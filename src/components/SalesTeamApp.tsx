@@ -1078,50 +1078,81 @@ export default function SalesTeamApp({
   };
 
   const handleImageUpload = async (pageId: string, file: File, type: 'image' | 'bg') => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onloadend = async () => {
-      const base64data = reader.result as string;
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/upload`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileName: file.name,
-            fileType: file.type,
-            base64: base64data
-          })
+    try {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        alert("Please select a valid image file.");
+        return;
+      }
+
+      // Compress image client-side using canvas
+      const compressImage = (file: File, maxWidth: number = 800, quality: number = 0.7): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Failed to read file."));
+          reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject(new Error("Failed to load image."));
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
+              
+              // Scale down if wider than maxWidth
+              if (width > maxWidth) {
+                height = Math.round((height * maxWidth) / width);
+                width = maxWidth;
+              }
+              
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) { reject(new Error("Canvas not supported.")); return; }
+              ctx.drawImage(img, 0, 0, width, height);
+              
+              // Convert to JPEG data URL for smaller size
+              const dataUrl = canvas.toDataURL('image/jpeg', quality);
+              resolve(dataUrl);
+            };
+            img.src = reader.result as string;
+          };
+          reader.readAsDataURL(file);
         });
-        if (!res.ok) throw new Error("Upload failed");
-        const data = await res.json();
-        const url = data.url;
-        
-        // Find page configuration
+      };
+
+      // Compress the image (800px wide, 70% quality for bg; 400px for logo)
+      const maxW = type === 'bg' ? 800 : 400;
+      const dataUrl = await compressImage(file, maxW, 0.7);
+      
+      // Check compressed size (base64 is ~33% larger than binary)
+      const sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+      if (sizeKB > 500) {
+        // Try more aggressive compression
+        const smallerDataUrl = await compressImage(file, type === 'bg' ? 600 : 300, 0.5);
+        const smallerSizeKB = Math.round((smallerDataUrl.length * 3) / 4 / 1024);
+        if (smallerSizeKB > 500) {
+          alert(`Image is still too large (${smallerSizeKB}KB) after compression. Please use a smaller image.`);
+          return;
+        }
+        // Use the more compressed version
+        const fieldKey = type === 'image' ? 'image_url' : 'bg_image_url';
         const pageToUpdate = quoteTemplatePages.find(p => p.id === pageId);
         if (pageToUpdate) {
-          const updatedPage = { ...pageToUpdate };
-          if (type === 'image') updatedPage.image_url = url;
-          else updatedPage.bg_image_url = url;
-
-          await fetch(`${API_BASE_URL}/api/db/update`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "edit",
-              table: "quoteTemplatePages",
-              id: pageId,
-              data: updatedPage
-            })
-          });
-          
-          if (onRefreshState) onRefreshState();
-          alert("Image uploaded successfully!");
+          await handleSavePageTextChanges(pageToUpdate, { [fieldKey]: smallerDataUrl });
         }
-      } catch (err) {
-        console.error("Upload error:", err);
-        alert("Failed to upload image.");
+        return;
       }
-    };
+      
+      // Save the data URL directly to the template page record
+      const fieldKey = type === 'image' ? 'image_url' : 'bg_image_url';
+      const pageToUpdate = quoteTemplatePages.find(p => p.id === pageId);
+      if (pageToUpdate) {
+        await handleSavePageTextChanges(pageToUpdate, { [fieldKey]: dataUrl });
+      }
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      alert("Failed to upload image: " + (err.message || "Unknown error"));
+    }
   };
 
   const handleSavePageTextChanges = async (page: any, data: any) => {

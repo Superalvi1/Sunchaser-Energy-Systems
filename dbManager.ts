@@ -1012,13 +1012,20 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
 
   const quoteTemplatePagesMapped = (quoteTemplatePagesData || []).map((qtp: any) => ({
     id: qtp.id,
+    template_id: qtp.template_id,
     templateId: qtp.template_id,
+    page_type: qtp.page_type,
     pageType: qtp.page_type,
     title: qtp.title,
+    body_text: qtp.body_text,
     bodyText: qtp.body_text,
+    image_url: qtp.image_url,
     imageUrl: qtp.image_url,
+    bg_image_url: qtp.bg_image_url,
     bgImageUrl: qtp.bg_image_url,
+    is_enabled: !!qtp.is_enabled,
     isEnabled: !!qtp.is_enabled,
+    sort_order: Number(qtp.sort_order || 0),
     sortOrder: Number(qtp.sort_order || 0)
   }));
 

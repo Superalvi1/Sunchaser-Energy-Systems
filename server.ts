@@ -1263,23 +1263,26 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
 // 9d. Base64 Upload endpoint
 app.post("/api/upload", async (req, res) => {
   try {
-    const { base64Data, filename } = req.body;
-    if (!base64Data) {
-      return res.status(400).json({ error: "base64Data is required" });
+    // Accept both field name formats: {base64Data, filename} and {base64, fileName}
+    const base64Input = req.body.base64Data || req.body.base64;
+    const filenameInput = req.body.filename || req.body.fileName;
+    
+    if (!base64Input) {
+      return res.status(400).json({ error: "base64Data or base64 field is required" });
     }
     
-    const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    const matches = base64Input.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
     let dataBuffer;
     let extension = "";
     if (matches && matches.length === 3) {
       extension = matches[1].split('/')[1];
       dataBuffer = Buffer.from(matches[2], 'base64');
     } else {
-      dataBuffer = Buffer.from(base64Data, 'base64');
+      dataBuffer = Buffer.from(base64Input, 'base64');
     }
 
-    const cleanFilename = filename 
-      ? filename.replace(/[^a-zA-Z0-9.-]/g, "_")
+    const cleanFilename = filenameInput 
+      ? filenameInput.replace(/[^a-zA-Z0-9.-]/g, "_")
       : `upload_${Date.now()}.${extension || 'png'}`;
 
     const uploadsDir = path.join(__dirname, "public", "uploads");
@@ -1290,7 +1293,8 @@ app.post("/api/upload", async (req, res) => {
     const filePath = path.join(uploadsDir, cleanFilename);
     fs.writeFileSync(filePath, dataBuffer);
 
-    res.json({ url: `/uploads/${cleanFilename}` });
+    // Return both the file path URL and the original base64 data URL for direct storage
+    res.json({ url: `/uploads/${cleanFilename}`, dataUrl: base64Input });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to upload file: " + err.message });
   }
@@ -2189,14 +2193,14 @@ app.post("/api/db/update", async (req, res) => {
           pgTable = "quote_template_pages";
           mappedData = {
             id: data.id,
-            template_id: data.templateId || data.template_id,
-            page_type: data.pageType || data.page_type,
+            template_id: data.template_id || data.templateId,
+            page_type: data.page_type || data.pageType,
             title: data.title,
-            body_text: data.bodyText || data.body_text || "",
-            image_url: data.imageUrl || data.image_url || "",
-            bg_image_url: data.bgImageUrl || data.bg_image_url || "",
-            is_enabled: data.isEnabled !== undefined ? data.isEnabled : true,
-            sort_order: Number(data.sortOrder || data.sort_order || 0)
+            body_text: data.body_text !== undefined ? data.body_text : (data.bodyText || ""),
+            image_url: data.image_url !== undefined ? data.image_url : (data.imageUrl || ""),
+            bg_image_url: data.bg_image_url !== undefined ? data.bg_image_url : (data.bgImageUrl || ""),
+            is_enabled: data.is_enabled !== undefined ? data.is_enabled : (data.isEnabled !== undefined ? data.isEnabled : true),
+            sort_order: Number(data.sort_order || data.sortOrder || 0)
           };
         } else if (table === "bankAccounts") {
           pgTable = "bank_accounts";
