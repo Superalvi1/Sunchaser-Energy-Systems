@@ -362,6 +362,14 @@ export interface AppState {
   settings?: any;
   websiteContent?: any;
   quotations?: any[];
+  quoteTemplates?: any[];
+  quoteTemplatePages?: any[];
+  bankAccounts?: any[];
+  companyTerms?: any[];
+  ceoMessages?: any[];
+  socialLinks?: any[];
+  structureDescriptions?: any[];
+  quotePdfSettings?: any[];
 }
 
 export type UserRole = 

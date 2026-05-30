@@ -423,9 +423,9 @@ export default function App() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch pt-4">
+            <div className={`grid grid-cols-1 ${(import.meta as any).env.DEV ? "lg:grid-cols-12 max-w-6xl" : "max-w-md"} gap-8 items-stretch pt-4 mx-auto`}>
               {/* Login form */}
-              <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
+              <div className={`${(import.meta as any).env.DEV ? "lg:col-span-5" : "w-full"} bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl relative overflow-hidden flex flex-col justify-between`}>
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Lock className="text-amber-500 h-5 w-5" />
@@ -446,7 +446,7 @@ export default function App() {
                       <label className="text-slate-400 block font-semibold">Key Password</label>
                       <input
                         type="password"
-                        placeholder="Enter password (built-in test: 123)"
+                        placeholder="Enter password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-amber-500 text-sm"
@@ -476,50 +476,54 @@ export default function App() {
                 </div>
                 <div className="pt-4 border-t border-slate-800/70 text-[10px] text-slate-500 leading-relaxed font-mono">
                    * Encryption Hash: SHA-256 AES Secures<br />
-                   * Standard administrative passcode is <strong className="text-amber-500/80">123</strong> for testing personas.
+                   {(import.meta as any).env.DEV && (
+                     <span>* Standard administrative passcode is <strong className="text-amber-500/80">123</strong> for testing personas.</span>
+                   )}
                 </div>
               </div>
 
               {/* Dev Quick switcher / Roles directory list */}
-              <div className="lg:col-span-7 bg-slate-900/60 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-lg flex flex-col justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2 font-mono">
-                    <Sparkles className="text-amber-500 h-4 w-4" /> DEV & TESTING QUICK PERSONA SWITCHER
-                  </h3>
-                  <p className="text-xs text-slate-400 mb-4 font-sans">
-                     Click any of Sunchaser's standard test profiles below to auto-login as that role and preview their custom workspace:
-                  </p>
+              {(import.meta as any).env.DEV && (
+                <div className="lg:col-span-7 bg-slate-900/60 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-lg flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2 font-mono">
+                      <Sparkles className="text-amber-500 h-4 w-4" /> DEV & TESTING QUICK PERSONA SWITCHER
+                    </h3>
+                    <p className="text-xs text-slate-400 mb-4 font-sans">
+                       Click any of Sunchaser's standard test profiles below to auto-login as that role and preview their custom workspace:
+                    </p>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {[
+                        { u: "admin", label: "Super Admin", desc: "Alex Admin", cap: "Unlocks metrics, full CRM, blueprints & server logs", col: "border-purple-900/40 hover:border-purple-500" },
+                        { u: "manager", label: "Sales Manager", desc: "Sarah Manager", cap: "CRM lead delegator, manager metrics, tracers", col: "border-indigo-900/40 hover:border-indigo-500" },
+                        { u: "sales", label: "Sales Executive", desc: "Sarah Connor", cap: "Sizing calculators, lead tracking, PDF quotations", col: "border-blue-900/40 hover:border-blue-500" },
+                        { u: "surveyor", label: "Survey Engineer", desc: "Bob Surveyor", cap: "Roof CAD maps drawing & measures audits", col: "border-amber-900/40 hover:border-amber-500" },
+                        { u: "installer", label: "Installation Team", desc: "Dave Installer", cap: "Staging, task checklists & commissioning", col: "border-emerald-950/40 hover:border-emerald-500" },
+                        { u: "customer", label: "Customer Portal", desc: "John Miller (lead-1)", cap: "View/sign proposal, net meter, file support cases", col: "border-pink-900/40 hover:border-pink-500" }
+                      ].map((pOpt) => (
+                        <button
+                          key={pOpt.u}
+                          onClick={() => handleQuickLogin(pOpt.u, "123")}
+                          className={`p-3 rounded-2xl bg-slate-950 text-left border ${pOpt.col} cursor-pointer transition flex flex-col justify-between h-28`}
+                        >
+                          <div>
+                            <span className="text-xs font-bold font-sans text-neutral-100 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>{pOpt.label}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 mb-1.5 block">User: {pOpt.u} ({pOpt.desc})</span>
+                          </div>
+                          <p className="text-[9px] text-slate-500 leading-snug line-clamp-2 font-sans">{pOpt.cap}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {[
-                      { u: "admin", label: "Super Admin", desc: "Alex Admin", cap: "Unlocks metrics, full CRM, blueprints & server logs", col: "border-purple-900/40 hover:border-purple-500" },
-                      { u: "manager", label: "Sales Manager", desc: "Sarah Manager", cap: "CRM lead delegator, manager metrics, tracers", col: "border-indigo-900/40 hover:border-indigo-500" },
-                      { u: "sales", label: "Sales Executive", desc: "Sarah Connor", cap: "Sizing calculators, lead tracking, PDF quotations", col: "border-blue-900/40 hover:border-blue-500" },
-                      { u: "surveyor", label: "Survey Engineer", desc: "Bob Surveyor", cap: "Roof CAD maps drawing & measures audits", col: "border-amber-900/40 hover:border-amber-500" },
-                      { u: "installer", label: "Installation Team", desc: "Dave Installer", cap: "Staging, task checklists & commissioning", col: "border-emerald-950/40 hover:border-emerald-500" },
-                      { u: "customer", label: "Customer Portal", desc: "John Miller (lead-1)", cap: "View/sign proposal, net meter, file support cases", col: "border-pink-900/40 hover:border-pink-500" }
-                    ].map((pOpt) => (
-                      <button
-                        key={pOpt.u}
-                        onClick={() => handleQuickLogin(pOpt.u, "123")}
-                        className={`p-3 rounded-2xl bg-slate-950 text-left border ${pOpt.col} cursor-pointer transition flex flex-col justify-between h-28`}
-                      >
-                        <div>
-                          <span className="text-xs font-bold font-sans text-neutral-100 flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>{pOpt.label}
-                          </span>
-                          <span className="text-[10px] font-mono text-slate-400 mb-1.5 block">User: {pOpt.u} ({pOpt.desc})</span>
-                        </div>
-                        <p className="text-[9px] text-slate-500 leading-snug line-clamp-2 font-sans">{pOpt.cap}</p>
-                      </button>
-                    ))}
+                  <div className="text-[10px] text-slate-400 border-t border-slate-800/50 pt-3 italic font-sans">
+                    Choose a persona to explore role-based permissions immediately without typing.
                   </div>
                 </div>
-                
-                <div className="text-[10px] text-slate-400 border-t border-slate-800/50 pt-3 italic font-sans">
-                  Choose a persona to explore role-based permissions immediately without typing.
-                </div>
-              </div>
+              )}
             </div>
           </div>
         ) : appState ? (
@@ -585,10 +589,20 @@ export default function App() {
               <SalesTeamApp
                 leads={appState.leads}
                 inventory={appState.inventory}
+                products={appState.products || []}
                 onUpdateLead={handleUpdateLead}
                 on创造Quote={handleCreateQuote}
                 on提交Survey={handleSubmitSurvey}
+                onRefreshState={loadDatabaseState}
                 settings={appState.settings}
+                quoteTemplates={appState.quoteTemplates || []}
+                quoteTemplatePages={appState.quoteTemplatePages || []}
+                bankAccounts={appState.bankAccounts || []}
+                companyTerms={appState.companyTerms || []}
+                ceoMessages={appState.ceoMessages || []}
+                socialLinks={appState.socialLinks || []}
+                structureDescriptions={appState.structureDescriptions || []}
+                quotePdfSettings={appState.quotePdfSettings || []}
               />
             )}
 
@@ -650,6 +664,14 @@ export default function App() {
                 settings={appState.settings || {}}
                 websiteContent={appState.websiteContent || {}}
                 quotations={appState.quotations || []}
+                quoteTemplates={appState.quoteTemplates || []}
+                quoteTemplatePages={appState.quoteTemplatePages || []}
+                bankAccounts={appState.bankAccounts || []}
+                companyTerms={appState.companyTerms || []}
+                ceoMessages={appState.ceoMessages || []}
+                socialLinks={appState.socialLinks || []}
+                structureDescriptions={appState.structureDescriptions || []}
+                quotePdfSettings={appState.quotePdfSettings || []}
                 onResolveTicket={handleResolveTicket}
                 onProcureInventory={async (vendor, itemId, quantity) => {
                   setLoading(true);

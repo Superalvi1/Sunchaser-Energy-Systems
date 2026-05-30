@@ -65,7 +65,15 @@ async function main() {
     "notifications",
     "settings",
     "website_content",
-    "purchase_orders"
+    "purchase_orders",
+    "quote_templates",
+    "quote_template_pages",
+    "bank_accounts",
+    "company_terms",
+    "ceo_messages",
+    "social_links",
+    "structure_descriptions",
+    "quote_pdf_settings"
   ];
 
   const results: Record<string, { status: "OK" | "Error"; msg: string }> = {};
@@ -286,8 +294,39 @@ async function main() {
               installation_charges: q.installationCharges || 0,
               net_metering_charges: q.netMeteringCharges || 0,
               payment_terms: q.paymentTerms || "",
-              warranty_terms: q.warrantyTerms || "",
+              warranty_terms: q.warranty_terms || "",
               terms_and_conditions: q.termsAndConditions || "",
+              extended_data: {
+                clientName: q.clientName,
+                clientPhone: q.clientPhone,
+                clientEmail: q.clientEmail,
+                clientAddress: q.clientAddress,
+                cnic: q.cnic,
+                cityArea: q.cityArea,
+                bdmName: q.bdmName,
+                quoteDate: q.quoteDate,
+                systemType: q.systemType,
+                panelBrand: q.panelBrand,
+                panelWattage: q.panelWattage,
+                inverterBrand: q.inverterBrand,
+                inverterCapacity: q.inverterCapacity,
+                batteryOption: q.batteryOption,
+                netMeteringRequired: q.netMeteringRequired,
+                discount: q.discount,
+                paymentSchedule: q.paymentSchedule,
+                boqItems: q.boqItems,
+                lescoSettings: q.lescoSettings,
+                societyCharges: q.societyCharges,
+                taxEnabled: q.taxEnabled,
+                taxRate: q.taxRate,
+                taxAmount: q.taxAmount,
+                selectedStructure: q.selectedStructure,
+                customStructure: q.customStructure,
+                boqRows: q.boqRows,
+                customNotes: q.customNotes,
+                grandTotal: q.grandTotal,
+                netTotal: q.netTotal
+              },
               created_at: q.createdAt || new Date().toISOString()
             }, { onConflict: "id" });
             if (!error) quoteCount++;
@@ -498,7 +537,8 @@ async function main() {
       status: "Pending",
       structure_type: "Anodized water barrier rails",
       warranty_terms: "25 Years degradation limit",
-      payment_terms: "30% retain, 30% structurally, 30% mount completion, 10% grid"
+      payment_terms: "30% retain, 30% structurally, 30% mount completion, 10% grid",
+      extended_data: { clientName: "Arthur Dent Sunchaser-Test", boqRows: [] }
     });
     if (quoteErr) throw new Error(`Quotation Insert: ${quoteErr.message}`);
     console.log("      ✅ Custom quotation terms created successfully.");

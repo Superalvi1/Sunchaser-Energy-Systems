@@ -1,6 +1,6 @@
 import { Lead, Ticket, AppState, Quote, User } from "../types";
 
-export const API_BASE_URL = ((import.meta as any).env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+export const API_BASE_URL = ((import.meta as any).env.VITE_API_BASE_URL || "https://sunchaser-energy-systems.onrender.com").replace(/\/$/, "");
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;

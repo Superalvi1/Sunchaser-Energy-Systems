@@ -86,6 +86,7 @@ create table if not exists public.quotations (
   payment_terms text,
   warranty_terms text,
   terms_and_conditions text,
+  extended_data jsonb,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -387,3 +388,9 @@ create policy "Enable full access for authenticated backend" on public.notificat
 create policy "Enable full access for authenticated backend" on public.settings for all using (true);
 create policy "Enable full access for authenticated backend" on public.website_content for all using (true);
 create policy "Enable full access for authenticated backend" on public.purchase_orders for all using (true);
+
+-- Safe overrides for existing schemas
+alter table if exists public.quotations add column if not exists extended_data jsonb;
+
+-- Force PostgREST schema cache reload
+NOTIFY pgrst, 'reload schema';

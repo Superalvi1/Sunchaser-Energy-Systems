@@ -1,0 +1,886 @@
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Sunchaser Proposal Deck</title>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
+      <style>
+        body {
+          font-family: 'Inter', system-ui, sans-serif;
+          margin: 0;
+          padding: 0;
+          background-color: #f1f5f9;
+          color: #1e293b;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        .action-bar {
+          background-color: #0f172a;
+          color: #ffffff;
+          padding: 12px 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+          font-size: 14px;
+        }
+        .btn-print {
+          background-color: #f59e0b;
+          color: #0f172a;
+          border: none;
+          padding: 8px 18px;
+          border-radius: 8px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: 'Inter', sans-serif;
+        }
+        .btn-print:hover {
+          background-color: #d97706;
+        }
+        .pages-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 20px;
+          padding: 30px 0;
+        }
+        .page {
+          width: 210mm;
+          height: 297mm;
+          background: #ffffff;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+          box-sizing: border-box;
+          padding: 15mm 15mm;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          position: relative;
+          overflow: hidden;
+          page-break-after: always;
+        }
+        .page.cover {
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .page-header-logo {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1.5px solid #cbd5e1;
+          padding-bottom: 6px;
+          margin-bottom: 12px;
+        }
+        .header-company-name {
+          font-weight: 800;
+          font-size: 13px;
+          color: #0f172a;
+          letter-spacing: 0.05em;
+        }
+        .page-title {
+          font-size: 16px;
+          font-weight: 850;
+          color: #0f172a;
+          border-left: 4px solid #f59e0b;
+          padding-left: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+        }
+        .page-footer {
+          border-top: 1px solid #cbd5e1;
+          padding-top: 6px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 8.5px;
+          color: #64748b;
+          font-weight: 600;
+        }
+        .grid-2 {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 15px;
+        }
+        .card {
+          background-color: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 12px;
+        }
+        .badge {
+          font-size: 8.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          padding: 2px 7px;
+          border-radius: 4px;
+          background-color: #fef3c7;
+          color: #92400e;
+        }
+        .urdu-text {
+          font-family: 'Noto Nastaliq Urdu', serif;
+          direction: rtl;
+          text-align: right;
+          line-height: 2.2;
+          font-size: 11px;
+          color: #334155;
+        }
+        .boq-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 9.5px;
+        }
+        .boq-table th {
+          background-color: #0f172a;
+          color: #ffffff;
+          text-align: left;
+          padding: 6px 8px;
+          font-weight: 750;
+          text-transform: uppercase;
+          font-size: 8px;
+          letter-spacing: 0.03em;
+        }
+        .boq-table td {
+          padding: 5px 8px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        @page {
+          size: A4 portrait;
+          margin: 0;
+        }
+        @media print {
+          body {
+            background-color: #ffffff !important;
+          }
+          .action-bar {
+            display: none !important;
+          }
+          .pages-container {
+            padding: 0 !important;
+            gap: 0 !important;
+          }
+          .page {
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="action-bar">
+        <div><strong>Sunchaser Proposal Deck</strong> - Client: Muhammad Allauddin</div>
+        <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
+      </div>
+
+      <div class="pages-container">
+        
+      <div class="page cover" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #ffffff; padding: 25mm 20mm;">
+        <div style="display: flex; align-items: center; gap: 12px; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
+          <div style="background-color: #f59e0b; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
+          <div>
+            <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #ffffff;">SUNCHASER ENERGY</div>
+            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #f59e0b; font-weight: bold;">Generational Infrastructure</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 40px;">
+          <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #ffffff;">
+            15kW Hybrid<br/>Solar Power Solution
+          </div>
+          <div style="font-size: 13px; color: #f59e0b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px;">
+            Sunchaser Energy Systems
+          </div>
+          <p style="font-size: 12px; color: #cbd5e1; margin-top: 10px; line-height: 1.6; max-width: 500px;">
+            Generational Energy Independence<br/>Technical Feasibility & Engineering Quotation
+          </p>
+          
+          <div style="border-top: 1px solid #334155; padding-top: 20px; margin-top: 35px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
+              <div>
+                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
+                <div style="font-weight: 700; color: #ffffff; margin-top: 4px; font-size: 13px;">Muhammad Allauddin</div>
+              </div>
+              <div>
+                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Proposal Validity</div>
+                <div style="font-weight: 700; color: #f59e0b; margin-top: 4px;">3-Day Validity (Exp: 2 June 2026)</div>
+              </div>
+              <div>
+                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Site Location</div>
+                <div style="font-weight: 600; color: #ffffff; margin-top: 4px;">Lahore</div>
+              </div>
+              <div>
+                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Technical Advisor / BDM</div>
+                <div style="font-weight: 600; color: #ffffff; margin-top: 4px;">Sarah Connor</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid #334155; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #94a3b8; margin-top: auto;">
+          <div>
+            <div style="font-weight: 700; color: #ffffff; margin-bottom: 2px;">Sunchaser Energy Lahore Office</div>
+            <div>Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</div>
+            <div style="color: #f59e0b;">Hotlines: 0309-0236666, 0330-7776444</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-weight: 700; color: #ffffff;">Doc ID: SC-LEAD-PRE-DRAFT</div>
+            <div>Date: 30 May 2026</div>
+          </div>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 2</span>
+          </div>
+          <div class="page-title">Sunchaser Group Profile</div>
+          
+          <div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 20px 0; font-weight: 500;">
+            Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry.
+          </div>
+
+          <div class="grid-2" style="margin-top: 25px;">
+            <div class="card">
+              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">☀️ Sunchaser Energy</div>
+              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                The core installation and smart grid integration arm. Responsible for site surveys, detailed electrical engineering designs, high-tension terminations, and smart telemetry commissioning.
+              </div>
+            </div>
+            <div class="card">
+              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">⚡ Helios Solar</div>
+              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                The design consultancy branch. Creates 3D shadow analysis, panel positioning arrays using dynamic CAD, and utility net metering simulation projections.
+              </div>
+            </div>
+            <div class="card">
+              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🏗️ AL ADAM Steel</div>
+              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                Heavy mechanical fabrication plant. Produces heavy hot-dip galvanized frame mounts, standard structures, elevated configurations, and legendary Mughal Girder designs.
+              </div>
+            </div>
+            <div class="card">
+              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🌐 Signals Global</div>
+              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                International procurement and shipping network. Authorizes direct clearance and imports of Tier-1 solar modules, Knox/Goodwe/Solis inverters, and battery packs.
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 30px; text-align: center; border-left: 4px solid #f59e0b; background-color: #fafaf9;">
+            <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; letter-spacing: 0.05em;">Our Group Vision</div>
+            <div style="font-size: 13px; font-weight: 600; line-height: 1.5; margin-top: 6px; font-style: italic; color: #1c1917;">
+              "Empowering Pakistan with generational clean energy independence, combining premium imports with superior local engineering."
+            </div>
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 3</span>
+          </div>
+          <div class="page-title">Why Partner with Sunchaser?</div>
+
+          <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+            Tier-1 Direct Imported Hardware: All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates.
+          </div>
+
+          <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
+            <div style="display: flex; gap: 10px; align-items: flex-start;">
+              <span style="font-size: 20px;">🏆</span>
+              <div>
+                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Direct Imported Tier-1 Hardware</div>
+                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Direct Clearance customs certificates for JA Solar, Jinko and Longi modules.</div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: flex-start;">
+              <span style="font-size: 20px;">🔩</span>
+              <div>
+                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Galvanized mechanical structure</div>
+                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Heavy hot-dip galvanized and girder frame designs engineered for 130 km/h wind shear.</div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: flex-start;">
+              <span style="font-size: 20px;">📑</span>
+              <div>
+                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Complete NEPRA / LESCO Handling</div>
+                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Turnkey green meter licensing coordination directly managed by Sunchaser relations desk.</div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: flex-start;">
+              <span style="font-size: 20px;">📲</span>
+              <div>
+                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">24/7 Smart Telemetry App</div>
+                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Active monitoring for daily generation yield logs, export credits, and maintenance tickets.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 30px; border: 1px dashed #cbd5e1; background-color: #fafaf9;">
+            <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
+            <div style="display: flex; justify-content: space-around; align-items: center;">
+              <div style="text-align: center;">
+                <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
+                  <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
+                  <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
+                  <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
+                  <rect x="70" y="0" width="30" height="30" fill="#0f172a" />
+                  <rect x="75" y="5" width="20" height="20" fill="#ffffff" />
+                  <rect x="80" y="10" width="10" height="10" fill="#0f172a" />
+                  <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
+                  <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
+                  <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
+                  <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
+                  <rect x="60" y="40" width="10" height="20" fill="#0f172a" />
+                  <rect x="45" y="70" width="20" height="10" fill="#0f172a" />
+                </svg>
+                <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Customer Portal</div>
+              </div>
+              <div style="text-align: center;">
+                <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
+                  <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
+                  <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
+                  <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
+                  <rect x="70" y="0" width="30" height="30" fill="#0f172a" />
+                  <rect x="75" y="5" width="20" height="20" fill="#ffffff" />
+                  <rect x="80" y="10" width="10" height="10" fill="#0f172a" />
+                  <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
+                  <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
+                  <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
+                  <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
+                  <rect x="50" y="40" width="10" height="10" fill="#0f172a" />
+                  <rect x="60" y="70" width="10" height="20" fill="#0f172a" />
+                </svg>
+                <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Corporate Registry</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 4</span>
+          </div>
+          <div class="page-title">Executive Board Assurances</div>
+          
+
+          <div class="grid-2" style="margin-top: 15px;">
+            <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 180mm;">
+              <div>
+                <div style="font-size: 22px; margin-bottom: 6px;">🛡️</div>
+                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">Muhammad Allauddin</div>
+                <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">CEO, Engineering & Operations</div>
+                <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
+                  "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation. We refuse to cut corners on material gauges, hot-dip zinc coating parameters, wire thicknesses, or chemical earthing bores. Every layout is physically verified, and every termination complies with ISO standards. Sunchaser means ultimate power security."
+                </div>
+              </div>
+              <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
+                <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">Muhammad Allauddin</div>
+                <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
+              </div>
+            </div>
+
+            <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 180mm;">
+              <div>
+                <div style="font-size: 22px; margin-bottom: 6px;">⚖️</div>
+                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">Barrister Raza Khan Niazi</div>
+                <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">CEO Strategy & Innovation / Compliance</div>
+                <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
+                  "Liaison with utility boards and regulatory licensing can be daunting for clients. Sunchaser handles the entire paperwork and NEPRA filing process transparently. We promise that all governmental files are processed legally, demand notices are audited, and net metering activations are completed with maximal efficiency."
+                </div>
+              </div>
+              <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
+                <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">Barrister Raza Khan Niazi</div>
+                <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 5</span>
+          </div>
+          <div class="page-title">Mounting Structure & Fabrication Details</div>
+
+          <div class="card" style="margin: 15px 0 10px 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-weight: 800; font-size: 12px; color: #0f172a;">Selected Structure Frame Type:</span>
+              <span class="badge" style="font-size: 8px; padding: 2.5px 8px;">Elevated Frame Mount</span>
+            </div>
+            <div style="font-size: 11px; line-height: 1.5; color: #475569;">
+              <strong>English Specification:</strong><br/>
+              Premium Galvanized Mounting Structure, wind resistant up to 130 km/h.
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 10px; border-left: 4px solid #f59e0b; padding: 10px 14px;">
+            <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 4px; text-align: right;">ساختی تفصیلات (اردو)</div>
+            <div class="urdu-text" style="font-size: 11.5px; line-height: 2;">
+              10 فٹ چھت کی اونچائی کا ہاٹ ڈِپ گیلوانائزڈ ایلیویٹڈ سٹرکچر فریم۔
+            </div>
+          </div>
+
+          <div class="grid-2" style="margin-bottom: 10px;">
+            <div class="card" style="font-size: 10.5px; line-height: 1.45;">
+              <strong>Mechanical Design Specs:</strong>
+              <div style="margin-top: 4px; color: #475569;">
+                • Material: Hot-dip Galvanized Steel<br/>
+                • Weight Category: Standard Weight<br/>
+                • Max Wind Shear: 130 km/h wind certified
+              </div>
+            </div>
+            <div class="card" style="font-size: 10.5px; line-height: 1.45;">
+              <strong>Warranty Guidelines:</strong>
+              <div style="margin-top: 4px; color: #475569;">
+                • Structural Integrity: 10 Years Warranty<br/>
+                • Anchoring: Pure Rawl anchors<br/>
+                • Analysis Model: SAP 2000 Wind Load compliant
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="padding: 6px; border: 1.5px solid #e2e8f0; background-color: #fafaf9;">
+            <div style="font-weight: 800; font-size: 9.5px; color: #0f172a; text-align: center; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px;">Engineering Mounting Layout Blueprint</div>
+            
+      <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
+        <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
+        <line x1="90" y1="120" x2="90" y2="55" stroke="#475569" stroke-width="5" />
+        <line x1="190" y1="120" x2="190" y2="30" stroke="#475569" stroke-width="5" />
+        <line x1="60" y1="62" x2="220" y2="22" stroke="#d97706" stroke-width="6" />
+        <rect x="75" y="48" width="35" height="10" transform="rotate(-14, 90, 53)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="125" y="36" width="35" height="10" transform="rotate(-14, 140, 41)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="175" y="24" width="35" height="10" transform="rotate(-14, 190, 29)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="80" y="115" width="20" height="8" fill="#64748b" />
+        <rect x="180" y="115" width="20" height="8" fill="#64748b" />
+        <text x="140" y="140" text-anchor="middle" font-size="10" fill="#64748b" font-weight="700">Elevated Frame (10ft Roof clearance hot-dip galvanized)</text>
+      </svg>
+    
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page" style="padding: 12mm 15mm;">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 6</span>
+          </div>
+          <div class="page-title">Technical Bill of Quantities (BOQ)</div>
+          
+          <div style="max-height: 200mm; overflow: hidden; border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
+            <table class="boq-table">
+              <thead>
+                <tr style="height: 28px;">
+                  <th style="width: 5%; text-align: center; border-bottom: 2px solid #0f172a;">Sr.</th>
+                  <th style="width: 25%; border-bottom: 2px solid #0f172a;">Item Name</th>
+                  <th style="width: 32%; border-bottom: 2px solid #0f172a;">Material Specifications</th>
+                  <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Unit</th>
+                  <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Qty</th>
+                  <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Rate</th>
+                  <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+          <tr style="border-bottom: 1px solid #cbd5e1; font-size: 10px;">
+            <td style="padding: 6px; text-align: center; color: #475569;">1</td>
+            <td style="padding: 6px; font-weight: 600; color: #0f172a;">Solar Modules array (JA Solar 550W Mono-PERC Panels)</td>
+            <td style="padding: 6px; color: #475569;">Tier-1 high output PV solar panels, direct clearance trace</td>
+            <td style="padding: 6px; text-align: center; color: #475569;">Nos</td>
+            <td style="padding: 6px; text-align: center; font-weight: 500;">24</td>
+            <td style="padding: 6px; text-align: right; color: #475569;">Rs. 21,500</td>
+            <td style="padding: 6px; text-align: right; font-weight: 600; color: #0f172a;">Rs. 516,000</td>
+          </tr>
+        
+          <tr style="border-bottom: 1px solid #cbd5e1; font-size: 10px;">
+            <td style="padding: 6px; text-align: center; color: #475569;">2</td>
+            <td style="padding: 6px; font-weight: 600; color: #0f172a;">Power conversion (Growatt 15kW Hybrid Inverter)</td>
+            <td style="padding: 6px; color: #475569;">Smart grid tied inverter with continuous monitoring cloud link</td>
+            <td style="padding: 6px; text-align: center; color: #475569;">No</td>
+            <td style="padding: 6px; text-align: center; font-weight: 500;">1</td>
+            <td style="padding: 6px; text-align: right; color: #475569;">Rs. 280,000</td>
+            <td style="padding: 6px; text-align: right; font-weight: 600; color: #0f172a;">Rs. 280,000</td>
+          </tr>
+        
+          <tr style="border-bottom: 1px solid #cbd5e1; font-size: 10px;">
+            <td style="padding: 6px; text-align: center; color: #475569;">3</td>
+            <td style="padding: 6px; font-weight: 600; color: #0f172a;">Mounting structural frame & masonry</td>
+            <td style="padding: 6px; color: #475569;">Mughal steel layout, anchor brackets, structural foundation bores</td>
+            <td style="padding: 6px; text-align: center; color: #475569;">Set</td>
+            <td style="padding: 6px; text-align: center; font-weight: 500;">1</td>
+            <td style="padding: 6px; text-align: right; color: #475569;">Rs. 125,000</td>
+            <td style="padding: 6px; text-align: right; font-weight: 600; color: #0f172a;">Rs. 125,000</td>
+          </tr>
+        
+          <tr style="border-bottom: 1px solid #cbd5e1; font-size: 10px;">
+            <td style="padding: 6px; text-align: center; color: #475569;">4</td>
+            <td style="padding: 6px; font-weight: 600; color: #0f172a;">Pure chemical copper earthing bores</td>
+            <td style="padding: 6px; color: #475569;">Dedicated AC/DC chemical grounding safety boring arrays</td>
+            <td style="padding: 6px; text-align: center; color: #475569;">Nos</td>
+            <td style="padding: 6px; text-align: center; font-weight: 500;">3</td>
+            <td style="padding: 6px; text-align: right; color: #475569;">Rs. 25,000</td>
+            <td style="padding: 6px; text-align: right; font-weight: 600; color: #0f172a;">Rs. 75,000</td>
+          </tr>
+        
+          <tr style="border-bottom: 1px solid #cbd5e1; font-size: 10px;">
+            <td style="padding: 6px; text-align: center; color: #475569;">5</td>
+            <td style="padding: 6px; font-weight: 600; color: #0f172a;">Stackable Battery Storage (10.24kWh Lithium Pack)</td>
+            <td style="padding: 6px; color: #475569;">Advanced LiFePO4 chemistry energy storage wall system</td>
+            <td style="padding: 6px; text-align: center; color: #475569;">No</td>
+            <td style="padding: 6px; text-align: center; font-weight: 500;">1</td>
+            <td style="padding: 6px; text-align: right; color: #475569;">Rs. 790,000</td>
+            <td style="padding: 6px; text-align: right; font-weight: 600; color: #0f172a;">Rs. 790,000</td>
+          </tr>
+        
+              </tbody>
+            </table>
+          </div>
+
+          <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: flex-start;">
+            <div style="width: 48%; font-size: 9.5px; color: #64748b; line-height: 1.45;">
+              Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel.
+            </div>
+            
+            <div style="width: 46%;">
+              <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                <span style="color: #64748b; font-weight: 500;">BOQ Gross Sum:</span>
+                <span style="font-weight: 600; color: #0f172a;">Rs. 1,786,000</span>
+              </div>
+              
+              
+              
+              <div style="display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 850; border-top: 1.5px solid #0f172a; padding-top: 4px; margin-top: 4px;">
+                <span style="color: #0f172a;">Turnkey Investment:</span>
+                <span style="color: #d97706; font-size: 13.5px;">Rs. 1,786,000</span>
+              </div>
+              <div style="font-size: 8px; color: #94a3b8; text-align: right; margin-top: 4px; font-weight: bold;">
+                * Direct imports clearance trace.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 7</span>
+          </div>
+          <div class="page-title">Terms, Conditions & Regulations (1/2)</div>
+          
+          <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+            All engineering activities, supply dispatch, and LESCO utility agreements are governed strictly by the Sunchaser covenants below:
+          </div>
+
+          <div style="margin-top: 10px;">
+            
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">1.</span>
+        <span style="color: #334155; font-weight: 500;">Quotation validity: 3 days from date of issuance.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">2.</span>
+        <span style="color: #334155; font-weight: 500;">Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">3.</span>
+        <span style="color: #334155; font-weight: 500;">Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">4.</span>
+        <span style="color: #334155; font-weight: 500;">Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">5.</span>
+        <span style="color: #334155; font-weight: 500;">Work will commence within 3 days after receipt of the advance payment.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">6.</span>
+        <span style="color: #334155; font-weight: 500;">Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">7.</span>
+        <span style="color: #334155; font-weight: 500;">Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">8.</span>
+        <span style="color: #334155; font-weight: 500;">Client interference: Any on-site construction delays caused by the client will affect the completion timeline.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">9.</span>
+        <span style="color: #334155; font-weight: 500;">Grid connection: Net metering facilitation requires valid property documents and sanctioned load compliance.</span>
+      </div>
+    
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 8</span>
+          </div>
+          <div class="page-title">Terms, Conditions & Regulations (2/2)</div>
+          
+          <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+            Consortium hardware replacement and force majeure exclusions continue below:
+          </div>
+
+          <div style="margin-top: 10px;">
+            
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">10.</span>
+        <span style="color: #334155; font-weight: 500;">System earthing: Dedicated chemical earthing bores will be created for DC, AC, and frame grounding safety.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">11.</span>
+        <span style="color: #334155; font-weight: 500;">Smart online monitoring: Active monitoring requires stable client Wi-Fi connection at the inverter site.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">12.</span>
+        <span style="color: #334155; font-weight: 500;">Wi-Fi requirement: Customer must provide stable continuous Wi-Fi access for monitoring data synch.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">13.</span>
+        <span style="color: #334155; font-weight: 500;">Client scope of work: Providing masonry work access, temporary electricity & water during construction.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">14.</span>
+        <span style="color: #334155; font-weight: 500;">Civil work exclusions: Cutting of structural concrete slabs or custom aesthetic tiles is excluded unless quoted.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">15.</span>
+        <span style="color: #334155; font-weight: 500;">Net metering clearance remains the client's responsibility if document verification faults occur.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">16.</span>
+        <span style="color: #334155; font-weight: 500;">Panel washing advisory: Clean arrays bi-weekly for optimal generation yield performance.</span>
+      </div>
+    
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">17.</span>
+        <span style="color: #334155; font-weight: 500;">Force majeure: Sunchaser is not liable for delays caused by national strikes, weather anomalies, or utility board freezes.</span>
+      </div>
+    
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 9</span>
+          </div>
+          <div class="page-title">Client Verification & Sign-off</div>
+
+          <div class="card" style="margin: 15px 0 10px 0;">
+            <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+              1. Customer Billing Profile
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+              <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">Muhammad Allauddin</span></div>
+              <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">Pending Verification</span></div>
+              <div><strong>Active Line:</strong> <span style="color: #0f172a;">0309-0236666</span></div>
+              <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">allai1432009@gmail.com</span></div>
+              <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">DHA Phase 6, Lahore</span></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 15px; border-left: 4px solid #0284c7;">
+            <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+              2. Utility Interconnect (LESCO Metering)
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+              <div><strong>LESCO Meter ID:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">Not Scanned</span></div>
+              <div><strong>Consumer A/C Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">Not Scanned</span></div>
+              <div><strong>Sanctioned Grid Load:</strong> <span style="color: #0f172a; font-weight: 600;">Not Scanned</span></div>
+              <div><strong>Terminations Phase:</strong> <span style="color: #0f172a;">Three Phase</span></div>
+              <div style="grid-column: span 2;"><strong>Turnkey Net Metering Licensing:</strong> <span style="color: #0284c7; font-weight: 700;">REQUIRED &amp; SOW INCLUDED</span></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 20px; font-size: 10px; line-height: 1.5; color: #475569;">
+            <strong>Contract Declaration:</strong> By signing below, the client confirms the technical parameters (Page 5), accepts the final turnkey financial quote (Page 6), accepts the terms &amp; exclusions (Page 7 &amp; 8), and formally authorizes Sunchaser Energy to proceed with hardware procurement, chemical bores, structural steel fabrication, and LESCO utility interconnect procedures.
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 25px;">
+            <div style="text-align: center;">
+              <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                Signature / Thumb Stamp
+              </div>
+              <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Client Representative Sign-off</div>
+              <div style="font-size: 8px; color: #94a3b8;">Declaration Acceptance Authority</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                Sunchaser Central Staging
+              </div>
+              <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Sunchaser Central Operations</div>
+              <div style="font-size: 8px; color: #94a3b8;">Design Release Validation Authorization</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page">
+        <div>
+          <div class="page-header-logo">
+            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
+            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 10</span>
+          </div>
+          <div class="page-title">Official Payment Channels</div>
+
+          <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
+            <span style="font-size: 18px;">⚠️</span>
+            <span style="font-size: 10px; color: #b45309; line-height: 1.4; font-weight: 600;">
+              <strong>Payment Safety Guidelines:</strong> Sunchaser Energy Systems never requests cash handovers or deposits to personal employee accounts. Verify all drafts match the official channels.
+            </span>
+          </div>
+
+          <div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 15px;">
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>1. Allied Bank Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">SUNCHASER ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">04190010112276940012</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK81ABPA0010112276940012</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>2. Bank Alfalah Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">AL ADAM</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">55265001858603</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK12ALFH5526005001858603</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>3. Allied Bank Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">SIGNALS GLOBAL</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">09090010112284650035</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> N/A</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>4. Meezan Bank Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">HELIOS SOLAR ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">02490109527492</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK49MEZN0002490109527492</div>
+      </div>
+    </div>
+          </div>
+
+          <div class="card" style="margin-top: 25px; font-size: 10px; color: #475569; line-height: 1.5; background-color: #fafaf9;">
+            <strong>Verification SLA:</strong> Once a bank transfer, direct deposit, or pay order is dispatched, snap the transfer slip and email to <strong>billing@sunchaser-energy.com</strong> or share with your advisor for warehouse component staging release.
+          </div>
+        </div>
+
+        <div class="page-footer">
+          <span>Sunchaser Energy Systems Proposal</span>
+          <span>Doc ID: SC-LEAD-PRE</span>
+        </div>
+      </div>
+    
+      <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm;">
+        <div>
+          <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
+          <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</h2>
+          <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
+          
+          <div style="max-width: 440px; margin: 0 auto 40px auto; font-size: 12px; line-height: 1.6; color: #475569; font-weight: 500; font-style: italic;">
+            "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings."
+          </div>
+
+          <div style="border-top: 1.5px solid #cbd5e1; padding-top: 25px; font-size: 10.5px; color: #475569; max-width: 360px; margin: 0 auto; line-height: 1.5;">
+            <strong style="color: #0f172a; font-size: 11px;">Sunchaser Central Staging HQ</strong><br/>
+            Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore<br/>
+            Hotlines: 0309-0236666, 0330-7776444<br/>
+            Email: billing@sunchaser-energy.com | Web: www.sunchaser-energy.com
+          </div>
+        </div>
+      </div>
+    
+      </div>
+    </body>
+    </html>
+  

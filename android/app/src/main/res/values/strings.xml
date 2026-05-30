@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Sunchaser CRM</string>
+    <string name="title_activity_main">Sunchaser CRM</string>
+    <string name="package_name">com.sunchaser.crm</string>
+    <string name="custom_url_scheme">com.sunchaser.crm</string>
+</resources>

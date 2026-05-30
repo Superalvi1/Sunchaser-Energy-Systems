@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Sunchaser CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #020617;
+      --bg-card: rgba(15, 23, 42, 0.6);
+      --border-color: rgba(51, 65, 85, 0.4);
+      --accent: #f59e0b;
+      --accent-hover: #fbbf24;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(245, 158, 11, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(99, 102, 241, 0.08) 0px, transparent 50%);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      line-height: 1.6;
+      padding: 4rem 1.5rem;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      max-width: 800px;
+      width: 100%;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .logo-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .logo-icon {
+      color: var(--accent);
+      font-size: 2rem;
+      font-weight: 800;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .logo-text {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 1.5rem;
+      letter-spacing: -0.03em;
+    }
+
+    .logo-text span {
+      color: var(--accent);
+    }
+
+    h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 800;
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.02em;
+    }
+
+    .meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--accent);
+      background-color: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      padding: 0.4rem 1rem;
+      border-radius: 9999px;
+      display: inline-block;
+    }
+
+    main {
+      background-color: var(--bg-card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 2rem;
+      padding: 3rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      margin-bottom: 3rem;
+    }
+
+    section {
+      margin-bottom: 2.5rem;
+    }
+
+    section:last-child {
+      margin-bottom: 0;
+    }
+
+    h2 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    h2::before {
+      content: '';
+      display: inline-block;
+      width: 0.35rem;
+      height: 1.1rem;
+      background-color: var(--accent);
+      border-radius: 9999px;
+    }
+
+    p {
+      color: var(--text-muted);
+      font-size: 0.925rem;
+      margin-bottom: 1.2rem;
+    }
+
+    p strong {
+      color: var(--text-main);
+    }
+
+    ul, ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1.2rem;
+      color: var(--text-muted);
+      font-size: 0.925rem;
+    }
+
+    li {
+      margin-bottom: 0.5rem;
+    }
+
+    li strong {
+      color: var(--text-main);
+    }
+
+    .tech-list {
+      list-style-type: none;
+      margin-left: 0;
+      display: grid;
+      grid-template-cols: 1fr;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    @media (min-width: 640px) {
+      .tech-list {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .tech-item {
+      background-color: rgba(15, 23, 42, 0.4);
+      border: 1px solid rgba(51, 65, 85, 0.2);
+      border-radius: 0.75rem;
+      padding: 0.75rem 1rem;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .tech-item span {
+      color: var(--accent);
+      font-weight: 600;
+      display: block;
+      margin-bottom: 0.15rem;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      transition: color 0.15s ease;
+    }
+
+    a:hover {
+      color: var(--accent-hover);
+      text-decoration: underline;
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 2rem 1rem;
+      }
+      main {
+        padding: 1.5rem;
+        border-radius: 1.5rem;
+      }
+      h1 {
+        font-size: 1.8rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo-container">
+        <span class="logo-icon">☀️</span>
+        <span class="logo-text">SUNCHASER<span>CRM</span></span>
+      </div>
+      <h1>Privacy Policy</h1>
+      <span class="meta">Effective Date: May 30, 2026</span>
+    </header>
+
+    <main>
+      <section>
+        <h2>Introduction</h2>
+        <p>
+          Welcome to <strong>Sunchaser CRM</strong> ("the App"), a utility application developed for and utilized by <strong>Sunchaser Energy Systems</strong>. We respect your privacy and are committed to protecting any personal data we collect. This Privacy Policy describes how we handle personal data collected from users of the Sunchaser CRM mobile application, which connects directly to the Sunchaser customer relationship management (CRM) backend.
+        </p>
+        <p>
+          By downloading, installing, or using this App, you consent to the data collection and use practices described in this Privacy Policy.
+        </p>
+      </section>
+
+      <section>
+        <h2>Information We Collect</h2>
+        <p>We collect and process the following types of information in order to provide system calculators, lead progression, and proposal generation workflows:</p>
+        <ul>
+          <li><strong>User Credentials</strong>: Usernames and administrative passwords to authenticate system clearance and access custom workspace roles.</li>
+          <li><strong>Lead & Customer Data</strong>: Client names, telephone numbers, emails, and physical installation addresses required for coordinating operations.</li>
+          <li><strong>Technical Solar Specifications</strong>: Information entered to run sizing recommendations, including monthly bills, electrical unit consumption, service panel load metrics, roof space, and shading analysis.</li>
+          <li><strong>Activity Logs</strong>: Timestamps, user roles, and changes made within the system (e.g. status changes, inventories delegated, or quotation records updated) for audit logging.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>How We Use Your Information</h2>
+        <p>The information collected is used solely to facilitate business processes inside Sunchaser Energy Systems:</p>
+        <ul>
+          <li>To verify identity and grant role-appropriate portal access.</li>
+          <li>To perform solar sizing recommendations and generate structured pricing proposals.</li>
+          <li>To track installation progress and schedule site surveys.</li>
+          <li>To maintain secure system activity audit logs to prevent unauthorized access.</li>
+          <li>To coordinate warranty filings and support ticket lifecycles.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Third-Party Integration & Service Providers</h2>
+        <p>
+          The App connects to external sub-processors and cloud systems to execute its logic. We only share the minimal required data with third-parties in a secure manner:
+        </p>
+        <div class="tech-list">
+          <div class="tech-item">
+            <span>Supabase / PostgreSQL</span>
+            Secure storage of lead records, credential validation databases, and operational logs.
+          </div>
+          <div class="tech-item">
+            <span>Google Gemini AI</span>
+            Automated sizing analysis chatbot and diagnostic lead scoring calculations.
+          </div>
+          <div class="tech-item">
+            <span>Render / Vercel</span>
+            API server hosting infrastructure and web runtime build hosts.
+          </div>
+          <div class="tech-item">
+            <span>WhatsApp / Meta APIs</span>
+            Automated SMS notifications regarding scheduled site surveys and proposal approvals.
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Data Security & Encryption</h2>
+        <p>
+          We take data security very seriously. All network transmissions are strictly encrypted using HTTPS/TLS protocols. Access to endpoints is secured via JSON Web Tokens (JWT), and the Supabase backend utilizes row-level security (RLS) policies to prevent unauthorized data exposure.
+        </p>
+      </section>
+
+      <section>
+        <h2>Data Retention & Deletion Rights</h2>
+        <p>
+          We retain personal data for as long as necessary to fulfill Sunchaser operational requirements. 
+        </p>
+        <p>
+          Under Google Play policies and global data regulations, users have the right to request access to, correction of, or permanent deletion of their personal data. To request data deletion, please contact us at <a href="mailto:support@sunchaserenergy.co">support@sunchaserenergy.co</a>. We will process compliant requests within 30 days.
+        </p>
+      </section>
+
+      <section>
+        <h2>Contact Information</h2>
+        <p>
+          If you have any questions or feedback regarding this Privacy Policy or the security practices of Sunchaser CRM, please contact Sunchaser Energy Systems administration:
+        </p>
+        <p>
+          <strong>Email</strong>: <a href="mailto:support@sunchaserenergy.co">support@sunchaserenergy.co</a><br>
+          <strong>Office Address</strong>: Sunchaser Energy Headquarters, Lahore, Pakistan
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <p>&copy; 2026 Sunchaser Energy Systems. All rights reserved.</p>
+    </footer>
+  </div>
+</body>
+</html>

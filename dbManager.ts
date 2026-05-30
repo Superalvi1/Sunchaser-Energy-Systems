@@ -78,6 +78,14 @@ export interface Database {
   settings?: any;
   websiteContent?: any;
   quotations?: any[];
+  quoteTemplates?: any[];
+  quoteTemplatePages?: any[];
+  bankAccounts?: any[];
+  companyTerms?: any[];
+  ceoMessages?: any[];
+  socialLinks?: any[];
+  structureDescriptions?: any[];
+  quotePdfSettings?: any[];
 }
 
 export const initialSeed: Database = {
@@ -87,243 +95,13 @@ export const initialSeed: Database = {
     { id: "u-3", username: "sales", password: "123", name: "Sarah Connor", email: "sarah.connor@sunchaser.com", role: "Sales Executive" },
     { id: "u-4", username: "surveyor", password: "123", name: "Bob Surveyor", email: "bob@sunchaser.com", role: "Survey Engineer" },
     { id: "u-5", username: "installer", password: "123", name: "Dave Installer", email: "dave@sunchaser.com", role: "Installation Team" },
-    { id: "u-6", username: "customer", password: "123", name: "John Miller", email: "john.miller@gmail.com", role: "Customer" },
     { id: "u-7", username: "admin2", password: "123", name: "Alice Admin", email: "alice.admin@sunchaser.com", role: "Admin" },
     { id: "u-8", username: "inventory", password: "123", name: "Ian Inventory", email: "ian@sunchaser.com", role: "Inventory Manager" },
     { id: "u-9", username: "support", password: "123", name: "Sam Support", email: "sam@sunchaser.com", role: "Support Agent" },
     { id: "u-10", username: "technician", password: "123", name: "Dave Installer", email: "dave.tech@sunchaser.com", role: "Technician" },
   ],
-  leads: [
-    {
-      id: "lead-1",
-      name: "John Miller",
-      email: "john.miller@gmail.com",
-      phone: "+1 (555) 349-2091",
-      address: "742 Evergreen Terrace, Springfield",
-      status: "Contracted",
-      monthlyBill: 250,
-      monthlyUnits: 820,
-      sanctionedLoad: 10,
-      backupRequirement: "Whole House Backup",
-      location: "Springfield",
-      roofType: "Asphalt Shingle",
-      roofSpace: 1200,
-      shading: "Low",
-      rating: 5,
-      assignedSalesperson: "Sarah Connor",
-      createdAt: "2026-05-10T08:30:00Z",
-      notes: "Highly interested in solar battery backup. Prefers Tesla Powerwall options.",
-      leadSource: "Direct/Referral",
-      engagementLevel: "High",
-      conversionProbability: 95,
-      conversionScore: 88,
-      quotes: [
-        {
-          id: "q-1",
-          systemSizekW: 8.5,
-          panelCount: 22,
-          panelType: "Sunchaser Ultra 400W",
-          inverterType: "Enphase IQ8 Microinverter",
-          batteryCapacity: "13.5 kWh Sunchaser Core",
-          totalCost: 19500,
-          federalTaxCredit: 5850,
-          netCost: 13650,
-          estimatedAnnualSavings: 2800,
-          paybackPeriodYears: 5.2,
-          status: "Accepted",
-          createdAt: "2026-05-12T14:20:00Z"
-        }
-      ],
-      survey: {
-        scheduledDate: "2026-06-02T10:00:00Z",
-        status: "Completed",
-        notes: "Roof has a 30-degree pitch, southern exposure. No significant shading. Shingles are late-stage asphalt but sturdy enough for installation. Service panel is 200A, which is ideal.",
-        shadingPercent: 8,
-        optimalPlacement: "South-West Section",
-        photos: ["/assets/roof_sample_1.jpg"],
-        measurements: {
-          roofPitch: "30 degrees",
-          rafterSpacing: "24 inches OC",
-          dimensions: "40ft x 30ft Southern Face",
-          obstructions: "Chimney on East corner, plumbing vent pipe"
-        },
-        structureRecommendation: "Flush mount standard rail system",
-        dbInverterLocation: "Utility Room near main electrical panel",
-        panelPlacements: [
-          { x: 120, y: 150, id: 1 },
-          { x: 160, y: 150, id: 2 },
-          { x: 200, y: 150, id: 3 },
-          { x: 240, y: 150, id: 4 },
-          { x: 120, y: 200, id: 5 },
-          { x: 160, y: 200, id: 6 }
-        ]
-      },
-      installation: {
-        status: "Scheduled",
-        scheduledDate: "2026-06-15T08:00:00Z",
-        progress: 20,
-        tasks: [
-          { id: "t-1", name: "Structural Reinforcement & Rails", done: true },
-          { id: "t-2", name: "Inverter & Core Battery Mounting", done: false },
-          { id: "t-3", name: "Solar Panel Array Installation", done: false },
-          { id: "t-4", name: "Electrical Connection & Conduit Routing", done: false },
-          { id: "t-5", name: "Net Meter Setup & Interconnection Inspection", done: false }
-        ],
-        completionPhotos: [],
-        report: ""
-      }
-    },
-    {
-      id: "lead-2",
-      name: "Jessica Albright",
-      email: "jessica.a@yahoo.com",
-      phone: "+1 (555) 872-4411",
-      address: "2418 Ridge Road, Fairview",
-      status: "Survey Scheduled",
-      monthlyBill: 180,
-      monthlyUnits: 620,
-      sanctionedLoad: 8,
-      backupRequirement: "Essential Loads Only",
-      location: "Fairview",
-      roofType: "Standing Seam Metal",
-      roofSpace: 950,
-      shading: "Medium",
-      rating: 3,
-      assignedSalesperson: "Sarah Connor",
-      createdAt: "2026-05-20T11:15:00Z",
-      notes: "Worried about large oak tree on southeast side of roof. Wants a shading analysis.",
-      leadSource: "Web Search",
-      engagementLevel: "Medium",
-      conversionProbability: 65,
-      conversionScore: 58,
-      quotes: [],
-      survey: {
-        scheduledDate: "2026-06-01T14:00:00Z",
-        status: "Pending",
-        notes: "",
-        shadingPercent: 0,
-        optimalPlacement: "",
-        photos: []
-      }
-    },
-    {
-      id: "lead-3",
-      name: "Robert Delgado",
-      email: "r.delgado@outlook.com",
-      phone: "+1 (555) 761-0022",
-      address: "889 Bluebird Lane, Whispering Pines",
-      status: "Installed",
-      monthlyBill: 340,
-      monthlyUnits: 1100,
-      sanctionedLoad: 15,
-      backupRequirement: "Whole House Backup",
-      location: "Whispering Pines",
-      roofType: "Concrete Tile",
-      roofSpace: 1800,
-      shading: "None",
-      rating: 4,
-      assignedSalesperson: "Michael Scott",
-      createdAt: "2026-04-15T09:00:00Z",
-      notes: "Wants premium high-efficiency components. Opted for commercial-grade panels.",
-      leadSource: "Direct/Referral",
-      engagementLevel: "High",
-      conversionProbability: 100,
-      conversionScore: 92,
-      quotes: [
-        {
-          id: "q-3",
-          systemSizekW: 12.0,
-          panelCount: 30,
-          panelType: "Sunchaser Pro High-Efficiency 400W",
-          inverterType: "Tesla Inverter 7.6kW",
-          batteryCapacity: "27.0 kWh Twin Storage",
-          totalCost: 28400,
-          federalTaxCredit: 8520,
-          netCost: 19880,
-          estimatedAnnualSavings: 4200,
-          paybackPeriodYears: 4.8,
-          status: "Accepted",
-          createdAt: "2026-04-18T16:00:00Z"
-        }
-      ],
-      survey: {
-        scheduledDate: "2026-04-22T09:00:00Z",
-        status: "Completed",
-        notes: "Large flat roof portion combined with pitched southern face. Beautiful space, high potential.",
-        shadingPercent: 3,
-        optimalPlacement: "Southern Facing Pitch and South-East Flat Roof Area",
-        photos: []
-      },
-      installation: {
-        status: "Completed",
-        scheduledDate: "2026-05-05T08:00:00Z",
-        progress: 100,
-        tasks: [
-          { id: "t-1", name: "Structural Reinforcement & Rails", done: true },
-          { id: "t-2", name: "Inverter & Core Battery Mounting", done: true },
-          { id: "t-3", name: "Solar Panel Array Installation", done: true },
-          { id: "t-4", name: "Electrical Connection & Conduit Routing", done: true },
-          { id: "t-5", name: "Net Meter Setup & Interconnection Inspection", done: true }
-        ],
-        completionPhotos: ["https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?w=800&auto=format&fit=crop&q=60"],
-        report: "Successful deployment. All electrical tests show peak performance. System outputting 11.8 kW max. Net metering fully approved by utility district and online."
-      }
-    },
-    {
-      id: "lead-4",
-      name: "Catherine Vance",
-      email: "cvance@gmail.com",
-      phone: "+1 (555) 124-7788",
-      address: "123 Maple Street, Oakville",
-      status: "New",
-      monthlyBill: 120,
-      monthlyUnits: 400,
-      sanctionedLoad: 6,
-      backupRequirement: "None",
-      location: "Oakville",
-      roofType: "Asphalt Shingle",
-      roofSpace: 700,
-      shading: "High",
-      rating: 2,
-      assignedSalesperson: "Michael Scott",
-      createdAt: "2026-05-28T15:45:00Z",
-      notes: "Looking to save but roof has many trees. Looking for alternatives or ground mount info.",
-      leadSource: "Facebook Ad",
-      engagementLevel: "Low",
-      conversionProbability: 25,
-      conversionScore: 32,
-      quotes: []
-    }
-  ],
-  tickets: [
-    {
-      id: "ticket-101",
-      customerName: "Robert Delgado",
-      email: "r.delgado@outlook.com",
-      subject: "Inverter Connectivity Issue",
-      description: "My solar app dashboard is not updating real-time values. The WiFi indicator on the Enphase combiner box is blinking amber.",
-      status: "Open",
-      priority: "Medium",
-      createdAt: "2026-05-28T09:00:00Z",
-      messages: [
-        { sender: "Customer", text: "The WiFi router was reset yesterday. Since then, the inverter shows offline.", time: "2026-05-28T09:00:00Z" }
-      ]
-    },
-    {
-      id: "ticket-102",
-      customerName: "John Miller",
-      email: "john.miller@gmail.com",
-      subject: "HOA Approval Documentation",
-      description: "Can you provide the solar CAD layout and structural schematic so I can submit them to my HOA for approval?",
-      status: "In Progress",
-      priority: "Low",
-      createdAt: "2026-05-25T14:30:00Z",
-      messages: [
-        { sender: "Customer", text: "They usually take 10-14 days, so the sooner I get the documents, the better.", time: "2026-05-25T14:30:00Z" },
-        { sender: "Agent", text: "Hello John, our design team is finalizing your layout schematics today. We will upload and email you the PDF layout by tomorrow morning.", time: "2026-05-26T10:15:00Z" }
-      ]
-    }
-  ],
+  leads: [],
+  tickets: [],
   netMeteringHistory: [
     { month: "Jan", consumption: 850, generation: 420 },
     { month: "Feb", consumption: 790, generation: 510 },
@@ -338,85 +116,11 @@ export const initialSeed: Database = {
     { id: "inv-te", name: "Tesla Inverter 7.6kW", category: "Inverters", desc: "Centralized power converting with full Tesla backup ecosystem integration.", stock: 35, cost: 1500 },
     { id: "bat-cs", name: "Sunchaser Core Battery 13.5kWh", category: "Storage", desc: "Stackable lithium-iron-phosphate clean solar battery.", stock: 80, cost: 6200 }
   ],
-  projects: [
-    {
-      id: "project-1",
-      leadId: "lead-1",
-      customerName: "John Miller",
-      address: "742 Evergreen Terrace, Springfield",
-      systemSizekW: 8.5,
-      stage: "Advance Received",
-      createdAt: "2026-05-12T14:20:00Z",
-      updatedAt: "2026-05-29T10:00:00Z"
-    },
-    {
-      id: "project-3",
-      leadId: "lead-3",
-      customerName: "Robert Delgado",
-      address: "889 Bluebird Lane, Whispering Pines",
-      systemSizekW: 12.0,
-      stage: "Completed",
-      createdAt: "2026-04-18T16:00:00Z",
-      updatedAt: "2026-05-15T09:00:00Z"
-    }
-  ],
-  netMeteringTrackers: {
-    "lead-1": {
-      leadId: "lead-1",
-      documentsCollected: true,
-      applicationSubmitted: true,
-      discoInspection: false,
-      demandNotice: false,
-      meterInstallation: false,
-      greenMeterActive: false
-    },
-    "lead-3": {
-      leadId: "lead-3",
-      documentsCollected: true,
-      applicationSubmitted: true,
-      discoInspection: true,
-      demandNotice: true,
-      meterInstallation: true,
-      greenMeterActive: true
-    }
-  },
-  paymentTracks: {
-    "lead-1": {
-      leadId: "lead-1",
-      totalValue: 19500,
-      advanceReceived: 5850,
-      pendingAmount: 13650,
-      reminderSent: false,
-      invoiceStatus: "Pending",
-      milestones: [
-        { name: "30% Sign-up Advance", amount: 5850, status: "Paid", dueDate: "2026-05-12" },
-        { name: "30% Structural Engineering Approval", amount: 5850, status: "Pending", dueDate: "2026-06-05" },
-        { name: "30% Panel Arrays Completed", amount: 5850, status: "Pending", dueDate: "2026-06-25" },
-        { name: "10% Utility Interconnection Active", amount: 1950, status: "Pending", dueDate: "2026-07-15" }
-      ]
-    },
-    "lead-3": {
-      leadId: "lead-3",
-      totalValue: 28400,
-      advanceReceived: 28400,
-      pendingAmount: 0,
-      reminderSent: false,
-      invoiceStatus: "Paid",
-      milestones: [
-        { name: "100% Retainer Pre-Purchase", amount: 28400, status: "Paid", dueDate: "2026-04-18" }
-      ]
-    }
-  },
-  activityLogs: [
-    { id: "log-1", timestamp: "2026-05-10T08:30:00Z", userId: "guest", userName: "Website Request", role: "Customer", action: "Lead Created", details: "Candidate John Miller submitted interest on Sunchaser calculator" },
-    { id: "log-2", timestamp: "2026-05-12T14:20:00Z", userId: "u-3", userName: "Sarah Connor", role: "Sales Executive", action: "Quotation Formulated", details: "Drafted 8.5 kW panel layout with 1x Sunchaser Core storage battery ($19,500 total)" },
-    { id: "log-3", timestamp: "2026-05-15T11:00:00Z", userId: "u-6", userName: "John Miller", role: "Customer", action: "Proposal Accepted", details: "Electronically signed contract, scheduled installer dispatch" },
-    { id: "log-4", timestamp: "2026-05-29T09:12:00Z", userId: "u-4", userName: "Bob Surveyor", role: "Survey Engineer", action: "Structural Audit Finished", details: "Audit completed for John Miller site survey, optimized placement array to South-West roof segment" }
-  ],
-  whatsAppLogs: [
-    { id: "wa-1", timestamp: "2026-05-10T08:31:00Z", customerName: "John Miller", phone: "+1 (555) 349-2091", eventType: "survey_confirmation", messageText: "☀️ Hi John Miller! Welcome to Sunchaser. Your home solar assessment is under engineering review. Sunchaser sales team advisor Sarah Connor will follow up soon.", status: "Delivered" },
-    { id: "wa-2", timestamp: "2026-05-12T14:22:00Z", customerName: "John Miller", phone: "+1 (555) 349-2091", eventType: "quote_generation", messageText: "☀️ Hi John! Sunchaser advisor Sarah Connor has unlocked your premium Solar Design Proposal: 8.5 kW Sunchaser Ultra array paired with 13.5kWh Sunchaser Core. Estimated payback is 5.2 years!", status: "Delivered" }
-  ],
+  projects: [],
+  netMeteringTrackers: {},
+  paymentTracks: {},
+  activityLogs: [],
+  whatsAppLogs: [],
   purchaseOrders: [
     { id: "PO-9001", vendor: "Canadian Solar Ltd", itemId: "p-400", itemName: "Sunchaser Ultra 400W", quantity: 200, status: "Delivered", date: "2026-05-18", cost: 56000 },
     { id: "PO-9002", vendor: "Enphase Energy", itemId: "inv-en", itemName: "Enphase IQ8 Microinverter", quantity: 500, status: "In Transit", date: "2026-05-24", cost: 90000 }
@@ -435,255 +139,393 @@ export const initialSeed: Database = {
   ],
   products: [
     {
-      id: "p-sol-10",
-      name: "Sunchaser Sol-Max 10kW Array",
-      category: "Solar Systems",
-      brand: "Sunchaser Energy",
-      model: "Sol-Max Premium 10",
-      sku: "SC-SYS-10K",
-      price: 14500,
-      discount: 1500,
-      stock: 45,
-      images: ["https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?w=800&auto=format&fit=crop&q=60"],
+      id: "p-sol-jinko-580",
+      name: "Jinko Tiger Neo 580W Panel",
+      category: "Solar Panels",
+      brand: "Jinko",
+      model: "Tiger Neo N-type 580W",
+      sku: "JK-PAN-580N",
+      price: 26000,
+      discount: 1000,
+      stock: 500,
+      images: ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
       warrantyPeriod: "25 Years",
-      specifications: { "Max Output": "10.2 kW", "Cell Type": "MonocrystallineMonocrystalline", "Inverter Pairing": "Ready" },
-      installationRequired: true,
-      serviceRequired: true
+      specifications: { wattage: 580, costPrice: 19500, description: "Jinko Tiger Neo N-type high efficiency monocrystalline bifacial panels." }
     },
     {
-      id: "p-pan-400",
-      name: "Sunchaser Ultra 400W Panel",
+      id: "p-sol-longi-575",
+      name: "Longi Hi-MO 6 Explorer 575W",
       category: "Solar Panels",
-      brand: "Sunchaser Energy",
-      model: "Ultra-400X",
-      sku: "SC-PAN-400",
-      price: 280,
-      discount: 20,
+      brand: "Longi",
+      model: "Hi-MO 6 Explorer 575W",
+      sku: "LG-PAN-575E",
+      price: 25215,
+      discount: 500,
       stock: 450,
       images: ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
       warrantyPeriod: "25 Years",
-      specifications: { "Efficiency": "21.8%", "Dimensions": "1722 x 1134 x 30 mm", "Weight": "21.5 kg" },
-      installationRequired: true,
-      serviceRequired: false
+      specifications: { wattage: 575, costPrice: 18900, description: "Longi Hi-MO 6 Explorer HPBC single glass modules." }
     },
     {
-      id: "p-inv-en",
-      name: "Enphase IQ8 Microinverter",
-      category: "Inverters",
-      brand: "Enphase Energy",
-      model: "IQ8-Plus-72-2-US",
-      sku: "EP-INV-IQ8",
-      price: 180,
+      id: "p-sol-ja-550",
+      name: "JA Solar DeepBlue 550W",
+      category: "Solar Panels",
+      brand: "JA Solar",
+      model: "DeepBlue 3.0 550W",
+      sku: "JA-PAN-550D",
+      price: 19500,
       discount: 0,
-      stock: 1210,
-      images: ["https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"],
+      stock: 350,
+      images: ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
       warrantyPeriod: "25 Years",
-      specifications: { "Max Output": "300 VA", "Frequency": "60 Hz", "Enclosure": "NEMA 250 Type 6" },
-      installationRequired: true,
-      serviceRequired: false
+      specifications: { wattage: 550, costPrice: 15500, description: "JA Solar DeepBlue 3.0 Mono-crystalline assembly." }
     },
     {
-      id: "p-bat-13",
-      name: "Sunchaser PowerCore 13.5kWh LFP",
+      id: "p-sol-canadian-650",
+      name: "Canadian Solar BiHiKu7 650W",
+      category: "Solar Panels",
+      brand: "Canadian Solar",
+      model: "BiHiKu7 650W",
+      sku: "CS-PAN-650B",
+      price: 23000,
+      discount: 1000,
+      stock: 300,
+      images: ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "25 Years",
+      specifications: { wattage: 650, costPrice: 17500, description: "Canadian Solar BiHiKu7 double glass bifacial modules." }
+    },
+    {
+      id: "p-sol-trina-430",
+      name: "Trina Vertex S+ 430W",
+      category: "Solar Panels",
+      brand: "Trina",
+      model: "Vertex S+ 430W",
+      sku: "TR-PAN-430V",
+      price: 16000,
+      discount: 500,
+      stock: 400,
+      images: ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "25 Years",
+      specifications: { wattage: 430, costPrice: 12500, description: "Trina Vertex S+ N-type dual glass solar modules." }
+    },
+    {
+      id: "p-inv-knox-10",
+      name: "Knox Smart Sync 10kW Inverter",
+      category: "Inverters",
+      brand: "Knox",
+      model: "KNS-10K-G3",
+      sku: "KX-INV-10K",
+      price: 400000,
+      discount: 15000,
+      stock: 120,
+      images: ["https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "10 Years",
+      specifications: { wattage: 10000, costPrice: 320000, description: "Knox Smart Sync 10kW three phase dual MPPT grid tied inverter." }
+    },
+    {
+      id: "p-inv-solis-10",
+      name: "Solis 3-Phase 10kW Inverter",
+      category: "Inverters",
+      brand: "Solis",
+      model: "S6-GR3P10K",
+      sku: "SL-INV-10K",
+      price: 420000,
+      discount: 10000,
+      stock: 90,
+      images: ["https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "10 Years",
+      specifications: { wattage: 10000, costPrice: 340000, description: "Solis S6 three phase grid-tied solar inverter." }
+    },
+    {
+      id: "p-inv-growatt-6",
+      name: "Growatt Hybrid 6kW Inverter",
+      category: "Inverters",
+      brand: "Growatt",
+      model: "MIN 6000TL-XH",
+      sku: "GW-INV-6K",
+      price: 280000,
+      discount: 5000,
+      stock: 80,
+      images: ["https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "5 Years",
+      specifications: { wattage: 6000, costPrice: 220000, description: "Growatt MIN 6000TL-XH hybrid single phase storage inverter." }
+    },
+    {
+      id: "p-inv-nitrox-12",
+      name: "Nitrox Hybrid 12kW Inverter",
+      category: "Inverters",
+      brand: "Nitrox",
+      model: "S-12K-SG04LP3",
+      sku: "NX-INV-12K",
+      price: 580000,
+      discount: 20000,
+      stock: 65,
+      images: ["https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "5 Years",
+      specifications: { wattage: 12000, costPrice: 480000, description: "Nitrox 12kW hybrid three phase storage inverter (low voltage battery supported)." }
+    },
+    {
+      id: "p-inv-fox-10",
+      name: "Fox ESS 3-Phase 10kW Hybrid",
+      category: "Inverters",
+      brand: "Fox ESS",
+      model: "H3-10.0-E",
+      sku: "FX-INV-10K",
+      price: 490000,
+      discount: 10000,
+      stock: 40,
+      images: ["https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "10 Years",
+      specifications: { wattage: 10000, costPrice: 410000, description: "Fox ESS high performance H3 series 10kW hybrid inverter." }
+    },
+    {
+      id: "p-bat-dyness-5",
+      name: "Dyness LFP 5.12kWh Battery",
       category: "Batteries",
-      brand: "Sunchaser Energy",
-      model: "PowerCore LFP-13",
-      sku: "SC-BAT-13",
-      price: 6200,
-      discount: 400,
+      brand: "Dyness",
+      model: "DL5.0C LFP",
+      sku: "DN-BAT-5K",
+      price: 235000,
+      discount: 5000,
+      stock: 150,
+      images: ["https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "10 Years",
+      specifications: { wattage: 5120, costPrice: 190000, description: "Dyness DL5.0C lithium iron phosphate (LiFePO4) 51.2V 100Ah rack battery." }
+    },
+    {
+      id: "p-bat-pylontech-48",
+      name: "Pylontech US5000 4.8kWh",
+      category: "Batteries",
+      brand: "Pylontech",
+      model: "US5000 48V",
+      sku: "PT-BAT-48",
+      price: 260000,
+      discount: 10000,
       stock: 80,
       images: ["https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"],
       warrantyPeriod: "10 Years",
-      specifications: { "Energy Capacity": "13.5 kWh", "Cell Chemistry": "Lithium Iron Phosphate (LFP)", "Round-trip Efficiency": "92.5%" },
-      installationRequired: true,
-      serviceRequired: false
+      specifications: { wattage: 4800, costPrice: 215000, description: "Pylontech US5000 LFP lithium energy storage battery module." }
     },
     {
-      id: "p-ev-c22",
-      name: "Sunchaser EV ChargeMax Pro 22kW",
-      category: "EV Chargers",
-      brand: "Sunchaser Energy",
-      model: "ChargeMax-22P",
-      sku: "SC-EV-C22",
-      price: 850,
-      discount: 50,
-      stock: 120,
-      images: ["https://images.unsplash.com/photo-1563720223185-11003d516935?w=800&auto=format&fit=crop&q=60"],
+      id: "p-bat-soluna-10",
+      name: "Soluna EOS 10K Pack",
+      category: "Batteries",
+      brand: "Soluna",
+      model: "EOS 10K LFP",
+      sku: "SL-BAT-10K",
+      price: 480000,
+      discount: 15000,
+      stock: 45,
+      images: ["https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"],
+      warrantyPeriod: "10 Years",
+      specifications: { wattage: 10240, costPrice: 380000, description: "Soluna EOS high capacity LFP stackable battery system." }
+    },
+    {
+      id: "p-bat-narada-48",
+      name: "Narada LFP 100Ah Battery",
+      category: "Batteries",
+      brand: "Narada",
+      model: "48NPFC100",
+      sku: "ND-BAT-48",
+      price: 210000,
+      discount: 5000,
+      stock: 95,
+      images: ["https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"],
       warrantyPeriod: "5 Years",
-      specifications: { "Power output": "Up to 22 kW", "Current": "32 A", "Connector Type": "CCS Type 2 & J1772" },
-      installationRequired: true,
-      serviceRequired: true
+      specifications: { wattage: 4800, costPrice: 175000, description: "Narada 48V telecom-grade lithium iron phosphate rack batteries." }
     },
     {
-      id: "p-mob-s25",
-      name: "Sunchaser Phone S25 Ultra",
-      category: "Mobile Phones",
-      brand: "Sunchaser Mobile",
-      model: "S25-Ultra-Chaser",
-      sku: "SC-MOB-S25",
-      price: 1199,
-      discount: 100,
-      stock: 150,
-      images: ["https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=800&auto=format&fit=crop&q=60"],
-      warrantyPeriod: "2 Years",
-      specifications: { "Processor": "ChaserCore X3", "Memory": "16GB RAM / 512GB Storage", "Camera": "200 MP Quad Array" },
-      installationRequired: false,
-      serviceRequired: false
+      id: "p-str-std",
+      name: "Standard A-Frame Mount Rails",
+      category: "Structure",
+      brand: "Mughal",
+      model: "Standard A-Frame (Roof)",
+      sku: "MG-STR-STD",
+      price: 4800,
+      discount: 0,
+      stock: 1000,
+      images: [],
+      warrantyPeriod: "10 Years",
+      specifications: { wattage: 0, costPrice: 3500, description: "Standard hot-dip galvanized L3 14 gauge frame roof mounts." }
     },
     {
-      id: "p-el-t12",
-      name: "ChaserTab Pro 12\" Electronic Display",
-      category: "Electronics",
-      brand: "Sunchaser",
-      model: "ChaserTab-12Pro",
-      sku: "SC-EL-T12",
-      price: 499,
-      discount: 30,
+      id: "p-str-elv",
+      name: "Elevated Steel Frame (10ft clearance)",
+      category: "Structure",
+      brand: "Mughal",
+      model: "Elevated Frame (10ft)",
+      sku: "MG-STR-ELV",
+      price: 147600,
+      discount: 5000,
+      stock: 100,
+      images: [],
+      warrantyPeriod: "15 Years",
+      specifications: { wattage: 0, costPrice: 120000, description: "Hot-dip galvanized C-Channel / H-Beam heavy fabrication structure." }
+    },
+    {
+      id: "p-str-gir",
+      name: "Premium Mughal Girder Heavy Frame",
+      category: "Structure",
+      brand: "Mughal",
+      model: "Girder Heavy Frame",
+      sku: "MG-STR-GIR",
+      price: 180000,
+      discount: 10000,
       stock: 80,
-      images: ["https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?w=800&auto=format&fit=crop&q=60"],
-      warrantyPeriod: "1 Year",
-      specifications: { "Screen size": "12.4 inches", "Resolution": "2800 x 1752", "Battery": "10,090 mAh" },
-      installationRequired: false,
-      serviceRequired: false
+      images: [],
+      warrantyPeriod: "15 Years",
+      specifications: { wattage: 0, costPrice: 140000, description: "Extreme wind shear resistant structural steel girder system." }
     },
     {
-      id: "p-ap-rf",
-      name: "Sunchaser EcoFridge Smart Cooler",
-      category: "Appliances",
-      brand: "Sunchaser Home",
-      model: "EcoFridge-500",
-      sku: "SC-AP-RF",
-      price: 1899,
-      discount: 150,
-      stock: 35,
-      images: ["https://images.unsplash.com/photo-1584269600464-37b1b58a9fe7?w=800&auto=format&fit=crop&q=60"],
+      id: "p-cab-dc6",
+      name: "Pakistan Cables 6mm Single Core DC",
+      category: "Cables",
+      brand: "Pakistan Cables",
+      model: "6mm Single-Core DC Solar",
+      sku: "PK-CAB-DC6",
+      price: 280,
+      discount: 10,
+      stock: 5000,
+      images: [],
+      warrantyPeriod: "20 Years",
+      specifications: { wattage: 0, costPrice: 220, description: "Double insulated copper core DC solar cable per meter." }
+    },
+    {
+      id: "p-cab-ac16",
+      name: "Fast Cables 16mm 4-Core AC Cable",
+      category: "Cables",
+      brand: "Fast Cables",
+      model: "16mm 4-Core AC Copper",
+      sku: "FC-CAB-AC16",
+      price: 2200,
+      discount: 100,
+      stock: 2000,
+      images: [],
+      warrantyPeriod: "15 Years",
+      specifications: { wattage: 0, costPrice: 1800, description: "Standard connection copper cable for AC distribution box per meter." }
+    },
+    {
+      id: "p-pro-box",
+      name: "DC Breaker & SPD Protection Box",
+      category: "Protection",
+      brand: "Chint",
+      model: "DC Protection Box Equipped",
+      sku: "CT-PRO-DCB",
+      price: 22000,
+      discount: 2000,
+      stock: 150,
+      images: [],
+      warrantyPeriod: "3 Years",
+      specifications: { wattage: 0, costPrice: 15000, description: "DC box with 1000V fuses, DC SPD, and heavy circuit breakers." }
+    },
+    {
+      id: "p-acc-con",
+      name: "PVC Conduit Ducting & MC4 Connectors",
+      category: "Accessories",
+      brand: "Beta",
+      model: "Ducting Accessories Kit",
+      sku: "BT-ACC-KIT",
+      price: 18000,
+      discount: 0,
+      stock: 400,
+      images: [],
       warrantyPeriod: "5 Years",
-      specifications: { "Capacity": "520 Liters", "Energy Rating": "A+++ Multi-Flow", "IoT Mode": "WiFi Connected" },
-      installationRequired: true,
-      serviceRequired: true
+      specifications: { wattage: 0, costPrice: 12000, description: "Complete PVC conduit piping, ducting, flex pipes, joints, and MC4 kit." }
+    },
+    {
+      id: "p-net-lesco",
+      name: "LESCO Bidirectional Green Meter Filing",
+      category: "Net Metering",
+      brand: "LESCO",
+      model: "Three-Phase Green Metering",
+      sku: "LE-NET-FIL",
+      price: 90000,
+      discount: 0,
+      stock: 999,
+      images: [],
+      warrantyPeriod: "N/A",
+      specifications: { wattage: 0, costPrice: 75000, description: "Bidirectional meter licensing, NEPRA application filing, demand notice audit." }
+    },
+    {
+      id: "p-civ-fnd",
+      name: "Concrete Ballast Foundation Pillars",
+      category: "Civil Works",
+      brand: "Local",
+      model: "Ballast Concrete Pad",
+      sku: "LC-CIV-FND",
+      price: 16000,
+      discount: 0,
+      stock: 500,
+      images: [],
+      warrantyPeriod: "N/A",
+      specifications: { wattage: 0, costPrice: 11000, description: "1.5x1.5ft concrete blocks for anchor base foundation stabilization." }
     }
   ],
-  orders: [
-    {
-      id: "ORD-1001",
-      customerName: "John Miller",
-      email: "john.miller@gmail.com",
-      phone: "+1 (555) 349-2091",
-      address: "742 Evergreen Terrace, Springfield",
-      orderType: "Product",
-      status: "Delivered",
-      items: [
-        { productId: "p-mob-s25", productName: "Sunchaser Phone S25 Ultra", quantity: 1, price: 1099 }
-      ],
-      totalCost: 1099,
-      createdAt: "2026-05-15T11:30:00Z"
-    },
-    {
-      id: "ORD-1002",
-      customerName: "Jessica Albright",
-      email: "jessica.a@yahoo.com",
-      phone: "+1 (555) 872-4411",
-      address: "2418 Ridge Road, Fairview",
-      orderType: "Product",
-      status: "Delivered",
-      items: [
-        { productId: "p-ev-c22", productName: "Sunchaser EV ChargeMax Pro 22kW", quantity: 1, price: 800 }
-      ],
-      totalCost: 800,
-      createdAt: "2026-05-24T09:45:00Z",
-      installationRequired: true
-    },
-    {
-      id: "ORD-1003",
-      customerName: "Robert Delgado",
-      email: "r.delgado@outlook.com",
-      phone: "+1 (555) 761-0022",
-      address: "889 Bluebird Lane, Whispering Pines",
-      orderType: "Solar Project",
-      status: "Installed",
-      items: [
-        { productId: "p-sol-10", productName: "Sunchaser Sol-Max 10kW Array", quantity: 1, price: 13000 }
-      ],
-      totalCost: 13000,
-      createdAt: "2026-05-02T10:00:00Z",
-      installationRequired: true
-    }
+  orders: [],
+  warranties: [],
+  notifications: [],
+  quoteTemplates: [
+    { id: "tmpl-1", name: "Sunchaser Official Proposal Template", is_active: true }
   ],
-  warranties: [
-    {
-      id: "WAR-2001",
-      customerName: "John Miller",
-      email: "john.miller@gmail.com",
-      productName: "Sunchaser Phone S25 Ultra",
-      productSku: "SC-MOB-S25",
-      serialNumber: "SN-MOB-S25-4421",
-      startDate: "2026-05-15T12:00:00Z",
-      endDate: "2028-05-15T12:00:00Z",
-      installationDate: "2026-05-15T12:00:00Z",
-      status: "Active",
-      claimHistory: [
-        {
-          claimId: "CLM-301",
-          claimDate: "2026-05-20T14:00:00Z",
-          issueTitle: "Screen flickering",
-          description: "Top left region of display shows micro-flickering under low brightness.",
-          status: "Approved",
-          resolutionNotes: "Replaced panel screen at Springfield customer support hub."
-        }
-      ]
-    },
-    {
-      id: "WAR-2002",
-      customerName: "John Miller",
-      email: "john.miller@gmail.com",
-      productName: "Sunchaser PowerCore 13.5kWh LFP",
-      productSku: "SC-BAT-13",
-      serialNumber: "SN-BAT-13-88120",
-      startDate: "2026-05-15T08:00:00Z",
-      endDate: "2036-05-15T08:00:00Z",
-      installationDate: "2026-05-15T08:00:00Z",
-      status: "Active",
-      claimHistory: []
-    },
-    {
-      id: "WAR-2003",
-      customerName: "Jessica Albright",
-      email: "jessica.a@yahoo.com",
-      productName: "Sunchaser EV ChargeMax Pro 22kW",
-      productSku: "SC-EV-C22",
-      serialNumber: "SN-EV-C22-10923",
-      startDate: "2026-05-24T12:00:00Z",
-      endDate: "2031-05-24T12:00:00Z",
-      installationDate: "2026-05-24T12:00:00Z",
-      status: "Active",
-      claimHistory: []
-    }
+  quoteTemplatePages: [
+    { id: "tmpl-p-1", template_id: "tmpl-1", page_type: "cover", title: "Sunchaser Energy Systems", body_text: "Generational Energy Independence\nTechnical Feasibility & Engineering Quotation", is_enabled: true, sort_order: 1 },
+    { id: "tmpl-p-2", template_id: "tmpl-1", page_type: "profile", title: "Sunchaser Group Profile", body_text: "Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry.", is_enabled: true, sort_order: 2 },
+    { id: "tmpl-p-3", template_id: "tmpl-1", page_type: "qr", title: "Why Partner with Sunchaser?", body_text: "Tier-1 Direct Imported Hardware: All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates.", is_enabled: true, sort_order: 3 },
+    { id: "tmpl-p-4", template_id: "tmpl-1", page_type: "ceo", title: "Executive Board Assurances", body_text: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation.", is_enabled: true, sort_order: 4 },
+    { id: "tmpl-p-5a", template_id: "tmpl-1", page_type: "structure_standard", title: "Mounting Structure - Standard A-Frame", body_text: "Standard Galvanized L3 14 Gauge structure with Rawal anchors wind-resistant up to 130 km/h.", is_enabled: true, sort_order: 5 },
+    { id: "tmpl-p-5b", template_id: "tmpl-1", page_type: "structure_elevated", title: "Mounting Structure - Elevated Steel Frame", body_text: "10ft Roof clearance hot-dip galvanized elevated structure frame wind-resistant up to 130 km/h.", is_enabled: true, sort_order: 6 },
+    { id: "tmpl-p-5c", template_id: "tmpl-1", page_type: "structure_girder", title: "Mounting Structure - Heavy Mughal Girder Frame", body_text: "Heavy duty C-Channel girder steel columns and girders wind-resistant up to 150 km/h.", is_enabled: true, sort_order: 7 },
+    { id: "tmpl-p-5d", template_id: "tmpl-1", page_type: "structure_custom", title: "Mounting Structure - Custom Structural Drawing", body_text: "Custom designed mounting rails and brackets based on site constraints and calculations.", is_enabled: true, sort_order: 8 },
+    { id: "tmpl-p-6", template_id: "tmpl-1", page_type: "terms1", title: "Terms, Conditions & Regulations (1/2)", body_text: "", is_enabled: true, sort_order: 9 },
+    { id: "tmpl-p-7", template_id: "tmpl-1", page_type: "terms2", title: "Terms, Conditions & Regulations (2/2)", body_text: "", is_enabled: true, sort_order: 10 },
+    { id: "tmpl-p-8", template_id: "tmpl-1", page_type: "signoff", title: "Client Verification & Sign-off", body_text: "", is_enabled: true, sort_order: 11 },
+    { id: "tmpl-p-9", template_id: "tmpl-1", page_type: "bank", title: "Official Payment Channels", body_text: "", is_enabled: true, sort_order: 12 },
+    { id: "tmpl-p-10", template_id: "tmpl-1", page_type: "final", title: "Sunchaser Energy Systems", body_text: "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings.", is_enabled: true, sort_order: 13 }
   ],
-  notifications: [
-    {
-      id: "NT-3001",
-      customerName: "John Miller",
-      message: "Warranty registered successfully for Sunchaser Phone S25 Ultra (SN-MOB-S25-4421).",
-      type: "new_order",
-      createdAt: "2026-05-15T12:05:00Z",
-      read: true
-    },
-    {
-      id: "NT-3002",
-      customerName: "John Miller",
-      message: "Complaint ticket ticket-102 has been assigned to Technician Dave Installer.",
-      type: "technician_assigned",
-      createdAt: "2026-05-25T14:40:00Z",
-      read: false
-    },
-    {
-      id: "NT-3003",
-      customerName: "Jessica Albright",
-      message: "Payment confirmed for Sunchaser EV Charger order ORD-1002.",
-      type: "payment_pending",
-      createdAt: "2026-05-24T09:50:00Z",
-      read: false
-    }
+  bankAccounts: [
+    { id: "bank-1", bank_name: "Allied Bank Limited", account_title: "SUNCHASER ENERGY", account_number: "04190010112276940012", iban: "PK81ABPA0010112276940012", is_active: true, sort_order: 1 },
+    { id: "bank-2", bank_name: "Bank Alfalah Limited", account_title: "AL ADAM", account_number: "55265001858603", iban: "PK12ALFH5526005001858603", is_active: true, sort_order: 2 },
+    { id: "bank-3", bank_name: "Allied Bank Limited", account_title: "SIGNALS GLOBAL", account_number: "09090010112284650035", iban: "N/A", is_active: true, sort_order: 3 },
+    { id: "bank-4", bank_name: "Meezan Bank Limited", account_title: "HELIOS SOLAR ENERGY", account_number: "02490109527492", iban: "PK49MEZN0002490109527492", is_active: true, sort_order: 4 },
+    { id: "bank-5", bank_name: "Standard Chartered Bank", account_title: "HELIOS SOLAR ENERGY", account_number: "1702559001", iban: "PK91SCBL0000001702559001", is_active: true, sort_order: 5 },
+    { id: "bank-6", bank_name: "United Bank Limited", account_title: "HELIOS SOLAR ENERGY", account_number: "1305307203838", iban: "PK93UNIL0109000307203838", is_active: true, sort_order: 6 },
+    { id: "bank-7", bank_name: "Habib Metropolitan Bank", account_title: "HELIOS SOLAR ENERGY", account_number: "6121020301714129916", iban: "PK42MPBL1210067140129916", is_active: true, sort_order: 7 },
+    { id: "bank-8", bank_name: "Bank Al Habib Limited", account_title: "HELIOS SOLAR ENERGY", account_number: "03440981001290017", iban: "PK62BAHL0344098100129001", is_active: true, sort_order: 8 }
+  ],
+  companyTerms: [
+    { id: "term-1", term_text: "Quotation validity: 3 days from date of issuance.", sort_order: 1 },
+    { id: "term-2", term_text: "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.", sort_order: 2 },
+    { id: "term-3", term_text: "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.", sort_order: 3 },
+    { id: "term-4", term_text: "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.", sort_order: 4 },
+    { id: "term-5", term_text: "Work will commence within 3 days after receipt of the advance payment.", sort_order: 5 },
+    { id: "term-6", term_text: "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.", sort_order: 6 },
+    { id: "term-7", term_text: "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.", sort_order: 7 },
+    { id: "term-8", term_text: "Client interference: Any on-site construction delays caused by the client will affect the completion timeline.", sort_order: 8 },
+    { id: "term-9", term_text: "Grid connection: Net metering facilitation requires valid property documents and sanctioned load compliance.", sort_order: 9 },
+    { id: "term-10", term_text: "System earthing: Dedicated chemical earthing bores will be created for DC, AC, and frame grounding safety.", sort_order: 10 },
+    { id: "term-11", term_text: "Smart online monitoring: Active monitoring requires stable client Wi-Fi connection at the inverter site.", sort_order: 11 },
+    { id: "term-12", term_text: "Wi-Fi requirement: Customer must provide stable continuous Wi-Fi access for monitoring data synch.", sort_order: 12 },
+    { id: "term-13", term_text: "Client scope of work: Providing masonry work access, temporary electricity & water during construction.", sort_order: 13 },
+    { id: "term-14", term_text: "Civil work exclusions: Cutting of structural concrete slabs or custom aesthetic tiles is excluded unless quoted.", sort_order: 14 },
+    { id: "term-15", term_text: "Net metering clearance remains the client's responsibility if document verification faults occur.", sort_order: 15 },
+    { id: "term-16", term_text: "Panel washing advisory: Clean arrays bi-weekly for optimal generation yield performance.", sort_order: 16 },
+    { id: "term-17", term_text: "Force majeure: Sunchaser is not liable for delays caused by national strikes, weather anomalies, or utility board freezes.", sort_order: 17 }
+  ],
+  ceoMessages: [
+    { id: "ceo-1", name: "Muhammad Allauddin", designation: "CEO, Engineering & Operations", message: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation. We refuse to cut corners on material gauges, hot-dip zinc coating parameters, wire thicknesses, or chemical earthing bores. Every layout is physically verified, and every termination complies with ISO standards. Sunchaser means ultimate power security.", signature_url: "", photo_url: "" },
+    { id: "ceo-2", name: "Barrister Raza Khan Niazi", designation: "CEO Strategy & Innovation / Compliance", message: "Liaison with utility boards and regulatory licensing can be daunting for clients. Sunchaser handles the entire paperwork and NEPRA filing process transparently. We promise that all governmental files are processed legally, demand notices are audited, and net metering activations are completed with maximal efficiency.", signature_url: "", photo_url: "" }
+  ],
+  socialLinks: [
+    { id: "soc-1", platform: "Customer Portal", url: "http://sunchaser.co/portal", qr_code_url: "" },
+    { id: "soc-2", platform: "Corporate Registry", url: "http://sunchaser.co/registry", qr_code_url: "" }
+  ],
+  structureDescriptions: [
+    { id: "struct-1", structure_type: "standard", title: "Standard Structure", description_en: "Premium Galvanized Mounting Structure, wind resistant up to 130 km/h.", description_ur: "پریمیم گیلوانائزڈ ماونٹنگ سٹرکچر، 130 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔", material_type: "Galvanized L3 Steel", weight: "Standard Frame", wind_rating: "130 km/h", warranty: "10 Years Warranty", image_url: "" },
+    { id: "struct-2", structure_type: "elevated", title: "Elevated Structure", description_en: "10ft Roof clearance hot-dip galvanized elevated structure frame.", description_ur: "10 فٹ چھت کی اونچائی کا ہاٹ ڈِپ گیلوانائزڈ ایلیویٹڈ سٹرکچر فریم۔", material_type: "Hot-dip Galvanized Steel", weight: "Heavy Frame", wind_rating: "130 km/h", warranty: "10 Years Warranty", image_url: "" },
+    { id: "struct-3", structure_type: "girder", title: "Girder Structure", description_en: "Heavy-Duty Mughal Girder Frame supporting extreme wind shear.", description_ur: "ہیوی ڈیوٹی مغل گارڈر فریم جو شدید ہوا کے دباؤ کو برداشت کرتا ہے۔", material_type: "Mughal Girder Steel", weight: "1600g/ft Structural Load", wind_rating: "150 km/h", warranty: "15 Years Warranty", image_url: "" }
+  ],
+  quotePdfSettings: [
+    { id: "settings-1", company_name: "SUNCHASER ENERGY SYSTEMS", office_address: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore", hotline_phones: "0309-0236666, 0330-7776444", billing_email: "billing@sunchaser-energy.com", website_url: "www.sunchaser-energy.com", logo_url: "" }
   ]
 };
 
@@ -814,7 +656,15 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     solarPackagesData,
     settingsData,
     websiteContentData,
-    purchaseOrdersData
+    purchaseOrdersData,
+    quoteTemplatesData,
+    quoteTemplatePagesData,
+    bankAccountsData,
+    companyTermsData,
+    ceoMessagesData,
+    socialLinksData,
+    structureDescriptionsData,
+    quotePdfSettingsData
   ] = await Promise.all([
     safeFetch("users"),
     safeFetch("leads"),
@@ -836,35 +686,47 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     safeFetch("solar_packages"),
     safeFetch("settings"),
     safeFetch("website_content"),
-    safeFetch("purchase_orders")
+    safeFetch("purchase_orders"),
+    safeFetch("quote_templates"),
+    safeFetch("quote_template_pages"),
+    safeFetch("bank_accounts"),
+    safeFetch("company_terms"),
+    safeFetch("ceo_messages"),
+    safeFetch("social_links"),
+    safeFetch("structure_descriptions"),
+    safeFetch("quote_pdf_settings")
   ]);
 
   // Assemble leads with nested attributes
   const leadsMapped = (leadsData || []).map((lead: any) => {
     const quotes = (quotesData || [])
       .filter((q: any) => q.lead_id === lead.id)
-      .map((q: any) => ({
-        id: q.id,
-        systemSizekW: Number(q.system_size_kw),
-        panelCount: q.panel_count,
-        panelType: q.panel_type,
-        inverterType: q.inverter_type,
-        batteryCapacity: q.battery_capacity,
-        totalCost: Number(q.total_cost),
-        federalTaxCredit: Number(q.federal_tax_credit),
-        netCost: Number(q.net_cost),
-        estimatedAnnualSavings: Number(q.estimated_annual_savings),
-        paybackPeriodYears: Number(q.payback_period_years),
-        status: q.status,
-        createdAt: q.created_at,
-        structureType: q.structure_type,
-        accessories: q.accessories,
-        installationCharges: Number(q.installation_charges || 0),
-        netMeteringCharges: Number(q.net_metering_charges || 0),
-        paymentTerms: q.payment_terms,
-        warrantyTerms: q.warranty_terms,
-        termsAndConditions: q.terms_and_conditions
-      }));
+      .map((q: any) => {
+        const ext = q.extended_data ? (typeof q.extended_data === 'string' ? JSON.parse(q.extended_data) : q.extended_data) : {};
+        return {
+          id: q.id,
+          systemSizekW: Number(q.system_size_kw),
+          panelCount: q.panel_count,
+          panelType: q.panel_type,
+          inverterType: q.inverter_type,
+          batteryCapacity: q.battery_capacity,
+          totalCost: Number(q.total_cost),
+          federalTaxCredit: Number(q.federal_tax_credit),
+          netCost: Number(q.net_cost),
+          estimatedAnnualSavings: Number(q.estimated_annual_savings),
+          paybackPeriodYears: Number(q.payback_period_years),
+          status: q.status,
+          createdAt: q.created_at,
+          structureType: q.structure_type,
+          accessories: q.accessories,
+          installationCharges: Number(q.installation_charges || 0),
+          netMeteringCharges: Number(q.net_metering_charges || 0),
+          paymentTerms: q.payment_terms,
+          warrantyTerms: q.warranty_terms,
+          termsAndConditions: q.terms_and_conditions,
+          ...ext
+        };
+      });
 
     const s = (surveysData || []).find((sd: any) => sd.lead_id === lead.id);
     let surveyObj: any = undefined;
@@ -1142,6 +1004,80 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     items: typeof po.items === "string" ? JSON.parse(po.items) : (po.items || [])
   }));
 
+  const quoteTemplatesMapped = (quoteTemplatesData || []).map((qt: any) => ({
+    id: qt.id,
+    name: qt.name,
+    isActive: !!qt.is_active
+  }));
+
+  const quoteTemplatePagesMapped = (quoteTemplatePagesData || []).map((qtp: any) => ({
+    id: qtp.id,
+    templateId: qtp.template_id,
+    pageType: qtp.page_type,
+    title: qtp.title,
+    bodyText: qtp.body_text,
+    imageUrl: qtp.image_url,
+    bgImageUrl: qtp.bg_image_url,
+    isEnabled: !!qtp.is_enabled,
+    sortOrder: Number(qtp.sort_order || 0)
+  }));
+
+  const bankAccountsMapped = (bankAccountsData || []).map((ba: any) => ({
+    id: ba.id,
+    bankName: ba.bank_name,
+    accountTitle: ba.account_title || ba.title,
+    accountNumber: ba.account_number || ba.accountNo,
+    iban: ba.iban,
+    branchCode: ba.branch_code,
+    isActive: !!ba.is_active,
+    sortOrder: Number(ba.sort_order || 0)
+  }));
+
+  const companyTermsMapped = (companyTermsData || []).map((ct: any) => ({
+    id: ct.id,
+    termText: ct.term_text || ct.termText,
+    sortOrder: Number(ct.sort_order || 0)
+  }));
+
+  const ceoMessagesMapped = (ceoMessagesData || []).map((cm: any) => ({
+    id: cm.id,
+    name: cm.name,
+    designation: cm.designation,
+    message: cm.message,
+    signatureUrl: cm.signature_url || cm.signatureUrl,
+    photoUrl: cm.photo_url || cm.photoUrl
+  }));
+
+  const socialLinksMapped = (socialLinksData || []).map((sl: any) => ({
+    id: sl.id,
+    platform: sl.platform,
+    url: sl.url,
+    qrCodeUrl: sl.qr_code_url || sl.qrCodeUrl
+  }));
+
+  const structureDescriptionsMapped = (structureDescriptionsData || []).map((sd: any) => ({
+    id: sd.id,
+    structureType: sd.structure_type || sd.structureType,
+    title: sd.title,
+    descriptionEn: sd.description_en || sd.descriptionEn,
+    descriptionUr: sd.description_ur || sd.descriptionUr,
+    materialType: sd.material_type || sd.materialType,
+    weight: sd.weight,
+    windRating: sd.wind_rating || sd.windRating,
+    warranty: sd.warranty,
+    imageUrl: sd.image_url || sd.imageUrl
+  }));
+
+  const quotePdfSettingsMapped = (quotePdfSettingsData || []).map((qps: any) => ({
+    id: qps.id,
+    companyName: qps.company_name || qps.companyName,
+    officeAddress: qps.office_address || qps.officeAddress,
+    hotlinePhones: qps.hotline_phones || qps.hotlinePhones,
+    billingEmail: qps.billing_email || qps.billingEmail,
+    websiteUrl: qps.website_url || qps.websiteUrl,
+    logoUrl: qps.logo_url || qps.logoUrl
+  }));
+
   return {
     users: users || [],
     leads: leadsMapped,
@@ -1167,7 +1103,15 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     solarPackages: solarPackagesMapped.length > 0 ? solarPackagesMapped : undefined,
     settings: settingsObj || undefined,
     websiteContent: websiteContentObj || undefined,
-    purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : undefined
+    purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : undefined,
+    quoteTemplates: quoteTemplatesMapped,
+    quoteTemplatePages: quoteTemplatePagesMapped,
+    bankAccounts: bankAccountsMapped,
+    companyTerms: companyTermsMapped,
+    ceoMessages: ceoMessagesMapped,
+    socialLinks: socialLinksMapped,
+    structureDescriptions: structureDescriptionsMapped,
+    quotePdfSettings: quotePdfSettingsMapped
   };
 }
 
@@ -1300,6 +1244,37 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
               payment_terms: q.paymentTerms || "",
               warranty_terms: q.warrantyTerms || "",
               terms_and_conditions: q.termsAndConditions || "",
+              extended_data: {
+                clientName: q.clientName,
+                clientPhone: q.clientPhone,
+                clientEmail: q.clientEmail,
+                clientAddress: q.clientAddress,
+                cnic: q.cnic,
+                cityArea: q.cityArea,
+                bdmName: q.bdmName,
+                quoteDate: q.quoteDate,
+                systemType: q.systemType,
+                panelBrand: q.panelBrand,
+                panelWattage: q.panelWattage,
+                inverterBrand: q.inverterBrand,
+                inverterCapacity: q.inverterCapacity,
+                batteryOption: q.batteryOption,
+                netMeteringRequired: q.netMeteringRequired,
+                discount: q.discount,
+                paymentSchedule: q.paymentSchedule,
+                boqItems: q.boqItems,
+                lescoSettings: q.lescoSettings,
+                societyCharges: q.societyCharges,
+                taxEnabled: q.taxEnabled,
+                taxRate: q.taxRate,
+                taxAmount: q.taxAmount,
+                selectedStructure: q.selectedStructure,
+                customStructure: q.customStructure,
+                boqRows: q.boqRows,
+                customNotes: q.customNotes,
+                grandTotal: q.grandTotal,
+                netTotal: q.netTotal
+              },
               created_at: q.createdAt || new Date().toISOString()
             }, { onConflict: "id" });
           }
@@ -1534,6 +1509,120 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
           total_cost: Number(po.totalCost || po.cost || 0),
           status: po.status || "Pending",
           items: po.items || []
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 19. Quote Templates
+    if (localDbData.quoteTemplates) {
+      for (const qt of localDbData.quoteTemplates) {
+        await supabase.from("quote_templates").upsert({
+          id: qt.id,
+          name: qt.name,
+          is_active: qt.isActive !== undefined ? qt.isActive : qt.is_active
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 20. Quote Template Pages
+    if (localDbData.quoteTemplatePages) {
+      for (const qtp of localDbData.quoteTemplatePages) {
+        await supabase.from("quote_template_pages").upsert({
+          id: qtp.id,
+          template_id: qtp.templateId || qtp.template_id,
+          page_type: qtp.pageType || qtp.page_type,
+          title: qtp.title,
+          body_text: qtp.bodyText || qtp.body_text,
+          image_url: qtp.imageUrl || qtp.image_url,
+          bg_image_url: qtp.bgImageUrl || qtp.bg_image_url,
+          is_enabled: qtp.isEnabled !== undefined ? qtp.isEnabled : qtp.is_enabled,
+          sort_order: qtp.sortOrder || qtp.sort_order || 0
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 21. Bank Accounts
+    if (localDbData.bankAccounts) {
+      for (const ba of localDbData.bankAccounts) {
+        await supabase.from("bank_accounts").upsert({
+          id: ba.id,
+          bank_name: ba.bankName || ba.bank_name,
+          account_title: ba.accountTitle || ba.account_title || ba.title,
+          account_number: ba.accountNumber || ba.account_number || ba.accountNo,
+          iban: ba.iban,
+          branch_code: ba.branchCode || ba.branch_code || "",
+          is_active: ba.isActive !== undefined ? ba.isActive : ba.is_active,
+          sort_order: ba.sortOrder || ba.sort_order || 0
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 22. Company Terms
+    if (localDbData.companyTerms) {
+      for (const ct of localDbData.companyTerms) {
+        await supabase.from("company_terms").upsert({
+          id: ct.id,
+          term_text: ct.termText || ct.term_text,
+          sort_order: ct.sortOrder || ct.sort_order || 0
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 23. CEO Messages
+    if (localDbData.ceoMessages) {
+      for (const cm of localDbData.ceoMessages) {
+        await supabase.from("ceo_messages").upsert({
+          id: cm.id,
+          name: cm.name,
+          designation: cm.designation,
+          message: cm.message,
+          signature_url: cm.signatureUrl || cm.signature_url || "",
+          photo_url: cm.photoUrl || cm.photo_url || ""
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 24. Social Links
+    if (localDbData.socialLinks) {
+      for (const sl of localDbData.socialLinks) {
+        await supabase.from("social_links").upsert({
+          id: sl.id,
+          platform: sl.platform,
+          url: sl.url,
+          qr_code_url: sl.qrCodeUrl || sl.qr_code_url || ""
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 25. Structure Descriptions
+    if (localDbData.structureDescriptions) {
+      for (const sd of localDbData.structureDescriptions) {
+        await supabase.from("structure_descriptions").upsert({
+          id: sd.id,
+          structure_type: sd.structureType || sd.structure_type,
+          title: sd.title,
+          description_en: sd.descriptionEn || sd.description_en,
+          description_ur: sd.descriptionUr || sd.description_ur,
+          material_type: sd.materialType || sd.material_type || "",
+          weight: sd.weight || "",
+          wind_rating: sd.windRating || sd.wind_rating || "",
+          warranty: sd.warranty || "",
+          image_url: sd.imageUrl || sd.image_url || ""
+        }, { onConflict: "id" });
+      }
+    }
+
+    // 26. PDF Settings
+    if (localDbData.quotePdfSettings) {
+      for (const qps of localDbData.quotePdfSettings) {
+        await supabase.from("quote_pdf_settings").upsert({
+          id: qps.id,
+          company_name: qps.companyName || qps.company_name,
+          office_address: qps.officeAddress || qps.office_address,
+          hotline_phones: qps.hotlinePhones || qps.hotline_phones,
+          billing_email: qps.billingEmail || qps.billing_email,
+          website_url: qps.websiteUrl || qps.website_url,
+          logo_url: qps.logoUrl || qps.logo_url || ""
         }, { onConflict: "id" });
       }
     }

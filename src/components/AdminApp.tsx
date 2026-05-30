@@ -9,7 +9,7 @@ import {
   AreaChart, Area, PieChart, Pie, Cell 
 } from "recharts";
 import ManualAdminControl from "./ManualAdminControl";
-import { currencySymbol } from "../services/api";
+import { currencySymbol, API_BASE_URL } from "../services/api";
 
 interface AdminAppProps {
   leads: Lead[];
@@ -25,6 +25,14 @@ interface AdminAppProps {
   settings?: any;
   websiteContent?: any;
   quotations?: any[];
+  quoteTemplates?: any[];
+  quoteTemplatePages?: any[];
+  bankAccounts?: any[];
+  companyTerms?: any[];
+  ceoMessages?: any[];
+  socialLinks?: any[];
+  structureDescriptions?: any[];
+  quotePdfSettings?: any[];
   onResolveTicket: (id: string) => void;
   onProcureInventory: (vendor: string, itemId: string, quantity: number) => Promise<void>;
   onRefreshState: () => void;
@@ -44,11 +52,19 @@ export default function AdminApp({
   settings = {},
   websiteContent = {},
   quotations = [],
+  quoteTemplates = [],
+  quoteTemplatePages = [],
+  bankAccounts = [],
+  companyTerms = [],
+  ceoMessages = [],
+  socialLinks = [],
+  structureDescriptions = [],
+  quotePdfSettings = [],
   onResolveTicket,
   onProcureInventory,
   onRefreshState
 }: AdminAppProps) {
-  const [activeSegment, setActiveSegment] = useState<'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel'>('overview');
+  const [activeSegment, setActiveSegment] = useState<'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates'>('overview');
 
   // Procurement local form states
   const [vendor, setVendor] = useState("Canadian Solar Ltd");
@@ -56,6 +72,73 @@ export default function AdminApp({
   const [quantity, setQuantity] = useState<number>(100);
   const [procurementLoading, setProcurementLoading] = useState(false);
   const [procurementNotice, setProcurementNotice] = useState<string | null>(null);
+
+  // Template Manager Tab states
+  const [selectedSubTab, setSelectedSubTab] = useState<'pages' | 'banks' | 'terms' | 'ceo' | 'structures' | 'settings'>('pages');
+  
+  // Database CRUD status states
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Edit draft tracking states
+  const [editingPageId, setEditingPageId] = useState<string | null>(null);
+  const [pageDraft, setPageDraft] = useState<any>(null);
+
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [bankDraft, setBankDraft] = useState<any>(null);
+  const [newBank, setNewBank] = useState({
+    bankName: "",
+    accountTitle: "",
+    accountNumber: "",
+    iban: "",
+    branchCode: "",
+    isActive: true,
+    sortOrder: 0
+  });
+
+  const [editingTermId, setEditingTermId] = useState<string | null>(null);
+  const [termDraft, setTermDraft] = useState<any>(null);
+  const [newTerm, setNewTerm] = useState({
+    termText: "",
+    sortOrder: 0
+  });
+
+  const [editingCeoId, setEditingCeoId] = useState<string | null>(null);
+  const [ceoDraft, setCeoDraft] = useState<any>(null);
+
+  const [editingStructId, setEditingStructId] = useState<string | null>(null);
+  const [structDraft, setStructDraft] = useState<any>(null);
+
+  const [editingPdfSettingsId, setEditingPdfSettingsId] = useState<string | null>(null);
+  const [pdfSettingsDraft, setPdfSettingsDraft] = useState<any>(null);
+
+  const saveDbChange = async (action: "add" | "edit" | "delete", table: string, data: any, id?: string) => {
+    setSyncing(true);
+    setSuccessMsg(null);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, table, data, id })
+      });
+      if (!res.ok) throw new Error("Could not execute manual update on server memory.");
+      const result = await res.json();
+      if (result.success) {
+        setSuccessMsg(`Action [${action.toUpperCase()}] for '${table}' successfully stored and persisted.`);
+        setTimeout(() => setSuccessMsg(null), 4000);
+        onRefreshState();
+      } else {
+        throw new Error("Server rejected state modifier request.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Network state syncing faulted.");
+      setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Format monetary sums
   const formattedRevenue = stats.totalRevenue.toLocaleString();
@@ -165,6 +248,16 @@ export default function AdminApp({
           }`}
         >
           <ShieldAlert className="w-4 h-4 inline mr-1" /> Support Tickets
+        </button>
+        <button
+          onClick={() => setActiveSegment('pdf-templates')}
+          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
+            activeSegment === 'pdf-templates'
+              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
+              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
+          }`}
+        >
+          <ClipboardList className="w-4 h-4 inline mr-1" /> Quotation Templates
         </button>
         <button
           onClick={() => setActiveSegment('control-panel')}
@@ -511,6 +604,995 @@ export default function AdminApp({
           </div>
         )}
 
+        {activeSegment === 'pdf-templates' && (
+          <div className="space-y-6 fade-in-entry text-left font-sans text-xs">
+            
+            {/* Top Branding Section & Live Preview Button */}
+            <div className="flex justify-between items-center flex-wrap gap-4 border-b border-neutral-800 pb-4">
+              <div>
+                <h3 className="text-sm font-bold text-neutral-100 uppercase tracking-wider font-mono">Quotation PDF Template Manager</h3>
+                <p className="text-[11px] text-neutral-400 mt-0.5">Manage branding, cover pages, payment channels, and client-facing assurances.</p>
+              </div>
+              <button
+                onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/template-preview/tmpl-1`, "_blank")}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center gap-1.5 transition cursor-pointer"
+              >
+                Live PDF Template Preview
+              </button>
+            </div>
+
+            {/* Notification system */}
+            {successMsg && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-2xl text-[11px] font-mono">
+                ✓ {successMsg}
+              </div>
+            )}
+            {errorMsg && (
+              <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-2xl text-[11px] font-mono">
+                ❌ {errorMsg}
+              </div>
+            )}
+
+            {/* Inner Sub-Tab Selector Navigation */}
+            <div className="flex gap-1.5 bg-neutral-950 p-1.5 rounded-2xl border border-neutral-850 flex-wrap">
+              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings'] as const).map((sub) => (
+                <button
+                  key={sub}
+                  onClick={() => {
+                    setSelectedSubTab(sub);
+                    // Clear edits when switching tabs
+                    setPageDraft(null);
+                    setBankDraft(null);
+                    setTermDraft(null);
+                    setCeoDraft(null);
+                    setStructDraft(null);
+                    setPdfSettingsDraft(null);
+                  }}
+                  className={`py-2 px-4 rounded-xl text-[10px] font-bold uppercase tracking-wider transition cursor-pointer ${
+                    selectedSubTab === sub
+                      ? "bg-amber-500 text-neutral-950"
+                      : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900"
+                  }`}
+                >
+                  {sub === 'pages' && 'Pages & Layout'}
+                  {sub === 'banks' && 'Bank Accounts'}
+                  {sub === 'terms' && 'Terms & Conditions'}
+                  {sub === 'ceo' && 'Executive CEO Messages'}
+                  {sub === 'structures' && 'Structure Drawings'}
+                  {sub === 'settings' && 'Global PDF settings'}
+                </button>
+              ))}
+            </div>
+
+            {/* Sub-Tab Contents */}
+
+            {/* SUBTAB 1: PAGES & LAYOUT */}
+            {selectedSubTab === 'pages' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-7 bg-neutral-900 border border-neutral-808 rounded-3xl p-5 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-450 font-mono mb-2">Template Layout Checklist</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-neutral-800 text-neutral-400 text-[10px] uppercase font-mono tracking-wider">
+                          <th className="py-2.5 px-3">Type</th>
+                          <th className="py-2.5 px-3">Page Title</th>
+                          <th className="py-2.5 px-3 text-center">Order</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-850 text-neutral-350">
+                        {quoteTemplatePages
+                          .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
+                          .map((p: any) => (
+                            <tr
+                              key={p.id}
+                              onClick={() => {
+                                setEditingPageId(p.id);
+                                setPageDraft({ ...p });
+                              }}
+                              className={`cursor-pointer hover:bg-neutral-950 transition ${
+                                editingPageId === p.id ? 'bg-neutral-950 border-l-2 border-amber-500' : ''
+                              }`}
+                            >
+                              <td className="py-2.5 px-3 font-mono font-bold uppercase text-neutral-400">{p.pageType}</td>
+                              <td className="py-2.5 px-3 font-semibold text-neutral-100">{p.title || "(No Title)"}</td>
+                              <td className="py-2.5 px-3 text-center font-mono font-semibold">{p.sortOrder}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-mono font-bold ${
+                                  p.isEnabled ? 'bg-emerald-500/20 text-emerald-450 text-emerald-400' : 'bg-neutral-800 text-neutral-500'
+                                }`}>
+                                  {p.isEnabled ? 'Active' : 'Disabled'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-5">
+                  {pageDraft ? (
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm">
+                      <div className="flex justify-between items-center pb-2 border-b border-neutral-800">
+                        <span className="text-xs font-bold uppercase text-amber-500 font-mono">Edit: {pageDraft.pageType}</span>
+                        <button
+                          onClick={() => {
+                            setEditingPageId(null);
+                            setPageDraft(null);
+                          }}
+                          className="text-neutral-450 hover:text-neutral-200 text-[10px]"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-1">
+                        <label className="text-neutral-300 block font-semibold">Page Title Header</label>
+                        <input
+                          type="text"
+                          value={pageDraft.title || ""}
+                          onChange={(e) => setPageDraft({ ...pageDraft, title: e.target.value })}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-sans"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-neutral-300 block font-semibold">Text Content / Descriptions</label>
+                        <textarea
+                          rows={6}
+                          value={pageDraft.bodyText || ""}
+                          onChange={(e) => setPageDraft({ ...pageDraft, bodyText: e.target.value })}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-200 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-xs"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Display Rank / Sort Order</label>
+                          <input
+                            type="number"
+                            value={pageDraft.sortOrder}
+                            onChange={(e) => setPageDraft({ ...pageDraft, sortOrder: Number(e.target.value) })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+                        
+                        <div className="flex items-center gap-2 pt-5">
+                          <input
+                            type="checkbox"
+                            id="page-enabled-checkbox"
+                            checked={pageDraft.isEnabled}
+                            onChange={(e) => setPageDraft({ ...pageDraft, isEnabled: e.target.checked })}
+                            className="rounded border-neutral-800 text-amber-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                          />
+                          <label htmlFor="page-enabled-checkbox" className="text-neutral-300 font-semibold cursor-pointer">Enabled</label>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={async () => {
+                          await saveDbChange("edit", "quoteTemplatePages", pageDraft, pageDraft.id);
+                          setEditingPageId(null);
+                          setPageDraft(null);
+                        }}
+                        className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2 rounded-xl transition cursor-pointer"
+                      >
+                        Save Page Details
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-neutral-900/50 border border-neutral-808 border-dashed rounded-3xl p-8 text-center text-neutral-500 text-xs flex flex-col justify-center items-center h-48">
+                      <span>Select a page from the checklist layout to customize its titles & body texts.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUBTAB 2: BANK ACCOUNTS */}
+            {selectedSubTab === 'banks' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-7 bg-neutral-900 border border-neutral-808 rounded-3xl p-5 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-450 font-mono mb-2">Registered Accounts</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-neutral-800 text-neutral-400 text-[10px] uppercase font-mono tracking-wider">
+                          <th className="py-2.5 px-3">Bank Name</th>
+                          <th className="py-2.5 px-3">Account Title</th>
+                          <th className="py-2.5 px-3 text-center">Active</th>
+                          <th className="py-2.5 px-3 text-right">Delete</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-850 text-neutral-300">
+                        {bankAccounts
+                          .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
+                          .map((b: any) => (
+                            <tr
+                              key={b.id}
+                              onClick={() => {
+                                setEditingBankId(b.id);
+                                setBankDraft({ ...b });
+                              }}
+                              className={`cursor-pointer hover:bg-neutral-950 transition ${
+                                editingBankId === b.id ? 'bg-neutral-950 border-l-2 border-amber-500' : ''
+                              }`}
+                            >
+                              <td className="py-2.5 px-3 font-semibold text-neutral-100">{b.bankName}</td>
+                              <td className="py-2.5 px-3 font-mono">{b.accountTitle}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                                  b.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-neutral-800 text-neutral-500'
+                                }`}>
+                                  {b.isActive ? 'Y' : 'N'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (confirm("Delete this bank account from quotations?")) {
+                                      await saveDbChange("delete", "bankAccounts", null, b.id);
+                                      if (editingBankId === b.id) {
+                                        setEditingBankId(null);
+                                        setBankDraft(null);
+                                      }
+                                    }
+                                  }}
+                                  className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 inline" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-5 space-y-6">
+                  {/* Account Editor Draft */}
+                  {bankDraft ? (
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm">
+                      <div className="flex justify-between items-center pb-2 border-b border-neutral-800">
+                        <span className="text-xs font-bold uppercase text-amber-500 font-mono">Edit Account details</span>
+                        <button
+                          onClick={() => {
+                            setEditingBankId(null);
+                            setBankDraft(null);
+                          }}
+                          className="text-neutral-450 hover:text-neutral-200 text-[10px]"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Bank Institution Name</label>
+                          <input
+                            type="text"
+                            value={bankDraft.bankName || ""}
+                            onChange={(e) => setBankDraft({ ...bankDraft, bankName: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Account Title (Beneficiary)</label>
+                          <input
+                            type="text"
+                            value={bankDraft.accountTitle || ""}
+                            onChange={(e) => setBankDraft({ ...bankDraft, accountTitle: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono text-xs font-bold"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Account Number</label>
+                          <input
+                            type="text"
+                            value={bankDraft.accountNumber || ""}
+                            onChange={(e) => setBankDraft({ ...bankDraft, accountNumber: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">IBAN Code</label>
+                          <input
+                            type="text"
+                            value={bankDraft.iban || ""}
+                            onChange={(e) => setBankDraft({ ...bankDraft, iban: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Branch Code</label>
+                            <input
+                              type="text"
+                              value={bankDraft.branchCode || ""}
+                              onChange={(e) => setBankDraft({ ...bankDraft, branchCode: e.target.value })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Sort order</label>
+                            <input
+                              type="number"
+                              value={bankDraft.sortOrder || 0}
+                              onChange={(e) => setBankDraft({ ...bankDraft, sortOrder: Number(e.target.value) })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="bank-active-checkbox"
+                            checked={bankDraft.isActive}
+                            onChange={(e) => setBankDraft({ ...bankDraft, isActive: e.target.checked })}
+                            className="rounded border-neutral-800 text-amber-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                          />
+                          <label htmlFor="bank-active-checkbox" className="text-neutral-300 font-semibold cursor-pointer">Account Active for Invoicing</label>
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            await saveDbChange("edit", "bankAccounts", bankDraft, bankDraft.id);
+                            setEditingBankId(null);
+                            setBankDraft(null);
+                          }}
+                          className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Save Changes
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Add New Account Form */
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm text-left">
+                      <h4 className="text-xs font-bold uppercase text-indigo-400 font-mono pb-2 border-b border-neutral-800">Add Bank Channel</h4>
+                      
+                      <div className="space-y-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Bank Institution Name</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Allied Bank Limited"
+                            value={newBank.bankName}
+                            onChange={(e) => setNewBank({ ...newBank, bankName: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Account Title</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. SUNCHASER ENERGY SYSTEMS"
+                            value={newBank.accountTitle}
+                            onChange={(e) => setNewBank({ ...newBank, accountTitle: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono text-xs font-bold"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Account Number</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. 04190010112276..."
+                            value={newBank.accountNumber}
+                            onChange={(e) => setNewBank({ ...newBank, accountNumber: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">IBAN Code</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. PK81ABPA..."
+                            value={newBank.iban}
+                            onChange={(e) => setNewBank({ ...newBank, iban: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Branch Code</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 0419"
+                              value={newBank.branchCode}
+                              onChange={(e) => setNewBank({ ...newBank, branchCode: e.target.value })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Sort Order</label>
+                            <input
+                              type="number"
+                              value={newBank.sortOrder}
+                              onChange={(e) => setNewBank({ ...newBank, sortOrder: Number(e.target.value) })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!newBank.bankName || !newBank.accountNumber}
+                          onClick={async () => {
+                            const newId = `bank-${Date.now()}`;
+                            await saveDbChange("add", "bankAccounts", { id: newId, ...newBank });
+                            setNewBank({
+                              bankName: "",
+                              accountTitle: "",
+                              accountNumber: "",
+                              iban: "",
+                              branchCode: "",
+                              isActive: true,
+                              sortOrder: bankAccounts.length + 1
+                            });
+                          }}
+                          className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded-xl transition cursor-pointer disabled:opacity-50"
+                        >
+                          Register New Account
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUBTAB 3: TERMS & CONDITIONS */}
+            {selectedSubTab === 'terms' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-7 bg-neutral-900 border border-neutral-808 rounded-3xl p-5 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-450 font-mono mb-2">Legal Clauses ({companyTerms.length})</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-neutral-800 text-neutral-400 text-[10px] uppercase font-mono tracking-wider">
+                          <th className="py-2.5 px-3">Sort</th>
+                          <th className="py-2.5 px-3">Term Clause Text</th>
+                          <th className="py-2.5 px-3 text-right">Delete</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-850 text-neutral-350">
+                        {companyTerms
+                          .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
+                          .map((t: any) => (
+                            <tr
+                              key={t.id}
+                              onClick={() => {
+                                setEditingTermId(t.id);
+                                setTermDraft({ ...t });
+                              }}
+                              className={`cursor-pointer hover:bg-neutral-950 transition ${
+                                editingTermId === t.id ? 'bg-neutral-950 border-l-2 border-amber-500' : ''
+                              }`}
+                            >
+                              <td className="py-2.5 px-3 font-mono font-bold">{t.sortOrder}</td>
+                              <td className="py-2.5 px-3 truncate max-w-sm font-sans">{t.termText}</td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (confirm("Delete this legal clause?")) {
+                                      await saveDbChange("delete", "companyTerms", null, t.id);
+                                      if (editingTermId === t.id) {
+                                        setEditingTermId(null);
+                                        setTermDraft(null);
+                                      }
+                                    }
+                                  }}
+                                  className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 inline" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-5 space-y-6">
+                  {termDraft ? (
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm">
+                      <div className="flex justify-between items-center pb-2 border-b border-neutral-800">
+                        <span className="text-xs font-bold uppercase text-amber-500 font-mono">Edit Legal Clause</span>
+                        <button
+                          onClick={() => {
+                            setEditingTermId(null);
+                            setTermDraft(null);
+                          }}
+                          className="text-neutral-450 hover:text-neutral-200 text-[10px]"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Clause Text</label>
+                          <textarea
+                            rows={5}
+                            value={termDraft.termText || ""}
+                            onChange={(e) => setTermDraft({ ...termDraft, termText: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Sort Rank</label>
+                          <input
+                            type="number"
+                            value={termDraft.sortOrder || 0}
+                            onChange={(e) => setTermDraft({ ...termDraft, sortOrder: Number(e.target.value) })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            await saveDbChange("edit", "companyTerms", termDraft, termDraft.id);
+                            setEditingTermId(null);
+                            setTermDraft(null);
+                          }}
+                          className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Save Clause Changes
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Add Term */
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm text-left">
+                      <h4 className="text-xs font-bold uppercase text-indigo-400 font-mono pb-2 border-b border-neutral-800">Add Legal Clause</h4>
+                      
+                      <div className="space-y-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Clause Text Description</label>
+                          <textarea
+                            rows={4}
+                            placeholder="Enter the quotation terms details here..."
+                            value={newTerm.termText}
+                            onChange={(e) => setNewTerm({ ...newTerm, termText: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Sort Rank Order</label>
+                          <input
+                            type="number"
+                            value={newTerm.sortOrder}
+                            onChange={(e) => setNewTerm({ ...newTerm, sortOrder: Number(e.target.value) })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!newTerm.termText}
+                          onClick={async () => {
+                            const newId = `term-${Date.now()}`;
+                            await saveDbChange("add", "companyTerms", { id: newId, ...newTerm });
+                            setNewTerm({
+                              termText: "",
+                              sortOrder: companyTerms.length + 1
+                            });
+                          }}
+                          className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded-xl transition cursor-pointer disabled:opacity-50"
+                        >
+                          Append Legal Clause
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUBTAB 4: CEO MESSAGES */}
+            {selectedSubTab === 'ceo' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-6 bg-neutral-900 border border-neutral-808 rounded-3xl p-5 shadow-sm space-y-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-450 font-mono pb-2 border-b border-neutral-800">Executive Board Signatures</h4>
+                  <div className="space-y-3">
+                    {ceoMessages.map((m: any) => (
+                      <div
+                        key={m.id}
+                        onClick={() => {
+                          setEditingCeoId(m.id);
+                          setCeoDraft({ ...m });
+                        }}
+                        className={`p-4 bg-neutral-950 rounded-2xl border cursor-pointer hover:border-amber-500/40 transition flex items-center justify-between ${
+                          editingCeoId === m.id ? 'border-amber-500' : 'border-neutral-850'
+                        }`}
+                      >
+                        <div>
+                          <strong className="text-neutral-100 text-xs block font-sans">{m.name}</strong>
+                          <span className="text-[10px] text-neutral-400 font-mono">{m.designation}</span>
+                        </div>
+                        <span className="text-[9px] bg-neutral-800 text-neutral-450 px-2 py-0.5 rounded font-mono uppercase">
+                          {m.id}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-6">
+                  {ceoDraft ? (
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm">
+                      <div className="flex justify-between items-center pb-2 border-b border-neutral-800">
+                        <span className="text-xs font-bold uppercase text-amber-500 font-mono">Edit Board Assurance Letter</span>
+                        <button
+                          onClick={() => {
+                            setEditingCeoId(null);
+                            setCeoDraft(null);
+                          }}
+                          className="text-neutral-450 hover:text-neutral-200 text-[10px]"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Executive Full Name</label>
+                          <input
+                            type="text"
+                            value={ceoDraft.name || ""}
+                            onChange={(e) => setCeoDraft({ ...ceoDraft, name: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Corporate Designation</label>
+                          <input
+                            type="text"
+                            value={ceoDraft.designation || ""}
+                            onChange={(e) => setCeoDraft({ ...ceoDraft, designation: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono text-[11px]"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Signature Assurances Message</label>
+                          <textarea
+                            rows={5}
+                            value={ceoDraft.message || ""}
+                            onChange={(e) => setCeoDraft({ ...ceoDraft, message: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-105 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-xs"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Signature Image URL</label>
+                            <input
+                              type="text"
+                              value={ceoDraft.signatureUrl || ""}
+                              onChange={(e) => setCeoDraft({ ...ceoDraft, signatureUrl: e.target.value })}
+                              placeholder="e.g. /assets/sig.png"
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Photo Image URL</label>
+                            <input
+                              type="text"
+                              value={ceoDraft.photoUrl || ""}
+                              onChange={(e) => setCeoDraft({ ...ceoDraft, photoUrl: e.target.value })}
+                              placeholder="e.g. /assets/ceo.jpg"
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            await saveDbChange("edit", "ceoMessages", ceoDraft, ceoDraft.id);
+                            setEditingCeoId(null);
+                            setCeoDraft(null);
+                          }}
+                          className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Update Executive Message
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-neutral-900/50 border border-neutral-808 border-dashed rounded-3xl p-8 text-center text-neutral-500 text-xs flex flex-col justify-center items-center h-48">
+                      <span>Select a board member signature profile from the left list to edit their message.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUBTAB 5: STRUCTURE DRAWINGS */}
+            {selectedSubTab === 'structures' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-6 bg-neutral-900 border border-neutral-808 rounded-3xl p-5 shadow-sm space-y-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-450 font-mono pb-2 border-b border-neutral-800">Mechanical Drawings Library</h4>
+                  <div className="space-y-3">
+                    {structureDescriptions.map((s: any) => (
+                      <div
+                        key={s.id}
+                        onClick={() => {
+                          setEditingStructId(s.id);
+                          setStructDraft({ ...s });
+                        }}
+                        className={`p-4 bg-neutral-950 rounded-2xl border cursor-pointer hover:border-amber-500/40 transition flex items-center justify-between ${
+                          editingStructId === s.id ? 'border-amber-500' : 'border-neutral-850'
+                        }`}
+                      >
+                        <div>
+                          <strong className="text-neutral-100 text-xs block font-sans">{s.title}</strong>
+                          <span className="text-[10px] text-neutral-400 font-mono uppercase">{s.structureType} Type</span>
+                        </div>
+                        <span className="text-[9px] bg-neutral-800 text-neutral-450 px-2 py-0.5 rounded font-mono uppercase">
+                          {s.windRating || s.wind_rating || "130 km/h"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-6">
+                  {structDraft ? (
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 shadow-sm text-left">
+                      <div className="flex justify-between items-center pb-2 border-b border-neutral-800">
+                        <span className="text-xs font-bold uppercase text-amber-500 font-mono">Edit Structural Specifications</span>
+                        <button
+                          onClick={() => {
+                            setEditingStructId(null);
+                            setStructDraft(null);
+                          }}
+                          className="text-neutral-450 hover:text-neutral-200 text-[10px]"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 text-xs">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Mount Type Title</label>
+                          <input
+                            type="text"
+                            value={structDraft.title || ""}
+                            onChange={(e) => setStructDraft({ ...structDraft, title: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Technical Description (English)</label>
+                          <textarea
+                            rows={3}
+                            value={structDraft.descriptionEn || ""}
+                            onChange={(e) => setStructDraft({ ...structDraft, descriptionEn: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold text-right font-sans">تکنیکی تفصیل (Urdu)</label>
+                          <textarea
+                            rows={3}
+                            dir="rtl"
+                            value={structDraft.descriptionUr || ""}
+                            onChange={(e) => setStructDraft({ ...structDraft, descriptionUr: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-sm text-right"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Material Grade</label>
+                            <input
+                              type="text"
+                              value={structDraft.materialType || ""}
+                              onChange={(e) => setStructDraft({ ...structDraft, materialType: e.target.value })}
+                              placeholder="e.g. Hot-Dip Galvanized Iron"
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Estimated Weight</label>
+                            <input
+                              type="text"
+                              value={structDraft.weight || ""}
+                              onChange={(e) => setStructDraft({ ...structDraft, weight: e.target.value })}
+                              placeholder="e.g. 25kg/frame"
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Wind Shear Rating</label>
+                            <input
+                              type="text"
+                              value={structDraft.windRating || ""}
+                              onChange={(e) => setStructDraft({ ...structDraft, windRating: e.target.value })}
+                              placeholder="e.g. 130 km/h wind shear"
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-300 block font-semibold">Structural Warranty</label>
+                            <input
+                              type="text"
+                              value={structDraft.warranty || ""}
+                              onChange={(e) => setStructDraft({ ...structDraft, warranty: e.target.value })}
+                              placeholder="e.g. 10 Years structural guarantee"
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Reference Image URL</label>
+                          <input
+                            type="text"
+                            value={structDraft.imageUrl || ""}
+                            onChange={(e) => setStructDraft({ ...structDraft, imageUrl: e.target.value })}
+                            placeholder="Image URL for PDF reference frame"
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            await saveDbChange("edit", "structureDescriptions", structDraft, structDraft.id);
+                            setEditingStructId(null);
+                            setStructDraft(null);
+                          }}
+                          className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Save Specifications
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-neutral-900/50 border border-neutral-808 border-dashed rounded-3xl p-8 text-center text-neutral-500 text-xs flex flex-col justify-center items-center h-48">
+                      <span>Select a mounting structure drawing type on the left to edit its specs.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUBTAB 6: GLOBAL PDF SETTINGS */}
+            {selectedSubTab === 'settings' && (
+              <div className="bg-neutral-900 border border-neutral-808 rounded-3xl p-6 shadow-sm max-w-2xl text-left">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400 font-mono pb-2 border-b border-neutral-800 mb-4">Corporate PDF Invoice Branding</h4>
+                
+                {(() => {
+                  const currentSettings = quotePdfSettings[0] || {
+                    id: "settings-1",
+                    companyName: "SUNCHASER ENERGY SYSTEMS",
+                    officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+                    hotlinePhones: "0309-0236666, 0330-7776444",
+                    billingEmail: "billing@sunchaser-energy.com",
+                    websiteUrl: "www.sunchaser-energy.com",
+                    logoUrl: ""
+                  };
+                  
+                  // Initialize settings draft if not initialized
+                  if (!pdfSettingsDraft || pdfSettingsDraft.id !== currentSettings.id) {
+                    setPdfSettingsDraft({ ...currentSettings });
+                    return null;
+                  }
+
+                  return (
+                    <div className="space-y-4 text-xs font-sans">
+                      <div className="space-y-1">
+                        <label className="text-neutral-300 block font-semibold">Registered Company Name</label>
+                        <input
+                          type="text"
+                          value={pdfSettingsDraft.companyName || ""}
+                          onChange={(e) => setPdfSettingsDraft({ ...pdfSettingsDraft, companyName: e.target.value })}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-bold"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-neutral-300 block font-semibold">Head Office Address</label>
+                        <input
+                          type="text"
+                          value={pdfSettingsDraft.officeAddress || ""}
+                          onChange={(e) => setPdfSettingsDraft({ ...pdfSettingsDraft, officeAddress: e.target.value })}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Hotline Phones (Comma Separated)</label>
+                          <input
+                            type="text"
+                            value={pdfSettingsDraft.hotlinePhones || ""}
+                            onChange={(e) => setPdfSettingsDraft({ ...pdfSettingsDraft, hotlinePhones: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Billing Support Email</label>
+                          <input
+                            type="email"
+                            value={pdfSettingsDraft.billingEmail || ""}
+                            onChange={(e) => setPdfSettingsDraft({ ...pdfSettingsDraft, billingEmail: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Official Website URL</label>
+                          <input
+                            type="text"
+                            value={pdfSettingsDraft.websiteUrl || ""}
+                            onChange={(e) => setPdfSettingsDraft({ ...pdfSettingsDraft, websiteUrl: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold">Corporate Logo URL</label>
+                          <input
+                            type="text"
+                            value={pdfSettingsDraft.logoUrl || ""}
+                            onChange={(e) => setPdfSettingsDraft({ ...pdfSettingsDraft, logoUrl: e.target.value })}
+                            placeholder="Direct URL of transparent PNG logo image"
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 focus:outline-none focus:border-amber-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <button
+                          onClick={async () => {
+                            await saveDbChange("edit", "quotePdfSettings", pdfSettingsDraft, pdfSettingsDraft.id);
+                          }}
+                          className="w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2.5 px-6 rounded-xl transition cursor-pointer"
+                        >
+                          Save Corporate Settings
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+          </div>
+        )}
         {activeSegment === 'control-panel' && (
           <ManualAdminControl
             leads={leads}

@@ -1,0 +1,6 @@
+{
+  "appId": "com.sunchaser.crm",
+  "appName": "Sunchaser CRM",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

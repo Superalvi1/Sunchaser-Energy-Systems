@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
-  Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown
+  Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow } from "../types";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
@@ -10,30 +10,53 @@ import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommend
 interface SalesTeamAppProps {
   leads: Lead[];
   inventory: InventoryItem[];
+  products: any[];
   onUpdateLead: (id: string, updatedData: any) => void;
   on创造Quote: (id: string, quoteData: any) => void;
   on提交Survey: (id: string, surveyData: any) => void;
+  onRefreshState?: () => void;
   settings?: any;
+  quoteTemplates?: any[];
+  quoteTemplatePages?: any[];
+  bankAccounts?: any[];
+  companyTerms?: any[];
+  ceoMessages?: any[];
+  socialLinks?: any[];
+  structureDescriptions?: any[];
+  quotePdfSettings?: any[];
 }
 
 export default function SalesTeamApp({
   leads,
   inventory,
+  products = [],
   onUpdateLead,
   on创造Quote,
   on提交Survey,
-  settings
+  onRefreshState,
+  settings,
+  quoteTemplates = [],
+  quoteTemplatePages = [],
+  bankAccounts = [],
+  companyTerms = [],
+  ceoMessages = [],
+  socialLinks = [],
+  structureDescriptions = [],
+  quotePdfSettings = []
 }: SalesTeamAppProps) {
-  // Filter leads assigned to Sarah Connor or general unassigned ones
-  const salesLeads = leads;
+  
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
-    salesLeads.length > 0 ? salesLeads[0].id : null
+    leads.length > 0 ? leads[0].id : null
   );
 
-  const activeLead = salesLeads.find(l => l.id === selectedLeadId);
+  const activeLead = leads.find(l => l.id === selectedLeadId);
+
+  // Modular routing tab selector
+  const [activeModule, setActiveModule] = useState<'sizer' | 'boq_builder' | 'templates' | 'quotes' | 'products'>('sizer');
+  const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
 
   // Quote formulator local state
-  const [systemSizekW, setSystemSizekW] = useState<number>(activeLead?.monthlyBill ? Number((activeLead.monthlyBill / 26).toFixed(1)) : 8.5);
+  const [systemSizekW, setSystemSizekW] = useState<number>(8.5);
   const [panelType, setPanelType] = useState("Sunchaser Ultra 400W");
   const [inverterType, setInverterType] = useState("Enphase IQ8 Microinverter");
   const [batteryCapacity, setBatteryCapacity] = useState("Sunchaser Core 13.5kWh");
@@ -49,13 +72,13 @@ export default function SalesTeamApp({
   const [termsAndConditions, setTermsAndConditions] = useState("Quoted prices are valid for 3 days.");
 
   // Lahore/Pakistan custom quotation states
-  const [clientName, setClientName] = useState(activeLead?.name || "");
-  const [clientPhone, setClientPhone] = useState(activeLead?.phone || "");
-  const [clientEmail, setClientEmail] = useState(activeLead?.email || "");
-  const [clientAddress, setClientAddress] = useState(activeLead?.address || "");
+  const [clientName, setClientName] = useState("");
+  const [clientPhone, setClientPhone] = useState("");
+  const [clientEmail, setClientEmail] = useState("");
+  const [clientAddress, setClientAddress] = useState("");
   const [cnic, setCnic] = useState("");
-  const [cityArea, setCityArea] = useState(activeLead?.location || "Lahore");
-  const [bdmName, setBdmName] = useState(activeLead?.assignedSalesperson || "Sarah Connor");
+  const [cityArea, setCityArea] = useState("Lahore");
+  const [bdmName, setBdmName] = useState("Sarah Connor");
   const [quoteDate, setQuoteDate] = useState(new Date().toISOString().split('T')[0]);
   const [systemType, setSystemType] = useState<'On-grid' | 'Hybrid' | 'Off-grid'>('Hybrid');
   const [panelBrand, setPanelBrand] = useState("Jinko");
@@ -67,6 +90,18 @@ export default function SalesTeamApp({
   const [discount, setDiscount] = useState<number>(0);
   const [paymentSchedule, setPaymentSchedule] = useState("50% Advance, 40% Delivery, 10% Commissioning");
   const [selectedTemplate, setSelectedTemplate] = useState("custom");
+  const [includedPages, setIncludedPages] = useState<Record<string, boolean>>({
+    cover: true,
+    profile: true,
+    qr: true,
+    ceo: true,
+    structure: true,
+    boq: true,
+    terms: true,
+    signoff: true,
+    bank: true,
+    final: true
+  });
   const [boqItems, setBoqItems] = useState<any[]>([]);
 
   // LESCO net metering parameters
@@ -95,11 +130,54 @@ export default function SalesTeamApp({
   // Excel-style BOQ grid rows
   const [boqRows, setBoqRows] = useState<BoqRow[]>([]);
   const [manualBoqItems, setManualBoqItems] = useState<any[]>([]);
-  const [selectedPanelId, setSelectedPanelId] = useState<string>("");
-  const [selectedInverterId, setSelectedInverterId] = useState<string>("");
-  const [selectedBatteryId, setSelectedBatteryId] = useState<string>("");
-  const [selectedMountId, setSelectedMountId] = useState<string>("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Sizing inputs and options
+  const [formMonthlyUnits, setFormMonthlyUnits] = useState<number>(985);
+  const [formRoofWidth, setFormRoofWidth] = useState<number>(30);
+  const [formRoofLength, setFormRoofLength] = useState<number>(25);
+  const [formBackupReq, setFormBackupReq] = useState<string>("Essential Loads (Sunchaser Core 13.5kWh)");
+  const [formLocation, setFormLocation] = useState<string>("Lahore");
+  const [systemSector, setSystemSector] = useState<'residential' | 'commercial'>('residential');
+  const [confirmHighUnits, setConfirmHighUnits] = useState<boolean>(false);
+  const [savingQuote, setSavingQuote] = useState<boolean>(false);
+
+  // OCR Bill scanner mock state
+  const [billFile, setBillFile] = useState<File | null>(null);
+  const [billLoading, setBillLoading] = useState(false);
+  const [billParsedData, setBillParsedData] = useState<any | null>(null);
+
+  // Gemini technical assessment report
+  const [aiReportMarkdown, setAiReportMarkdown] = useState<string | null>(null);
+  const [aiReportLoading, setAiReportLoading] = useState<boolean>(false);
+
+  // Proposal contract creator state
+  const [proposalMarkdown, setProposalMarkdown] = useState<string | null>(null);
+  const [proposalLoading, setProposalLoading] = useState(false);
+  const [quoteCreatedConfirm, setQuoteCreatedConfirm] = useState(false);
+  const [whatsappNotice, setWhatsappNotice] = useState<string | null>(null);
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+
+  // View state for quote detail
+  const [selectedQuoteDetail, setSelectedQuoteDetail] = useState<Quote | null>(null);
+
+  // Product CRUD forms modal states
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<any | null>(null);
+  const [productFormBrand, setProductFormBrand] = useState("");
+  const [productFormModel, setProductFormModel] = useState("");
+  const [productFormCategory, setProductFormCategory] = useState("Solar Panels");
+  const [productFormSku, setProductFormSku] = useState("");
+  const [productFormPrice, setProductFormPrice] = useState(0);
+  const [productFormCostPrice, setProductFormCostPrice] = useState(0);
+  const [productFormStock, setProductFormStock] = useState(10);
+  const [productFormWarranty, setProductFormWarranty] = useState("");
+  const [productFormWattage, setProductFormWattage] = useState(0);
+  const [productFormDesc, setProductFormDesc] = useState("");
+
+  // Product Category selection tab in library
+  const [selectedProductCategory, setSelectedProductCategory] = useState("Solar Panels");
+  const [productSearchQuery, setProductSearchQuery] = useState("");
 
   const calculateRowTotalsAndSubtotals = (rows: BoqRow[]): BoqRow[] => {
     let currentSubtotalSum = 0;
@@ -158,6 +236,8 @@ export default function SalesTeamApp({
     let inverterRate = 400000;
     if (sizekW > 15) inverterRate = 420000;
     if (sizekW > 25) inverterRate = 580000;
+    if (sizekW >= 50) inverterRate = 800000;
+    if (sizekW >= 100) inverterRate = 1400000;
     
     rows.push({
       id: 'inverter_row',
@@ -353,6 +433,9 @@ export default function SalesTeamApp({
     
     let installRate = 80000;
     if (sizekW > 15) installRate = 120000;
+    if (sizekW >= 50) installRate = 200000;
+    if (sizekW >= 100) installRate = 350000;
+
     rows.push({
       id: 'install_service_row',
       type: 'item',
@@ -385,6 +468,10 @@ export default function SalesTeamApp({
     });
     
     if (netMeter === 'Yes') {
+      let nmRate = 90000;
+      if (sizekW >= 30) nmRate = 100000;
+      if (sizekW >= 50) nmRate = 120000;
+      if (sizekW >= 100) nmRate = 150000;
       rows.push({
         id: 'net_metering_row',
         type: 'item',
@@ -394,8 +481,8 @@ export default function SalesTeamApp({
         brand: 'LESCO',
         unit: 'Job',
         qty: 1,
-        rate: 90000,
-        total: 90000
+        rate: nmRate,
+        total: nmRate
       });
     }
     
@@ -417,174 +504,261 @@ export default function SalesTeamApp({
     return calculateRowTotalsAndSubtotals(rows);
   };
 
-  const generateDefaultBoqItems = (
-    sizeOverride?: number,
-    battOverride?: string,
-    wattageOverride?: number,
-    capacityOverride?: string
-  ): BoqRow[] => {
-    const size = sizeOverride !== undefined ? sizeOverride : (systemSizekW || 10);
-    const type = systemType || 'Hybrid';
-    const struct = selectedStructure || 'standard';
-    const pBrand = panelBrand || 'Jinko';
-    const pWattage = wattageOverride !== undefined ? wattageOverride : (panelWattage || 580);
-    const iBrand = inverterBrand || 'Knox';
-    const iCapacity = capacityOverride !== undefined ? capacityOverride : (inverterCapacity || '10kW');
-    const batt = battOverride !== undefined ? battOverride : (batteryOption || 'None');
-    const net = netMeteringRequired || 'Yes';
-    
-    return generateDefaultBoqRows(size, type, struct, pBrand, pWattage, iBrand, iCapacity, batt, net);
+  // Quick package loader mapping
+  const applyPackage = (kwSize: number) => {
+    let type: 'On-grid' | 'Hybrid' | 'Off-grid' = 'Hybrid';
+    let brand = "Jinko";
+    let wattage = 580;
+    let invBrand = "Knox";
+    let invCap = `${kwSize}kW`;
+    let batt = "Lithium Battery Pack 5.12kWh";
+    let struct = "Standard";
+    let net: 'Yes' | 'No' = "Yes";
+    let instCharges = 50000;
+    let netCharges = 90000;
+
+    if (kwSize === 3) {
+      brand = "Jinko";
+      wattage = 580;
+      invBrand = "Solis";
+      invCap = "3kW";
+      batt = "Lithium Battery Pack 5.12kWh";
+      struct = "Standard";
+      net = "No";
+      instCharges = 40000;
+      netCharges = 0;
+    } else if (kwSize === 5) {
+      brand = "Jinko";
+      wattage = 580;
+      invBrand = "Knox";
+      invCap = "5kW";
+      batt = "Lithium Battery Pack 5.12kWh";
+      struct = "Standard";
+      net = "Yes";
+      instCharges = 50000;
+      netCharges = 90000;
+    } else if (kwSize === 7) {
+      brand = "Longi";
+      wattage = 575;
+      invBrand = "Knox";
+      invCap = "7kW";
+      batt = "Lithium Battery Pack 5.12kWh";
+      struct = "Standard";
+      net = "Yes";
+      instCharges = 60000;
+      netCharges = 90000;
+    } else if (kwSize === 10) {
+      brand = "Jinko";
+      wattage = 580;
+      invBrand = "Knox";
+      invCap = "10kW";
+      batt = "Lithium Battery Pack 10.24kWh";
+      struct = "Standard";
+      net = "Yes";
+      instCharges = 80000;
+      netCharges = 90000;
+    } else if (kwSize === 12) {
+      brand = "Jinko";
+      wattage = 580;
+      invBrand = "Knox";
+      invCap = "12kW";
+      batt = "Lithium Battery Pack 10.24kWh";
+      struct = "Standard";
+      net = "Yes";
+      instCharges = 90000;
+      netCharges = 90000;
+    } else if (kwSize === 15) {
+      brand = "JA Solar";
+      wattage = 550;
+      invBrand = "Solis";
+      invCap = "15kW";
+      batt = "Lithium Battery Pack 15.0kWh";
+      struct = "Elevated";
+      net = "Yes";
+      instCharges = 100000;
+      netCharges = 90000;
+    } else if (kwSize === 20) {
+      type = "On-grid";
+      brand = "Canadian Solar";
+      wattage = 580;
+      invBrand = "Goodwe";
+      invCap = "20kW";
+      batt = "None";
+      struct = "Standard";
+      net = "Yes";
+      instCharges = 120000;
+      netCharges = 90000;
+    } else if (kwSize === 25) {
+      type = "On-grid";
+      brand = "Canadian Solar";
+      wattage = 580;
+      invBrand = "Goodwe";
+      invCap = "25kW";
+      batt = "None";
+      struct = "Standard";
+      net = "Yes";
+      instCharges = 130000;
+      netCharges = 95000;
+    } else if (kwSize === 30) {
+      type = "On-grid";
+      brand = "JA Solar";
+      wattage = 550;
+      invBrand = "Solis";
+      invCap = "30kW";
+      batt = "None";
+      struct = "Girder";
+      net = "Yes";
+      instCharges = 150000;
+      netCharges = 100000;
+    } else if (kwSize === 50) {
+      type = "On-grid";
+      brand = "Jinko";
+      wattage = 580;
+      invBrand = "Goodwe";
+      invCap = "50kW";
+      batt = "None";
+      struct = "Girder";
+      net = "Yes";
+      instCharges = 200000;
+      netCharges = 120000;
+    } else if (kwSize === 100) {
+      type = "On-grid";
+      brand = "Jinko";
+      wattage = 580;
+      invBrand = "Solis";
+      invCap = "100kW";
+      batt = "None";
+      struct = "Girder";
+      net = "Yes";
+      instCharges = 350000;
+      netCharges = 150000;
+    }
+
+    const sector = kwSize >= 50 ? 'commercial' : 'residential';
+    setSystemSector(sector);
+    setSystemSizekW(kwSize);
+    setSystemType(type);
+    setPanelBrand(brand);
+    setPanelWattage(wattage);
+    setInverterBrand(invBrand);
+    setInverterCapacity(invCap);
+    setBatteryOption(batt);
+    setStructureType(struct);
+    setSelectedStructure(struct.toLowerCase() as any);
+    setNetMeteringRequired(net);
+    setInstallationCharges(instCharges);
+    setNetMeteringCharges(netCharges);
+
+    const defaultBoq = generateDefaultBoqRows(kwSize, type, struct, brand, wattage, invBrand, invCap, batt, net);
+    setBoqRows(defaultBoq);
+    setManualBoqItems(defaultBoq);
+    localStorage.setItem(`sunchaser_boq_${activeLead?.id}`, JSON.stringify(defaultBoq));
   };
 
-  // AI Solar Design Engine Inputs
-  const [billFile, setBillFile] = useState<File | null>(null);
-  const [billLoading, setBillLoading] = useState(false);
-  const [billParsedData, setBillParsedData] = useState<{
-    monthlyBill: number;
-    monthlyUnits: number;
-    location: string;
-    width: number;
-    length: number;
-    area: number;
-    backupReq: string;
-    fileName: string;
-  } | null>(null);
-
-  const [formMonthlyUnits, setFormMonthlyUnits] = useState<number>(985);
-  const [formRoofWidth, setFormRoofWidth] = useState<number>(30);
-  const [formRoofLength, setFormRoofLength] = useState<number>(25);
-  const [formBackupReq, setFormBackupReq] = useState<string>("Essential Loads");
-  const [formLocation, setFormLocation] = useState<string>("Lahore");
-
-  const [activeEngineTab, setActiveEngineTab] = useState<'ai_engine' | 'manual_config'>('ai_engine');
-  
-  // Custom AI Engineering assessment result
-  const [aiReportMarkdown, setAiReportMarkdown] = useState<string | null>(null);
-  const [aiReportLoading, setAiReportLoading] = useState<boolean>(false);
-
-  // Proposal creator states
-  const [proposalMarkdown, setProposalMarkdown] = useState<string | null>(null);
-  const [proposalLoading, setProposalLoading] = useState(false);
-  const [quoteCreatedConfirm, setQuoteCreatedConfirm] = useState(false);
-  const [whatsappNotice, setWhatsappNotice] = useState<string | null>(null);
-  const [whatsappLoading, setWhatsappLoading] = useState(false);
-
-  // Helper mapping functions
-  const getSunHoursByLocation = (loc: string): number => {
-    return 4.8; // Standard Pakistan insolation index
-  };
-
-  const getTariffByLocation = (loc: string): number => {
-    return 35.0; // Default Rs 35 per unit standard PK tariff
-  };
-
-  // Synchronize inputs dynamically when activeLead selection shifts
+  // Sync client details and BOQ rows when activeLead changes
   useEffect(() => {
     if (activeLead) {
-      const assumedUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
-      setFormMonthlyUnits(assumedUnits);
-      setFormLocation(activeLead.location || "Lahore");
-      
-      const rs = activeLead.roofSpace || 750;
-      const width = Math.ceil(Math.sqrt(rs));
-      setFormRoofWidth(width);
-      setFormRoofLength(Math.round(rs / width));
-      
-      setFormBackupReq(activeLead.backupRequirement || "Essential Loads");
-      setBillParsedData(null);
-      setBillFile(null);
-      setAiReportMarkdown(null);
+      setClientName(activeLead.name || "");
+      setClientPhone(activeLead.phone || "");
+      setClientEmail(activeLead.email || "");
+      setClientAddress(activeLead.address || "");
+      setCityArea(activeLead.location || "Lahore");
+      setBdmName(activeLead.assignedSalesperson || "Sarah Connor");
+      setQuoteDate(new Date().toISOString().split('T')[0]);
+      setEditingQuoteId(null);
 
-      // Load latest quote if available
-      const latestQuote = activeLead.quotes?.[0];
-      if (latestQuote) {
-        setClientName(latestQuote.clientName || activeLead.name || "");
-        setClientPhone(latestQuote.clientPhone || activeLead.phone || "");
-        setClientEmail(latestQuote.clientEmail || activeLead.email || "");
-        setClientAddress(latestQuote.clientAddress || activeLead.address || "");
-        setCnic(latestQuote.cnic || "");
-        setCityArea(latestQuote.cityArea || activeLead.location || "Lahore");
-        setBdmName(latestQuote.bdmName || activeLead.assignedSalesperson || "Sarah Connor");
-        setQuoteDate(latestQuote.quoteDate || new Date().toISOString().split('T')[0]);
-        setSystemSizekW(latestQuote.systemSizekW || 10);
-        setSystemType(latestQuote.systemType || 'Hybrid');
-        setPanelBrand(latestQuote.panelBrand || "Jinko");
-        setPanelWattage(latestQuote.panelWattage || 580);
-        setInverterBrand(latestQuote.inverterBrand || "Knox");
-        setInverterCapacity(latestQuote.inverterCapacity || "10kW");
-        setBatteryOption(latestQuote.batteryOption || "None");
-        setStructureType(latestQuote.structureType || "Standard");
-        setNetMeteringRequired(latestQuote.netMeteringRequired || "Yes");
-        setDiscount(latestQuote.discount || 0);
-        setPaymentSchedule(latestQuote.paymentSchedule || "50% Advance, 40% Delivery, 10% Commissioning");
-        
-        setLescoMeterNo(latestQuote.lescoSettings?.meterNo || "");
-        setLescoConsumerNo(latestQuote.lescoSettings?.consumerNo || "");
-        setLescoSanctionedLoad(latestQuote.lescoSettings?.sanctionedLoad || "");
-        setLescoPhaseType(latestQuote.lescoSettings?.phaseType || 'Three Phase');
-        setSocietyCharges(latestQuote.societyCharges || 0);
-        setTaxEnabled(latestQuote.taxEnabled || false);
-        setTaxRate(latestQuote.taxRate || 17);
-        setCustomNotes(latestQuote.customNotes || "");
-        const quoteItems = latestQuote.boqRows || latestQuote.boqItems || [];
-        setBoqRows(quoteItems);
-        setManualBoqItems(quoteItems);
-        setSelectedStructure(latestQuote.selectedStructure || 'standard');
-        
-        if (latestQuote.customStructure) {
-          setCustomStructName(latestQuote.customStructure.name || "");
-          setCustomStructDescEn(latestQuote.customStructure.descEn || "");
-          setCustomStructDescUr(latestQuote.customStructure.descUr || "");
-          setCustomStructRate(latestQuote.customStructure.rate || 0);
-          setCustomStructWeight(latestQuote.customStructure.weight || "");
-          setCustomStructMaterial(latestQuote.customStructure.materialType || "");
-          setCustomStructWarranty(latestQuote.customStructure.warranty || "");
-          setCustomStructWind(latestQuote.customStructure.windRating || "");
+      // Check localStorage first for autosave cache
+      const cachedBoq = localStorage.getItem(`sunchaser_boq_${activeLead.id}`);
+      if (cachedBoq) {
+        try {
+          const parsed = JSON.parse(cachedBoq);
+          setBoqRows(parsed);
+          setManualBoqItems(parsed);
+        } catch (e) {
+          console.error("Failed to parse cached BOQ", e);
         }
       } else {
-        setClientName(activeLead.name || "");
-        setClientPhone(activeLead.phone || "");
-        setClientEmail(activeLead.email || "");
-        setClientAddress(activeLead.address || "");
-        setCnic("");
-        setCityArea(activeLead.location || "Lahore");
-        setBdmName(activeLead.assignedSalesperson || "Sarah Connor");
-        setQuoteDate(new Date().toISOString().split('T')[0]);
-        const calcSize = activeLead.monthlyBill ? Number((activeLead.monthlyBill / (26 * 35)).toFixed(1)) : 8.5;
-        setSystemSizekW(calcSize);
-        setSystemType('Hybrid');
-        setPanelBrand("Jinko");
-        setPanelWattage(580);
-        setInverterBrand("Knox");
-        setInverterCapacity("10kW");
-        setBatteryOption("None");
-        setStructureType("Standard");
-        setNetMeteringRequired("Yes");
-        setDiscount(0);
-        setPaymentSchedule("50% Advance, 40% Delivery, 10% Commissioning");
-        
-        setLescoMeterNo("");
-        setLescoConsumerNo("");
-        setLescoSanctionedLoad("");
-        setLescoPhaseType('Three Phase');
-        setSocietyCharges(0);
-        setTaxEnabled(false);
-        setTaxRate(17);
-        setCustomNotes("");
-        setSelectedStructure('standard');
-        
-        // Generate default BOQ
-        const defaultBoq = generateDefaultBoqRows(calcSize, 'Hybrid', 'Standard', 'Jinko', 580, 'Knox', '10kW', 'None', 'Yes');
-        setBoqRows(defaultBoq);
-        setManualBoqItems(defaultBoq);
+        // Fallback to latest quote rows or generate defaults
+        const latestQuote = activeLead.quotes?.[0];
+        if (latestQuote) {
+          const qRows = latestQuote.boqRows || latestQuote.boqItems || [];
+          setBoqRows(qRows);
+          setManualBoqItems(qRows);
+          setSystemSizekW(latestQuote.systemSizekW || 10);
+          setSystemType(latestQuote.systemType || 'Hybrid');
+          setPanelBrand(latestQuote.panelBrand || "Jinko");
+          setPanelWattage(latestQuote.panelWattage || 580);
+          setInverterBrand(latestQuote.inverterBrand || "Knox");
+          setInverterCapacity(latestQuote.inverterCapacity || "10kW");
+          setBatteryOption(latestQuote.batteryOption || "None");
+          setSelectedStructure(latestQuote.selectedStructure || 'standard');
+          setNetMeteringRequired(latestQuote.netMeteringRequired || 'Yes');
+          setDiscount(latestQuote.discount || 0);
+          setPaymentSchedule(latestQuote.paymentSchedule || "50% Advance, 40% Delivery, 10% Commissioning");
+          setLescoMeterNo(latestQuote.lescoSettings?.meterNo || "");
+          setLescoConsumerNo(latestQuote.lescoSettings?.consumerNo || "");
+          setLescoSanctionedLoad(latestQuote.lescoSettings?.sanctionedLoad || "");
+          setLescoPhaseType(latestQuote.lescoSettings?.phaseType || 'Three Phase');
+          setSocietyCharges(latestQuote.societyCharges || 0);
+          setTaxEnabled(latestQuote.taxEnabled || false);
+          setTaxRate(latestQuote.taxRate || 17);
+          setCustomNotes(latestQuote.customNotes || "");
+        } else {
+          // Default system size calculation
+          const assumedUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
+          setFormMonthlyUnits(assumedUnits);
+          const calcSize = activeLead.monthlyBill ? Number((activeLead.monthlyBill / (26 * 35)).toFixed(1)) : 8.5;
+          setSystemSizekW(calcSize);
+          setSystemType('Hybrid');
+          setPanelBrand("Jinko");
+          setPanelWattage(580);
+          setInverterBrand("Knox");
+          setInverterCapacity("10kW");
+          setBatteryOption("None");
+          setSelectedStructure('standard');
+          setNetMeteringRequired('Yes');
+          setDiscount(0);
+          setPaymentSchedule("50% Advance, 40% Delivery, 10% Commissioning");
+          
+          const defaultBoq = generateDefaultBoqRows(calcSize, 'Hybrid', 'Standard', 'Jinko', 580, 'Knox', '10kW', 'None', 'Yes');
+          setBoqRows(defaultBoq);
+          setManualBoqItems(defaultBoq);
+        }
       }
-      setSelectedTemplate("custom");
     }
   }, [selectedLeadId]);
 
-  // Excel Row Actions
+  // Sync rows to localStorage on edit
+  const triggerAutosave = (updatedRows: BoqRow[]) => {
+    if (activeLead) {
+      localStorage.setItem(`sunchaser_boq_${activeLead.id}`, JSON.stringify(updatedRows));
+    }
+  };
+
+  // Excel Manual Builder Cell Handlers
+  const handleCellChange = (index: number, field: keyof BoqRow, value: any) => {
+    const updated = [...manualBoqItems];
+    if (!updated[index]) return;
+    
+    updated[index] = {
+      ...updated[index],
+      [field]: value
+    };
+
+    if (field === 'qty' || field === 'rate') {
+      const q = Number(updated[index].qty) || 0;
+      const r = Number(updated[index].rate) || 0;
+      updated[index].total = q * r;
+    }
+
+    const calculated = calculateRowTotalsAndSubtotals(updated);
+    setManualBoqItems(calculated);
+    setBoqRows(calculated);
+    triggerAutosave(calculated);
+  };
+
   const addBoqRow = (type: 'heading' | 'item' | 'subtotal') => {
-    const currentItems = Array.isArray(manualBoqItems) && manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
     const newRow: BoqRow = {
       id: `row-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type,
@@ -600,11 +774,13 @@ export default function SalesTeamApp({
     const updated = calculateRowTotalsAndSubtotals([...currentItems, newRow]);
     setManualBoqItems(updated);
     setBoqRows(updated);
+    triggerAutosave(updated);
   };
 
   const deleteBoqRow = (index: number) => {
-    const currentItems = Array.isArray(manualBoqItems) && manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
     const updatedRows = currentItems.filter((_, i) => i !== index);
+    
     // Re-index Sr No for items
     let itemCounter = 1;
     const reindexed = updatedRows.map(row => {
@@ -616,10 +792,11 @@ export default function SalesTeamApp({
     const updated = calculateRowTotalsAndSubtotals(reindexed);
     setManualBoqItems(updated);
     setBoqRows(updated);
+    triggerAutosave(updated);
   };
 
   const duplicateBoqRow = (index: number) => {
-    const currentItems = Array.isArray(manualBoqItems) && manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
     const rowToDuplicate = currentItems[index];
     if (!rowToDuplicate) return;
     const duplicatedRow: BoqRow = {
@@ -641,10 +818,11 @@ export default function SalesTeamApp({
     const updated = calculateRowTotalsAndSubtotals(reindexed);
     setManualBoqItems(updated);
     setBoqRows(updated);
+    triggerAutosave(updated);
   };
 
   const moveBoqRow = (index: number, direction: 'up' | 'down') => {
-    const currentItems = Array.isArray(manualBoqItems) && manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
     if (direction === 'up' && index === 0) return;
     if (direction === 'down' && index === currentItems.length - 1) return;
     
@@ -666,32 +844,191 @@ export default function SalesTeamApp({
     const updated = calculateRowTotalsAndSubtotals(reindexed);
     setManualBoqItems(updated);
     setBoqRows(updated);
+    triggerAutosave(updated);
   };
 
   const handleLoadFromLibrary = (index: number, libraryItemId: string) => {
-    if (!settings || !Array.isArray(settings.boqMasterLibrary)) return;
-    const libItem = settings.boqMasterLibrary.find((item: any) => item && item.id === libraryItemId);
+    const libItem = products.find((item: any) => item && item.id === libraryItemId);
     if (!libItem) return;
     
-    const currentItems = Array.isArray(manualBoqItems) && manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
     const updated = [...currentItems];
     if (!updated[index]) return;
+    
+    const qtyVal = updated[index].qty || 1;
+    const saleRate = Number(libItem.price) || 0;
+    
     updated[index] = {
       ...updated[index],
       name: libItem.brand + " " + libItem.model,
       brand: libItem.brand,
-      description: libItem.description || "",
-      unit: libItem.unit || "Pcs",
-      rate: libItem.salePrice || 0,
-      total: (updated[index].qty || 1) * (libItem.salePrice || 0)
+      description: libItem.specifications?.description || libItem.name || "",
+      unit: "Pcs",
+      rate: saleRate,
+      total: qtyVal * saleRate
     };
     
     const calculated = calculateRowTotalsAndSubtotals(updated);
     setManualBoqItems(calculated);
     setBoqRows(calculated);
+    triggerAutosave(calculated);
   };
 
-  const handleLoadQuote = (quote: any) => {
+  // Compile Quote Payload & Send to API
+  const handleSaveQuote = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!activeLead) return;
+    if (savingQuote) return;
+    setSubmitError(null);
+
+    // Validate size limits
+    const sMin = systemSector === 'residential' ? 3.0 : 30.0;
+    const sMax = systemSector === 'residential' ? 30.0 : 500.0;
+    if (systemSizekW < sMin || systemSizekW > sMax) {
+      setSubmitError(`Impossible system size for ${systemSector} sector. Must be between ${sMin}kW and ${sMax}kW.`);
+      return;
+    }
+
+    setSavingQuote(true);
+
+    try {
+      const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
+      
+      // Structure specs payload
+      let customStructurePayload = undefined;
+      if (selectedStructure === 'custom') {
+        customStructurePayload = {
+          name: customStructName,
+          descEn: customStructDescEn,
+          descUr: customStructDescUr,
+          rate: Number(customStructRate) || 0,
+          weight: customStructWeight,
+          materialType: customStructMaterial,
+          warranty: customStructWarranty,
+          windRating: customStructWind,
+          image: ""
+        };
+      }
+
+      const calculatedGrandTotal = boqRows
+        .filter(r => r && r.type === 'item')
+        .reduce((sum, r) => sum + (r.total || 0), 0);
+
+      const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
+      const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+
+      // Generate client-side idempotencyKey
+      const idempotencyKey = `ik-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+      const quoteData = {
+        idempotencyKey,
+        systemSizekW,
+        panelCount: panelsCount,
+        panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
+        inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
+        batteryCapacity: batteryOption !== "None" ? batteryOption : "",
+        totalCost: calculatedGrandTotal,
+        structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
+        accessories,
+        installationCharges: Number(boqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
+        netMeteringCharges: netMeteringRequired === "Yes" ? (Number(boqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
+        paymentTerms: paymentSchedule,
+        warrantyTerms,
+        termsAndConditions,
+
+        // Custom Lahore/Pakistan fields
+        clientName,
+        clientPhone,
+        clientEmail,
+        clientAddress,
+        cnic,
+        cityArea,
+        bdmName,
+        quoteDate,
+        systemType,
+        panelBrand,
+        panelWattage,
+        inverterBrand,
+        inverterCapacity,
+        batteryOption,
+        netMeteringRequired,
+        discount: Number(discount) || 0,
+        paymentSchedule,
+        boqItems: boqRows,
+
+        // Redesigned Manual Builder fields
+        lescoSettings: {
+          meterNo: lescoMeterNo,
+          consumerNo: lescoConsumerNo,
+          sanctionedLoad: lescoSanctionedLoad,
+          phaseType: lescoPhaseType
+        },
+        societyCharges: Number(societyCharges) || 0,
+        taxEnabled,
+        taxRate: Number(taxRate) || 0,
+        taxAmount: calculatedTaxAmount,
+        selectedStructure,
+        customStructure: customStructurePayload,
+        boqRows: boqRows,
+        customNotes,
+        grandTotal: calculatedGrandTotal,
+        netTotal: calculatedNetTotal
+      };
+
+      if (editingQuoteId) {
+        // Overwrite existing quote record
+        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quoteId: editingQuoteId, quoteData })
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to overwrite quote.");
+        }
+        setEditingQuoteId(null);
+      } else {
+        // Create new quote version
+        await on创造Quote(activeLead.id, quoteData);
+      }
+
+      setQuoteCreatedConfirm(true);
+      setTimeout(() => setQuoteCreatedConfirm(false), 8000);
+
+      // Clean local storage cache
+      localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
+
+      // Refresh global state
+      if (onRefreshState) onRefreshState();
+
+      // Open PDF in a new tab
+      window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank");
+    } catch (err: any) {
+      console.error("Quote save failed:", err);
+      setSubmitError(err.message || "Failed to save quotation on server.");
+    } finally {
+      setSavingQuote(false);
+    }
+  };
+
+  const handleDuplicateQuote = async (quote: any) => {
+    if (!activeLead) return;
+    try {
+      const dupQuote = {
+        ...quote,
+        id: undefined,
+        createdAt: new Date().toISOString(),
+        quoteDate: new Date().toISOString().split('T')[0],
+      };
+      await on创造Quote(activeLead.id, dupQuote);
+      if (onRefreshState) onRefreshState();
+    } catch (err: any) {
+      console.error("Failed to duplicate quote:", err);
+    }
+  };
+
+  const handleLoadQuoteForEditing = (quote: any) => {
+    setEditingQuoteId(quote.id);
     setClientName(quote.clientName || activeLead?.name || "");
     setClientPhone(quote.clientPhone || activeLead?.phone || "");
     setClientEmail(quote.clientEmail || activeLead?.email || "");
@@ -736,320 +1073,287 @@ export default function SalesTeamApp({
       setCustomStructWind(quote.customStructure.windRating || "");
     }
     
-    // Switch to manual tab
-    setActiveEngineTab('manual_config');
+    // Switch to manual BOQ tab
+    setActiveModule('boq_builder');
   };
 
-  const handleDuplicateQuote = async (quote: any) => {
-    if (!activeLead) return;
-    try {
-      const dupQuote = {
-        ...quote,
-        id: undefined, // Let backend assign new ID
-        createdAt: new Date().toISOString(),
-        quoteDate: new Date().toISOString().split('T')[0],
-      };
-      
-      await on创造Quote(activeLead.id, dupQuote);
-      
-      setQuoteCreatedConfirm(true);
-      setTimeout(() => setQuoteCreatedConfirm(false), 8000);
-    } catch (err: any) {
-      console.error("Failed to duplicate quote:", err);
-    }
-  };
+  const handleImageUpload = async (pageId: string, file: File, type: 'image' | 'bg') => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onloadend = async () => {
+      const base64data = reader.result as string;
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/upload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileType: file.type,
+            base64: base64data
+          })
+        });
+        if (!res.ok) throw new Error("Upload failed");
+        const data = await res.json();
+        const url = data.url;
+        
+        // Find page configuration
+        const pageToUpdate = quoteTemplatePages.find(p => p.id === pageId);
+        if (pageToUpdate) {
+          const updatedPage = { ...pageToUpdate };
+          if (type === 'image') updatedPage.image_url = url;
+          else updatedPage.bg_image_url = url;
 
-  // Template Quick Loader
-  const loadTemplate = (tplKey: string) => {
-    setSelectedTemplate(tplKey);
-    if (tplKey === "custom") return;
-
-    let size = 10;
-    let type: 'On-grid' | 'Hybrid' | 'Off-grid' = 'Hybrid';
-    let brand = "Jinko";
-    let wattage = 580;
-    let invBrand = "Knox";
-    let invCap = "10kW";
-    let batt = "Lithium Battery Pack 10.24kWh";
-    let struct = "Standard";
-    let net = 'Yes' as const;
-
-    if (tplKey === "5kw_hybrid") {
-      size = 5;
-      type = "Hybrid";
-      brand = "Longi";
-      wattage = 580;
-      invBrand = "Growatt";
-      invCap = "5kW";
-      batt = "Lithium Battery Pack 5.12kWh";
-      struct = "Standard";
-      net = "Yes";
-    } else if (tplKey === "10kw_hybrid") {
-      size = 10;
-      type = "Hybrid";
-      brand = "Jinko";
-      wattage = 580;
-      invBrand = "Knox";
-      invCap = "10kW";
-      batt = "Lithium Battery Pack 10.24kWh";
-      struct = "Standard";
-      net = "Yes";
-    } else if (tplKey === "15kw_hybrid") {
-      size = 15;
-      type = "Hybrid";
-      brand = "JA Solar";
-      wattage = 580;
-      invBrand = "Solis";
-      invCap = "15kW";
-      batt = "Lithium Battery Pack 15.0kWh";
-      struct = "Elevated";
-      net = "Yes";
-    } else if (tplKey === "20kw_ongrid") {
-      size = 20;
-      type = "On-grid";
-      brand = "Canadian Solar";
-      wattage = 580;
-      invBrand = "Goodwe";
-      invCap = "20kW";
-      batt = "None";
-      struct = "Standard";
-      net = "Yes";
-    } else if (tplKey === "30kw_commercial") {
-      size = 30;
-      type = "On-grid";
-      brand = "Longi";
-      wattage = 580;
-      invBrand = "Goodwe";
-      invCap = "30kW";
-      batt = "None";
-      struct = "Girder";
-      net = "Yes";
-    }
-
-    setSystemSizekW(size);
-    setSystemType(type);
-    setPanelBrand(brand);
-    setPanelWattage(wattage);
-    setInverterBrand(invBrand);
-    setInverterCapacity(invCap);
-    setBatteryOption(batt);
-    setStructureType(struct);
-    setNetMeteringRequired(net);
-    setSelectedStructure(struct.toLowerCase() as any);
-
-    const defaultBoq = generateDefaultBoqRows(size, type, struct, brand, wattage, invBrand, invCap, batt, net);
-    setBoqRows(defaultBoq);
-  };
-
-  const handleQuoteFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeLead) return;
-    setSubmitError(null);
-
-    try {
-      const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
-      
-      // Structure details payload
-      let customStructurePayload = undefined;
-      if (selectedStructure === 'custom') {
-        customStructurePayload = {
-          name: customStructName,
-          descEn: customStructDescEn,
-          descUr: customStructDescUr,
-          rate: Number(customStructRate) || 0,
-          weight: customStructWeight,
-          materialType: customStructMaterial,
-          warranty: customStructWarranty,
-          windRating: customStructWind,
-          image: ""
-        };
+          await fetch(`${API_BASE_URL}/api/db/update`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "edit",
+              table: "quoteTemplatePages",
+              id: pageId,
+              data: updatedPage
+            })
+          });
+          
+          if (onRefreshState) onRefreshState();
+          alert("Image uploaded successfully!");
+        }
+      } catch (err) {
+        console.error("Upload error:", err);
+        alert("Failed to upload image.");
       }
-
-      const calculatedGrandTotal = safeBoqItems
-        .filter(r => r && r.type === 'item')
-        .reduce((sum, r) => sum + (r.total || 0), 0);
-
-      const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
-      const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
-
-      const quoteData = {
-        systemSizekW,
-        panelCount: panelsCount,
-        panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
-        inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
-        batteryCapacity: batteryOption !== "None" ? batteryOption : "",
-        totalCost: calculatedGrandTotal,
-        structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
-        accessories,
-        installationCharges: Number(safeBoqItems.find(i => i && i.id === 'install_service_row')?.rate) || 80000,
-        netMeteringCharges: netMeteringRequired === "Yes" ? (Number(safeBoqItems.find(i => i && i.id === 'net_metering_row')?.rate) || 90000) : 0,
-        paymentTerms: paymentSchedule,
-        warrantyTerms,
-        termsAndConditions,
-
-        // Custom Lahore/Pakistan quotation fields
-        clientName,
-        clientPhone,
-        clientEmail,
-        clientAddress,
-        cnic,
-        cityArea,
-        bdmName,
-        quoteDate,
-        systemType,
-        panelBrand,
-        panelWattage,
-        inverterBrand,
-        inverterCapacity,
-        batteryOption,
-        netMeteringRequired,
-        discount: Number(discount) || 0,
-        paymentSchedule,
-        boqItems: safeBoqItems,
-
-        // Redesigned Manual Builder fields
-        lescoSettings: {
-          meterNo: lescoMeterNo,
-          consumerNo: lescoConsumerNo,
-          sanctionedLoad: lescoSanctionedLoad,
-          phaseType: lescoPhaseType
-        },
-        societyCharges: Number(societyCharges) || 0,
-        taxEnabled,
-        taxRate: Number(taxRate) || 0,
-        taxAmount: calculatedTaxAmount,
-        selectedStructure,
-        customStructure: customStructurePayload,
-        boqRows: safeBoqItems,
-        customNotes,
-        grandTotal: calculatedGrandTotal,
-        netTotal: calculatedNetTotal
-      };
-
-      if (typeof on创造Quote === 'function') {
-        await on创造Quote(activeLead.id, quoteData);
-      }
-      setQuoteCreatedConfirm(true);
-      setTimeout(() => setQuoteCreatedConfirm(false), 8000);
-
-      // Open PDF in a new tab
-      window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank");
-    } catch (err: any) {
-      console.error("Quote creation failed:", err);
-      setSubmitError(err.message || "Failed to compile quotation on database.");
-    }
+    };
   };
 
-  // Call server-side Gemini endpoint to write customized proposal document
-  const triggerAIProposalGeneration = async () => {
-    if (!activeLead) return;
-    setProposalLoading(true);
-    setProposalMarkdown(null);
+  const handleSavePageTextChanges = async (page: any, data: any) => {
     try {
-      const res = await generateProposalDocument({
-        customerName: activeLead.name,
-        address: activeLead.address,
-        systemSizekW: systemSizekW,
-        batteryUpgrade: !!batteryCapacity,
-        totalCost: totalCost,
-        notes: `Bill context: ${currencySymbol}${activeLead.monthlyBill}/mo, Roof pitch context: unshaded ${activeLead.roofSpace} sq ft.`
+      await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          table: "quoteTemplatePages",
+          id: page.id,
+          data: { ...page, ...data }
+        })
       });
-      setProposalMarkdown(res.proposalMarkdown);
+      if (onRefreshState) onRefreshState();
+      alert("Page configuration saved successfully!");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save page changes.");
+    }
+  };
+
+  const handleUpdatePageSortOrder = async (pageId: string, currentOrder: number, direction: 'up' | 'down') => {
+    const list = [...quoteTemplatePages].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+    const idx = list.findIndex(p => p.id === pageId);
+    if (idx === -1) return;
+    
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+    
+    const tempOrder = list[idx].sort_order;
+    list[idx].sort_order = list[targetIdx].sort_order;
+    list[targetIdx].sort_order = tempOrder;
+
+    try {
+      // Save both pages updates
+      await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit", table: "quoteTemplatePages", id: list[idx].id, data: { sort_order: list[idx].sort_order } })
+      });
+      await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit", table: "quoteTemplatePages", id: list[targetIdx].id, data: { sort_order: list[targetIdx].sort_order } })
+      });
+
+      if (onRefreshState) onRefreshState();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Product library CRUD helpers
+  const handleOpenAddProduct = () => {
+    setEditingProduct(null);
+    setProductFormBrand("");
+    setProductFormModel("");
+    setProductFormCategory("Solar Panels");
+    setProductFormSku("");
+    setProductFormPrice(0);
+    setProductFormCostPrice(0);
+    setProductFormStock(10);
+    setProductFormWarranty("");
+    setProductFormWattage(0);
+    setProductFormDesc("");
+    setIsProductModalOpen(true);
+  };
+
+  const handleOpenEditProduct = (prod: any) => {
+    setEditingProduct(prod);
+    setProductFormBrand(prod.brand || "");
+    setProductFormModel(prod.model || "");
+    setProductFormCategory(prod.category || "Solar Panels");
+    setProductFormSku(prod.sku || "");
+    setProductFormPrice(prod.price || 0);
+    setProductFormCostPrice(prod.specifications?.costPrice || 0);
+    setProductFormStock(prod.stock || 0);
+    setProductFormWarranty(prod.warrantyPeriod || "");
+    setProductFormWattage(prod.specifications?.wattage || 0);
+    setProductFormDesc(prod.specifications?.description || "");
+    setIsProductModalOpen(true);
+  };
+
+  const handleSaveProductForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = {
+      id: editingProduct ? editingProduct.id : `prod-${Date.now()}`,
+      name: `${productFormBrand} ${productFormModel}`,
+      category: productFormCategory,
+      brand: productFormBrand,
+      model: productFormModel,
+      sku: productFormSku || `SKU-${Date.now().toString().slice(-6)}`,
+      price: Number(productFormPrice),
+      stock: Number(productFormStock),
+      warrantyPeriod: productFormWarranty,
+      images: editingProduct?.images || ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
+      specifications: {
+        wattage: Number(productFormWattage),
+        costPrice: Number(productFormCostPrice),
+        description: productFormDesc
+      }
+    };
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: editingProduct ? "edit" : "add",
+          table: "products",
+          id: payload.id,
+          data: payload
+        })
+      });
+      if (!response.ok) throw new Error("Catalog synchronization failed.");
+      
+      setIsProductModalOpen(false);
+      if (onRefreshState) onRefreshState();
+      alert("Product catalog updated successfully!");
     } catch (err: any) {
       console.error(err);
-      setProposalMarkdown("Unstable AI channel. Sunchaser standard draft is saved.");
-    } finally {
-      setProposalLoading(false);
+      alert(err.message || "Failed to update product library.");
     }
   };
 
-  // 1. AI Sizing Calculations computation block
-  const sunHours = getSunHoursByLocation(formLocation);
-  const tariffRate = getTariffByLocation(formLocation);
-  const calculatedRoofArea = formRoofWidth * formRoofLength;
+  const handleDeleteProduct = async (prodId: string) => {
+    if (!window.confirm("Are you sure you want to delete this product from database?")) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          table: "products",
+          id: prodId
+        })
+      });
+      if (!response.ok) throw new Error("Failed to delete product from database.");
+      if (onRefreshState) onRefreshState();
+      alert("Product deleted.");
+    } catch (e) {
+      console.error(e);
+      alert("Error deleting product.");
+    }
+  };
 
+  // Math Sizer calculations preview
+  const sunHours = 4.8;
+  const tariffRate = 35.0;
+  const calculatedRoofArea = formRoofWidth * formRoofLength;
   const dailyKwhNeeded = formMonthlyUnits / 30;
-  const calculatedSystemSizekW = Number(Math.max(3.0, Math.min(30.0, Math.round((dailyKwhNeeded / sunHours) * 1.25 * 10) / 10)).toFixed(1));
+  
+  const minKw = systemSector === 'residential' ? 3.0 : 30.0;
+  const maxKw = systemSector === 'residential' ? 30.0 : 500.0;
+  const calculatedSystemSizekW = Number(Math.max(minKw, Math.min(maxKw, Math.round((dailyKwhNeeded / sunHours) * 1.25 * 10) / 10)).toFixed(1));
 
   const maxPanelsByRoof = Math.floor(calculatedRoofArea / 20);
   const maxKwByRoof = Number(((maxPanelsByRoof * 400) / 1000).toFixed(1));
-  
   const isRoofConstrained = calculatedSystemSizekW > maxKwByRoof;
-  const actualSystemSizekW = isRoofConstrained ? maxKwByRoof : calculatedSystemSizekW;
+  const actualSystemSizekW = Math.max(minKw, Math.min(maxKw, isRoofConstrained ? maxKwByRoof : calculatedSystemSizekW));
 
-  const actualPanelCount = Math.ceil((actualSystemSizekW * 1000) / 400);
-  const inverterRec = `${actualPanelCount}x Enphase IQ8 Microinverters (Dual frequency-lock grid tied module)`;
+  const isHighUnits = systemSector === 'residential'
+    ? formMonthlyUnits > 3500
+    : formMonthlyUnits > 60000;
 
-  let batteryCapacityRec = "";
-  let batteryCostValue = 0;
-  if (formBackupReq.includes("13.5kWh") || formBackupReq.includes("Essential")) {
-    batteryCapacityRec = "Sunchaser Core 13.5kWh Stack";
-    batteryCostValue = 6200;
-  } else if (formBackupReq.includes("27kWh") || formBackupReq.includes("Whole")) {
-    batteryCapacityRec = "2x Sunchaser Core 27.0kWh Storage Array";
-    batteryCostValue = 11800;
-  } else if (formBackupReq.includes("40.5kWh") || formBackupReq.includes("Off-Grid")) {
-    batteryCapacityRec = "3x Sunchaser Core 40.5kWh Power Independence Pack";
-    batteryCostValue = 16900;
-  } else {
-    batteryCapacityRec = "";
-    batteryCostValue = 0;
-  }
-
+  const actualPanelCount = Math.ceil((actualSystemSizekW * 1000) / 580);
+  const inverterRec = `${inverterBrand} ${inverterCapacity} Inverter`;
   const monthlyGeneration = Math.round(actualSystemSizekW * sunHours * 30 * 0.82);
   const monthlySavingsAmt = Math.round(monthlyGeneration * tariffRate);
+  
+  const calculatedTotalCost = Math.round((actualSystemSizekW * 1550) + (actualSystemSizekW * 450) + 1200 + installationCharges + netMeteringCharges);
+  const calculatedROI = Number(((monthlySavingsAmt * 12 / calculatedTotalCost) * 100).toFixed(1));
+  const calculatedPayback = Number((calculatedTotalCost / (monthlySavingsAmt * 12)).toFixed(1));
 
-  const calculatedTotalCost = Math.round((actualSystemSizekW * 1550) + (actualSystemSizekW * 450) + batteryCostValue + 1200 + installationCharges + netMeteringCharges);
-  const calculatedFederalTaxCredit = Math.round(calculatedTotalCost * 0.3);
-  const calculatedNetCost = calculatedTotalCost - calculatedFederalTaxCredit;
-
-  const annualSavingsAmt = monthlySavingsAmt * 12;
-  const calculatedROI = calculatedNetCost > 0 ? Number(((annualSavingsAmt / calculatedNetCost) * 100).toFixed(1)) : 0;
-  const calculatedPayback = annualSavingsAmt > 0 ? Number((calculatedNetCost / annualSavingsAmt).toFixed(1)) : 0;
-
-  // Dynamic manual BOQ calculations with safe defaults and null checks
-  const grandTotal = (manualBoqItems || [])
+  // Dynamic manual BOQ calculations
+  const grandTotal = boqRows
     .filter(r => r && r.type === 'item')
     .reduce((sum, r) => sum + (r.total || 0), 0);
   const calculatedTaxAmount = taxEnabled ? Math.round(grandTotal * (taxRate / 100)) : 0;
   const netTotal = grandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
 
-  // Safe checks for sizer properties
-  const safeBoqItems = Array.isArray(manualBoqItems) ? manualBoqItems : [];
-  const safeSelectedPanelId = selectedPanelId || "";
-  const safeSelectedInverterId = selectedInverterId || "";
-  const safeSelectedBatteryId = selectedBatteryId || "";
-  const safeSelectedMountId = selectedMountId || "";
+  // Format helper for PKR currency representation
+  const formatPKR = (num: number) => {
+    return "Rs. " + (num || 0).toLocaleString('en-PK');
+  };
+
+  // Filter products by search and category
+  const filteredProducts = products.filter(p => {
+    const matchesCat = p.category === selectedProductCategory;
+    const matchesSearch = !productSearchQuery ? true : (
+      (p.brand || "").toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+      (p.model || "").toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+      (p.name || "").toLowerCase().includes(productSearchQuery.toLowerCase())
+    );
+    return matchesCat && matchesSearch;
+  });
 
   return (
-    <div id="sales-team-workspace" className="space-y-6 text-xs">
+    <div id="sales-team-workspace" className="space-y-6 text-xs text-slate-200">
       
       {/* Information Header Banner Card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:align-middle md:items-center gap-4 shadow-sm">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-sm">
         <div>
           <span className="text-[10px] text-amber-400 font-bold tracking-wider font-mono bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
-            SOLAR GENERATIVE PROPOSAL STUDIO
+            SUNCHASER CRM &amp; GENERATIVE PROPOSAL DECK
           </span>
           <h2 className="text-xl md:text-2xl font-bold tracking-tight text-white font-sans mt-2">
-            Advisor Quotation & Design Deck
+            Quotation RESTUCTURE workspace
           </h2>
           <p className="text-slate-400 mt-1 text-xs">
-            Formulate custom panel grid cost plans, configure storage accessories, model ROI curves, and compile AI-generated contract agreements.
+            Calculate system offsets, compile custom spreadsheet bills of quantities, audit PDF template layouts, and inventory real Pakistan solar parts.
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* SIDE BAR: SELECT MY CRM SALES ASSIGNMENTS */}
-        <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-md">
-          <div className="border-b border-slate-800 pb-2">
-            <h3 className="text-sm font-bold text-slate-105 font-sans">Active Target Clients</h3>
-            <span className="text-[10px] text-slate-400 font-sans">All available candidates needing pricing layouts.</span>
+        {/* SIDE BAR: CRM TARGET CLIENT SELECTION */}
+        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-md text-left">
+          <div className="border-b border-slate-800 pb-2 flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-bold text-slate-100 font-sans">Target Clients</h3>
+              <span className="text-[10px] text-slate-500 font-sans">Active sales assignments.</span>
+            </div>
+            <span className="bg-slate-850 px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 font-bold">
+              {leads.length}
+            </span>
           </div>
 
-          <div className="space-y-2.5 max-h-[580px] overflow-y-auto pr-1">
-            {salesLeads.length > 0 ? (
-              salesLeads.map((lead) => {
+          <div className="space-y-2.5 max-h-[620px] overflow-y-auto pr-1">
+            {leads.length > 0 ? (
+              leads.map((lead) => {
                 const isSelected = selectedLeadId === lead.id;
                 return (
                   <button
@@ -1057,12 +1361,12 @@ export default function SalesTeamApp({
                     type="button"
                     onClick={() => {
                       setSelectedLeadId(lead.id);
-                      setSystemSizekW(lead.monthlyBill ? Number((lead.monthlyBill / 26).toFixed(1)) : 8.5);
+                      setEditingQuoteId(null);
                     }}
                     className={`w-full p-4 rounded-2xl border text-left cursor-pointer transition ${
                       isSelected
                         ? "bg-slate-950 border-amber-500/40 text-white shadow-lg"
-                        : "bg-slate-950/70 border-slate-850 hover:bg-slate-800/50 text-slate-300"
+                        : "bg-slate-950/70 border-slate-850 hover:bg-slate-800/50 text-slate-350"
                     }`}
                   >
                     <div className="flex justify-between items-start mb-1 font-sans">
@@ -1073,100 +1377,128 @@ export default function SalesTeamApp({
                         {lead.status}
                       </span>
                     </div>
-                    <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {lead.address}</p>
+                    <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {lead.address || "Lahore, Pakistan"}</p>
                     
-                    {/* Small layout tags */}
                     <div className="flex justify-between text-[9px] font-mono text-slate-500 pt-1.5 border-t border-slate-800/50">
-                      <span>Monthly Bill: {currencySymbol}{lead.monthlyBill}</span>
-                      <span className="text-amber-550 text-amber-500 font-bold">AI Probability: {lead.conversionProbability || 50}%</span>
+                      <span>Units: {lead.monthlyUnits || Math.round(lead.monthlyBill / 35)} kWh</span>
+                      <span className="text-amber-500 font-bold">Prob: {lead.conversionProbability || 50}%</span>
                     </div>
                   </button>
                 );
               })
             ) : (
-              <div className="text-center py-12 text-slate-500 font-mono">No relevant client leads.</div>
+              <div className="text-center py-12 text-slate-500 font-mono">No target clients available.</div>
             )}
           </div>
         </div>
 
-        {/* STUDY CONFIGURATION WORKSPACE */}
-        <div className="lg:col-span-8 space-y-6">
+        {/* MAIN CONFIGURATION AREA */}
+        <div className="lg:col-span-9 space-y-6">
           {activeLead ? (
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            <div className="space-y-6">
               
-              {/* QUOTATION PROPOSAL INVOICING BUILDER */}
-              <div className="xl:col-span-7 bg-slate-900 border border-slate-850 rounded-3xl p-5 md:p-6 shadow space-y-6">
-                
-                {/* Mode Selector Tabs */}
-                <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-850">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveEngineTab('ai_engine');
-                      // Sync calculated values to manual quotes state
-                      setSystemSizekW(actualSystemSizekW);
-                      setBatteryCapacity(batteryCapacityRec);
-                      setTotalCost(calculatedTotalCost);
-                    }}
-                    className={`flex-1 py-2 px-3 rounded-xl font-sans font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                      activeEngineTab === 'ai_engine'
-                        ? 'bg-amber-500 text-slate-950 shadow'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
-                    }`}
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>AI Solar Design Engine</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      let items: any[] = [];
-                      const latestQuote = activeLead?.quotes?.[0];
-                      if (latestQuote && ((latestQuote.boqRows && latestQuote.boqRows.length > 0) || (latestQuote.boqItems && latestQuote.boqItems.length > 0))) {
-                        handleLoadQuote(latestQuote);
-                        items = latestQuote.boqRows || latestQuote.boqItems || [];
-                      } else {
-                        // Sync calculated values from AI engine to states
-                        setSystemSizekW(actualSystemSizekW);
-                        setPanelBrand('Jinko');
-                        setPanelWattage(400);
-                        setInverterBrand('Knox');
-                        setInverterCapacity(`${actualSystemSizekW}kW`);
-                        const finalBattery = batteryCapacityRec || 'None';
-                        setBatteryOption(finalBattery);
-                        setNetMeteringRequired('Yes');
-                        
-                        items = generateDefaultBoqItems(actualSystemSizekW, finalBattery, 400, `${actualSystemSizekW}kW`);
-                      }
-                      
-                      setManualBoqItems(items);
-                      setBoqRows(items);
-                      setActiveEngineTab('manual_config');
-                    }}
-                    className={`flex-1 py-2 px-3 rounded-xl font-sans font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                      activeEngineTab === 'manual_config'
-                        ? 'bg-amber-500 text-slate-950 shadow'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
-                    }`}
-                  >
-                    <Settings2 className="h-3.5 w-3.5" />
-                    <span>Manual Override Sizer</span>
-                  </button>
+              {/* Client Briefing Profile summary card */}
+              <div className="bg-slate-900 border border-slate-850 p-5 rounded-3xl flex flex-col md:flex-row justify-between gap-4 text-left shadow-sm">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-white font-sans">{activeLead.name}</h3>
+                    <span className="text-[10px] bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded-full">
+                      ID: {activeLead.id}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">
+                    <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>
+                    <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>
+                    <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.location || "Lahore"}</span>
+                    <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {activeLead.assignedSalesperson || "Unassigned"}</span>
+                  </div>
                 </div>
 
-                {activeEngineTab === 'ai_engine' ? (
-                  <div className="space-y-6 text-left">
-                    {/* 1. INPUTS SECTION */}
-                    <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-850/60 space-y-4">
-                      <div className="flex items-center gap-1.5 border-b border-slate-800/60 pb-2">
+                <div className="flex gap-2 self-start md:self-center">
+                  <button
+                    type="button"
+                    onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}`, "_blank")}
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5 text-amber-500" /> Sizer Summary
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank")}
+                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer animate-pulse"
+                  >
+                    <Eye className="h-3.5 w-3.5" /> Client Proposal PDF
+                  </button>
+                </div>
+              </div>
+
+              {/* MODULE SELECTOR ROUTING TAB BAR */}
+              <div className="flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5">
+                {[
+                  { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
+                  { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
+                  { id: 'templates', label: 'Quote Templates', icon: Layers },
+                  { id: 'quotes', label: 'Generated Quotes', icon: FileText },
+                  { id: 'products', label: 'Product Library', icon: Settings }
+                ].map((mod) => {
+                  const Icon = mod.icon;
+                  const isCurrent = activeModule === mod.id;
+                  return (
+                    <button
+                      key={mod.id}
+                      type="button"
+                      onClick={() => setActiveModule(mod.id as any)}
+                      className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl font-sans font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        isCurrent
+                          ? 'bg-amber-500 text-slate-950 shadow'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{mod.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Editing active banner notice */}
+              {editingQuoteId && (
+                <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 p-3 rounded-2xl flex justify-between items-center text-left">
+                  <div>
+                    <strong className="block font-bold">⚠️ EDITING MODE ACTIVE: Quote #{editingQuoteId}</strong>
+                    <span className="text-[10px] font-mono">Any save or submit operations will overwrite this version instead of duplicating.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingQuoteId(null);
+                      // reload defaults
+                      applyPackage(10);
+                    }}
+                    className="bg-amber-500 text-slate-950 px-3 py-1 rounded-xl text-[10px] font-sans font-bold hover:bg-amber-400 cursor-pointer"
+                  >
+                    Cancel Edit
+                  </button>
+                </div>
+              )}
+
+              {/* MODULE 1: AUTO SIZER VIEW */}
+              {activeModule === 'sizer' && (
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 text-left">
+                  
+                  {/* Left config form inputs */}
+                  <div className="xl:col-span-7 bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6">
+                    
+                    <div className="space-y-3.5">
+                      <div className="flex items-center gap-1.5 border-b border-slate-800 pb-2">
                         <Upload className="h-4 w-4 text-amber-500" />
-                        <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-sans">1. Sunchaser Sizing Inputs</h4>
+                        <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">1. LESCO Bill Scanner &amp; Inputs</h4>
                       </div>
 
+                      {/* OCR Scanner upload box */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Drag and Drop / OCR bill Upload with manual backup */}
-                        <div className="space-y-2 text-left">
-                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Electricity Bill Upload (OCR Scan)</label>
+                        <div className="space-y-2">
+                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">LESCO Electric bill scan (OCR)</label>
                           <div className="border border-dashed border-slate-800 rounded-xl p-3 bg-slate-950/90 text-center hover:border-amber-500/50 transition relative group cursor-pointer">
                             <input
                               type="file"
@@ -1181,26 +1513,32 @@ export default function SalesTeamApp({
 
                                 setTimeout(() => {
                                   const parsed = {
-                                    monthlyBill: 312,
-                                    monthlyUnits: 1120,
-                                    location: activeLead ? activeLead.address.split(",").slice(-2).join(",").trim() || "Austin, TX" : "Austin, TX",
-                                    width: 35,
-                                    length: 26,
-                                    area: 910,
+                                    monthlyBill: 48000,
+                                    monthlyUnits: 1370,
+                                    location: activeLead ? activeLead.address.split(",").slice(-2).join(",").trim() || "Lahore, Pakistan" : "Lahore, Pakistan",
+                                    width: 32,
+                                    length: 28,
+                                    area: 896,
                                     backupReq: "Essential Loads (Sunchaser Core 13.5kWh)",
                                     fileName: file.name
                                   };
+
+                                  const detectedSector = parsed.monthlyUnits > 3500 ? 'commercial' : 'residential';
+                                  setSystemSector(detectedSector);
+                                  const rawSize = parsed.monthlyUnits / 30 / 4.8 * 1.25;
+                                  const sectorMin = detectedSector === 'residential' ? 3.0 : 30.0;
+                                  const sectorMax = detectedSector === 'residential' ? 30.0 : 500.0;
+                                  const cappedSize = Number(Math.max(sectorMin, Math.min(sectorMax, rawSize)).toFixed(1));
 
                                   setBillParsedData(parsed);
                                   setFormMonthlyUnits(parsed.monthlyUnits);
                                   setFormLocation(parsed.location);
                                   setFormRoofWidth(parsed.width);
                                   setFormRoofLength(parsed.length);
-                                  setFormBackupReq(parsed.backupReq);
                                   setBillLoading(false);
 
                                   // Sync values
-                                  setSystemSizekW(Number((parsed.monthlyUnits / 30 / 5.0 * 1.2).toFixed(1)));
+                                  setSystemSizekW(cappedSize);
                                 }, 1500);
                               }}
                               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -1209,100 +1547,75 @@ export default function SalesTeamApp({
                             {billLoading ? (
                               <div className="py-2 flex flex-col items-center justify-center gap-1.5">
                                 <Loader2 className="h-6 w-6 text-amber-400 animate-spin" />
-                                <span className="text-[10px] text-slate-400 font-sans">Scanning meter rates & history...</span>
+                                <span className="text-[10px] text-slate-400">Scanning meter rates & history...</span>
                               </div>
                             ) : billParsedData ? (
                               <div className="py-1 flex flex-col items-center justify-center">
                                 <CheckCircle2 className="h-6 w-6 text-emerald-400 animate-bounce" />
-                                <span className="text-[10px] text-slate-100 font-bold font-sans mt-0.5">OCR Scan Completed</span>
-                                <span className="text-[9px] text-slate-400 font-mono truncate max-w-[160px]">{billFile?.name || "energy-invoice.pdf"}</span>
+                                <span className="text-[10px] text-slate-100 font-bold mt-0.5">OCR Scan Completed</span>
+                                <span className="text-[9px] text-slate-400 truncate max-w-[160px]">{billFile?.name}</span>
                               </div>
                             ) : (
                               <div className="py-2 flex flex-col items-center justify-center gap-1">
                                 <Upload className="h-5 w-5 text-slate-500 group-hover:text-amber-500 transition" />
-                                <span className="text-[10px] text-slate-300 font-sans block">Drag bill PDF or click here</span>
-                                <span className="text-[8px] text-slate-500 font-mono block">Supports PDF, JPEG, PNG (Max 5MB)</span>
+                                <span className="text-[10px] text-slate-300 block">Drag bill PDF or click here</span>
+                                <span className="text-[8px] text-slate-500 font-mono block font-sans">Max file size 5MB</span>
                               </div>
                             )}
                           </div>
-                          {billParsedData && (
-                            <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-xl p-2.5 text-[9px] font-mono leading-normal text-emerald-400">
-                              ⚡ Scanned: <strong className="text-emerald-300">{billParsedData.monthlyUnits} kWh/mo</strong> &amp; <strong className="text-emerald-300">{currencySymbol}{billParsedData.monthlyBill}/mo</strong> at <strong className="text-emerald-300">{billParsedData.location}</strong>.
-                            </div>
-                          )}
                         </div>
 
-                        {/* Interactive fields list */}
                         <div className="space-y-3">
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 uppercase font-mono font-semibold block">Monthly Units Consumed (kWh/mo)</label>
+                            <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Sector Type</label>
+                            <select
+                              value={systemSector}
+                              onChange={(e) => setSystemSector(e.target.value as any)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer focus:outline-none focus:border-amber-500"
+                            >
+                              <option value="residential">Residential (3.0kW - 30.0kW)</option>
+                              <option value="commercial">Commercial (30.0kW - 500.0kW)</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Monthly Units (kWh)</label>
                             <input
                               type="number"
-                              min="100"
-                              max="10000"
                               value={formMonthlyUnits}
                               onChange={(e) => setFormMonthlyUnits(Number(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
-                            />
-                          </div>
-                          
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 uppercase font-mono font-semibold block">Geographic Location (City, State)</label>
-                            <input
-                              type="text"
-                              value={formLocation}
-                              onChange={(e) => setFormLocation(e.target.value)}
-                              placeholder="e.g. Austin, TX"
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-sans"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                             />
                           </div>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-                        {/* Roof layout and dimensions */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Available Roof Dimensions (Width x Length)</label>
-                          <div className="flex items-center gap-2 font-mono">
-                            <div className="relative flex-1">
-                              <input
-                                type="number"
-                                min="10"
-                                max="100"
-                                value={formRoofWidth}
-                                onChange={(e) => setFormRoofWidth(Number(e.target.value))}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
-                              />
-                              <span className="absolute right-2.5 top-1.5 text-[9px] text-slate-500 font-sans">W ft</span>
-                            </div>
-                            <span className="text-slate-500 text-xs">×</span>
-                            <div className="relative flex-1">
-                              <input
-                                type="number"
-                                min="10"
-                                max="100"
-                                value={formRoofLength}
-                                onChange={(e) => setFormRoofLength(Number(e.target.value))}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
-                              />
-                              <span className="absolute right-2.5 top-1.5 text-[9px] text-slate-500 font-sans">L ft</span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center pt-1 text-[9px] font-mono">
-                            <span className="text-slate-500 font-sans">Total Available Area:</span>
-                            <span className="text-slate-300 font-bold">{calculatedRoofArea} sq ft</span>
+                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Roof Space (W x L ft)</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              value={formRoofWidth}
+                              onChange={(e) => setFormRoofWidth(Number(e.target.value))}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
+                            <span className="text-slate-500 self-center">×</span>
+                            <input
+                              type="number"
+                              value={formRoofLength}
+                              onChange={(e) => setFormRoofLength(Number(e.target.value))}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
                           </div>
                         </div>
-
-                        {/* Backup selection options */}
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Backup Battery Requirement</label>
+                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Backup battery Pack</label>
                           <select
                             value={formBackupReq}
                             onChange={(e) => setFormBackupReq(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none cursor-pointer font-sans"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer focus:outline-none"
                           >
-                            <option value="None (Standard Grid-tied)">None (Standard Grid-tied Only)</option>
+                            <option value="None">None (Standard Grid-tied)</option>
                             <option value="Essential Loads (Sunchaser Core 13.5kWh)">Essential Loads (1x Sunchaser Core 13.5kWh)</option>
                             <option value="Whole Home Backup (2x Sunchaser Core 27kWh)">Whole Home Backup (2x Sunchaser Core 27kWh)</option>
                             <option value="Off-Grid Prep (3x Sunchaser Core 40.5kWh)">Off-Grid Prep (3x Sunchaser Core 40.5kWh)</option>
@@ -1311,79 +1624,181 @@ export default function SalesTeamApp({
                       </div>
                     </div>
 
-                    {/* 2. OUTPUTS PREVIEW DASHBOARD SECTION */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-sm text-left">
-                      <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                        <div className="flex items-center gap-1.5">
-                          <Zap className="h-4 w-4 text-emerald-400 animate-pulse" />
-                          <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wide font-sans">2. Sizing Engine Output Results</h4>
+                    {/* QUICK PACKAGE BUILDER */}
+                    <div className="space-y-3.5 pt-3 border-t border-slate-800">
+                      <div className="flex items-center gap-1.5">
+                        <Tag className="h-4 w-4 text-amber-500" />
+                        <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">2. Quick Solar Packages (Pakistan Standards)</h4>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                        {[3, 5, 7, 10, 12, 15, 20, 25, 30, 50, 100].map((kw) => (
+                          <button
+                            key={kw}
+                            type="button"
+                            onClick={() => applyPackage(kw)}
+                            className="bg-slate-950 hover:bg-slate-800 hover:text-amber-400 border border-slate-800 hover:border-amber-500/30 text-white font-mono py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer"
+                          >
+                            {kw}kW
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* SIZER ACTIONS AND VALIDATIONS */}
+                    <div className="space-y-4 pt-3 border-t border-slate-800">
+                      {isHighUnits && (
+                        <div className="bg-amber-950/40 border border-amber-900/50 rounded-2xl p-4 space-y-3 text-left">
+                          <div className="flex items-start gap-2.5">
+                            <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                            <div className="space-y-1 text-xs">
+                              <h5 className="font-extrabold text-amber-400">High Consumption Warning</h5>
+                              <p className="text-slate-300 font-sans leading-relaxed">
+                                Monthly units entered ({formMonthlyUnits.toLocaleString()} kWh/mo) are exceptionally high for the {systemSector} sector.
+                                Please verify if this consumption is correct.
+                              </p>
+                            </div>
+                          </div>
+                          <label className="flex items-center gap-2 cursor-pointer select-none border-t border-amber-900/40 pt-2.5">
+                            <input
+                              type="checkbox"
+                              checked={confirmHighUnits}
+                              onChange={(e) => setConfirmHighUnits(e.target.checked)}
+                              className="rounded border-amber-900 text-amber-500 focus:ring-amber-500 bg-slate-950 h-4 w-4"
+                            />
+                            <span className="text-[11px] text-amber-400 font-bold font-sans">I confirm this high usage is correct</span>
+                          </label>
                         </div>
-                        <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[8px] font-mono font-sans font-bold">
-                          Calculated Real-Time
+                      )}
+
+                      {submitError && (
+                        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold">
+                          ❌ Error: {submitError}
+                        </div>
+                      )}
+
+                      {quoteCreatedConfirm && (
+                        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold flex flex-col gap-1.5 leading-snug">
+                          <div className="flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 animate-bounce" />
+                            <span>Solar proposal compiled &amp; synced! PDF created successfully.</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={savingQuote || (isHighUnits && !confirmHighUnits)}
+                        onClick={async () => {
+                          if (savingQuote) return;
+                          
+                          // 1. Sync sizer settings to lead
+                          try {
+                            await onUpdateLead(activeLead.id, {
+                              monthlyUnits: formMonthlyUnits,
+                              location: formLocation,
+                              roofSpace: calculatedRoofArea,
+                              backupRequirement: formBackupReq,
+                              monthlyBill: Math.round(formMonthlyUnits * tariffRate)
+                            });
+                            
+                            // 2. Compile proposal quote
+                            await handleSaveQuote();
+                          } catch (e: any) {
+                            console.error(e);
+                            setSubmitError(e.message || "Failed to sync sizer.");
+                          }
+                        }}
+                        className={`w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 ${
+                          (savingQuote || (isHighUnits && !confirmHighUnits))
+                            ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-750"
+                            : "bg-amber-500 hover:bg-amber-400 text-slate-950"
+                        }`}
+                      >
+                        {savingQuote ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-slate-550" />
+                            <span>Compiling Sunchaser Proposal...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>Compile &amp; Save Sizer Quotation</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                  </div>
+
+                  {/* Right Column: Calculations Preview & AI briefing */}
+                  <div className="xl:col-span-5 space-y-6">
+                    
+                    {/* Technical values preview */}
+                    <div className="bg-slate-950 border border-slate-850 p-5 rounded-3xl space-y-4">
+                      <div className="flex justify-between items-center border-b border-slate-900 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Zap className="h-4 w-4 text-emerald-400" />
+                          <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">Sizing Calculation Preview</h4>
+                        </div>
+                        <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[8px] font-mono font-bold">
+                          calculated
                         </span>
                       </div>
 
                       {isRoofConstrained && (
-                        <div className="bg-amber-950/20 border border-amber-900/50 rounded-xl p-3 text-[10px] text-amber-300 font-sans leading-relaxed text-left">
-                          ⚠️ <strong>Roof Spatial Constraint Alert:</strong> Offset requirement warrants a {calculatedSystemSizekW} kW system. Roof area ({calculatedRoofArea} sq ft) restricts layouts to high-capacity 400W panels capped at <strong>{actualSystemSizekW} kW</strong> ({actualPanelCount} panels).
+                        <div className="bg-amber-950/20 border border-amber-900/50 rounded-xl p-3 text-[10px] text-amber-300 leading-relaxed">
+                          ⚠️ <strong>Space Constrained:</strong> Consumption requires {calculatedSystemSizekW}kW but roof area limits panel array layout to <strong>{actualSystemSizekW}kW</strong> ({actualPanelCount} panels).
                         </div>
                       )}
 
-                      {/* Technical specifications grid output */}
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 text-left">
-                          <span className="text-[9px] uppercase font-mono text-slate-500 block">System Sizing Requirement</span>
-                          <span className="text-xs font-extrabold text-white font-sans">{actualSystemSizekW} kW DC Array</span>
+                      <div className="grid grid-cols-2 gap-3 font-mono text-xs">
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
+                          <span className="text-[8px] text-slate-500 uppercase block">Offset Requirement</span>
+                          <span className="text-xs font-bold text-white block mt-0.5">{actualSystemSizekW} kW Array</span>
                         </div>
-                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 text-left">
-                          <span className="text-[9px] uppercase font-mono text-slate-500 block">Calculated Panel Count</span>
-                          <span className="text-xs font-extrabold text-slate-100 font-sans">{actualPanelCount} Premium Panels (400W)</span>
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
+                          <span className="text-[8px] text-slate-500 uppercase block">Solar Panel Count</span>
+                          <span className="text-xs font-bold text-slate-200 block mt-0.5">{actualPanelCount}x (580W panels)</span>
                         </div>
-                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 col-span-2 text-left">
-                          <span className="text-[9px] uppercase font-mono text-slate-500 block">Recommended Inverter</span>
-                          <span className="text-[11px] font-medium text-slate-300 font-sans font-semibold leading-relaxed">{inverterRec}</span>
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850 col-span-2">
+                          <span className="text-[8px] text-slate-500 uppercase block">Inverter Specification</span>
+                          <span className="text-[11px] font-bold text-slate-300 block mt-0.5">{inverterRec}</span>
                         </div>
-                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 col-span-2 text-left">
-                          <span className="text-[9px] uppercase font-mono text-slate-500 block">Recommended Storage Battery</span>
-                          <span className="text-[11px] font-medium text-slate-300 font-sans font-semibold">
-                            {batteryCapacityRec ? batteryCapacityRec : "Grid-tied (Online backfeed, standard net metering, zero storage backup)"}
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850 col-span-2">
+                          <span className="text-[8px] text-slate-500 uppercase block">Storage Battery Option</span>
+                          <span className="text-[11px] font-bold text-slate-300 block mt-0.5">
+                            {formBackupReq.includes("None") ? "On-Grid (No Battery Backup)" : formBackupReq}
                           </span>
                         </div>
                       </div>
 
-                      {/* Calculations & ROI metrics output grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1 text-center font-mono">
-                        <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                          <span className="text-[8px] uppercase text-slate-500 block">Monthly Generation est</span>
-                          <span className="text-[10px] font-bold text-white block mt-0.5">{monthlyGeneration.toLocaleString()} kWh</span>
-                          <span className="text-[8px] text-slate-500">({(monthlyGeneration * 12).toLocaleString()} kWh/yr)</span>
+                      <div className="grid grid-cols-2 gap-2 text-center pt-1 font-mono text-[11px]">
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Monthly Generation</span>
+                          <span className="text-white font-bold block mt-0.5">{monthlyGeneration.toLocaleString()} kWh</span>
                         </div>
-                        <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                          <span className="text-[8px] uppercase text-slate-500 block">Monthly Savings est</span>
-                          <span className="text-[10px] font-bold text-emerald-400 block mt-0.5">{currencySymbol}{monthlySavingsAmt}/mo</span>
-                          <span className="text-[8px] text-slate-550 text-slate-500">at {currencySymbol}{tariffRate.toFixed(2)}/kWh</span>
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Savings Estimate</span>
+                          <span className="text-emerald-400 font-bold block mt-0.5">{formatPKR(monthlySavingsAmt)}/mo</span>
                         </div>
-                        <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                          <span className="text-[8px] uppercase text-slate-500 block">System RIO</span>
-                          <span className="text-[10px] font-bold text-amber-500 block mt-0.5 flex justify-center items-center gap-1">
-                            <TrendingUp className="h-3 w-3 shrink-0 text-amber-500" /> {calculatedROI}% /yr
-                          </span>
-                          <span className="text-[8px] text-slate-500">tax-free equity</span>
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Estimated ROI</span>
+                          <span className="text-amber-500 font-bold block mt-0.5">{calculatedROI}% /yr</span>
                         </div>
-                        <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                          <span className="text-[8px] uppercase text-slate-500 block">Payback Period</span>
-                          <span className="text-[10px] font-bold text-sky-400 block mt-0.5">{calculatedPayback} Years</span>
-                          <span className="text-[8px] text-slate-500">break-even point</span>
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Payback Duration</span>
+                          <span className="text-sky-400 font-bold block mt-0.5">{calculatedPayback} Years</span>
                         </div>
                       </div>
+
                     </div>
 
-                    {/* 3. GEMINI AI INTEL ENGINEERING BRIEFING */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 text-left">
-                      <div className="flex justify-between items-center bg-slate-900">
-                        <div className="flex items-center gap-1">
+                    {/* Gemini report card block */}
+                    <div className="bg-slate-905 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4">
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                        <div className="flex items-center gap-1.5">
                           <Bot className="h-4 w-4 text-amber-500" />
-                          <span className="text-xs font-bold text-slate-200 font-sans">Gemini Technical Assessment Briefing</span>
+                          <h4 className="text-xs font-bold text-slate-200 font-sans">Gemini Technical Audit Briefing</h4>
                         </div>
                         <button
                           type="button"
@@ -1400,284 +1815,253 @@ export default function SalesTeamApp({
                                 notes: formBackupReq
                               });
                               setAiReportMarkdown(res.recommendations);
-                            } catch (err: any) {
-                              setAiReportMarkdown("### AI Sunchaser Engineering Sizing Checklist\nFailed to download analysis details.");
+                            } catch (e: any) {
+                              setAiReportMarkdown("### AI Technical Sizing Checklist\nFailed to sync sizing recommendation report.");
                             } finally {
                               setAiReportLoading(false);
                             }
                           }}
-                          className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-[10px] font-sans px-2.5 py-1 rounded-lg cursor-pointer flex items-center gap-1 transition"
+                          className="bg-slate-950 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/30 text-slate-300 text-[10px] font-sans font-bold px-2 py-1 rounded-lg cursor-pointer flex items-center gap-1 transition"
                         >
                           {aiReportLoading ? (
                             <>
                               <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
-                              <span>Analyzing Sizing...</span>
+                              <span>Analyzing...</span>
                             </>
                           ) : (
                             <>
                               <Sparkles className="h-3 w-3 text-amber-500" />
-                              <span>Retrieve Gemini Tech Report</span>
+                              <span>Audit Sizing</span>
                             </>
                           )}
                         </button>
                       </div>
 
-                      {aiReportMarkdown && (
-                        <div className="bg-slate-950 p-3.5 rounded-xl text-[10px] text-slate-300 border border-slate-850 leading-relaxed font-sans max-h-[170px] overflow-y-auto pr-1 text-left">
-                          <div className="whitespace-pre-wrap text-left antialiased">
-                            {aiReportMarkdown}
-                          </div>
+                      {aiReportMarkdown ? (
+                        <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-850 text-slate-350 text-[10px] leading-relaxed max-h-[220px] overflow-y-auto font-sans text-left">
+                          <div className="whitespace-pre-wrap">{aiReportMarkdown}</div>
                         </div>
+                      ) : (
+                        <p className="text-slate-500 text-[10px] text-center py-6 font-mono">
+                          Click "Audit Sizing" to generate deep structural feasibility details.
+                        </p>
                       )}
                     </div>
 
-                    {quoteCreatedConfirm && activeLead && (
-                      <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold flex flex-col gap-1.5 leading-snug">
-                        <div className="flex items-center gap-1.5">
-                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 animate-bounce" />
-                          <span>Solar quotation compiled &amp; saved! Dispatched to client home portal.</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank")}
-                          className="underline text-amber-400 hover:text-amber-300 font-mono mt-1 text-[10px] self-start bg-transparent border-0 cursor-pointer p-0 text-left"
-                        >
-                          📥 Download Official Sunchaser Quote PDF
-                        </button>
-                      </div>
-                    )}
+                  </div>
 
-                    {/* Submit Section button */}
+                </div>
+              )}
+
+              {/* MODULE 2: MANUAL BOQ BUILDER */}
+              {activeModule === 'boq_builder' && (
+                <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
+                  
+                  {/* Action Bar */}
+                  <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-800 pb-4">
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('item')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-amber-500" /> Add Item
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('heading')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-blue-400" /> Add Heading
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('subtotal')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-emerald-400" /> Add Subtotal
+                      </button>
+                    </div>
+                    
                     <button
                       type="button"
-                      onClick={async () => {
-                        try {
-                          // 1. First, save updated lead parameters back to the server
-                          await onUpdateLead(activeLead.id, {
-                            monthlyUnits: formMonthlyUnits,
-                            location: formLocation,
-                            roofSpace: calculatedRoofArea,
-                            backupRequirement: formBackupReq,
-                            monthlyBill: Math.round(formMonthlyUnits * tariffRate)
-                          });
-
-                          // 2. Prepare the complete finalized Quote payload
-                          const defaultBoq = generateDefaultBoqRows(
-                            actualSystemSizekW,
-                            (formBackupReq.includes("None") ? 'On-grid' : 'Hybrid'),
-                            structureType,
-                            "Jinko", 
-                            400, 
-                            "Enphase", 
-                            "IQ8",
-                            batteryCapacityRec || "None",
-                            "Yes"
-                          );
-
-                          const quotePayload = {
-                            systemSizekW: actualSystemSizekW,
-                            panelCount: actualPanelCount,
-                            panelType: "Sunchaser Ultra 400W Monocrystalline",
-                            inverterType: inverterRec,
-                            batteryCapacity: batteryCapacityRec,
-                            totalCost: calculatedTotalCost,
-                            structureType,
-                            accessories,
-                            installationCharges,
-                            netMeteringCharges,
-                            paymentTerms,
-                            warrantyTerms,
-                            termsAndConditions,
-                            netCost: calculatedNetCost,
-                            paybackPeriodYears: calculatedPayback,
-                            boqRows: defaultBoq,
-                            boqItems: defaultBoq,
-                            selectedStructure: structureType.toLowerCase(),
-                            lescoSettings: {
-                              meterNo: lescoMeterNo || "",
-                              consumerNo: lescoConsumerNo || "",
-                              sanctionedLoad: lescoSanctionedLoad || "",
-                              phaseType: lescoPhaseType || 'Three Phase'
-                            },
-                            societyCharges: 0,
-                            taxEnabled: false,
-                            taxRate: 17,
-                            taxAmount: 0,
-                            grandTotal: calculatedTotalCost,
-                            netTotal: calculatedTotalCost
-                          };
-
-                          // 3. Save Quote to database
-                          await on创造Quote(activeLead.id, quotePayload);
-                          
-                          // 4. Highlight confirmation layout and triggers
-                          setSystemSizekW(actualSystemSizekW);
-                          setBatteryCapacity(batteryCapacityRec);
-                          setTotalCost(calculatedTotalCost);
-                          
-                          setQuoteCreatedConfirm(true);
-                          setTimeout(() => setQuoteCreatedConfirm(false), 8000);
-                        } catch (err: any) {
-                          console.error(err);
+                      onClick={() => {
+                        if (window.confirm("Overwrite BOQ rows with calculated sizer default layout?")) {
+                          applyPackage(systemSizekW || 10);
                         }
                       }}
-                      className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2"
+                      className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-xl cursor-pointer"
                     >
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span>Apply Sizing & Save Sunchaser Quote</span>
+                      Reset to Defaults
                     </button>
                   </div>
-                ) : (
-                  <form onSubmit={handleQuoteFormSubmit} className="space-y-6 font-mono text-xs text-left">
-                    {/* Drafted Quotes List */}
-                    {activeLead.quotes && activeLead.quotes.length > 0 && (
-                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2">
-                        <label className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block border-b border-slate-800 pb-1.5">Drafted Sunchaser Proposals ({activeLead.quotes.length})</label>
-                        <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-                          {activeLead.quotes.map((q: any) => (
-                            <div key={q.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 flex justify-between items-center text-xs">
-                              <div>
-                                <span className="font-bold text-white block">Quote {q.id} ({q.systemSizekW}kW {q.systemType})</span>
-                                <span className="text-[9px] text-slate-400 block font-mono">
-                                  Created: {new Date(q.createdAt).toLocaleDateString()} | Net: Rs. {q.netTotal?.toLocaleString() || q.netCost?.toLocaleString() || q.totalCost?.toLocaleString()}
-                                </span>
-                              </div>
-                              <div className="flex gap-1.5">
-                                <button 
-                                   type="button"
-                                   onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}?quoteId=${q.id}`, "_blank")}
-                                   className="bg-slate-900 hover:bg-slate-850 text-slate-300 text-[10px] font-sans font-bold px-2 py-1 rounded-lg border border-slate-800 transition flex items-center gap-1 cursor-pointer"
-                                 >
-                                   <Download className="h-3 w-3 text-amber-500" /> PDF
-                                 </button>
-                                <button 
-                                  type="button"
-                                  onClick={() => handleDuplicateQuote(q)}
-                                  className="bg-slate-900 hover:bg-slate-850 text-slate-350 text-[10px] font-sans font-bold px-2 py-1 rounded-lg border border-slate-800 transition flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Copy className="h-3 w-3" /> Copy
-                                </button>
-                                <button 
-                                  type="button"
-                                  onClick={() => handleLoadQuote(q)}
-                                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-sans font-bold px-2 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer"
-                                >
-                                  Edit
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+
+                  {/* Excel Spreadsheet Table */}
+                  <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950/60 max-h-[500px]">
+                    {boqRows.length === 0 ? (
+                      <div className="text-center py-12 text-slate-500 font-mono">
+                        No rows found. Add items or click reset.
                       </div>
+                    ) : (
+                      <table className="w-full text-left border-collapse text-[10px] font-mono">
+                        <thead>
+                          <tr className="bg-slate-950 text-slate-450 border-b border-slate-800 text-[9px] uppercase font-bold tracking-wider">
+                            <th className="py-2.5 px-2 text-center w-8">Sr</th>
+                            <th className="py-2.5 px-1.5 w-16">Type</th>
+                            <th className="py-2.5 px-2 w-72">Item Name & Specs</th>
+                            <th className="py-2.5 px-2 w-20">Brand</th>
+                            <th className="py-2.5 px-1.5 w-12 text-center">Unit</th>
+                            <th className="py-2.5 px-1.5 w-12 text-center">Qty</th>
+                            <th className="py-2.5 px-2 w-28 text-right">Rate</th>
+                            <th className="py-2.5 px-2 w-28 text-right">Total</th>
+                            <th className="py-2.5 px-2 text-center w-28">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {boqRows.map((row, idx) => {
+                            const isHeading = row.type === 'heading';
+                            const isSubtotal = row.type === 'subtotal';
+                            return (
+                              <tr key={row.id} className={`hover:bg-slate-900/25 ${isHeading ? 'bg-slate-900/40 font-bold' : isSubtotal ? 'bg-slate-900/10 font-bold' : ''}`}>
+                                {isHeading ? (
+                                  <td colSpan={3} className="py-2 px-2">
+                                    <input
+                                      type="text"
+                                      value={row.name}
+                                      onChange={(e) => handleCellChange(idx, 'name', e.target.value)}
+                                      className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1.5 py-0.5 border-0 focus:outline-none font-sans text-amber-400 font-bold text-xs uppercase"
+                                      placeholder="Section Heading Label..."
+                                    />
+                                  </td>
+                                ) : isSubtotal ? (
+                                  <td colSpan={3} className="py-2 px-2">
+                                    <input
+                                      type="text"
+                                      value={row.name}
+                                      onChange={(e) => handleCellChange(idx, 'name', e.target.value)}
+                                      className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1.5 py-0.5 border-0 focus:outline-none font-sans text-slate-200 font-bold text-xs"
+                                      placeholder="Subtotal Label..."
+                                    />
+                                  </td>
+                                ) : (
+                                  <>
+                                    <td className="py-2 text-center text-slate-500">{row.srNo || '-'}</td>
+                                    <td className="py-2 px-1.5">
+                                      <select
+                                        value={row.type}
+                                        onChange={(e) => handleCellChange(idx, 'type', e.target.value)}
+                                        className="bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-[9px] text-slate-350"
+                                      >
+                                        <option value="item">Item</option>
+                                        <option value="heading">Heading</option>
+                                        <option value="subtotal">Subtotal</option>
+                                      </select>
+                                    </td>
+                                    <td className="py-2 px-2 space-y-1.5">
+                                      <select
+                                        onChange={(e) => {
+                                          if (e.target.value !== "") {
+                                            handleLoadFromLibrary(idx, e.target.value);
+                                            e.target.value = "";
+                                          }
+                                        }}
+                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[9px] text-slate-400 font-sans cursor-pointer"
+                                      >
+                                        <option value="">-- Catalog Quick-fill --</option>
+                                        {products.map((lib: any) => (
+                                          <option key={lib.id} value={lib.id}>{lib.category} - {lib.brand} {lib.model}</option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="text"
+                                        value={row.name}
+                                        onChange={(e) => handleCellChange(idx, 'name', e.target.value)}
+                                        className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1.5 py-0.5 border-0 focus:outline-none font-sans text-white text-xs font-semibold"
+                                        placeholder="Item Name"
+                                      />
+                                      <textarea
+                                        value={row.description}
+                                        rows={1}
+                                        onChange={(e) => handleCellChange(idx, 'description', e.target.value)}
+                                        className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1.5 py-0.5 border-0 focus:outline-none text-[9px] text-slate-400 font-sans"
+                                        placeholder="Item Specifications..."
+                                      />
+                                    </td>
+                                  </>
+                                )}
+
+                                {isHeading || isSubtotal ? (
+                                  <td colSpan={4} className="py-2 px-2 text-right text-slate-100 font-bold text-xs">
+                                    {isSubtotal && formatPKR(row.total || 0)}
+                                  </td>
+                                ) : (
+                                  <>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="text"
+                                        value={row.brand}
+                                        onChange={(e) => handleCellChange(idx, 'brand', e.target.value)}
+                                        className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1.5 py-0.5 border-0 focus:outline-none text-xs text-slate-300 font-sans"
+                                        placeholder="Brand"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-1.5">
+                                      <input
+                                        type="text"
+                                        value={row.unit}
+                                        onChange={(e) => handleCellChange(idx, 'unit', e.target.value)}
+                                        className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1 py-0.5 border-0 focus:outline-none text-xs text-center text-slate-400 font-sans"
+                                        placeholder="Pcs"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-1.5">
+                                      <input
+                                        type="number"
+                                        value={row.qty}
+                                        onChange={(e) => handleCellChange(idx, 'qty', Number(e.target.value))}
+                                        className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1 py-0.5 border-0 focus:outline-none text-xs text-center text-white"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2 text-right">
+                                      <input
+                                        type="number"
+                                        value={row.rate}
+                                        onChange={(e) => handleCellChange(idx, 'rate', Number(e.target.value))}
+                                        className="w-full bg-transparent focus:bg-slate-950 focus:ring-1 focus:ring-amber-500 rounded px-1.5 py-0.5 border-0 focus:outline-none text-xs text-right text-emerald-400 font-bold"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2 text-right text-xs font-bold text-white">
+                                      {formatPKR(row.total || 0)}
+                                    </td>
+                                  </>
+                                )}
+
+                                <td className="py-2 px-2 text-center space-x-1 whitespace-nowrap">
+                                  <button type="button" onClick={() => moveBoqRow(idx, 'up')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><ArrowUp className="h-3 w-3" /></button>
+                                  <button type="button" onClick={() => moveBoqRow(idx, 'down')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><ArrowDown className="h-3 w-3" /></button>
+                                  <button type="button" onClick={() => duplicateBoqRow(idx)} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><Copy className="h-3 w-3" /></button>
+                                  <button type="button" onClick={() => deleteBoqRow(idx)} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-rose-400 cursor-pointer inline-flex"><Trash2 className="h-3 w-3" /></button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     )}
+                  </div>
 
-                    {/* Template Loader Dropdown */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2">
-                      <label className="text-amber-400 font-bold uppercase tracking-wider text-[10px] block">Quick Template Configuration Loaders</label>
-                      <select 
-                        value={selectedTemplate} 
-                        onChange={(e) => loadTemplate(e.target.value)} 
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white cursor-pointer font-sans"
-                      >
-                        <option value="custom">-- Custom Sizing & Details --</option>
-                        <option value="5kw_hybrid">5kW Hybrid Suite (Longi / Growatt / 5.12kWh Battery)</option>
-                        <option value="10kw_hybrid">10kW Hybrid Suite (Jinko / Knox / 10.24kWh Battery)</option>
-                        <option value="15kw_hybrid">15kW Hybrid Suite (JA Solar / Solis / 15kWh Battery)</option>
-                        <option value="20kw_ongrid">20kW On-grid Suite (Canadian Solar / Goodwe / No Battery)</option>
-                        <option value="30kw_commercial">30kW Commercial Suite (Longi / Goodwe / Mughal Girder)</option>
-                      </select>
-                    </div>
-
-                    {/* Client Demographics */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                      <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block border-b border-slate-800 pb-1.5">Client & BDM Demographics</span>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Client Name</label>
-                          <input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" required />
+                  {/* Financial Receipt Summary */}
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+                    
+                    {/* Columns left - details inputs */}
+                    <div className="md:col-span-7 space-y-4">
+                      
+                      {/* Structure and notes settings */}
+                      <div className="bg-slate-950 border border-slate-850 p-4 rounded-2xl grid grid-cols-2 gap-3 text-left">
+                        <div className="col-span-2 border-b border-slate-900 pb-1 flex justify-between items-center">
+                          <label className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Mounting Frame Settings</label>
                         </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Contact Number</label>
-                          <input type="text" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" required />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">CNIC Number</label>
-                          <input type="text" value={cnic} placeholder="e.g. 35201-1234567-9" onChange={(e) => setCnic(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Email Address</label>
-                          <input type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" />
-                        </div>
-                        <div className="md:col-span-2 space-y-1">
-                          <label className="text-slate-400">House Number / Address</label>
-                          <input type="text" value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" required />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">City / Area</label>
-                          <input type="text" value={cityArea} onChange={(e) => setCityArea(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" required />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">BDM / Salesperson</label>
-                          <input type="text" value={bdmName} onChange={(e) => setBdmName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" required />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Quotation Date</label>
-                          <input type="date" value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" required />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* LESCO Net Metering Settings */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                      <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block border-b border-slate-800 pb-1.5">LESCO Net Metering connection Parameters</span>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Meter Number</label>
-                          <input type="text" value={lescoMeterNo} onChange={(e) => setLescoMeterNo(e.target.value)} placeholder="e.g. 15-11524-123456" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Consumer Number</label>
-                          <input type="text" value={lescoConsumerNo} onChange={(e) => setLescoConsumerNo(e.target.value)} placeholder="e.g. 12-11524-1234567 U" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Sanctioned Load (kW)</label>
-                          <input type="text" value={lescoSanctionedLoad} onChange={(e) => setLescoSanctionedLoad(e.target.value)} placeholder="e.g. 15 kW" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Phase Type</label>
-                          <select value={lescoPhaseType} onChange={(e) => setLescoPhaseType(e.target.value as any)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans">
-                            <option value="Three Phase">Three Phase</option>
-                            <option value="Single Phase">Single Phase</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Technical Sizing Specs */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                      <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block border-b border-slate-800 pb-1.5">Technical Sizing Specs</span>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-slate-400">System Size (kW DC)</label>
-                          <input type="number" step="0.1" value={systemSizekW} onChange={(e) => setSystemSizekW(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-mono" required />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">System Type</label>
-                          <select value={systemType} onChange={(e) => setSystemType(e.target.value as any)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans">
-                            <option value="Hybrid">Hybrid (Storage & Grid Sync)</option>
-                            <option value="On-grid">On-Grid (Direct Sync only)</option>
-                            <option value="Off-grid">Off-Grid (Storage Standalone)</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Net Metering Required</label>
-                          <select value={netMeteringRequired} onChange={(e) => setNetMeteringRequired(e.target.value as any)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans">
-                            <option value="Yes">Yes (NEPRA Facilitation)</option>
-                            <option value="No">No</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Structure Type Selection</label>
+                        <div className="col-span-2">
                           <select 
                             value={selectedStructure} 
                             onChange={(e) => {
@@ -1686,7 +2070,7 @@ export default function SalesTeamApp({
                               if (val === 'custom') setStructureType('Custom');
                               else setStructureType(val.charAt(0).toUpperCase() + val.slice(1));
                             }} 
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans"
+                            className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white cursor-pointer"
                           >
                             <option value="standard">Standard A-Frame (Roof Mount)</option>
                             <option value="elevated">Elevated Steel Frame (10ft clearance)</option>
@@ -1694,767 +2078,761 @@ export default function SalesTeamApp({
                             <option value="custom">-- Custom Structural Design Spec --</option>
                           </select>
                         </div>
-                      </div>
 
-                      {/* Custom structure variables editor */}
-                      {selectedStructure === 'custom' && (
-                        <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl space-y-3 mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-left">
-                          <span className="col-span-2 text-amber-500 font-bold uppercase text-[9px] block">Custom Mounting Design Details</span>
-                          <div className="space-y-1 col-span-2">
-                            <label className="text-slate-400">Custom Structure Name</label>
-                            <input type="text" value={customStructName} onChange={(e) => setCustomStructName(e.target.value)} placeholder="e.g. Custom Double-Pitched Ground Mount" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-sans" />
-                          </div>
-                          <div className="space-y-1 col-span-2">
-                            <label className="text-slate-400">English Specifications Description</label>
-                            <textarea rows={2} value={customStructDescEn} onChange={(e) => setCustomStructDescEn(e.target.value)} placeholder="Premium custom structure columns 4x4inch, wind resistant up to 130 km/h." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 font-sans" />
-                          </div>
-                          <div className="space-y-1 col-span-2">
-                            <label className="text-slate-400">Urdu Specifications Description (اردو تفصیل)</label>
-                            <textarea rows={2} value={customStructDescUr} onChange={(e) => setCustomStructDescUr(e.target.value)} placeholder="پریمیم کسٹم ڈیزائن ماونٹنگ سٹرکچر..." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 font-sans text-right" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-slate-400">Default Rate (Rs)</label>
-                            <input type="number" value={customStructRate} onChange={(e) => setCustomStructRate(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-slate-400">Weight (kg / span)</label>
-                            <input type="text" value={customStructWeight} onChange={(e) => setCustomStructWeight(e.target.value)} placeholder="e.g. 450 kg total weight" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-sans" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-slate-400">Material Type</label>
-                            <input type="text" value={customStructMaterial} onChange={(e) => setCustomStructMaterial(e.target.value)} placeholder="e.g. Hot-Dip Galvanized Truss Structure" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-sans" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-slate-400">Structural Warranty</label>
-                            <input type="text" value={customStructWarranty} onChange={(e) => setCustomStructWarranty(e.target.value)} placeholder="e.g. 10 Years Warranty" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-sans" />
-                          </div>
-                          <div className="space-y-1 col-span-2">
-                            <label className="text-slate-400">Wind Shear Rating</label>
-                            <input type="text" value={customStructWind} onChange={(e) => setCustomStructWind(e.target.value)} placeholder="e.g. 140 km/h wind shear certified" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-sans" />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Equipment Hardware Configuration */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                      <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block border-b border-slate-800 pb-1.5">Equipment Hardware Specs</span>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Panel Brand</label>
-                          <select value={panelBrand} onChange={(e) => setPanelBrand(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans">
-                            <option value="Jinko">Jinko Solar</option>
-                            <option value="Longi">Longi Solar</option>
-                            <option value="JA Solar">JA Solar</option>
-                            <option value="Canadian Solar">Canadian Solar</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Panel Wattage</label>
-                          <input type="number" value={panelWattage} onChange={(e) => setPanelWattage(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-mono" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Panel Cells Count</label>
-                          <div className="w-full bg-slate-950 border border-slate-850 rounded-xl p-2 text-xs text-slate-400 text-center font-bold font-sans">
-                            {Math.ceil((systemSizekW * 1000) / panelWattage)} cells
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Inverter Brand</label>
-                          <select value={inverterBrand} onChange={(e) => setInverterBrand(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans">
-                            <option value="Knox">Knox Smart Sync</option>
-                            <option value="Solis">Solis Inverters</option>
-                            <option value="Growatt">Growatt Inverters</option>
-                            <option value="Goodwe">Goodwe Industrial</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Inverter Capacity</label>
-                          <input type="text" value={inverterCapacity} onChange={(e) => setInverterCapacity(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-sans" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400">Battery Option</label>
-                          <select value={batteryOption} onChange={(e) => setBatteryOption(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white cursor-pointer font-sans">
-                            <option value="None">None</option>
-                            <option value="Lithium Battery Pack 5.12kWh">Lithium 5.12kWh pack</option>
-                            <option value="Lithium Battery Pack 10.24kWh">Lithium 10.24kWh pack</option>
-                            <option value="Lithium Battery Pack 15.0kWh">Lithium 15.0kWh pack</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 overflow-hidden">
-                      <div className="flex justify-between items-center border-b border-slate-800 pb-1.5">
-                        <span className="text-amber-400 font-bold uppercase text-[10px] tracking-wider block">Excel-Style Manual BOQ Builder</span>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (window.confirm("This will overwrite your manually edited BOQ rows. Proceed?")) {
-                                const defaultBoq = generateDefaultBoqRows(systemSizekW, systemType, selectedStructure, panelBrand, panelWattage, inverterBrand, inverterCapacity, batteryOption, netMeteringRequired);
-                                setManualBoqItems(defaultBoq);
-                                setBoqRows(defaultBoq);
-                              }
-                            }}
-                            className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-[10px] font-sans px-2.5 py-1 rounded cursor-pointer transition"
-                          >
-                            Reset to Defaults
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto pr-1">
-                        {safeBoqItems.length === 0 ? (
-                          <div className="text-center py-10 border border-dashed border-slate-800 rounded-2xl bg-slate-950/40 space-y-3">
-                            <p className="text-slate-400 font-sans text-xs">No BOQ items loaded</p>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const defaultBoq = generateDefaultBoqItems();
-                                setManualBoqItems(defaultBoq);
-                                setBoqRows(defaultBoq);
-                              }}
-                              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold text-[11px] py-1.5 px-3.5 rounded-lg cursor-pointer transition"
-                            >
-                              Generate Default BOQ
-                            </button>
-                          </div>
-                        ) : (
-                          <table className="w-full border-collapse text-left text-[10px]">
-                            <thead>
-                              <tr className="border-b border-slate-800 text-slate-400 uppercase font-mono font-bold text-[9px] tracking-wider">
-                                <th className="py-2 pr-2 w-8 text-center">Sr</th>
-                                <th className="py-2 px-1 w-20">Type</th>
-                                <th className="py-2 px-2 w-72">Item Name & Specifications</th>
-                                <th className="py-2 px-1 w-24">Brand</th>
-                                <th className="py-2 px-1 w-16 text-center">Unit</th>
-                                <th className="py-2 px-1 w-16 text-center">Qty</th>
-                                <th className="py-2 px-1 w-24 text-right">Rate (Rs)</th>
-                                <th className="py-2 pl-2 w-24 text-right">Total (Rs)</th>
-                                <th className="py-2 pl-2 text-center w-28">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800 text-slate-300">
-                              {safeBoqItems.map((row, idx) => {
-                                const isHeading = row.type === 'heading';
-                                const isSubtotal = row.type === 'subtotal';
-                                return (
-                                  <tr key={row.id} className={`hover:bg-slate-950/40 ${isHeading ? 'bg-slate-950/60 font-bold' : isSubtotal ? 'bg-slate-950/20 font-bold' : ''}`}>
-                                    {isHeading ? (
-                                      <td colSpan={3} className="py-2 pr-2">
-                                        <input
-                                          type="text"
-                                          value={row.name}
-                                          onChange={(e) => {
-                                            const updated = [...safeBoqItems];
-                                            updated[idx].name = e.target.value;
-                                            setManualBoqItems(updated);
-                                            setBoqRows(updated);
-                                          }}
-                                          className="w-full bg-transparent border-b border-dashed border-slate-700 focus:border-amber-500 focus:outline-none py-0.5 font-sans text-amber-400 uppercase font-bold text-xs"
-                                          placeholder="Section Heading (e.g. Imported Equipment)"
-                                        />
-                                      </td>
-                                    ) : isSubtotal ? (
-                                      <td colSpan={3} className="py-2 pr-2">
-                                        <input
-                                          type="text"
-                                          value={row.name}
-                                          onChange={(e) => {
-                                            const updated = [...safeBoqItems];
-                                            updated[idx].name = e.target.value;
-                                            setManualBoqItems(updated);
-                                            setBoqRows(updated);
-                                          }}
-                                          className="w-full bg-transparent border-b border-dashed border-slate-700 focus:border-amber-500 focus:outline-none py-0.5 font-sans text-slate-200 font-bold text-xs"
-                                          placeholder="Subtotal Label"
-                                        />
-                                      </td>
-                                    ) : (
-                                      <>
-                                        <td className="py-2 text-center text-slate-500 font-mono">{row.srNo || '-'}</td>
-                                        <td className="py-2 px-1">
-                                          <select
-                                            value={row.type}
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].type = e.target.value as any;
-                                              const calculated = calculateRowTotalsAndSubtotals(updated);
-                                              setManualBoqItems(calculated);
-                                              setBoqRows(calculated);
-                                            }}
-                                            className="bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-[9px] text-slate-300"
-                                          >
-                                            <option value="item">Item</option>
-                                            <option value="heading">Heading</option>
-                                            <option value="subtotal">Subtotal</option>
-                                          </select>
-                                        </td>
-                                        <td className="py-2 px-2 space-y-1">
-                                          {/* Autofill library drop selector */}
-                                          <select
-                                            onChange={(e) => {
-                                              if (e.target.value !== "") {
-                                                handleLoadFromLibrary(idx, e.target.value);
-                                                e.target.value = "";
-                                              }
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[9px] text-slate-400 font-sans"
-                                          >
-                                            <option value="">-- Load catalog item values --</option>
-                                            {((settings && settings.boqMasterLibrary) || []).map((lib: any) => (
-                                              <option key={lib.id} value={lib.id}>{lib.category} - {lib.brand} {lib.model}</option>
-                                            ))}
-                                          </select>
-                                          <input
-                                            type="text"
-                                            value={row.name}
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].name = e.target.value;
-                                              setManualBoqItems(updated);
-                                              setBoqRows(updated);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white font-sans"
-                                            placeholder="Item Name"
-                                          />
-                                          <textarea
-                                            value={row.description}
-                                            rows={1}
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].description = e.target.value;
-                                              setManualBoqItems(updated);
-                                              setBoqRows(updated);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[9px] text-slate-450 text-slate-400 font-sans"
-                                            placeholder="Item specs"
-                                          />
-                                        </td>
-                                      </>
-                                    )}
-                                    
-                                    {isHeading || isSubtotal ? (
-                                      <td colSpan={4} className="py-2 px-1 text-right font-mono text-slate-100 font-bold text-xs">
-                                        {isSubtotal && `Rs. ${row.total?.toLocaleString()}`}
-                                      </td>
-                                    ) : (
-                                      <>
-                                        <td className="py-2 px-1">
-                                          <input
-                                            type="text"
-                                            value={row.brand}
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].brand = e.target.value;
-                                              setManualBoqItems(updated);
-                                              setBoqRows(updated);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-xs text-slate-300 font-sans"
-                                            placeholder="Brand"
-                                          />
-                                        </td>
-                                        <td className="py-2 px-1">
-                                          <input
-                                            type="text"
-                                            value={row.unit}
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].unit = e.target.value;
-                                              setManualBoqItems(updated);
-                                              setBoqRows(updated);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-xs text-center text-slate-400 font-sans"
-                                            placeholder="Unit"
-                                          />
-                                        </td>
-                                        <td className="py-2 px-1">
-                                          <input
-                                            type="number"
-                                            value={row.qty}
-                                            min="0"
-                                            step="any"
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].qty = Number(e.target.value);
-                                              const calculated = calculateRowTotalsAndSubtotals(updated);
-                                              setManualBoqItems(calculated);
-                                              setBoqRows(calculated);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-xs text-center text-white font-mono font-bold"
-                                          />
-                                        </td>
-                                        <td className="py-2 px-1">
-                                          <input
-                                            type="number"
-                                            value={row.rate}
-                                            min="0"
-                                            onChange={(e) => {
-                                              const updated = [...safeBoqItems];
-                                              updated[idx].rate = Number(e.target.value);
-                                              const calculated = calculateRowTotalsAndSubtotals(updated);
-                                              setManualBoqItems(calculated);
-                                              setBoqRows(calculated);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-xs text-right text-amber-400 font-mono font-bold"
-                                          />
-                                        </td>
-                                        <td className="py-2 pl-2 text-right font-mono font-bold text-slate-100">
-                                          Rs. {row.total?.toLocaleString()}
-                                        </td>
-                                      </>
-                                    )}
-                                    
-                                    <td className="py-2 pl-2 text-center">
-                                      <div className="flex gap-1 justify-center">
-                                        <button
-                                          type="button"
-                                          onClick={() => moveBoqRow(idx, 'up')}
-                                          disabled={idx === 0}
-                                          className="p-1 hover:bg-slate-850 hover:text-white rounded disabled:opacity-30 cursor-pointer"
-                                          title="Move Up"
-                                        >
-                                          <ArrowUp className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => moveBoqRow(idx, 'down')}
-                                          disabled={idx === safeBoqItems.length - 1}
-                                          className="p-1 hover:bg-slate-850 hover:text-white rounded disabled:opacity-30 cursor-pointer"
-                                          title="Move Down"
-                                        >
-                                          <ArrowDown className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => duplicateBoqRow(idx)}
-                                          className="p-1 hover:bg-slate-850 hover:text-amber-400 rounded cursor-pointer"
-                                          title="Duplicate"
-                                        >
-                                          <Copy className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => deleteBoqRow(idx)}
-                                          className="p-1 hover:bg-slate-850 hover:text-rose-500 rounded cursor-pointer"
-                                          title="Delete"
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-                      
-                      {/* Grid control actions bar */}
-                      <div className="flex flex-wrap gap-2.5 pt-2 border-t border-slate-800">
-                        <button
-                          type="button"
-                          onClick={() => addBoqRow('item')}
-                          className="bg-slate-950 border border-slate-850 hover:bg-slate-800 text-[10.5px] font-sans font-bold py-1.5 px-3 rounded-lg text-emerald-400 flex items-center gap-1 cursor-pointer transition"
-                        >
-                          <Plus className="h-3.5 w-3.5" /> Add Item Row
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addBoqRow('heading')}
-                          className="bg-slate-950 border border-slate-850 hover:bg-slate-800 text-[10.5px] font-sans font-bold py-1.5 px-3 rounded-lg text-amber-400 flex items-center gap-1 cursor-pointer transition"
-                        >
-                          <Plus className="h-3.5 w-3.5" /> Add Section Heading
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addBoqRow('subtotal')}
-                          className="bg-slate-950 border border-slate-850 hover:bg-slate-800 text-[10.5px] font-sans font-bold py-1.5 px-3 rounded-lg text-sky-450 text-sky-400 flex items-center gap-1 cursor-pointer transition"
-                        >
-                          <Plus className="h-3.5 w-3.5" /> Add Subtotal Row
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Commercial Terms & Validity */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                      <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block border-b border-slate-800 pb-1.5">Commercial Adjustments & Payments</span>
-                      <div className="space-y-3 font-sans text-xs">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-slate-400 block font-bold">Society / Association Dues (Rs)</label>
-                            <input 
-                              type="number" 
-                              value={societyCharges} 
-                              onChange={(e) => setSocietyCharges(Number(e.target.value))} 
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-mono font-bold" 
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-slate-400 block font-bold">Discount Amount (Rs)</label>
-                            <input 
-                              type="number" 
-                              value={discount} 
-                              onChange={(e) => setDiscount(Number(e.target.value))} 
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-rose-455 text-rose-500 font-mono font-bold" 
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-slate-400 block font-bold">Quotation Validity</label>
-                            <div className="w-full bg-slate-950 border border-slate-850 rounded-xl p-2 text-xs text-slate-400 font-bold text-center">
-                              3 Days
+                        {selectedStructure === 'custom' && (
+                          <div className="col-span-2 space-y-3 pt-2">
+                            <div className="space-y-1">
+                              <label className="text-slate-400">Custom Structure Name</label>
+                              <input type="text" value={customStructName} onChange={(e) => setCustomStructName(e.target.value)} placeholder="e.g. Custom Double-Pitched Ground Mount" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-slate-400">English Specifications Description</label>
+                              <textarea rows={2} value={customStructDescEn} onChange={(e) => setCustomStructDescEn(e.target.value)} placeholder="Premium custom structure columns 4x4inch, wind resistant..." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200" />
+                            </div>
+                            <div className="space-y-1 text-right">
+                              <label className="text-slate-400 block">Urdu Specifications Description (اردو تفصیل)</label>
+                              <textarea rows={2} value={customStructDescUr} onChange={(e) => setCustomStructDescUr(e.target.value)} placeholder="پریمیم کسٹم ڈیزائن ماونٹنگ سٹرکچر..." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 text-right" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-slate-400">Default Rate (Rs)</label>
+                                <input type="number" value={customStructRate} onChange={(e) => setCustomStructRate(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-slate-400">Weight (kg / span)</label>
+                                <input type="text" value={customStructWeight} onChange={(e) => setCustomStructWeight(e.target.value)} placeholder="e.g. 450 kg" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-slate-400">Material Type</label>
+                                <input type="text" value={customStructMaterial} onChange={(e) => setProductFormDesc(e.target.value)} placeholder="e.g. Hot-Dip Galvanized" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-slate-400">Warranty / Wind</label>
+                                <input type="text" value={customStructWarranty} onChange={(e) => setCustomStructWarranty(e.target.value)} placeholder="e.g. 10 Years / 140km/h" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
+                      </div>
 
-                        {/* Tax Settings grid block */}
-                        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-850/60 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <label className="text-slate-200 font-bold font-sans">Apply Lahore / Pakistan Tax Addition</label>
-                            <input
-                              type="checkbox"
-                              checked={taxEnabled}
-                              onChange={(e) => setTaxEnabled(e.target.checked)}
-                              className="w-4 h-4 text-amber-500 focus:ring-amber-500 border-slate-800 rounded bg-slate-950 cursor-pointer"
-                            />
+                      {/* LESCO settings inputs */}
+                      <div className="bg-slate-950 border border-slate-850 p-4 rounded-2xl grid grid-cols-2 gap-3 text-left">
+                        <span className="col-span-2 border-b border-slate-900 pb-1 text-[10px] font-bold text-amber-500 uppercase tracking-wider block">LESCO connection Parameters</span>
+                        <div className="space-y-1">
+                          <label className="text-slate-450 block">Meter Number</label>
+                          <input type="text" value={lescoMeterNo} onChange={(e) => setLescoMeterNo(e.target.value)} placeholder="e.g. 15-11524-123456" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-slate-450 block">Consumer Number</label>
+                          <input type="text" value={lescoConsumerNo} onChange={(e) => setLescoConsumerNo(e.target.value)} placeholder="e.g. 12-11524-1234567 U" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-slate-450 block">Sanctioned Load</label>
+                          <input type="text" value={lescoSanctionedLoad} onChange={(e) => setLescoSanctionedLoad(e.target.value)} placeholder="e.g. 15 kW" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-slate-450 block">Phase Type</label>
+                          <select value={lescoPhaseType} onChange={(e) => setLescoPhaseType(e.target.value as any)} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white cursor-pointer focus:outline-none">
+                            <option value="Three Phase">Three Phase</option>
+                            <option value="Single Phase">Single Phase</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-left">
+                        <label className="text-slate-400 block font-bold">Special Custom Notes (Appears on BOQ page)</label>
+                        <textarea 
+                          rows={2} 
+                          value={customNotes} 
+                          placeholder="e.g. Earthing wire route length custom calculations..."
+                          onChange={(e) => setCustomNotes(e.target.value)} 
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-300" 
+                        />
+                      </div>
+                    </div>
+
+                    {/* Columns right - receipt calculations and submit */}
+                    <div className="md:col-span-5 space-y-4">
+                      
+                      {/* Financial totals breakdown */}
+                      <div className="bg-slate-950 border border-slate-850 p-5 rounded-3xl space-y-4 text-xs font-mono">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-bold">Turnkey Contract Investment</span>
+                        
+                        <div className="space-y-2 border-b border-slate-900 pb-3">
+                          <div className="flex justify-between text-slate-450">
+                            <span>Gross BOQ Subtotal:</span>
+                            <span className="text-slate-200">{formatPKR(grandTotal)}</span>
                           </div>
-                          {taxEnabled && (
-                            <div className="grid grid-cols-2 gap-3 text-left">
-                              <div className="space-y-1">
-                                <label className="text-[10px] text-slate-400">Sales Tax Rate (%)</label>
+                          
+                          {/* Tax input */}
+                          <div className="space-y-1.5 pt-1">
+                            <div className="flex justify-between items-center text-slate-450">
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={taxEnabled}
+                                  onChange={(e) => setTaxEnabled(e.target.checked)}
+                                  className="w-3.5 h-3.5 text-amber-500 rounded bg-slate-900 border-slate-800 focus:ring-0 cursor-pointer"
+                                />
+                                <span>Apply Sales Tax:</span>
+                              </label>
+                              {taxEnabled ? (
+                                <span className="text-amber-550 font-bold text-amber-500">{formatPKR(calculatedTaxAmount)}</span>
+                              ) : (
+                                <span className="text-slate-600">Disabled</span>
+                              )}
+                            </div>
+                            {taxEnabled && (
+                              <div className="flex items-center gap-2 pl-5">
+                                <span className="text-[10px] text-slate-500">Tax Rate (%):</span>
                                 <input
                                   type="number"
                                   value={taxRate}
                                   onChange={(e) => setTaxRate(Number(e.target.value))}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs text-white font-mono"
+                                  className="w-16 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-center text-xs text-white"
                                 />
                               </div>
-                              <div className="space-y-1">
-                                <label className="text-[10px] text-slate-400 block">Calculated Tax Amount</label>
-                                <div className="text-xs font-bold text-amber-400 font-mono pt-2">
-                                  Rs. {calculatedTaxAmount.toLocaleString()}
+                            )}
+                          </div>
+
+                          <div className="flex justify-between items-center text-slate-450">
+                            <span>Society Charges (Rs):</span>
+                            <input
+                              type="number"
+                              value={societyCharges}
+                              onChange={(e) => setSocietyCharges(Number(e.target.value))}
+                              className="w-28 bg-slate-900 border border-slate-800 rounded text-right px-1.5 py-0.5 text-xs text-white"
+                            />
+                          </div>
+
+                          <div className="flex justify-between items-center text-slate-450">
+                            <span>Promo Discount (Rs):</span>
+                            <input
+                              type="number"
+                              value={discount}
+                              onChange={(e) => setDiscount(Number(e.target.value))}
+                              className="w-28 bg-slate-900 border border-slate-800 rounded text-right px-1.5 py-0.5 text-xs text-emerald-400 font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between text-sm font-extrabold border-t border-slate-900 pt-2.5">
+                          <span className="text-white font-sans">NET INVESTMENT:</span>
+                          <span className="text-amber-500 text-[15px]">{formatPKR(netTotal)}</span>
+                        </div>
+                      </div>
+
+                      {/* PDF page selector checklist */}
+                      <div className="bg-slate-950 border border-slate-850 p-4 rounded-2xl space-y-3">
+                        <span className="text-[10px] font-bold text-amber-550 text-amber-500 uppercase tracking-wider block border-b border-slate-900 pb-1.5">
+                          PDF Page Inclusion checklist
+                        </span>
+                        <div className="grid grid-cols-2 gap-2 text-left text-xs font-sans text-slate-400">
+                          {Object.entries({
+                            cover: "Cover Page",
+                            profile: "Group Profile",
+                            qr: "Benefits QR Page",
+                            ceo: "CEO Assurances",
+                            structure: "Structure Config",
+                            boq: "BOQ Price Sheet",
+                            terms: "Terms & Conditions",
+                            signoff: "Verification Sign",
+                            bank: "Official Banks",
+                            final: "Final Closing"
+                          }).map(([key, label]) => (
+                            <label key={key} className="flex items-center gap-1.5 cursor-pointer hover:text-white select-none">
+                              <input
+                                type="checkbox"
+                                checked={includedPages[key]}
+                                onChange={(e) => setIncludedPages(prev => ({ ...prev, [key]: e.target.checked }))}
+                                className="rounded border-slate-800 text-amber-500 focus:ring-amber-500 bg-slate-950 h-3.5 w-3.5"
+                              />
+                              <span>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Save BOQ trigger */}
+                      <div className="space-y-3">
+                        {submitError && (
+                          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3 text-xs font-bold rounded-xl text-left">
+                            ❌ {submitError}
+                          </div>
+                        )}
+
+                        {quoteCreatedConfirm && (
+                          <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 text-xs font-bold rounded-xl text-left flex items-center gap-1">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400 animate-bounce" />
+                            <span>Quotation successfully compiled &amp; saved!</span>
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleSaveQuote()}
+                          disabled={savingQuote}
+                          className="w-full bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 text-slate-950 disabled:text-slate-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm"
+                        >
+                          {savingQuote ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin text-slate-650" />
+                              <span>Saving BOQ Quote Version...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="h-4 w-4" />
+                              <span>{editingQuoteId ? 'Update Edited Quote' : 'Save & Compile BOQ Quote'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                </div>
+              )}
+
+              {/* MODULE 3: QUOTE TEMPLATES */}
+              {activeModule === 'templates' && (
+                <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
+                  <div className="border-b border-slate-800 pb-2">
+                    <h3 className="text-sm font-bold text-slate-100 font-sans">Visual Proposal Template Pages</h3>
+                    <span className="text-[10px] text-slate-500 font-sans">Reorder pages, configure text bodies, and upload base64 asset files.</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {quoteTemplatePages
+                      .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+                      .map((page, idx) => {
+                        return (
+                          <div key={page.id} className="bg-slate-950 border border-slate-850 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow hover:border-slate-800 transition">
+                            <div className="space-y-3">
+                              
+                              {/* Page Title header */}
+                              <div className="flex justify-between items-center border-b border-slate-900 pb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="bg-slate-900 text-amber-500 border border-slate-800 text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
+                                    #{page.sort_order || idx + 1}
+                                  </span>
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] font-mono">
+                                    {page.page_type || page.pageType}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <label className="flex items-center gap-1 cursor-pointer text-[10px] text-slate-400">
+                                    <input
+                                      type="checkbox"
+                                      checked={page.is_enabled}
+                                      onChange={(e) => handleSavePageTextChanges(page, { is_enabled: e.target.checked })}
+                                      className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
+                                    />
+                                    <span>Enabled</span>
+                                  </label>
+                                  <button type="button" onClick={() => handleUpdatePageSortOrder(page.id, page.sort_order, 'up')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-500 cursor-pointer inline-flex"><ArrowUp className="h-3 w-3" /></button>
+                                  <button type="button" onClick={() => handleUpdatePageSortOrder(page.id, page.sort_order, 'down')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-500 cursor-pointer inline-flex"><ArrowDown className="h-3 w-3" /></button>
                                 </div>
                               </div>
+
+                              <div className="space-y-2">
+                                <label className="text-[9px] uppercase font-mono text-slate-500 font-bold">Page Header Title</label>
+                                <input
+                                  type="text"
+                                  defaultValue={page.title}
+                                  onBlur={(e) => handleSavePageTextChanges(page, { title: e.target.value })}
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-[9px] uppercase font-mono text-slate-500 font-bold">Body Text Content</label>
+                                <textarea
+                                  rows={4}
+                                  defaultValue={page.body_text || page.bodyText}
+                                  onBlur={(e) => handleSavePageTextChanges(page, { body_text: e.target.value })}
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300"
+                                />
+                              </div>
+
+                              {/* Asset images upload preview */}
+                              <div className="grid grid-cols-2 gap-3 pt-1 text-[9px] font-sans">
+                                
+                                {/* Background Image */}
+                                <div className="space-y-1.5 text-left">
+                                  <label className="text-[9px] text-slate-500 font-bold block uppercase">Background Graphic</label>
+                                  {page.bg_image_url || page.bgImageUrl ? (
+                                    <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-16 bg-slate-900 flex items-center justify-center">
+                                      <img src={page.bg_image_url || page.bgImageUrl} className="h-full w-full object-cover opacity-60" alt="bg preview" />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSavePageTextChanges(page, { bg_image_url: "" })}
+                                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <label className="border border-dashed border-slate-800 hover:border-slate-700 rounded-lg h-16 bg-slate-900 flex flex-col items-center justify-center text-slate-500 hover:text-slate-350 cursor-pointer transition">
+                                      <Upload className="h-4 w-4 mb-0.5" />
+                                      <span>Upload BG</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handleImageUpload(page.id, file, 'bg');
+                                        }}
+                                        className="hidden"
+                                      />
+                                    </label>
+                                  )}
+                                </div>
+
+                                {/* Main/Logo Image */}
+                                <div className="space-y-1.5 text-left">
+                                  <label className="text-[9px] text-slate-500 font-bold block uppercase">Foreground Logo/Photo</label>
+                                  {page.image_url || page.imageUrl ? (
+                                    <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-16 bg-slate-900 flex items-center justify-center">
+                                      <img src={page.image_url || page.imageUrl} className="max-h-[85%] max-w-[85%] object-contain" alt="logo preview" />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSavePageTextChanges(page, { image_url: "" })}
+                                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <label className="border border-dashed border-slate-800 hover:border-slate-700 rounded-lg h-16 bg-slate-900 flex flex-col items-center justify-center text-slate-500 hover:text-slate-350 cursor-pointer transition">
+                                      <Upload className="h-4 w-4 mb-0.5" />
+                                      <span>Upload Asset</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handleImageUpload(page.id, file, 'image');
+                                        }}
+                                        className="hidden"
+                                      />
+                                    </label>
+                                  )}
+                                </div>
+
+                              </div>
+
                             </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* MODULE 4: GENERATED QUOTES & VERSION HISTORY */}
+              {activeModule === 'quotes' && (
+                <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
+                  <div className="border-b border-slate-800 pb-2">
+                    <h3 className="text-sm font-bold text-slate-100 font-sans">Lead Proposal Versions History</h3>
+                    <span className="text-[10px] text-slate-500 font-sans">Open details, duplicate, download specific PDF versions, and trigger simulated reminders.</span>
+                  </div>
+
+                  {activeLead.quotes && activeLead.quotes.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {activeLead.quotes.map((q: any) => {
+                        const dateString = q.createdAt ? new Date(q.createdAt).toLocaleString() : new Date().toLocaleDateString();
+                        const quoteNetVal = q.netTotal || q.netCost || q.totalCost || 0;
+                        return (
+                          <div key={q.id} className="bg-slate-950 border border-slate-850 hover:border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow transition">
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <span className="text-white font-bold text-xs block">Quote Version #{q.id.slice(-6)}</span>
+                                  <span className="text-[9px] text-slate-500 font-mono block">Created: {dateString}</span>
+                                </div>
+                                <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
+                                  q.status === 'Accepted' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                }`}>
+                                  {q.status || 'Draft'}
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 font-mono text-[10px] text-slate-400">
+                                <span>Size: {q.systemSizekW} kW</span>
+                                <span>Type: {q.systemType || 'Hybrid'}</span>
+                                <span className="col-span-2 truncate">Panel: {q.panelBrand} ({q.panelCount || Math.ceil(q.systemSizekW*1000/580)} pcs)</span>
+                                <span className="col-span-2 truncate">Inverter: {q.inverterBrand} {q.inverterCapacity}</span>
+                                {q.batteryOption && q.batteryOption !== "None" && (
+                                  <span className="col-span-2 truncate">Battery: {q.batteryOption}</span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex justify-between items-center border-t border-slate-900 pt-3">
+                              <div className="text-left font-mono">
+                                <span className="text-[9px] text-slate-500 uppercase block">Net Contract:</span>
+                                <span className="text-amber-500 font-bold text-xs">{formatPKR(quoteNetVal)}</span>
+                              </div>
+
+                              <div className="flex gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedQuoteDetail(q)}
+                                  className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold text-[10px] px-2.5 py-1.5 rounded-lg cursor-pointer transition"
+                                >
+                                  Inspect
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleLoadQuoteForEditing(q)}
+                                  className="bg-amber-550 bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold text-[10px] px-2.5 py-1.5 rounded-lg cursor-pointer transition"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDuplicateQuote(q)}
+                                  className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 p-1.5 rounded-lg cursor-pointer transition"
+                                  title="Duplicate version"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}?quoteId=${q.id}`, "_blank")}
+                                  className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
+                                  title="Download Version PDF"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 text-slate-500 font-mono">No proposal versions have been compiled for this client yet.</div>
+                  )}
+
+                  {/* Summary inspect panel details */}
+                  {selectedQuoteDetail && (
+                    <div className="border-t border-slate-800 pt-6 space-y-4">
+                      <div className="flex justify-between items-center bg-slate-950/60 p-3 rounded-xl border border-slate-850">
+                        <span className="font-bold text-white text-xs">Inspect Details: Quote {selectedQuoteDetail.id}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedQuoteDetail(null)}
+                          className="text-slate-400 hover:text-white font-mono text-[10px] bg-slate-900 border-0 px-2 py-0.5 rounded cursor-pointer"
+                        >
+                          Close Preview
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2 text-xs font-sans text-slate-400 text-left bg-slate-950 p-4 rounded-xl border border-slate-900">
+                          <span className="text-[10px] font-bold text-amber-550 uppercase tracking-wider block border-b border-slate-900 pb-1.5">Quote Specifications</span>
+                          <p><strong>System Size:</strong> {selectedQuoteDetail.systemSizekW} kW DC</p>
+                          <p><strong>System Type:</strong> {selectedQuoteDetail.systemType || "Hybrid"}</p>
+                          <p><strong>Panels Brand:</strong> {selectedQuoteDetail.panelBrand || "Jinko"}</p>
+                          <p><strong>Inverter capacity:</strong> {selectedQuoteDetail.inverterBrand} {selectedQuoteDetail.inverterCapacity}</p>
+                          <p><strong>Battery Type:</strong> {selectedQuoteDetail.batteryOption || "None"}</p>
+                          <p><strong>LESCO net-metering connection:</strong> {selectedQuoteDetail.netMeteringRequired}</p>
+                          <p><strong>Structure Type:</strong> {selectedQuoteDetail.structureType || "Standard"}</p>
+                          {selectedQuoteDetail.lescoSettings?.meterNo && (
+                            <p><strong>Meter No / Consumer No:</strong> {selectedQuoteDetail.lescoSettings?.meterNo} / {selectedQuoteDetail.lescoSettings?.consumerNo}</p>
                           )}
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="text-slate-400 block font-bold">Payment Schedule Clause</label>
-                          <textarea 
-                            rows={2} 
-                            value={paymentSchedule} 
-                            onChange={(e) => setPaymentSchedule(e.target.value)} 
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-300 font-sans" 
-                          />
+                        <div className="space-y-2 text-xs font-sans text-slate-400 text-left bg-slate-950 p-4 rounded-xl border border-slate-900">
+                          <span className="text-[10px] font-bold text-amber-550 uppercase tracking-wider block border-b border-slate-900 pb-1.5">Financial Summary</span>
+                          <p><strong>Gross BOQ Subtotal:</strong> {formatPKR(selectedQuoteDetail.grandTotal || selectedQuoteDetail.totalCost)}</p>
+                          <p><strong>Lahore Sales Tax:</strong> {selectedQuoteDetail.taxEnabled ? `${selectedQuoteDetail.taxRate}% (${formatPKR(selectedQuoteDetail.taxAmount || 0)})` : "Disabled"}</p>
+                          <p><strong>Society connection Dues:</strong> {formatPKR(selectedQuoteDetail.societyCharges || 0)}</p>
+                          <p><strong>Promo Executive discount:</strong> -{formatPKR(selectedQuoteDetail.discount || 0)}</p>
+                          <p className="text-white text-sm font-extrabold border-t border-slate-900 pt-2 mt-2">
+                            <strong>Net Turnkey value:</strong> {formatPKR(selectedQuoteDetail.netTotal || selectedQuoteDetail.netCost || selectedQuoteDetail.totalCost)}
+                          </p>
                         </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400 block font-bold">Special Custom Notes (Appears on BOQ page)</label>
-                          <textarea 
-                            rows={2} 
-                            value={customNotes} 
-                            placeholder="Add additional remarks e.g. Earthing wire route length custom calculations..."
-                            onChange={(e) => setCustomNotes(e.target.value)} 
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-300 font-sans" 
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-slate-400 block font-bold">Quotation Terms &amp; Clauses</label>
-                          <textarea 
-                            rows={2} 
-                            value={termsAndConditions} 
-                            onChange={(e) => setTermsAndConditions(e.target.value)} 
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-300 font-sans" 
-                          />
-                        </div>
+                      </div>
+
+                      {/* Display BOQ list */}
+                      <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
+                        <table className="w-full text-left border-collapse text-[10px] font-mono">
+                          <thead className="bg-slate-950 text-slate-500 text-[9px] uppercase border-b border-slate-800">
+                            <tr>
+                              <th className="py-2 px-2 text-center w-8">Sr</th>
+                              <th className="py-2 px-2">Item Name & Specifications</th>
+                              <th className="py-2 px-2 w-20">Brand</th>
+                              <th className="py-2 px-1.5 w-12 text-center">Qty</th>
+                              <th className="py-2 px-2 w-24 text-right">Rate</th>
+                              <th className="py-2 px-2 w-24 text-right">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50 text-slate-350">
+                            {(selectedQuoteDetail.boqRows || selectedQuoteDetail.boqItems || []).map((row: any) => {
+                              const isHeading = row.type === 'heading';
+                              const isSubtotal = row.type === 'subtotal';
+                              return (
+                                <tr key={row.id} className={`${isHeading ? 'bg-slate-900/30 text-amber-400 font-bold' : isSubtotal ? 'bg-slate-900/10 font-bold' : ''}`}>
+                                  {isHeading ? (
+                                    <td colSpan={6} className="py-1.5 px-2 uppercase font-bold text-xs">{row.name}</td>
+                                  ) : isSubtotal ? (
+                                    <td colSpan={5} className="py-1.5 px-2 text-right font-bold text-slate-200">
+                                      {row.name}:
+                                    </td>
+                                  ) : (
+                                    <>
+                                      <td className="py-1.5 text-center text-slate-550">{row.srNo || '-'}</td>
+                                      <td className="py-1.5 px-2 font-sans text-xs">
+                                        <span className="block font-bold text-white">{row.name}</span>
+                                        <span className="block text-[9px] text-slate-500">{row.description}</span>
+                                      </td>
+                                      <td className="py-1.5 px-2 font-sans">{row.brand}</td>
+                                      <td className="py-1.5 px-1.5 text-center">{row.qty}</td>
+                                      <td className="py-1.5 px-2 text-right">{row.rate?.toLocaleString()}</td>
+                                    </>
+                                  )}
+                                  <td className="py-1.5 px-2 text-right text-white font-bold">{row.total?.toLocaleString()}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
+                  )}
 
-                    {/* Net Financial Receipt summary */}
-                    <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 shadow-inner shadow-black/80 space-y-3 text-xs">
-                      <span className="text-[10px] font-mono tracking-wider text-slate-500 uppercase font-bold block">Grand Financial Proposal Summary</span>
-                      <div className="space-y-2 font-mono">
-                        <div className="flex justify-between text-slate-400">
-                          <span>BOQ Gross Subtotal:</span>
-                          <span className="text-slate-200">Rs. {grandTotal.toLocaleString()}</span>
-                        </div>
-                        {taxEnabled && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Sales Tax Dues ({taxRate}%):</span>
-                            <span className="text-amber-500">Rs. {calculatedTaxAmount.toLocaleString()}</span>
-                          </div>
-                        )}
-                        {societyCharges > 0 && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Society Association Dues:</span>
-                            <span className="text-slate-200">Rs. {societyCharges.toLocaleString()}</span>
-                          </div>
-                        )}
-                        {discount > 0 && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Executive Promo Discount:</span>
-                            <span className="text-emerald-400 font-bold">-Rs. {discount.toLocaleString()}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between text-base border-t border-slate-800 pt-2 font-extrabold">
-                          <span className="text-white">Net Turnkey Investment Dues:</span>
-                          <span className="text-amber-400">Rs. {netTotal.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
+                </div>
+              )}
 
-                    {quoteCreatedConfirm && activeLead && (
-                      <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold flex flex-col gap-1.5 leading-snug">
-                        <div className="flex items-center gap-1.5">
-                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 animate-bounce" />
-                          <span>Quotation created successfully! Sync sent to Customer Home Portal. WhatsApp message dispatched to client.</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank")}
-                          className="underline text-amber-400 hover:text-amber-300 font-mono mt-1 text-[10px] self-start bg-transparent border-0 cursor-pointer p-0 text-left"
-                        >
-                          📥 Download Official Sunchaser Quote PDF
-                        </button>
-                      </div>
-                    )}
-
-                    {submitError && (
-                      <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold flex flex-col gap-1.5 leading-snug">
-                        <div className="flex items-center gap-1.5">
-                          <span>❌ Error: {submitError}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span>Compile solar quotation on database</span>
-                    </button>
-                  </form>
-                )}
-              </div>
-
-              {/* GENERATE AI SALES PROPOSAL blueprint WITH GEMINI */}
-              <div className="xl:col-span-5 space-y-6">
-                
-                {/* Visual Invoice Cost Receipt calculator */}
-                <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 shadow-inner shadow-black/80 space-y-4">
-                  <h4 className="text-[10px] font-mono tracking-wider text-slate-500 uppercase font-bold">Pricing Breakdown Receipt</h4>
+              {/* MODULE 5: PRODUCT LIBRARY */}
+              {activeModule === 'products' && (
+                <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
                   
-                  <div className="space-y-2 text-xs font-mono">
-                    {activeEngineTab === 'manual_config' ? (
-                      <>
-                        <div className="max-h-[140px] overflow-y-auto pr-1 space-y-1.5 border-b border-slate-900 pb-2 text-left">
-                          {safeBoqItems.filter(r => r && r.type === 'item').map((r) => (
-                            <div key={r.id} className="flex justify-between text-slate-400 text-[10px]">
-                              <span className="truncate max-w-[170px]">{r.name} (x{r.qty})</span>
-                              <span className="text-slate-200">Rs. {r.total?.toLocaleString()}</span>
+                  {/* Category Selection Tabs & search bar */}
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-100 font-sans">Pakistan Solar Hardware Catalog</h3>
+                      <span className="text-[10px] text-slate-500 font-sans">Add, Edit, and Manage master solar products records syncing to Supabase.</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleOpenAddProduct}
+                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer flex items-center gap-1 shadow"
+                    >
+                      <Plus className="h-4 w-4" /> Add Product
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row gap-4 items-center">
+                    {/* Categories tabs */}
+                    <div className="flex flex-wrap gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-850 w-full md:w-auto">
+                      {[
+                        "Solar Panels", "Inverters", "Batteries", "Structure", "Cables", "Protection", "Accessories", "Net Metering", "Civil Works"
+                      ].map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setSelectedProductCategory(cat)}
+                          className={`px-3 py-1.5 rounded-xl font-sans font-bold text-[10px] transition cursor-pointer ${
+                            selectedProductCategory === cat ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Search query input */}
+                    <input
+                      type="text"
+                      placeholder="Search brand or model..."
+                      value={productSearchQuery}
+                      onChange={(e) => setProductSearchQuery(e.target.value)}
+                      className="w-full md:w-48 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                    />
+                  </div>
+
+                  {/* Products Grid */}
+                  {filteredProducts.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {filteredProducts.map((p) => (
+                        <div key={p.id} className="bg-slate-950 border border-slate-850 hover:border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow transition text-left">
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <span className="font-extrabold text-white text-xs block">{p.brand}</span>
+                                <span className="text-[10px] text-slate-400 font-bold block">{p.model}</span>
+                              </div>
+                              <span className="text-[9px] font-mono text-slate-550 text-slate-500 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full font-bold">
+                                {p.sku}
+                              </span>
                             </div>
-                          ))}
-                        </div>
-                        <div className="flex justify-between text-slate-400">
-                          <span>BOQ Gross:</span>
-                          <span className="text-slate-200">Rs. {grandTotal.toLocaleString()}</span>
-                        </div>
-                        {taxEnabled && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Sales Tax ({taxRate}%):</span>
-                            <span className="text-amber-500">Rs. {calculatedTaxAmount.toLocaleString()}</span>
-                          </div>
-                        )}
-                        {societyCharges > 0 && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Society Charges:</span>
-                            <span className="text-slate-200">Rs. {societyCharges.toLocaleString()}</span>
-                          </div>
-                        )}
-                        {discount > 0 && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Discount:</span>
-                            <span className="text-rose-500">-Rs. {discount.toLocaleString()}</span>
-                          </div>
-                        )}
-                        <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-white text-xs">
-                          <span className="font-sans text-[11px] font-bold">TOTAL CONTRACT VALUE</span>
-                          <span className="font-mono text-amber-500 text-sm font-extrabold">Rs. {netTotal.toLocaleString()}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex justify-between text-slate-400">
-                          <span>Solar Modules (x{Math.round((systemSizekW * 1000) / 400)})</span>
-                          <span className="text-slate-200">{currencySymbol}{(systemSizekW * 1550).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-400">
-                          <span>Smart Micro-Inverters</span>
-                          <span className="text-slate-200">{currencySymbol}{(systemSizekW * 450).toLocaleString()}</span>
-                        </div>
-                        {batteryCapacity && (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Sunchaser Storage Core</span>
-                            <span className="text-slate-200">{currencySymbol}6,200</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between text-slate-400">
-                          <span>Mount rails structural brackets</span>
-                          <span className="text-slate-200">{currencySymbol}1,200</span>
-                        </div>
-                        <div className="flex justify-between text-slate-400">
-                          <span>System assembly & wiring services</span>
-                          <span className="text-slate-200">{currencySymbol}{installationCharges.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-400">
-                          <span>Net meter filing dues</span>
-                          <span className="text-slate-200">{currencySymbol}{netMeteringCharges.toLocaleString()}</span>
-                        </div>
 
-                        <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-white text-xs">
-                          <span className="font-sans text-[11px] font-bold">TOTAL CONTRACT VALUE</span>
-                          <span className="font-mono text-emerald-400 text-sm font-extrabold">{currencySymbol}{totalCost.toLocaleString()}</span>
+                            <p className="text-[10px] text-slate-400 font-sans line-clamp-2 leading-relaxed">
+                              {p.specifications?.description || p.name}
+                            </p>
+
+                            <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[9px] text-slate-500">
+                              <span>Stock: <strong className="text-white">{p.stock || 0}</strong></span>
+                              <span>Warranty: <strong className="text-white">{p.warrantyPeriod || "N/A"}</strong></span>
+                              {p.specifications?.wattage > 0 && (
+                                <span className="col-span-2">Capacity/Wattage: <strong className="text-white">{p.specifications.wattage}W</strong></span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between items-center border-t border-slate-900 pt-3">
+                            <div className="font-mono text-left">
+                              <span className="text-[8px] text-slate-500 block uppercase">Cost / Sale:</span>
+                              <span className="text-slate-400 text-[10px] line-through block">
+                                {formatPKR(p.specifications?.costPrice || 0)}
+                              </span>
+                              <span className="text-emerald-400 font-bold text-xs">
+                                {formatPKR(p.price || 0)}
+                              </span>
+                            </div>
+
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditProduct(p)}
+                                className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 p-1.5 rounded-lg cursor-pointer transition"
+                                title="Edit Product details"
+                              >
+                                <Settings className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteProduct(p.id)}
+                                className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-rose-400 p-1.5 rounded-lg cursor-pointer transition"
+                                title="Delete Product"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
-
-                        <p className="bg-emerald-500/10 border border-emerald-500/10 p-2.5 rounded-xl text-emerald-400 text-[10px] font-sans font-light leading-normal leading-relaxed text-left mt-2">
-                          💰 <strong>State Tax Rebates:</strong> Client unlocks is eligible for 30% Solar ITC credit, deducting <strong>-{currencySymbol}{Math.round(totalCost * 0.3).toLocaleString()}</strong> on federal tax liability, reducing cost weight to <strong>{currencySymbol}{Math.round(totalCost * 0.7).toLocaleString()}</strong>!
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Proposal generator trigger */}
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow space-y-4 text-left">
-                  <div className="flex gap-2 items-center">
-                    <div className="bg-amber-500/10 p-2 rounded-xl text-amber-500">
-                      <Sparkles className="h-4 w-4" />
+                      ))}
                     </div>
-                    <div>
-                      <h4 className="text-xs font-bold font-sans text-slate-201 leading-tight">AI Proposal contract creator</h4>
-                      <p className="text-[10px] text-slate-500 font-sans">Synthesize signed clean energy guarantees using server-side Gemini intelligence.</p>
-                    </div>
-                  </div>
+                  ) : (
+                    <div className="text-center py-12 text-slate-500 font-mono">No equipment items found in category tab.</div>
+                  )}
 
-                  <p className="text-slate-400 text-xs">
-                    Produces a signed Sunchaser assurances contract containing system layouts and financial ROI curves to display instantly under their customer portal.
-                  </p>
+                  {/* Add/Edit Product Modal panel */}
+                  {isProductModalOpen && (
+                    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 w-full max-w-md space-y-4">
+                        <div className="flex justify-between items-center border-b border-slate-900 pb-2.5">
+                          <h4 className="text-sm font-bold font-sans text-white">
+                            {editingProduct ? 'Edit Catalog Product details' : 'Add New Pakistan solar Hardware'}
+                          </h4>
+                          <button
+                            type="button"
+                            onClick={() => setIsProductModalOpen(false)}
+                            className="text-slate-500 hover:text-white font-bold font-mono text-xs border-0 bg-transparent cursor-pointer"
+                          >
+                            ×
+                          </button>
+                        </div>
 
-                  <button
-                    type="button"
-                    onClick={triggerAIProposalGeneration}
-                    disabled={proposalLoading}
-                    className="w-full bg-slate-950 border border-slate-800 hover:bg-slate-850 disabled:bg-slate-800 text-neutral-200 hover:text-white font-bold font-sans text-xs py-2.5 px-3.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-2 shadow"
-                  >
-                    {proposalLoading ? (
-                      <>
-                        <Loader2 className="h-4.5 w-4.5 text-amber-500 animate-spin" />
-                        <span>Compiling AI Assurances...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Bot className="h-4 w-4" />
-                        <span>Generate AI Solar Proposal Blueprint</span>
-                      </>
-                    )}
-                  </button>
+                        <form onSubmit={handleSaveProductForm} className="space-y-3.5 text-xs text-left">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-slate-400 font-bold block">Brand Name</label>
+                              <input type="text" value={productFormBrand} onChange={(e) => setProductFormBrand(e.target.value)} placeholder="e.g. Jinko" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" required />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-slate-400 font-bold block">Model Name</label>
+                              <input type="text" value={productFormModel} onChange={(e) => setProductFormModel(e.target.value)} placeholder="e.g. Tiger Neo 580" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" required />
+                            </div>
+                          </div>
 
-                  {/* Proposal Markdown Preview modal */}
-                  {proposalMarkdown && (
-                    <div className="bg-slate-950 border border-slate-850 rounded-2xl p-4 space-y-3 overflow-y-auto max-h-[300px]">
-                      <div className="flex justify-between items-center bg-slate-900 px-3 py-1 rounded-lg border border-slate-800 text-[10px] font-mono select-all">
-                        <span className="text-slate-400 font-bold block">Blueprint Contract finalized</span>
-                        <span className="text-emerald-400">Ready on portal</span>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-slate-400 font-bold block">Category</label>
+                              <select
+                                value={productFormCategory}
+                                onChange={(e) => setProductFormCategory(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white cursor-pointer focus:outline-none"
+                              >
+                                {["Solar Panels", "Inverters", "Batteries", "Structure", "Cables", "Protection", "Accessories", "Net Metering", "Civil Works"].map((c) => (
+                                  <option key={c} value={c}>{c}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-slate-400 block">SKU Code</label>
+                              <input type="text" value={productFormSku} onChange={(e) => setProductFormSku(e.target.value)} placeholder="e.g. JK-PAN-580N" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-slate-400 font-bold block">Cost Price (Rs)</label>
+                              <input type="number" value={productFormCostPrice} onChange={(e) => setProductFormCostPrice(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" required />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-slate-400 font-bold block">Sale Price (Rs)</label>
+                              <input type="number" value={productFormPrice} onChange={(e) => setProductFormPrice(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" required />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-slate-450 block font-bold">Stock Qty</label>
+                              <input type="number" value={productFormStock} onChange={(e) => setProductFormStock(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white text-center" required />
+                            </div>
+                            <div className="space-y-1 col-span-2">
+                              <label className="text-slate-450 block font-bold">Warranty Period</label>
+                              <input type="text" value={productFormWarranty} onChange={(e) => setProductFormWarranty(e.target.value)} placeholder="e.g. 25 Years" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-slate-400 block font-bold">Wattage / Power Capacity (W)</label>
+                            <input type="number" value={productFormWattage} onChange={(e) => setProductFormWattage(Number(e.target.value))} placeholder="e.g. 580" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-slate-400 block font-bold">Specifications description</label>
+                            <textarea rows={3} value={productFormDesc} onChange={(e) => setProductFormDesc(e.target.value)} placeholder="Enter details..." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300" />
+                          </div>
+
+                          <div className="flex gap-3 pt-3">
+                            <button
+                              type="button"
+                              onClick={() => setIsProductModalOpen(false)}
+                              className="flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 py-2.5 rounded-xl font-sans font-bold cursor-pointer transition"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 py-2.5 rounded-xl font-sans font-bold cursor-pointer transition"
+                            >
+                              Save Product
+                            </button>
+                          </div>
+                        </form>
                       </div>
-                      
-                      {/* Formatted Markdown text area */}
-                      <pre className="text-slate-400 leading-relaxed font-sans text-[11px] whitespace-pre-wrap italic">
-                        {proposalMarkdown}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-
-                {/* CRM ENGAGEMENT & WHATSAPP LOGISTICS */}
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow space-y-4 text-left">
-                  <div className="flex gap-2 items-center">
-                    <div className="bg-emerald-500/10 p-2 rounded-xl text-emerald-400">
-                      <MessageCircle className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold font-sans text-slate-100 leading-tight">Customer CRM WhatsApp Actions</h4>
-                      <p className="text-[10px] text-slate-500 font-sans">Trigger instant, simulated mobile notifications and status briefs.</p>
-                    </div>
-                  </div>
-
-                  {whatsappNotice && (
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl text-[10px] font-mono leading-relaxed">
-                      ✓ {whatsappNotice}
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-2 text-[10px] font-sans">
-                    <button
-                      type="button"
-                      disabled={whatsappLoading}
-                      onClick={async () => {
-                        setWhatsappLoading(true);
-                        setWhatsappNotice(null);
-                        try {
-                          await sendWhatsAppReminder(activeLead.id);
-                          setWhatsappNotice(`Dispatched Sunchaser Sizing follow-up reminder to ${activeLead.name}! Check SMS logs.`);
-                          setTimeout(() => setWhatsappNotice(null), 5000);
-                        } catch (err: any) {
-                          setWhatsappNotice(`Error: ${err.message}`);
-                        } finally {
-                          setWhatsappLoading(false);
-                        }
-                      }}
-                      className="bg-slate-950 border border-slate-850 hover:bg-slate-800 text-slate-200 py-2.5 rounded-xl font-bold transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                    >
-                      <Send className="h-3 w-3 text-emerald-400" />
-                      <span>Follow-up Alert</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={whatsappLoading}
-                      onClick={async () => {
-                        setWhatsappLoading(true);
-                        setWhatsappNotice(null);
-                        try {
-                          // Trigger customized PDF quotation message
-                          const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/whatsapp-reminder`, {
-                            method: "POST"
-                          });
-                          if (!res.ok) throw new Error("Could not wire quotation check.");
-                          setWhatsappNotice(`Official Sunchaser Contract Quotation link and backup PDF generated and delivered to ${activeLead.name}!`);
-                          setTimeout(() => setWhatsappNotice(null), 5000);
-                        } catch (err: any) {
-                          setWhatsappNotice(`Error: ${err.message}`);
-                        } finally {
-                          setWhatsappLoading(false);
-                        }
-                      }}
-                      className="bg-slate-950 border border-slate-850 hover:bg-slate-800 text-slate-200 py-2.5 rounded-xl font-bold transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                    >
-                      <MessageCircle className="h-3 w-3 text-amber-500" />
-                      <span>Transmit PDF Sizer</span>
-                    </button>
-                  </div>
                 </div>
+              )}
 
-              </div>
-              
             </div>
           ) : (
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-slate-400">
-              <Inbox className="h-10 w-10 text-slate-500 mx-auto" />
-              <strong className="block text-white mt-1">Select an active client in the menu</strong>
-              <span className="text-xs text-slate-400">Complete task layouts or draft pricing blueprint proposal plans.</span>
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-slate-500">
+              <Inbox className="h-10 w-10 mx-auto" />
+              <strong className="block text-white mt-1.5 font-sans">Select a client on the left pane</strong>
+              <span className="text-xs">Configure layouts, preview quotes history, and sync product inventories.</span>
             </div>
           )}
         </div>

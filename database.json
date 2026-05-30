@@ -41,14 +41,6 @@
       "role": "Installation Team"
     },
     {
-      "id": "u-6",
-      "username": "customer",
-      "password": "123",
-      "name": "John Miller",
-      "email": "john.miller@gmail.com",
-      "role": "Customer"
-    },
-    {
       "id": "u-7",
       "username": "admin2",
       "password": "123",
@@ -83,3131 +75,6 @@
   ],
   "leads": [
     {
-      "id": "lead-1",
-      "name": "John Miller",
-      "email": "john.miller@gmail.com",
-      "phone": "+1 (555) 349-2091",
-      "address": "742 Evergreen Terrace, Springfield",
-      "status": "Quoted",
-      "monthlyBill": 70000,
-      "monthlyUnits": 2000,
-      "sanctionedLoad": 10,
-      "backupRequirement": "Whole House Backup",
-      "location": "Springfield",
-      "roofType": "Asphalt Shingle",
-      "roofSpace": 1190,
-      "shading": "Low",
-      "rating": 5,
-      "assignedSalesperson": "Sarah Connor",
-      "createdAt": "2026-05-10T08:30:00Z",
-      "notes": "Highly interested in solar battery backup. Prefers Tesla Powerwall options.",
-      "leadSource": "Direct/Referral",
-      "engagementLevel": "High",
-      "conversionProbability": 95,
-      "conversionScore": 100,
-      "quotes": [
-        {
-          "id": "q-3",
-          "systemSizekW": 7.1,
-          "panelCount": 18,
-          "panelType": "Sunchaser Ultra 400W Monocrystalline",
-          "inverterType": "18x Enphase IQ8 Microinverters (Dual frequency-lock grid tied module)",
-          "batteryCapacity": "2x Sunchaser Core 27.0kWh Storage Array",
-          "totalCost": 192200,
-          "federalTaxCredit": 0,
-          "netCost": 192200,
-          "estimatedAnnualSavings": 347900,
-          "paybackPeriodYears": 0.6,
-          "status": "Pending",
-          "createdAt": "2026-05-29T21:37:32.495Z",
-          "structureType": "Standard",
-          "accessories": "Dual DC cables, PVC ducting & safety switches",
-          "installationCharges": 75000,
-          "netMeteringCharges": 90000,
-          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
-          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
-          "termsAndConditions": "Quoted prices are valid for 3 days.",
-          "clientName": "John Miller",
-          "clientPhone": "+1 (555) 349-2091",
-          "clientEmail": "john.miller@gmail.com",
-          "clientAddress": "742 Evergreen Terrace, Springfield",
-          "cnic": "",
-          "cityArea": "Springfield",
-          "bdmName": "Sarah Connor",
-          "quoteDate": "2026-05-29",
-          "systemType": "Hybrid",
-          "panelBrand": "Jinko",
-          "panelWattage": 580,
-          "inverterBrand": "Knox",
-          "inverterCapacity": "10kW",
-          "batteryOption": "None",
-          "netMeteringRequired": "Yes",
-          "discount": 0,
-          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
-          "boqItems": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 400W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 21000,
-              "total": 378000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Enphase IQ8 Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Enphase",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "battery_row",
-              "type": "item",
-              "srNo": "3",
-              "name": "2x Sunchaser Core 27.0kWh Storage Array",
-              "description": "Lithium iron phosphate (LiFePO4) storage batteries",
-              "brand": "Soluna",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 235000,
-              "total": 235000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 1013000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 147,
-              "rate": 280,
-              "total": 41160
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 70160
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 4800,
-              "total": 86400
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 182400
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "lescoSettings": {
-            "meterNo": "",
-            "consumerNo": "",
-            "sanctionedLoad": "",
-            "phaseType": "Three Phase"
-          },
-          "societyCharges": 0,
-          "taxEnabled": false,
-          "taxRate": 17,
-          "taxAmount": 0,
-          "selectedStructure": "standard",
-          "customStructure": null,
-          "boqRows": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 400W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 21000,
-              "total": 378000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Enphase IQ8 Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Enphase",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "battery_row",
-              "type": "item",
-              "srNo": "3",
-              "name": "2x Sunchaser Core 27.0kWh Storage Array",
-              "description": "Lithium iron phosphate (LiFePO4) storage batteries",
-              "brand": "Soluna",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 235000,
-              "total": 235000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 1013000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 147,
-              "rate": 280,
-              "total": 41160
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 70160
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 4800,
-              "total": 86400
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 182400
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "customNotes": "",
-          "grandTotal": 192200,
-          "netTotal": 192200
-        },
-        {
-          "id": "q-2",
-          "systemSizekW": 7.1,
-          "panelCount": 18,
-          "panelType": "Sunchaser Ultra 400W Monocrystalline",
-          "inverterType": "18x Enphase IQ8 Microinverters (Dual frequency-lock grid tied module)",
-          "batteryCapacity": "2x Sunchaser Core 27.0kWh Storage Array",
-          "totalCost": 192200,
-          "federalTaxCredit": 0,
-          "netCost": 192200,
-          "estimatedAnnualSavings": 347900,
-          "paybackPeriodYears": 0.6,
-          "status": "Pending",
-          "createdAt": "2026-05-29T21:37:26.428Z",
-          "structureType": "Standard",
-          "accessories": "Dual DC cables, PVC ducting & safety switches",
-          "installationCharges": 75000,
-          "netMeteringCharges": 90000,
-          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
-          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
-          "termsAndConditions": "Quoted prices are valid for 3 days.",
-          "clientName": "John Miller",
-          "clientPhone": "+1 (555) 349-2091",
-          "clientEmail": "john.miller@gmail.com",
-          "clientAddress": "742 Evergreen Terrace, Springfield",
-          "cnic": "",
-          "cityArea": "Springfield",
-          "bdmName": "Sarah Connor",
-          "quoteDate": "2026-05-29",
-          "systemType": "Hybrid",
-          "panelBrand": "Jinko",
-          "panelWattage": 580,
-          "inverterBrand": "Knox",
-          "inverterCapacity": "10kW",
-          "batteryOption": "None",
-          "netMeteringRequired": "Yes",
-          "discount": 0,
-          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
-          "boqItems": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 400W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 21000,
-              "total": 378000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Enphase IQ8 Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Enphase",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "battery_row",
-              "type": "item",
-              "srNo": "3",
-              "name": "2x Sunchaser Core 27.0kWh Storage Array",
-              "description": "Lithium iron phosphate (LiFePO4) storage batteries",
-              "brand": "Soluna",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 235000,
-              "total": 235000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 1013000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 147,
-              "rate": 280,
-              "total": 41160
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 70160
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 4800,
-              "total": 86400
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 182400
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "lescoSettings": {
-            "meterNo": "",
-            "consumerNo": "",
-            "sanctionedLoad": "",
-            "phaseType": "Three Phase"
-          },
-          "societyCharges": 0,
-          "taxEnabled": false,
-          "taxRate": 17,
-          "taxAmount": 0,
-          "selectedStructure": "standard",
-          "customStructure": null,
-          "boqRows": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 400W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 21000,
-              "total": 378000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Enphase IQ8 Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Enphase",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "battery_row",
-              "type": "item",
-              "srNo": "3",
-              "name": "2x Sunchaser Core 27.0kWh Storage Array",
-              "description": "Lithium iron phosphate (LiFePO4) storage batteries",
-              "brand": "Soluna",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 235000,
-              "total": 235000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 1013000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 147,
-              "rate": 280,
-              "total": 41160
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 70160
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 18,
-              "rate": 4800,
-              "total": 86400
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 182400
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "customNotes": "",
-          "grandTotal": 192200,
-          "netTotal": 192200
-        },
-        {
-          "id": "q-1",
-          "systemSizekW": 8.5,
-          "panelCount": 22,
-          "panelType": "Sunchaser Ultra 400W",
-          "inverterType": "Enphase IQ8 Microinverter",
-          "batteryCapacity": "13.5 kWh Sunchaser Core",
-          "totalCost": 19500,
-          "federalTaxCredit": 5850,
-          "netCost": 13650,
-          "estimatedAnnualSavings": 2800,
-          "paybackPeriodYears": 5.2,
-          "status": "Accepted",
-          "createdAt": "2026-05-12T14:20:00Z"
-        }
-      ],
-      "survey": {
-        "scheduledDate": "2026-06-02T10:00:00Z",
-        "status": "Completed",
-        "notes": "Roof has a 30-degree pitch, southern exposure. No significant shading. Shingles are late-stage asphalt but sturdy enough for installation. Service panel is 200A, which is ideal.",
-        "shadingPercent": 8,
-        "optimalPlacement": "South-West Section",
-        "photos": [
-          "/assets/roof_sample_1.jpg"
-        ],
-        "measurements": {
-          "roofPitch": "30 degrees",
-          "rafterSpacing": "24 inches OC",
-          "dimensions": "40ft x 30ft Southern Face",
-          "obstructions": "Chimney on East corner, plumbing vent pipe"
-        },
-        "structureRecommendation": "Flush mount standard rail system",
-        "dbInverterLocation": "Utility Room near main electrical panel",
-        "panelPlacements": [
-          {
-            "x": 120,
-            "y": 150,
-            "id": 1
-          },
-          {
-            "x": 160,
-            "y": 150,
-            "id": 2
-          },
-          {
-            "x": 200,
-            "y": 150,
-            "id": 3
-          },
-          {
-            "x": 240,
-            "y": 150,
-            "id": 4
-          },
-          {
-            "x": 120,
-            "y": 200,
-            "id": 5
-          },
-          {
-            "x": 160,
-            "y": 200,
-            "id": 6
-          }
-        ]
-      },
-      "installation": {
-        "status": "Scheduled",
-        "scheduledDate": "2026-06-15T08:00:00Z",
-        "progress": 20,
-        "tasks": [
-          {
-            "id": "t-1",
-            "name": "Structural Reinforcement & Rails",
-            "done": true
-          },
-          {
-            "id": "t-2",
-            "name": "Inverter & Core Battery Mounting",
-            "done": false
-          },
-          {
-            "id": "t-3",
-            "name": "Solar Panel Array Installation",
-            "done": false
-          },
-          {
-            "id": "t-4",
-            "name": "Electrical Connection & Conduit Routing",
-            "done": false
-          },
-          {
-            "id": "t-5",
-            "name": "Net Meter Setup & Interconnection Inspection",
-            "done": false
-          }
-        ],
-        "completionPhotos": [],
-        "report": ""
-      }
-    },
-    {
-      "id": "lead-2",
-      "name": "Jessica Albright",
-      "email": "jessica.a@yahoo.com",
-      "phone": "+1 (555) 872-4411",
-      "address": "2418 Ridge Road, Fairview",
-      "status": "Quoted",
-      "monthlyBill": 180,
-      "monthlyUnits": 620,
-      "sanctionedLoad": 8,
-      "backupRequirement": "Essential Loads Only",
-      "location": "Fairview",
-      "roofType": "Standing Seam Metal",
-      "roofSpace": 950,
-      "shading": "Medium",
-      "rating": 3,
-      "assignedSalesperson": "Sarah Connor",
-      "createdAt": "2026-05-20T11:15:00Z",
-      "notes": "Worried about large oak tree on southeast side of roof. Wants a shading analysis.",
-      "leadSource": "Web Search",
-      "engagementLevel": "Medium",
-      "conversionProbability": 65,
-      "conversionScore": 58,
-      "quotes": [
-        {
-          "id": "q-2",
-          "systemSizekW": 0.2,
-          "panelCount": 1,
-          "panelType": "Jinko 580W Mono-PERC Panels",
-          "inverterType": "Knox 10kW Inverter",
-          "batteryCapacity": "",
-          "totalCost": 813840,
-          "federalTaxCredit": 0,
-          "netCost": 813840,
-          "estimatedAnnualSavings": 9800,
-          "paybackPeriodYears": 83,
-          "status": "Pending",
-          "createdAt": "2026-05-29T22:50:18.513Z",
-          "structureType": "Standard",
-          "accessories": "Dual DC cables, PVC ducting & safety switches",
-          "installationCharges": 80000,
-          "netMeteringCharges": 90000,
-          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
-          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
-          "termsAndConditions": "Quoted prices are valid for 3 days.",
-          "clientName": "Jessica Albright",
-          "clientPhone": "+1 (555) 872-4411",
-          "clientEmail": "jessica.a@yahoo.com",
-          "clientAddress": "2418 Ridge Road, Fairview",
-          "cnic": "",
-          "cityArea": "Fairview",
-          "bdmName": "Sarah Connor",
-          "quoteDate": "2026-05-29",
-          "systemType": "Hybrid",
-          "panelBrand": "Jinko",
-          "panelWattage": 580,
-          "inverterBrand": "Knox",
-          "inverterCapacity": "10kW",
-          "batteryOption": "None",
-          "netMeteringRequired": "Yes",
-          "discount": 0,
-          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
-          "boqItems": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 580W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 21000,
-              "total": 21000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Knox 10kW Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Knox",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 421000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 43,
-              "rate": 280,
-              "total": 12040
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 41040
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 4800,
-              "total": 4800
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 100800
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "lescoSettings": {
-            "meterNo": "",
-            "consumerNo": "",
-            "sanctionedLoad": "",
-            "phaseType": "Three Phase"
-          },
-          "societyCharges": 0,
-          "taxEnabled": false,
-          "taxRate": 17,
-          "taxAmount": 0,
-          "selectedStructure": "standard",
-          "customStructure": null,
-          "boqRows": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 580W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 21000,
-              "total": 21000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Knox 10kW Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Knox",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 421000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 43,
-              "rate": 280,
-              "total": 12040
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 41040
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 4800,
-              "total": 4800
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 100800
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "customNotes": "",
-          "grandTotal": 813840,
-          "netTotal": 813840
-        },
-        {
-          "id": "q-1",
-          "systemSizekW": 0.2,
-          "panelCount": 1,
-          "panelType": "Jinko 580W Mono-PERC Panels",
-          "inverterType": "Knox 10kW Inverter",
-          "batteryCapacity": "",
-          "totalCost": 813840,
-          "federalTaxCredit": 0,
-          "netCost": 813840,
-          "estimatedAnnualSavings": 9800,
-          "paybackPeriodYears": 83,
-          "status": "Pending",
-          "createdAt": "2026-05-29T22:50:00.579Z",
-          "structureType": "Standard",
-          "accessories": "Dual DC cables, PVC ducting & safety switches",
-          "installationCharges": 80000,
-          "netMeteringCharges": 90000,
-          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
-          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
-          "termsAndConditions": "Quoted prices are valid for 3 days.",
-          "clientName": "Jessica Albright",
-          "clientPhone": "+1 (555) 872-4411",
-          "clientEmail": "jessica.a@yahoo.com",
-          "clientAddress": "2418 Ridge Road, Fairview",
-          "cnic": "",
-          "cityArea": "Fairview",
-          "bdmName": "Sarah Connor",
-          "quoteDate": "2026-05-29",
-          "systemType": "Hybrid",
-          "panelBrand": "Jinko",
-          "panelWattage": 580,
-          "inverterBrand": "Knox",
-          "inverterCapacity": "10kW",
-          "batteryOption": "None",
-          "netMeteringRequired": "No",
-          "discount": 0,
-          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
-          "boqItems": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 580W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 21000,
-              "total": 21000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Knox 10kW Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Knox",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 421000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 43,
-              "rate": 280,
-              "total": 12040
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 41040
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 4800,
-              "total": 4800
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 100800
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "lescoSettings": {
-            "meterNo": "",
-            "consumerNo": "",
-            "sanctionedLoad": "",
-            "phaseType": "Three Phase"
-          },
-          "societyCharges": 0,
-          "taxEnabled": false,
-          "taxRate": 17,
-          "taxAmount": 0,
-          "selectedStructure": "standard",
-          "customStructure": null,
-          "boqRows": [
-            {
-              "id": "h-1",
-              "type": "heading",
-              "name": "Imported Equipment",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "panel_row",
-              "type": "item",
-              "srNo": "1",
-              "name": "Jinko 580W Mono-PERC Solar Panels",
-              "description": "Tier-1 high efficiency solar modules",
-              "brand": "Jinko",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 21000,
-              "total": 21000
-            },
-            {
-              "id": "inverter_row",
-              "type": "item",
-              "srNo": "2",
-              "name": "Knox 10kW Smart Sync Inverter",
-              "description": "Intelligent energy management inverter",
-              "brand": "Knox",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 400000,
-              "total": 400000
-            },
-            {
-              "id": "s-1",
-              "type": "subtotal",
-              "name": "Imported Equipment Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 421000
-            },
-            {
-              "id": "h-2",
-              "type": "heading",
-              "name": "Cables & Conductors",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "dc_cable_row",
-              "type": "item",
-              "srNo": "4",
-              "name": "DC Solar Cable 6mm",
-              "description": "Double Insulated Tin Coated DC Solar Cable",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 43,
-              "rate": 280,
-              "total": 12040
-            },
-            {
-              "id": "ac_cable_row",
-              "type": "item",
-              "srNo": "5",
-              "name": "AC Connecting Cable 4-Core",
-              "description": "AC copper flexible connection cable job",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 40,
-              "rate": 250,
-              "total": 10000
-            },
-            {
-              "id": "earth_wire_row",
-              "type": "item",
-              "srNo": "6",
-              "name": "Earthing Bare Copper Wire",
-              "description": "Bare copper conductor for system grounding",
-              "brand": "GM/FAST",
-              "unit": "Meter",
-              "qty": 50,
-              "rate": 380,
-              "total": 19000
-            },
-            {
-              "id": "s-2",
-              "type": "subtotal",
-              "name": "Cables & Conductors Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 41040
-            },
-            {
-              "id": "h-3",
-              "type": "heading",
-              "name": "DB Boxes & Breakers",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "db_box_row",
-              "type": "item",
-              "srNo": "7",
-              "name": "AC/DC Distribution DB Box Equipped",
-              "description": "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
-              "brand": "GADA/Chint",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 32000,
-              "total": 32000
-            },
-            {
-              "id": "s-3",
-              "type": "subtotal",
-              "name": "DB Boxes & Breakers Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 32000
-            },
-            {
-              "id": "h-4",
-              "type": "heading",
-              "name": "Electrical & Mechanical Supplies",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "supplies_row",
-              "type": "item",
-              "srNo": "8",
-              "name": "PVC Pipes, Ducts & Conduits Job",
-              "description": "Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing",
-              "brand": "Beta/Eq",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 18000,
-              "total": 18000
-            },
-            {
-              "id": "s-4",
-              "type": "subtotal",
-              "name": "Supplies Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 18000
-            },
-            {
-              "id": "h-5",
-              "type": "heading",
-              "name": "System Earthing Works",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "earthing_bore_row",
-              "type": "item",
-              "srNo": "9",
-              "name": "Chemical Earthing Bores",
-              "description": "Copper rods with chemical enhancement compound filling",
-              "brand": "Local",
-              "unit": "Bores",
-              "qty": 2,
-              "rate": 48000,
-              "total": 96000
-            },
-            {
-              "id": "s-5",
-              "type": "subtotal",
-              "name": "System Earthing Works Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 96000
-            },
-            {
-              "id": "h-6",
-              "type": "heading",
-              "name": "System Installation & Fabrication",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "structure_row",
-              "type": "item",
-              "srNo": "10",
-              "name": "Standard Galvanized L3 14 Gauge Structure",
-              "description": "Galvanized iron mounting structure with Rawal bolts",
-              "brand": "Mughal",
-              "unit": "Pcs",
-              "qty": 1,
-              "rate": 4800,
-              "total": 4800
-            },
-            {
-              "id": "civil_work_row",
-              "type": "item",
-              "srNo": "11",
-              "name": "Structure Pillars Foundations civil work",
-              "description": "Concrete pillar foundation blocks for load stability",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 16000,
-              "total": 16000
-            },
-            {
-              "id": "install_service_row",
-              "type": "item",
-              "srNo": "12",
-              "name": "Complete Installation & Commissioning Service",
-              "description": "Electrical wiring terminations, panel alignment, system tuning & start",
-              "brand": "Sunchaser",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 80000,
-              "total": 80000
-            },
-            {
-              "id": "s-6",
-              "type": "subtotal",
-              "name": "System Installation & Fabrication Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 100800
-            },
-            {
-              "id": "h-7",
-              "type": "heading",
-              "name": "Transportation & Services",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 0
-            },
-            {
-              "id": "freight_row",
-              "type": "item",
-              "srNo": "13",
-              "name": "Transportation, Logistics Freight & Manual Lifting",
-              "description": "Equipment loading, delivery to site and manual roof shifting logistics",
-              "brand": "Local",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 10000,
-              "total": 10000
-            },
-            {
-              "id": "net_metering_row",
-              "type": "item",
-              "srNo": "14",
-              "name": "LESCO Net Metering Licensing Process",
-              "description": "Document processing, demand notice payments & green meter commission",
-              "brand": "LESCO",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 90000,
-              "total": 90000
-            },
-            {
-              "id": "survey_design_row",
-              "type": "item",
-              "srNo": "15",
-              "name": "Survey, Designing, Testing & Project Management Suite",
-              "description": "Engineering site audit, CAD layouts, electrical simulations",
-              "brand": "Helios",
-              "unit": "Job",
-              "qty": 1,
-              "rate": 5000,
-              "total": 5000
-            },
-            {
-              "id": "s-7",
-              "type": "subtotal",
-              "name": "Transportation & Services Subtotal",
-              "description": "",
-              "brand": "",
-              "unit": "",
-              "qty": 0,
-              "rate": 0,
-              "total": 105000
-            }
-          ],
-          "customNotes": "",
-          "grandTotal": 813840,
-          "netTotal": 813840
-        }
-      ],
-      "survey": {
-        "scheduledDate": "2026-06-01T14:00:00Z",
-        "status": "Pending",
-        "notes": "",
-        "shadingPercent": 0,
-        "optimalPlacement": "",
-        "photos": []
-      }
-    },
-    {
-      "id": "lead-3",
-      "name": "Robert Delgado",
-      "email": "r.delgado@outlook.com",
-      "phone": "+1 (555) 761-0022",
-      "address": "889 Bluebird Lane, Whispering Pines",
-      "status": "Installed",
-      "monthlyBill": 340,
-      "monthlyUnits": 1100,
-      "sanctionedLoad": 15,
-      "backupRequirement": "Whole House Backup",
-      "location": "Whispering Pines",
-      "roofType": "Concrete Tile",
-      "roofSpace": 1800,
-      "shading": "None",
-      "rating": 4,
-      "assignedSalesperson": "Michael Scott",
-      "createdAt": "2026-04-15T09:00:00Z",
-      "notes": "Wants premium high-efficiency components. Opted for commercial-grade panels.",
-      "leadSource": "Direct/Referral",
-      "engagementLevel": "High",
-      "conversionProbability": 100,
-      "conversionScore": 92,
-      "quotes": [
-        {
-          "id": "q-3",
-          "systemSizekW": 12,
-          "panelCount": 30,
-          "panelType": "Sunchaser Pro High-Efficiency 400W",
-          "inverterType": "Tesla Inverter 7.6kW",
-          "batteryCapacity": "27.0 kWh Twin Storage",
-          "totalCost": 28400,
-          "federalTaxCredit": 8520,
-          "netCost": 19880,
-          "estimatedAnnualSavings": 4200,
-          "paybackPeriodYears": 4.8,
-          "status": "Accepted",
-          "createdAt": "2026-04-18T16:00:00Z"
-        }
-      ],
-      "survey": {
-        "scheduledDate": "2026-04-22T09:00:00Z",
-        "status": "Completed",
-        "notes": "Large flat roof portion combined with pitched southern face. Beautiful space, high potential.",
-        "shadingPercent": 3,
-        "optimalPlacement": "Southern Facing Pitch and South-East Flat Roof Area",
-        "photos": []
-      },
-      "installation": {
-        "status": "Completed",
-        "scheduledDate": "2026-05-05T08:00:00Z",
-        "progress": 100,
-        "tasks": [
-          {
-            "id": "t-1",
-            "name": "Structural Reinforcement & Rails",
-            "done": true
-          },
-          {
-            "id": "t-2",
-            "name": "Inverter & Core Battery Mounting",
-            "done": true
-          },
-          {
-            "id": "t-3",
-            "name": "Solar Panel Array Installation",
-            "done": true
-          },
-          {
-            "id": "t-4",
-            "name": "Electrical Connection & Conduit Routing",
-            "done": true
-          },
-          {
-            "id": "t-5",
-            "name": "Net Meter Setup & Interconnection Inspection",
-            "done": true
-          }
-        ],
-        "completionPhotos": [
-          "https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?w=800&auto=format&fit=crop&q=60"
-        ],
-        "report": "Successful deployment. All electrical tests show peak performance. System outputting 11.8 kW max. Net metering fully approved by utility district and online."
-      }
-    },
-    {
-      "id": "lead-4",
-      "name": "Catherine Vance",
-      "email": "cvance@gmail.com",
-      "phone": "+1 (555) 124-7788",
-      "address": "123 Maple Street, Oakville",
-      "status": "New",
-      "monthlyBill": 120,
-      "monthlyUnits": 400,
-      "sanctionedLoad": 6,
-      "backupRequirement": "None",
-      "location": "Oakville",
-      "roofType": "Asphalt Shingle",
-      "roofSpace": 700,
-      "shading": "High",
-      "rating": 2,
-      "assignedSalesperson": "Michael Scott",
-      "createdAt": "2026-05-28T15:45:00Z",
-      "notes": "Looking to save but roof has many trees. Looking for alternatives or ground mount info.",
-      "leadSource": "Facebook Ad",
-      "engagementLevel": "Low",
-      "conversionProbability": 25,
-      "conversionScore": 32,
-      "quotes": []
-    },
-    {
       "id": "lead-105",
       "name": "alvidon",
       "email": "allai@gmail.com",
@@ -3233,47 +100,7 @@
       "conversionProbability": 95
     }
   ],
-  "tickets": [
-    {
-      "id": "ticket-101",
-      "customerName": "Robert Delgado",
-      "email": "r.delgado@outlook.com",
-      "subject": "Inverter Connectivity Issue",
-      "description": "My solar app dashboard is not updating real-time values. The WiFi indicator on the Enphase combiner box is blinking amber.",
-      "status": "Open",
-      "priority": "Medium",
-      "createdAt": "2026-05-28T09:00:00Z",
-      "messages": [
-        {
-          "sender": "Customer",
-          "text": "The WiFi router was reset yesterday. Since then, the inverter shows offline.",
-          "time": "2026-05-28T09:00:00Z"
-        }
-      ]
-    },
-    {
-      "id": "ticket-102",
-      "customerName": "John Miller",
-      "email": "john.miller@gmail.com",
-      "subject": "HOA Approval Documentation",
-      "description": "Can you provide the solar CAD layout and structural schematic so I can submit them to my HOA for approval?",
-      "status": "In Progress",
-      "priority": "Low",
-      "createdAt": "2026-05-25T14:30:00Z",
-      "messages": [
-        {
-          "sender": "Customer",
-          "text": "They usually take 10-14 days, so the sooner I get the documents, the better.",
-          "time": "2026-05-25T14:30:00Z"
-        },
-        {
-          "sender": "Agent",
-          "text": "Hello John, our design team is finalizing your layout schematics today. We will upload and email you the PDF layout by tomorrow morning.",
-          "time": "2026-05-26T10:15:00Z"
-        }
-      ]
-    }
-  ],
+  "tickets": [],
   "netMeteringHistory": [
     {
       "month": "Jan",
@@ -3407,118 +234,27 @@
       "cost": 70000
     }
   ],
-  "projects": [
-    {
-      "id": "project-1",
-      "leadId": "lead-1",
-      "customerName": "John Miller",
-      "address": "742 Evergreen Terrace, Springfield",
-      "systemSizekW": 8.5,
-      "stage": "Advance Received",
-      "createdAt": "2026-05-12T14:20:00Z",
-      "updatedAt": "2026-05-29T10:00:00Z"
-    },
-    {
-      "id": "project-3",
-      "leadId": "lead-3",
-      "customerName": "Robert Delgado",
-      "address": "889 Bluebird Lane, Whispering Pines",
-      "systemSizekW": 12,
-      "stage": "Completed",
-      "createdAt": "2026-04-18T16:00:00Z",
-      "updatedAt": "2026-05-15T09:00:00Z"
-    }
-  ],
-  "netMeteringTrackers": {
-    "lead-1": {
-      "leadId": "lead-1",
-      "documentsCollected": true,
-      "applicationSubmitted": true,
-      "discoInspection": false,
-      "demandNotice": false,
-      "meterInstallation": false,
-      "greenMeterActive": false
-    },
-    "lead-3": {
-      "leadId": "lead-3",
-      "documentsCollected": true,
-      "applicationSubmitted": true,
-      "discoInspection": true,
-      "demandNotice": true,
-      "meterInstallation": true,
-      "greenMeterActive": true
-    }
-  },
-  "paymentTracks": {
-    "lead-1": {
-      "leadId": "lead-1",
-      "totalValue": 19500,
-      "advanceReceived": 5850,
-      "pendingAmount": 13650,
-      "reminderSent": false,
-      "invoiceStatus": "Pending",
-      "milestones": [
-        {
-          "name": "30% Sign-up Advance",
-          "amount": 5850,
-          "status": "Paid",
-          "dueDate": "2026-05-12"
-        },
-        {
-          "name": "30% Structural Engineering Approval",
-          "amount": 5850,
-          "status": "Pending",
-          "dueDate": "2026-06-05"
-        },
-        {
-          "name": "30% Panel Arrays Completed",
-          "amount": 5850,
-          "status": "Pending",
-          "dueDate": "2026-06-25"
-        },
-        {
-          "name": "10% Utility Interconnection Active",
-          "amount": 1950,
-          "status": "Pending",
-          "dueDate": "2026-07-15"
-        }
-      ]
-    },
-    "lead-3": {
-      "leadId": "lead-3",
-      "totalValue": 28400,
-      "advanceReceived": 28400,
-      "pendingAmount": 0,
-      "reminderSent": false,
-      "invoiceStatus": "Paid",
-      "milestones": [
-        {
-          "name": "100% Retainer Pre-Purchase",
-          "amount": 28400,
-          "status": "Paid",
-          "dueDate": "2026-04-18"
-        }
-      ]
-    }
-  },
+  "projects": [],
+  "netMeteringTrackers": {},
+  "paymentTracks": {},
   "activityLogs": [
     {
-      "id": "log-1780095018932",
-      "timestamp": "2026-05-29T22:50:18.932Z",
-      "userId": "sales",
-      "userName": "Sarah Connor",
-      "role": "Sales Executive",
-      "action": "Quotation Written",
-      "details": "Formulated quote q-2 for Jessica Albright"
+      "id": "log-1780123771091",
+      "timestamp": "2026-05-30T06:49:31.091Z",
+      "userId": "u-11",
+      "userName": "Muhammad Allauddin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
     },
     {
-      "id": "log-1780095001673",
-      "timestamp": "2026-05-29T22:50:01.673Z",
-      "userId": "sales",
-      "userName": "Sarah Connor",
-      "role": "Sales Executive",
-      "action": "Quotation Written",
-      "details": "Formulated quote q-1 for Jessica Albright"
+      "id": "log-1780123770292",
+      "timestamp": "2026-05-30T06:49:30.292Z",
+      "userId": "u-1",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
     },
     {
       "id": "log-1780092597670",
@@ -3548,24 +284,6 @@
       "details": "Authorized access via Supabase PostgreSQL security clearance."
     },
     {
-      "id": "log-1780090652495",
-      "timestamp": "2026-05-29T21:37:32.495Z",
-      "userId": "sales",
-      "userName": "Sarah Connor",
-      "role": "Sales Executive",
-      "action": "Quotation Written",
-      "details": "Formulated quote q-3 for John Miller"
-    },
-    {
-      "id": "log-1780090646429",
-      "timestamp": "2026-05-29T21:37:26.429Z",
-      "userId": "sales",
-      "userName": "Sarah Connor",
-      "role": "Sales Executive",
-      "action": "Quotation Written",
-      "details": "Formulated quote q-2 for John Miller"
-    },
-    {
       "id": "log-1780067480058",
       "timestamp": "2026-05-29T15:11:20.058Z",
       "userId": "guest",
@@ -3584,15 +302,6 @@
       "details": "Authorized access via local file persistence layout."
     },
     {
-      "id": "log-1",
-      "timestamp": "2026-05-10T08:30:00Z",
-      "userId": "guest",
-      "userName": "Website Request",
-      "role": "Customer",
-      "action": "Lead Created",
-      "details": "Candidate John Miller submitted interest on Sunchaser calculator"
-    },
-    {
       "id": "log-2",
       "timestamp": "2026-05-12T14:20:00Z",
       "userId": "u-3",
@@ -3600,63 +309,9 @@
       "role": "Sales Executive",
       "action": "Quotation Formulated",
       "details": "Drafted 8.5 kW panel layout with 1x Sunchaser Core storage battery ($19,500 total)"
-    },
-    {
-      "id": "log-3",
-      "timestamp": "2026-05-15T11:00:00Z",
-      "userId": "u-6",
-      "userName": "John Miller",
-      "role": "Customer",
-      "action": "Proposal Accepted",
-      "details": "Electronically signed contract, scheduled installer dispatch"
-    },
-    {
-      "id": "log-4",
-      "timestamp": "2026-05-29T09:12:00Z",
-      "userId": "u-4",
-      "userName": "Bob Surveyor",
-      "role": "Survey Engineer",
-      "action": "Structural Audit Finished",
-      "details": "Audit completed for John Miller site survey, optimized placement array to South-West roof segment"
     }
   ],
   "whatsAppLogs": [
-    {
-      "id": "wa-1780095019201",
-      "timestamp": "2026-05-29T22:50:19.201Z",
-      "customerName": "Jessica Albright",
-      "phone": "+1 (555) 872-4411",
-      "eventType": "quote_generation",
-      "messageText": "☀️ Hi Jessica Albright! Sunchaser has unlocked your custom solar proposal: 0.2 kW with Knox 10kW Inverter. Total final cost is Rs. 813,840. Open file: http://sunchaser.co/portal",
-      "status": "Delivered"
-    },
-    {
-      "id": "wa-1780095001912",
-      "timestamp": "2026-05-29T22:50:01.912Z",
-      "customerName": "Jessica Albright",
-      "phone": "+1 (555) 872-4411",
-      "eventType": "quote_generation",
-      "messageText": "☀️ Hi Jessica Albright! Sunchaser has unlocked your custom solar proposal: 0.2 kW with Knox 10kW Inverter. Total final cost is Rs. 813,840. Open file: http://sunchaser.co/portal",
-      "status": "Delivered"
-    },
-    {
-      "id": "wa-1780090652496",
-      "timestamp": "2026-05-29T21:37:32.496Z",
-      "customerName": "John Miller",
-      "phone": "+1 (555) 349-2091",
-      "eventType": "quote_generation",
-      "messageText": "☀️ Hi John Miller! Sunchaser has unlocked your custom solar proposal: 7.1 kW with 18x Enphase IQ8 Microinverters (Dual frequency-lock grid tied module). Total final cost is Rs. 192,200. Open file: http://sunchaser.co/portal",
-      "status": "Delivered"
-    },
-    {
-      "id": "wa-1780090646436",
-      "timestamp": "2026-05-29T21:37:26.436Z",
-      "customerName": "John Miller",
-      "phone": "+1 (555) 349-2091",
-      "eventType": "quote_generation",
-      "messageText": "☀️ Hi John Miller! Sunchaser has unlocked your custom solar proposal: 7.1 kW with 18x Enphase IQ8 Microinverters (Dual frequency-lock grid tied module). Total final cost is Rs. 192,200. Open file: http://sunchaser.co/portal",
-      "status": "Delivered"
-    },
     {
       "id": "wa-1780067480060",
       "timestamp": "2026-05-29T15:11:20.060Z",
@@ -3664,24 +319,6 @@
       "phone": "032184877879",
       "eventType": "survey_confirmation",
       "messageText": "☀️ Hi alvidon! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
-      "status": "Delivered"
-    },
-    {
-      "id": "wa-1",
-      "timestamp": "2026-05-10T08:31:00Z",
-      "customerName": "John Miller",
-      "phone": "+1 (555) 349-2091",
-      "eventType": "survey_confirmation",
-      "messageText": "☀️ Hi John Miller! Welcome to Sunchaser. Your home solar assessment is under engineering review. Sunchaser sales team advisor Sarah Connor will follow up soon.",
-      "status": "Delivered"
-    },
-    {
-      "id": "wa-2",
-      "timestamp": "2026-05-12T14:22:00Z",
-      "customerName": "John Miller",
-      "phone": "+1 (555) 349-2091",
-      "eventType": "quote_generation",
-      "messageText": "☀️ Hi John! Sunchaser advisor Sarah Connor has unlocked your premium Solar Design Proposal: 8.5 kW Sunchaser Ultra array paired with 13.5kWh Sunchaser Core. Estimated payback is 5.2 years!",
       "status": "Delivered"
     }
   ],
@@ -3761,319 +398,451 @@
   ],
   "products": [
     {
-      "id": "p-sol-10",
-      "name": "Sunchaser Sol-Max 10kW Array",
-      "category": "Solar Systems",
-      "brand": "Sunchaser Energy",
-      "model": "Sol-Max Premium 10",
-      "sku": "SC-SYS-10K",
-      "price": 14500,
-      "discount": 1500,
-      "stock": 45,
+      "id": "p-sol-jinko-580",
+      "name": "Jinko Tiger Neo 580W Panel",
+      "category": "Solar Panels",
+      "brand": "Jinko",
+      "model": "Tiger Neo N-type 580W",
+      "sku": "JK-PAN-580N",
+      "price": 26000,
+      "discount": 1000,
+      "stock": 500,
       "images": [
-        "https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?w=800&auto=format&fit=crop&q=60"
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
       ],
       "warrantyPeriod": "25 Years",
       "specifications": {
-        "Max Output": "10.2 kW",
-        "Cell Type": "MonocrystallineMonocrystalline",
-        "Inverter Pairing": "Ready"
-      },
-      "installationRequired": true,
-      "serviceRequired": true
+        "wattage": 580,
+        "costPrice": 19500,
+        "description": "Jinko Tiger Neo N-type high efficiency monocrystalline bifacial panels."
+      }
     },
     {
-      "id": "p-pan-400",
-      "name": "Sunchaser Ultra 400W Panel",
+      "id": "p-sol-longi-575",
+      "name": "Longi Hi-MO 6 Explorer 575W",
       "category": "Solar Panels",
-      "brand": "Sunchaser Energy",
-      "model": "Ultra-400X",
-      "sku": "SC-PAN-400",
-      "price": 280,
-      "discount": 20,
+      "brand": "Longi",
+      "model": "Hi-MO 6 Explorer 575W",
+      "sku": "LG-PAN-575E",
+      "price": 25215,
+      "discount": 500,
       "stock": 450,
       "images": [
         "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
       ],
       "warrantyPeriod": "25 Years",
       "specifications": {
-        "Efficiency": "21.8%",
-        "Dimensions": "1722 x 1134 x 30 mm",
-        "Weight": "21.5 kg"
-      },
-      "installationRequired": true,
-      "serviceRequired": false
+        "wattage": 575,
+        "costPrice": 18900,
+        "description": "Longi Hi-MO 6 Explorer HPBC single glass modules."
+      }
     },
     {
-      "id": "p-inv-en",
-      "name": "Enphase IQ8 Microinverter",
-      "category": "Inverters",
-      "brand": "Enphase Energy",
-      "model": "IQ8-Plus-72-2-US",
-      "sku": "EP-INV-IQ8",
-      "price": 180,
+      "id": "p-sol-ja-550",
+      "name": "JA Solar DeepBlue 550W",
+      "category": "Solar Panels",
+      "brand": "JA Solar",
+      "model": "DeepBlue 3.0 550W",
+      "sku": "JA-PAN-550D",
+      "price": 19500,
       "discount": 0,
-      "stock": 1210,
+      "stock": 350,
       "images": [
-        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
       ],
       "warrantyPeriod": "25 Years",
       "specifications": {
-        "Max Output": "300 VA",
-        "Frequency": "60 Hz",
-        "Enclosure": "NEMA 250 Type 6"
-      },
-      "installationRequired": true,
-      "serviceRequired": false
+        "wattage": 550,
+        "costPrice": 15500,
+        "description": "JA Solar DeepBlue 3.0 Mono-crystalline assembly."
+      }
     },
     {
-      "id": "p-bat-13",
-      "name": "Sunchaser PowerCore 13.5kWh LFP",
+      "id": "p-sol-canadian-650",
+      "name": "Canadian Solar BiHiKu7 650W",
+      "category": "Solar Panels",
+      "brand": "Canadian Solar",
+      "model": "BiHiKu7 650W",
+      "sku": "CS-PAN-650B",
+      "price": 23000,
+      "discount": 1000,
+      "stock": 300,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 650,
+        "costPrice": 17500,
+        "description": "Canadian Solar BiHiKu7 double glass bifacial modules."
+      }
+    },
+    {
+      "id": "p-sol-trina-430",
+      "name": "Trina Vertex S+ 430W",
+      "category": "Solar Panels",
+      "brand": "Trina",
+      "model": "Vertex S+ 430W",
+      "sku": "TR-PAN-430V",
+      "price": 16000,
+      "discount": 500,
+      "stock": 400,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 430,
+        "costPrice": 12500,
+        "description": "Trina Vertex S+ N-type dual glass solar modules."
+      }
+    },
+    {
+      "id": "p-inv-knox-10",
+      "name": "Knox Smart Sync 10kW Inverter",
+      "category": "Inverters",
+      "brand": "Knox",
+      "model": "KNS-10K-G3",
+      "sku": "KX-INV-10K",
+      "price": 400000,
+      "discount": 15000,
+      "stock": 120,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10000,
+        "costPrice": 320000,
+        "description": "Knox Smart Sync 10kW three phase dual MPPT grid tied inverter."
+      }
+    },
+    {
+      "id": "p-inv-solis-10",
+      "name": "Solis 3-Phase 10kW Inverter",
+      "category": "Inverters",
+      "brand": "Solis",
+      "model": "S6-GR3P10K",
+      "sku": "SL-INV-10K",
+      "price": 420000,
+      "discount": 10000,
+      "stock": 90,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10000,
+        "costPrice": 340000,
+        "description": "Solis S6 three phase grid-tied solar inverter."
+      }
+    },
+    {
+      "id": "p-inv-growatt-6",
+      "name": "Growatt Hybrid 6kW Inverter",
+      "category": "Inverters",
+      "brand": "Growatt",
+      "model": "MIN 6000TL-XH",
+      "sku": "GW-INV-6K",
+      "price": 280000,
+      "discount": 5000,
+      "stock": 80,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "5 Years",
+      "specifications": {
+        "wattage": 6000,
+        "costPrice": 220000,
+        "description": "Growatt MIN 6000TL-XH hybrid single phase storage inverter."
+      }
+    },
+    {
+      "id": "p-inv-nitrox-12",
+      "name": "Nitrox Hybrid 12kW Inverter",
+      "category": "Inverters",
+      "brand": "Nitrox",
+      "model": "S-12K-SG04LP3",
+      "sku": "NX-INV-12K",
+      "price": 580000,
+      "discount": 20000,
+      "stock": 65,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "5 Years",
+      "specifications": {
+        "wattage": 12000,
+        "costPrice": 480000,
+        "description": "Nitrox 12kW hybrid three phase storage inverter (low voltage battery supported)."
+      }
+    },
+    {
+      "id": "p-inv-fox-10",
+      "name": "Fox ESS 3-Phase 10kW Hybrid",
+      "category": "Inverters",
+      "brand": "Fox ESS",
+      "model": "H3-10.0-E",
+      "sku": "FX-INV-10K",
+      "price": 490000,
+      "discount": 10000,
+      "stock": 40,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10000,
+        "costPrice": 410000,
+        "description": "Fox ESS high performance H3 series 10kW hybrid inverter."
+      }
+    },
+    {
+      "id": "p-bat-dyness-5",
+      "name": "Dyness LFP 5.12kWh Battery",
       "category": "Batteries",
-      "brand": "Sunchaser Energy",
-      "model": "PowerCore LFP-13",
-      "sku": "SC-BAT-13",
-      "price": 6200,
-      "discount": 400,
+      "brand": "Dyness",
+      "model": "DL5.0C LFP",
+      "sku": "DN-BAT-5K",
+      "price": 235000,
+      "discount": 5000,
+      "stock": 150,
+      "images": [
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 5120,
+        "costPrice": 190000,
+        "description": "Dyness DL5.0C lithium iron phosphate (LiFePO4) 51.2V 100Ah rack battery."
+      }
+    },
+    {
+      "id": "p-bat-pylontech-48",
+      "name": "Pylontech US5000 4.8kWh",
+      "category": "Batteries",
+      "brand": "Pylontech",
+      "model": "US5000 48V",
+      "sku": "PT-BAT-48",
+      "price": 260000,
+      "discount": 10000,
       "stock": 80,
       "images": [
         "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
       ],
       "warrantyPeriod": "10 Years",
       "specifications": {
-        "Energy Capacity": "13.5 kWh",
-        "Cell Chemistry": "Lithium Iron Phosphate (LFP)",
-        "Round-trip Efficiency": "92.5%"
-      },
-      "installationRequired": true,
-      "serviceRequired": false
+        "wattage": 4800,
+        "costPrice": 215000,
+        "description": "Pylontech US5000 LFP lithium energy storage battery module."
+      }
     },
     {
-      "id": "p-ev-c22",
-      "name": "Sunchaser EV ChargeMax Pro 22kW",
-      "category": "EV Chargers",
-      "brand": "Sunchaser Energy",
-      "model": "ChargeMax-22P",
-      "sku": "SC-EV-C22",
-      "price": 850,
-      "discount": 50,
-      "stock": 120,
+      "id": "p-bat-soluna-10",
+      "name": "Soluna EOS 10K Pack",
+      "category": "Batteries",
+      "brand": "Soluna",
+      "model": "EOS 10K LFP",
+      "sku": "SL-BAT-10K",
+      "price": 480000,
+      "discount": 15000,
+      "stock": 45,
       "images": [
-        "https://images.unsplash.com/photo-1563720223185-11003d516935?w=800&auto=format&fit=crop&q=60"
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10240,
+        "costPrice": 380000,
+        "description": "Soluna EOS high capacity LFP stackable battery system."
+      }
+    },
+    {
+      "id": "p-bat-narada-48",
+      "name": "Narada LFP 100Ah Battery",
+      "category": "Batteries",
+      "brand": "Narada",
+      "model": "48NPFC100",
+      "sku": "ND-BAT-48",
+      "price": 210000,
+      "discount": 5000,
+      "stock": 95,
+      "images": [
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
       ],
       "warrantyPeriod": "5 Years",
       "specifications": {
-        "Power output": "Up to 22 kW",
-        "Current": "32 A",
-        "Connector Type": "CCS Type 2 & J1772"
-      },
-      "installationRequired": true,
-      "serviceRequired": true
+        "wattage": 4800,
+        "costPrice": 175000,
+        "description": "Narada 48V telecom-grade lithium iron phosphate rack batteries."
+      }
     },
     {
-      "id": "p-mob-s25",
-      "name": "Sunchaser Phone S25 Ultra",
-      "category": "Mobile Phones",
-      "brand": "Sunchaser Mobile",
-      "model": "S25-Ultra-Chaser",
-      "sku": "SC-MOB-S25",
-      "price": 1199,
-      "discount": 100,
-      "stock": 150,
-      "images": [
-        "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=800&auto=format&fit=crop&q=60"
-      ],
-      "warrantyPeriod": "2 Years",
+      "id": "p-str-std",
+      "name": "Standard A-Frame Mount Rails",
+      "category": "Structure",
+      "brand": "Mughal",
+      "model": "Standard A-Frame (Roof)",
+      "sku": "MG-STR-STD",
+      "price": 4800,
+      "discount": 0,
+      "stock": 1000,
+      "images": [],
+      "warrantyPeriod": "10 Years",
       "specifications": {
-        "Processor": "ChaserCore X3",
-        "Memory": "16GB RAM / 512GB Storage",
-        "Camera": "200 MP Quad Array"
-      },
-      "installationRequired": false,
-      "serviceRequired": false
+        "wattage": 0,
+        "costPrice": 3500,
+        "description": "Standard hot-dip galvanized L3 14 gauge frame roof mounts."
+      }
     },
     {
-      "id": "p-el-t12",
-      "name": "ChaserTab Pro 12\" Electronic Display",
-      "category": "Electronics",
-      "brand": "Sunchaser",
-      "model": "ChaserTab-12Pro",
-      "sku": "SC-EL-T12",
-      "price": 499,
-      "discount": 30,
+      "id": "p-str-elv",
+      "name": "Elevated Steel Frame (10ft clearance)",
+      "category": "Structure",
+      "brand": "Mughal",
+      "model": "Elevated Frame (10ft)",
+      "sku": "MG-STR-ELV",
+      "price": 147600,
+      "discount": 5000,
+      "stock": 100,
+      "images": [],
+      "warrantyPeriod": "15 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 120000,
+        "description": "Hot-dip galvanized C-Channel / H-Beam heavy fabrication structure."
+      }
+    },
+    {
+      "id": "p-str-gir",
+      "name": "Premium Mughal Girder Heavy Frame",
+      "category": "Structure",
+      "brand": "Mughal",
+      "model": "Girder Heavy Frame",
+      "sku": "MG-STR-GIR",
+      "price": 180000,
+      "discount": 10000,
       "stock": 80,
-      "images": [
-        "https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?w=800&auto=format&fit=crop&q=60"
-      ],
-      "warrantyPeriod": "1 Year",
+      "images": [],
+      "warrantyPeriod": "15 Years",
       "specifications": {
-        "Screen size": "12.4 inches",
-        "Resolution": "2800 x 1752",
-        "Battery": "10,090 mAh"
-      },
-      "installationRequired": false,
-      "serviceRequired": false
+        "wattage": 0,
+        "costPrice": 140000,
+        "description": "Extreme wind shear resistant structural steel girder system."
+      }
     },
     {
-      "id": "p-ap-rf",
-      "name": "Sunchaser EcoFridge Smart Cooler",
-      "category": "Appliances",
-      "brand": "Sunchaser Home",
-      "model": "EcoFridge-500",
-      "sku": "SC-AP-RF",
-      "price": 1899,
-      "discount": 150,
-      "stock": 35,
-      "images": [
-        "https://images.unsplash.com/photo-1584269600464-37b1b58a9fe7?w=800&auto=format&fit=crop&q=60"
-      ],
+      "id": "p-cab-dc6",
+      "name": "Pakistan Cables 6mm Single Core DC",
+      "category": "Cables",
+      "brand": "Pakistan Cables",
+      "model": "6mm Single-Core DC Solar",
+      "sku": "PK-CAB-DC6",
+      "price": 280,
+      "discount": 10,
+      "stock": 5000,
+      "images": [],
+      "warrantyPeriod": "20 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 220,
+        "description": "Double insulated copper core DC solar cable per meter."
+      }
+    },
+    {
+      "id": "p-cab-ac16",
+      "name": "Fast Cables 16mm 4-Core AC Cable",
+      "category": "Cables",
+      "brand": "Fast Cables",
+      "model": "16mm 4-Core AC Copper",
+      "sku": "FC-CAB-AC16",
+      "price": 2200,
+      "discount": 100,
+      "stock": 2000,
+      "images": [],
+      "warrantyPeriod": "15 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 1800,
+        "description": "Standard connection copper cable for AC distribution box per meter."
+      }
+    },
+    {
+      "id": "p-pro-box",
+      "name": "DC Breaker & SPD Protection Box",
+      "category": "Protection",
+      "brand": "Chint",
+      "model": "DC Protection Box Equipped",
+      "sku": "CT-PRO-DCB",
+      "price": 22000,
+      "discount": 2000,
+      "stock": 150,
+      "images": [],
+      "warrantyPeriod": "3 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 15000,
+        "description": "DC box with 1000V fuses, DC SPD, and heavy circuit breakers."
+      }
+    },
+    {
+      "id": "p-acc-con",
+      "name": "PVC Conduit Ducting & MC4 Connectors",
+      "category": "Accessories",
+      "brand": "Beta",
+      "model": "Ducting Accessories Kit",
+      "sku": "BT-ACC-KIT",
+      "price": 18000,
+      "discount": 0,
+      "stock": 400,
+      "images": [],
       "warrantyPeriod": "5 Years",
       "specifications": {
-        "Capacity": "520 Liters",
-        "Energy Rating": "A+++ Multi-Flow",
-        "IoT Mode": "WiFi Connected"
-      },
-      "installationRequired": true,
-      "serviceRequired": true
+        "wattage": 0,
+        "costPrice": 12000,
+        "description": "Complete PVC conduit piping, ducting, flex pipes, joints, and MC4 kit."
+      }
+    },
+    {
+      "id": "p-net-lesco",
+      "name": "LESCO Bidirectional Green Meter Filing",
+      "category": "Net Metering",
+      "brand": "LESCO",
+      "model": "Three-Phase Green Metering",
+      "sku": "LE-NET-FIL",
+      "price": 90000,
+      "discount": 0,
+      "stock": 999,
+      "images": [],
+      "warrantyPeriod": "N/A",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 75000,
+        "description": "Bidirectional meter licensing, NEPRA application filing, demand notice audit."
+      }
+    },
+    {
+      "id": "p-civ-fnd",
+      "name": "Concrete Ballast Foundation Pillars",
+      "category": "Civil Works",
+      "brand": "Local",
+      "model": "Ballast Concrete Pad",
+      "sku": "LC-CIV-FND",
+      "price": 16000,
+      "discount": 0,
+      "stock": 500,
+      "images": [],
+      "warrantyPeriod": "N/A",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 11000,
+        "description": "1.5x1.5ft concrete blocks for anchor base foundation stabilization."
+      }
     }
   ],
-  "orders": [
-    {
-      "id": "ORD-1001",
-      "customerName": "John Miller",
-      "email": "john.miller@gmail.com",
-      "phone": "+1 (555) 349-2091",
-      "address": "742 Evergreen Terrace, Springfield",
-      "orderType": "Product",
-      "status": "Delivered",
-      "items": [
-        {
-          "productId": "p-mob-s25",
-          "productName": "Sunchaser Phone S25 Ultra",
-          "quantity": 1,
-          "price": 1099
-        }
-      ],
-      "totalCost": 1099,
-      "createdAt": "2026-05-15T11:30:00Z"
-    },
-    {
-      "id": "ORD-1002",
-      "customerName": "Jessica Albright",
-      "email": "jessica.a@yahoo.com",
-      "phone": "+1 (555) 872-4411",
-      "address": "2418 Ridge Road, Fairview",
-      "orderType": "Product",
-      "status": "Delivered",
-      "items": [
-        {
-          "productId": "p-ev-c22",
-          "productName": "Sunchaser EV ChargeMax Pro 22kW",
-          "quantity": 1,
-          "price": 800
-        }
-      ],
-      "totalCost": 800,
-      "createdAt": "2026-05-24T09:45:00Z",
-      "installationRequired": true
-    },
-    {
-      "id": "ORD-1003",
-      "customerName": "Robert Delgado",
-      "email": "r.delgado@outlook.com",
-      "phone": "+1 (555) 761-0022",
-      "address": "889 Bluebird Lane, Whispering Pines",
-      "orderType": "Solar Project",
-      "status": "Installed",
-      "items": [
-        {
-          "productId": "p-sol-10",
-          "productName": "Sunchaser Sol-Max 10kW Array",
-          "quantity": 1,
-          "price": 13000
-        }
-      ],
-      "totalCost": 13000,
-      "createdAt": "2026-05-02T10:00:00Z",
-      "installationRequired": true
-    }
-  ],
-  "warranties": [
-    {
-      "id": "WAR-2001",
-      "customerName": "John Miller",
-      "email": "john.miller@gmail.com",
-      "productName": "Sunchaser Phone S25 Ultra",
-      "productSku": "SC-MOB-S25",
-      "serialNumber": "SN-MOB-S25-4421",
-      "startDate": "2026-05-15T12:00:00Z",
-      "endDate": "2028-05-15T12:00:00Z",
-      "installationDate": "2026-05-15T12:00:00Z",
-      "status": "Active",
-      "claimHistory": [
-        {
-          "claimId": "CLM-301",
-          "claimDate": "2026-05-20T14:00:00Z",
-          "issueTitle": "Screen flickering",
-          "description": "Top left region of display shows micro-flickering under low brightness.",
-          "status": "Approved",
-          "resolutionNotes": "Replaced panel screen at Springfield customer support hub."
-        }
-      ]
-    },
-    {
-      "id": "WAR-2002",
-      "customerName": "John Miller",
-      "email": "john.miller@gmail.com",
-      "productName": "Sunchaser PowerCore 13.5kWh LFP",
-      "productSku": "SC-BAT-13",
-      "serialNumber": "SN-BAT-13-88120",
-      "startDate": "2026-05-15T08:00:00Z",
-      "endDate": "2036-05-15T08:00:00Z",
-      "installationDate": "2026-05-15T08:00:00Z",
-      "status": "Active",
-      "claimHistory": []
-    },
-    {
-      "id": "WAR-2003",
-      "customerName": "Jessica Albright",
-      "email": "jessica.a@yahoo.com",
-      "productName": "Sunchaser EV ChargeMax Pro 22kW",
-      "productSku": "SC-EV-C22",
-      "serialNumber": "SN-EV-C22-10923",
-      "startDate": "2026-05-24T12:00:00Z",
-      "endDate": "2031-05-24T12:00:00Z",
-      "installationDate": "2026-05-24T12:00:00Z",
-      "status": "Active",
-      "claimHistory": []
-    }
-  ],
-  "notifications": [
-    {
-      "id": "NT-3001",
-      "customerName": "John Miller",
-      "message": "Warranty registered successfully for Sunchaser Phone S25 Ultra (SN-MOB-S25-4421).",
-      "type": "new_order",
-      "createdAt": "2026-05-15T12:05:00Z",
-      "read": true
-    },
-    {
-      "id": "NT-3002",
-      "customerName": "John Miller",
-      "message": "Complaint ticket ticket-102 has been assigned to Technician Dave Installer.",
-      "type": "technician_assigned",
-      "createdAt": "2026-05-25T14:40:00Z",
-      "read": false
-    },
-    {
-      "id": "NT-3003",
-      "customerName": "Jessica Albright",
-      "message": "Payment confirmed for Sunchaser EV Charger order ORD-1002.",
-      "type": "payment_pending",
-      "createdAt": "2026-05-24T09:50:00Z",
-      "read": false
-    }
-  ],
+  "orders": [],
+  "warranties": [],
+  "notifications": [],
   "solarPackages": [
     {
       "id": "sp-5kw-hybrid",
