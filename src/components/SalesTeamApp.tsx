@@ -1036,7 +1036,7 @@ export default function SalesTeamApp({
       if (onRefreshState) onRefreshState();
 
       // Open PDF in a new tab
-      window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank");
+      window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}`, "_blank");
     } catch (err: any) {
       console.error("Quote save failed:", err);
       setSubmitError(err.message || "Failed to save quotation on server.");
@@ -1680,14 +1680,14 @@ export default function SalesTeamApp({
                     onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}`, "_blank")}
                     className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Download className="h-3.5 w-3.5 text-amber-500" /> Sizer Summary
+                    <Download className="h-3.5 w-3.5 text-amber-500" /> Download Auto Sizer PDF
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}`, "_blank")}
+                    onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}`, "_blank")}
                     className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer animate-pulse"
                   >
-                    <Eye className="h-3.5 w-3.5" /> Client Proposal PDF
+                    <Download className="h-3.5 w-3.5" /> Download Saved Quote PDF
                   </button>
                 </div>
               </div>
@@ -2572,7 +2572,7 @@ export default function SalesTeamApp({
                           className="w-full bg-slate-800 hover:bg-slate-700 text-amber-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-700 mt-3"
                         >
                           <Download className="h-4 w-4" />
-                          <span>Download Manual BOQ Quotation PDF</span>
+                          <span>Download Manual BOQ Quote PDF</span>
                         </button>
                       </div>
 
@@ -2833,7 +2833,7 @@ export default function SalesTeamApp({
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/${activeLead.id}?quoteId=${q.id}`, "_blank")}
+                                  onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`, "_blank")}
                                   className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
                                   title="Download Version PDF"
                                 >

@@ -1280,7 +1280,9 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
                 boqRows: q.boqRows,
                 customNotes: q.customNotes,
                 grandTotal: q.grandTotal,
-                netTotal: q.netTotal
+                netTotal: q.netTotal,
+                templateId: q.templateId,
+                includedPages: q.includedPages
               },
               created_at: q.createdAt || new Date().toISOString()
             }, { onConflict: "id" });

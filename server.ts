@@ -1120,7 +1120,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
           customNotes: newQuote.customNotes,
           grandTotal: newQuote.grandTotal,
           netTotal: newQuote.netTotal,
-          idempotencyKey: newQuote.idempotencyKey
+          idempotencyKey: newQuote.idempotencyKey,
+          templateId: newQuote.templateId,
+          includedPages: newQuote.includedPages
         }
       });
 
@@ -1244,7 +1246,9 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
           customNotes: updatedQuote.customNotes,
           grandTotal: updatedQuote.grandTotal,
           netTotal: updatedQuote.netTotal,
-          idempotencyKey: updatedQuote.idempotencyKey
+          idempotencyKey: updatedQuote.idempotencyKey,
+          templateId: updatedQuote.templateId,
+          includedPages: updatedQuote.includedPages
         }
       }, { onConflict: "id" });
 
@@ -3828,6 +3832,44 @@ app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
   }
 });
 
+app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+
+    const quoteId = req.query.quoteId;
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
+    }
+    if (!quote) {
+      quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
+    }
+
+    if (!quote) {
+      return res.status(404).send("No saved quotation found for this lead.");
+    }
+
+    const options = {
+      includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
+      templateId: quote.templateId || "tmpl-1"
+    };
+
+    const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
+    res.send(pdfHtml);
+  } catch (err: any) {
+    res.status(500).send("Error compiling manual quotation PDF: " + err.message);
+  }
+});
+
 app.get("/api/export/pdf/:leadId", async (req, res) => {
   try {
     loadDb();
@@ -3841,7 +3883,6 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
       return res.status(404).send("Lead not found.");
     }
 
-    // Try to find the requested quote by ID, otherwise default to the first one
     const quoteId = req.query.quoteId;
     let quote = null;
     if (quoteId) {
@@ -3850,19 +3891,12 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
     if (!quote) {
       quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
     }
-    
-    let pdfHtml = "";
+
     if (quote) {
-      const options = {
-        includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
-        templateId: quote.templateId || "tmpl-1"
-      };
-      pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
+      res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}${req.query.quoteId ? `?quoteId=${req.query.quoteId}` : ""}`);
     } else {
       res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}`);
-      return;
     }
-    res.send(pdfHtml);
   } catch (err: any) {
     res.status(500).send("Error compiling Legacy PDF wrapper: " + err.message);
   }
