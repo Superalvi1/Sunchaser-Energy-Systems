@@ -2810,379 +2810,417 @@ function compileSunchaserPDFHtml(
   const lescoObj = quoteObj.lescoSettings || { meterNo: "", consumerNo: "", sanctionedLoad: "", phaseType: "Three Phase" };
   const netMeteringText = quoteObj.netMeteringRequired || "Yes";
 
-  // Build Pages Array HTML
+  // ----------------------------------------------------
+  // Dynamic Template Page Assembly & Sort Order Logic
+  // ----------------------------------------------------
+  const getIncludedFlagForPageType = (pageType: string) => {
+    if (pageType === 'terms1' || pageType === 'terms2') {
+      return getIncludedFlag('terms');
+    }
+    if (pageType.startsWith('structure_')) {
+      return getIncludedFlag('structure');
+    }
+    return getIncludedFlag(pageType);
+  };
+
+  const getStructurePageType = () => {
+    if (selectedStructKey === "elevated") return "structure_elevated";
+    if (selectedStructKey === "girder") return "structure_girder";
+    if (selectedStructKey === "custom") return "structure_custom";
+    return "structure_standard";
+  };
+  const activeStructurePageType = getStructurePageType();
+
+  // Load all enabled quote template pages for this template from Supabase / DB
+  const enabledDbPages = dbPages.filter((p: any) => {
+    if (p.isEnabled === false || p.is_enabled === false) return false;
+    const type = p.pageType || p.page_type || "";
+    if (!getIncludedFlagForPageType(type)) return false;
+    if (type.startsWith('structure_') && type !== activeStructurePageType) return false;
+    return true;
+  });
+
+  const pagesList: any[] = enabledDbPages.map((p: any) => ({
+    type: p.pageType || p.page_type,
+    sortOrder: Number(p.sortOrder || p.sort_order || 0),
+    dbPage: p
+  }));
+
+  // Add virtual BOQ page if included
+  if (getIncludedFlag('boq')) {
+    pagesList.push({
+      type: 'boq',
+      sortOrder: 8.5, // Placed between structures (5,6,7,8) and terms1 (9)
+      dbPage: null
+    });
+  }
+
+  // Sort by sortOrder
+  pagesList.sort((a, b) => a.sortOrder - b.sortOrder);
+
+  // Diagnostic Logs
+  console.log(`[PDF Rendering Diagnostics]
+  - selected template id: ${templateId}
+  - number of pages loaded: ${dbPages.length}
+  - enabled page count: ${enabledDbPages.length}
+  - image_url exists: ${!!pCover.imageUrl}
+  - bg_image_url exists: ${!!pCover.bgImageUrl}
+  `);
+
+  const defaultPageConfigs: Record<string, { title: string; bodyText: string }> = {
+    cover: { title: "Technical Feasibility & Engineering Quotation", bodyText: "Generational Energy Independence\nTechnical Feasibility & Engineering Quotation" },
+    profile: { title: "Sunchaser Group Profile", bodyText: "Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry." },
+    qr: { title: "Why Partner with Sunchaser?", bodyText: "Tier-1 Direct Imported Hardware: All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates." },
+    ceo: { title: "Executive Board Assurances", bodyText: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation." },
+    structure_standard: { title: "Mounting Structure - Standard A-Frame", bodyText: "Standard Galvanized L3 14 Gauge structure with Rawal anchors wind-resistant up to 130 km/h." },
+    structure_elevated: { title: "Mounting Structure - Elevated Steel Frame", bodyText: "10ft Roof clearance hot-dip galvanized elevated structure frame wind-resistant up to 130 km/h." },
+    structure_girder: { title: "Mounting Structure - Heavy Mughal Girder Frame", bodyText: "Heavy duty C-Channel girder steel columns and girders wind-resistant up to 150 km/h." },
+    structure_custom: { title: "Mounting Structure - Custom Structural Drawing", bodyText: "Custom designed mounting rails and brackets based on site constraints and calculations." },
+    terms1: { title: "Terms, Conditions & Regulations (1/2)", bodyText: "" },
+    terms2: { title: "Terms, Conditions & Regulations (2/2)", bodyText: "" },
+    signoff: { title: "Client Verification & Sign-off", bodyText: "" },
+    bank: { title: "Official Payment Channels", bodyText: "" },
+    final: { title: "Sunchaser Energy Systems", bodyText: "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings." }
+  };
+
   let pagesHtml = "";
+  pagesList.forEach((pageItem, pageIndex) => {
+    const pageType = pageItem.type;
+    const defaults = defaultPageConfigs[pageType] || { title: "", bodyText: "" };
+    
+    // Resolve page title and body, prioritizing db template fields and falling back to default values
+    const p = {
+      title: (pageItem.dbPage && (pageItem.dbPage.title || pageItem.dbPage.title === "")) ? pageItem.dbPage.title : defaults.title,
+      bodyText: (pageItem.dbPage && (pageItem.dbPage.bodyText || pageItem.dbPage.body_text || pageItem.dbPage.bodyText === "" || pageItem.dbPage.body_text === "")) ? (pageItem.dbPage.bodyText || pageItem.dbPage.body_text) : defaults.bodyText,
+      imageUrl: (pageItem.dbPage && (pageItem.dbPage.imageUrl || pageItem.dbPage.image_url)) || "",
+      bgImageUrl: (pageItem.dbPage && (pageItem.dbPage.bgImageUrl || pageItem.dbPage.bg_image_url)) || ""
+    };
 
-  // 1. PAGE 1: COVER
-  if (mode === 'preview' || (pCover.enabled && getIncludedFlag('cover'))) {
-    pagesHtml += `
-      <div class="page cover" style="background: #ffffff; color: #0f172a; padding: 25mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-direction: column; justify-content: space-between;">
-        <div style="display: flex; align-items: center; gap: 12px; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
-          <div style="background-color: #0f172a; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
-          <div>
-            <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">SUNCHASER ENERGY</div>
-            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #d97706; font-weight: bold;">Generational Infrastructure</div>
-          </div>
-        </div>
-
-        <div style="margin-top: 40px;">
-          <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a;">
-            ${quoteObj.systemSizekW || 15}kW ${quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
-          </div>
-          <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px;">
-            ${pCover.title || 'Technical Feasibility & Engineering Quotation'}
-          </div>
-          <p style="font-size: 12px; color: #475569; margin-top: 10px; line-height: 1.6; max-width: 500px;">
-            ${pCover.bodyText.replace(/\n/g, '<br/>')}
-          </p>
-          
-          <div style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 35px;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
-              <div>
-                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
-                <div style="font-weight: 700; color: #0f172a; margin-top: 4px; font-size: 13px;">${quoteObj.clientName || leadObj.name}</div>
-              </div>
-              <div>
-                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Proposal Validity</div>
-                <div style="font-weight: 700; color: #d97706; margin-top: 4px;">3-Day Validity (Exp: ${expiryDateString})</div>
-              </div>
-              <div>
-                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Site Location</div>
-                <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.cityArea || leadObj.location || 'Lahore'}</div>
-              </div>
-              <div>
-                <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Technical Advisor / BDM</div>
-                <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.bdmName || leadObj.assignedSalesperson || 'Sarah Connor'}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto;">
-          <div>
-            <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">Sunchaser Energy Lahore Office</div>
-            <div>${settings.officeAddress}</div>
-            <div style="color: #d97706;">Hotlines: ${settings.phoneNumbers}</div>
-          </div>
-          <div style="text-align: right;">
-            <div style="font-weight: 700; color: #0f172a;">Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}-${(quoteObj.id || 'DRAFT').toUpperCase()}</div>
-            <div>Date: ${quoteDateString}</div>
-          </div>
-        </div>
+    const headerHtml = `
+      <div class="page-header-logo">
+        <span class="header-company-name">
+          ${p.imageUrl ? `<img src="${p.imageUrl}" style="max-height: 25px; max-width: 100px; object-fit: contain;" alt="Logo" />` : `☀️ SUNCHASER ENERGY`}
+        </span>
+        <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page ${pageIndex + 1}</span>
       </div>
     `;
-  }
 
-  // 2. PAGE 2: PROFILE
-  if (mode === 'preview' || (pProfile.enabled && getIncludedFlag('profile') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 2</span>
-          </div>
-          <div class="page-title">${pProfile.title}</div>
-          
-          <div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 20px 0; font-weight: 500;">
-            ${pProfile.bodyText}
-          </div>
-
-          <div class="grid-2" style="margin-top: 25px;">
-            <div class="card">
-              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">☀️ Sunchaser Energy</div>
-              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
-                The core installation and smart grid integration arm. Responsible for site surveys, detailed electrical engineering designs, high-tension terminations, and smart telemetry commissioning.
-              </div>
-            </div>
-            <div class="card">
-              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">⚡ Helios Solar</div>
-              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
-                The design consultancy branch. Creates 3D shadow analysis, panel positioning arrays using dynamic CAD, and utility net metering simulation projections.
-              </div>
-            </div>
-            <div class="card">
-              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🏗️ AL ADAM Steel</div>
-              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
-                Heavy mechanical fabrication plant. Produces heavy hot-dip galvanized frame mounts, standard structures, elevated configurations, and legendary Mughal Girder designs.
-              </div>
-            </div>
-            <div class="card">
-              <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🌐 Signals Global</div>
-              <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
-                International procurement and shipping network. Authorizes direct clearance and imports of Tier-1 solar modules, Knox/Goodwe/Solis inverters, and battery packs.
-              </div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top: 30px; text-align: center; border-left: 4px solid #f59e0b; background-color: #fafaf9;">
-            <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; letter-spacing: 0.05em;">Our Group Vision</div>
-            <div style="font-size: 13px; font-weight: 600; line-height: 1.5; margin-top: 6px; font-style: italic; color: #1c1917;">
-              "Empowering Pakistan with generational clean energy independence, combining premium imports with superior local engineering."
-            </div>
-          </div>
-        </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
+    const footerHtml = `
+      <div class="page-footer">
+        <span>Sunchaser Energy Systems Proposal</span>
+        <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
       </div>
     `;
-  }
 
-  // 3. PAGE 3: SOCIAL & PARTNER BENEFITS
-  if (mode === 'preview' || (pQr.enabled && getIncludedFlag('qr') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 3</span>
-          </div>
-          <div class="page-title">${pQr.title}</div>
+    const pageStyleAttr = p.bgImageUrl ? `style="background: url('${p.bgImageUrl}') no-repeat center center / cover;"` : ``;
 
-          <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
-            ${pQr.bodyText}
-          </div>
-
-          <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
-            <div style="display: flex; gap: 10px; align-items: flex-start;">
-              <span style="font-size: 20px;">🏆</span>
-              <div>
-                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Direct Imported Tier-1 Hardware</div>
-                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Direct Clearance customs certificates for JA Solar, Jinko and Longi modules.</div>
-              </div>
-            </div>
-            <div style="display: flex; gap: 10px; align-items: flex-start;">
-              <span style="font-size: 20px;">🔩</span>
-              <div>
-                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Galvanized mechanical structure</div>
-                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Heavy hot-dip galvanized and girder frame designs engineered for 130 km/h wind shear.</div>
-              </div>
-            </div>
-            <div style="display: flex; gap: 10px; align-items: flex-start;">
-              <span style="font-size: 20px;">📑</span>
-              <div>
-                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Complete NEPRA / LESCO Handling</div>
-                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Turnkey green meter licensing coordination directly managed by Sunchaser relations desk.</div>
-              </div>
-            </div>
-            <div style="display: flex; gap: 10px; align-items: flex-start;">
-              <span style="font-size: 20px;">📲</span>
-              <div>
-                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">24/7 Smart Telemetry App</div>
-                <div style="font-size: 10px; color: #475569; line-height: 1.45;">Active monitoring for daily generation yield logs, export credits, and maintenance tickets.</div>
-              </div>
+    if (pageType === 'cover') {
+      pagesHtml += `
+        <div class="page cover" style="background: ${p.bgImageUrl ? `url('${p.bgImageUrl}') no-repeat center center / cover` : '#ffffff'}; color: #0f172a; padding: 25mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-direction: column; justify-content: space-between;">
+          <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              ${p.imageUrl ? `
+                <img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
+              ` : `
+                <div style="background-color: #0f172a; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
+                <div>
+                  <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">SUNCHASER ENERGY</div>
+                  <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #d97706; font-weight: bold;">Generational Infrastructure</div>
+                </div>
+              `}
             </div>
           </div>
 
-          <div class="card" style="margin-top: 30px; border: 1px dashed #cbd5e1; background-color: #fafaf9;">
-            <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
-            <div style="display: flex; justify-content: space-around; align-items: center;">
-              <div style="text-align: center;">
-                <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
-                  <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
-                  <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
-                  <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
-                  <rect x="70" y="0" width="30" height="30" fill="#0f172a" />
-                  <rect x="75" y="5" width="20" height="20" fill="#ffffff" />
-                  <rect x="80" y="10" width="10" height="10" fill="#0f172a" />
-                  <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
-                  <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
-                  <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
-                  <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
-                  <rect x="60" y="40" width="10" height="20" fill="#0f172a" />
-                  <rect x="45" y="70" width="20" height="10" fill="#0f172a" />
-                </svg>
-                <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Customer Portal</div>
-              </div>
-              <div style="text-align: center;">
-                <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
-                  <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
-                  <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
-                  <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
-                  <rect x="70" y="0" width="30" height="30" fill="#0f172a" />
-                  <rect x="75" y="5" width="20" height="20" fill="#ffffff" />
-                  <rect x="80" y="10" width="10" height="10" fill="#0f172a" />
-                  <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
-                  <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
-                  <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
-                  <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
-                  <rect x="50" y="40" width="10" height="10" fill="#0f172a" />
-                  <rect x="60" y="70" width="10" height="20" fill="#0f172a" />
-                </svg>
-                <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Corporate Registry</div>
-              </div>
+          <div style="margin-top: 40px;">
+            <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a;">
+              ${quoteObj.systemSizekW || 15}kW ${quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
             </div>
-          </div>
-        </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // 4. PAGE 4: CEO MESSAGE
-  if (mode === 'preview' || (pCeo.enabled && getIncludedFlag('ceo') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 4</span>
-          </div>
-          <div class="page-title">${pCeo.title}</div>
-          ${pCeo.bodyText ? `<div style="font-size: 11px; margin-bottom: 12px; color: #475569;">${pCeo.bodyText}</div>` : ''}
-
-          <div class="grid-2" style="margin-top: 15px;">
-            <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 180mm;">
-              <div>
-                <div style="font-size: 22px; margin-bottom: 6px;">🛡️</div>
-                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">${ceoList[0].name}</div>
-                <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">${ceoList[0].designation}</div>
-                <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
-                  "${ceoList[0].message}"
+            <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px;">
+              ${p.title}
+            </div>
+            <p style="font-size: 12px; color: #475569; margin-top: 10px; line-height: 1.6; max-width: 500px;">
+              ${p.bodyText.replace(/\n/g, '<br/>')}
+            </p>
+            
+            <div style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 35px;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
+                <div>
+                  <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
+                  <div style="font-weight: 700; color: #0f172a; margin-top: 4px; font-size: 13px;">${quoteObj.clientName || leadObj.name}</div>
+                </div>
+                <div>
+                  <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Proposal Validity</div>
+                  <div style="font-weight: 700; color: #d97706; margin-top: 4px;">3-Day Validity (Exp: ${expiryDateString})</div>
+                </div>
+                <div>
+                  <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Site Location</div>
+                  <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.cityArea || leadObj.location || 'Lahore'}</div>
+                </div>
+                <div>
+                  <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Technical Advisor / BDM</div>
+                  <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.bdmName || leadObj.assignedSalesperson || 'Sarah Connor'}</div>
                 </div>
               </div>
-              <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
-                <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">${ceoList[0].name}</div>
-                <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
-              </div>
+            </div>
+          </div>
+
+          <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto;">
+            <div>
+              <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">Sunchaser Energy Lahore Office</div>
+              <div>${settings.officeAddress}</div>
+              <div style="color: #d97706;">Hotlines: ${settings.phoneNumbers}</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-weight: 700; color: #0f172a;">Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}-${(quoteObj.id || 'DRAFT').toUpperCase()}</div>
+              <div>Date: ${quoteDateString}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    else if (pageType === 'profile') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+            
+            <div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 20px 0; font-weight: 500;">
+              ${p.bodyText.replace(/\n/g, '<br/>')}
             </div>
 
-            <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 180mm;">
-              <div>
-                <div style="font-size: 22px; margin-bottom: 6px;">⚖️</div>
-                <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">${ceoList[1].name}</div>
-                <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">${ceoList[1].designation}</div>
-                <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
-                  "${ceoList[1].message}"
+            <div class="grid-2" style="margin-top: 25px;">
+              <div class="card">
+                <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">☀️ Sunchaser Energy</div>
+                <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                  The core installation and smart grid integration arm. Responsible for site surveys, detailed electrical engineering designs, high-tension terminations, and smart telemetry commissioning.
                 </div>
               </div>
-              <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
-                <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">${ceoList[1].name}</div>
-                <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
+              <div class="card">
+                <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">⚡ Helios Solar</div>
+                <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                  The design consultancy branch. Creates 3D shadow analysis, panel positioning arrays using dynamic CAD, and utility net metering simulation projections.
+                </div>
+              </div>
+              <div class="card">
+                <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🏗️ AL ADAM Steel</div>
+                <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                  Heavy mechanical fabrication plant. Produces heavy hot-dip galvanized frame mounts, standard structures, elevated configurations, and legendary Mughal Girder designs.
+                </div>
+              </div>
+              <div class="card">
+                <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🌐 Signals Global</div>
+                <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
+                  International procurement and shipping network. Authorizes direct clearance and imports of Tier-1 solar modules, Knox/Goodwe/Solis inverters, and battery packs.
+                </div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 30px; text-align: center; border-left: 4px solid #f59e0b; background-color: #fafaf9;">
+              <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; letter-spacing: 0.05em;">Our Group Vision</div>
+              <div style="font-size: 13px; font-weight: 600; line-height: 1.5; margin-top: 6px; font-style: italic; color: #1c1917;">
+                "Empowering Pakistan with generational clean energy independence, combining premium imports with superior local engineering."
               </div>
             </div>
           </div>
+          ${footerHtml}
         </div>
+      `;
+    }
 
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
+    else if (pageType === 'qr') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
 
-  // 5. PAGE 5: STRUCTURE
-  if (mode === 'preview' || (pStructure.enabled && getIncludedFlag('structure'))) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 5</span>
-          </div>
-          <div class="page-title">${pStructure.title}</div>
-
-          <div class="card" style="margin: 15px 0 10px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span style="font-weight: 800; font-size: 12px; color: #0f172a;">Selected Structure Frame Type:</span>
-              <span class="badge" style="font-size: 8px; padding: 2.5px 8px;">${structDetails.title}</span>
+            <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              ${p.bodyText.replace(/\n/g, '<br/>')}
             </div>
-            <div style="font-size: 11px; line-height: 1.5; color: #475569;">
-              <strong>English Specification:</strong><br/>
-              ${pStructure.bodyText || structDetails.descriptionEn}
-            </div>
-          </div>
 
-          <div class="card" style="margin-bottom: 10px; border-left: 4px solid #f59e0b; padding: 10px 14px;">
-            <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 4px; text-align: right;">ساختی تفصیلات (اردو)</div>
-            <div class="urdu-text" style="font-size: 11.5px; line-height: 2;">
-              ${structDetails.descriptionUr}
-            </div>
-          </div>
-
-          <div class="grid-2" style="margin-bottom: 10px;">
-            <div class="card" style="font-size: 10.5px; line-height: 1.45;">
-              <strong>Mechanical Design Specs:</strong>
-              <div style="margin-top: 4px; color: #475569;">
-                • Material: ${structDetails.materialType}<br/>
-                • Weight Category: ${structDetails.weight}<br/>
-                • Max Wind Shear: ${structDetails.windRating} wind certified
+            <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <span style="font-size: 20px;">🏆</span>
+                <div>
+                  <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Direct Imported Tier-1 Hardware</div>
+                  <div style="font-size: 10px; color: #475569; line-height: 1.45;">Direct Clearance customs certificates for JA Solar, Jinko and Longi modules.</div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <span style="font-size: 20px;">🔩</span>
+                <div>
+                  <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Galvanized mechanical structure</div>
+                  <div style="font-size: 10px; color: #475569; line-height: 1.45;">Heavy hot-dip galvanized and girder frame designs engineered for 130 km/h wind shear.</div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <span style="font-size: 20px;">📑</span>
+                <div>
+                  <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Complete NEPRA / LESCO Handling</div>
+                  <div style="font-size: 10px; color: #475569; line-height: 1.45;">Turnkey green meter licensing coordination directly managed by Sunchaser relations desk.</div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <span style="font-size: 20px;">📲</span>
+                <div>
+                  <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">24/7 Smart Telemetry App</div>
+                  <div style="font-size: 10px; color: #475569; line-height: 1.45;">Active monitoring for daily generation yield logs, export credits, and maintenance tickets.</div>
+                </div>
               </div>
             </div>
-            <div class="card" style="font-size: 10.5px; line-height: 1.45;">
-              <strong>Warranty Guidelines:</strong>
-              <div style="margin-top: 4px; color: #475569;">
-                • Structural Integrity: ${structDetails.warranty}<br/>
-                • Anchoring: Pure Rawl anchors<br/>
-                • Analysis Model: SAP 2000 Wind Load compliant
+
+            <div class="card" style="margin-top: 30px; border: 1px dashed #cbd5e1; background-color: #fafaf9;">
+              <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
+              <div style="display: flex; justify-content: space-around; align-items: center;">
+                <div style="text-align: center;">
+                  <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
+                    <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
+                    <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
+                    <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
+                    <rect x="70" y="0" width="30" height="30" fill="#0f172a" />
+                    <rect x="75" y="5" width="20" height="20" fill="#ffffff" />
+                    <rect x="80" y="10" width="10" height="10" fill="#0f172a" />
+                    <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
+                    <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
+                    <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
+                    <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
+                    <rect x="60" y="40" width="10" height="20" fill="#0f172a" />
+                    <rect x="45" y="70" width="20" height="10" fill="#0f172a" />
+                  </svg>
+                  <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Customer Portal</div>
+                </div>
+                <div style="text-align: center;">
+                  <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
+                    <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
+                    <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
+                    <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
+                    <rect x="70" y="0" width="30" height="30" fill="#0f172a" />
+                    <rect x="75" y="5" width="20" height="20" fill="#ffffff" />
+                    <rect x="80" y="10" width="10" height="10" fill="#0f172a" />
+                    <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
+                    <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
+                    <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
+                    <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
+                    <rect x="50" y="40" width="10" height="10" fill="#0f172a" />
+                    <rect x="60" y="70" width="10" height="20" fill="#0f172a" />
+                  </svg>
+                  <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Corporate Registry</div>
+                </div>
               </div>
             </div>
           </div>
+          ${footerHtml}
+        </div>
+      `;
+    }
 
-          <div class="card" style="padding: 6px; border: 1.5px solid #e2e8f0; background-color: #fafaf9;">
-            <div style="font-weight: 800; font-size: 9.5px; color: #0f172a; text-align: center; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px;">Engineering Mounting Layout Blueprint</div>
-            ${structureSvg}
+    else if (pageType === 'ceo') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+            ${p.bodyText ? `<div style="font-size: 11px; margin-bottom: 12px; color: #475569;">${p.bodyText}</div>` : ''}
+
+            <div class="grid-2" style="margin-top: 15px;">
+              <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 180mm;">
+                <div>
+                  <div style="font-size: 22px; margin-bottom: 6px;">🛡️</div>
+                  <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">${ceoList[0].name}</div>
+                  <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">${ceoList[0].designation}</div>
+                  <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
+                    "${ceoList[0].message}"
+                  </div>
+                </div>
+                <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
+                  <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">${ceoList[0].name}</div>
+                  <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
+                </div>
+              </div>
+
+              <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 180mm;">
+                <div>
+                  <div style="font-size: 22px; margin-bottom: 6px;">⚖️</div>
+                  <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">${ceoList[1].name}</div>
+                  <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">${ceoList[1].designation}</div>
+                  <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
+                    "${ceoList[1].message}"
+                  </div>
+                </div>
+                <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
+                  <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">${ceoList[1].name}</div>
+                  <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
+                </div>
+              </div>
+            </div>
           </div>
+          ${footerHtml}
         </div>
+      `;
+    }
 
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
+    else if (pageType.startsWith('structure_')) {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+
+            <div class="card" style="margin: 15px 0 10px 0;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span style="font-weight: 800; font-size: 12px; color: #0f172a;">Selected Structure Frame Type:</span>
+                <span class="badge" style="font-size: 8px; padding: 2.5px 8px;">${structDetails.title}</span>
+              </div>
+              <div style="font-size: 11px; line-height: 1.5; color: #475569;">
+                <strong>English Specification:</strong><br/>
+                ${p.bodyText || structDetails.descriptionEn}
+              </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 10px; border-left: 4px solid #f59e0b; padding: 10px 14px;">
+              <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 4px; text-align: right;">ساختی تفصیلات (اردو)</div>
+              <div class="urdu-text" style="font-size: 11.5px; line-height: 2;">
+                ${structDetails.descriptionUr}
+              </div>
+            </div>
+
+            <div class="grid-2" style="margin-bottom: 10px;">
+              <div class="card" style="font-size: 10.5px; line-height: 1.45;">
+                <strong>Mechanical Design Specs:</strong>
+                <div style="margin-top: 4px; color: #475569;">
+                  • Material: ${structDetails.materialType}<br/>
+                  • Weight Category: ${structDetails.weight}<br/>
+                  • Max Wind Shear: ${structDetails.windRating} wind certified
+                </div>
+              </div>
+              <div class="card" style="font-size: 10.5px; line-height: 1.45;">
+                <strong>Warranty Guidelines:</strong>
+                <div style="margin-top: 4px; color: #475569;">
+                  • Structural Integrity: ${structDetails.warranty}<br/>
+                  • Anchoring: Pure Rawl anchors<br/>
+                  • Analysis Model: SAP 2000 Wind Load compliant
+                </div>
+              </div>
+            </div>
+
+            <div class="card" style="padding: 6px; border: 1.5px solid #e2e8f0; background-color: #fafaf9;">
+              <div style="font-weight: 800; font-size: 9.5px; color: #0f172a; text-align: center; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px;">Engineering Mounting Layout Blueprint</div>
+              ${structureSvg}
+            </div>
+          </div>
+          ${footerHtml}
         </div>
-      </div>
-    `;
-  }
+      `;
+    }
 
-  // 6. PAGE 6: BOQ PRICE
-  if (mode === 'preview' || (mode === 'manual' && getIncludedFlag('boq')) || mode === 'sizer') {
-    let boqHtml = "";
-    let grossTotal = 0;
-    let discountAmount = 0;
-    let netTotal = 0;
+    else if (pageType === 'boq') {
+      let boqHtml = "";
+      let grossTotal = 0;
+      let discountAmount = 0;
+      let netTotal = 0;
 
-    if (mode === 'sizer' || mode === 'preview') {
-      // Compiled quick technical sizing list for sizer
-      const sizeKw = Number(quoteObj.systemSizekW) || 10;
-      const count = Number(quoteObj.panelCount) || Math.round(sizeKw * 1.7);
-      const isHybrid = quoteObj.batteryCapacity || quoteObj.batteryOption !== "None";
-      
-      const rows = [
-        { srNo: "1", name: `Solar Modules array (${quoteObj.panelType || 'JA Solar 585W'})`, description: "Tier-1 high output PV solar panels, direct clearance trace", unit: "Nos", qty: count, rate: 21500, total: count * 21500 },
-        { srNo: "2", name: `Power conversion (${quoteObj.inverterType || 'Knox 10kW Inverter'})`, description: "Smart grid tied inverter with continuous monitoring cloud link", unit: "No", qty: 1, rate: 280000, total: 280000 },
-        { srNo: "3", name: "Mounting structural frame & masonry", description: "Mughal steel layout, anchor brackets, structural foundation bores", unit: "Set", qty: 1, rate: 125000, total: 125000 },
-        { srNo: "4", name: "Pure chemical copper earthing bores", description: "Dedicated AC/DC chemical grounding safety boring arrays", unit: "Nos", qty: 3, rate: 25000, total: 75000 }
-      ];
-
-      if (isHybrid) {
-        rows.push({ srNo: "5", name: `Stackable Battery Storage (${quoteObj.batteryCapacity || 'Sunchaser Core 13.5kWh'})`, description: "Advanced LiFePO4 chemistry energy storage wall system", unit: "No", qty: 1, rate: 790000, total: 790000 });
-      }
-
-      rows.forEach(r => {
-        grossTotal += r.total;
-        boqHtml += `
-          <tr style="border-bottom: 1px solid #cbd5e1; font-size: 10px;">
-            <td style="padding: 6px; text-align: center; color: #475569;">${r.srNo}</td>
-            <td style="padding: 6px; font-weight: 600; color: #0f172a;">${r.name}</td>
-            <td style="padding: 6px; color: #475569;">${r.description}</td>
-            <td style="padding: 6px; text-align: center; color: #475569;">${r.unit}</td>
-            <td style="padding: 6px; text-align: center; font-weight: 500;">${r.qty}</td>
-            <td style="padding: 6px; text-align: right; color: #475569;">${formatPKR(r.rate)}</td>
-            <td style="padding: 6px; text-align: right; font-weight: 600; color: #0f172a;">${formatPKR(r.total)}</td>
-          </tr>
-        `;
-      });
-      discountAmount = Number(quoteObj.discount) || 0;
-      netTotal = grossTotal - discountAmount;
-    } else {
-      // Use exact manual BOQ rows currently visible on screen
       const rows = quoteObj.boqRows || quoteObj.boqItems || [];
       let calculatedGross = 0;
       rows.forEach((r: any) => {
@@ -3217,274 +3255,234 @@ function compileSunchaserPDFHtml(
       grossTotal = quoteObj.grandTotal || calculatedGross;
       discountAmount = Number(quoteObj.discount) || 0;
       netTotal = quoteObj.netTotal || (grossTotal - discountAmount + Number(quoteObj.societyCharges || 0) + Number(quoteObj.taxAmount || 0));
+
+      const societyCharges = Number(quoteObj.societyCharges) || 0;
+      const taxEnabled = !!quoteObj.taxEnabled;
+      const taxRate = Number(quoteObj.taxRate) || 0;
+      const taxAmount = Number(quoteObj.taxAmount) || 0;
+
+      pagesHtml += `
+        <div class="page" style="padding: 12mm 15mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''}">
+          <div>
+            ${headerHtml}
+            <div class="page-title">${mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)'}</div>
+            
+            <div style="max-height: 200mm; overflow: hidden; border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
+              <table class="boq-table">
+                <thead>
+                  <tr style="height: 28px;">
+                    <th style="width: 5%; text-align: center; border-bottom: 2px solid #0f172a;">Sr.</th>
+                    <th style="width: 25%; border-bottom: 2px solid #0f172a;">Item Name</th>
+                    <th style="width: 32%; border-bottom: 2px solid #0f172a;">Material Specifications</th>
+                    <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Unit</th>
+                    <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Qty</th>
+                    <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Rate</th>
+                    <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${boqHtml}
+                </tbody>
+              </table>
+            </div>
+
+            <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: flex-start;">
+              <div style="width: 48%; font-size: 9.5px; color: #64748b; line-height: 1.45;">
+                ${quoteObj.customNotes ? `
+                  <div style="background-color: #fdf4ff; border: 1px solid #f3e8ff; border-radius: 6px; padding: 6px 10px; color: #6b21a8; font-weight: 500;">
+                    <strong>Special Execution Notes:</strong><br/>
+                    ${quoteObj.customNotes}
+                  </div>
+                ` : 'Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel.'}
+              </div>
+              
+              <div style="width: 46%;">
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                  <span style="color: #64748b; font-weight: 500;">BOQ Gross Sum:</span>
+                  <span style="font-weight: 600; color: #0f172a;">${formatPKR(grossTotal)}</span>
+                </div>
+                ${discountAmount > 0 ? `
+                  <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                    <span style="color: #64748b; font-weight: 500;">Special Discount:</span>
+                    <span style="font-weight: 600; color: #dc2626;">-${formatPKR(discountAmount)}</span>
+                  </div>
+                ` : ''}
+                ${taxEnabled ? `
+                  <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                    <span style="color: #64748b; font-weight: 500;">Sales Tax (${taxRate}%):</span>
+                    <span style="font-weight: 600; color: #dc2626;">+${formatPKR(taxAmount)}</span>
+                  </div>
+                ` : ''}
+                ${societyCharges > 0 ? `
+                  <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                    <span style="color: #64748b; font-weight: 500;">Society Approval / Dues:</span>
+                    <span style="font-weight: 600; color: #0f172a;">+${formatPKR(societyCharges)}</span>
+                  </div>
+                ` : ''}
+                <div style="display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 850; border-top: 1.5px solid #0f172a; padding-top: 4px; margin-top: 4px;">
+                  <span style="color: #0f172a;">Turnkey Investment:</span>
+                  <span style="color: #d97706; font-size: 13.5px;">${formatPKR(netTotal)}</span>
+                </div>
+                <div style="font-size: 8px; color: #94a3b8; text-align: right; margin-top: 4px; font-weight: bold;">
+                  * Direct imports clearance trace.
+                </div>
+              </div>
+            </div>
+          </div>
+          ${footerHtml}
+        </div>
+      `;
     }
 
-    const societyCharges = Number(quoteObj.societyCharges) || 0;
-    const taxEnabled = !!quoteObj.taxEnabled;
-    const taxRate = Number(quoteObj.taxRate) || 0;
-    const taxAmount = Number(quoteObj.taxAmount) || 0;
-
-    pagesHtml += `
-      <div class="page" style="padding: 12mm 15mm;">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 6</span>
-          </div>
-          <div class="page-title">${mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)'}</div>
-          
-          <div style="max-height: 200mm; overflow: hidden; border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
-            <table class="boq-table">
-              <thead>
-                <tr style="height: 28px;">
-                  <th style="width: 5%; text-align: center; border-bottom: 2px solid #0f172a;">Sr.</th>
-                  <th style="width: 25%; border-bottom: 2px solid #0f172a;">Item Name</th>
-                  <th style="width: 32%; border-bottom: 2px solid #0f172a;">Material Specifications</th>
-                  <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Unit</th>
-                  <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Qty</th>
-                  <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Rate</th>
-                  <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${boqHtml}
-              </tbody>
-            </table>
-          </div>
-
-          <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: flex-start;">
-            <div style="width: 48%; font-size: 9.5px; color: #64748b; line-height: 1.45;">
-              ${quoteObj.customNotes ? `
-                <div style="background-color: #fdf4ff; border: 1px solid #f3e8ff; border-radius: 6px; padding: 6px 10px; color: #6b21a8; font-weight: 500;">
-                  <strong>Special Execution Notes:</strong><br/>
-                  ${quoteObj.customNotes}
-                </div>
-              ` : 'Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel.'}
-            </div>
-            
-            <div style="width: 46%;">
-              <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                <span style="color: #64748b; font-weight: 500;">BOQ Gross Sum:</span>
-                <span style="font-weight: 600; color: #0f172a;">${formatPKR(grossTotal)}</span>
-              </div>
-              ${discountAmount > 0 ? `
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                  <span style="color: #64748b; font-weight: 500;">Special Discount:</span>
-                  <span style="font-weight: 600; color: #dc2626;">-${formatPKR(discountAmount)}</span>
-                </div>
-              ` : ''}
-              ${taxEnabled ? `
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                  <span style="color: #64748b; font-weight: 500;">Sales Tax (${taxRate}%):</span>
-                  <span style="font-weight: 600; color: #dc2626;">+${formatPKR(taxAmount)}</span>
-                </div>
-              ` : ''}
-              ${societyCharges > 0 ? `
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                  <span style="color: #64748b; font-weight: 500;">Society Approval / Dues:</span>
-                  <span style="font-weight: 600; color: #0f172a;">+${formatPKR(societyCharges)}</span>
-                </div>
-              ` : ''}
-              <div style="display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 850; border-top: 1.5px solid #0f172a; padding-top: 4px; margin-top: 4px;">
-                <span style="color: #0f172a;">Turnkey Investment:</span>
-                <span style="color: #d97706; font-size: 13.5px;">${formatPKR(netTotal)}</span>
-              </div>
-              <div style="font-size: 8px; color: #94a3b8; text-align: right; margin-top: 4px; font-weight: bold;">
-                * Direct imports clearance trace.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // 7. PAGE 7: TERMS 1
-  if (mode === 'preview' || (pTerms1.enabled && getIncludedFlag('terms') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 7</span>
-          </div>
-          <div class="page-title">${pTerms1.title}</div>
-          
-          <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
-            All engineering activities, supply dispatch, and LESCO utility agreements are governed strictly by the Sunchaser covenants below:
-          </div>
-
-          <div style="margin-top: 10px;">
-            ${tcPage1Html}
-          </div>
-        </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // 8. PAGE 8: TERMS 2
-  if (mode === 'preview' || (pTerms2.enabled && getIncludedFlag('terms') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 8</span>
-          </div>
-          <div class="page-title">${pTerms2.title}</div>
-          
-          <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
-            Consortium hardware replacement and force majeure exclusions continue below:
-          </div>
-
-          <div style="margin-top: 10px;">
-            ${tcPage2Html}
-          </div>
-        </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // 9. PAGE 9: SIGNOFF
-  if (mode === 'preview' || (pSignoff.enabled && getIncludedFlag('signoff') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 9</span>
-          </div>
-          <div class="page-title">${pSignoff.title}</div>
-
-          <div class="card" style="margin: 15px 0 10px 0;">
-            <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
-              1. Customer Billing Profile
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
-              <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.clientName || leadObj.name}</span></div>
-              <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.cnic || 'Pending Verification'}</span></div>
-              <div><strong>Active Line:</strong> <span style="color: #0f172a;">${quoteObj.clientPhone || leadObj.phone}</span></div>
-              <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">${quoteObj.clientEmail || leadObj.email}</span></div>
-              <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">${quoteObj.clientAddress || leadObj.address}</span></div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom: 15px; border-left: 4px solid #0284c7;">
-            <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
-              2. Utility Interconnect (LESCO Metering)
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
-              <div><strong>LESCO Meter ID:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.meterNo || 'Not Scanned'}</span></div>
-              <div><strong>Consumer A/C Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.consumerNo || 'Not Scanned'}</span></div>
-              <div><strong>Sanctioned Grid Load:</strong> <span style="color: #0f172a; font-weight: 600;">${lescoObj.sanctionedLoad ? lescoObj.sanctionedLoad + ' kW' : 'Not Scanned'}</span></div>
-              <div><strong>Terminations Phase:</strong> <span style="color: #0f172a;">${lescoObj.phaseType || 'Three Phase'}</span></div>
-              <div style="grid-column: span 2;"><strong>Turnkey Net Metering Licensing:</strong> <span style="color: #0284c7; font-weight: 700;">${netMeteringText === 'Yes' ? 'REQUIRED &amp; SOW INCLUDED' : 'NOT REQUIRED'}</span></div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom: 20px; font-size: 10px; line-height: 1.5; color: #475569;">
-            <strong>Contract Declaration:</strong> By signing below, the client confirms the technical parameters (Page 5), accepts the final turnkey financial quote (Page 6), accepts the terms &amp; exclusions (Page 7 &amp; 8), and formally authorizes Sunchaser Energy to proceed with hardware procurement, chemical bores, structural steel fabrication, and LESCO utility interconnect procedures.
-          </div>
-
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 25px;">
-            <div style="text-align: center;">
-              <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
-                Signature / Thumb Stamp
-              </div>
-              <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Client Representative Sign-off</div>
-              <div style="font-size: 8px; color: #94a3b8;">Declaration Acceptance Authority</div>
-            </div>
-            <div style="text-align: center;">
-              <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
-                Sunchaser Central Staging
-              </div>
-              <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Sunchaser Central Operations</div>
-              <div style="font-size: 8px; color: #94a3b8;">Design Release Validation Authorization</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // 10. PAGE 10: BANK DETAILS
-  if (mode === 'preview' || (pBank.enabled && getIncludedFlag('bank') && mode !== 'sizer')) {
-    pagesHtml += `
-      <div class="page">
-        <div>
-          <div class="page-header-logo">
-            <span class="header-company-name">☀️ SUNCHASER ENERGY</span>
-            <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 10</span>
-          </div>
-          <div class="page-title">${pBank.title}</div>
-
-          <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
-            <span style="font-size: 18px;">⚠️</span>
-            <span style="font-size: 10px; color: #b45309; line-height: 1.4; font-weight: 600;">
-              <strong>Payment Safety Guidelines:</strong> Sunchaser Energy Systems never requests cash handovers or deposits to personal employee accounts. Verify all drafts match the official channels.
-            </span>
-          </div>
-
+    else if (pageType === 'terms1') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
           <div>
-            ${bankAccountsHtml}
-          </div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+            
+            <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              All engineering activities, supply dispatch, and LESCO utility agreements are governed strictly by the Sunchaser covenants below:
+            </div>
 
-          <div class="card" style="margin-top: 25px; font-size: 10px; color: #475569; line-height: 1.5; background-color: #fafaf9;">
-            <strong>Verification SLA:</strong> Once a bank transfer, direct deposit, or pay order is dispatched, snap the transfer slip and email to <strong>${settings.billingEmail}</strong> or share with your advisor for warehouse component staging release.
+            <div style="margin-top: 10px;">
+              ${tcPage1Html}
+            </div>
+          </div>
+          ${footerHtml}
+        </div>
+      `;
+    }
+
+    else if (pageType === 'terms2') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+            
+            <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              Consortium hardware replacement and force majeure exclusions continue below:
+            </div>
+
+            <div style="margin-top: 10px;">
+              ${tcPage2Html}
+            </div>
+          </div>
+          ${footerHtml}
+        </div>
+      `;
+    }
+
+    else if (pageType === 'signoff') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+
+            <div class="card" style="margin: 15px 0 10px 0;">
+              <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+                1. Customer Billing Profile
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+                <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.clientName || leadObj.name}</span></div>
+                <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.cnic || 'Pending Verification'}</span></div>
+                <div><strong>Active Line:</strong> <span style="color: #0f172a;">${quoteObj.clientPhone || leadObj.phone}</span></div>
+                <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">${quoteObj.clientEmail || leadObj.email}</span></div>
+                <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">${quoteObj.clientAddress || leadObj.address}</span></div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 15px; border-left: 4px solid #0284c7;">
+              <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+                2. Utility Interconnect (LESCO Metering)
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+                <div><strong>LESCO Meter ID:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.meterNo || 'Not Scanned'}</span></div>
+                <div><strong>Consumer A/C Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.consumerNo || 'Not Scanned'}</span></div>
+                <div><strong>Sanctioned Grid Load:</strong> <span style="color: #0f172a; font-weight: 600;">${lescoObj.sanctionedLoad ? lescoObj.sanctionedLoad + ' kW' : 'Not Scanned'}</span></div>
+                <div><strong>Terminations Phase:</strong> <span style="color: #0f172a;">${lescoObj.phaseType || 'Three Phase'}</span></div>
+                <div style="grid-column: span 2;"><strong>Turnkey Net Metering Licensing:</strong> <span style="color: #0284c7; font-weight: 700;">${netMeteringText === 'Yes' ? 'REQUIRED &amp; SOW INCLUDED' : 'NOT REQUIRED'}</span></div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 20px; font-size: 10px; line-height: 1.5; color: #475569;">
+              <strong>Contract Declaration:</strong> By signing below, the client confirms the technical parameters (Page 5), accepts the final turnkey financial quote (Page 6), accepts the terms &amp; exclusions (Page 7 &amp; 8), and formally authorizes Sunchaser Energy to proceed with hardware procurement, chemical bores, structural steel fabrication, and LESCO utility interconnect procedures.
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 25px;">
+              <div style="text-align: center;">
+                <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                  Signature / Thumb Stamp
+                </div>
+                <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Client Representative Sign-off</div>
+                <div style="font-size: 8px; color: #94a3b8;">Declaration Acceptance Authority</div>
+              </div>
+              <div style="text-align: center;">
+                <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                  Sunchaser Central Staging
+                </div>
+                <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Sunchaser Central Operations</div>
+                <div style="font-size: 8px; color: #94a3b8;">Design Release Validation Authorization</div>
+              </div>
+            </div>
+          </div>
+          ${footerHtml}
+        </div>
+      `;
+    }
+
+    else if (pageType === 'bank') {
+      pagesHtml += `
+        <div class="page" ${pageStyleAttr}>
+          <div>
+            ${headerHtml}
+            <div class="page-title">${p.title}</div>
+
+            <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
+              <span style="font-size: 18px;">⚠️</span>
+              <span style="font-size: 10px; color: #b45309; line-height: 1.4; font-weight: 600;">
+                <strong>Payment Safety Guidelines:</strong> Sunchaser Energy Systems never requests cash handovers or deposits to personal employee accounts. Verify all drafts match the official channels.
+              </span>
+            </div>
+
+            <div>
+              ${bankAccountsHtml}
+            </div>
+
+            <div class="card" style="margin-top: 25px; font-size: 10px; color: #475569; line-height: 1.5; background-color: #fafaf9;">
+              <strong>Verification SLA:</strong> Once a bank transfer, direct deposit, or pay order is dispatched, snap the transfer slip and email to <strong>${settings.billingEmail}</strong> or share with your advisor for warehouse component staging release.
+            </div>
+          </div>
+          ${footerHtml}
+        </div>
+      `;
+    }
+
+    else if (pageType === 'final') {
+      pagesHtml += `
+        <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''}">
+          <div>
+            <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
+            <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</h2>
+            <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
+            
+            <div style="max-width: 440px; margin: 0 auto 40px auto; font-size: 12px; line-height: 1.6; color: #475569; font-weight: 500; font-style: italic;">
+              "${p.bodyText}"
+            </div>
+
+            <div style="border-top: 1.5px solid #cbd5e1; padding-top: 25px; font-size: 10.5px; color: #475569; max-width: 360px; margin: 0 auto; line-height: 1.5;">
+              <strong style="color: #0f172a; font-size: 11px;">Sunchaser Central Staging HQ</strong><br/>
+              ${settings.officeAddress}<br/>
+              Hotlines: ${settings.phoneNumbers}<br/>
+              Email: ${settings.billingEmail || 'billing@sunchaser-energy.com'} | Web: ${settings.websiteUrl || 'www.sunchaser-energy.com'}
+            </div>
           </div>
         </div>
-
-        <div class="page-footer">
-          <span>Sunchaser Energy Systems Proposal</span>
-          <span>Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // 11. PAGE 11: CLOSING
-  if (mode === 'preview' || (pFinal.enabled && getIncludedFlag('final'))) {
-    pagesHtml += `
-      <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm;">
-        <div>
-          <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
-          <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</h2>
-          <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
-          
-          <div style="max-width: 440px; margin: 0 auto 40px auto; font-size: 12px; line-height: 1.6; color: #475569; font-weight: 500; font-style: italic;">
-            "${pFinal.bodyText}"
-          </div>
-
-          <div style="border-top: 1.5px solid #cbd5e1; padding-top: 25px; font-size: 10.5px; color: #475569; max-width: 360px; margin: 0 auto; line-height: 1.5;">
-            <strong style="color: #0f172a; font-size: 11px;">Sunchaser Central Staging HQ</strong><br/>
-            ${settings.officeAddress}<br/>
-            Hotlines: ${settings.phoneNumbers}<br/>
-            Email: ${settings.billingEmail || 'billing@sunchaser-energy.com'} | Web: ${settings.websiteUrl || 'www.sunchaser-energy.com'}
-          </div>
-        </div>
-      </div>
-    `;
-  }
+      `;
+    }
+  });
 
   return `
     <!DOCTYPE html>

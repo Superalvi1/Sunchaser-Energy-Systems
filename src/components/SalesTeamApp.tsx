@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
-  Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag
+  Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
+  Printer, Save
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow } from "../types";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
@@ -131,6 +132,37 @@ export default function SalesTeamApp({
   const [boqRows, setBoqRows] = useState<BoqRow[]>([]);
   const [manualBoqItems, setManualBoqItems] = useState<any[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // State for Quote Templates Print Preview & Save enhancements
+  const [localPageStates, setLocalPageStates] = useState<Record<string, {
+    title?: string;
+    body_text?: string;
+    image_url?: string;
+    bg_image_url?: string;
+    is_enabled?: boolean;
+    saveStatus?: 'Saved' | 'Unsaved' | 'Saving...';
+  }>>({});
+  const [previewPage, setPreviewPage] = useState<any | null>(null);
+  const [printPageData, setPrintPageData] = useState<any | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("tmpl-1");
+
+  useEffect(() => {
+    if (printPageData) {
+      const timer = setTimeout(() => {
+        window.print();
+      }, 250);
+      
+      const handleAfterPrint = () => {
+        setPrintPageData(null);
+      };
+      
+      window.addEventListener('afterprint', handleAfterPrint);
+      return () => {
+        clearTimeout(timer);
+        window.removeEventListener('afterprint', handleAfterPrint);
+      };
+    }
+  }, [printPageData]);
 
   // Sizing inputs and options
   const [formMonthlyUnits, setFormMonthlyUnits] = useState<number>(985);
@@ -972,7 +1004,9 @@ export default function SalesTeamApp({
         boqRows: boqRows,
         customNotes,
         grandTotal: calculatedGrandTotal,
-        netTotal: calculatedNetTotal
+        netTotal: calculatedNetTotal,
+        templateId: selectedTemplateId,
+        includedPages: Object.keys(includedPages).filter(k => includedPages[k])
       };
 
       if (editingQuoteId) {
@@ -1009,6 +1043,102 @@ export default function SalesTeamApp({
     } finally {
       setSavingQuote(false);
     }
+  };
+
+  const handleDownloadManualQuotePDF = () => {
+    if (!activeLead) return;
+
+    const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
+
+    let customStructurePayload = undefined;
+    if (selectedStructure === 'custom') {
+      customStructurePayload = {
+        name: customStructName,
+        descEn: customStructDescEn,
+        descUr: customStructDescUr,
+        rate: Number(customStructRate) || 0,
+        weight: customStructWeight,
+        materialType: customStructMaterial,
+        warranty: customStructWarranty,
+        windRating: customStructWind,
+        image: ""
+      };
+    }
+
+    const calculatedGrandTotal = boqRows
+      .filter(r => r && r.type === 'item')
+      .reduce((sum, r) => sum + (r.total || 0), 0);
+
+    const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
+    const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+
+    const quoteData = {
+      systemSizekW,
+      panelCount: panelsCount,
+      panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
+      inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
+      batteryCapacity: batteryOption !== "None" ? batteryOption : "",
+      totalCost: calculatedGrandTotal,
+      structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
+      accessories,
+      installationCharges: Number(boqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
+      netMeteringCharges: netMeteringRequired === "Yes" ? (Number(boqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
+      paymentTerms: paymentSchedule,
+      warrantyTerms,
+      termsAndConditions,
+      clientName,
+      clientPhone,
+      clientEmail,
+      clientAddress,
+      cnic,
+      cityArea,
+      bdmName,
+      quoteDate,
+      systemType,
+      panelBrand,
+      panelWattage,
+      inverterBrand,
+      inverterCapacity,
+      batteryOption,
+      netMeteringRequired,
+      discount: Number(discount) || 0,
+      paymentSchedule,
+      boqItems: boqRows,
+      lescoSettings: {
+        meterNo: lescoMeterNo,
+        consumerNo: lescoConsumerNo,
+        sanctionedLoad: lescoSanctionedLoad,
+        phaseType: lescoPhaseType
+      },
+      societyCharges: Number(societyCharges) || 0,
+      taxEnabled,
+      taxRate: Number(taxRate) || 0,
+      taxAmount: calculatedTaxAmount,
+      selectedStructure,
+      customStructure: customStructurePayload,
+      boqRows: boqRows,
+      customNotes,
+      grandTotal: calculatedGrandTotal,
+      netTotal: calculatedNetTotal,
+      leadId: activeLead.id,
+      includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
+      templateId: selectedTemplateId
+    };
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `${API_BASE_URL}/api/export/pdf/manual-quote`;
+    form.target = '_blank';
+
+    const hiddenInput = document.createElement('input');
+    hiddenInput.type = 'hidden';
+    hiddenInput.name = 'payload';
+    hiddenInput.value = JSON.stringify(quoteData);
+    form.appendChild(hiddenInput);
+
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
   };
 
   const handleDuplicateQuote = async (quote: any) => {
@@ -1073,19 +1203,130 @@ export default function SalesTeamApp({
       setCustomStructWind(quote.customStructure.windRating || "");
     }
     
+    setSelectedTemplateId(quote.templateId || "tmpl-1");
+
+    if (quote.includedPages && Array.isArray(quote.includedPages)) {
+      const pageMapping: Record<string, boolean> = {
+        cover: false, profile: false, qr: false, ceo: false, structure: false, boq: false, terms: false, signoff: false, bank: false, final: false
+      };
+      quote.includedPages.forEach((p: string) => {
+        pageMapping[p] = true;
+      });
+      setIncludedPages(pageMapping);
+    }
+    
     // Switch to manual BOQ tab
     setActiveModule('boq_builder');
   };
 
+  const getPageState = (page: any) => {
+    const local = localPageStates[page.id];
+    return {
+      title: local?.title !== undefined ? local.title : (page.title || ""),
+      body_text: local?.body_text !== undefined ? local.body_text : (page.body_text || page.bodyText || ""),
+      image_url: local?.image_url !== undefined ? local.image_url : (page.image_url || page.imageUrl || ""),
+      bg_image_url: local?.bg_image_url !== undefined ? local.bg_image_url : (page.bg_image_url || page.bgImageUrl || ""),
+      is_enabled: local?.is_enabled !== undefined ? local.is_enabled : (page.is_enabled !== false),
+      saveStatus: local?.saveStatus || 'Saved'
+    };
+  };
+
+  const handleFieldChange = (pageId: string, field: string, value: any) => {
+    setLocalPageStates(prev => {
+      const existing = prev[pageId] || {};
+      const page = quoteTemplatePages.find(p => p.id === pageId);
+      
+      let originalVal: any = "";
+      if (page) {
+        if (field === 'title') originalVal = page.title || "";
+        else if (field === 'body_text') originalVal = page.body_text || page.bodyText || "";
+        else if (field === 'is_enabled') originalVal = page.is_enabled !== false;
+        else if (field === 'image_url') originalVal = page.image_url || page.imageUrl || "";
+        else if (field === 'bg_image_url') originalVal = page.bg_image_url || page.bgImageUrl || "";
+      }
+      
+      const isDifferent = originalVal !== value;
+      const saveStatus = isDifferent ? 'Unsaved' : 'Saved';
+      
+      return {
+        ...prev,
+        [pageId]: {
+          ...existing,
+          [field]: value,
+          saveStatus
+        }
+      };
+    });
+  };
+
+  const handleSavePage = async (pageId: string) => {
+    const page = quoteTemplatePages.find(p => p.id === pageId);
+    if (!page) return;
+
+    const state = getPageState(page);
+
+    setLocalPageStates(prev => ({
+      ...prev,
+      [pageId]: {
+        ...prev[pageId],
+        saveStatus: 'Saving...'
+      }
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          table: "quoteTemplatePages",
+          id: pageId,
+          data: {
+            ...page,
+            title: state.title,
+            body_text: state.body_text,
+            image_url: state.image_url,
+            bg_image_url: state.bg_image_url,
+            is_enabled: state.is_enabled
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || `HTTP error ${response.status}`);
+      }
+
+      setLocalPageStates(prev => ({
+        ...prev,
+        [pageId]: {
+          ...prev[pageId],
+          saveStatus: 'Saved'
+        }
+      }));
+
+      alert("Page configuration saved successfully!");
+      if (onRefreshState) onRefreshState();
+    } catch (err: any) {
+      console.error("Save error:", err);
+      alert("Failed to save template page changes: " + (err.message || err.toString()));
+      setLocalPageStates(prev => ({
+        ...prev,
+        [pageId]: {
+          ...prev[pageId],
+          saveStatus: 'Unsaved'
+        }
+      }));
+    }
+  };
+
   const handleImageUpload = async (pageId: string, file: File, type: 'image' | 'bg') => {
     try {
-      // Validate file type
       if (!file.type.startsWith('image/')) {
         alert("Please select a valid image file.");
         return;
       }
 
-      // Compress image client-side using canvas
       const compressImage = (file: File, maxWidth: number = 800, quality: number = 0.7): Promise<string> => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -1098,7 +1339,6 @@ export default function SalesTeamApp({
               let width = img.width;
               let height = img.height;
               
-              // Scale down if wider than maxWidth
               if (width > maxWidth) {
                 height = Math.round((height * maxWidth) / width);
                 width = maxWidth;
@@ -1110,7 +1350,6 @@ export default function SalesTeamApp({
               if (!ctx) { reject(new Error("Canvas not supported.")); return; }
               ctx.drawImage(img, 0, 0, width, height);
               
-              // Convert to JPEG data URL for smaller size
               const dataUrl = canvas.toDataURL('image/jpeg', quality);
               resolve(dataUrl);
             };
@@ -1120,58 +1359,48 @@ export default function SalesTeamApp({
         });
       };
 
-      // Compress the image (800px wide, 70% quality for bg; 400px for logo)
       const maxW = type === 'bg' ? 800 : 400;
-      const dataUrl = await compressImage(file, maxW, 0.7);
+      let dataUrl = await compressImage(file, maxW, 0.7);
       
-      // Check compressed size (base64 is ~33% larger than binary)
-      const sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+      let sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
       if (sizeKB > 500) {
-        // Try more aggressive compression
-        const smallerDataUrl = await compressImage(file, type === 'bg' ? 600 : 300, 0.5);
-        const smallerSizeKB = Math.round((smallerDataUrl.length * 3) / 4 / 1024);
-        if (smallerSizeKB > 500) {
-          alert(`Image is still too large (${smallerSizeKB}KB) after compression. Please use a smaller image.`);
+        dataUrl = await compressImage(file, type === 'bg' ? 600 : 300, 0.5);
+        sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+        if (sizeKB > 500) {
+          alert(`Image is still too large (${sizeKB}KB) after compression. Please use a smaller image.`);
           return;
         }
-        // Use the more compressed version
-        const fieldKey = type === 'image' ? 'image_url' : 'bg_image_url';
-        const pageToUpdate = quoteTemplatePages.find(p => p.id === pageId);
-        if (pageToUpdate) {
-          await handleSavePageTextChanges(pageToUpdate, { [fieldKey]: smallerDataUrl });
-        }
-        return;
       }
-      
-      // Save the data URL directly to the template page record
-      const fieldKey = type === 'image' ? 'image_url' : 'bg_image_url';
-      const pageToUpdate = quoteTemplatePages.find(p => p.id === pageId);
-      if (pageToUpdate) {
-        await handleSavePageTextChanges(pageToUpdate, { [fieldKey]: dataUrl });
-      }
-    } catch (err: any) {
-      console.error("Upload error:", err);
-      alert("Failed to upload image: " + (err.message || "Unknown error"));
-    }
-  };
 
-  const handleSavePageTextChanges = async (page: any, data: any) => {
-    try {
-      await fetch(`${API_BASE_URL}/api/db/update`, {
+      const response = await fetch(`${API_BASE_URL}/api/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "edit",
-          table: "quoteTemplatePages",
-          id: page.id,
-          data: { ...page, ...data }
+          base64Data: dataUrl,
+          filename: file.name
         })
       });
-      if (onRefreshState) onRefreshState();
-      alert("Page configuration saved successfully!");
-    } catch (e) {
-      console.error(e);
-      alert("Failed to save page changes.");
+
+      if (!response.ok) {
+        let errMsg = `HTTP error ${response.status}`;
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errData.message || errMsg;
+        } catch {
+          const errText = await response.text();
+          if (errText) errMsg = errText;
+        }
+        throw new Error(errMsg);
+      }
+
+      const resData = await response.json();
+      const finalUrl = resData.dataUrl || resData.url || dataUrl;
+
+      const fieldKey = type === 'image' ? 'image_url' : 'bg_image_url';
+      handleFieldChange(pageId, fieldKey, finalUrl);
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      alert("Upload failed: " + (err.message || err.toString()));
     }
   };
 
@@ -2253,6 +2482,25 @@ export default function SalesTeamApp({
                         </div>
                       </div>
 
+                      {/* Select Quote Template */}
+                      <div className="bg-slate-950 border border-slate-850 p-4 rounded-2xl space-y-2.5 text-left">
+                        <span className="text-[10px] font-bold text-amber-550 text-amber-500 uppercase tracking-wider block border-b border-slate-900 pb-1.5 font-sans">
+                          Select Quote Template
+                        </span>
+                        <select
+                          value={selectedTemplateId}
+                          onChange={(e) => setSelectedTemplateId(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-sans"
+                        >
+                          {quoteTemplates && quoteTemplates.map((t: any) => (
+                            <option key={t.id} value={t.id}>{t.name || t.id}</option>
+                          ))}
+                          {(!quoteTemplates || quoteTemplates.length === 0) && (
+                            <option value="tmpl-1">Sunchaser Official Proposal Template</option>
+                          )}
+                        </select>
+                      </div>
+
                       {/* PDF page selector checklist */}
                       <div className="bg-slate-950 border border-slate-850 p-4 rounded-2xl space-y-3">
                         <span className="text-[10px] font-bold text-amber-550 text-amber-500 uppercase tracking-wider block border-b border-slate-900 pb-1.5">
@@ -2317,6 +2565,15 @@ export default function SalesTeamApp({
                             </>
                           )}
                         </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadManualQuotePDF()}
+                          className="w-full bg-slate-800 hover:bg-slate-700 text-amber-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-700 mt-3"
+                        >
+                          <Download className="h-4 w-4" />
+                          <span>Download Manual BOQ Quotation PDF</span>
+                        </button>
                       </div>
 
                     </div>
@@ -2338,6 +2595,7 @@ export default function SalesTeamApp({
                     {quoteTemplatePages
                       .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
                       .map((page, idx) => {
+                        const pageState = getPageState(page);
                         return (
                           <div key={page.id} className="bg-slate-950 border border-slate-850 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow hover:border-slate-800 transition">
                             <div className="space-y-3">
@@ -2351,14 +2609,24 @@ export default function SalesTeamApp({
                                   <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] font-mono">
                                     {page.page_type || page.pageType}
                                   </span>
+                                  {/* Save status indicator */}
+                                  <span className={`text-[9px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                                    pageState.saveStatus === 'Saved' 
+                                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' 
+                                      : pageState.saveStatus === 'Saving...'
+                                        ? 'bg-blue-500/15 text-blue-400 border border-blue-500/20 animate-pulse'
+                                        : 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                                  }`}>
+                                    {pageState.saveStatus}
+                                  </span>
                                 </div>
 
                                 <div className="flex items-center gap-2">
                                   <label className="flex items-center gap-1 cursor-pointer text-[10px] text-slate-400">
                                     <input
                                       type="checkbox"
-                                      checked={page.is_enabled}
-                                      onChange={(e) => handleSavePageTextChanges(page, { is_enabled: e.target.checked })}
+                                      checked={pageState.is_enabled}
+                                      onChange={(e) => handleFieldChange(page.id, 'is_enabled', e.target.checked)}
                                       className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
                                     />
                                     <span>Enabled</span>
@@ -2372,8 +2640,8 @@ export default function SalesTeamApp({
                                 <label className="text-[9px] uppercase font-mono text-slate-500 font-bold">Page Header Title</label>
                                 <input
                                   type="text"
-                                  defaultValue={page.title}
-                                  onBlur={(e) => handleSavePageTextChanges(page, { title: e.target.value })}
+                                  value={pageState.title}
+                                  onChange={(e) => handleFieldChange(page.id, 'title', e.target.value)}
                                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
                                 />
                               </div>
@@ -2382,8 +2650,8 @@ export default function SalesTeamApp({
                                 <label className="text-[9px] uppercase font-mono text-slate-500 font-bold">Body Text Content</label>
                                 <textarea
                                   rows={4}
-                                  defaultValue={page.body_text || page.bodyText}
-                                  onBlur={(e) => handleSavePageTextChanges(page, { body_text: e.target.value })}
+                                  value={pageState.body_text}
+                                  onChange={(e) => handleFieldChange(page.id, 'body_text', e.target.value)}
                                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300"
                                 />
                               </div>
@@ -2394,12 +2662,12 @@ export default function SalesTeamApp({
                                 {/* Background Image */}
                                 <div className="space-y-1.5 text-left">
                                   <label className="text-[9px] text-slate-500 font-bold block uppercase">Background Graphic</label>
-                                  {page.bg_image_url || page.bgImageUrl ? (
+                                  {pageState.bg_image_url ? (
                                     <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-16 bg-slate-900 flex items-center justify-center">
-                                      <img src={page.bg_image_url || page.bgImageUrl} className="h-full w-full object-cover opacity-60" alt="bg preview" />
+                                      <img src={pageState.bg_image_url} className="h-full w-full object-cover opacity-60" alt="bg preview" />
                                       <button
                                         type="button"
-                                        onClick={() => handleSavePageTextChanges(page, { bg_image_url: "" })}
+                                        onClick={() => handleFieldChange(page.id, 'bg_image_url', "")}
                                         className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
                                       >
                                         Remove
@@ -2425,12 +2693,12 @@ export default function SalesTeamApp({
                                 {/* Main/Logo Image */}
                                 <div className="space-y-1.5 text-left">
                                   <label className="text-[9px] text-slate-500 font-bold block uppercase">Foreground Logo/Photo</label>
-                                  {page.image_url || page.imageUrl ? (
+                                  {pageState.image_url ? (
                                     <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-16 bg-slate-900 flex items-center justify-center">
-                                      <img src={page.image_url || page.imageUrl} className="max-h-[85%] max-w-[85%] object-contain" alt="logo preview" />
+                                      <img src={pageState.image_url} className="max-h-[85%] max-w-[85%] object-contain" alt="logo preview" />
                                       <button
                                         type="button"
-                                        onClick={() => handleSavePageTextChanges(page, { image_url: "" })}
+                                        onClick={() => handleFieldChange(page.id, 'image_url', "")}
                                         className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
                                       >
                                         Remove
@@ -2456,6 +2724,38 @@ export default function SalesTeamApp({
                               </div>
 
                             </div>
+
+                            {/* Action buttons footer */}
+                            <div className="flex gap-2 pt-2 border-t border-slate-900 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewPage(pageState)}
+                                className="flex-1 bg-slate-900 border border-slate-800 text-slate-350 hover:text-slate-100 hover:border-slate-700 py-1.5 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 font-bold font-sans"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                                <span>Preview</span>
+                              </button>
+                              
+                              <button
+                                type="button"
+                                onClick={() => setPrintPageData(pageState)}
+                                className="flex-1 bg-slate-900 border border-slate-800 text-slate-350 hover:text-slate-100 hover:border-slate-700 py-1.5 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 font-bold font-sans"
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                                <span>Print</span>
+                              </button>
+                              
+                              <button
+                                type="button"
+                                onClick={() => handleSavePage(page.id)}
+                                disabled={pageState.saveStatus === 'Saved' || pageState.saveStatus === 'Saving...'}
+                                className="flex-1 bg-amber-500/10 hover:bg-amber-500/20 disabled:bg-slate-900 text-amber-400 disabled:text-slate-600 border border-amber-500/20 disabled:border-slate-850 py-1.5 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 font-bold font-sans"
+                              >
+                                <Save className="h-3.5 w-3.5" />
+                                <span>Save</span>
+                              </button>
+                            </div>
+
                           </div>
                         );
                       })}
@@ -2868,6 +3168,178 @@ export default function SalesTeamApp({
           )}
         </div>
 
+        {/* Preview Page Modal */}
+        {previewPage && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm overflow-y-auto p-4 md:p-6 text-slate-800">
+            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full max-w-4xl shadow-2xl flex flex-col my-8">
+              
+              {/* Modal Header */}
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+                <div>
+                  <h3 className="text-sm md:text-base font-bold text-white font-sans flex items-center gap-2">
+                    <Eye className="h-4 w-4 text-amber-500" />
+                    <span>A4 Proposal Page Preview</span>
+                  </h3>
+                  <span className="text-[10px] text-slate-500 font-sans block mt-0.5">
+                    Accurate visualization of the template page compiled layout.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPage(null)}
+                  className="text-slate-400 hover:text-white transition cursor-pointer text-xs font-bold bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-xl border-0"
+                >
+                  Close Preview
+                </button>
+              </div>
+
+              {/* A4 Page viewport wrapper */}
+              <div className="flex justify-center items-center bg-slate-950 p-4 md:p-8 rounded-2xl overflow-auto max-h-[70vh]">
+                {/* Scaled preview matching A4 aspect ratio */}
+                <div 
+                  className="relative bg-white shadow-2xl font-sans text-left flex flex-col justify-between overflow-hidden"
+                  style={{
+                    width: '210mm',
+                    height: '297mm',
+                    minWidth: '210mm',
+                    minHeight: '297mm',
+                    padding: '20mm',
+                    boxSizing: 'border-box',
+                    backgroundImage: previewPage.bg_image_url ? `url(${previewPage.bg_image_url})` : 'none',
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    backgroundRepeat: 'no-repeat'
+                  }}
+                >
+                  {/* Background Dimmer Overlay */}
+                  {previewPage.bg_image_url && (
+                    <div className="absolute inset-0 bg-white/70 pointer-events-none z-0" />
+                  )}
+
+                  <div className="relative z-10 flex flex-col justify-between h-full">
+                    {/* Header */}
+                    <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">☀️</span>
+                        <div>
+                          <div className="font-extrabold text-base tracking-tight text-slate-900 leading-none">SUNCHASER ENERGY</div>
+                          <div className="text-[8px] uppercase tracking-wider text-amber-600 font-bold mt-1">Generational Infrastructure</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[9px] uppercase font-mono text-slate-500 font-bold tracking-wider">
+                          Page: {previewPage.page_type || previewPage.pageType}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Main Content Body */}
+                    <div className="flex-1 flex flex-col justify-start">
+                      {/* Logo / Foreground Photo Preview if present */}
+                      {previewPage.image_url && (
+                        <div className="mb-6 flex justify-center">
+                          <img 
+                            src={previewPage.image_url} 
+                            alt="Foreground asset" 
+                            className="max-h-48 object-contain rounded-lg border border-slate-100 p-2 bg-slate-50/50" 
+                          />
+                        </div>
+                      )}
+
+                      {/* Title */}
+                      <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight mb-4">
+                        {previewPage.title}
+                      </h1>
+
+                      {/* Body Text */}
+                      <p className="text-xs md:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                        {previewPage.body_text}
+                      </p>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="border-t border-slate-200 pt-4 flex justify-between items-end text-[9px] text-slate-500 font-mono mt-auto">
+                      <div>
+                        <span className="font-bold text-slate-800">Sunchaser Energy Systems</span>
+                      </div>
+                      <div>
+                        <span>Official Client Proposal Deck</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+              
+            </div>
+          </div>
+        )}
+
+        {/* Print Preview Container (only active when printing) */}
+        {printPageData && (
+          <div 
+            id="print-preview-container"
+            style={{
+              backgroundImage: printPageData.bg_image_url ? `url(${printPageData.bg_image_url})` : 'none',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat'
+            }}
+          >
+            {printPageData.bg_image_url && (
+              <div className="absolute inset-0 bg-white/70 pointer-events-none z-0" />
+            )}
+            
+            <div className="relative z-10 flex flex-col justify-between h-full">
+              {/* Header */}
+              <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">☀️</span>
+                  <div>
+                    <div className="font-extrabold text-base tracking-tight text-slate-900 leading-none">SUNCHASER ENERGY</div>
+                    <div className="text-[8px] uppercase tracking-wider text-amber-600 font-bold mt-1">Generational Infrastructure</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[9px] uppercase font-mono text-slate-500 font-bold tracking-wider">
+                    Page: {printPageData.page_type || printPageData.pageType}
+                  </span>
+                </div>
+              </div>
+
+              {/* Main Content Body */}
+              <div className="flex-1 flex flex-col justify-start">
+                {printPageData.image_url && (
+                  <div className="mb-6 flex justify-center">
+                    <img 
+                      src={printPageData.image_url} 
+                      alt="Foreground asset" 
+                      className="max-h-48 object-contain rounded-lg" 
+                    />
+                  </div>
+                )}
+
+                <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-4">
+                  {printPageData.title}
+                </h1>
+
+                <p className="text-sm text-slate-750 whitespace-pre-wrap leading-relaxed">
+                  {printPageData.body_text}
+                </p>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t border-slate-200 pt-4 flex justify-between items-end text-[9px] text-slate-500 font-mono mt-auto">
+                <div>
+                  <span className="font-bold text-slate-800">Sunchaser Energy Systems</span>
+                </div>
+                <div>
+                  <span>Official Client Proposal Deck</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
     </div>
