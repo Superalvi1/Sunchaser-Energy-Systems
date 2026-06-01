@@ -25,6 +25,7 @@ interface SalesTeamAppProps {
   socialLinks?: any[];
   structureDescriptions?: any[];
   quotePdfSettings?: any[];
+  onDeleteQuote?: (leadId: string, quoteId: string) => Promise<void>;
 }
 
 export default function SalesTeamApp({
@@ -43,7 +44,8 @@ export default function SalesTeamApp({
   ceoMessages = [],
   socialLinks = [],
   structureDescriptions = [],
-  quotePdfSettings = []
+  quotePdfSettings = [],
+  onDeleteQuote
 }: SalesTeamAppProps) {
   
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
@@ -145,6 +147,33 @@ export default function SalesTeamApp({
   const [previewPage, setPreviewPage] = useState<any | null>(null);
   const [printPageData, setPrintPageData] = useState<any | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("tmpl-1");
+  const [includeSizerItems, setIncludeSizerItems] = useState<boolean>(false);
+  const [showProposalPreview, setShowProposalPreview] = useState<boolean>(false);
+  const [proposalPreviewHtml, setProposalPreviewHtml] = useState<string>("");
+  const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
+  const [globalHeaderEnabled, setGlobalHeaderEnabled] = useState<boolean>(true);
+  const [globalHeaderText, setGlobalHeaderText] = useState<string>("☀️ SUNCHASER ENERGY");
+  const [globalHeaderLogoUrl, setGlobalHeaderLogoUrl] = useState<string>("");
+  const [globalHeaderLogoSize, setGlobalHeaderLogoSize] = useState<string>("25px");
+  const [globalHeaderLineColor, setGlobalHeaderLineColor] = useState<string>("#f59e0b");
+  const [globalHeaderAlignment, setGlobalHeaderAlignment] = useState<string>("left");
+  const [globalFooterEnabled, setGlobalFooterEnabled] = useState<boolean>(true);
+  const [globalFooterText, setGlobalFooterText] = useState<string>("Sunchaser Energy Systems Proposal");
+  const [globalFooterLineColor, setGlobalFooterLineColor] = useState<string>("#cbd5e1");
+  const [globalFooterAlignment, setGlobalFooterAlignment] = useState<string>("left");
+
+  const isDefaultAutoSizerRow = (row: any) => {
+    const defaultIds = [
+      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+      'h-3', 'db_box_row', 's-3',
+      'h-4', 'supplies_row', 's-4',
+      'h-5', 'earthing_bore_row', 's-5',
+      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+    ];
+    return defaultIds.includes(row.id);
+  };
 
   useEffect(() => {
     if (printPageData) {
@@ -163,6 +192,118 @@ export default function SalesTeamApp({
       };
     }
   }, [printPageData]);
+
+  useEffect(() => {
+    if (settings) {
+      if (settings.globalPdfHeader) {
+        setGlobalHeaderEnabled(settings.globalPdfHeader.enabled !== false);
+        setGlobalHeaderText(settings.globalPdfHeader.text || "☀️ SUNCHASER ENERGY");
+        setGlobalHeaderLogoUrl(settings.globalPdfHeader.logoUrl || "");
+        setGlobalHeaderLogoSize(settings.globalPdfHeader.logoSize || "25px");
+        setGlobalHeaderLineColor(settings.globalPdfHeader.lineColor || "#f59e0b");
+        setGlobalHeaderAlignment(settings.globalPdfHeader.alignment || "left");
+      }
+      if (settings.globalPdfFooter) {
+        setGlobalFooterEnabled(settings.globalPdfFooter.enabled !== false);
+        setGlobalFooterText(settings.globalPdfFooter.text || "Sunchaser Energy Systems Proposal");
+        setGlobalFooterLineColor(settings.globalPdfFooter.lineColor || "#cbd5e1");
+        setGlobalFooterAlignment(settings.globalPdfFooter.alignment || "left");
+      }
+    }
+  }, [settings]);
+
+  const handleSaveGlobalPdfSettings = async () => {
+    try {
+      const updatedSettings = {
+        ...settings,
+        globalPdfHeader: {
+          enabled: globalHeaderEnabled,
+          text: globalHeaderText,
+          logoUrl: globalHeaderLogoUrl,
+          logoSize: globalHeaderLogoSize,
+          lineColor: globalHeaderLineColor,
+          alignment: globalHeaderAlignment
+        },
+        globalPdfFooter: {
+          enabled: globalFooterEnabled,
+          text: globalFooterText,
+          lineColor: globalFooterLineColor,
+          alignment: globalFooterAlignment
+        }
+      };
+
+      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          table: "settings",
+          data: updatedSettings
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+
+      alert("Global PDF Header & Footer settings saved successfully!");
+      if (onRefreshState) onRefreshState();
+    } catch (err: any) {
+      console.error("Save global settings error:", err);
+      alert("Failed to save global PDF settings: " + (err.message || err.toString()));
+    }
+  };
+
+  const uploadImageFile = async (file: File, isBg: boolean): Promise<string> => {
+    if (!file.type.startsWith('image/')) {
+      throw new Error("Please select a valid image file.");
+    }
+    const reader = new FileReader();
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      reader.onerror = () => reject(new Error("FileReader error."));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Image element error."));
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxWidth = isBg ? 800 : 400;
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { reject(new Error("Canvas context error.")); return; }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    const response = await fetch(`${API_BASE_URL}/api/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base64Data: dataUrl, filename: file.name })
+    });
+    if (!response.ok) throw new Error("Server upload failure.");
+    const resData = await response.json();
+    return resData.dataUrl || resData.url || dataUrl;
+  };
+
+  const handleGlobalHeaderLogoUpload = async (file: File) => {
+    try {
+      const url = await uploadImageFile(file, false);
+      setGlobalHeaderLogoUrl(url);
+    } catch (err: any) {
+      console.error("Global logo upload error:", err);
+      alert("Upload failed: " + (err.message || err.toString()));
+    }
+  };
 
   // Sizing inputs and options
   const [formMonthlyUnits, setFormMonthlyUnits] = useState<number>(985);
@@ -682,9 +823,58 @@ export default function SalesTeamApp({
     setNetMeteringCharges(netCharges);
 
     const defaultBoq = generateDefaultBoqRows(kwSize, type, struct, brand, wattage, invBrand, invCap, batt, net);
-    setBoqRows(defaultBoq);
-    setManualBoqItems(defaultBoq);
-    localStorage.setItem(`sunchaser_boq_${activeLead?.id}`, JSON.stringify(defaultBoq));
+    // Rewrite all IDs to prevent them from being identified as default auto-sizer rows
+    const packageRows = defaultBoq.map(row => ({
+      ...row,
+      id: row.id.startsWith('h-') 
+        ? `row-heading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        : row.id.startsWith('s-')
+          ? `row-subtotal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+          : `row-item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    }));
+    setBoqRows(packageRows);
+    setManualBoqItems(packageRows);
+    triggerAutosave(packageRows);
+  };
+
+  const handleCopyAutoSizerToManualBoq = () => {
+    if (!activeLead) return;
+    
+    // Find latest auto sizer quote, or generate defaults if none
+    const latestAutoSizerQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'auto_sizer');
+    let rowsToCopy: any[] = [];
+    
+    if (latestAutoSizerQuote) {
+      rowsToCopy = latestAutoSizerQuote.boqRows || latestAutoSizerQuote.boqItems || [];
+    } else {
+      // Generate default auto sizer rows as fallback
+      rowsToCopy = generateDefaultBoqRows(
+        systemSizekW,
+        systemType,
+        'Standard',
+        panelBrand,
+        panelWattage,
+        inverterBrand,
+        inverterCapacity,
+        batteryOption,
+        netMeteringRequired
+      );
+    }
+    
+    // Rewrite row IDs to ensure they act as manual rows and don't match default IDs
+    const copiedRows = rowsToCopy.map((row: any) => ({
+      ...row,
+      id: row.id.startsWith('h-') 
+        ? `row-heading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        : row.id.startsWith('s-')
+          ? `row-subtotal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+          : `row-item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    }));
+    
+    setBoqRows(copiedRows);
+    setManualBoqItems(copiedRows);
+    triggerAutosave(copiedRows);
+    console.log(`[Manual BOQ Builder] Copied ${copiedRows.length} rows from Auto Sizer, rewritten IDs to manual.`);
   };
 
   // Sync client details and BOQ rows when activeLead changes
@@ -697,9 +887,103 @@ export default function SalesTeamApp({
       setCityArea(activeLead.location || "Lahore");
       setBdmName(activeLead.assignedSalesperson || "Sarah Connor");
       setQuoteDate(new Date().toISOString().split('T')[0]);
+      
+      // 1. Reset all quote editor states to standard defaults to prevent state leakage
       setEditingQuoteId(null);
+      setCnic("");
+      setSystemSizekW(8.5);
+      setSystemType('Hybrid');
+      setPanelBrand("Jinko");
+      setPanelWattage(580);
+      setInverterBrand("Knox");
+      setInverterCapacity("10kW");
+      setBatteryOption("None");
+      setSelectedStructure('standard');
+      setNetMeteringRequired('Yes');
+      setDiscount(0);
+      setPaymentSchedule("50% Advance, 40% Delivery, 10% Commissioning");
+      setLescoMeterNo("");
+      setLescoConsumerNo("");
+      setLescoSanctionedLoad("");
+      setLescoPhaseType('Three Phase');
+      setSocietyCharges(0);
+      setTaxEnabled(false);
+      setTaxRate(17);
+      setCustomNotes("");
+      setIncludeSizerItems(false);
+      setSelectedTemplateId("tmpl-1");
+      setIncludedPages({
+        cover: true, profile: true, qr: true, ceo: true, structure: true, boq: true, terms: true, signoff: true, bank: true, final: true
+      });
+      setCustomStructName("");
+      setCustomStructDescEn("");
+      setCustomStructDescUr("");
+      setCustomStructRate(0);
+      setCustomStructWeight("");
+      setCustomStructMaterial("");
+      setCustomStructWarranty("");
+      setCustomStructWind("");
+      setAccessories("Dual DC cables, PVC ducting & safety switches");
+      setWarrantyTerms("25 year power degradation, 10 year inverter warranty");
+      setTermsAndConditions("Quoted prices are valid for 3 days.");
 
-      // Check localStorage first for autosave cache
+      // 2. Load latest quote details or lead details
+      const latestQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'manual_boq');
+      if (latestQuote) {
+        setSystemSizekW(latestQuote.systemSizekW || 10);
+        setSystemType(latestQuote.systemType || 'Hybrid');
+        setPanelBrand(latestQuote.panelBrand || "Jinko");
+        setPanelWattage(latestQuote.panelWattage || 580);
+        setInverterBrand(latestQuote.inverterBrand || "Knox");
+        setInverterCapacity(latestQuote.inverterCapacity || "10kW");
+        setBatteryOption(latestQuote.batteryOption || "None");
+        setSelectedStructure(latestQuote.selectedStructure || 'standard');
+        setNetMeteringRequired(latestQuote.netMeteringRequired || 'Yes');
+        setDiscount(latestQuote.discount || 0);
+        setPaymentSchedule(latestQuote.paymentSchedule || "50% Advance, 40% Delivery, 10% Commissioning");
+        setLescoMeterNo(latestQuote.lescoSettings?.meterNo || "");
+        setLescoConsumerNo(latestQuote.lescoSettings?.consumerNo || "");
+        setLescoSanctionedLoad(latestQuote.lescoSettings?.sanctionedLoad || "");
+        setLescoPhaseType(latestQuote.lescoSettings?.phaseType || 'Three Phase');
+        setSocietyCharges(latestQuote.societyCharges || 0);
+        setTaxEnabled(latestQuote.taxEnabled || false);
+        setTaxRate(latestQuote.taxRate || 17);
+        setCustomNotes(latestQuote.customNotes || "");
+        setIncludeSizerItems(latestQuote.includeSizerItems === true);
+        setSelectedTemplateId(latestQuote.templateId || "tmpl-1");
+        setAccessories(latestQuote.accessories || "Dual DC cables, PVC ducting & safety switches");
+        setWarrantyTerms(latestQuote.warrantyTerms || "25 year power degradation, 10 year inverter warranty");
+        setTermsAndConditions(latestQuote.termsAndConditions || "Quoted prices are valid for 3 days.");
+        
+        if (latestQuote.customStructure) {
+          setCustomStructName(latestQuote.customStructure.name || "");
+          setCustomStructDescEn(latestQuote.customStructure.descEn || "");
+          setCustomStructDescUr(latestQuote.customStructure.descUr || "");
+          setCustomStructRate(latestQuote.customStructure.rate || 0);
+          setCustomStructWeight(latestQuote.customStructure.weight || "");
+          setCustomStructMaterial(latestQuote.customStructure.materialType || "");
+          setCustomStructWarranty(latestQuote.customStructure.warranty || "");
+          setCustomStructWind(latestQuote.customStructure.windRating || "");
+        }
+
+        if (latestQuote.includedPages && Array.isArray(latestQuote.includedPages)) {
+          const pageMapping: Record<string, boolean> = {
+            cover: false, profile: false, qr: false, ceo: false, structure: false, boq: false, terms: false, signoff: false, bank: false, final: false
+          };
+          latestQuote.includedPages.forEach((p: string) => {
+            pageMapping[p] = true;
+          });
+          setIncludedPages(pageMapping);
+        }
+      } else {
+        // Default system size calculation
+        const assumedUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
+        setFormMonthlyUnits(assumedUnits);
+        const calcSize = activeLead.monthlyBill && activeLead.monthlyBill > 1000 ? Number((activeLead.monthlyBill / (26 * 35)).toFixed(1)) : 8.5;
+        setSystemSizekW(calcSize);
+      }
+
+      // 3. Load BOQ rows (prioritizing localStorage autosave cache)
       const cachedBoq = localStorage.getItem(`sunchaser_boq_${activeLead.id}`);
       if (cachedBoq) {
         try {
@@ -709,56 +993,48 @@ export default function SalesTeamApp({
         } catch (e) {
           console.error("Failed to parse cached BOQ", e);
         }
+      } else if (latestQuote) {
+        const qRows = latestQuote.boqRows || latestQuote.boqItems || [];
+        setBoqRows(qRows);
+        setManualBoqItems(qRows);
       } else {
-        // Fallback to latest quote rows or generate defaults
-        const latestQuote = activeLead.quotes?.[0];
-        if (latestQuote) {
-          const qRows = latestQuote.boqRows || latestQuote.boqItems || [];
-          setBoqRows(qRows);
-          setManualBoqItems(qRows);
-          setSystemSizekW(latestQuote.systemSizekW || 10);
-          setSystemType(latestQuote.systemType || 'Hybrid');
-          setPanelBrand(latestQuote.panelBrand || "Jinko");
-          setPanelWattage(latestQuote.panelWattage || 580);
-          setInverterBrand(latestQuote.inverterBrand || "Knox");
-          setInverterCapacity(latestQuote.inverterCapacity || "10kW");
-          setBatteryOption(latestQuote.batteryOption || "None");
-          setSelectedStructure(latestQuote.selectedStructure || 'standard');
-          setNetMeteringRequired(latestQuote.netMeteringRequired || 'Yes');
-          setDiscount(latestQuote.discount || 0);
-          setPaymentSchedule(latestQuote.paymentSchedule || "50% Advance, 40% Delivery, 10% Commissioning");
-          setLescoMeterNo(latestQuote.lescoSettings?.meterNo || "");
-          setLescoConsumerNo(latestQuote.lescoSettings?.consumerNo || "");
-          setLescoSanctionedLoad(latestQuote.lescoSettings?.sanctionedLoad || "");
-          setLescoPhaseType(latestQuote.lescoSettings?.phaseType || 'Three Phase');
-          setSocietyCharges(latestQuote.societyCharges || 0);
-          setTaxEnabled(latestQuote.taxEnabled || false);
-          setTaxRate(latestQuote.taxRate || 17);
-          setCustomNotes(latestQuote.customNotes || "");
-        } else {
-          // Default system size calculation
-          const assumedUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
-          setFormMonthlyUnits(assumedUnits);
-          const calcSize = activeLead.monthlyBill ? Number((activeLead.monthlyBill / (26 * 35)).toFixed(1)) : 8.5;
-          setSystemSizekW(calcSize);
-          setSystemType('Hybrid');
-          setPanelBrand("Jinko");
-          setPanelWattage(580);
-          setInverterBrand("Knox");
-          setInverterCapacity("10kW");
-          setBatteryOption("None");
-          setSelectedStructure('standard');
-          setNetMeteringRequired('Yes');
-          setDiscount(0);
-          setPaymentSchedule("50% Advance, 40% Delivery, 10% Commissioning");
-          
-          const defaultBoq = generateDefaultBoqRows(calcSize, 'Hybrid', 'Standard', 'Jinko', 580, 'Knox', '10kW', 'None', 'Yes');
-          setBoqRows(defaultBoq);
-          setManualBoqItems(defaultBoq);
-        }
+        setBoqRows([]);
+        setManualBoqItems([]);
       }
     }
-  }, [selectedLeadId]);
+  }, [selectedLeadId, leads]);
+
+  // Console debugger tracking Manual BOQ Builder events
+  useEffect(() => {
+    if (activeModule === 'boq_builder' && activeLead) {
+      const defaultIds = [
+        'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+        'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+        'h-3', 'db_box_row', 's-3',
+        'h-4', 'supplies_row', 's-4',
+        'h-5', 'earthing_bore_row', 's-5',
+        'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+        'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+      ];
+      
+      const allRows = boqRows || [];
+      const autoCount = allRows.filter(r => defaultIds.includes(r.id)).length;
+      const manualCount = allRows.filter(r => !defaultIds.includes(r.id)).length;
+      
+      const isPackageRow = (r: any) => r.id && (r.id.startsWith('row-heading') || r.id.startsWith('row-item') || r.id.startsWith('row-subtotal'));
+      const sourceUsed = allRows.some(isPackageRow) ? 'package_loaded' : (autoCount > 0 ? 'auto_sizer' : 'manual_only');
+      
+      console.log("[Manual BOQ Debug Log] Frontend opened/updated:", {
+        leadId: activeLead.id,
+        selectedQuoteId: editingQuoteId || "N/A",
+        quote_type: editingQuoteId ? (activeLead.quotes?.find((q: any) => q.id === editingQuoteId)?.quote_type || "manual_boq") : "manual_boq",
+        manualBoqRowsCount: manualCount,
+        autoSizerRowsCount: autoCount,
+        defaultRowsInjected: autoCount > 0,
+        source: sourceUsed
+      });
+    }
+  }, [activeModule, boqRows, activeLead, editingQuoteId]);
 
   // Sync rows to localStorage on edit
   const triggerAutosave = (updatedRows: BoqRow[]) => {
@@ -986,7 +1262,7 @@ export default function SalesTeamApp({
         netMeteringRequired,
         discount: Number(discount) || 0,
         paymentSchedule,
-        boqItems: boqRows,
+        boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
 
         // Redesigned Manual Builder fields
         lescoSettings: {
@@ -1001,12 +1277,14 @@ export default function SalesTeamApp({
         taxAmount: calculatedTaxAmount,
         selectedStructure,
         customStructure: customStructurePayload,
-        boqRows: boqRows,
+        boqRows: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
         customNotes,
         grandTotal: calculatedGrandTotal,
         netTotal: calculatedNetTotal,
         templateId: selectedTemplateId,
-        includedPages: Object.keys(includedPages).filter(k => includedPages[k])
+        includeSizerItems,
+        includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
+        quote_type: activeModule === 'sizer' ? 'auto_sizer' : 'manual_boq'
       };
 
       if (editingQuoteId) {
@@ -1103,7 +1381,7 @@ export default function SalesTeamApp({
       netMeteringRequired,
       discount: Number(discount) || 0,
       paymentSchedule,
-      boqItems: boqRows,
+      boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
       lescoSettings: {
         meterNo: lescoMeterNo,
         consumerNo: lescoConsumerNo,
@@ -1116,13 +1394,14 @@ export default function SalesTeamApp({
       taxAmount: calculatedTaxAmount,
       selectedStructure,
       customStructure: customStructurePayload,
-      boqRows: boqRows,
+      boqRows: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
       customNotes,
       grandTotal: calculatedGrandTotal,
       netTotal: calculatedNetTotal,
       leadId: activeLead.id,
       includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
-      templateId: selectedTemplateId
+      templateId: selectedTemplateId,
+      includeSizerItems
     };
 
     const form = document.createElement('form');
@@ -1139,6 +1418,113 @@ export default function SalesTeamApp({
     document.body.appendChild(form);
     form.submit();
     document.body.removeChild(form);
+  };
+
+  const handlePreviewProposalDeck = async () => {
+    if (!activeLead) return;
+
+    const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
+
+    let customStructurePayload = undefined;
+    if (selectedStructure === 'custom') {
+      customStructurePayload = {
+        name: customStructName,
+        descEn: customStructDescEn,
+        descUr: customStructDescUr,
+        rate: Number(customStructRate) || 0,
+        weight: customStructWeight,
+        materialType: customStructMaterial,
+        warranty: customStructWarranty,
+        windRating: customStructWind,
+        image: ""
+      };
+    }
+
+    const calculatedGrandTotal = boqRows
+      .filter(r => r && r.type === 'item')
+      .reduce((sum, r) => sum + (r.total || 0), 0);
+
+    const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
+    const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+
+    const quoteData = {
+      systemSizekW,
+      panelCount: panelsCount,
+      panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
+      inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
+      batteryCapacity: batteryOption !== "None" ? batteryOption : "",
+      totalCost: calculatedGrandTotal,
+      structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
+      accessories,
+      installationCharges: Number(boqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
+      netMeteringCharges: netMeteringRequired === "Yes" ? (Number(boqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
+      paymentTerms: paymentSchedule,
+      warrantyTerms,
+      termsAndConditions,
+      clientName,
+      clientPhone,
+      clientEmail,
+      clientAddress,
+      cnic,
+      cityArea,
+      bdmName,
+      quoteDate,
+      systemType,
+      panelBrand,
+      panelWattage,
+      inverterBrand,
+      inverterCapacity,
+      batteryOption,
+      netMeteringRequired,
+      discount: Number(discount) || 0,
+      paymentSchedule,
+      boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
+      lescoSettings: {
+        meterNo: lescoMeterNo,
+        consumerNo: lescoConsumerNo,
+        sanctionedLoad: lescoSanctionedLoad,
+        phaseType: lescoPhaseType
+      },
+      societyCharges: Number(societyCharges) || 0,
+      taxEnabled,
+      taxRate: Number(taxRate) || 0,
+      taxAmount: calculatedTaxAmount,
+      selectedStructure,
+      customStructure: customStructurePayload,
+      boqRows: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
+      customNotes,
+      grandTotal: calculatedGrandTotal,
+      netTotal: calculatedNetTotal,
+      leadId: activeLead.id,
+      includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
+      templateId: selectedTemplateId,
+      includeSizerItems
+    };
+
+    try {
+      setLoadingPreview(true);
+      setShowProposalPreview(true);
+      
+      const response = await fetch(`${API_BASE_URL}/api/export/pdf/manual-quote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(quoteData)
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to compile proposal preview layout: ${response.statusText}`);
+      }
+      
+      const html = await response.text();
+      setProposalPreviewHtml(html);
+    } catch (err: any) {
+      console.error(err);
+      setProposalPreviewHtml(`<div style="padding: 20px; color: #ef4444; font-weight: bold; font-family: sans-serif;">Error loading preview: ${err.message}</div>`);
+    } finally {
+      setLoadingPreview(false);
+    }
   };
 
   const handleDuplicateQuote = async (quote: any) => {
@@ -1214,6 +1600,7 @@ export default function SalesTeamApp({
       });
       setIncludedPages(pageMapping);
     }
+    setIncludeSizerItems(quote.includeSizerItems === true);
     
     // Switch to manual BOQ tab
     setActiveModule('boq_builder');
@@ -1221,12 +1608,43 @@ export default function SalesTeamApp({
 
   const getPageState = (page: any) => {
     const local = localPageStates[page.id];
+    
+    // Parse JSON settings from DB record if present
+    const rawBody = page.body_text || page.bodyText || "";
+    let parsed: any = {};
+    if (typeof rawBody === 'string' && rawBody.trim().startsWith('{')) {
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        parsed = { bodyText: rawBody };
+      }
+    } else {
+      parsed = { bodyText: rawBody };
+    }
+
     return {
       title: local?.title !== undefined ? local.title : (page.title || ""),
-      body_text: local?.body_text !== undefined ? local.body_text : (page.body_text || page.bodyText || ""),
+      body_text: local?.body_text !== undefined ? local.body_text : (parsed.bodyText || ""),
       image_url: local?.image_url !== undefined ? local.image_url : (page.image_url || page.imageUrl || ""),
       bg_image_url: local?.bg_image_url !== undefined ? local.bg_image_url : (page.bg_image_url || page.bgImageUrl || ""),
       is_enabled: local?.is_enabled !== undefined ? local.is_enabled : (page.is_enabled !== false),
+      
+      // Extended fields
+      layoutMode: local?.layoutMode !== undefined ? local.layoutMode : (parsed.layoutMode || "standard"),
+      headerMode: local?.headerMode !== undefined ? local.headerMode : (parsed.header?.mode || "inherit"),
+      headerText: local?.headerText !== undefined ? local.headerText : (parsed.header?.text || ""),
+      headerLogoUrl: local?.headerLogoUrl !== undefined ? local.headerLogoUrl : (parsed.header?.logoUrl || ""),
+      headerLogoSize: local?.headerLogoSize !== undefined ? local.headerLogoSize : (parsed.header?.logoSize || "25px"),
+      headerLineColor: local?.headerLineColor !== undefined ? local.headerLineColor : (parsed.header?.lineColor || "#cbd5e1"),
+      headerAlignment: local?.headerAlignment !== undefined ? local.headerAlignment : (parsed.header?.alignment || "left"),
+      
+      footerMode: local?.footerMode !== undefined ? local.footerMode : (parsed.footer?.mode || "inherit"),
+      footerText: local?.footerText !== undefined ? local.footerText : (parsed.footer?.text || ""),
+      footerLineColor: local?.footerLineColor !== undefined ? local.footerLineColor : (parsed.footer?.lineColor || "#cbd5e1"),
+      footerAlignment: local?.footerAlignment !== undefined ? local.footerAlignment : (parsed.footer?.alignment || "left"),
+      
+      bodyImages: local?.bodyImages !== undefined ? local.bodyImages : (parsed.bodyImages || []),
+      
       saveStatus: local?.saveStatus || 'Saved'
     };
   };
@@ -1238,11 +1656,31 @@ export default function SalesTeamApp({
       
       let originalVal: any = "";
       if (page) {
+        const rawBody = page.body_text || page.bodyText || "";
+        let parsed: any = {};
+        if (typeof rawBody === 'string' && rawBody.trim().startsWith('{')) {
+          try { parsed = JSON.parse(rawBody); } catch (e) { parsed = { bodyText: rawBody }; }
+        } else {
+          parsed = { bodyText: rawBody };
+        }
+
         if (field === 'title') originalVal = page.title || "";
-        else if (field === 'body_text') originalVal = page.body_text || page.bodyText || "";
+        else if (field === 'body_text') originalVal = parsed.bodyText || "";
         else if (field === 'is_enabled') originalVal = page.is_enabled !== false;
         else if (field === 'image_url') originalVal = page.image_url || page.imageUrl || "";
         else if (field === 'bg_image_url') originalVal = page.bg_image_url || page.bgImageUrl || "";
+        else if (field === 'layoutMode') originalVal = parsed.layoutMode || "standard";
+        else if (field === 'headerMode') originalVal = parsed.header?.mode || "inherit";
+        else if (field === 'headerText') originalVal = parsed.header?.text || "";
+        else if (field === 'headerLogoUrl') originalVal = parsed.header?.logoUrl || "";
+        else if (field === 'headerLogoSize') originalVal = parsed.header?.logoSize || "25px";
+        else if (field === 'headerLineColor') originalVal = parsed.header?.lineColor || "#cbd5e1";
+        else if (field === 'headerAlignment') originalVal = parsed.header?.alignment || "left";
+        else if (field === 'footerMode') originalVal = parsed.footer?.mode || "inherit";
+        else if (field === 'footerText') originalVal = parsed.footer?.text || "";
+        else if (field === 'footerLineColor') originalVal = parsed.footer?.lineColor || "#cbd5e1";
+        else if (field === 'footerAlignment') originalVal = parsed.footer?.alignment || "left";
+        else if (field === 'bodyImages') originalVal = parsed.bodyImages || [];
       }
       
       const isDifferent = originalVal !== value;
@@ -1284,7 +1722,25 @@ export default function SalesTeamApp({
           data: {
             ...page,
             title: state.title,
-            body_text: state.body_text,
+            body_text: JSON.stringify({
+              bodyText: state.body_text,
+              layoutMode: state.layoutMode,
+              header: {
+                mode: state.headerMode,
+                text: state.headerText,
+                logoUrl: state.headerLogoUrl,
+                logoSize: state.headerLogoSize,
+                lineColor: state.headerLineColor,
+                alignment: state.headerAlignment
+              },
+              footer: {
+                mode: state.footerMode,
+                text: state.footerText,
+                lineColor: state.footerLineColor,
+                alignment: state.footerAlignment
+              },
+              bodyImages: state.bodyImages
+            }),
             image_url: state.image_url,
             bg_image_url: state.bg_image_url,
             is_enabled: state.is_enabled
@@ -2143,17 +2599,75 @@ export default function SalesTeamApp({
                       </button>
                     </div>
                     
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm("Overwrite BOQ rows with calculated sizer default layout?")) {
-                          applyPackage(systemSizekW || 10);
-                        }
-                      }}
-                      className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-xl cursor-pointer"
-                    >
-                      Reset to Defaults
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            if (window.confirm(`Overwrite BOQ rows with calculated ${e.target.value}kW package layout?`)) {
+                              applyPackage(Number(e.target.value));
+                            }
+                            e.target.value = "";
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        <option value="">🎁 Load Package...</option>
+                        <option value="3">3 kW Package</option>
+                        <option value="5">5 kW Package</option>
+                        <option value="7">7 kW Package</option>
+                        <option value="10">10 kW Package</option>
+                        <option value="12">12 kW Package</option>
+                        <option value="15">15 kW Package</option>
+                        <option value="20">20 kW Package</option>
+                        <option value="25">25 kW Package</option>
+                        <option value="30">30 kW Package</option>
+                        <option value="50">50 kW Package</option>
+                        <option value="100">100 kW Package</option>
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={handleCopyAutoSizerToManualBoq}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1 font-sans"
+                        title="Copy latest auto sizer quote rows to this manual builder"
+                      >
+                        📋 Copy Auto Sizer
+                      </button>
+
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const q = activeLead?.quotes?.find((quote: any) => quote.id === e.target.value);
+                            if (q) {
+                              if (window.confirm(`Load saved quote ${q.id} into Manual BOQ builder? This will overwrite current rows.`)) {
+                                handleLoadQuoteForEditing(q);
+                              }
+                            }
+                            e.target.value = "";
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        <option value="">📂 Load Saved Quote...</option>
+                        {(activeLead?.quotes || []).map((q: any) => (
+                          <option key={q.id} value={q.id}>
+                            Quote {q.id} ({q.quote_type === 'auto_sizer' ? 'Auto Sizer' : 'Manual BOQ'} - {q.systemSizekW}kW)
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Overwrite BOQ rows with calculated sizer default layout?")) {
+                            applyPackage(systemSizekW || 10);
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        Reset to Defaults
+                      </button>
+                    </div>
                   </div>
 
                   {/* Excel Spreadsheet Table */}
@@ -2499,6 +3013,20 @@ export default function SalesTeamApp({
                             <option value="tmpl-1">Sunchaser Official Proposal Template</option>
                           )}
                         </select>
+
+                        {/* Include Auto Sizer Items Checkbox */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <input
+                            type="checkbox"
+                            id="includeSizerItemsCheckbox"
+                            checked={includeSizerItems}
+                            onChange={(e) => setIncludeSizerItems(e.target.checked)}
+                            className="rounded border-slate-800 bg-slate-900 text-amber-550 text-amber-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                          />
+                          <label htmlFor="includeSizerItemsCheckbox" className="text-xs text-slate-400 select-none cursor-pointer font-sans">
+                            Include Auto Sizer Items in Manual BOQ
+                          </label>
+                        </div>
                       </div>
 
                       {/* PDF page selector checklist */}
@@ -2568,6 +3096,25 @@ export default function SalesTeamApp({
 
                         <button
                           type="button"
+                          onClick={() => handlePreviewProposalDeck()}
+                          disabled={loadingPreview}
+                          className="w-full bg-slate-950 hover:bg-slate-800 text-slate-200 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-850 mt-3"
+                        >
+                          {loadingPreview ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                              <span>Compiling Live Preview...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="h-4 w-4 text-amber-500" />
+                              <span>Preview Proposal Deck Layout</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => handleDownloadManualQuotePDF()}
                           className="w-full bg-slate-800 hover:bg-slate-700 text-amber-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-700 mt-3"
                         >
@@ -2589,6 +3136,166 @@ export default function SalesTeamApp({
                   <div className="border-b border-slate-800 pb-2">
                     <h3 className="text-sm font-bold text-slate-100 font-sans">Visual Proposal Template Pages</h3>
                     <span className="text-[10px] text-slate-500 font-sans">Reorder pages, configure text bodies, and upload base64 asset files.</span>
+                  </div>
+
+                  {/* Global Header & Footer Settings Card (BUG 5) */}
+                  <div className="bg-slate-950 border border-slate-850 p-5 rounded-2xl space-y-4">
+                    <div className="border-b border-slate-900 pb-2 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-sans">Global PDF Header & Footer Settings</h4>
+                        <p className="text-[9px] text-slate-500 font-sans">These settings apply to all proposal pages unless explicitly overridden at the page level.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveGlobalPdfSettings}
+                        className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-3 py-1.5 text-xs rounded-lg transition shrink-0"
+                      >
+                        Save Global Settings
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      {/* Global Header */}
+                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Header</label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-slate-400">
+                            <input
+                              type="checkbox"
+                              checked={globalHeaderEnabled}
+                              onChange={(e) => setGlobalHeaderEnabled(e.target.checked)}
+                              className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
+                            />
+                            <span>Enabled</span>
+                          </label>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Header Company Name Text</label>
+                          <input
+                            type="text"
+                            value={globalHeaderText}
+                            onChange={(e) => setGlobalHeaderText(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Logo Alignment</label>
+                            <select
+                              value={globalHeaderAlignment}
+                              onChange={(e) => setGlobalHeaderAlignment(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white"
+                            >
+                              <option value="left">Left</option>
+                              <option value="center">Center</option>
+                              <option value="right">Right</option>
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Line Color</label>
+                            <input
+                              type="text"
+                              value={globalHeaderLineColor}
+                              onChange={(e) => setGlobalHeaderLineColor(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Logo Max Height</label>
+                          <input
+                            type="text"
+                            value={globalHeaderLogoSize}
+                            onChange={(e) => setGlobalHeaderLogoSize(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Global Header Logo Image</label>
+                          {globalHeaderLogoUrl ? (
+                            <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-10 bg-slate-950 flex items-center justify-center">
+                              <img src={globalHeaderLogoUrl} style={{ maxHeight: globalHeaderLogoSize }} className="object-contain" alt="global logo preview" />
+                              <button
+                                type="button"
+                                onClick={() => setGlobalHeaderLogoUrl("")}
+                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : (
+                            <label className="border border-dashed border-slate-800 hover:border-slate-700 rounded-lg h-10 bg-slate-950 flex flex-col items-center justify-center text-slate-500 hover:text-slate-350 cursor-pointer transition">
+                              <Upload className="h-3 w-3 mb-0.5" />
+                              <span className="text-[9px]">Upload Header Logo</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    try {
+                                      const url = await uploadImageFile(file, false);
+                                      setGlobalHeaderLogoUrl(url);
+                                    } catch (err: any) {
+                                      alert("Upload failed: " + err.message);
+                                    }
+                                  }
+                                }}
+                                className="hidden"
+                              />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Global Footer */}
+                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Footer</label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-slate-400">
+                            <input
+                              type="checkbox"
+                              checked={globalFooterEnabled}
+                              onChange={(e) => setGlobalFooterEnabled(e.target.checked)}
+                              className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
+                            />
+                            <span>Enabled</span>
+                          </label>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Footer Text</label>
+                          <input
+                            type="text"
+                            value={globalFooterText}
+                            onChange={(e) => setGlobalFooterText(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Alignment</label>
+                            <select
+                              value={globalFooterAlignment}
+                              onChange={(e) => setGlobalFooterAlignment(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white"
+                            >
+                              <option value="left">Left</option>
+                              <option value="center">Center</option>
+                              <option value="right">Right</option>
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Line Color</label>
+                            <input
+                              type="text"
+                              value={globalFooterLineColor}
+                              onChange={(e) => setGlobalFooterLineColor(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2654,6 +3361,390 @@ export default function SalesTeamApp({
                                   onChange={(e) => handleFieldChange(page.id, 'body_text', e.target.value)}
                                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300"
                                 />
+                              </div>
+
+                              {/* Layout Mode Selector (BUG 4) */}
+                              <div className="space-y-2">
+                                <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Page Layout Mode</label>
+                                <select
+                                  value={pageState.layoutMode}
+                                  onChange={(e) => handleFieldChange(page.id, 'layoutMode', e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-sans focus:outline-none focus:border-amber-500"
+                                >
+                                  <option value="standard">Standard (Header, Title, Text, Footer)</option>
+                                  <option value="image_only">IMAGE ONLY PAGE (Render background image only)</option>
+                                  <option value="full_page_image">Full Page Image Only (Hides text & headers)</option>
+                                </select>
+                              </div>
+
+                              {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
+                                <>
+                                  {/* Page Header Customizations (BUG 2) */}
+                                  <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
+                                    <div className="flex justify-between items-center">
+                                      <label className="text-[9px] uppercase font-mono text-amber-500 font-bold">Page Header Override</label>
+                                      <select
+                                        value={pageState.headerMode}
+                                        onChange={(e) => handleFieldChange(page.id, 'headerMode', e.target.value)}
+                                        className="bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-none"
+                                      >
+                                        <option value="inherit">Inherit Global</option>
+                                        <option value="custom">Custom Header</option>
+                                        <option value="disabled">Hide Header</option>
+                                      </select>
+                                    </div>
+                                    {pageState.headerMode === 'custom' && (
+                                      <div className="space-y-2.5 pt-1">
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Header Text</label>
+                                            <input
+                                              type="text"
+                                              value={pageState.headerText}
+                                              onChange={(e) => handleFieldChange(page.id, 'headerText', e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Color</label>
+                                            <input
+                                              type="text"
+                                              value={pageState.headerLineColor}
+                                              onChange={(e) => handleFieldChange(page.id, 'headerLineColor', e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono"
+                                            />
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Logo Align</label>
+                                            <select
+                                              value={pageState.headerAlignment}
+                                              onChange={(e) => handleFieldChange(page.id, 'headerAlignment', e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
+                                            >
+                                              <option value="left">Left</option>
+                                              <option value="center">Center</option>
+                                              <option value="right">Right</option>
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Logo Max Height</label>
+                                            <input
+                                              type="text"
+                                              value={pageState.headerLogoSize}
+                                              onChange={(e) => handleFieldChange(page.id, 'headerLogoSize', e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono"
+                                            />
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <label className="text-[8px] text-slate-500 uppercase font-mono block mb-1">Header Custom Logo</label>
+                                          {pageState.headerLogoUrl ? (
+                                            <div className="relative group rounded border border-slate-850 h-8 bg-slate-950 flex items-center justify-center">
+                                              <img src={pageState.headerLogoUrl} style={{ maxHeight: pageState.headerLogoSize }} className="object-contain" alt="custom header logo preview" />
+                                              <button
+                                                type="button"
+                                                onClick={() => handleFieldChange(page.id, 'headerLogoUrl', "")}
+                                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[8px] transition cursor-pointer"
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <label className="border border-dashed border-slate-850 hover:border-slate-800 rounded h-8 bg-slate-950 flex flex-col items-center justify-center text-slate-500 cursor-pointer transition text-[9px]">
+                                              <span>Upload Custom Logo</span>
+                                              <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={async (e) => {
+                                                  const file = e.target.files?.[0];
+                                                  if (file) {
+                                                    try {
+                                                      const url = await uploadImageFile(file, false);
+                                                      handleFieldChange(page.id, 'headerLogoUrl', url);
+                                                    } catch (err: any) {
+                                                      alert("Logo upload failed: " + err.message);
+                                                    }
+                                                  }
+                                                }}
+                                                className="hidden"
+                                              />
+                                            </label>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Page Footer Customizations (BUG 2) */}
+                                  <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
+                                    <div className="flex justify-between items-center">
+                                      <label className="text-[9px] uppercase font-mono text-amber-500 font-bold">Page Footer Override</label>
+                                      <select
+                                        value={pageState.footerMode}
+                                        onChange={(e) => handleFieldChange(page.id, 'footerMode', e.target.value)}
+                                        className="bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-none"
+                                      >
+                                        <option value="inherit">Inherit Global</option>
+                                        <option value="custom">Custom Footer</option>
+                                        <option value="disabled">Hide Footer</option>
+                                      </select>
+                                    </div>
+                                    {pageState.footerMode === 'custom' && (
+                                      <div className="space-y-2 pt-1">
+                                        <div>
+                                          <label className="text-[8px] text-slate-500 uppercase font-mono block">Footer Text</label>
+                                          <input
+                                            type="text"
+                                            value={pageState.footerText}
+                                            onChange={(e) => handleFieldChange(page.id, 'footerText', e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white"
+                                          />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Alignment</label>
+                                            <select
+                                              value={pageState.footerAlignment}
+                                              onChange={(e) => handleFieldChange(page.id, 'footerAlignment', e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
+                                            >
+                                              <option value="left">Left</option>
+                                              <option value="center">Center</option>
+                                              <option value="right">Right</option>
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Color</label>
+                                            <input
+                                              type="text"
+                                              value={pageState.footerLineColor}
+                                              onChange={(e) => handleFieldChange(page.id, 'footerLineColor', e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono"
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+
+                              {/* Body Images list (BUG 2) */}
+                              <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80 text-left">
+                                <div className="flex justify-between items-center">
+                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold">Body Content Images</label>
+                                  <label className="bg-slate-950 border border-slate-850 hover:border-slate-800 text-slate-350 hover:text-slate-100 font-semibold px-2 py-0.5 rounded text-[10px] cursor-pointer inline-flex items-center gap-1 transition">
+                                    <Plus className="h-3 w-3" /> Add Image
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      onChange={async (e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                          try {
+                                            const url = await uploadImageFile(file, false);
+                                            const newImg = {
+                                              url,
+                                              title: "",
+                                              position: "middle",
+                                              alignment: "center",
+                                              width: "50%",
+                                              opacity: 1,
+                                              order: pageState.bodyImages.length + 1
+                                            };
+                                            handleFieldChange(page.id, 'bodyImages', [...pageState.bodyImages, newImg]);
+                                          } catch (err: any) {
+                                            alert("Body image upload failed: " + err.message);
+                                          }
+                                        }
+                                      }}
+                                      className="hidden"
+                                    />
+                                  </label>
+                                </div>
+
+                                {pageState.bodyImages && pageState.bodyImages.length > 0 ? (
+                                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                    {pageState.bodyImages.map((img: any, imgIdx: number) => (
+                                      <div key={imgIdx} className="bg-slate-950 border border-slate-900 rounded p-2 text-[10px] space-y-1.5">
+                                        <div className="flex justify-between items-center gap-2">
+                                          <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                            <img src={img.url} className="w-8 h-8 rounded border border-slate-850 object-cover" alt="body image preview" />
+                                            <input
+                                              type="text"
+                                              value={img.title || ""}
+                                              placeholder="Image label (optional)"
+                                              onChange={(e) => {
+                                                const updatedList = [...pageState.bodyImages];
+                                                updatedList[imgIdx] = { ...updatedList[imgIdx], title: e.target.value };
+                                                handleFieldChange(page.id, 'bodyImages', updatedList);
+                                              }}
+                                              className="bg-slate-900 border border-slate-850 rounded px-1.5 py-0.5 text-[10.5px] text-white flex-1 min-w-0"
+                                            />
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const updatedList = pageState.bodyImages.filter((_: any, i: number) => i !== imgIdx);
+                                              handleFieldChange(page.id, 'bodyImages', updatedList);
+                                            }}
+                                            className="text-rose-400 hover:text-rose-300 font-bold px-1 py-0.5"
+                                          >
+                                            Delete
+                                          </button>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-1.5 text-[9px] text-slate-400">
+                                          <div>
+                                            <label className="block text-[8px] text-slate-500 uppercase">Position</label>
+                                            <select
+                                              value={img.position || 'middle'}
+                                              onChange={(e) => {
+                                                const updatedList = [...pageState.bodyImages];
+                                                updatedList[imgIdx] = { ...updatedList[imgIdx], position: e.target.value };
+                                                handleFieldChange(page.id, 'bodyImages', updatedList);
+                                              }}
+                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white focus:outline-none"
+                                            >
+                                              <option value="top">Top</option>
+                                              <option value="middle">Middle</option>
+                                              <option value="bottom">Bottom</option>
+                                              <option value="absolute">Absolute</option>
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="block text-[8px] text-slate-500 uppercase">Alignment</label>
+                                            <select
+                                              value={img.alignment || 'center'}
+                                              onChange={(e) => {
+                                                const updatedList = [...pageState.bodyImages];
+                                                updatedList[imgIdx] = { ...updatedList[imgIdx], alignment: e.target.value };
+                                                handleFieldChange(page.id, 'bodyImages', updatedList);
+                                              }}
+                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white focus:outline-none"
+                                            >
+                                              <option value="left">Left</option>
+                                              <option value="center">Center</option>
+                                              <option value="right">Right</option>
+                                              <option value="full_width">Full Width</option>
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="block text-[8px] text-slate-500 uppercase">Width</label>
+                                            <select
+                                              value={img.width || '50%'}
+                                              onChange={(e) => {
+                                                const updatedList = [...pageState.bodyImages];
+                                                updatedList[imgIdx] = { ...updatedList[imgIdx], width: e.target.value };
+                                                handleFieldChange(page.id, 'bodyImages', updatedList);
+                                              }}
+                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white focus:outline-none"
+                                            >
+                                              <option value="25%">25%</option>
+                                              <option value="50%">50%</option>
+                                              <option value="75%">75%</option>
+                                              <option value="100%">100%</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                        {img.position === 'absolute' && (
+                                          <div className="grid grid-cols-4 gap-1 text-[8.5px]">
+                                            <div>
+                                              <label className="block text-[7.5px] text-slate-500 uppercase">Top</label>
+                                              <input
+                                                type="text"
+                                                placeholder="auto"
+                                                value={img.top || ""}
+                                                onChange={(e) => {
+                                                  const updatedList = [...pageState.bodyImages];
+                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], top: e.target.value };
+                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
+                                                }}
+                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="block text-[7.5px] text-slate-500 uppercase">Bottom</label>
+                                              <input
+                                                type="text"
+                                                placeholder="auto"
+                                                value={img.bottom || ""}
+                                                onChange={(e) => {
+                                                  const updatedList = [...pageState.bodyImages];
+                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], bottom: e.target.value };
+                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
+                                                }}
+                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="block text-[7.5px] text-slate-500 uppercase">Left</label>
+                                              <input
+                                                type="text"
+                                                placeholder="auto"
+                                                value={img.left || ""}
+                                                onChange={(e) => {
+                                                  const updatedList = [...pageState.bodyImages];
+                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], left: e.target.value };
+                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
+                                                }}
+                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="block text-[7.5px] text-slate-500 uppercase">Right</label>
+                                              <input
+                                                type="text"
+                                                placeholder="auto"
+                                                value={img.right || ""}
+                                                onChange={(e) => {
+                                                  const updatedList = [...pageState.bodyImages];
+                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], right: e.target.value };
+                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
+                                                }}
+                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
+                                              />
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-3 text-[9px] text-slate-400">
+                                          <div>
+                                            <label className="block text-[8px] text-slate-500 uppercase">Opacity ({img.opacity !== undefined ? img.opacity : 1})</label>
+                                            <input
+                                              type="range"
+                                              min="0.1"
+                                              max="1.0"
+                                              step="0.1"
+                                              value={img.opacity !== undefined ? img.opacity : 1}
+                                              onChange={(e) => {
+                                                const updatedList = [...pageState.bodyImages];
+                                                updatedList[imgIdx] = { ...updatedList[imgIdx], opacity: parseFloat(e.target.value) };
+                                                handleFieldChange(page.id, 'bodyImages', updatedList);
+                                              }}
+                                              className="w-full accent-amber-500"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="block text-[8px] text-slate-500 uppercase">Order</label>
+                                            <input
+                                              type="number"
+                                              value={img.order || 1}
+                                              onChange={(e) => {
+                                                const updatedList = [...pageState.bodyImages];
+                                                updatedList[imgIdx] = { ...updatedList[imgIdx], order: parseInt(e.target.value) || 1 };
+                                                handleFieldChange(page.id, 'bodyImages', updatedList);
+                                              }}
+                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1.5 py-0.5 text-white font-mono focus:outline-none"
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-slate-650 text-slate-600 italic">No body content images added.</div>
+                                )}
                               </div>
 
                               {/* Asset images upload preview */}
@@ -2759,9 +3850,9 @@ export default function SalesTeamApp({
                           </div>
                         );
                       })}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
               {/* MODULE 4: GENERATED QUOTES & VERSION HISTORY */}
               {activeModule === 'quotes' && (
@@ -2772,78 +3863,95 @@ export default function SalesTeamApp({
                   </div>
 
                   {activeLead.quotes && activeLead.quotes.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {activeLead.quotes.map((q: any) => {
-                        const dateString = q.createdAt ? new Date(q.createdAt).toLocaleString() : new Date().toLocaleDateString();
-                        const quoteNetVal = q.netTotal || q.netCost || q.totalCost || 0;
-                        return (
-                          <div key={q.id} className="bg-slate-950 border border-slate-850 hover:border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow transition">
-                            <div className="space-y-2">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <span className="text-white font-bold text-xs block">Quote Version #{q.id.slice(-6)}</span>
-                                  <span className="text-[9px] text-slate-500 font-mono block">Created: {dateString}</span>
-                                </div>
-                                <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
-                                  q.status === 'Accepted' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                }`}>
-                                  {q.status || 'Draft'}
-                                </span>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 font-mono text-[10px] text-slate-400">
-                                <span>Size: {q.systemSizekW} kW</span>
-                                <span>Type: {q.systemType || 'Hybrid'}</span>
-                                <span className="col-span-2 truncate">Panel: {q.panelBrand} ({q.panelCount || Math.ceil(q.systemSizekW*1000/580)} pcs)</span>
-                                <span className="col-span-2 truncate">Inverter: {q.inverterBrand} {q.inverterCapacity}</span>
-                                {q.batteryOption && q.batteryOption !== "None" && (
-                                  <span className="col-span-2 truncate">Battery: {q.batteryOption}</span>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="flex justify-between items-center border-t border-slate-900 pt-3">
-                              <div className="text-left font-mono">
-                                <span className="text-[9px] text-slate-500 uppercase block">Net Contract:</span>
-                                <span className="text-amber-500 font-bold text-xs">{formatPKR(quoteNetVal)}</span>
-                              </div>
-
-                              <div className="flex gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedQuoteDetail(q)}
-                                  className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold text-[10px] px-2.5 py-1.5 rounded-lg cursor-pointer transition"
-                                >
-                                  Inspect
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleLoadQuoteForEditing(q)}
-                                  className="bg-amber-550 bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold text-[10px] px-2.5 py-1.5 rounded-lg cursor-pointer transition"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDuplicateQuote(q)}
-                                  className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 p-1.5 rounded-lg cursor-pointer transition"
-                                  title="Duplicate version"
-                                >
-                                  <Copy className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`, "_blank")}
-                                  className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
-                                  title="Download Version PDF"
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950/60">
+                      <table className="w-full text-left border-collapse text-xs font-sans">
+                        <thead>
+                          <tr className="bg-slate-950 text-slate-400 border-b border-slate-800 font-bold uppercase text-[10px] tracking-wider">
+                            <th className="py-3.5 px-4">Quote Type</th>
+                            <th className="py-3.5 px-4">Client Name</th>
+                            <th className="py-3.5 px-4">System Size</th>
+                            <th className="py-3.5 px-4 text-right">Net Value</th>
+                            <th className="py-3.5 px-4">Created Date</th>
+                            <th className="py-3.5 px-4">Source</th>
+                            <th className="py-3.5 px-4 text-center">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-350 font-mono">
+                          {activeLead.quotes.map((q: any) => {
+                            const dateString = q.createdAt ? new Date(q.createdAt).toLocaleString() : new Date().toLocaleDateString();
+                            const quoteNetVal = q.netTotal || q.netCost || q.totalCost || 0;
+                            const isSizer = q.quote_type === 'auto_sizer';
+                            return (
+                              <tr key={q.id} className="hover:bg-slate-900/40 transition-colors">
+                                <td className="py-3 px-4 font-sans">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                                    isSizer ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                                  }`}>
+                                    {isSizer ? 'Auto Sizer' : 'Manual BOQ'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 font-sans text-white font-medium">{q.clientName || activeLead.name}</td>
+                                <td className="py-3 px-4">{q.systemSizekW} kW</td>
+                                <td className="py-3 px-4 text-right text-amber-500 font-bold">{formatPKR(quoteNetVal)}</td>
+                                <td className="py-3 px-4 text-[10px] text-slate-500">{dateString}</td>
+                                <td className="py-3 px-4 font-sans">
+                                  <span className="text-[10px] text-slate-400 bg-slate-800/60 px-1.5 py-0.5 rounded font-mono">
+                                    {q.id}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex justify-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedQuoteDetail(q)}
+                                      className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold text-[10px] px-2.5 py-1 rounded-lg cursor-pointer transition"
+                                    >
+                                      Inspect
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleLoadQuoteForEditing(q)}
+                                      className="bg-amber-550 hover:bg-amber-450 text-slate-950 font-sans font-bold text-[10px] px-2.5 py-1 rounded-lg cursor-pointer transition"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDuplicateQuote(q)}
+                                      className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 p-1.5 rounded-lg cursor-pointer transition"
+                                      title="Duplicate version"
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`, "_blank")}
+                                      className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
+                                      title="Download Version PDF"
+                                    >
+                                      <Download className="h-3 w-3" />
+                                    </button>
+                                    {onDeleteQuote && (
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          if (window.confirm("Are you sure you want to delete this quote version? This action cannot be undone.")) {
+                                            await onDeleteQuote(activeLead.id, q.id);
+                                          }
+                                        }}
+                                        className="bg-red-950/40 hover:bg-red-900/60 border border-red-900/40 hover:border-red-500/50 text-red-400 p-1.5 rounded-lg cursor-pointer transition flex items-center justify-center"
+                                        title="Delete Quote Version"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   ) : (
                     <div className="text-center py-12 text-slate-500 font-mono">No proposal versions have been compiled for this client yet.</div>
@@ -3203,7 +4311,7 @@ export default function SalesTeamApp({
                     height: '297mm',
                     minWidth: '210mm',
                     minHeight: '297mm',
-                    padding: '20mm',
+                    padding: (previewPage.layoutMode === 'full_page_image' || previewPage.layoutMode === 'image_only' || previewPage.layout_mode === 'full_page_image' || previewPage.layout_mode === 'image_only') ? '0mm' : '20mm',
                     boxSizing: 'border-box',
                     backgroundImage: previewPage.bg_image_url ? `url(${previewPage.bg_image_url})` : 'none',
                     backgroundSize: 'cover',
@@ -3212,63 +4320,137 @@ export default function SalesTeamApp({
                   }}
                 >
                   {/* Background Dimmer Overlay */}
-                  {previewPage.bg_image_url && (
+                  {previewPage.bg_image_url && 
+                   previewPage.layoutMode !== 'full_page_image' && 
+                   previewPage.layoutMode !== 'image_only' && 
+                   previewPage.layout_mode !== 'full_page_image' && 
+                   previewPage.layout_mode !== 'image_only' && (
                     <div className="absolute inset-0 bg-white/70 pointer-events-none z-0" />
                   )}
 
-                  <div className="relative z-10 flex flex-col justify-between h-full">
-                    {/* Header */}
-                    <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">☀️</span>
+                  {previewPage.layoutMode !== 'full_page_image' && 
+                   previewPage.layoutMode !== 'image_only' && 
+                   previewPage.layout_mode !== 'full_page_image' && 
+                   previewPage.layout_mode !== 'image_only' ? (
+                    <div className="relative z-10 flex flex-col justify-between h-full">
+                      {/* Header */}
+                      <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">☀️</span>
+                          <div>
+                            <div className="font-extrabold text-base tracking-tight text-slate-900 leading-none">SUNCHASER ENERGY</div>
+                            <div className="text-[8px] uppercase tracking-wider text-amber-600 font-bold mt-1">Generational Infrastructure</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[9px] uppercase font-mono text-slate-500 font-bold tracking-wider">
+                            Page: {previewPage.page_type || previewPage.pageType}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Main Content Body */}
+                      <div className="flex-1 flex flex-col justify-start">
+                        {/* Logo / Foreground Photo Preview if present */}
+                        {previewPage.image_url && (
+                          <div className="mb-6 flex justify-center">
+                            <img 
+                              src={previewPage.image_url} 
+                              alt="Foreground asset" 
+                              className="max-h-48 object-contain rounded-lg border border-slate-100 p-2 bg-slate-50/50" 
+                            />
+                          </div>
+                        )}
+
+                        {/* Title */}
+                        <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight mb-4">
+                          {previewPage.title}
+                        </h1>
+
+                        {/* Body Text */}
+                        <p className="text-xs md:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                          {previewPage.body_text}
+                        </p>
+                      </div>
+
+                      {/* Footer */}
+                      <div className="border-t border-slate-200 pt-4 flex justify-between items-end text-[9px] text-slate-500 font-mono mt-auto">
                         <div>
-                          <div className="font-extrabold text-base tracking-tight text-slate-900 leading-none">SUNCHASER ENERGY</div>
-                          <div className="text-[8px] uppercase tracking-wider text-amber-600 font-bold mt-1">Generational Infrastructure</div>
+                          <span className="font-bold text-slate-800">Sunchaser Energy Systems</span>
+                        </div>
+                        <div>
+                          <span>Official Client Proposal Deck</span>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <span className="text-[9px] uppercase font-mono text-slate-500 font-bold tracking-wider">
-                          Page: {previewPage.page_type || previewPage.pageType}
-                        </span>
-                      </div>
                     </div>
-
-                    {/* Main Content Body */}
-                    <div className="flex-1 flex flex-col justify-start">
-                      {/* Logo / Foreground Photo Preview if present */}
-                      {previewPage.image_url && (
-                        <div className="mb-6 flex justify-center">
-                          <img 
-                            src={previewPage.image_url} 
-                            alt="Foreground asset" 
-                            className="max-h-48 object-contain rounded-lg border border-slate-100 p-2 bg-slate-50/50" 
-                          />
-                        </div>
-                      )}
-
-                      {/* Title */}
-                      <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight mb-4">
-                        {previewPage.title}
-                      </h1>
-
-                      {/* Body Text */}
-                      <p className="text-xs md:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                        {previewPage.body_text}
-                      </p>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="border-t border-slate-200 pt-4 flex justify-between items-end text-[9px] text-slate-500 font-mono mt-auto">
-                      <div>
-                        <span className="font-bold text-slate-800">Sunchaser Energy Systems</span>
-                      </div>
-                      <div>
-                        <span>Official Client Proposal Deck</span>
-                      </div>
-                    </div>
-                  </div>
+                  ) : null}
 
                 </div>
+              </div>
+              
+            </div>
+          </div>
+        )}
+
+        {/* Proposal Deck Layout Preview Modal */}
+        {showProposalPreview && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 md:p-6 text-slate-800">
+            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full max-w-5xl shadow-2xl flex flex-col my-8 h-[90vh]">
+              
+              {/* Modal Header */}
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4 flex-shrink-0">
+                <div>
+                  <h3 className="text-sm md:text-base font-bold text-white font-sans flex items-center gap-2">
+                    <Eye className="h-4 w-4 text-amber-500" />
+                    <span>Live Proposal Deck PDF Preview</span>
+                  </h3>
+                  <span className="text-[10px] text-slate-500 font-sans block mt-0.5">
+                    Live layout rendering showing exactly how the exported PDF pages will print.
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const iframe = document.getElementById('proposal-preview-iframe') as HTMLIFrameElement;
+                      if (iframe && iframe.contentWindow) {
+                        iframe.contentWindow.print();
+                      }
+                    }}
+                    disabled={loadingPreview || !proposalPreviewHtml}
+                    className="text-amber-500 hover:text-amber-400 disabled:text-slate-650 transition cursor-pointer text-xs font-bold bg-slate-850 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-1"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Print Deck
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowProposalPreview(false);
+                      setProposalPreviewHtml("");
+                    }}
+                    className="text-slate-400 hover:text-white transition cursor-pointer text-xs font-bold bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-xl border-0"
+                  >
+                    Close Preview
+                  </button>
+                </div>
+              </div>
+
+              {/* iframe viewport */}
+              <div className="flex-1 bg-slate-950 rounded-2xl overflow-hidden relative border border-slate-950/80">
+                {loadingPreview ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400 bg-slate-950/90 font-mono text-xs">
+                    <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
+                    <span>Compiling proposal database templates...</span>
+                  </div>
+                ) : (
+                  <iframe 
+                    id="proposal-preview-iframe"
+                    srcDoc={proposalPreviewHtml} 
+                    className="w-full h-full border-0 bg-slate-950" 
+                    title="Live PDF HTML Layout Preview"
+                  />
+                )}
               </div>
               
             </div>
@@ -3280,64 +4462,74 @@ export default function SalesTeamApp({
           <div 
             id="print-preview-container"
             style={{
+              padding: (printPageData.layoutMode === 'full_page_image' || printPageData.layoutMode === 'image_only' || printPageData.layout_mode === 'full_page_image' || printPageData.layout_mode === 'image_only') ? '0mm' : undefined,
               backgroundImage: printPageData.bg_image_url ? `url(${printPageData.bg_image_url})` : 'none',
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               backgroundRepeat: 'no-repeat'
             }}
           >
-            {printPageData.bg_image_url && (
+            {printPageData.bg_image_url && 
+             printPageData.layoutMode !== 'full_page_image' && 
+             printPageData.layoutMode !== 'image_only' && 
+             printPageData.layout_mode !== 'full_page_image' && 
+             printPageData.layout_mode !== 'image_only' && (
               <div className="absolute inset-0 bg-white/70 pointer-events-none z-0" />
             )}
             
-            <div className="relative z-10 flex flex-col justify-between h-full">
-              {/* Header */}
-              <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">☀️</span>
+            {printPageData.layoutMode !== 'full_page_image' && 
+             printPageData.layoutMode !== 'image_only' && 
+             printPageData.layout_mode !== 'full_page_image' && 
+             printPageData.layout_mode !== 'image_only' ? (
+              <div className="relative z-10 flex flex-col justify-between h-full">
+                {/* Header */}
+                <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">☀️</span>
+                    <div>
+                      <div className="font-extrabold text-base tracking-tight text-slate-900 leading-none">SUNCHASER ENERGY</div>
+                      <div className="text-[8px] uppercase tracking-wider text-amber-600 font-bold mt-1">Generational Infrastructure</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[9px] uppercase font-mono text-slate-500 font-bold tracking-wider">
+                      Page: {printPageData.page_type || printPageData.pageType}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Main Content Body */}
+                <div className="flex-1 flex flex-col justify-start">
+                  {printPageData.image_url && (
+                    <div className="mb-6 flex justify-center">
+                      <img 
+                        src={printPageData.image_url} 
+                        alt="Foreground asset" 
+                        className="max-h-48 object-contain rounded-lg" 
+                      />
+                    </div>
+                  )}
+
+                  <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-4">
+                    {printPageData.title}
+                  </h1>
+
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                    {printPageData.body_text}
+                  </p>
+                </div>
+
+                {/* Footer */}
+                <div className="border-t border-slate-200 pt-4 flex justify-between items-end text-[9px] text-slate-500 font-mono mt-auto">
                   <div>
-                    <div className="font-extrabold text-base tracking-tight text-slate-900 leading-none">SUNCHASER ENERGY</div>
-                    <div className="text-[8px] uppercase tracking-wider text-amber-600 font-bold mt-1">Generational Infrastructure</div>
+                    <span className="font-bold text-slate-800">Sunchaser Energy Systems</span>
+                  </div>
+                  <div>
+                    <span>Official Client Proposal Deck</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-[9px] uppercase font-mono text-slate-500 font-bold tracking-wider">
-                    Page: {printPageData.page_type || printPageData.pageType}
-                  </span>
-                </div>
               </div>
-
-              {/* Main Content Body */}
-              <div className="flex-1 flex flex-col justify-start">
-                {printPageData.image_url && (
-                  <div className="mb-6 flex justify-center">
-                    <img 
-                      src={printPageData.image_url} 
-                      alt="Foreground asset" 
-                      className="max-h-48 object-contain rounded-lg" 
-                    />
-                  </div>
-                )}
-
-                <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-4">
-                  {printPageData.title}
-                </h1>
-
-                <p className="text-sm text-slate-750 whitespace-pre-wrap leading-relaxed">
-                  {printPageData.body_text}
-                </p>
-              </div>
-
-              {/* Footer */}
-              <div className="border-t border-slate-200 pt-4 flex justify-between items-end text-[9px] text-slate-500 font-mono mt-auto">
-                <div>
-                  <span className="font-bold text-slate-800">Sunchaser Energy Systems</span>
-                </div>
-                <div>
-                  <span>Official Client Proposal Deck</span>
-                </div>
-              </div>
-            </div>
+            ) : null}
           </div>
         )}
       </div>

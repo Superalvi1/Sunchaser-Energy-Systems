@@ -8,8 +8,12 @@ import {
   fetchAppState, createLead, updateLead, scheduleSurvey, 
   submitSurveyReport, createQuote, acceptQuote, updateInstallation, 
   createTicket, replyToTicket, resolveTicket, loginUser, updateProjectStage, updateNetMetering, payMilestone, procureInventory,
-  setCurrencySymbol, API_BASE_URL
+  setCurrencySymbol, API_BASE_URL, deleteLead, deleteQuote
 } from "./services/api";
+
+declare const __GIT_COMMIT_HASH__: string;
+declare const __BUILD_TIME__: string;
+declare const __BUILD_ENV__: string;
 
 // Submodule imports
 import CustomerPortal from "./components/CustomerPortal";
@@ -142,6 +146,30 @@ export default function App() {
     try {
       setLoading(true);
       await createLead(leadData);
+      await loadDatabaseState();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteLead = async (id: string) => {
+    try {
+      setLoading(true);
+      await deleteLead(id);
+      await loadDatabaseState();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteQuote = async (leadId: string, quoteId: string) => {
+    try {
+      setLoading(true);
+      await deleteQuote(leadId, quoteId);
       await loadDatabaseState();
     } catch (err: any) {
       setError(err.message);
@@ -603,6 +631,7 @@ export default function App() {
                 socialLinks={appState.socialLinks || []}
                 structureDescriptions={appState.structureDescriptions || []}
                 quotePdfSettings={appState.quotePdfSettings || []}
+                onDeleteQuote={handleDeleteQuote}
               />
             )}
 
@@ -611,6 +640,7 @@ export default function App() {
                 leads={appState.leads}
                 onUpdateLead={handleUpdateLead}
                 onAddLead={handleAddLead}
+                onDeleteLead={handleDeleteLead}
               />
             )}
 
@@ -774,8 +804,14 @@ export default function App() {
       {/* Humble Footer */}
       <footer className="bg-slate-900 border-t border-slate-800 py-6 text-center text-slate-500 text-xs font-mono mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <span>&copy; {new Date().getFullYear()} Sunchaser Energy Systems Inc. All Rights Reserved.</span>
-          <span className="text-[10px] text-slate-600">STATE CONTROL COMPLIANCE • CONTAINER ISOLATED LAYER</span>
+          <div className="flex flex-col items-center md:items-start text-[11px] text-slate-500">
+            <span>&copy; {new Date().getFullYear()} Sunchaser Energy Systems Inc. All Rights Reserved.</span>
+            <span className="text-[10px] text-slate-600">STATE CONTROL COMPLIANCE • CONTAINER ISOLATED LAYER</span>
+          </div>
+          <div className="flex flex-col items-center md:items-end text-[10px] text-slate-500 border border-slate-800/80 rounded-2xl px-3 py-1.5 bg-slate-950/40">
+            <span className="font-bold text-amber-500">Build {__GIT_COMMIT_HASH__} ({__BUILD_ENV__})</span>
+            <span className="text-[9px] text-slate-400 mt-0.5">{__BUILD_TIME__}</span>
+          </div>
         </div>
       </footer>
     </div>

@@ -50,10 +50,7 @@ export function getSupabase(): SupabaseClient | null {
 }
 
 export function isSupabaseActive(): boolean {
-  if (!isConfigured) {
-    getSupabase();
-  }
-  return isConfigured && clientInstance !== null;
+  return false;
 }
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
@@ -619,6 +616,16 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     throw new Error("Supabase is not configured.");
   }
 
+  let localBackup: any = {};
+  try {
+    const backupPath = path.join(process.cwd(), "database.json");
+    if (fs.existsSync(backupPath)) {
+      localBackup = JSON.parse(fs.readFileSync(backupPath, "utf-8"));
+    }
+  } catch (e) {
+    // ignore
+  }
+
   // Safe table fetch function that prevents crashing if a table hasn't been created yet
   const safeFetch = async (tableName: string, defaultVal: any = []) => {
     try {
@@ -1108,17 +1115,17 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     warranties: warrantiesMapped.length > 0 ? warrantiesMapped : undefined,
     notifications: notificationsMapped.length > 0 ? notificationsMapped : undefined,
     solarPackages: solarPackagesMapped.length > 0 ? solarPackagesMapped : undefined,
-    settings: settingsObj || undefined,
-    websiteContent: websiteContentObj || undefined,
-    purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : undefined,
-    quoteTemplates: quoteTemplatesMapped,
-    quoteTemplatePages: quoteTemplatePagesMapped,
-    bankAccounts: bankAccountsMapped,
-    companyTerms: companyTermsMapped,
-    ceoMessages: ceoMessagesMapped,
-    socialLinks: socialLinksMapped,
-    structureDescriptions: structureDescriptionsMapped,
-    quotePdfSettings: quotePdfSettingsMapped
+    settings: settingsObj || localBackup.settings || undefined,
+    websiteContent: websiteContentObj || localBackup.websiteContent || undefined,
+    purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : (localBackup.purchaseOrders || []),
+    quoteTemplates: quoteTemplatesMapped.length > 0 ? quoteTemplatesMapped : (localBackup.quoteTemplates || []),
+    quoteTemplatePages: quoteTemplatePagesMapped.length > 0 ? quoteTemplatePagesMapped : (localBackup.quoteTemplatePages || []),
+    bankAccounts: bankAccountsMapped.length > 0 ? bankAccountsMapped : (localBackup.bankAccounts || []),
+    companyTerms: companyTermsMapped.length > 0 ? companyTermsMapped : (localBackup.companyTerms || []),
+    ceoMessages: ceoMessagesMapped.length > 0 ? ceoMessagesMapped : (localBackup.ceoMessages || []),
+    socialLinks: socialLinksMapped.length > 0 ? socialLinksMapped : (localBackup.socialLinks || []),
+    structureDescriptions: structureDescriptionsMapped.length > 0 ? structureDescriptionsMapped : (localBackup.structureDescriptions || []),
+    quotePdfSettings: quotePdfSettingsMapped.length > 0 ? quotePdfSettingsMapped : (localBackup.quotePdfSettings || [])
   };
 }
 
@@ -1282,7 +1289,9 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
                 grandTotal: q.grandTotal,
                 netTotal: q.netTotal,
                 templateId: q.templateId,
-                includedPages: q.includedPages
+                includedPages: q.includedPages,
+                includeSizerItems: q.includeSizerItems === true,
+                quote_type: q.quote_type || "auto_sizer"
               },
               created_at: q.createdAt || new Date().toISOString()
             }, { onConflict: "id" });

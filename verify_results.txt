@@ -1,0 +1,679 @@
+Fetching URL: http://localhost:3000/api/export/pdf/manual-quote/lead-1?quoteId=q-6
+Success! Fetched 42039 bytes.
+Saved HTML to file: q6_manual_quote.html
+
+--- Search Results in Generated HTML ---
+Found occurrence of 'cover_background_1780091097583.png': 1 time(s)
+  Snippet: ... iv class="page cover" style="background: url('https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/cover_background_1780091097583.png') no-repeat center center / cover; color: #0f172a; padding: 25mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-d ...
+Found occurrence of 'cover_foreground_1780091097583.png': 1 time(s)
+  Snippet: ... <img src="https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/cover_foreground_1780091097583.png" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />                                </div> ...
+Found occurrence of 'sunchaser_logo_1780091097583.png': 1 time(s)
+  Snippet: ... ms: center; gap: 8px;">             <img src="https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/sunchaser_logo_1780091097583.png" style="max-height: 25px; object-fit: contain;" alt="Logo" />             <span style="font-weight: 800; font-size: 13p ...
+Found occurrence of 'bodyImages': 2 time(s)
+  Snippet: ... uild systems that outlast a generation.</div>                             <div style="width: 100%;">               <!-- bodyImages -->               <img class="bodyImages" src="https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/upload ...
+Found occurrence of 'page-header-logo': 4 time(s)
+  Snippet: ... page-image-only {           padding: 0 !important;           box-shadow: 0 4px 12px rgba(0,0,0,0.1);         }         .page-header-logo {           display: flex;           justify-content: space-between;           align-items: center;           border-bo ...
+Found occurrence of 'page-footer': 4 time(s)
+  Snippet: ... padding-left: 8px;           text-transform: uppercase;           letter-spacing: 0.02em;         }         .page-footer {           border-top: 1px solid #cbd5e1;           padding-top: 6px;           display: flex;           justify-conte ...
+
+Total TR rows in the BOQ table: 21
+Total BOQ item rows (excluding table header): 20
+
+--- First 20 BOQ Rows Rendered (Text content) ---
+Row 1: 1 | Main AC Distribution Box | IP65 weatherproof steel cabinet with Schneider breakers | Nos | 1 | Rs. 35,000 | Rs. 35,000
+Row 2: 2 | Main DC Junction Enclosure | IP65 box with DC fuses, surge arresters, isolators | Nos | 1 | Rs. 28,000 | Rs. 28,000
+Row 3: 3 | DC Cables 6mm PV-1F | Single-core copper tinned cables for panel strings (100m) | Nos | 1 | Rs. 18,000 | Rs. 18,000
+Row 4: 4 | AC Cables 4-Core 16mm | Flexible multi-strand copper connection to main DB (50m) | Nos | 1 | Rs. 24,000 | Rs. 24,000
+Row 5: 5 | Earth Wire 10mm Pure Copper | AC-DC grounding safety conductors (80m) | Nos | 1 | Rs. 15,000 | Rs. 15,000
+Row 6: 6 | Chemical Earthing Bore (DC) | 100ft bore with copper plate and resistivity compound | Nos | 1 | Rs. 45,000 | Rs. 45,000
+Row 7: 7 | Chemical Earthing Bore (AC) | 100ft bore with copper plate and resistivity compound | Nos | 1 | Rs. 45,000 | Rs. 45,000
+Row 8: 8 | Chemical Earthing Bore (Structure) | 100ft bore with copper plate and resistivity compound | Nos | 1 | Rs. 45,000 | Rs. 45,000
+Row 9: 9 | Mughal Girder Uprights | Heavy duty structural vertical columns for elevated mount | Nos | 1 | Rs. 85,000 | Rs. 85,000
+Row 10: 10 | Hot-Dip Galvanized L-Cables | L-bracket angle framing profiles and cross braces | Nos | 1 | Rs. 65,000 | Rs. 65,000
+Row 11: 11 | Anchor Bolts rawl-plugs | Stainless steel expansion anchors for roof safety | Nos | 1 | Rs. 12,000 | Rs. 12,000
+Row 12: 12 | Flexible Conduit Pipes IP67 | Halogen-free corrugated wiring protection pipes | Nos | 1 | Rs. 9,500 | Rs. 9,500
+Row 13: 13 | Cable Trays 6-inch | Galvanized sheet metal cable trays with covers | Nos | 1 | Rs. 16,000 | Rs. 16,000
+Row 14: 14 | Ducting Channels PVC | Perforated cable organizer channels for indoor wiring | Nos | 1 | Rs. 7,500 | Rs. 7,500
+Row 15: 15 | Schneider AC Breaker 32A | Original 3-pole miniature circuit breaker | Nos | 1 | Rs. 6,800 | Rs. 6,800
+Row 16: 16 | Schneider DC Breaker 40A | High voltage 1000V DC surge breaker | Nos | 1 | Rs. 8,200 | Rs. 8,200
+Row 17: 17 | Solis Smart Energy Meter | Export credit tracking smart meter with CT sensors | Nos | 1 | Rs. 22,000 | Rs. 22,000
+Row 18: 18 | Lightning Arrester Spike | Copper Franklin-type protection rod on mast | Nos | 1 | Rs. 18,500 | Rs. 18,500
+Row 19: 19 | Civil Work Cement Foundation | Concrete anchor block pads for mounting uprights | Job | 1 | Rs. 30,000 | Rs. 30,000
+Row 20: 20 | Sunchaser Commissioning Labor | Turnkey ISO alignment, safety terminations & tests | Job | 1 | Rs. 75,000 | Rs. 75,000
+
+--- Runtime Option Values ---
+includeSizerItems during runtime: False
+
+--- Exact JSON Objects Passed into PDF Renderer ---
+
+1. Quotation Object (quoteObj):
+{
+  "id": "q-6",
+  "leadId": "lead-1",
+  "systemSizekW": 10.0,
+  "panelCount": 18,
+  "panelType": "Jinko 580W Panels",
+  "inverterType": "Goodwe 10kW Inverter",
+  "batteryCapacity": "",
+  "totalCost": 610500,
+  "federalTaxCredit": 0,
+  "netCost": 600500,
+  "estimatedAnnualSavings": 490000,
+  "paybackPeriodYears": 3.2,
+  "status": "Pending",
+  "createdAt": "2026-05-31T15:20:00Z",
+  "structureType": "standard",
+  "accessories": "Dual DC cables, PVC ducting & safety switches",
+  "installationCharges": 75000,
+  "netMeteringCharges": 95000,
+  "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
+  "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
+  "termsAndConditions": "Generation yield matches simulation rules.",
+  "clientName": "Arthur Dent",
+  "clientPhone": "0300-1234567",
+  "clientEmail": "arthur.dent@galaxy.com",
+  "clientAddress": "Heart of Gold, Orbit",
+  "cnic": "35201-1234567-1",
+  "cityArea": "Lahore",
+  "bdmName": "Sarah Connor",
+  "quoteDate": "2026-05-31",
+  "systemType": "Hybrid",
+  "panelBrand": "Jinko",
+  "panelWattage": 580,
+  "inverterBrand": "Goodwe",
+  "inverterCapacity": "10kW",
+  "batteryOption": "None",
+  "netMeteringRequired": "Yes",
+  "discount": 15000,
+  "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
+  "lescoSettings": {
+    "meterNo": "LES-9988",
+    "consumerNo": "04-1234-567890",
+    "sanctionedLoad": "10",
+    "phaseType": "Three Phase"
+  },
+  "societyCharges": 5000,
+  "taxEnabled": false,
+  "taxRate": 0,
+  "taxAmount": 0,
+  "selectedStructure": "standard",
+  "customStructure": null,
+  "boqRows": [
+    {
+      "id": "panel_row",
+      "srNo": "",
+      "name": "AI Solar Panels",
+      "description": "Longi 580W N-Type PV Modules",
+      "unit": "Nos",
+      "qty": 18,
+      "rate": 20000,
+      "total": 360000,
+      "type": "item"
+    },
+    {
+      "id": "inverter_row",
+      "srNo": "",
+      "name": "AI Inverter Unit",
+      "description": "Goodwe 10kW Hybrid Inverter",
+      "unit": "No",
+      "qty": 1,
+      "rate": 280000,
+      "total": 280000,
+      "type": "item"
+    },
+    {
+      "id": "structure_row",
+      "srNo": "",
+      "name": "AI Mounting Frame",
+      "description": "Standard A-Frame Galvanized Railing",
+      "unit": "No",
+      "qty": 1,
+      "rate": 90000,
+      "total": 90000,
+      "type": "item"
+    },
+    {
+      "id": "net_metering_row",
+      "srNo": "",
+      "name": "AI Net Metering",
+      "description": "Bidirectional LESCO green-meter setup",
+      "unit": "Job",
+      "qty": 1,
+      "rate": 95000,
+      "total": 95000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-1",
+      "srNo": 1,
+      "name": "Main AC Distribution Box",
+      "description": "IP65 weatherproof steel cabinet with Schneider breakers",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 35000,
+      "total": 35000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-2",
+      "srNo": 2,
+      "name": "Main DC Junction Enclosure",
+      "description": "IP65 box with DC fuses, surge arresters, isolators",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 28000,
+      "total": 28000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-3",
+      "srNo": 3,
+      "name": "DC Cables 6mm PV-1F",
+      "description": "Single-core copper tinned cables for panel strings (100m)",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 18000,
+      "total": 18000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-4",
+      "srNo": 4,
+      "name": "AC Cables 4-Core 16mm",
+      "description": "Flexible multi-strand copper connection to main DB (50m)",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 24000,
+      "total": 24000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-5",
+      "srNo": 5,
+      "name": "Earth Wire 10mm Pure Copper",
+      "description": "AC-DC grounding safety conductors (80m)",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 15000,
+      "total": 15000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-6",
+      "srNo": 6,
+      "name": "Chemical Earthing Bore (DC)",
+      "description": "100ft bore with copper plate and resistivity compound",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 45000,
+      "total": 45000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-7",
+      "srNo": 7,
+      "name": "Chemical Earthing Bore (AC)",
+      "description": "100ft bore with copper plate and resistivity compound",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 45000,
+      "total": 45000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-8",
+      "srNo": 8,
+      "name": "Chemical Earthing Bore (Structure)",
+      "description": "100ft bore with copper plate and resistivity compound",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 45000,
+      "total": 45000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-9",
+      "srNo": 9,
+      "name": "Mughal Girder Uprights",
+      "description": "Heavy duty structural vertical columns for elevated mount",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 85000,
+      "total": 85000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-10",
+      "srNo": 10,
+      "name": "Hot-Dip Galvanized L-Cables",
+      "description": "L-bracket angle framing profiles and cross braces",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 65000,
+      "total": 65000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-11",
+      "srNo": 11,
+      "name": "Anchor Bolts rawl-plugs",
+      "description": "Stainless steel expansion anchors for roof safety",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 12000,
+      "total": 12000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-12",
+      "srNo": 12,
+      "name": "Flexible Conduit Pipes IP67",
+      "description": "Halogen-free corrugated wiring protection pipes",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 9500,
+      "total": 9500,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-13",
+      "srNo": 13,
+      "name": "Cable Trays 6-inch",
+      "description": "Galvanized sheet metal cable trays with covers",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 16000,
+      "total": 16000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-14",
+      "srNo": 14,
+      "name": "Ducting Channels PVC",
+      "description": "Perforated cable organizer channels for indoor wiring",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 7500,
+      "total": 7500,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-15",
+      "srNo": 15,
+      "name": "Schneider AC Breaker 32A",
+      "description": "Original 3-pole miniature circuit breaker",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 6800,
+      "total": 6800,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-16",
+      "srNo": 16,
+      "name": "Schneider DC Breaker 40A",
+      "description": "High voltage 1000V DC surge breaker",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 8200,
+      "total": 8200,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-17",
+      "srNo": 17,
+      "name": "Solis Smart Energy Meter",
+      "description": "Export credit tracking smart meter with CT sensors",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 22000,
+      "total": 22000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-18",
+      "srNo": 18,
+      "name": "Lightning Arrester Spike",
+      "description": "Copper Franklin-type protection rod on mast",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 18500,
+      "total": 18500,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-19",
+      "srNo": 19,
+      "name": "Civil Work Cement Foundation",
+      "description": "Concrete anchor block pads for mounting uprights",
+      "unit": "Job",
+      "qty": 1,
+      "rate": 30000,
+      "total": 30000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-20",
+      "srNo": 20,
+      "name": "Sunchaser Commissioning Labor",
+      "description": "Turnkey ISO alignment, safety terminations & tests",
+      "unit": "Job",
+      "qty": 1,
+      "rate": 75000,
+      "total": 75000,
+      "type": "item"
+    }
+  ],
+  "boqItems": [
+    {
+      "id": "panel_row",
+      "srNo": "",
+      "name": "AI Solar Panels",
+      "description": "Longi 580W N-Type PV Modules",
+      "unit": "Nos",
+      "qty": 18,
+      "rate": 20000,
+      "total": 360000,
+      "type": "item"
+    },
+    {
+      "id": "inverter_row",
+      "srNo": "",
+      "name": "AI Inverter Unit",
+      "description": "Goodwe 10kW Hybrid Inverter",
+      "unit": "No",
+      "qty": 1,
+      "rate": 280000,
+      "total": 280000,
+      "type": "item"
+    },
+    {
+      "id": "structure_row",
+      "srNo": "",
+      "name": "AI Mounting Frame",
+      "description": "Standard A-Frame Galvanized Railing",
+      "unit": "No",
+      "qty": 1,
+      "rate": 90000,
+      "total": 90000,
+      "type": "item"
+    },
+    {
+      "id": "net_metering_row",
+      "srNo": "",
+      "name": "AI Net Metering",
+      "description": "Bidirectional LESCO green-meter setup",
+      "unit": "Job",
+      "qty": 1,
+      "rate": 95000,
+      "total": 95000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-1",
+      "srNo": 1,
+      "name": "Main AC Distribution Box",
+      "description": "IP65 weatherproof steel cabinet with Schneider breakers",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 35000,
+      "total": 35000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-2",
+      "srNo": 2,
+      "name": "Main DC Junction Enclosure",
+      "description": "IP65 box with DC fuses, surge arresters, isolators",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 28000,
+      "total": 28000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-3",
+      "srNo": 3,
+      "name": "DC Cables 6mm PV-1F",
+      "description": "Single-core copper tinned cables for panel strings (100m)",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 18000,
+      "total": 18000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-4",
+      "srNo": 4,
+      "name": "AC Cables 4-Core 16mm",
+      "description": "Flexible multi-strand copper connection to main DB (50m)",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 24000,
+      "total": 24000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-5",
+      "srNo": 5,
+      "name": "Earth Wire 10mm Pure Copper",
+      "description": "AC-DC grounding safety conductors (80m)",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 15000,
+      "total": 15000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-6",
+      "srNo": 6,
+      "name": "Chemical Earthing Bore (DC)",
+      "description": "100ft bore with copper plate and resistivity compound",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 45000,
+      "total": 45000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-7",
+      "srNo": 7,
+      "name": "Chemical Earthing Bore (AC)",
+      "description": "100ft bore with copper plate and resistivity compound",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 45000,
+      "total": 45000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-8",
+      "srNo": 8,
+      "name": "Chemical Earthing Bore (Structure)",
+      "description": "100ft bore with copper plate and resistivity compound",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 45000,
+      "total": 45000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-9",
+      "srNo": 9,
+      "name": "Mughal Girder Uprights",
+      "description": "Heavy duty structural vertical columns for elevated mount",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 85000,
+      "total": 85000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-10",
+      "srNo": 10,
+      "name": "Hot-Dip Galvanized L-Cables",
+      "description": "L-bracket angle framing profiles and cross braces",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 65000,
+      "total": 65000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-11",
+      "srNo": 11,
+      "name": "Anchor Bolts rawl-plugs",
+      "description": "Stainless steel expansion anchors for roof safety",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 12000,
+      "total": 12000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-12",
+      "srNo": 12,
+      "name": "Flexible Conduit Pipes IP67",
+      "description": "Halogen-free corrugated wiring protection pipes",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 9500,
+      "total": 9500,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-13",
+      "srNo": 13,
+      "name": "Cable Trays 6-inch",
+      "description": "Galvanized sheet metal cable trays with covers",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 16000,
+      "total": 16000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-14",
+      "srNo": 14,
+      "name": "Ducting Channels PVC",
+      "description": "Perforated cable organizer channels for indoor wiring",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 7500,
+      "total": 7500,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-15",
+      "srNo": 15,
+      "name": "Schneider AC Breaker 32A",
+      "description": "Original 3-pole miniature circuit breaker",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 6800,
+      "total": 6800,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-16",
+      "srNo": 16,
+      "name": "Schneider DC Breaker 40A",
+      "description": "High voltage 1000V DC surge breaker",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 8200,
+      "total": 8200,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-17",
+      "srNo": 17,
+      "name": "Solis Smart Energy Meter",
+      "description": "Export credit tracking smart meter with CT sensors",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 22000,
+      "total": 22000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-18",
+      "srNo": 18,
+      "name": "Lightning Arrester Spike",
+      "description": "Copper Franklin-type protection rod on mast",
+      "unit": "Nos",
+      "qty": 1,
+      "rate": 18500,
+      "total": 18500,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-19",
+      "srNo": 19,
+      "name": "Civil Work Cement Foundation",
+      "description": "Concrete anchor block pads for mounting uprights",
+      "unit": "Job",
+      "qty": 1,
+      "rate": 30000,
+      "total": 30000,
+      "type": "item"
+    },
+    {
+      "id": "row-manual-20",
+      "srNo": 20,
+      "name": "Sunchaser Commissioning Labor",
+      "description": "Turnkey ISO alignment, safety terminations & tests",
+      "unit": "Job",
+      "qty": 1,
+      "rate": 75000,
+      "total": 75000,
+      "type": "item"
+    }
+  ],
+  "customNotes": "Verify customized BOQ isolation and images overlay rendering.",
+  "grandTotal": 610500,
+  "netTotal": 600500,
+  "templateId": "tmpl-1",
+  "includedPages": [
+    "cover",
+    "profile",
+    "ceo",
+    "boq",
+    "final"
+  ],
+  "includeSizerItems": false
+}
+
+2. Lead Object (leadObj):
+{
+  "id": "lead-1",
+  "name": "Arthur Dent",
+  "email": "arthur.dent@galaxy.com",
+  "phone": "0300-1234567",
+  "address": "Heart of Gold, Orbit",
+  "status": "Quoted",
+  "monthlyBill": 25000,
+  "monthlyUnits": 650,
+  "sanctionedLoad": 10,
+  "backupRequirement": "None",
+  "location": "Lahore",
+  "roofType": "Concrete",
+  "roofSpace": 1000,
+  "shading": "None",
+  "rating": 5,
+  "assignedSalesperson": "Sarah Connor",
+  "notes": "Seeded proposal verification record."
+}
+
+3. Options Object (options):
+{
+  "includedPages": [
+    "cover",
+    "profile",
+    "ceo",
+    "boq",
+    "final"
+  ],
+  "templateId": "tmpl-1",
+  "includeSizerItems": false
+}

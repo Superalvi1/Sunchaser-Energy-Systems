@@ -33,7 +33,9 @@ const ai = new GoogleGenAI({
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
 
 // Custom CORS middleware to allow the frontend domain to call the backend API securely
 app.use((req, res, next) => {
@@ -96,6 +98,14 @@ function loadDb() {
         if (!db.orders) db.orders = initialSeed.orders;
         if (!db.warranties) db.warranties = initialSeed.warranties;
         if (!db.notifications) db.notifications = initialSeed.notifications;
+        if (!db.quoteTemplates) db.quoteTemplates = initialSeed.quoteTemplates;
+        if (!db.quoteTemplatePages) db.quoteTemplatePages = initialSeed.quoteTemplatePages;
+        if (!db.bankAccounts) db.bankAccounts = initialSeed.bankAccounts;
+        if (!db.companyTerms) db.companyTerms = initialSeed.companyTerms;
+        if (!db.ceoMessages) db.ceoMessages = initialSeed.ceoMessages;
+        if (!db.socialLinks) db.socialLinks = initialSeed.socialLinks;
+        if (!db.structureDescriptions) db.structureDescriptions = initialSeed.structureDescriptions;
+        if (!db.quotePdfSettings) db.quotePdfSettings = initialSeed.quotePdfSettings;
         
         // Manual control panel supplementary schemas
         if (!db.solarPackages) {
@@ -418,7 +428,64 @@ app.get("/api/state", async (req, res) => {
     solarPackages: db.solarPackages || [],
     settings: db.settings || {},
     websiteContent: db.websiteContent || {},
-    quotations: db.quotations || []
+    quotations: db.quotations || [],
+    quoteTemplates: db.quoteTemplates || [],
+    quoteTemplatePages: db.quoteTemplatePages || [],
+    bankAccounts: db.bankAccounts || [],
+    companyTerms: db.companyTerms || [],
+    ceoMessages: db.ceoMessages || [],
+    socialLinks: db.socialLinks || [],
+    structureDescriptions: db.structureDescriptions || [],
+    quotePdfSettings: db.quotePdfSettings || []
+  });
+});
+
+// Diagnostic endpoint to check backend configuration and Supabase connection
+app.get("/api/diagnostics/db", async (req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  
+  let supabaseUrlMasked = "NONE";
+  if (process.env.SUPABASE_URL) {
+    try {
+      const parsed = new URL(process.env.SUPABASE_URL);
+      supabaseUrlMasked = parsed.origin;
+    } catch {
+      supabaseUrlMasked = "INVALID_URL_FORMAT";
+    }
+  }
+
+  const envKeysFound = Object.keys(process.env).filter(key => 
+    key.includes("SUPABASE") || key.includes("JWT") || key.includes("GEMINI")
+  );
+
+  let supabaseUsersCount = 0;
+  let supabaseError = null;
+
+  if (active && supabase) {
+    try {
+      const { count, error } = await supabase
+        .from("users")
+        .select("*", { count: "exact", head: true });
+      if (error) {
+        supabaseError = error.message;
+      } else {
+        supabaseUsersCount = count || 0;
+      }
+    } catch (err: any) {
+      supabaseError = err.message;
+    }
+  }
+
+  res.json({
+    supabaseActive: active,
+    supabaseUrl: supabaseUrlMasked,
+    envKeysFound,
+    supabaseUsersCount,
+    supabaseError,
+    localDbExists: fs.existsSync(DB_FILE),
+    localUsersCount: db.users?.length || 0,
+    nodeEnv: process.env.NODE_ENV,
   });
 });
 
@@ -570,6 +637,69 @@ app.put("/api/leads/:id", async (req, res) => {
   }
 
   res.json(db.leads[index]);
+});
+
+// Delete lead and cascade delete quote/project references
+app.delete("/api/leads/:id", async (req, res) => {
+  loadDb();
+  const { id } = req.params;
+  const index = db.leads.findIndex((l: any) => l.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Lead not found" });
+  }
+
+  // Remove from local in-memory DB
+  db.leads.splice(index, 1);
+  db.projects = db.projects.filter((p: any) => p.leadId !== id);
+  if (db.netMeteringTrackers[id]) delete db.netMeteringTrackers[id];
+  if (db.paymentTracks[id]) delete db.paymentTracks[id];
+
+  saveDb();
+
+  // Remove from Supabase if active
+  if (isSupabaseActive()) {
+    try {
+      const supabase = getSupabase()!;
+      // cascade on delete will delete quotations, projects, installation tasks, trackers, etc.
+      await supabase.from("leads").delete().eq("id", id);
+    } catch (err: any) {
+      console.error("[Supabase Lead Deletion Error]:", err.message);
+    }
+  }
+
+  await appendActivityLog("admin", "Admin", "Super Admin", "Lead Deleted", `Deleted lead ${id}`);
+  res.json({ success: true, message: `Lead ${id} and all related quotes/projects deleted successfully.` });
+});
+
+// Delete specific quote for a lead
+app.delete("/api/leads/:leadId/quotes/:quoteId", async (req, res) => {
+  loadDb();
+  const { leadId, quoteId } = req.params;
+  const lead = db.leads.find((l: any) => l.id === leadId);
+  if (!lead) {
+    return res.status(404).json({ error: "Lead not found" });
+  }
+
+  if (!lead.quotes) lead.quotes = [];
+  const quoteIndex = lead.quotes.findIndex((q: any) => q.id === quoteId);
+  if (quoteIndex === -1) {
+    return res.status(404).json({ error: "Quote not found" });
+  }
+
+  lead.quotes.splice(quoteIndex, 1);
+  saveDb();
+
+  if (isSupabaseActive()) {
+    try {
+      const supabase = getSupabase()!;
+      await supabase.from("quotations").delete().eq("id", quoteId).eq("lead_id", leadId);
+    } catch (err: any) {
+      console.error("[Supabase Quote Deletion Error]:", err.message);
+    }
+  }
+
+  await appendActivityLog("admin", "Admin", "Super Admin", "Quote Deleted", `Deleted quote ${quoteId} for lead ${leadId}`);
+  res.json({ success: true, message: `Quote ${quoteId} deleted successfully.` });
 });
 
 // 5. Delegate salesperson assignment
@@ -870,11 +1000,44 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     boqRows,
     customNotes,
     grandTotal,
-    netTotal
+    netTotal,
+    idempotencyKey,
+    quote_type
   } = req.body;
+
+  console.log(`[API POST /api/leads/${id}/create-quote] Received request body:`, {
+    systemSizekW,
+    panelCount,
+    totalCost,
+    clientName,
+    clientPhone,
+    boqRowsCount: boqRows?.length || 0,
+    boqItemsCount: boqItems?.length || 0,
+    grandTotal,
+    netTotal,
+    idempotencyKey,
+    quote_type
+  });
 
   const lead = db.leads.find((l: any) => l.id === id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+  // 1. Idempotency Key check to block duplicate submits
+  if (idempotencyKey && lead.quotes?.some((q: any) => q.idempotencyKey === idempotencyKey)) {
+    console.log(`[API POST /api/leads/${id}/create-quote] Blocked duplicate request with idempotency key: ${idempotencyKey}`);
+    return res.status(409).json({ error: "Duplicate request: Quote with this idempotency key already exists." });
+  }
+
+  // 2. 4-second rate limit guard
+  const now = Date.now();
+  const recentQuote = lead.quotes?.find((q: any) => {
+    const createdAtTime = new Date(q.createdAt).getTime();
+    return (now - createdAtTime) < 4000;
+  });
+  if (recentQuote) {
+    console.log(`[API POST /api/leads/${id}/create-quote] Blocked request due to 4s guard. Last quote created at: ${recentQuote.createdAt}`);
+    return res.status(429).json({ error: "Rate limit: Please wait 4 seconds between generating quotes." });
+  }
 
   const quoteId = `q-${(lead.quotes || []).length + 1}`;
   const cost = Number(totalCost) || (Number(systemSizekW) * 19500 + (batteryCapacity ? 480000 : 0));
@@ -891,6 +1054,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
 
   const newQuote = {
     id: quoteId,
+    idempotencyKey: idempotencyKey || "",
     systemSizekW: Number(systemSizekW) || 7.2,
     panelCount: Number(panelCount) || 18,
     panelType: panelType || "Longi 580W Panels",
@@ -942,7 +1106,8 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     boqRows: boqRows || [],
     customNotes: customNotes || "",
     grandTotal: Number(grandTotal) || cost,
-    netTotal: Number(netTotal) || netCost
+    netTotal: Number(netTotal) || netCost,
+    quote_type: quote_type || "auto_sizer"
   };
 
   lead.quotes = [newQuote, ...(lead.quotes || [])];
@@ -963,7 +1128,16 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
         status: "Quoted" 
       }).eq("id", id);
       
-      await supabase.from("quotations").insert({
+      console.log(`[Supabase Create Quotation] Inserting quote ${newQuote.id} for lead ${id}. Payload diagnostics:`, {
+        clientName: newQuote.clientName,
+        clientPhone: newQuote.clientPhone,
+        boqRowsCount: newQuote.boqRows?.length || 0,
+        lescoMeterNo: newQuote.lescoSettings?.meterNo,
+        grandTotal: newQuote.grandTotal,
+        netTotal: newQuote.netTotal,
+      });
+
+      const { error: insertError } = await supabase.from("quotations").insert({
         id: newQuote.id,
         lead_id: id,
         customer_id: customerId,
@@ -981,8 +1155,50 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
         structure_type: newQuote.structureType,
         payment_terms: newQuote.paymentTerms,
         warranty_terms: newQuote.warrantyTerms,
-        terms_and_conditions: newQuote.termsAndConditions
+        terms_and_conditions: newQuote.termsAndConditions,
+        extended_data: {
+          clientName: newQuote.clientName,
+          clientPhone: newQuote.clientPhone,
+          clientEmail: newQuote.clientEmail,
+          clientAddress: newQuote.clientAddress,
+          cnic: newQuote.cnic,
+          cityArea: newQuote.cityArea,
+          bdmName: newQuote.bdmName,
+          quoteDate: newQuote.quoteDate,
+          systemType: newQuote.systemType,
+          panelBrand: newQuote.panelBrand,
+          panelWattage: newQuote.panelWattage,
+          inverterBrand: newQuote.inverterBrand,
+          inverterCapacity: newQuote.inverterCapacity,
+          batteryOption: newQuote.batteryOption,
+          netMeteringRequired: newQuote.netMeteringRequired,
+          discount: newQuote.discount,
+          paymentSchedule: newQuote.paymentSchedule,
+          boqItems: newQuote.boqItems,
+          lescoSettings: newQuote.lescoSettings,
+          societyCharges: newQuote.societyCharges,
+          taxEnabled: newQuote.taxEnabled,
+          taxRate: newQuote.taxRate,
+          taxAmount: newQuote.taxAmount,
+          selectedStructure: newQuote.selectedStructure,
+          customStructure: newQuote.customStructure,
+          boqRows: newQuote.boqRows,
+          customNotes: newQuote.customNotes,
+          grandTotal: newQuote.grandTotal,
+          netTotal: newQuote.netTotal,
+          idempotencyKey: newQuote.idempotencyKey,
+          templateId: newQuote.templateId,
+          includedPages: newQuote.includedPages,
+          includeSizerItems: newQuote.includeSizerItems === true,
+          quote_type: newQuote.quote_type || "auto_sizer"
+        }
       });
+
+      if (insertError) {
+        console.error("[Supabase Create Quotation Database Error]:", insertError.message);
+      } else {
+        console.log(`[Supabase Create Quotation] Quote ${newQuote.id} inserted successfully.`);
+      }
     } catch (err: any) {
       console.error("[Supabase Create Quotation Error]:", err.message);
     }
@@ -1018,6 +1234,145 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
   lead.quotes = [duplicated, ...(lead.quotes || [])];
   saveDb();
   res.json(lead);
+});
+
+// 9c. Update/Overwrite Quote endpoint
+app.post("/api/leads/:id/update-quote", async (req, res) => {
+  loadDb();
+  const { id } = req.params;
+  const { quoteId, ...quotePayload } = req.body;
+  const lead = db.leads.find((l: any) => l.id === id);
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+  const quoteIndex = lead.quotes?.findIndex((q: any) => q.id === quoteId);
+  if (quoteIndex === -1 || quoteIndex === undefined) {
+    return res.status(404).json({ error: "Quote not found" });
+  }
+
+  const existingQuote = lead.quotes[quoteIndex];
+  const updatedQuote = {
+    ...existingQuote,
+    ...quotePayload,
+    id: quoteId,
+    quote_type: quotePayload.quote_type || existingQuote.quote_type || "auto_sizer",
+    updatedAt: new Date().toISOString()
+  };
+
+  lead.quotes[quoteIndex] = updatedQuote;
+  saveDb();
+
+  if (isSupabaseActive()) {
+    try {
+      const supabase = getSupabase()!;
+      const customerId = `cust-${id.replace("lead-", "")}`;
+      
+      const { error: updateError } = await supabase.from("quotations").upsert({
+        id: quoteId,
+        lead_id: id,
+        customer_id: customerId,
+        system_size_kw: updatedQuote.systemSizekW,
+        panel_count: updatedQuote.panelCount,
+        panel_type: updatedQuote.panelType,
+        inverter_type: updatedQuote.inverterType,
+        battery_capacity: updatedQuote.batteryCapacity,
+        total_cost: updatedQuote.totalCost,
+        federal_tax_credit: 0,
+        net_cost: updatedQuote.netCost,
+        estimated_annual_savings: updatedQuote.estimatedAnnualSavings,
+        payback_period_years: updatedQuote.paybackPeriodYears,
+        status: updatedQuote.status,
+        structure_type: updatedQuote.structureType,
+        payment_terms: updatedQuote.paymentTerms,
+        warranty_terms: updatedQuote.warrantyTerms,
+        terms_and_conditions: updatedQuote.termsAndConditions,
+        extended_data: {
+          clientName: updatedQuote.clientName,
+          clientPhone: updatedQuote.clientPhone,
+          clientEmail: updatedQuote.clientEmail,
+          clientAddress: updatedQuote.clientAddress,
+          cnic: updatedQuote.cnic,
+          cityArea: updatedQuote.cityArea,
+          bdmName: updatedQuote.bdmName,
+          quoteDate: updatedQuote.quoteDate,
+          systemType: updatedQuote.systemType,
+          panelBrand: updatedQuote.panelBrand,
+          panelWattage: updatedQuote.panelWattage,
+          inverterBrand: updatedQuote.inverterBrand,
+          inverterCapacity: updatedQuote.inverterCapacity,
+          batteryOption: updatedQuote.batteryOption,
+          netMeteringRequired: updatedQuote.netMeteringRequired,
+          discount: updatedQuote.discount,
+          paymentSchedule: updatedQuote.paymentSchedule,
+          boqItems: updatedQuote.boqItems,
+          lescoSettings: updatedQuote.lescoSettings,
+          societyCharges: updatedQuote.societyCharges,
+          taxEnabled: updatedQuote.taxEnabled,
+          taxRate: updatedQuote.taxRate,
+          taxAmount: updatedQuote.taxAmount,
+          selectedStructure: updatedQuote.selectedStructure,
+          customStructure: updatedQuote.customStructure,
+          boqRows: updatedQuote.boqRows,
+          customNotes: updatedQuote.customNotes,
+          grandTotal: updatedQuote.grandTotal,
+          netTotal: updatedQuote.netTotal,
+          idempotencyKey: updatedQuote.idempotencyKey,
+          templateId: updatedQuote.templateId,
+          includedPages: updatedQuote.includedPages,
+          includeSizerItems: updatedQuote.includeSizerItems === true,
+          quote_type: updatedQuote.quote_type || "auto_sizer"
+        }
+      }, { onConflict: "id" });
+
+      if (updateError) {
+        console.error("[Supabase Update Quotation Database Error]:", updateError.message);
+      }
+    } catch (err: any) {
+      console.error("[Supabase Update Quotation Error]:", err.message);
+    }
+  }
+
+  await appendActivityLog("sales", updatedQuote.bdmName || "Sarah Connor", "Sales Executive", "Quotation Updated", `Updated quote ${quoteId} for ${lead.name}`);
+  res.json(lead);
+});
+
+// 9d. Base64 Upload endpoint
+app.post("/api/upload", async (req, res) => {
+  try {
+    // Accept both field name formats: {base64Data, filename} and {base64, fileName}
+    const base64Input = req.body.base64Data || req.body.base64;
+    const filenameInput = req.body.filename || req.body.fileName;
+    
+    if (!base64Input) {
+      return res.status(400).json({ error: "base64Data or base64 field is required" });
+    }
+    
+    const matches = base64Input.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    let dataBuffer;
+    let extension = "";
+    if (matches && matches.length === 3) {
+      extension = matches[1].split('/')[1];
+      dataBuffer = Buffer.from(matches[2], 'base64');
+    } else {
+      dataBuffer = Buffer.from(base64Input, 'base64');
+    }
+
+    const cleanFilename = filenameInput 
+      ? filenameInput.replace(/[^a-zA-Z0-9.-]/g, "_")
+      : `upload_${Date.now()}.${extension || 'png'}`;
+
+    const uploadsDir = path.join(__dirname, "public", "uploads");
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const filePath = path.join(uploadsDir, cleanFilename);
+    fs.writeFileSync(filePath, dataBuffer);
+
+    // Return both the file path URL and the original base64 data URL for direct storage
+    res.json({ url: `/uploads/${cleanFilename}`, dataUrl: base64Input });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to upload file: " + err.message });
+  }
 });
 
 // 10. Accept Quote & Auto-Provision trackers
@@ -1902,6 +2257,88 @@ app.post("/api/db/update", async (req, res) => {
             status: data.status || "Pending",
             items: data.items || []
           };
+        } else if (table === "quoteTemplates") {
+          pgTable = "quote_templates";
+          mappedData = {
+            id: data.id,
+            name: data.name,
+            is_active: data.isActive !== undefined ? data.isActive : true
+          };
+        } else if (table === "quoteTemplatePages") {
+          pgTable = "quote_template_pages";
+          mappedData = {
+            id: data.id,
+            template_id: data.template_id || data.templateId,
+            page_type: data.page_type || data.pageType,
+            title: data.title,
+            body_text: data.body_text !== undefined ? data.body_text : (data.bodyText || ""),
+            image_url: data.image_url !== undefined ? data.image_url : (data.imageUrl || ""),
+            bg_image_url: data.bg_image_url !== undefined ? data.bg_image_url : (data.bgImageUrl || ""),
+            is_enabled: data.is_enabled !== undefined ? data.is_enabled : (data.isEnabled !== undefined ? data.isEnabled : true),
+            sort_order: Number(data.sort_order || data.sortOrder || 0)
+          };
+        } else if (table === "bankAccounts") {
+          pgTable = "bank_accounts";
+          mappedData = {
+            id: data.id,
+            bank_name: data.bankName || data.bank_name,
+            account_title: data.accountTitle || data.account_title || data.title,
+            account_number: data.accountNumber || data.account_number || data.accountNo,
+            iban: data.iban || "",
+            branch_code: data.branchCode || data.branch_code || "",
+            is_active: data.isActive !== undefined ? data.isActive : true,
+            sort_order: Number(data.sortOrder || data.sort_order || 0)
+          };
+        } else if (table === "companyTerms") {
+          pgTable = "company_terms";
+          mappedData = {
+            id: data.id,
+            term_text: data.termText || data.term_text,
+            sort_order: Number(data.sortOrder || data.sort_order || 0)
+          };
+        } else if (table === "ceoMessages") {
+          pgTable = "ceo_messages";
+          mappedData = {
+            id: data.id,
+            name: data.name,
+            designation: data.designation,
+            message: data.message,
+            signature_url: data.signatureUrl || data.signature_url || "",
+            photo_url: data.photoUrl || data.photo_url || ""
+          };
+        } else if (table === "socialLinks") {
+          pgTable = "social_links";
+          mappedData = {
+            id: data.id,
+            platform: data.platform,
+            url: data.url,
+            qr_code_url: data.qrCodeUrl || data.qr_code_url || ""
+          };
+        } else if (table === "structureDescriptions") {
+          pgTable = "structure_descriptions";
+          mappedData = {
+            id: data.id,
+            structure_type: data.structureType || data.structure_type,
+            title: data.title,
+            description_en: data.descriptionEn || data.description_en,
+            description_ur: data.descriptionUr || data.description_ur,
+            material_type: data.materialType || data.material_type || "",
+            weight: data.weight || "",
+            wind_rating: data.windRating || data.wind_rating || "",
+            warranty: data.warranty || "",
+            image_url: data.imageUrl || data.image_url || ""
+          };
+        } else if (table === "quotePdfSettings") {
+          pgTable = "quote_pdf_settings";
+          mappedData = {
+            id: data.id,
+            company_name: data.companyName || data.company_name,
+            office_address: data.officeAddress || data.office_address,
+            hotline_phones: data.hotlinePhones || data.hotline_phones,
+            billing_email: data.billingEmail || data.billing_email,
+            website_url: data.websiteUrl || data.website_url,
+            logo_url: data.logoUrl || data.logo_url || ""
+          };
         }
 
         if (pgTable) {
@@ -2007,692 +2444,898 @@ app.get("/api/backup/export", async (req, res) => {
   }
 });
 
-// 18. PDF Export Renderer
-app.get("/api/export/pdf/:leadId", async (req, res) => {
-  try {
-    let activeState: Database = db;
-    if (isSupabaseActive()) {
-      activeState = await fetchAppStateFromSupabase();
+// Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
+
+// Helper function to parse extended template settings from body text
+function parseExtendedSettings(bodyTextContent: string, pageType: string) {
+  let bodyText = bodyTextContent || "";
+  let layoutMode = "standard";
+  let header = {
+    mode: "inherit",
+    enabled: true,
+    text: "",
+    logoUrl: "",
+    logoSize: "25px",
+    lineColor: "#f59e0b",
+    alignment: "left"
+  };
+  let footer = {
+    mode: "inherit",
+    enabled: true,
+    text: "Sunchaser Energy Systems Proposal",
+    lineColor: "#cbd5e1",
+    alignment: "left"
+  };
+  let bodyImages: any[] = [];
+
+  if (typeof bodyText === 'string' && bodyText.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(bodyText);
+      bodyText = parsed.bodyText !== undefined ? parsed.bodyText : "";
+      layoutMode = parsed.layoutMode || "standard";
+      if (parsed.header) header = { ...header, ...parsed.header };
+      if (parsed.footer) footer = { ...footer, ...parsed.footer };
+      if (Array.isArray(parsed.bodyImages)) bodyImages = parsed.bodyImages;
+    } catch (e) {
+      // ignore
     }
+  }
 
-    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
-    if (!lead) return res.status(404).send("Document lead not found.");
+  return {
+    bodyText,
+    layoutMode,
+    header,
+    footer,
+    bodyImages
+  };
+}
 
-    // Retrieve active quote by query param, fallback to first quote
-    const quoteId = req.query.quoteId;
-    let quoteObj = null;
-    if (quoteId) {
-      quoteObj = lead.quotes?.find((q: any) => q.id === quoteId);
-    }
-    if (!quoteObj) {
-      quoteObj = lead.quotes?.[0];
-    }
+// Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
+function compileSunchaserPDFHtml(
+  mode: 'sizer' | 'manual' | 'preview',
+  quoteObj: any,
+  leadObj: any,
+  activeState: Database,
+  options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean } = {}
+): string {
+  const settings = {
+    companyName: "Sunchaser Energy Systems",
+    officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+    phoneNumbers: "0309-0236666, 0330-7776444",
+    billingEmail: "billing@sunchaser-energy.com",
+    websiteUrl: "www.sunchaser-energy.com",
+    ...(activeState.settings || {})
+  };
 
-    // Default quote fallback if lead has no quotes
-    if (!quoteObj) {
-      quoteObj = {
-        id: "q-default",
-        systemSizekW: 10,
-        panelCount: 18,
-        panelType: "Jinko 580W Panels",
-        inverterType: "Knox 10kW Inverter",
-        batteryCapacity: "",
-        totalCost: 1500000,
-        netCost: 1500000,
-        estimatedAnnualSavings: 350000,
-        paybackPeriodYears: 4.2,
-        status: "Pending",
-        createdAt: new Date().toISOString(),
-        structureType: "Standard",
-        clientName: lead.name,
-        clientPhone: lead.phone,
-        clientEmail: lead.email,
-        clientAddress: lead.address,
-        cnic: "",
-        cityArea: lead.location || "Lahore",
-        bdmName: lead.assignedSalesperson || "Sarah Connor",
-        quoteDate: new Date().toISOString().split('T')[0],
-        systemType: "Hybrid",
-        panelBrand: "Jinko",
-        panelWattage: 580,
-        inverterBrand: "Knox",
-        inverterCapacity: "10kW",
-        batteryOption: "None",
-        netMeteringRequired: "Yes",
-        discount: 0,
-        paymentSchedule: "50% Advance, 40% Delivery, 10% Commissioning",
-        boqItems: [],
-        lescoSettings: { meterNo: "", consumerNo: "", sanctionedLoad: "", phaseType: "Three Phase" },
-        societyCharges: 0,
-        taxEnabled: false,
-        taxRate: 17,
-        taxAmount: 0,
-        selectedStructure: "standard",
-        boqRows: [],
-        customNotes: "",
-        grandTotal: 1500000,
-        netTotal: 1500000
-      };
-    }
+  // PKR Formatting helper
+  const formatPKR = (val: number) => {
+    if (val === undefined || val === null || isNaN(val)) return "Rs. 0";
+    return "Rs. " + Math.round(val).toLocaleString("en-US");
+  };
 
-    const settings = activeState.settings || {
-      companyName: "Sunchaser Energy",
-      phoneNumber: "0309-0236666",
-      whatsAppNumber: "0330-7776444",
-      officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
-      phoneNumbers: "0309-0236666, 0330-7776444",
-      termsAndConditionsList: [
-        "Quotation validity: 3 days from date of issuance.",
-        "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
-        "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
-        "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
-        "Work will commence within 3 days after receipt of the advance payment.",
-        "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
-        "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
-        "Client interference: Any on-site construction delays caused by the client will affect the completion timeline.",
-        "Grid connection: Net metering facilitation requires valid property documents and sanctioned load compliance.",
-        "System earthing: Dedicated chemical earthing bores will be created for DC, AC, and frame grounding safety.",
-        "Smart online monitoring: Active monitoring requires stable client Wi-Fi connection at the inverter site.",
-        "Wi-Fi requirement: Customer must provide stable continuous Wi-Fi access for monitoring data synch.",
-        "Client scope of work: Providing masonry work access, temporary electricity & water during construction.",
-        "Civil work exclusions: Cutting of structural concrete slabs or custom aesthetic tiles is excluded unless quoted.",
-        "Net metering clearance remains the client's responsibility if document verification faults occur.",
-        "Panel washing advisory: Clean arrays bi-weekly for optimal generation yield performance.",
-        "Force majeure: Sunchaser is not liable for delays caused by national strikes, weather anomalies, or utility board freezes."
-      ]
-    };
-
-    // Load BOQ rows from quoteObj
-    const boq = quoteObj.boqRows || quoteObj.boqItems || [];
-
-    // Date Calculations
-    const qDate = quoteObj.quoteDate ? new Date(quoteObj.quoteDate) : new Date();
-    const validityDate = new Date(qDate.getTime() + 3 * 24 * 60 * 60 * 1000);
-    const expiryDateString = validityDate.toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' });
-    const quoteDateString = qDate.toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' });
-
-    // PKR Formatting helper
-    const formatPKR = (val: number) => {
-      if (val === undefined || val === null || isNaN(val)) return "Rs. 0";
-      return "Rs. " + Math.round(val).toLocaleString("en-US");
-    };
-
-    // Sequential manual BOQ HTML compilation (Page 6)
-    let boqHtml = "";
-    let localGrossCalculated = 0;
-
-    if (boq.length > 0) {
-      boq.forEach((row: any) => {
-        if (row.type === 'heading') {
-          boqHtml += `
-            <tr style="background-color: #f1f5f9; font-weight: 700; color: #0f172a; border-bottom: 2px solid #cbd5e1;">
-              <td colspan="7" style="padding: 6px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-family: 'Inter', sans-serif;">${row.name}</td>
-            </tr>
-          `;
-        } else if (row.type === 'subtotal') {
-          boqHtml += `
-            <tr style="border-bottom: 2px solid #e2e8f0; font-weight: 750; background-color: #f8fafc; font-size: 10px;">
-              <td colspan="6" style="padding: 6px 10px; text-align: right; color: #475569; text-transform: uppercase;">${row.name || 'SUBTOTAL'}:</td>
-              <td style="padding: 6px 10px; text-align: right; color: #0f172a; font-weight: 800;">${formatPKR(row.total)}</td>
-            </tr>
-          `;
-        } else {
-          localGrossCalculated += Number(row.total) || 0;
-          boqHtml += `
-            <tr style="border-bottom: 1px solid #e2e8f0; font-size: 9.5px;">
-              <td style="padding: 5px 10px; text-align: center; color: #64748b;">${row.srNo || ''}</td>
-              <td style="padding: 5px 10px; font-weight: 600; color: #0f172a;">${row.name}</td>
-              <td style="padding: 5px 10px; color: #475569; font-size: 9px; line-height: 1.3;">${row.description || ''}</td>
-              <td style="padding: 5px 10px; text-align: center; color: #475569;">${row.unit || 'Nos'}</td>
-              <td style="padding: 5px 10px; text-align: center; font-weight: 500;">${row.qty}</td>
-              <td style="padding: 5px 10px; text-align: right; color: #475569;">${formatPKR(row.rate)}</td>
-              <td style="padding: 5px 10px; text-align: right; font-weight: 600; color: #0f172a;">${formatPKR(row.total)}</td>
-            </tr>
-          `;
-        }
-      });
-    } else {
-      boqHtml += `
-        <tr>
-          <td colspan="7" style="padding: 20px; text-align: center; color: #94a3b8;">No BOQ items loaded. Please configure quote builder.</td>
-        </tr>
-      `;
-    }
-
-    const grossTotal = quoteObj.grandTotal || localGrossCalculated;
-    const discountAmount = Number(quoteObj.discount) || 0;
-    const societyCharges = Number(quoteObj.societyCharges) || 0;
-    const taxEnabled = !!quoteObj.taxEnabled;
-    const taxRate = Number(quoteObj.taxRate) || 0;
-    const taxAmount = Number(quoteObj.taxAmount) || 0;
-    const finalNetPrice = quoteObj.netTotal || (grossTotal - discountAmount + societyCharges + taxAmount);
-
-    // Terms split across Page 7 & Page 8
-    const tcList = settings.termsAndConditionsList || [];
-    let tcPage1Html = "";
-    let tcPage2Html = "";
-    tcList.forEach((clause: string, index: number) => {
-      const formattedClause = `
-        <div style="display: flex; margin-bottom: 12px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
-          <span style="font-weight: 800; color: #d97706; margin-right: 8px; min-width: 22px;">${index + 1}.</span>
-          <span style="color: #334155; font-weight: 500;">${clause}</span>
-        </div>
-      `;
-      if (index < 9) {
-        tcPage1Html += formattedClause;
-      } else {
-        tcPage2Html += formattedClause;
-      }
-    });
-
-    // Structure model mapping & graphics for Page 5
-    const selectedStructKey = String(quoteObj.selectedStructure || quoteObj.structureType || "standard").toLowerCase();
+  if (mode === 'sizer') {
+    const sizeKw = Number(quoteObj.systemSizekW) || 10;
+    const count = Number(quoteObj.panelCount) || Math.round(sizeKw * 1.7);
+    const estimatedSavings = Number(quoteObj.estimatedAnnualSavings) || Math.round(sizeKw * 1400 * 35);
+    const payback = Number(quoteObj.paybackPeriodYears) || 3.5;
     
-    // Retrieve structure details from settings seeds
-    const structDetails = (activeState.settings?.structureDescriptions?.[selectedStructKey]) || {
-      en: "Premium Galvanized Mounting Structure, wind resistant up to 130 km/h.",
-      ur: "پریمیم گیلوانائزڈ ماونٹنگ سٹرکچر، 130 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔",
-      weight: "Standard Frame",
-      materialType: "Galvanized L3 Steel",
-      warranty: "10 Years Warranty",
-      windRating: "130 km/h"
-    };
-
-    let structureSvg = "";
-    if (selectedStructKey === "elevated") {
-      structureSvg = `
-        <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
-          <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
-          <line x1="90" y1="120" x2="90" y2="55" stroke="#475569" stroke-width="5" />
-          <line x1="190" y1="120" x2="190" y2="30" stroke="#475569" stroke-width="5" />
-          <line x1="60" y1="62" x2="220" y2="22" stroke="#d97706" stroke-width="6" />
-          <rect x="75" y="48" width="35" height="10" transform="rotate(-14, 90, 53)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="125" y="36" width="35" height="10" transform="rotate(-14, 140, 41)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="175" y="24" width="35" height="10" transform="rotate(-14, 190, 29)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="80" y="115" width="20" height="8" fill="#64748b" />
-          <rect x="180" y="115" width="20" height="8" fill="#64748b" />
-          <text x="140" y="140" text-anchor="middle" font-size="10" fill="#64748b" font-weight="700">Elevated Frame (10ft Roof clearance hot-dip galvanized)</text>
-        </svg>
-      `;
-    } else if (selectedStructKey === "girder") {
-      structureSvg = `
-        <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
-          <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
-          <rect x="85" y="45" width="12" height="75" fill="#334155" />
-          <rect x="185" y="20" width="12" height="100" fill="#334155" />
-          <line x1="50" y1="52" x2="220" y2="18" stroke="#b45309" stroke-width="9" />
-          <rect x="65" y="38" width="40" height="12" transform="rotate(-11.5, 85, 44)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="115" y="28" width="40" height="12" transform="rotate(-11.5, 135, 34)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="165" y="18" width="40" height="12" transform="rotate(-11.5, 185, 24)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <text x="140" y="140" text-anchor="middle" font-size="10" fill="#b45309" font-weight="800">Heavy-Duty Mughal Girder Frame (1600g/ft Structural Load)</text>
-        </svg>
-      `;
-    } else {
-      structureSvg = `
-        <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
-          <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
-          <line x1="100" y1="120" x2="100" y2="85" stroke="#475569" stroke-width="4" />
-          <line x1="170" y1="120" x2="170" y2="55" stroke="#475569" stroke-width="4" />
-          <line x1="70" y1="98" x2="200" y2="40" stroke="#0f172a" stroke-width="5" />
-          <rect x="80" y="82" width="30" height="9" transform="rotate(-24, 95, 86)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="120" y="64" width="30" height="9" transform="rotate(-24, 135, 68)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <rect x="160" y="46" width="30" height="9" transform="rotate(-24, 175, 50)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
-          <text x="140" y="140" text-anchor="middle" font-size="10" fill="#475569" font-weight="700">Standard A-Frame (Direct Roof Mount Layout)</text>
-        </svg>
-      `;
-    }
-
-    // 8 Bank Accounts (Page 10)
-    const official8BankAccounts = [
-      { "title": "SUNCHASER ENERGY", "bankName": "Allied Bank Limited", "accountNo": "04190010112276940012", "iban": "PK81ABPA0010112276940012", "isAlternate": false },
-      { "title": "AL ADAM", "bankName": "Bank Alfalah Limited", "accountNo": "55265001858603", "iban": "PK12ALFH5526005001858603", "isAlternate": false },
-      { "title": "SIGNALS GLOBAL", "bankName": "Allied Bank Limited", "accountNo": "09090010112284650035", "iban": "N/A", "isAlternate": false },
-      { "title": "HELIOS SOLAR ENERGY", "bankName": "Meezan Bank Limited", "accountNo": "02490109527492", "iban": "PK49MEZN0002490109527492", "isAlternate": false },
-      { "title": "HELIOS SOLAR ENERGY", "bankName": "Standard Chartered Bank", "accountNo": "1702559001", "iban": "PK91SCBL0000001702559001", "isAlternate": false },
-      { "title": "HELIOS SOLAR ENERGY", "bankName": "United Bank Limited", "accountNo": "1305307203838", "iban": "PK93UNIL0109000307203838", "isAlternate": false },
-      { "title": "HELIOS SOLAR ENERGY", "bankName": "Habib Metropolitan Bank", "accountNo": "6121020301714129916", "iban": "PK42MPBL1210067140129916", "isAlternate": false },
-      { "title": "HELIOS SOLAR ENERGY", "bankName": "Bank Al Habib Limited", "accountNo": "03440981001290017", "iban": "PK62BAHL0344098100129001", "isAlternate": false }
-    ];
-
-    const activeBankAccounts = activeState.settings?.bankAccounts && activeState.settings.bankAccounts.length >= 8 
-      ? activeState.settings.bankAccounts 
-      : official8BankAccounts;
-
-    let bankAccountsHtml = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">`;
-    activeBankAccounts.forEach((acc: any, index: number) => {
-      bankAccountsHtml += `
-        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 11px; line-height: 1.45;">
-          <div style="font-weight: 800; font-size: 12px; color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-            <span>${index + 1}. ${acc.bankName}</span>
-            <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Verify Direct</span>
-          </div>
-          <div style="color: #475569;"><strong>Account Title:</strong> <span style="color: #0f172a; font-weight: 600;">${acc.title}</span></div>
-          <div style="color: #475569;"><strong>Account Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace; font-size: 12px;">${acc.accountNo}</span></div>
-          <div style="color: #475569; font-family: monospace; font-size: 10px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> ${acc.iban || 'N/A'}</div>
-        </div>
-      `;
-    });
-    bankAccountsHtml += `</div>`;
-
-    // Retrieve LESCO fields (Page 9)
-    const lescoObj = quoteObj.lescoSettings || { meterNo: "", consumerNo: "", sanctionedLoad: "", phaseType: "Three Phase" };
-    const netMeteringText = quoteObj.netMeteringRequired || "Yes";
-
-    const pdfHtml = `
+    return `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Sunchaser Proposal Deck - ${quoteObj.clientName || lead.name}</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
+        <title>Sunchaser Technical Sizing Summary</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <style>
           body {
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #0b1329;
+            font-family: 'Inter', sans-serif;
+            background-color: #ffffff;
             color: #1e293b;
+            margin: 0;
+            padding: 20px;
+            font-size: 11px;
+            line-height: 1.5;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
+          .container {
+            max-width: 210mm;
+            margin: 0 auto;
+            border: 1px solid #cbd5e1;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #f59e0b;
+            padding-bottom: 12px;
+            margin-bottom: 20px;
+          }
+          .title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #0f172a;
+          }
+          .subtitle {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #d97706;
+            font-weight: 700;
+          }
+          .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+          }
+          .card {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px;
+          }
+          .section-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 4px;
+            margin-bottom: 10px;
+            color: #0f172a;
+          }
+          .table-summary {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+          }
+          .table-summary th {
+            background-color: #0f172a;
+            color: #ffffff;
+            font-size: 9px;
+            padding: 6px;
+            text-align: left;
+          }
+          .table-summary td {
+            padding: 6px;
+            border-bottom: 1px solid #e2e8f0;
+          }
+          .metric-badge {
+            font-weight: 750;
+            color: #0f172a;
+            font-size: 12px;
+          }
           .action-bar {
-            background-color: #1e293b;
+            background-color: #0f172a;
             color: #ffffff;
             padding: 12px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-            font-size: 14px;
+            margin-bottom: 15px;
+            border-radius: 8px;
           }
           .btn-print {
             background-color: #f59e0b;
             color: #0f172a;
             border: none;
-            padding: 8px 18px;
-            border-radius: 8px;
+            padding: 6px 14px;
+            border-radius: 6px;
             font-weight: 700;
             cursor: pointer;
-            transition: background-color 0.2s;
-            font-family: 'Inter', sans-serif;
-          }
-          .btn-print:hover {
-            background-color: #d97706;
-          }
-          .pages-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 24px;
-            padding: 40px 0;
-          }
-          .page {
-            width: 210mm;
-            height: 297mm;
-            background: #ffffff;
-            box-shadow: 0 10px 30px -5px rgba(0,0,0,0.45);
-            box-sizing: border-box;
-            padding: 18mm 20mm;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            position: relative;
-            overflow: hidden;
-            page-break-after: always;
-          }
-          .page.cover {
-            background: linear-gradient(145deg, #020617 0%, #0f172a 100%);
-            color: #ffffff;
-            padding: 30mm 20mm 20mm 20mm;
-          }
-          .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 8px;
-            margin-bottom: 15px;
-          }
-          .page-title-row {
-            font-size: 15px;
-            font-weight: 800;
-            color: #0f172a;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            border-left: 4px solid #f59e0b;
-            padding-left: 10px;
-            font-family: 'Inter', sans-serif;
-          }
-          .page-footer {
-            border-top: 1px solid #e2e8f0;
-            padding-top: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 9px;
-            color: #94a3b8;
-            font-weight: 600;
-          }
-          .grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-          }
-          .card {
-            background-color: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 14px;
-          }
-          .card.dark {
-            background-color: #0f172a;
-            border-color: #1e293b;
-            color: #ffffff;
-          }
-          .badge {
-            font-size: 9px;
-            font-weight: 800;
-            text-transform: uppercase;
-            padding: 2.5px 8px;
-            border-radius: 6px;
-            background-color: #f59e0b;
-            color: #0f172a;
-            letter-spacing: 0.03em;
-          }
-          .cover-brand {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-          }
-          .cover-logo {
-            background-color: #f59e0b;
-            width: 54px;
-            height: 54px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 28px;
-            color: #ffffff;
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.45);
-          }
-          .cover-title {
-            font-size: 34px;
-            font-weight: 800;
-            line-height: 1.25;
-            letter-spacing: -0.025em;
-            margin-top: 40px;
-            background: linear-gradient(to right, #ffffff 60%, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-          }
-          .cover-subtitle {
-            font-size: 15px;
-            color: #f59e0b;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-top: 10px;
-          }
-          .cover-meta {
-            border-top: 1px solid #1e293b;
-            padding-top: 24px;
-            margin-top: 35px;
-          }
-          .cover-meta-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 18px;
-            font-size: 12px;
-          }
-          .cover-meta-label {
-            color: #64748b;
-            text-transform: uppercase;
-            font-weight: 800;
-            font-size: 9px;
-            letter-spacing: 0.05em;
-          }
-          .cover-meta-val {
-            font-weight: 600;
-            color: #ffffff;
-            margin-top: 4px;
-          }
-          .cover-footer {
-            border-top: 1px solid #1e293b;
-            padding-top: 18px;
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            font-size: 10px;
-            color: #94a3b8;
-          }
-          .urdu-text {
-            font-family: 'Noto Nastaliq Urdu', serif;
-            direction: rtl;
-            text-align: right;
-            line-height: 2.2;
-            font-size: 12px;
-            color: #334155;
-          }
-          .boq-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 10.5px;
-          }
-          .boq-table th {
-            background-color: #0f172a;
-            color: #ffffff;
-            text-align: left;
-            padding: 7px 10px;
-            font-weight: 750;
-            text-transform: uppercase;
-            font-size: 8.5px;
-            letter-spacing: 0.05em;
-          }
-          .boq-table td {
-            padding: 6px 10px;
-          }
-          @page {
-            size: A4 portrait;
-            margin: 0;
           }
           @media print {
-            body {
-              background-color: #ffffff !important;
-            }
-            .action-bar {
-              display: none !important;
-            }
-            .pages-container {
-              padding: 0 !important;
-              gap: 0 !important;
-            }
-            .page {
-              box-shadow: none !important;
-              border: none !important;
-              margin: 0 !important;
-              page-break-after: always !important;
-              page-break-inside: avoid !important;
-              float: none;
-              padding: 15mm 20mm !important;
-              width: 210mm !important;
-              height: 297mm !important;
-              box-sizing: border-box !important;
-            }
-            .page.cover {
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-              background: linear-gradient(145deg, #020617 0%, #0f172a 100%) !important;
-            }
+            .action-bar { display: none !important; }
+            body { padding: 0; }
+            .container { border: none; box-shadow: none; padding: 10px; }
           }
         </style>
       </head>
       <body>
         <div class="action-bar">
-          <span>☀️ <strong>Sunchaser Proposal Deck:</strong> Multi-Quote Version (${quoteObj.id})</span>
-          <button class="btn-print" onclick="window.print()">Print / Download PDF</button>
+          <div><strong>Sunchaser Technical Sizing Report</strong> - Client: ${leadObj.name}</div>
+          <button class="btn-print" onclick="window.print()">Print Report</button>
         </div>
+        <div class="container">
+          <div class="header">
+            <div>
+              <div class="title">☀️ SUNCHASER ENERGY SYSTEMS</div>
+              <div class="subtitle">Technical Capacity & Sizing Assessment Summary</div>
+            </div>
+            <div style="text-align: right; font-size: 10px;">
+              <strong>Date:</strong> ${new Date().toLocaleDateString()}<br/>
+              <strong>Lead ID:</strong> ${leadObj.id}
+            </div>
+          </div>
+          
+          <div class="grid-2">
+            <div class="card">
+              <div class="section-title">Client Demographics & Details</div>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr><td style="padding: 2px 0;"><strong>Client Name:</strong></td><td>${leadObj.name}</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Phone:</strong></td><td>${leadObj.phone}</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Email:</strong></td><td>${leadObj.email || 'N/A'}</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Address:</strong></td><td>${leadObj.address || 'N/A'}</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Location:</strong></td><td>${leadObj.location || 'Lahore'}</td></tr>
+              </table>
+            </div>
+            
+            <div class="card">
+              <div class="section-title">AI Sizer Performance Estimates</div>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr><td style="padding: 2px 0;"><strong>System Size:</strong></td><td class="metric-badge">${sizeKw} kW DC</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Panel Count:</strong></td><td>${count} Panels</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Monthly Bill Context:</strong></td><td>${formatPKR(leadObj.monthlyBill || 0)}</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Est. Monthly Generation:</strong></td><td>${Math.round(sizeKw * 125).toLocaleString()} kWh</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Est. Annual Savings:</strong></td><td style="color: #047857; font-weight: 700;">${formatPKR(estimatedSavings)}</td></tr>
+                <tr><td style="padding: 2px 0;"><strong>Simple Payback Period:</strong></td><td>${payback} Years</td></tr>
+              </table>
+            </div>
+          </div>
+          
+          <div class="card" style="margin-top: 15px;">
+            <div class="section-title">Hardware Configuration & Specifications Recommendation</div>
+            <table class="table-summary">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Description</th>
+                  <th>Specs / Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Solar Panels</strong></td>
+                  <td>${quoteObj.panelType || 'Premium Monocrystalline Panels'}</td>
+                  <td>Qty: ${count} (${quoteObj.panelWattage || 580}W modules)</td>
+                </tr>
+                <tr>
+                  <td><strong>Inverter Unit</strong></td>
+                  <td>${quoteObj.inverterType || 'Grid-tied Cloud Sync Inverter'}</td>
+                  <td>Dual MPPT phase synchronization technology</td>
+                </tr>
+                <tr>
+                  <td><strong>Structure Type</strong></td>
+                  <td>${quoteObj.structureType || 'Standard Mount'}</td>
+                  <td>Mughal Steel L3 wind-shear compliant framing</td>
+                </tr>
+                <tr>
+                  <td><strong>Battery Option</strong></td>
+                  <td>${quoteObj.batteryCapacity !== 'None' && quoteObj.batteryCapacity ? quoteObj.batteryCapacity : 'No storage option configured'}</td>
+                  <td>LFP high-safety storage module</td>
+                </tr>
+                <tr>
+                  <td><strong>Net Metering</strong></td>
+                  <td>${quoteObj.netMeteringRequired === 'Yes' || leadObj.backupRequirement === 'None' ? 'Yes (NEPRA standard bidirectional meter)' : 'No'}</td>
+                  <td>Application filing included</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="card" style="margin-top: 15px; border-left: 4px solid #f59e0b;">
+            <div class="section-title" style="color: #b45309; border-bottom: none; margin-bottom: 4px;">Technical Feasibility Notes</div>
+            <p style="margin: 0; font-size: 10px; color: #475569;">
+              This sizing assessment is simulated based on local insolation statistics for ${leadObj.location || 'Lahore'} (insolation index: 4.8 hr/day). Actual energy yield depends on panel clean routines, shade obstacles, tilt parameters, and LESCO grid uptime. Net-metering approval requires a valid three-phase connection and sanctioned load match.
+            </p>
+          </div>
+          
+          <div style="margin-top: 30px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 15px; font-size: 9px; color: #64748b;">
+            <strong>Sunchaser Energy Systems Staging Division</strong> | DHA Phase 6, Lahore | Hotlines: 0309-0236666, 0330-7776444
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
 
-        <div class="pages-container">
+  // Global Header & Footer configs
+  const globalHeader = (activeState.settings && activeState.settings.globalPdfHeader) || {
+    enabled: true,
+    text: "☀️ SUNCHASER ENERGY",
+    logoUrl: "",
+    logoSize: "25px",
+    lineColor: "#f59e0b",
+    alignment: "left"
+  };
 
-          <!-- PAGE 1: COVER PAGE -->
-          <div class="page cover">
-            <div class="cover-brand">
-              <div class="cover-logo">☀️</div>
-              <div>
-                <div style="font-weight: 800; font-size: 22px; letter-spacing: -0.025em; color: #ffffff;">SUNCHASER ENERGY</div>
-                <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #f59e0b;">Generational Infrastructure</div>
+  const globalFooter = (activeState.settings && activeState.settings.globalPdfFooter) || {
+    enabled: true,
+    text: "Sunchaser Energy Systems Proposal",
+    lineColor: "#cbd5e1",
+    alignment: "left"
+  };
+
+  // Resolve template pages from database if available
+  const templateId = options.templateId || "tmpl-1";
+  const allDbPages = activeState.quoteTemplatePages || [];
+  const dbPages = allDbPages.filter((p: any) => p.templateId === templateId);
+
+  const getPageConfig = (pageType: string, defaultTitle: string, defaultBody: string) => {
+    const dbPage = dbPages.find((p: any) => p.pageType === pageType);
+    if (dbPage) {
+      const rawBody = dbPage.bodyText || dbPage.body_text || "";
+      const ext = parseExtendedSettings(rawBody, pageType);
+      return {
+        enabled: dbPage.isEnabled !== false,
+        title: dbPage.title !== undefined && dbPage.title !== null ? dbPage.title : defaultTitle,
+        bodyText: dbPage ? ext.bodyText : defaultBody,
+        imageUrl: dbPage.imageUrl || dbPage.image_url || "",
+        bgImageUrl: dbPage.bgImageUrl || dbPage.bg_image_url || ""
+      };
+    }
+    return { enabled: true, title: defaultTitle, bodyText: defaultBody, imageUrl: "", bgImageUrl: "" };
+  };
+
+  const getIncludedFlag = (pageType: string) => {
+    if (options.includedPages && Array.isArray(options.includedPages)) {
+      return options.includedPages.includes(pageType);
+    }
+    return true; // default to true if no inclusion array provided
+  };
+
+  // 1. Cover Page Config
+  const pCover = getPageConfig("cover", "Sunchaser Energy Systems", "Generational Energy Independence\\nTechnical Feasibility & Engineering Quotation");
+  // 2. Profile Page Config
+  const pProfile = getPageConfig("profile", "Sunchaser Group Profile", "Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry.");
+  // 3. Social QR Page Config
+  const pQr = getPageConfig("qr", "Why Partner with Sunchaser?", "Tier-1 Direct Imported Hardware: All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates.");
+  // 4. CEO Page Config
+  const pCeo = getPageConfig("ceo", "Executive Board Assurances", "");
+  // 5. Structure Page Config
+  const pStructure = getPageConfig("structure", "Mounting Structure & Fabrication Details", "Premium Galvanized Mounting Structure, wind resistant up to 130 km/h.");
+  // 6. Terms Page Configs
+  const pTerms1 = getPageConfig("terms1", "Terms, Conditions & Regulations (1/2)", "");
+  const pTerms2 = getPageConfig("terms2", "Terms, Conditions & Regulations (2/2)", "");
+  // 7. Signoff Config
+  const pSignoff = getPageConfig("signoff", "Client Verification & Sign-off", "");
+  // 8. Bank Config
+  const pBank = getPageConfig("bank", "Official Payment Channels", "");
+  // 9. Final Page Config
+  const pFinal = getPageConfig("final", "Sunchaser Energy Systems", "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings.");
+
+  // Date Calculations
+  const qDate = quoteObj.quoteDate ? new Date(quoteObj.quoteDate) : new Date();
+  const validityDate = new Date(qDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const expiryDateString = validityDate.toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' });
+  const quoteDateString = qDate.toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  // Bank accounts mapping (Page 10)
+  const officialBankAccounts = [
+    { bankName: "Allied Bank Limited", accountTitle: "SUNCHASER ENERGY", accountNumber: "04190010112276940012", iban: "PK81ABPA0010112276940012" },
+    { bankName: "Bank Alfalah Limited", accountTitle: "AL ADAM", accountNumber: "55265001858603", iban: "PK12ALFH5526005001858603" },
+    { bankName: "Allied Bank Limited", accountTitle: "SIGNALS GLOBAL", accountNumber: "09090010112284650035", iban: "N/A" },
+    { bankName: "Meezan Bank Limited", accountTitle: "HELIOS SOLAR ENERGY", accountNumber: "02490109527492", iban: "PK49MEZN0002490109527492" }
+  ];
+  const dbBankAccounts = activeState.bankAccounts || [];
+  const bankAccountsList = dbBankAccounts.length > 0 ? dbBankAccounts.filter((b: any) => b.isActive !== false) : officialBankAccounts;
+
+  let bankAccountsHtml = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 15px;">`;
+  bankAccountsList.forEach((acc: any, index: number) => {
+    bankAccountsHtml += `
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>${index + 1}. ${acc.bankName || acc.bank_name}</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">${acc.accountTitle || acc.account_title || acc.title}</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${acc.accountNumber || acc.account_number || acc.accountNo}</span></div>
+        ${acc.iban ? `<div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> ${acc.iban}</div>` : ''}
+      </div>
+    `;
+  });
+  bankAccountsHtml += `</div>`;
+
+  // Company Terms (Page 7 & Page 8)
+  const defaultTerms = [
+    "Quotation validity: 3 days from date of issuance.",
+    "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
+    "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
+    "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
+    "Work will commence within 3 days after receipt of the advance payment.",
+    "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
+    "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
+    "Client interference: Any on-site construction delays caused by the client will affect the completion timeline.",
+    "Grid connection: Net metering facilitation requires valid property documents and sanctioned load compliance.",
+    "System earthing: Dedicated chemical earthing bores will be created for DC, AC, and frame grounding safety.",
+    "Smart online monitoring: Active monitoring requires stable client Wi-Fi connection at the inverter site.",
+    "Wi-Fi requirement: Customer must provide stable continuous Wi-Fi access for monitoring data synch.",
+    "Client scope of work: Providing masonry work access, temporary electricity & water during construction.",
+    "Civil work exclusions: Cutting of structural concrete slabs or custom aesthetic tiles is excluded unless quoted.",
+    "Net metering clearance remains the client's responsibility if document verification faults occur.",
+    "Panel washing advisory: Clean arrays bi-weekly for optimal generation yield performance.",
+    "Force majeure: Sunchaser is not liable for delays caused by national strikes, weather anomalies, or utility board freezes."
+  ];
+  const dbTerms = activeState.companyTerms || [];
+  const termsList = dbTerms.length > 0 ? dbTerms.map((t: any) => t.termText || t.term_text) : defaultTerms;
+
+  let tcPage1Html = "";
+  let tcPage2Html = "";
+  termsList.forEach((clause: string, index: number) => {
+    const formattedClause = `
+      <div style="display: flex; margin-bottom: 10px; font-size: 11px; line-height: 1.5; align-items: flex-start;">
+        <span style="font-weight: 800; color: #d97706; margin-right: 6px; min-width: 20px;">${index + 1}.</span>
+        <span style="color: #334155; font-weight: 500;">${clause}</span>
+      </div>
+    `;
+    if (index < 9) {
+      tcPage1Html += formattedClause;
+    } else {
+      tcPage2Html += formattedClause;
+    }
+  });
+
+  // Structure Graphic SVGs
+  const selectedStructKey = String(quoteObj.selectedStructure || quoteObj.structureType || "standard").toLowerCase();
+  const dbStructs = activeState.structureDescriptions || [];
+  const customStruct = quoteObj.customStructure || {};
+  const structDetails = dbStructs.find((s: any) => s.structureType === selectedStructKey) || {
+    title: selectedStructKey === "custom" ? (customStruct.name || "Custom Mounting Details") : (selectedStructKey === "elevated" ? "Elevated Frame Mount" : (selectedStructKey === "girder" ? "Heavy-Duty Mughal Girder Frame" : "Standard A-Frame Mount")),
+    descriptionEn: selectedStructKey === "custom" ? (customStruct.descEn || "Custom structure specifications configured in BOQ.") : (selectedStructKey === "elevated" ? "10ft Roof clearance hot-dip galvanized elevated structure frame." : (selectedStructKey === "girder" ? "Heavy-Duty Mughal Girder Frame supporting extreme wind shear." : "Premium Galvanized Mounting Structure, wind resistant up to 130 km/h.")),
+    descriptionUr: selectedStructKey === "custom" ? (customStruct.descUr || "کسٹم ڈیزائن ماونٹنگ سٹرکچر") : (selectedStructKey === "elevated" ? "10 فٹ چھت کی اونچائی کا ہاٹ ڈِپ گیلوانائزڈ ایلیویٹڈ سٹرکچر فریم۔" : (selectedStructKey === "girder" ? "ہیوی ڈیوٹی مغل گارڈر فریم جو شدید ہوا کے دباؤ کو برداشت کرتا ہے۔" : "پریمیم گیلوانائزڈ ماونٹنگ سٹرکچر، 130 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔")),
+    materialType: selectedStructKey === "custom" ? (customStruct.materialType || "Custom structure material") : (selectedStructKey === "elevated" ? "Hot-dip Galvanized Steel" : (selectedStructKey === "girder" ? "Mughal Girder Steel" : "Galvanized L3 Steel")),
+    weight: selectedStructKey === "custom" ? (customStruct.weight || "Custom Weight") : (selectedStructKey === "girder" ? "1600g/ft Structural Load" : "Standard Weight"),
+    windRating: selectedStructKey === "custom" ? (customStruct.windRating || "Custom wind shear certification") : (selectedStructKey === "girder" ? "150 km/h" : "130 km/h"),
+    warranty: selectedStructKey === "custom" ? (customStruct.warranty || "Custom Warranty") : (selectedStructKey === "girder" ? "15 Years Warranty" : "10 Years Warranty")
+  };
+
+  let structureSvg = "";
+  if (selectedStructKey === "elevated") {
+    structureSvg = `
+      <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
+        <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
+        <line x1="90" y1="120" x2="90" y2="55" stroke="#475569" stroke-width="5" />
+        <line x1="190" y1="120" x2="190" y2="30" stroke="#475569" stroke-width="5" />
+        <line x1="60" y1="62" x2="220" y2="22" stroke="#d97706" stroke-width="6" />
+        <rect x="75" y="48" width="35" height="10" transform="rotate(-14, 90, 53)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="125" y="36" width="35" height="10" transform="rotate(-14, 140, 41)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="175" y="24" width="35" height="10" transform="rotate(-14, 190, 29)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="80" y="115" width="20" height="8" fill="#64748b" />
+        <rect x="180" y="115" width="20" height="8" fill="#64748b" />
+        <text x="140" y="140" text-anchor="middle" font-size="10" fill="#64748b" font-weight="700">Elevated Frame (10ft Roof clearance hot-dip galvanized)</text>
+      </svg>
+    `;
+  } else if (selectedStructKey === "girder") {
+    structureSvg = `
+      <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
+        <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
+        <rect x="85" y="45" width="12" height="75" fill="#334155" />
+        <rect x="185" y="20" width="12" height="100" fill="#334155" />
+        <line x1="50" y1="52" x2="220" y2="18" stroke="#b45309" stroke-width="9" />
+        <rect x="65" y="38" width="40" height="12" transform="rotate(-11.5, 85, 44)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="115" y="28" width="40" height="12" transform="rotate(-11.5, 135, 34)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="165" y="18" width="40" height="12" transform="rotate(-11.5, 185, 24)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <text x="140" y="140" text-anchor="middle" font-size="10" fill="#b45309" font-weight="800">Heavy-Duty Mughal Girder Frame (1600g/ft Structural Load)</text>
+      </svg>
+    `;
+  } else if (selectedStructKey === "custom") {
+    structureSvg = `
+      <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
+        <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
+        <line x1="70" y1="120" x2="100" y2="60" stroke="#475569" stroke-width="4" />
+        <line x1="140" y1="120" x2="140" y2="60" stroke="#475569" stroke-width="4" />
+        <line x1="210" y1="120" x2="180" y2="60" stroke="#475569" stroke-width="4" />
+        <line x1="50" y1="60" x2="230" y2="60" stroke="#d97706" stroke-width="5" stroke-dasharray="4,4" />
+        <rect x="70" y="52" width="40" height="8" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="120" y="52" width="40" height="8" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="170" y="52" width="40" height="8" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <text x="140" y="140" text-anchor="middle" font-size="10" fill="#d97706" font-weight="700">Custom Engineering Layout Specifications</text>
+      </svg>
+    `;
+  } else {
+    structureSvg = `
+      <svg width="280" height="150" viewBox="0 0 280 150" style="display: block; margin: 15px auto;">
+        <line x1="30" y1="120" x2="250" y2="120" stroke="#94a3b8" stroke-width="3" />
+        <line x1="100" y1="120" x2="100" y2="85" stroke="#475569" stroke-width="4" />
+        <line x1="170" y1="120" x2="170" y2="55" stroke="#475569" stroke-width="4" />
+        <line x1="70" y1="98" x2="200" y2="40" stroke="#0f172a" stroke-width="5" />
+        <rect x="80" y="82" width="30" height="9" transform="rotate(-24, 95, 86)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="120" y="64" width="30" height="9" transform="rotate(-24, 135, 68)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <rect x="160" y="46" width="30" height="9" transform="rotate(-24, 175, 50)" fill="#1e3a8a" stroke="#ffffff" stroke-width="1" />
+        <text x="140" y="140" text-anchor="middle" font-size="10" fill="#475569" font-weight="700">Standard A-Frame (Direct Roof Mount Layout)</text>
+      </svg>
+    `;
+  }
+
+  // 17 CEO messages
+  const defaultCeos = [
+    { name: "Muhammad Allauddin", designation: "CEO, Engineering & Operations", message: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation. We refuse to cut corners on material gauges, hot-dip zinc coating parameters, wire thicknesses, or chemical earthing bores. Every layout is physically verified, and every termination complies with ISO standards. Sunchaser means ultimate power security." },
+    { name: "Barrister Raza Khan Niazi", designation: "CEO Strategy & Innovation / Compliance", message: "Liaison with utility boards and regulatory licensing can be daunting for clients. Sunchaser handles the entire paperwork and NEPRA filing process transparently. We promise that all governmental files are processed legally, demand notices are audited, and net metering activations are completed with maximal efficiency." }
+  ];
+  const dbCeos = activeState.ceoMessages || [];
+  const ceoList = dbCeos.length > 0 ? dbCeos : defaultCeos;
+
+  // LESCO / Net Metering Settings (Page 9)
+  const lescoObj = quoteObj.lescoSettings || { meterNo: "", consumerNo: "", sanctionedLoad: "", phaseType: "Three Phase" };
+  const netMeteringText = quoteObj.netMeteringRequired || "Yes";
+
+  // ----------------------------------------------------
+  // Dynamic Template Page Assembly & Sort Order Logic
+  // ----------------------------------------------------
+  const getIncludedFlagForPageType = (pageType: string) => {
+    if (pageType === 'terms1' || pageType === 'terms2') {
+      return getIncludedFlag('terms');
+    }
+    if (pageType.startsWith('structure_')) {
+      return getIncludedFlag('structure');
+    }
+    return getIncludedFlag(pageType);
+  };
+
+  const getStructurePageType = () => {
+    if (selectedStructKey === "elevated") return "structure_elevated";
+    if (selectedStructKey === "girder") return "structure_girder";
+    if (selectedStructKey === "custom") return "structure_custom";
+    return "structure_standard";
+  };
+  const activeStructurePageType = getStructurePageType();
+
+  // Load all enabled quote template pages for this template from Supabase / DB
+  const enabledDbPages = dbPages.filter((p: any) => {
+    if (p.isEnabled === false || p.is_enabled === false) return false;
+    const type = p.pageType || p.page_type || "";
+    if (!getIncludedFlagForPageType(type)) return false;
+    if (type.startsWith('structure_') && type !== activeStructurePageType) return false;
+    return true;
+  });
+
+  const pagesList: any[] = enabledDbPages.map((p: any) => ({
+    type: p.pageType || p.page_type,
+    sortOrder: Number(p.sortOrder || p.sort_order || 0),
+    dbPage: p
+  }));
+
+  // Add virtual BOQ page if included
+  if (getIncludedFlag('boq')) {
+    pagesList.push({
+      type: 'boq',
+      sortOrder: 8.5, // Placed between structures (5,6,7,8) and terms1 (9)
+      dbPage: null
+    });
+  }
+
+  // Sort by sortOrder
+  pagesList.sort((a, b) => a.sortOrder - b.sortOrder);
+
+  // Diagnostic Logs
+  console.log(`[PDF Rendering Diagnostics]
+  - selected template id: ${templateId}
+  - number of pages loaded: ${dbPages.length}
+  - enabled page count: ${enabledDbPages.length}
+  `);
+
+  const defaultPageConfigs: Record<string, { title: string; bodyText: string }> = {
+    cover: { title: "Technical Feasibility & Engineering Quotation", bodyText: "Generational Energy Independence\\nTechnical Feasibility & Engineering Quotation" },
+    profile: { title: "Sunchaser Group Profile", bodyText: "Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry." },
+    qr: { title: "Why Partner with Sunchaser?", bodyText: "Tier-1 Direct Imported Hardware: All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates." },
+    ceo: { title: "Executive Board Assurances", bodyText: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation." },
+    structure_standard: { title: "Mounting Structure - Standard A-Frame", bodyText: "Standard Galvanized L3 14 Gauge structure with Rawal anchors wind-resistant up to 130 km/h." },
+    structure_elevated: { title: "Mounting Structure - Elevated Steel Frame", bodyText: "10ft Roof clearance hot-dip galvanized elevated structure frame wind-resistant up to 130 km/h." },
+    structure_girder: { title: "Mounting Structure - Heavy Mughal Girder Frame", bodyText: "Heavy duty C-Channel girder steel columns and girders wind-resistant up to 150 km/h." },
+    structure_custom: { title: "Mounting Structure - Custom Structural Drawing", bodyText: "Custom designed mounting rails and brackets based on site constraints and calculations." },
+    terms1: { title: "Terms, Conditions & Regulations (1/2)", bodyText: "" },
+    terms2: { title: "Terms, Conditions & Regulations (2/2)", bodyText: "" },
+    signoff: { title: "Client Verification & Sign-off", bodyText: "" },
+    bank: { title: "Official Payment Channels", bodyText: "" },
+    final: { title: "Sunchaser Energy Systems", bodyText: "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings." }
+  };
+
+  const defaultAutoSizerIds = [
+    'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+    'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+    'h-3', 'db_box_row', 's-3',
+    'h-4', 'supplies_row', 's-4',
+    'h-5', 'earthing_bore_row', 's-5',
+    'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+    'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+  ];
+
+  let pagesHtml = "";
+  pagesList.forEach((pageItem, pageIndex) => {
+    const pageType = pageItem.type;
+    const defaults = defaultPageConfigs[pageType] || { title: "", bodyText: "" };
+    
+    // Resolve page title and body, prioritizing db template fields and falling back to default values
+    const dbPage = pageItem.dbPage;
+    const rawBody = (dbPage && (dbPage.bodyText || dbPage.body_text)) || "";
+    const ext = parseExtendedSettings(rawBody, pageType);
+
+    const p = {
+      title: (dbPage && dbPage.title !== undefined && dbPage.title !== null) ? dbPage.title : defaults.title,
+      bodyText: dbPage ? ext.bodyText : defaults.bodyText,
+      imageUrl: (dbPage && (dbPage.imageUrl || dbPage.image_url)) || "",
+      bgImageUrl: (dbPage && (dbPage.bgImageUrl || dbPage.bg_image_url)) || ""
+    };
+
+    // Resolve header settings
+    let hEnabled = globalHeader.enabled !== false;
+    let hText = globalHeader.text || "☀️ SUNCHASER ENERGY";
+    let hLogoUrl = globalHeader.logoUrl || "";
+    let hLogoSize = globalHeader.logoSize || "25px";
+    let hLineColor = globalHeader.lineColor || "#f59e0b";
+    let hAlignment = globalHeader.alignment || "left";
+
+    if (ext.header.mode === 'custom') {
+      hEnabled = ext.header.enabled !== false;
+      hText = ext.header.text || "";
+      hLogoUrl = ext.header.logoUrl || "";
+      hLogoSize = ext.header.logoSize || "25px";
+      hLineColor = ext.header.lineColor || "#cbd5e1";
+      hAlignment = ext.header.alignment || "left";
+    } else if (ext.header.mode === 'disabled') {
+      hEnabled = false;
+    }
+
+    // Resolve footer settings
+    let fEnabled = globalFooter.enabled !== false;
+    let fText = globalFooter.text || "Sunchaser Energy Systems Proposal";
+    let fLineColor = globalFooter.lineColor || "#cbd5e1";
+    let fAlignment = globalFooter.alignment || "left";
+
+    if (ext.footer.mode === 'custom') {
+      fEnabled = ext.footer.enabled !== false;
+      fText = ext.footer.text || "";
+      fLineColor = ext.footer.lineColor || "#cbd5e1";
+      fAlignment = ext.footer.alignment || "left";
+    } else if (ext.footer.mode === 'disabled') {
+      fEnabled = false;
+    }
+
+    let headerHtml = "";
+    if (hEnabled) {
+      let justifyValue = "space-between";
+      let alignValue = "center";
+      let flexDir = "row";
+      if (hAlignment === 'center') {
+        justifyValue = "center";
+        flexDir = "column";
+      } else if (hAlignment === 'right') {
+        justifyValue = "flex-end";
+        flexDir = "row-reverse";
+      }
+
+      headerHtml = `
+        <div class="page-header-logo" style="display: flex; flex-direction: ${flexDir}; justify-content: ${justifyValue}; align-items: ${alignValue}; border-bottom: 1.5px solid ${hLineColor}; padding-bottom: 6px; margin-bottom: 12px; width: 100%;">
+          <span class="header-company-name" style="display: flex; align-items: center; gap: 8px;">
+            ${hLogoUrl ? `<img src="${hLogoUrl}" style="max-height: ${hLogoSize}; object-fit: contain;" alt="Logo" />` : ''}
+            ${hText ? `<span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">${hText}</span>` : ''}
+          </span>
+          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page ${pageIndex + 1}</span>
+        </div>
+      `;
+    }
+
+    let footerHtml = "";
+    if (fEnabled) {
+      let justifyValue = "space-between";
+      if (fAlignment === 'center') justifyValue = "center";
+      else if (fAlignment === 'right') justifyValue = "flex-end";
+
+      footerHtml = `
+        <div class="page-footer" style="display: flex; justify-content: ${justifyValue}; align-items: center; border-top: 1px solid ${fLineColor}; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%;">
+          <span>${fText}</span>
+          ${fAlignment !== 'center' ? `<span style="font-size: 8px; font-family: monospace;">Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>` : ''}
+        </div>
+      `;
+    }
+
+    const pageStyleAttr = p.bgImageUrl ? `style="background: url('${p.bgImageUrl}') no-repeat center center / cover;"` : ``;
+
+    // Compile dynamic body images
+    let bodyImagesHtml = "";
+    let absoluteImagesHtml = "";
+    
+    if (Array.isArray(ext.bodyImages) && ext.bodyImages.length > 0) {
+      const sortedImages = [...ext.bodyImages].sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+      sortedImages.forEach((img: any) => {
+        if (!img.url) return;
+        const opacityStyle = img.opacity !== undefined ? `opacity: ${img.opacity};` : "";
+        const widthStyle = img.width ? `width: ${img.width};` : "width: 150px;";
+        
+        if (img.position === 'absolute') {
+          const coords = `
+            top: ${img.top || 'auto'};
+            left: ${img.left || 'auto'};
+            right: ${img.right || 'auto'};
+            bottom: ${img.bottom || 'auto'};
+          `;
+          absoluteImagesHtml += `
+            <!-- bodyImages -->
+            <img class="bodyImages" src="${img.url}" style="position: absolute; ${coords} ${widthStyle} ${opacityStyle} object-fit: contain; pointer-events: none; z-index: 5;" alt="Overlay Image" />
+          `;
+        } else {
+          // Block positioning
+          const alignStyle = img.alignment === 'center' ? 'margin: 10px auto; display: block;' : (img.alignment === 'right' ? 'margin: 10px 0 10px auto; display: block;' : 'margin: 10px auto 10px 0; display: block;');
+          bodyImagesHtml += `
+            <div style="width: 100%;">
+              <!-- bodyImages -->
+              <img class="bodyImages" src="${img.url}" style="${widthStyle} ${opacityStyle} ${alignStyle} object-fit: contain;" alt="Body Image" />
+            </div>
+          `;
+        }
+      });
+    }
+
+    // Render full page image only if enabled
+    if (ext.layoutMode === 'full_page_image' || ext.layoutMode === 'image_only') {
+      pagesHtml += `
+        <div class="page full-page-image-only" style="background: ${p.bgImageUrl ? `url('${p.bgImageUrl}') no-repeat center center / cover` : '#ffffff'}; border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always;">
+          ${absoluteImagesHtml}
+        </div>
+      `;
+    } else {
+      if (pageType === 'cover') {
+        pagesHtml += `
+          <div class="page cover" style="background: ${p.bgImageUrl ? `url('${p.bgImageUrl}') no-repeat center center / cover` : '#ffffff'}; color: #0f172a; padding: 25mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-direction: column; justify-content: space-between; position: relative;">
+            ${absoluteImagesHtml}
+            <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                ${p.imageUrl ? `
+                  <img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
+                ` : `
+                  <div style="background-color: #0f172a; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
+                  <div>
+                    <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">SUNCHASER ENERGY</div>
+                    <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #d97706; font-weight: bold;">Generational Infrastructure</div>
+                  </div>
+                `}
               </div>
             </div>
 
-            <div>
-              <div class="cover-title">
-                ${quoteObj.systemSizekW}kW ${quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
+            <div style="margin-top: 40px;">
+              <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a;">
+                ${quoteObj.systemSizekW || 15}kW ${quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
               </div>
-              <div class="cover-subtitle">Technical Feasibility & Engineering Quotation</div>
+              <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px;">
+                ${p.title}
+              </div>
+              <p style="font-size: 12px; color: #475569; margin-top: 10px; line-height: 1.6; max-width: 500px;">
+                ${p.bodyText.replace(/\\n/g, '<br/>')}
+              </p>
               
-              <div class="cover-meta">
-                <div class="cover-meta-grid">
+              ${bodyImagesHtml}
+              
+              <div style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 35px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
                   <div>
-                    <div class="cover-meta-label">Prepared For</div>
-                    <div class="cover-meta-val" style="font-size: 15px;">${quoteObj.clientName || lead.name}</div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
+                    <div style="font-weight: 700; color: #0f172a; margin-top: 4px; font-size: 13px;">${quoteObj.clientName || leadObj.name}</div>
                   </div>
                   <div>
-                    <div class="cover-meta-label">Proposal Expiry</div>
-                    <div class="cover-meta-val" style="color: #f59e0b;">3-Day Validity (Exp: ${expiryDateString})</div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Proposal Validity</div>
+                    <div style="font-weight: 700; color: #d97706; margin-top: 4px;">3-Day Validity (Exp: ${expiryDateString})</div>
                   </div>
                   <div>
-                    <div class="cover-meta-label">Site Area</div>
-                    <div class="cover-meta-val">${quoteObj.cityArea || lead.location || 'Lahore'}</div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Site Location</div>
+                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.cityArea || leadObj.location || 'Lahore'}</div>
                   </div>
                   <div>
-                    <div class="cover-meta-label">Technical Advisor / BDM</div>
-                    <div class="cover-meta-val">${quoteObj.bdmName || lead.assignedSalesperson || 'Sarah Connor'}</div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Technical Advisor / BDM</div>
+                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.bdmName || leadObj.assignedSalesperson || 'Sarah Connor'}</div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div class="cover-footer">
+            <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto;">
               <div>
-                <div style="font-weight: 700; color: #ffffff; margin-bottom: 2px;">Sunchaser Energy Lahore Office</div>
-                <div style="font-size: 9px; line-height: 1.4;">${settings.officeAddress || 'Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore'}</div>
-                <div style="font-size: 9px; line-height: 1.4; color: #f59e0b;">Hotlines: ${settings.phoneNumbers || '0309-0236666, 0330-7776444'}</div>
+                <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">Sunchaser Energy Lahore Office</div>
+                <div>${settings.officeAddress}</div>
+                <div style="color: #d97706;">Hotlines: ${settings.phoneNumbers}</div>
               </div>
               <div style="text-align: right;">
-                <div style="font-weight: 700; color: #ffffff;">Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}-${quoteObj.id.toUpperCase()}</div>
-                <div>Date of Issuance: ${quoteDateString}</div>
+                <div style="font-weight: 700; color: #0f172a;">Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}-${(quoteObj.id || 'DRAFT').toUpperCase()}</div>
+                <div>Date: ${quoteDateString}</div>
               </div>
             </div>
           </div>
+        `;
+      }
 
-          <!-- PAGE 2: GROUP Intro -->
-          <div class="page">
+      else if (pageType === 'profile') {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Sunchaser Group Profile</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 2 of 11</div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
+              
+              <div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 20px 0; font-weight: 500;">
+                ${p.bodyText.replace(/\\n/g, '<br/>')}
               </div>
 
-              <div style="font-size: 12.5px; line-height: 1.6; color: #475569; margin-bottom: 20px; font-weight: 500;">
-                Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry.
-              </div>
+              ${bodyImagesHtml}
 
-              <div class="grid-2">
+              <div class="grid-2" style="margin-top: 25px;">
                 <div class="card">
-                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 6px; font-size: 13px;">☀️ Sunchaser Energy</div>
-                  <div style="font-size: 11px; line-height: 1.5; color: #475569;">
+                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">☀️ Sunchaser Energy</div>
+                  <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
                     The core installation and smart grid integration arm. Responsible for site surveys, detailed electrical engineering designs, high-tension terminations, and smart telemetry commissioning.
                   </div>
                 </div>
                 <div class="card">
-                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 6px; font-size: 13px;">⚡ Helios Solar</div>
-                  <div style="font-size: 11px; line-height: 1.5; color: #475569;">
+                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">⚡ Helios Solar</div>
+                  <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
                     The design consultancy branch. Creates 3D shadow analysis, panel positioning arrays using dynamic CAD, and utility net metering simulation projections.
                   </div>
                 </div>
-                <div class="card" style="margin-top: 10px;">
-                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 6px; font-size: 13px;">🏗️ AL ADAM Steel</div>
-                  <div style="font-size: 11px; line-height: 1.5; color: #475569;">
+                <div class="card">
+                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🏗️ AL ADAM Steel</div>
+                  <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
                     Heavy mechanical fabrication plant. Produces heavy hot-dip galvanized frame mounts, standard structures, elevated configurations, and legendary Mughal Girder designs.
                   </div>
                 </div>
-                <div class="card" style="margin-top: 10px;">
-                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 6px; font-size: 13px;">🌐 Signals Global</div>
-                  <div style="font-size: 11px; line-height: 1.5; color: #475569;">
+                <div class="card">
+                  <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">🌐 Signals Global</div>
+                  <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
                     International procurement and shipping network. Authorizes direct clearance and imports of Tier-1 solar modules, Knox/Goodwe/Solis inverters, and battery packs.
                   </div>
                 </div>
               </div>
 
-              <div class="card dark" style="margin-top: 25px; text-align: center; padding: 18px;">
-                <div style="font-size: 10px; text-transform: uppercase; color: #f59e0b; font-weight: 800; letter-spacing: 0.05em;">Our Group Vision</div>
-                <div style="font-size: 13.5px; font-weight: 600; line-height: 1.5; margin-top: 8px; font-style: italic; color: #f8fafc;">
+              <div class="card" style="margin-top: 30px; text-align: center; border-left: 4px solid #f59e0b; background-color: #fafaf9;">
+                <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; letter-spacing: 0.05em;">Our Group Vision</div>
+                <div style="font-size: 13px; font-weight: 600; line-height: 1.5; margin-top: 6px; font-style: italic; color: #1c1917;">
                   "Empowering Pakistan with generational clean energy independence, combining premium imports with superior local engineering."
                 </div>
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 3: PARTNER BENEFITS -->
-          <div class="page">
+      else if (pageType === 'qr') {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Why Partner with Sunchaser?</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 3 of 11</div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
+
+              <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+                ${p.bodyText.replace(/\\n/g, '<br/>')}
               </div>
 
-              <div class="grid-2" style="margin-bottom: 24px; row-gap: 20px;">
-                <div style="display: flex; gap: 12px; align-items: flex-start;">
-                  <span style="font-size: 24px;">🏆</span>
+              ${bodyImagesHtml}
+
+              <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
+                <div style="display: flex; gap: 10px; align-items: flex-start;">
+                  <span style="font-size: 20px;">🏆</span>
                   <div>
-                    <div style="font-weight: 800; font-size: 13px; color: #0f172a; margin-bottom: 4px;">Tier-1 Direct Imported Hardware</div>
-                    <div style="font-size: 11px; color: #475569; line-height: 1.5;">
-                      All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates.
-                    </div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Direct Imported Tier-1 Hardware</div>
+                    <div style="font-size: 10px; color: #475569; line-height: 1.45;">Direct Clearance customs certificates for JA Solar, Jinko and Longi modules.</div>
                   </div>
                 </div>
-                <div style="display: flex; gap: 12px; align-items: flex-start;">
-                  <span style="font-size: 24px;">🔩</span>
+                <div style="display: flex; gap: 10px; align-items: flex-start;">
+                  <span style="font-size: 20px;">🔩</span>
                   <div>
-                    <div style="font-weight: 800; font-size: 13px; color: #0f172a; margin-bottom: 4px;">Indestructible Fabrication Mounts</div>
-                    <div style="font-size: 11px; color: #475569; line-height: 1.5;">
-                      We install heavy galvanized and girder frames designed to withstand 130 km/h wind shear. Standard, Elevated, or heavy custom structural spans.
-                    </div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Galvanized mechanical structure</div>
+                    <div style="font-size: 10px; color: #475569; line-height: 1.45;">Heavy hot-dip galvanized and girder frame designs engineered for 130 km/h wind shear.</div>
                   </div>
                 </div>
-                <div style="display: flex; gap: 12px; align-items: flex-start;">
-                  <span style="font-size: 24px;">📑</span>
+                <div style="display: flex; gap: 10px; align-items: flex-start;">
+                  <span style="font-size: 20px;">📑</span>
                   <div>
-                    <div style="font-weight: 800; font-size: 13px; color: #0f172a; margin-bottom: 4px;">Turnkey NEPRA & LESCO Net Metering</div>
-                    <div style="font-size: 11px; color: #475569; line-height: 1.5;">
-                      Our in-house corporate relations team manages all documentation, inspections, demand notices, green meter procurement, and LESCO commissioning.
-                    </div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">Complete NEPRA / LESCO Handling</div>
+                    <div style="font-size: 10px; color: #475569; line-height: 1.45;">Turnkey green meter licensing coordination directly managed by Sunchaser relations desk.</div>
                   </div>
                 </div>
-                <div style="display: flex; gap: 12px; align-items: flex-start;">
-                  <span style="font-size: 24px;">📲</span>
+                <div style="display: flex; gap: 10px; align-items: flex-start;">
+                  <span style="font-size: 20px;">📲</span>
                   <div>
-                    <div style="font-weight: 800; font-size: 13px; color: #0f172a; margin-bottom: 4px;">24/7 Smart Telemetry Portal</div>
-                    <div style="font-size: 11px; color: #475569; line-height: 1.5;">
-                      Track daily generation stats, battery health logs, grid export credits, and service tickets directly through the Sunchaser Customer app.
-                    </div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 2px;">24/7 Smart Telemetry App</div>
+                    <div style="font-size: 10px; color: #475569; line-height: 1.45;">Active monitoring for daily generation yield logs, export credits, and maintenance tickets.</div>
                   </div>
                 </div>
               </div>
 
-              <div class="card" style="margin-top: 30px; border: 1.5px dashed #cbd5e1; background-color: #f8fafc;">
-                <div style="font-weight: 800; color: #0f172a; font-size: 13px; margin-bottom: 12px; text-align: center;">Official Digital Channels & Portals</div>
-                <div style="display: flex; justify-content: space-around; align-items: center; padding: 10px 0;">
+              <div class="card" style="margin-top: 30px; border: 1px dashed #cbd5e1; background-color: #fafaf9;">
+                <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
+                <div style="display: flex; justify-content: space-around; align-items: center;">
                   <div style="text-align: center;">
-                    <svg width="85" height="85" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px dashed #cbd5e1; border-radius: 6px; display: block; margin: 0 auto;">
+                    <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
                       <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
                       <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
                       <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
@@ -2702,19 +3345,14 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
                       <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
                       <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
                       <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
-                      <rect x="40" y="10" width="10" height="10" fill="#0f172a" />
-                      <rect x="50" y="20" width="10" height="10" fill="#0f172a" />
                       <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
                       <rect x="60" y="40" width="10" height="20" fill="#0f172a" />
-                      <rect x="80" y="45" width="10" height="10" fill="#0f172a" />
                       <rect x="45" y="70" width="20" height="10" fill="#0f172a" />
-                      <rect x="75" y="85" width="15" height="10" fill="#0f172a" />
                     </svg>
-                    <div style="font-size: 9.5px; font-weight: 800; color: #475569; margin-top: 8px;">Customer Portal</div>
+                    <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Customer Portal</div>
                   </div>
-
                   <div style="text-align: center;">
-                    <svg width="85" height="85" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px dashed #cbd5e1; border-radius: 6px; display: block; margin: 0 auto;">
+                    <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
                       <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
                       <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
                       <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
@@ -2724,147 +3362,214 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
                       <rect x="0" y="70" width="30" height="30" fill="#0f172a" />
                       <rect x="5" y="75" width="20" height="20" fill="#ffffff" />
                       <rect x="10" y="80" width="10" height="10" fill="#0f172a" />
-                      <rect x="40" y="20" width="10" height="10" fill="#0f172a" />
-                      <rect x="50" y="40" width="10" height="10" fill="#0f172a" />
                       <rect x="35" y="45" width="15" height="15" fill="#f59e0b" />
-                      <rect x="60" y="70" width="10" height="20" fill="#0f172a" />
-                      <rect x="80" y="75" width="10" height="10" fill="#0f172a" />
+                      <rect x="40" y="60" width="20" height="10" fill="#0f172a" />
+                      <rect x="70" y="45" width="10" height="20" fill="#0f172a" />
                     </svg>
-                    <div style="font-size: 9.5px; font-weight: 800; color: #475569; margin-top: 8px;">Corporate Registry</div>
+                    <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Technician Dispatch</div>
                   </div>
                 </div>
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 4: CEO MESSAGE -->
-          <div class="page">
+      else if (pageType === 'ceo') {
+        const hasBodyImage = ext.bodyImages && ext.bodyImages.length > 0;
+        const cardHeight = hasBodyImage ? "130mm" : "155mm";
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Executive Board Assurances</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 4 of 11</div>
-              </div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
+              ${p.bodyText ? `<div style="font-size: 11px; margin-bottom: 12px; color: #475569;">${p.bodyText}</div>` : ''}
 
-              <div class="grid-2" style="margin-top: 10px;">
-                <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 185mm;">
+              ${bodyImagesHtml}
+
+              <div class="grid-2" style="margin-top: 15px;">
+                <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: ${cardHeight};">
                   <div>
-                    <div style="font-size: 26px; margin-bottom: 8px;">🛡️</div>
-                    <div style="font-weight: 800; font-size: 13px; color: #0f172a; margin-bottom: 2px;">Muhammad Allauddin</div>
-                    <div style="font-size: 8.5px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 12px; letter-spacing: 0.05em;">CEO, Engineering & Operations</div>
-                    <div style="font-size: 11px; line-height: 1.65; color: #475569; font-style: italic;">
-                      "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation. We refuse to cut corners on material gauges, hot-dip zinc coating parameters, wire thicknesses, or chemical earthing bores. Every layout is physically verified, and every termination complies with ISO standards. Sunchaser means ultimate power security."
+                    <div style="font-size: 22px; margin-bottom: 6px;">🛡️</div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">${ceoList[0].name}</div>
+                    <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">${ceoList[0].designation}</div>
+                    <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
+                      "${ceoList[0].message}"
                     </div>
                   </div>
-                  <div style="border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 15px; text-align: center;">
-                    <div style="font-family: 'Georgia', serif; font-size: 16px; font-style: italic; color: #1e293b; font-weight: 700;">Muhammad Allauddin</div>
-                    <div style="font-size: 8.5px; text-transform: uppercase; color: #94a3b8; margin-top: 4px; font-weight: bold;">Digital Signature Record</div>
+                  <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
+                    <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">${ceoList[0].name}</div>
+                    <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
                   </div>
                 </div>
 
-                <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: 185mm;">
+                <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: ${cardHeight};">
                   <div>
-                    <div style="font-size: 26px; margin-bottom: 8px;">⚖️</div>
-                    <div style="font-weight: 800; font-size: 13px; color: #0f172a; margin-bottom: 2px;">Barrister Raza Khan Niazi</div>
-                    <div style="font-size: 8.5px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 12px; letter-spacing: 0.05em;">CEO Strategy &amp; Innovation / Compliance</div>
-                    <div style="font-size: 11px; line-height: 1.65; color: #475569; font-style: italic;">
-                      "Liaison with utility boards and regulatory licensing can be daunting for clients. Sunchaser handles the entire paperwork and NEPRA filing process transparently. We promise that all governmental files are processed legally, demand notices are audited, and net metering activations are completed with maximal efficiency."
+                    <div style="font-size: 22px; margin-bottom: 6px;">⚖️</div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; margin-bottom: 1px;">${ceoList[1].name}</div>
+                    <div style="font-size: 8px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 10px; letter-spacing: 0.05em;">${ceoList[1].designation}</div>
+                    <div style="font-size: 10.5px; line-height: 1.6; color: #475569; font-style: italic;">
+                      "${ceoList[1].message}"
                     </div>
                   </div>
-                  <div style="border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 15px; text-align: center;">
-                    <div style="font-family: 'Georgia', serif; font-size: 16px; font-style: italic; color: #1e293b; font-weight: 700;">Barrister Raza Khan Niazi</div>
-                    <div style="font-size: 8.5px; text-transform: uppercase; color: #94a3b8; margin-top: 4px; font-weight: bold;">Digital Signature Record</div>
+                  <div style="border-top: 1px dashed #cbd5e1; padding-top: 8px; margin-top: 10px; text-align: center;">
+                    <div style="font-family: 'Georgia', serif; font-size: 13px; font-style: italic; color: #1e293b; font-weight: 700;">${ceoList[1].name}</div>
+                    <div style="font-size: 8px; text-transform: uppercase; color: #94a3b8; margin-top: 2px; font-weight: bold;">Digital Seal Verification</div>
                   </div>
                 </div>
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 5: STRUCTURE DESCRIPTION -->
-          <div class="page">
+      else if (pageType.startsWith('structure_')) {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Mounting Structure & Fabrication Details</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 5 of 11</div>
-              </div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
 
-              <div class="card" style="margin-bottom: 15px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                  <span style="font-weight: 800; font-size: 14px; color: #0f172a;">Selected Mounting Structure:</span>
-                  <span class="badge" style="font-size: 9.5px; padding: 4px 12px;">${quoteObj.selectedStructure || quoteObj.structureType || 'Standard'}</span>
+              <div class="card" style="margin: 15px 0 10px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-weight: 800; font-size: 12px; color: #0f172a;">Selected Structure Frame Type:</span>
+                  <span class="badge" style="font-size: 8px; padding: 2.5px 8px;">${structDetails.title}</span>
                 </div>
-                <div style="font-size: 11.5px; line-height: 1.55; color: #475569;">
+                <div style="font-size: 11px; line-height: 1.5; color: #475569;">
                   <strong>English Specification:</strong><br/>
-                  ${structDetails.en}
+                  ${p.bodyText || structDetails.descriptionEn}
                 </div>
               </div>
 
-              <div class="card" style="margin-bottom: 15px; border-left: 4px solid #f59e0b; padding: 12px 16px;">
-                <div style="font-size: 10px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 6px; text-align: right; letter-spacing: 0.05em;">ساختی تفصیلات (اردو)</div>
-                <div class="urdu-text">
-                  ${structDetails.ur}
+              ${bodyImagesHtml}
+
+              <div class="card" style="margin-bottom: 10px; border-left: 4px solid #f59e0b; padding: 10px 14px;">
+                <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 4px; text-align: right;">ساختی تفصیلات (اردو)</div>
+                <div class="urdu-text" style="font-size: 11.5px; line-height: 2;">
+                  ${structDetails.descriptionUr}
                 </div>
               </div>
 
-              <div class="grid-2" style="margin-bottom: 15px;">
-                <div class="card" style="font-size: 11px; line-height: 1.5;">
-                  <strong>Mechanical Design Parameters:</strong>
-                  <div style="margin-top: 6px; color: #475569;">
-                    • Material: ${structDetails.materialType || 'Galvanized L3 Steel'}<br/>
-                    • Calculated Weight: ${structDetails.weight || 'Standard Weight'}<br/>
-                    • Wind Shear Rating: ${structDetails.windRating || '130 km/h wind certified'}
+              <div class="grid-2" style="margin-bottom: 10px;">
+                <div class="card" style="font-size: 10.5px; line-height: 1.45;">
+                  <strong>Mechanical Design Specs:</strong>
+                  <div style="margin-top: 4px; color: #475569;">
+                    • Material: ${structDetails.materialType}<br/>
+                    • Weight Category: ${structDetails.weight}<br/>
+                    • Max Wind Shear: ${structDetails.windRating} wind certified
                   </div>
                 </div>
-                <div class="card" style="font-size: 11px; line-height: 1.5;">
-                  <strong>Structural Warranties:</strong>
-                  <div style="margin-top: 6px; color: #475569;">
-                    • Structure Warranty: ${structDetails.warranty || '10 Years Limited Warranty'}<br/>
-                    • Certification: SAP 2000 Wind Load Compliance<br/>
-                    • Mechanical Bolts: Pure High-tensile Rawal anchors
+                <div class="card" style="font-size: 10.5px; line-height: 1.45;">
+                  <strong>Warranty Guidelines:</strong>
+                  <div style="margin-top: 4px; color: #475569;">
+                    • Structural Integrity: ${structDetails.warranty}<br/>
+                    • Anchoring: Pure Rawl anchors<br/>
+                    • Analysis Model: SAP 2000 Wind Load compliant
                   </div>
                 </div>
               </div>
 
-              <div class="card dark" style="padding: 8px 16px;">
-                <div style="font-weight: 800; font-size: 11px; color: #f59e0b; margin-bottom: 5px; text-align: center; text-transform: uppercase; letter-spacing: 0.05em;">Structure Engineering Schematics</div>
+              <div class="card" style="padding: 6px; border: 1.5px solid #e2e8f0; background-color: #fafaf9;">
+                <div style="font-weight: 800; font-size: 9.5px; color: #0f172a; text-align: center; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px;">Engineering Mounting Layout Blueprint</div>
                 ${structureSvg}
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 6: BOQ PRICE TABLE -->
-          <div class="page" style="padding: 12mm 15mm;">
+      else if (pageType === 'boq') {
+        let boqHtml = "";
+        let grossTotal = 0;
+        let discountAmount = 0;
+        let netTotal = 0;
+
+        const allRows = quoteObj.boqRows || quoteObj.boqItems || [];
+        const includeSizerItems = options.includeSizerItems === true;
+        
+        // Count manual rows and auto sizer rows
+        const autoSizerRows = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id));
+        const manualBoqRows = allRows.filter((r: any) => !defaultAutoSizerIds.includes(r.id));
+        
+        const isPackageRow = (r: any) => r.id && (r.id.startsWith('row-heading') || r.id.startsWith('row-item') || r.id.startsWith('row-subtotal'));
+        const sourceUsed = manualBoqRows.some(isPackageRow) ? 'package_loaded' : (includeSizerItems ? 'auto_sizer' : 'manual_only');
+        const rows = includeSizerItems ? allRows : manualBoqRows;
+
+        console.log(`[PDF Compilation Debug Log]
+          - manualBoqRows count: ${manualBoqRows.length}
+          - autoSizerRows count: ${autoSizerRows.length}
+          - finalPdfBoqRows count: ${rows.length}
+          - source used: ${sourceUsed}`);
+
+        let calculatedGross = 0;
+        rows.forEach((r: any) => {
+          if (r.type === 'heading') {
+            boqHtml += `
+              <tr style="background-color: #f1f5f9; font-weight: 700; color: #0f172a; border-bottom: 1.5px solid #cbd5e1;">
+                <td colspan="7" style="padding: 5px 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; font-family: monospace;">${r.name}</td>
+              </tr>
+            `;
+          } else if (r.type === 'subtotal') {
+            boqHtml += `
+              <tr style="border-bottom: 1.5px solid #cbd5e1; font-weight: 700; background-color: #f8fafc; font-size: 9.5px;">
+                <td colspan="6" style="padding: 5px 8px; text-align: right; color: #475569; text-transform: uppercase;">${r.name || 'SUBTOTAL'}:</td>
+                <td style="padding: 5px 8px; text-align: right; color: #0f172a;">${formatPKR(r.total)}</td>
+              </tr>
+            `;
+          } else {
+            calculatedGross += Number(r.total) || 0;
+            boqHtml += `
+              <tr style="border-bottom: 1px solid #cbd5e1; font-size: 9.5px;">
+                <td style="padding: 5px 8px; text-align: center; color: #64748b;">${r.srNo || ''}</td>
+                <td style="padding: 5px 8px; font-weight: 600; color: #0f172a;">${r.name}</td>
+                <td style="padding: 5px 8px; color: #475569; font-size: 9px; line-height: 1.3;">${r.description || ''}</td>
+                <td style="padding: 5px 8px; text-align: center; color: #475569;">${r.unit || 'Nos'}</td>
+                <td style="padding: 5px 8px; text-align: center; font-weight: 500;">${r.qty}</td>
+                <td style="padding: 5px 8px; text-align: right; color: #475569;">${formatPKR(r.rate)}</td>
+                <td style="padding: 5px 8px; text-align: right; font-weight: 600; color: #0f172a;">${formatPKR(r.total)}</td>
+              </tr>
+            `;
+          }
+        });
+
+        // Recalculate totals if not including auto sizer items
+        if (!includeSizerItems) {
+          grossTotal = calculatedGross;
+        } else {
+          grossTotal = quoteObj.grandTotal || calculatedGross;
+        }
+        discountAmount = Number(quoteObj.discount) || 0;
+        
+        const societyCharges = Number(quoteObj.societyCharges) || 0;
+        const taxEnabled = !!quoteObj.taxEnabled;
+        const taxRate = Number(quoteObj.taxRate) || 0;
+        const taxAmount = taxEnabled ? Math.round(grossTotal * (taxRate / 100)) : 0;
+        
+        netTotal = grossTotal - discountAmount + societyCharges + taxAmount;
+
+        pagesHtml += `
+          <div class="page" style="padding: 12mm 15mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header" style="margin-bottom: 10px;">
-                <div class="page-title-row">Bill of Quantities (BOQ)</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 6 of 11</div>
-              </div>
-
-              <div style="max-height: 195mm; overflow: hidden; border: 1px solid #cbd5e1; border-radius: 8px;">
+              ${headerHtml}
+              <div class="page-title">${mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)'}</div>
+              
+              <div style="max-height: 200mm; overflow: hidden; border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
                 <table class="boq-table">
                   <thead>
                     <tr style="height: 28px;">
-                      <th style="width: 5%; text-align: center;">Sr.</th>
-                      <th style="width: 25%;">Item Description</th>
-                      <th style="width: 30%;">Specifications</th>
-                      <th style="width: 8%; text-align: center;">Unit</th>
-                      <th style="width: 8%; text-align: center;">Qty</th>
-                      <th style="width: 12%; text-align: right;">Rate</th>
-                      <th style="width: 12%; text-align: right;">Total Dues</th>
+                      <th style="width: 5%; text-align: center; border-bottom: 2px solid #0f172a;">Sr.</th>
+                      <th style="width: 25%; border-bottom: 2px solid #0f172a;">Item Name</th>
+                      <th style="width: 32%; border-bottom: 2px solid #0f172a;">Material Specifications</th>
+                      <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Unit</th>
+                      <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Qty</th>
+                      <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Rate</th>
+                      <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Total</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2873,225 +3578,702 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
                 </table>
               </div>
 
-              <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: flex-start;">
-                <div style="width: 50%; font-size: 9px; color: #64748b; line-height: 1.45;">
+              ${bodyImagesHtml}
+
+              <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: flex-start;">
+                <div style="width: 48%; font-size: 9.5px; color: #64748b; line-height: 1.45;">
                   ${quoteObj.customNotes ? `
-                    <div style="background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 8px; color: #6b21a8; font-weight: 500;">
-                      <strong>Special Operations Notes:</strong><br/>
+                    <div style="background-color: #fdf4ff; border: 1px solid #f3e8ff; border-radius: 6px; padding: 6px 10px; color: #6b21a8; font-weight: 500;">
+                      <strong>Special Execution Notes:</strong><br/>
                       ${quoteObj.customNotes}
                     </div>
-                  ` : 'Note: Sunchaser solar systems are configured with Tier-1 solar arrays & high-grade chemical ground anchors.'}
+                  ` : 'Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel.'}
                 </div>
-                <div style="width: 45%;">
+                
+                <div style="width: 46%;">
                   <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                    <span style="color: #64748b; font-weight: 500;">BOQ Gross Value:</span>
+                    <span style="color: #64748b; font-weight: 500;">BOQ Gross Sum:</span>
                     <span style="font-weight: 600; color: #0f172a;">${formatPKR(grossTotal)}</span>
                   </div>
                   ${discountAmount > 0 ? `
                     <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                      <span style="color: #64748b; font-weight: 500;">Partner Discount:</span>
+                      <span style="color: #64748b; font-weight: 500;">Special Discount:</span>
                       <span style="font-weight: 600; color: #dc2626;">-${formatPKR(discountAmount)}</span>
                     </div>
                   ` : ''}
                   ${taxEnabled ? `
                     <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
                       <span style="color: #64748b; font-weight: 500;">Sales Tax (${taxRate}%):</span>
-                      <span style="font-weight: 600; color: #d97706;">+${formatPKR(taxAmount)}</span>
+                      <span style="font-weight: 600; color: #dc2626;">+${formatPKR(taxAmount)}</span>
                     </div>
                   ` : ''}
                   ${societyCharges > 0 ? `
                     <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                      <span style="color: #64748b; font-weight: 500;">DHA/Society Dues:</span>
+                      <span style="color: #64748b; font-weight: 500;">Society Approval / Dues:</span>
                       <span style="font-weight: 600; color: #0f172a;">+${formatPKR(societyCharges)}</span>
                     </div>
                   ` : ''}
-                  <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 800; border-top: 2px solid #0f172a; padding-top: 4px; margin-top: 4px;">
-                    <span style="color: #0f172a;">Turnkey Net Investment:</span>
-                    <span style="color: #d97706; font-size: 14px;">${formatPKR(finalNetPrice)}</span>
+                  <div style="display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 850; border-top: 1.5px solid #0f172a; padding-top: 4px; margin-top: 4px;">
+                    <span style="color: #0f172a;">Turnkey Investment:</span>
+                    <span style="color: #d97706; font-size: 13.5px;">${formatPKR(netTotal)}</span>
                   </div>
-                  <div style="font-size: 7.5px; color: #94a3b8; text-align: right; margin-top: 2px;">
-                    * All pricing conforms to Pakistan fiscal/duty structures.
+                  <div style="font-size: 8px; color: #94a3b8; text-align: right; margin-top: 4px; font-weight: bold;">
+                    * Direct imports clearance trace.
                   </div>
                 </div>
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 7: TERMS & CONDITIONS (PART 1) -->
-          <div class="page">
+      else if (pageType === 'terms1') {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Terms, Conditions &amp; Regulations (1/2)</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 7 of 11</div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
+              
+              <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+                All engineering activities, supply dispatch, and LESCO utility agreements are governed strictly by the Sunchaser covenants below:
               </div>
 
-              <div style="font-size: 12px; line-height: 1.5; color: #475569; margin-bottom: 18px; font-weight: 500;">
-                All contractual relationships, hardware execution plans, and regulatory billing policies are governed strictly by the following mutually-agreed terms:
-              </div>
+              ${bodyImagesHtml}
 
-              <div style="padding: 5px;">
+              <div style="margin-top: 10px;">
                 ${tcPage1Html}
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 8: TERMS & CONDITIONS (PART 2) -->
-          <div class="page">
+      else if (pageType === 'terms2') {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Terms, Conditions &amp; Regulations (2/2)</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 8 of 11</div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
+              
+              <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+                Consortium hardware replacement and force majeure exclusions continue below:
               </div>
 
-              <div style="font-size: 12px; line-height: 1.5; color: #475569; margin-bottom: 18px; font-weight: 500;">
-                Execution guidelines, structural warranties, exclusions, and safety operations policies are continued below:
-              </div>
+              ${bodyImagesHtml}
 
-              <div style="padding: 5px;">
+              <div style="margin-top: 10px;">
                 ${tcPage2Html}
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 9: CUSTOMER SIGN-OFF -->
-          <div class="page">
+      else if (pageType === 'signoff') {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Client Verification &amp; Sign-off</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 9 of 11</div>
-              </div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
 
-              <div class="card" style="margin-bottom: 15px;">
-                <div style="font-weight: 800; color: #0f172a; font-size: 12.5px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
-                  1. Contractual Customer Demographics
+              ${bodyImagesHtml}
+
+              <div class="card" style="margin: 15px 0 10px 0;">
+                <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+                  1. Customer Billing Profile
                 </div>
-                <div class="cover-meta-grid" style="font-size: 11.5px; color: #475569; row-gap: 8px;">
-                  <div><strong>Client Name:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.clientName || lead.name}</span></div>
-                  <div><strong>CNIC / Identity Card:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.cnic || 'Pending Verification'}</span></div>
-                  <div><strong>Contact Number:</strong> <span style="color: #0f172a;">${quoteObj.clientPhone || lead.phone}</span></div>
-                  <div><strong>Email Address:</strong> <span style="color: #0f172a;">${quoteObj.clientEmail || lead.email}</span></div>
-                  <div><strong>Site Address:</strong> <span style="color: #0f172a;">${quoteObj.clientAddress || lead.address}</span></div>
-                  <div><strong>City / Sector:</strong> <span style="color: #0f172a;">${quoteObj.cityArea || lead.location || 'Lahore'}</span></div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+                  <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.clientName || leadObj.name}</span></div>
+                  <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.cnic || 'Pending Verification'}</span></div>
+                  <div><strong>Active Line:</strong> <span style="color: #0f172a;">${quoteObj.clientPhone || leadObj.phone}</span></div>
+                  <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">${quoteObj.clientEmail || leadObj.email}</span></div>
+                  <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">${quoteObj.clientAddress || leadObj.address}</span></div>
                 </div>
               </div>
 
               <div class="card" style="margin-bottom: 15px; border-left: 4px solid #0284c7;">
-                <div style="font-weight: 800; color: #0f172a; font-size: 12.5px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">
-                  2. LESCO Billing &amp; Net Metering Parameters
+                <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+                  2. Utility Interconnect (LESCO Metering)
                 </div>
-                <div class="cover-meta-grid" style="font-size: 11.5px; color: #475569; row-gap: 8px;">
-                  <div><strong>LESCO Meter Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.meterNo || 'Not Provided'}</span></div>
-                  <div><strong>Consumer Account Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.consumerNo || 'Not Provided'}</span></div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+                  <div><strong>LESCO Meter ID:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.meterNo || 'Not Scanned'}</span></div>
+                  <div><strong>Consumer A/C Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">${lescoObj.consumerNo || 'Not Scanned'}</span></div>
                   <div><strong>Sanctioned Grid Load:</strong> <span style="color: #0f172a; font-weight: 600;">${lescoObj.sanctionedLoad ? lescoObj.sanctionedLoad + ' kW' : 'Not Scanned'}</span></div>
-                  <div><strong>Connection Phase:</strong> <span style="color: #0f172a;">${lescoObj.phaseType || 'Three Phase'}</span></div>
-                  <div class="col-span-2"><strong>Turnkey Net Metering NEPRA Licensing:</strong> <span style="color: #0369a1; font-weight: 700;">${netMeteringText === 'Yes' ? 'REQUIRED &amp; INCLUDED IN SOW' : 'NOT REQUIRED'}</span></div>
+                  <div><strong>Terminations Phase:</strong> <span style="color: #0f172a;">${lescoObj.phaseType || 'Three Phase'}</span></div>
+                  <div style="grid-column: span 2;"><strong>Turnkey Net Metering Licensing:</strong> <span style="color: #0284c7; font-weight: 700;">${netMeteringText === 'Yes' ? 'REQUIRED &amp; SOW INCLUDED' : 'NOT REQUIRED'}</span></div>
                 </div>
               </div>
 
-              <div class="card" style="margin-bottom: 20px; padding: 12px;">
-                <div style="font-size: 10.5px; line-height: 1.5; color: #475569;">
-                  <strong>Contract Declaration:</strong> By signing below, the client confirms the technical parameters (Page 5), accepts the final turnkey financial quote (Page 6), accepts the terms &amp; exclusions (Page 7 &amp; 8), and formally authorizes Sunchaser Energy to proceed with hardware procurement, chemical bores, structural steel fabrication, and LESCO utility interconnect procedures.
-                </div>
+              <div class="card" style="margin-bottom: 20px; font-size: 10px; line-height: 1.5; color: #475569;">
+                <strong>Contract Declaration:</strong> By signing below, the client confirms the technical parameters (Page 5), accepts the final turnkey financial quote (Page 6), accepts the terms &amp; exclusions (Page 7 &amp; 8), and formally authorizes Sunchaser Energy to proceed with hardware procurement, chemical bores, structural steel fabrication, and LESCO utility interconnect procedures.
               </div>
 
-              <div class="grid-2" style="margin-top: 20px;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 25px;">
                 <div style="text-align: center;">
-                  <div style="height: 20mm; border-bottom: 1.5px solid #94a3b8; display: flex; align-items: flex-end; justify-content: center; font-family: 'Georgia', serif; font-size: 14px; color: #cbd5e1; font-style: italic;">
+                  <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
                     Signature / Thumb Stamp
                   </div>
-                  <div style="font-weight: 800; color: #0f172a; font-size: 12px; margin-top: 6px;">Client Representative Signature</div>
-                  <div style="font-size: 9px; color: #94a3b8;">Acceptance of Specifications &amp; Terms</div>
+                  <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Client Representative Sign-off</div>
+                  <div style="font-size: 8px; color: #94a3b8;">Declaration Acceptance Authority</div>
                 </div>
-
                 <div style="text-align: center;">
-                  <div style="height: 20mm; border-bottom: 1.5px solid #d97706; display: flex; align-items: flex-end; justify-content: center; font-family: 'Georgia', serif; font-size: 14px; color: #fde68a; font-style: italic;">
-                    Sunchaser Central Operations
+                  <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                    Sunchaser Central Staging
                   </div>
-                  <div style="font-weight: 800; color: #0f172a; font-size: 12px; margin-top: 6px;">Sunchaser Authorized Signatory</div>
-                  <div style="font-size: 9px; color: #94a3b8;">Central Operations Release &amp; Allocation</div>
+                  <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Sunchaser Central Operations</div>
+                  <div style="font-size: 8px; color: #94a3b8;">Design Release Validation Authorization</div>
                 </div>
               </div>
             </div>
-
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
-            </div>
+            ${footerHtml}
           </div>
+        `;
+      }
 
-          <!-- PAGE 10: BANK DETAILS -->
-          <div class="page">
+      else if (pageType === 'bank') {
+        pagesHtml += `
+          <div class="page" ${pageStyleAttr}>
+            ${absoluteImagesHtml}
             <div>
-              <div class="page-header">
-                <div class="page-title-row">Official Payment Channels</div>
-                <div style="font-size: 10px; font-weight: bold; color: #64748b;">Page 10 of 11</div>
-              </div>
+              ${headerHtml}
+              <div class="page-title">${p.title}</div>
 
-              <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-bottom: 12px; display: flex; gap: 12px; align-items: center; padding: 10px 14px;">
-                <span style="font-size: 22px;">⚠️</span>
-                <span style="font-size: 11px; color: #b45309; line-height: 1.45; font-weight: 600;">
-                  <strong>Financial Safety Warning:</strong> Sunchaser Energy never requests cash collections or transfers to personal employee accounts. Please ensure all wire transfers, bank deposits, or pay orders match the official corporate accounts listed below.
+              <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
+                <span style="font-size: 18px;">⚠️</span>
+                <span style="font-size: 10px; color: #b45309; line-height: 1.4; font-weight: 600;">
+                  <strong>Payment Safety Guidelines:</strong> Sunchaser Energy Systems never requests cash handovers or deposits to personal employee accounts. Verify all drafts match the official channels.
                 </span>
               </div>
+
+              ${bodyImagesHtml}
 
               <div>
                 ${bankAccountsHtml}
               </div>
 
-              <div style="margin-top: 20px; font-size: 10px; color: #64748b; line-height: 1.5; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;">
-                <strong>Payment Verification Workflow:</strong><br/>
-                Once a wire transfer, bank draft, or pay order is completed, please scan or photograph the payment receipt and share it with your assigned sales representative or email it directly to <strong>billing@sunchaser-energy.com</strong> for swift operational clearance and logistics dispatch.
+              <div class="card" style="margin-top: 25px; font-size: 10px; color: #475569; line-height: 1.5; background-color: #fafaf9;">
+                <strong>Verification SLA:</strong> Once a bank transfer, direct deposit, or pay order is dispatched, snap the transfer slip and email to <strong>${settings.billingEmail}</strong> or share with your advisor for warehouse component staging release.
               </div>
             </div>
+            ${footerHtml}
+          </div>
+        `;
+      }
 
-            <div class="page-footer">
-              <span>Sunchaser Energy Systems Proposal</span>
-              <span>Doc ID: SC-${lead.id.substring(0, 8).toUpperCase()}</span>
+      else if (pageType === 'final') {
+        pagesHtml += `
+          <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
+            ${absoluteImagesHtml}
+            <div>
+              <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
+              <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</h2>
+              <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
+              
+              <div style="max-width: 440px; margin: 0 auto 40px auto; font-size: 12px; line-height: 1.6; color: #475569; font-weight: 500; font-style: italic;">
+                "${p.bodyText}"
+              </div>
+
+              ${bodyImagesHtml}
+
+              <div style="border-top: 1.5px solid #cbd5e1; padding-top: 25px; font-size: 10.5px; color: #475569; max-width: 360px; margin: 0 auto; line-height: 1.5;">
+                <strong style="color: #0f172a; font-size: 11px;">Sunchaser Central Staging HQ</strong><br/>
+                ${settings.officeAddress}<br/>
+                Hotlines: ${settings.phoneNumbers}<br/>
+                Email: ${settings.billingEmail || 'billing@sunchaser-energy.com'} | Web: ${settings.websiteUrl || 'www.sunchaser-energy.com'}
+              </div>
             </div>
           </div>
+        `;
+      }
+    }
+  });
 
-          <!-- PAGE 11: CLOSING PAGE -->
-          <div class="page cover" style="justify-content: center; text-align: center; padding: 40mm 20mm;">
-            <div style="margin-bottom: 40px;">
-              <div class="cover-logo" style="margin: 0 auto; width: 80px; height: 80px; font-size: 40px; border-radius: 20px;">☀️</div>
-              <h2 style="font-size: 28px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; margin-top: 24px; margin-bottom: 4px;">SUNCHASER ENERGY SYSTEMS</h2>
-              <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: #f59e0b; font-weight: 700;">Generational Energy Independence</div>
-            </div>
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Sunchaser Proposal Deck</title>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
+      <style>
+        body {
+          font-family: 'Inter', system-ui, sans-serif;
+          margin: 0;
+          padding: 0;
+          background-color: #f1f5f9;
+          color: #1e293b;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        .action-bar {
+          background-color: #0f172a;
+          color: #ffffff;
+          padding: 12px 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+          font-size: 14px;
+        }
+        .btn-print {
+          background-color: #f59e0b;
+          color: #0f172a;
+          border: none;
+          padding: 8px 18px;
+          border-radius: 8px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: 'Inter', sans-serif;
+        }
+        .btn-print:hover {
+          background-color: #d97706;
+        }
+        .pages-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 20px;
+          padding: 30px 0;
+        }
+        .page {
+          width: 210mm;
+          height: 297mm;
+          background: #ffffff;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+          box-sizing: border-box;
+          padding: 15mm 15mm;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          position: relative;
+          overflow: hidden;
+          page-break-after: always;
+        }
+        .page.cover {
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .page.full-page-image-only {
+          padding: 0 !important;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .page-header-logo {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1.5px solid #cbd5e1;
+          padding-bottom: 6px;
+          margin-bottom: 12px;
+        }
+        .header-company-name {
+          font-weight: 800;
+          font-size: 13px;
+          color: #0f172a;
+          letter-spacing: 0.05em;
+        }
+        .page-title {
+          font-size: 16px;
+          font-weight: 850;
+          color: #0f172a;
+          border-left: 4px solid #f59e0b;
+          padding-left: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+        }
+        .page-footer {
+          border-top: 1px solid #cbd5e1;
+          padding-top: 6px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 8.5px;
+          color: #64748b;
+          font-weight: 600;
+        }
+        .grid-2 {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 15px;
+        }
+        .card {
+          background-color: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 12px;
+        }
+        .badge {
+          font-size: 8.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          padding: 2px 7px;
+          border-radius: 4px;
+          background-color: #fef3c7;
+          color: #92400e;
+        }
+        .urdu-text {
+          font-family: 'Noto Nastaliq Urdu', serif;
+          direction: rtl;
+          text-align: right;
+          line-height: 2.2;
+          font-size: 11px;
+          color: #334155;
+        }
+        .boq-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 9.5px;
+        }
+        .boq-table th {
+          background-color: #0f172a;
+          color: #ffffff;
+          text-align: left;
+          padding: 6px 8px;
+          font-weight: 750;
+          text-transform: uppercase;
+          font-size: 8px;
+          letter-spacing: 0.03em;
+        }
+        .boq-table td {
+          padding: 5px 8px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        @page {
+          size: A4 portrait;
+          margin: 0;
+        }
+        @media print {
+          body {
+            background-color: #ffffff !important;
+          }
+          .action-bar {
+            display: none !important;
+          }
+          .pages-container {
+            padding: 0 !important;
+            gap: 0 !important;
+          }
+          .page {
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="action-bar">
+        <div><strong>Sunchaser Proposal Deck</strong> - Client: ${quoteObj.clientName || leadObj.name}</div>
+        <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
+      </div>
 
-            <div style="max-width: 480px; margin: 0 auto 50px auto; font-size: 13.5px; line-height: 1.6; color: #94a3b8; font-weight: 500;">
-              "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings."
-            </div>
+      <div class="pages-container">
+        ${pagesHtml}
+      </div>
+    </body>
+    </html>
+  `;
+}
 
-            <div style="border-top: 1px solid #1e293b; padding-top: 30px; font-size: 11px; color: #64748b; max-width: 380px; margin: 0 auto;">
-              <strong style="color: #ffffff;">Sunchaser Central Head Office</strong><br/>
-              Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore<br/>
-              Hotlines: 0309-0236666, 0330-7776444<br/>
-              Email: info@sunchaser-energy.com | Web: www.sunchaser-energy.com
-            </div>
-          </div>
 
-        </div>
-      </body>
-      </html>
-    `;
+// 18. PDF Export Endpoints
+app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+    
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+    
+    // For auto sizer, we build a mock quote object from the lead parameters
+    const systemSizekW = lead.monthlyBill ? Number((lead.monthlyBill / 26).toFixed(1)) : 8.5;
+    const panelWattage = 400;
+    const panelCount = Math.ceil((systemSizekW * 1000) / panelWattage);
+    const mockQuote = {
+      systemSizekW,
+      panelCount,
+      panelType: `Sunchaser Premium ${panelWattage}W Mono-PERC Panels`,
+      inverterType: "Sunchaser Smart Inverter",
+      batteryCapacity: lead.backupRequirement || "None",
+      totalCost: Math.round(systemSizekW * 180000), // generic price estimate
+      structureType: lead.roofType || "Standard",
+      accessories: "Standard mechanical couplers, AC/DC DB box, copper cabling",
+      installationCharges: 75000,
+      netMeteringCharges: 90000,
+      paymentTerms: "50% Advance, 40% Delivery, 10% Commissioning",
+      warrantyTerms: "25 Years panel warranty, 10 Years inverter warranty",
+      termsAndConditions: "Standard Sunchaser terms apply.",
+      clientName: lead.name,
+      clientPhone: lead.phone,
+      clientEmail: lead.email,
+      clientAddress: lead.address,
+      cityArea: lead.location || "Lahore",
+      systemType: "On-grid"
+    };
+
+    const defaultAutoSizerIds = [
+      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+      'h-3', 'db_box_row', 's-3',
+      'h-4', 'supplies_row', 's-4',
+      'h-5', 'earthing_bore_row', 's-5',
+      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+    ];
+    console.log(`[PDF BACKEND LOG] GET /api/export/pdf/auto-sizer/:leadId
+      - quoteId: N/A (Auto Sizer Mock)
+      - quote_type: auto_sizer
+      - includeSizerItems: true
+      - manual rows count: 0
+      - auto rows count: ${defaultAutoSizerIds.length}
+      - final rows count: ${defaultAutoSizerIds.length}
+    `);
+
+    const pdfHtml = compileSunchaserPDFHtml('sizer', mockQuote, lead, activeState);
     res.send(pdfHtml);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF structure: " + err.message);
+  }
+});
+
+app.post("/api/export/pdf/manual-quote", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    let payload = req.body;
+    if (payload && typeof payload.payload === 'string') {
+      try {
+        payload = JSON.parse(payload.payload);
+      } catch (e) {
+        // ignore
+      }
+    }
+    
+    // Create a mock lead object or find one if leadId is provided
+    let lead = null;
+    if (payload.leadId) {
+      lead = activeState.leads.find((l: any) => l.id === payload.leadId);
+    }
+    
+    if (!lead) {
+      lead = {
+        id: payload.leadId || `lead-manual-${Date.now()}`,
+        name: payload.clientName || payload.customerName || "Customer",
+        email: payload.clientEmail || "customer@example.com",
+        phone: payload.clientPhone || "0000-0000000",
+        address: payload.clientAddress || "Lahore, Pakistan",
+        location: payload.cityArea || "Lahore",
+        monthlyBill: 0,
+        roofSpace: 0,
+        shading: "None",
+        rating: 5,
+        assignedSalesperson: payload.bdmName || "Sales Advisor",
+        createdAt: new Date().toISOString(),
+        notes: ""
+      };
+    }
+
+    const options = {
+      includedPages: payload.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
+      templateId: payload.templateId || "tmpl-1",
+      includeSizerItems: payload.includeSizerItems === true
+    };
+
+    const defaultAutoSizerIds = [
+      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+      'h-3', 'db_box_row', 's-3',
+      'h-4', 'supplies_row', 's-4',
+      'h-5', 'earthing_bore_row', 's-5',
+      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+    ];
+    const allRows = payload.boqRows || payload.boqItems || [];
+    const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
+    const manualBoqCount = allRows.filter((r: any) => !defaultAutoSizerIds.includes(r.id)).length;
+    const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
+    console.log(`[PDF BACKEND LOG] POST /api/export/pdf/manual-quote
+      - quoteId: ${payload.id || 'N/A'}
+      - quote_type: ${payload.quote_type || 'manual_boq'}
+      - includeSizerItems: ${options.includeSizerItems}
+      - manual rows count: ${manualBoqCount}
+      - auto rows count: ${autoSizerCount}
+      - final rows count: ${finalCount}
+    `);
+
+    const pdfHtml = compileSunchaserPDFHtml('manual', payload, lead, activeState, options);
+    res.send(pdfHtml);
+  } catch (err: any) {
+    res.status(500).send("Error compiling Manual PDF structure: " + err.message);
+  }
+});
+
+app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const templateId = req.params.templateId;
+    
+    // Create mock objects for previewing
+    const mockLead = {
+      id: "lead-preview",
+      name: "Muhammad Allauddin (Preview)",
+      email: "allai1432009@gmail.com",
+      phone: "0309-0236666",
+      address: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+      location: "Lahore",
+      monthlyBill: 120000,
+      roofSpace: 1200,
+      shading: "None",
+      rating: 5,
+      assignedSalesperson: "Sarah Connor",
+      createdAt: new Date().toISOString(),
+      notes: "Preview of corporate proposal styling."
+    };
+
+    const mockQuote = {
+      systemSizekW: 15,
+      panelCount: 24,
+      panelType: "JA Solar 550W Mono-PERC Panels",
+      inverterType: "Growatt 15kW Hybrid Inverter",
+      batteryCapacity: "10.24kWh Lithium Pack",
+      totalCost: 1850000,
+      structureType: "Elevated",
+      accessories: "Standard accessories bundle",
+      installationCharges: 80000,
+      netMeteringCharges: 90000,
+      paymentTerms: "50% Advance, 40% Delivery, 10% Commissioning",
+      warrantyTerms: "Standard warranties apply",
+      termsAndConditions: "Standard terms and conditions apply.",
+      clientName: "Muhammad Allauddin",
+      clientPhone: "0309-0236666",
+      clientEmail: "allai1432009@gmail.com",
+      clientAddress: "DHA Phase 6, Lahore",
+      cityArea: "Lahore",
+      systemType: "Hybrid"
+    };
+
+    const options = {
+      templateId,
+      includedPages: ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final']
+    };
+
+    const pdfHtml = compileSunchaserPDFHtml('preview', mockQuote, mockLead, activeState, options);
+    res.send(pdfHtml);
+  } catch (err: any) {
+    res.status(500).send("Error compiling PDF preview: " + err.message);
+  }
+});
+
+app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+
+    const quoteId = req.query.quoteId;
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
+    }
+    if (!quote) {
+      quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
+    }
+
+    if (!quote) {
+      return res.status(404).send("No saved quotation found for this lead.");
+    }
+
+    const options = {
+      includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
+      templateId: quote.templateId || "tmpl-1",
+      includeSizerItems: quote.includeSizerItems === true
+    };
+
+    const defaultAutoSizerIds = [
+      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+      'h-3', 'db_box_row', 's-3',
+      'h-4', 'supplies_row', 's-4',
+      'h-5', 'earthing_bore_row', 's-5',
+      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+    ];
+    const allRows = quote.boqRows || quote.boqItems || [];
+    const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
+    const manualBoqCount = allRows.filter((r: any) => !defaultAutoSizerIds.includes(r.id)).length;
+    const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
+    console.log(`[PDF BACKEND LOG] GET /api/export/pdf/manual-quote/:leadId
+      - quoteId: ${quote.id}
+      - quote_type: ${quote.quote_type || 'manual_boq'}
+      - includeSizerItems: ${options.includeSizerItems}
+      - manual rows count: ${manualBoqCount}
+      - auto rows count: ${autoSizerCount}
+      - final rows count: ${finalCount}
+    `);
+
+    const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
+    res.send(pdfHtml);
+  } catch (err: any) {
+    res.status(500).send("Error compiling manual quotation PDF: " + err.message);
+  }
+});
+
+app.get("/api/export/pdf/:leadId", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+
+    const quoteId = req.query.quoteId;
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
+    }
+    if (!quote) {
+      quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
+    }
+
+    if (quote) {
+      res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}${req.query.quoteId ? `?quoteId=${req.query.quoteId}` : ""}`);
+    } else {
+      res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}`);
+    }
+  } catch (err: any) {
+    res.status(500).send("Error compiling Legacy PDF wrapper: " + err.message);
   }
 });
 

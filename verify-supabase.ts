@@ -325,7 +325,8 @@ async function main() {
                 boqRows: q.boqRows,
                 customNotes: q.customNotes,
                 grandTotal: q.grandTotal,
-                netTotal: q.netTotal
+                netTotal: q.netTotal,
+                includeSizerItems: q.includeSizerItems === true
               },
               created_at: q.createdAt || new Date().toISOString()
             }, { onConflict: "id" });

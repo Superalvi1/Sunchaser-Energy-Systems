@@ -10,12 +10,14 @@ interface CRMAppProps {
   leads: Lead[];
   onUpdateLead: (id: string, updatedData: any) => void;
   onAddLead: (data: any) => void;
+  onDeleteLead?: (id: string) => void;
 }
 
 export default function CRMApp({
   leads,
   onUpdateLead,
-  onAddLead
+  onAddLead,
+  onDeleteLead
 }: CRMAppProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("All");
@@ -460,6 +462,20 @@ export default function CRMApp({
                         >
                           Edit Profile
                         </button>
+
+                        {onDeleteLead && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Are you absolutely sure you want to delete lead "${lead.name}" and all associated quotes? This action cannot be undone.`)) {
+                                onDeleteLead(lead.id);
+                              }
+                            }}
+                            className="bg-red-950/40 hover:bg-red-900/60 border border-red-900/40 hover:border-red-500/50 p-2 rounded-xl text-red-400 transition cursor-pointer flex items-center justify-center"
+                            title="Delete Lead Profile"
+                          >
+                            <Trash className="h-3.5 w-3.5" />
+                          </button>
+                        )}
 
                         <select
                           value={lead.status}

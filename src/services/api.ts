@@ -303,6 +303,22 @@ export async function markNotificationAsRead(notifId: string): Promise<any> {
   return res.json();
 }
 
+export async function deleteLead(id: string): Promise<any> {
+  const res = await apiFetch(`/api/leads/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete lead.");
+  return res.json();
+}
+
+export async function deleteQuote(leadId: string, quoteId: string): Promise<any> {
+  const res = await apiFetch(`/api/leads/${leadId}/quotes/${quoteId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete quote.");
+  return res.json();
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {
