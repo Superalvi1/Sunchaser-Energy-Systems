@@ -12,7 +12,8 @@ import {
   getDashboardStats,
   calculateLeadScore,
   Database,
-  persistQuotationToSupabase
+  persistQuotationToSupabase,
+  AUTO_SIZER_QUOTE_CREATION_ENABLED
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -1037,6 +1038,10 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
   const lead = db.leads.find((l: any) => l.id === id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
+  if (quote_type === "auto_sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+    return res.status(403).json({ error: "Auto Sizer quote creation is temporarily disabled. Use Manual BOQ Builder." });
+  }
+
   // 1. Idempotency Key check to block duplicate submits
   if (idempotencyKey && lead.quotes?.some((q: any) => q.idempotencyKey === idempotencyKey)) {
     console.log(`[API POST /api/leads/${id}/create-quote] Blocked duplicate request with idempotency key: ${idempotencyKey}`);
@@ -1122,7 +1127,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     customNotes: customNotes || "",
     grandTotal: Number(grandTotal) || cost,
     netTotal: Number(netTotal) || netCost,
-    quote_type: quote_type || "auto_sizer"
+    quote_type: quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq"
   };
 
   lead.quotes = [newQuote, ...(lead.quotes || [])];
@@ -1206,9 +1211,14 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
 app.post("/api/leads/:id/update-quote", async (req, res) => {
   loadDb();
   const { id } = req.params;
-  const { quoteId, ...quotePayload } = req.body;
+  const { quoteId, quoteData, ...quotePayload } = req.body;
+  const payload = quoteData && typeof quoteData === "object" ? quoteData : quotePayload;
   const lead = db.leads.find((l: any) => l.id === id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+  if (payload.quote_type === "auto_sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+    return res.status(403).json({ error: "Auto Sizer quote updates are temporarily disabled." });
+  }
 
   const quoteIndex = lead.quotes?.findIndex((q: any) => q.id === quoteId);
   if (quoteIndex === -1 || quoteIndex === undefined) {
@@ -1218,9 +1228,12 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   const existingQuote = lead.quotes[quoteIndex];
   const updatedQuote = {
     ...existingQuote,
-    ...quotePayload,
+    ...payload,
     id: quoteId,
-    quote_type: quotePayload.quote_type || existingQuote.quote_type || "auto_sizer",
+    quote_type:
+      payload.quote_type === "auto_sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED
+        ? "auto_sizer"
+        : "manual_boq",
     updatedAt: new Date().toISOString()
   };
 
@@ -3927,6 +3940,9 @@ function compileSunchaserPDFHtml(
 // 18. PDF Export Endpoints
 app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
   try {
+    if (!AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+      return res.status(403).send("Auto Sizer PDF export is temporarily disabled. Use Manual BOQ PDF with quoteId.");
+    }
     loadDb();
     let activeState: Database = db;
     if (isSupabaseActive()) {
@@ -4222,10 +4238,10 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
       return res.status(404).send("Quote not found for this lead.");
     }
 
-    if (quote && quote.quote_type === 'manual_boq') {
-      res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}${req.query.quoteId ? `?quoteId=${req.query.quoteId}` : ""}`);
-    } else {
+    if (quote.quote_type === "auto_sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED) {
       res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}?quoteId=${quoteId}`);
+    } else {
+      res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}?quoteId=${quoteId}`);
     }
   } catch (err: any) {
     res.status(500).send("Error compiling Legacy PDF wrapper: " + err.message);

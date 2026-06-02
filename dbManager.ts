@@ -54,6 +54,9 @@ export function isSupabaseActive(): boolean {
   return getSupabase() !== null;
 }
 
+/** When false, CRM must not persist auto_sizer quotations (manual BOQ only). */
+export const AUTO_SIZER_QUOTE_CREATION_ENABLED = false;
+
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
 export interface Database {
   users: any[];
@@ -647,7 +650,7 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     templateId: quote.templateId,
     includedPages: quote.includedPages,
     includeSizerItems: quote.includeSizerItems === true,
-    quote_type: quote.quote_type || "auto_sizer",
+    quote_type: quote.quote_type || (AUTO_SIZER_QUOTE_CREATION_ENABLED ? "auto_sizer" : "manual_boq"),
     termsAndConditions: quote.termsAndConditions,
   };
 }

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow } from "../types";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
+import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
 
 interface SalesTeamAppProps {
   leads: Lead[];
@@ -54,8 +55,11 @@ export default function SalesTeamApp({
 
   const activeLead = leads.find(l => l.id === selectedLeadId);
 
+  const getLeadManualQuotes = (lead: Lead | null | undefined) =>
+    (lead?.quotes || []).filter((q: any) => q.quote_type === "manual_boq");
+
   // Modular routing tab selector
-  const [activeModule, setActiveModule] = useState<'sizer' | 'boq_builder' | 'templates' | 'quotes' | 'products'>('sizer');
+  const [activeModule, setActiveModule] = useState<'sizer' | 'boq_builder' | 'templates' | 'quotes' | 'products'>('boq_builder');
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
 
   // Quote formulator local state
@@ -874,12 +878,18 @@ export default function SalesTeamApp({
           ? `row-subtotal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
           : `row-item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     }));
-    setBoqRows(packageRows);
-    setManualBoqItems(packageRows);
-    triggerAutosave(packageRows);
+    if (activeModule === "boq_builder") {
+      setBoqRows(packageRows);
+      setManualBoqItems(packageRows);
+      triggerAutosave(packageRows);
+    }
   };
 
   const handleCopyAutoSizerToManualBoq = () => {
+    if (!AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+      alert("Auto Sizer is temporarily disabled. Add Manual BOQ rows directly.");
+      return;
+    }
     if (!activeLead) return;
     
     // Find latest auto sizer quote, or generate defaults if none
@@ -976,12 +986,11 @@ export default function SalesTeamApp({
       const initialUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
       setFormMonthlyUnits(initialUnits);
 
-      // 2. Load latest quote details or lead details
-      const latestManualQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'manual_boq');
-      const latestSizerQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'auto_sizer');
-      const latestQuote = latestManualQuote || latestSizerQuote || (activeLead.quotes && activeLead.quotes.length > 0 ? activeLead.quotes[0] : null);
+      // 2. Load manual BOQ quote only (never auto_sizer — isolated state per lead)
+      const latestManualQuote = getLeadManualQuotes(activeLead).slice(-1)[0] || null;
 
-      if (latestQuote) {
+      if (latestManualQuote) {
+        const latestQuote = latestManualQuote;
         setSystemSizekW(latestQuote.systemSizekW || 10);
         setSystemType(latestQuote.systemType || 'Hybrid');
         setPanelBrand(latestQuote.panelBrand || "Jinko");
@@ -1001,7 +1010,8 @@ export default function SalesTeamApp({
         setTaxEnabled(latestQuote.taxEnabled || false);
         setTaxRate(latestQuote.taxRate || 17);
         setCustomNotes(latestQuote.customNotes || "");
-        setIncludeSizerItems(latestQuote.includeSizerItems === true);
+        setIncludeSizerItems(false);
+        if (latestManualQuote.id) setEditingQuoteId(latestManualQuote.id);
         setSelectedTemplateId(latestQuote.templateId || "tmpl-1");
         setAccessories(latestQuote.accessories || "Dual DC cables, PVC ducting & safety switches");
         setWarrantyTerms(latestQuote.warrantyTerms || "25 year power degradation, 10 year inverter warranty");
@@ -1028,12 +1038,10 @@ export default function SalesTeamApp({
           setIncludedPages(pageMapping);
         }
       } else {
-        // Default system size calculation
-        const calcSize = activeLead.monthlyBill && activeLead.monthlyBill > 1000 ? Number((activeLead.monthlyBill / (26 * 35)).toFixed(1)) : 8.5;
-        setSystemSizekW(calcSize);
+        setSystemSizekW(10);
       }
 
-      // 3. Load BOQ rows (prioritizing localStorage autosave cache)
+      // 3. Load BOQ rows (manual quote + per-lead cache only)
       const cachedBoq = localStorage.getItem(`sunchaser_boq_${activeLead.id}`);
       if (cachedBoq) {
         try {
@@ -1237,6 +1245,10 @@ export default function SalesTeamApp({
     if (e) e.preventDefault();
     if (!activeLead) return;
     if (savingQuote) return;
+    if (activeModule === "sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+      setSubmitError("Auto Sizer quote saving is temporarily disabled. Use Manual BOQ Builder.");
+      return;
+    }
     setSubmitError(null);
 
     // Validate size limits
@@ -1269,8 +1281,8 @@ export default function SalesTeamApp({
       }
 
       let finalBoqRows = boqRows;
-      let finalIncludeSizerItems = includeSizerItems;
-      if (activeModule === 'sizer') {
+      const finalIncludeSizerItems = false;
+      if (activeModule === "sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED) {
         finalBoqRows = generateDefaultBoqRows(
           systemSizekW,
           systemType as any,
@@ -1282,7 +1294,14 @@ export default function SalesTeamApp({
           batteryOption,
           netMeteringRequired as any
         );
-        finalIncludeSizerItems = true;
+      }
+      const manualOnlyRows = finalBoqRows.filter(
+        (r) => r && (r.type !== "item" || !isDefaultAutoSizerRow(r))
+      );
+      if (manualOnlyRows.filter((r) => r.type === "item").length === 0) {
+        setSubmitError("No BOQ items added yet.");
+        setSavingQuote(false);
+        return;
       }
 
       const calculatedGrandTotal = finalBoqRows
@@ -1329,7 +1348,7 @@ export default function SalesTeamApp({
         netMeteringRequired,
         discount: Number(discount) || 0,
         paymentSchedule,
-        boqItems: finalIncludeSizerItems ? finalBoqRows : finalBoqRows.filter(r => !isDefaultAutoSizerRow(r)),
+        boqItems: manualOnlyRows,
 
         // Redesigned Manual Builder fields
         lescoSettings: {
@@ -1344,52 +1363,53 @@ export default function SalesTeamApp({
         taxAmount: calculatedTaxAmount,
         selectedStructure,
         customStructure: customStructurePayload,
-        boqRows: finalIncludeSizerItems ? finalBoqRows : finalBoqRows.filter(r => !isDefaultAutoSizerRow(r)),
+        boqRows: manualOnlyRows,
         customNotes,
         grandTotal: calculatedGrandTotal,
         netTotal: calculatedNetTotal,
         templateId: selectedTemplateId,
         includeSizerItems: finalIncludeSizerItems,
         includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
-        quote_type: activeModule === 'sizer' ? 'auto_sizer' : 'manual_boq'
+        quote_type: "manual_boq"
       };
 
+      let savedQuoteId = editingQuoteId;
+
       if (editingQuoteId) {
-        // Overwrite existing quote record
         const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ quoteId: editingQuoteId, quoteData })
+          body: JSON.stringify({ quoteId: editingQuoteId, ...quoteData })
         });
         if (!res.ok) {
           const errData = await res.json();
           throw new Error(errData.error || "Failed to overwrite quote.");
         }
-        setEditingQuoteId(null);
+        savedQuoteId = editingQuoteId;
       } else {
-        // Create new quote version
-        await on创造Quote(activeLead.id, quoteData);
+        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/create-quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(quoteData)
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to save quotation on server.");
+        }
+        const savedLead = await res.json();
+        const newManual = getLeadManualQuotes(savedLead).find(
+          (q: any) => q.idempotencyKey === quoteData.idempotencyKey
+        ) || getLeadManualQuotes(savedLead).slice(-1)[0];
+        if (newManual?.id) savedQuoteId = newManual.id;
       }
+
+      if (savedQuoteId) setEditingQuoteId(savedQuoteId);
+      localStorage.setItem(`sunchaser_boq_${activeLead.id}`, JSON.stringify(manualOnlyRows));
 
       setQuoteCreatedConfirm(true);
       setTimeout(() => setQuoteCreatedConfirm(false), 8000);
 
-      // Clean local storage cache
-      localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
-
-      // Refresh global state
-      if (onRefreshState) onRefreshState();
-
-      // Open exact edited quote PDF only when quote id is known
-      if (editingQuoteId) {
-        const editedQuote = activeLead.quotes?.find((q: any) => q.id === editingQuoteId);
-        if (editedQuote) {
-          const endpoint = editedQuote.quote_type === "auto_sizer"
-            ? `${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${editingQuoteId}`
-            : `${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${editingQuoteId}`;
-          window.open(endpoint, "_blank");
-        }
-      }
+      if (onRefreshState) await onRefreshState();
     } catch (err: any) {
       console.error("Quote save failed:", err);
       setSubmitError(err.message || "Failed to save quotation on server.");
@@ -1655,12 +1675,14 @@ export default function SalesTeamApp({
 
   const handleDuplicateQuote = async (quote: any) => {
     if (!activeLead) return;
+    if (quote.quote_type !== "manual_boq") return;
     try {
       const dupQuote = {
         ...quote,
         id: undefined,
         createdAt: new Date().toISOString(),
         quoteDate: new Date().toISOString().split('T')[0],
+        quote_type: "manual_boq",
       };
       await on创造Quote(activeLead.id, dupQuote);
       if (onRefreshState) onRefreshState();
@@ -1670,6 +1692,7 @@ export default function SalesTeamApp({
   };
 
   const handleLoadQuoteForEditing = (quote: any) => {
+    if (quote.quote_type !== "manual_boq") return;
     setEditingQuoteId(quote.id);
     setClientName(quote.clientName || activeLead?.name || "");
     setClientPhone(quote.clientPhone || activeLead?.phone || "");
@@ -2257,6 +2280,7 @@ export default function SalesTeamApp({
                 </div>
 
                 <div className="flex gap-2 self-start md:self-center">
+                  {AUTO_SIZER_QUOTE_CREATION_ENABLED && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2271,6 +2295,7 @@ export default function SalesTeamApp({
                   >
                     <Download className="h-3.5 w-3.5 text-amber-500" /> Download Auto Sizer PDF
                   </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -2328,8 +2353,11 @@ export default function SalesTeamApp({
                     type="button"
                     onClick={() => {
                       setEditingQuoteId(null);
-                      // reload defaults
-                      applyPackage(10);
+                      if (activeModule === "boq_builder") {
+                        setBoqRows([]);
+                        setManualBoqItems([]);
+                        if (activeLead) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
+                      }
                     }}
                     className="bg-amber-500 text-slate-950 px-3 py-1 rounded-xl text-[10px] font-sans font-bold hover:bg-amber-400 cursor-pointer"
                   >
@@ -2543,45 +2571,16 @@ export default function SalesTeamApp({
 
                       <button
                         type="button"
-                        disabled={savingQuote || (isHighUnits && !confirmHighUnits)}
-                        onClick={async () => {
-                          if (savingQuote) return;
-                          
-                          // 1. Sync sizer settings to lead
-                          try {
-                            await onUpdateLead(activeLead.id, {
-                              monthlyUnits: formMonthlyUnits,
-                              location: formLocation,
-                              roofSpace: calculatedRoofArea,
-                              backupRequirement: formBackupReq,
-                              monthlyBill: Math.round(formMonthlyUnits * tariffRate)
-                            });
-                            
-                            // 2. Compile proposal quote
-                            await handleSaveQuote();
-                          } catch (e: any) {
-                            console.error(e);
-                            setSubmitError(e.message || "Failed to sync sizer.");
-                          }
-                        }}
-                        className={`w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 ${
-                          (savingQuote || (isHighUnits && !confirmHighUnits))
-                            ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-750"
-                            : "bg-amber-500 hover:bg-amber-400 text-slate-950"
-                        }`}
+                        disabled
+                        title="Auto Sizer quote saving is temporarily disabled. Use Manual BOQ Builder."
+                        className="w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow flex items-center justify-center gap-2 bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-750"
                       >
-                        {savingQuote ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin text-slate-550" />
-                            <span>Compiling Sunchaser Proposal...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" />
-                            <span>Compile &amp; Save Sizer Quotation</span>
-                          </>
-                        )}
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Compile &amp; Save Sizer Quotation (Disabled)</span>
                       </button>
+                      <p className="text-[10px] text-slate-500 font-mono text-center">
+                        Auto Sizer is preview-only. Save quotations in Manual BOQ Builder.
+                      </p>
                     </div>
 
                   </div>
@@ -2765,6 +2764,7 @@ export default function SalesTeamApp({
                         <option value="100">100 kW Package</option>
                       </select>
 
+                      {AUTO_SIZER_QUOTE_CREATION_ENABLED && (
                       <button
                         type="button"
                         onClick={handleCopyAutoSizerToManualBoq}
@@ -2773,6 +2773,7 @@ export default function SalesTeamApp({
                       >
                         📋 Copy Auto Sizer
                       </button>
+                      )}
 
                       <select
                         onChange={(e) => {
@@ -2789,9 +2790,9 @@ export default function SalesTeamApp({
                         className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
                       >
                         <option value="">📂 Load Saved Quote...</option>
-                        {(activeLead?.quotes || []).map((q: any) => (
+                        {getLeadManualQuotes(activeLead).map((q: any) => (
                           <option key={q.id} value={q.id}>
-                            Quote {q.id} ({q.quote_type === 'auto_sizer' ? 'Auto Sizer' : 'Manual BOQ'} - {q.systemSizekW}kW)
+                            Quote {q.id} (Manual BOQ - {q.systemSizekW}kW)
                           </option>
                         ))}
                       </select>
@@ -4034,7 +4035,7 @@ export default function SalesTeamApp({
                     <span className="text-[10px] text-slate-500 font-sans">Open details, duplicate, download specific PDF versions, and trigger simulated reminders.</span>
                   </div>
 
-                  {activeLead.quotes && activeLead.quotes.length > 0 ? (
+                  {getLeadManualQuotes(activeLead).length > 0 ? (
                     <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950/60">
                       <table className="w-full text-left border-collapse text-xs font-sans">
                         <thead>
@@ -4049,7 +4050,7 @@ export default function SalesTeamApp({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 text-slate-350 font-mono">
-                          {activeLead.quotes.map((q: any) => {
+                          {getLeadManualQuotes(activeLead).map((q: any) => {
                             const dateString = q.createdAt ? new Date(q.createdAt).toLocaleString() : new Date().toLocaleDateString();
                             const quoteNetVal = q.netTotal || q.netCost || q.totalCost || 0;
                             const isSizer = q.quote_type === 'auto_sizer';
@@ -4098,10 +4099,7 @@ export default function SalesTeamApp({
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        const endpoint = q.quote_type === 'auto_sizer'
-                                          ? `${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${q.id}`
-                                          : `${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`;
-                                        window.open(endpoint, "_blank");
+                                        window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`, "_blank");
                                       }}
                                       className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
                                       title="Download Version PDF"
