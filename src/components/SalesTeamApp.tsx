@@ -161,6 +161,7 @@ export default function SalesTeamApp({
   const [globalFooterText, setGlobalFooterText] = useState<string>("Sunchaser Energy Systems Proposal");
   const [globalFooterLineColor, setGlobalFooterLineColor] = useState<string>("#cbd5e1");
   const [globalFooterAlignment, setGlobalFooterAlignment] = useState<string>("left");
+  const [useDefaultCompanyContent, setUseDefaultCompanyContent] = useState<boolean>(false);
 
   const isDefaultAutoSizerRow = (row: any) => {
     const defaultIds = [
@@ -209,6 +210,7 @@ export default function SalesTeamApp({
         setGlobalFooterLineColor(settings.globalPdfFooter.lineColor || "#cbd5e1");
         setGlobalFooterAlignment(settings.globalPdfFooter.alignment || "left");
       }
+      setUseDefaultCompanyContent(settings.useDefaultCompanyContent === true);
     }
   }, [settings]);
 
@@ -216,6 +218,7 @@ export default function SalesTeamApp({
     try {
       const updatedSettings = {
         ...settings,
+        useDefaultCompanyContent,
         globalPdfHeader: {
           enabled: globalHeaderEnabled,
           text: globalHeaderText,
@@ -252,6 +255,45 @@ export default function SalesTeamApp({
       console.error("Save global settings error:", err);
       alert("Failed to save global PDF settings: " + (err.message || err.toString()));
     }
+  };
+
+  const handleCleanAction = (pageId: string, actionType: 'content' | 'bg' | 'logo' | 'reset') => {
+    setLocalPageStates(prev => {
+      const existing = prev[pageId] || {};
+      const page = quoteTemplatePages.find(p => p.id === pageId);
+      if (!page) return prev;
+      
+      let updated: any = { ...existing };
+      
+      if (actionType === 'content') {
+        updated.title = "";
+        updated.body_text = "";
+        updated.bodyImages = [];
+      } else if (actionType === 'bg') {
+        updated.bg_image_url = "";
+      } else if (actionType === 'logo') {
+        updated.image_url = "";
+      } else if (actionType === 'reset') {
+        updated.title = "";
+        updated.body_text = "";
+        updated.image_url = "";
+        updated.bg_image_url = "";
+        updated.layoutMode = "standard";
+        updated.headerMode = "inherit";
+        updated.headerText = "";
+        updated.headerLogoUrl = "";
+        updated.footerMode = "inherit";
+        updated.footerText = "";
+        updated.bodyImages = [];
+      }
+      
+      updated.saveStatus = 'Unsaved';
+      
+      return {
+        ...prev,
+        [pageId]: updated
+      };
+    });
   };
 
   const uploadImageFile = async (file: File, isBg: boolean): Promise<string> => {
@@ -1338,8 +1380,16 @@ export default function SalesTeamApp({
       // Refresh global state
       if (onRefreshState) onRefreshState();
 
-      // Open PDF in a new tab
-      window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}`, "_blank");
+      // Open exact edited quote PDF only when quote id is known
+      if (editingQuoteId) {
+        const editedQuote = activeLead.quotes?.find((q: any) => q.id === editingQuoteId);
+        if (editedQuote) {
+          const endpoint = editedQuote.quote_type === "auto_sizer"
+            ? `${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${editingQuoteId}`
+            : `${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${editingQuoteId}`;
+          window.open(endpoint, "_blank");
+        }
+      }
     } catch (err: any) {
       console.error("Quote save failed:", err);
       setSubmitError(err.message || "Failed to save quotation on server.");
@@ -1350,6 +1400,24 @@ export default function SalesTeamApp({
 
   const handleDownloadManualQuotePDF = () => {
     if (!activeLead) return;
+
+    const getManualItemsCount = () => boqRows.filter(r => r && r.type === 'item' && !isDefaultAutoSizerRow(r)).length;
+    const isQuoteCompiled = () => activeLead.quotes && activeLead.quotes.some((q: any) => q.quote_type === 'manual_boq');
+
+    if (getManualItemsCount() === 0 || !isQuoteCompiled()) {
+      alert("No BOQ items added yet.");
+      return;
+    }
+
+    const targetManualQuote = editingQuoteId
+      ? activeLead.quotes?.find((q: any) => q.id === editingQuoteId && q.quote_type === "manual_boq")
+      : activeLead.quotes?.find((q: any) => q.quote_type === "manual_boq");
+    if (!targetManualQuote) {
+      alert("No BOQ items added yet.");
+      return;
+    }
+    window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${targetManualQuote.id}`, "_blank");
+    return;
 
     const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
 
@@ -1447,6 +1515,39 @@ export default function SalesTeamApp({
 
   const handlePreviewProposalDeck = async () => {
     if (!activeLead) return;
+
+    const getManualItemsCount = () => boqRows.filter(r => r && r.type === 'item' && !isDefaultAutoSizerRow(r)).length;
+    const isQuoteCompiled = () => activeLead.quotes && activeLead.quotes.some((q: any) => q.quote_type === 'manual_boq');
+
+    if (getManualItemsCount() === 0 || !isQuoteCompiled()) {
+      alert("No BOQ items added yet.");
+      return;
+    }
+
+    const targetManualQuote = editingQuoteId
+      ? activeLead.quotes?.find((q: any) => q.id === editingQuoteId && q.quote_type === "manual_boq")
+      : activeLead.quotes?.find((q: any) => q.quote_type === "manual_boq");
+    if (!targetManualQuote) {
+      alert("No BOQ items added yet.");
+      return;
+    }
+
+    try {
+      setLoadingPreview(true);
+      setShowProposalPreview(true);
+      const response = await fetch(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${targetManualQuote.id}`);
+      if (!response.ok) {
+        throw new Error(`Failed to compile proposal preview layout: ${response.statusText}`);
+      }
+      const html = await response.text();
+      setProposalPreviewHtml(html);
+    } catch (err: any) {
+      console.error(err);
+      setProposalPreviewHtml(`<div style="padding: 20px; color: #ef4444; font-weight: bold; font-family: sans-serif;">Error loading preview: ${err.message}</div>`);
+    } finally {
+      setLoadingPreview(false);
+    }
+    return;
 
     const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
 
@@ -2158,14 +2259,28 @@ export default function SalesTeamApp({
                 <div className="flex gap-2 self-start md:self-center">
                   <button
                     type="button"
-                    onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}`, "_blank")}
+                    onClick={() => {
+                      const latestAutoQuote = activeLead.quotes?.find((q: any) => q.quote_type === "auto_sizer");
+                      if (!latestAutoQuote) {
+                        alert("No Auto Sizer quote saved yet.");
+                        return;
+                      }
+                      window.open(`${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${latestAutoQuote.id}`, "_blank");
+                    }}
                     className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
                     <Download className="h-3.5 w-3.5 text-amber-500" /> Download Auto Sizer PDF
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}`, "_blank")}
+                    onClick={() => {
+                      const latestManualQuote = activeLead.quotes?.find((q: any) => q.quote_type === "manual_boq");
+                      if (!latestManualQuote) {
+                        alert("No BOQ items added yet.");
+                        return;
+                      }
+                      window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${latestManualQuote.id}`, "_blank");
+                    }}
                     className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer animate-pulse"
                   >
                     <Download className="h-3.5 w-3.5" /> Download Saved Quote PDF
@@ -3838,6 +3953,38 @@ export default function SalesTeamApp({
                                 </div>
 
                               </div>
+                              {/* Clear/Reset Controls */}
+                              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono text-slate-500 border-t border-slate-900/60 pt-2 mt-2">
+                                <span className="text-slate-600 font-bold">Quick Clean:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCleanAction(page.id, 'content')}
+                                  className="text-amber-500/80 hover:text-amber-400 cursor-pointer transition underline decoration-dotted"
+                                >
+                                  Clear Page Content
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCleanAction(page.id, 'bg')}
+                                  className="text-amber-500/80 hover:text-amber-400 cursor-pointer transition underline decoration-dotted"
+                                >
+                                  Clear Background
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCleanAction(page.id, 'logo')}
+                                  className="text-amber-500/80 hover:text-amber-400 cursor-pointer transition underline decoration-dotted"
+                                >
+                                  Clear Logo/Image
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCleanAction(page.id, 'reset')}
+                                  className="text-rose-400 hover:text-rose-300 cursor-pointer transition underline decoration-dotted ml-auto"
+                                >
+                                  Reset Entire Template
+                                </button>
+                              </div>
 
                             </div>
 
@@ -3950,7 +4097,12 @@ export default function SalesTeamApp({
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`, "_blank")}
+                                      onClick={() => {
+                                        const endpoint = q.quote_type === 'auto_sizer'
+                                          ? `${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${q.id}`
+                                          : `${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`;
+                                        window.open(endpoint, "_blank");
+                                      }}
                                       className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
                                       title="Download Version PDF"
                                     >

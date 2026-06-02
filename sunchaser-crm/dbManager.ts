@@ -615,6 +615,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   if (!supabase) {
     throw new Error("Supabase is not configured.");
   }
+  const useLocalConfigFallback = false;
 
   let localBackup: any = {};
   try {
@@ -1115,17 +1116,17 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     warranties: warrantiesMapped.length > 0 ? warrantiesMapped : undefined,
     notifications: notificationsMapped.length > 0 ? notificationsMapped : undefined,
     solarPackages: solarPackagesMapped.length > 0 ? solarPackagesMapped : undefined,
-    settings: settingsObj || localBackup.settings || undefined,
-    websiteContent: websiteContentObj || localBackup.websiteContent || undefined,
-    purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : (localBackup.purchaseOrders || []),
-    quoteTemplates: quoteTemplatesMapped.length > 0 ? quoteTemplatesMapped : (localBackup.quoteTemplates || []),
-    quoteTemplatePages: quoteTemplatePagesMapped.length > 0 ? quoteTemplatePagesMapped : (localBackup.quoteTemplatePages || []),
-    bankAccounts: bankAccountsMapped.length > 0 ? bankAccountsMapped : (localBackup.bankAccounts || []),
-    companyTerms: companyTermsMapped.length > 0 ? companyTermsMapped : (localBackup.companyTerms || []),
-    ceoMessages: ceoMessagesMapped.length > 0 ? ceoMessagesMapped : (localBackup.ceoMessages || []),
-    socialLinks: socialLinksMapped.length > 0 ? socialLinksMapped : (localBackup.socialLinks || []),
-    structureDescriptions: structureDescriptionsMapped.length > 0 ? structureDescriptionsMapped : (localBackup.structureDescriptions || []),
-    quotePdfSettings: quotePdfSettingsMapped.length > 0 ? quotePdfSettingsMapped : (localBackup.quotePdfSettings || [])
+    settings: settingsObj || (useLocalConfigFallback ? localBackup.settings : undefined),
+    websiteContent: websiteContentObj || (useLocalConfigFallback ? localBackup.websiteContent : undefined),
+    purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : (useLocalConfigFallback ? (localBackup.purchaseOrders || []) : []),
+    quoteTemplates: quoteTemplatesMapped.length > 0 ? quoteTemplatesMapped : (useLocalConfigFallback ? (localBackup.quoteTemplates || []) : []),
+    quoteTemplatePages: quoteTemplatePagesMapped.length > 0 ? quoteTemplatePagesMapped : (useLocalConfigFallback ? (localBackup.quoteTemplatePages || []) : []),
+    bankAccounts: bankAccountsMapped.length > 0 ? bankAccountsMapped : (useLocalConfigFallback ? (localBackup.bankAccounts || []) : []),
+    companyTerms: companyTermsMapped.length > 0 ? companyTermsMapped : (useLocalConfigFallback ? (localBackup.companyTerms || []) : []),
+    ceoMessages: ceoMessagesMapped.length > 0 ? ceoMessagesMapped : (useLocalConfigFallback ? (localBackup.ceoMessages || []) : []),
+    socialLinks: socialLinksMapped.length > 0 ? socialLinksMapped : (useLocalConfigFallback ? (localBackup.socialLinks || []) : []),
+    structureDescriptions: structureDescriptionsMapped.length > 0 ? structureDescriptionsMapped : (useLocalConfigFallback ? (localBackup.structureDescriptions || []) : []),
+    quotePdfSettings: quotePdfSettingsMapped.length > 0 ? quotePdfSettingsMapped : (useLocalConfigFallback ? (localBackup.quotePdfSettings || []) : [])
   };
 }
 

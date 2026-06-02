@@ -11,8 +11,7 @@ import {
   initialSeed,
   getDashboardStats,
   calculateLeadScore,
-  Database,
-  runDatabaseMigration
+  Database
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -256,12 +255,6 @@ function loadDb() {
       saveDb();
     }
 
-    // Run Supabase auto-migration in background if active
-    if (isSupabaseActive()) {
-      runDatabaseMigration(db).catch((err) => {
-        console.error("Error running auto-migration in background:", err);
-      });
-    }
   } catch (err) {
     console.error("FS Read error inside loadDb:", err);
     db = initialSeed;
@@ -648,24 +641,26 @@ app.delete("/api/leads/:id", async (req, res) => {
     return res.status(404).json({ error: "Lead not found" });
   }
 
+  // Remove from Supabase first when active (source of truth)
+  if (isSupabaseActive()) {
+    try {
+      const supabase = getSupabase()!;
+      const { error } = await supabase.from("leads").delete().eq("id", id);
+      if (error) {
+        throw error;
+      }
+    } catch (err: any) {
+      console.error("[Supabase Lead Deletion Error]:", err.message);
+      return res.status(500).json({ error: "Failed to delete lead from Supabase." });
+    }
+  }
+
   // Remove from local in-memory DB
   db.leads.splice(index, 1);
   db.projects = db.projects.filter((p: any) => p.leadId !== id);
   if (db.netMeteringTrackers[id]) delete db.netMeteringTrackers[id];
   if (db.paymentTracks[id]) delete db.paymentTracks[id];
-
   saveDb();
-
-  // Remove from Supabase if active
-  if (isSupabaseActive()) {
-    try {
-      const supabase = getSupabase()!;
-      // cascade on delete will delete quotations, projects, installation tasks, trackers, etc.
-      await supabase.from("leads").delete().eq("id", id);
-    } catch (err: any) {
-      console.error("[Supabase Lead Deletion Error]:", err.message);
-    }
-  }
 
   await appendActivityLog("admin", "Admin", "Super Admin", "Lead Deleted", `Deleted lead ${id}`);
   res.json({ success: true, message: `Lead ${id} and all related quotes/projects deleted successfully.` });
@@ -2752,6 +2747,8 @@ function compileSunchaserPDFHtml(
   const allDbPages = activeState.quoteTemplatePages || [];
   const dbPages = allDbPages.filter((p: any) => p.templateId === templateId);
 
+  const useDefaultCompanyContent = false;
+
   const getPageConfig = (pageType: string, defaultTitle: string, defaultBody: string) => {
     const dbPage = dbPages.find((p: any) => p.pageType === pageType);
     if (dbPage) {
@@ -2759,13 +2756,19 @@ function compileSunchaserPDFHtml(
       const ext = parseExtendedSettings(rawBody, pageType);
       return {
         enabled: dbPage.isEnabled !== false,
-        title: dbPage.title !== undefined && dbPage.title !== null ? dbPage.title : defaultTitle,
-        bodyText: dbPage ? ext.bodyText : defaultBody,
+        title: dbPage.title !== undefined && dbPage.title !== null ? dbPage.title : (useDefaultCompanyContent ? defaultTitle : ""),
+        bodyText: ext.bodyText !== undefined ? ext.bodyText : (useDefaultCompanyContent ? defaultBody : ""),
         imageUrl: dbPage.imageUrl || dbPage.image_url || "",
         bgImageUrl: dbPage.bgImageUrl || dbPage.bg_image_url || ""
       };
     }
-    return { enabled: true, title: defaultTitle, bodyText: defaultBody, imageUrl: "", bgImageUrl: "" };
+    return {
+      enabled: true,
+      title: useDefaultCompanyContent ? defaultTitle : "",
+      bodyText: useDefaultCompanyContent ? defaultBody : "",
+      imageUrl: "",
+      bgImageUrl: ""
+    };
   };
 
   const getIncludedFlag = (pageType: string) => {
@@ -2802,14 +2805,8 @@ function compileSunchaserPDFHtml(
   const quoteDateString = qDate.toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' });
 
   // Bank accounts mapping (Page 10)
-  const officialBankAccounts = [
-    { bankName: "Allied Bank Limited", accountTitle: "SUNCHASER ENERGY", accountNumber: "04190010112276940012", iban: "PK81ABPA0010112276940012" },
-    { bankName: "Bank Alfalah Limited", accountTitle: "AL ADAM", accountNumber: "55265001858603", iban: "PK12ALFH5526005001858603" },
-    { bankName: "Allied Bank Limited", accountTitle: "SIGNALS GLOBAL", accountNumber: "09090010112284650035", iban: "N/A" },
-    { bankName: "Meezan Bank Limited", accountTitle: "HELIOS SOLAR ENERGY", accountNumber: "02490109527492", iban: "PK49MEZN0002490109527492" }
-  ];
   const dbBankAccounts = activeState.bankAccounts || [];
-  const bankAccountsList = dbBankAccounts.length > 0 ? dbBankAccounts.filter((b: any) => b.isActive !== false) : officialBankAccounts;
+  const bankAccountsList = dbBankAccounts.filter((b: any) => b.isActive !== false);
 
   let bankAccountsHtml = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 15px;">`;
   bankAccountsList.forEach((acc: any, index: number) => {
@@ -2828,27 +2825,8 @@ function compileSunchaserPDFHtml(
   bankAccountsHtml += `</div>`;
 
   // Company Terms (Page 7 & Page 8)
-  const defaultTerms = [
-    "Quotation validity: 3 days from date of issuance.",
-    "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
-    "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
-    "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
-    "Work will commence within 3 days after receipt of the advance payment.",
-    "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
-    "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
-    "Client interference: Any on-site construction delays caused by the client will affect the completion timeline.",
-    "Grid connection: Net metering facilitation requires valid property documents and sanctioned load compliance.",
-    "System earthing: Dedicated chemical earthing bores will be created for DC, AC, and frame grounding safety.",
-    "Smart online monitoring: Active monitoring requires stable client Wi-Fi connection at the inverter site.",
-    "Wi-Fi requirement: Customer must provide stable continuous Wi-Fi access for monitoring data synch.",
-    "Client scope of work: Providing masonry work access, temporary electricity & water during construction.",
-    "Civil work exclusions: Cutting of structural concrete slabs or custom aesthetic tiles is excluded unless quoted.",
-    "Net metering clearance remains the client's responsibility if document verification faults occur.",
-    "Panel washing advisory: Clean arrays bi-weekly for optimal generation yield performance.",
-    "Force majeure: Sunchaser is not liable for delays caused by national strikes, weather anomalies, or utility board freezes."
-  ];
   const dbTerms = activeState.companyTerms || [];
-  const termsList = dbTerms.length > 0 ? dbTerms.map((t: any) => t.termText || t.term_text) : defaultTerms;
+  const termsList = dbTerms.map((t: any) => t.termText || t.term_text);
 
   let tcPage1Html = "";
   let tcPage2Html = "";
@@ -2939,12 +2917,8 @@ function compileSunchaserPDFHtml(
   }
 
   // 17 CEO messages
-  const defaultCeos = [
-    { name: "Muhammad Allauddin", designation: "CEO, Engineering & Operations", message: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation. We refuse to cut corners on material gauges, hot-dip zinc coating parameters, wire thicknesses, or chemical earthing bores. Every layout is physically verified, and every termination complies with ISO standards. Sunchaser means ultimate power security." },
-    { name: "Barrister Raza Khan Niazi", designation: "CEO Strategy & Innovation / Compliance", message: "Liaison with utility boards and regulatory licensing can be daunting for clients. Sunchaser handles the entire paperwork and NEPRA filing process transparently. We promise that all governmental files are processed legally, demand notices are audited, and net metering activations are completed with maximal efficiency." }
-  ];
   const dbCeos = activeState.ceoMessages || [];
-  const ceoList = dbCeos.length > 0 ? dbCeos : defaultCeos;
+  const ceoList = dbCeos;
 
   // LESCO / Net Metering Settings (Page 9)
   const lescoObj = quoteObj.lescoSettings || { meterNo: "", consumerNo: "", sanctionedLoad: "", phaseType: "Three Phase" };
@@ -2986,15 +2960,6 @@ function compileSunchaserPDFHtml(
     dbPage: p
   }));
 
-  // Add virtual BOQ page if included
-  if (getIncludedFlag('boq')) {
-    pagesList.push({
-      type: 'boq',
-      sortOrder: 8.5, // Placed between structures (5,6,7,8) and terms1 (9)
-      dbPage: null
-    });
-  }
-
   // Sort by sortOrder
   pagesList.sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -3004,22 +2969,6 @@ function compileSunchaserPDFHtml(
   - number of pages loaded: ${dbPages.length}
   - enabled page count: ${enabledDbPages.length}
   `);
-
-  const defaultPageConfigs: Record<string, { title: string; bodyText: string }> = {
-    cover: { title: "Technical Feasibility & Engineering Quotation", bodyText: "Generational Energy Independence\\nTechnical Feasibility & Engineering Quotation" },
-    profile: { title: "Sunchaser Group Profile", bodyText: "Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry." },
-    qr: { title: "Why Partner with Sunchaser?", bodyText: "Tier-1 Direct Imported Hardware: All solar modules are sourced directly from Bloomberg Tier-1 rated manufacturers (Jinko, Longi, JA Solar) with complete customs trace certificates." },
-    ceo: { title: "Executive Board Assurances", bodyText: "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation." },
-    structure_standard: { title: "Mounting Structure - Standard A-Frame", bodyText: "Standard Galvanized L3 14 Gauge structure with Rawal anchors wind-resistant up to 130 km/h." },
-    structure_elevated: { title: "Mounting Structure - Elevated Steel Frame", bodyText: "10ft Roof clearance hot-dip galvanized elevated structure frame wind-resistant up to 130 km/h." },
-    structure_girder: { title: "Mounting Structure - Heavy Mughal Girder Frame", bodyText: "Heavy duty C-Channel girder steel columns and girders wind-resistant up to 150 km/h." },
-    structure_custom: { title: "Mounting Structure - Custom Structural Drawing", bodyText: "Custom designed mounting rails and brackets based on site constraints and calculations." },
-    terms1: { title: "Terms, Conditions & Regulations (1/2)", bodyText: "" },
-    terms2: { title: "Terms, Conditions & Regulations (2/2)", bodyText: "" },
-    signoff: { title: "Client Verification & Sign-off", bodyText: "" },
-    bank: { title: "Official Payment Channels", bodyText: "" },
-    final: { title: "Sunchaser Energy Systems", bodyText: "Thank you for choosing Sunchaser Energy Systems! We are committed to delivering the highest caliber of electrical integration, structural safety, and long-term utility savings." }
-  };
 
   const defaultAutoSizerIds = [
     'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
@@ -3034,16 +2983,14 @@ function compileSunchaserPDFHtml(
   let pagesHtml = "";
   pagesList.forEach((pageItem, pageIndex) => {
     const pageType = pageItem.type;
-    const defaults = defaultPageConfigs[pageType] || { title: "", bodyText: "" };
-    
-    // Resolve page title and body, prioritizing db template fields and falling back to default values
+    // Resolve page title and body strictly from template editor content
     const dbPage = pageItem.dbPage;
     const rawBody = (dbPage && (dbPage.bodyText || dbPage.body_text)) || "";
     const ext = parseExtendedSettings(rawBody, pageType);
 
     const p = {
-      title: (dbPage && dbPage.title !== undefined && dbPage.title !== null) ? dbPage.title : defaults.title,
-      bodyText: dbPage ? ext.bodyText : defaults.bodyText,
+      title: (dbPage && dbPage.title !== undefined && dbPage.title !== null) ? dbPage.title : "",
+      bodyText: dbPage ? (ext.bodyText !== undefined ? ext.bodyText : "") : "",
       imageUrl: (dbPage && (dbPage.imageUrl || dbPage.image_url)) || "",
       bgImageUrl: (dbPage && (dbPage.bgImageUrl || dbPage.bg_image_url)) || ""
     };
@@ -3159,9 +3106,17 @@ function compileSunchaserPDFHtml(
 
     // Render full page image only if enabled
     if (ext.layoutMode === 'full_page_image' || ext.layoutMode === 'image_only') {
+      let imageContent = "";
+      if (p.imageUrl) {
+        imageContent = `<img src="${p.imageUrl}" style="width: 100%; height: 100%; object-fit: contain; display: block; margin: auto;" alt="Full Page Asset" />`;
+      } else if (p.bgImageUrl) {
+        imageContent = `<div style="width: 100%; height: 100%; background: url('${p.bgImageUrl}') no-repeat center center / cover;"></div>`;
+      } else if (bodyImagesHtml) {
+        imageContent = bodyImagesHtml;
+      }
       pagesHtml += `
-        <div class="page full-page-image-only" style="background: ${p.bgImageUrl ? `url('${p.bgImageUrl}') no-repeat center center / cover` : '#ffffff'}; border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always;">
-          ${absoluteImagesHtml}
+        <div class="page full-page-image-only" style="border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always; overflow: hidden;">
+          ${imageContent}
         </div>
       `;
     } else {
@@ -3173,13 +3128,13 @@ function compileSunchaserPDFHtml(
               <div style="display: flex; align-items: center; gap: 12px;">
                 ${p.imageUrl ? `
                   <img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
-                ` : `
+                ` : (useDefaultCompanyContent ? `
                   <div style="background-color: #0f172a; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
                   <div>
                     <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">SUNCHASER ENERGY</div>
                     <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #d97706; font-weight: bold;">Generational Infrastructure</div>
                   </div>
-                `}
+                ` : '')}
               </div>
             </div>
 
@@ -3187,12 +3142,16 @@ function compileSunchaserPDFHtml(
               <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a;">
                 ${quoteObj.systemSizekW || 15}kW ${quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
               </div>
+              ${p.title ? `
               <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px;">
                 ${p.title}
               </div>
+              ` : ''}
+              ${p.bodyText ? `
               <p style="font-size: 12px; color: #475569; margin-top: 10px; line-height: 1.6; max-width: 500px;">
                 ${p.bodyText.replace(/\\n/g, '<br/>')}
               </p>
+              ` : ''}
               
               ${bodyImagesHtml}
               
@@ -3239,14 +3198,17 @@ function compileSunchaserPDFHtml(
             ${absoluteImagesHtml}
             <div>
               ${headerHtml}
-              <div class="page-title">${p.title}</div>
+              ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
               
+              ${p.bodyText ? `
               <div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 20px 0; font-weight: 500;">
                 ${p.bodyText.replace(/\\n/g, '<br/>')}
               </div>
+              ` : ''}
 
               ${bodyImagesHtml}
 
+              ${useDefaultCompanyContent ? `
               <div class="grid-2" style="margin-top: 25px;">
                 <div class="card">
                   <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">☀️ Sunchaser Energy</div>
@@ -3280,6 +3242,7 @@ function compileSunchaserPDFHtml(
                   "Empowering Pakistan with generational clean energy independence, combining premium imports with superior local engineering."
                 </div>
               </div>
+              ` : ''}
             </div>
             ${footerHtml}
           </div>
@@ -3292,14 +3255,17 @@ function compileSunchaserPDFHtml(
             ${absoluteImagesHtml}
             <div>
               ${headerHtml}
-              <div class="page-title">${p.title}</div>
-
+              ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
+ 
+              ${p.bodyText ? `
               <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
                 ${p.bodyText.replace(/\\n/g, '<br/>')}
               </div>
-
+              ` : ''}
+ 
               ${bodyImagesHtml}
-
+ 
+              ${useDefaultCompanyContent ? `
               <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
                 <div style="display: flex; gap: 10px; align-items: flex-start;">
                   <span style="font-size: 20px;">🏆</span>
@@ -3330,7 +3296,7 @@ function compileSunchaserPDFHtml(
                   </div>
                 </div>
               </div>
-
+ 
               <div class="card" style="margin-top: 30px; border: 1px dashed #cbd5e1; background-color: #fafaf9;">
                 <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
                 <div style="display: flex; justify-content: space-around; align-items: center;">
@@ -3370,6 +3336,7 @@ function compileSunchaserPDFHtml(
                   </div>
                 </div>
               </div>
+              ` : ''}
             </div>
             ${footerHtml}
           </div>
@@ -3384,11 +3351,12 @@ function compileSunchaserPDFHtml(
             ${absoluteImagesHtml}
             <div>
               ${headerHtml}
-              <div class="page-title">${p.title}</div>
+              ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
               ${p.bodyText ? `<div style="font-size: 11px; margin-bottom: 12px; color: #475569;">${p.bodyText}</div>` : ''}
 
               ${bodyImagesHtml}
 
+              ${useDefaultCompanyContent ? `
               <div class="grid-2" style="margin-top: 15px;">
                 <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; height: ${cardHeight};">
                   <div>
@@ -3420,6 +3388,7 @@ function compileSunchaserPDFHtml(
                   </div>
                 </div>
               </div>
+              ` : ''}
             </div>
             ${footerHtml}
           </div>
@@ -3432,8 +3401,9 @@ function compileSunchaserPDFHtml(
             ${absoluteImagesHtml}
             <div>
               ${headerHtml}
-              <div class="page-title">${p.title}</div>
+              ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
 
+              ${(p.bodyText || useDefaultCompanyContent) ? `
               <div class="card" style="margin: 15px 0 10px 0;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                   <span style="font-weight: 800; font-size: 12px; color: #0f172a;">Selected Structure Frame Type:</span>
@@ -3444,9 +3414,11 @@ function compileSunchaserPDFHtml(
                   ${p.bodyText || structDetails.descriptionEn}
                 </div>
               </div>
+              ` : ''}
 
               ${bodyImagesHtml}
 
+              ${useDefaultCompanyContent ? `
               <div class="card" style="margin-bottom: 10px; border-left: 4px solid #f59e0b; padding: 10px 14px;">
                 <div style="font-size: 9px; text-transform: uppercase; color: #d97706; font-weight: 800; margin-bottom: 4px; text-align: right;">ساختی تفصیلات (اردو)</div>
                 <div class="urdu-text" style="font-size: 11.5px; line-height: 2;">
@@ -3477,6 +3449,7 @@ function compileSunchaserPDFHtml(
                 <div style="font-weight: 800; font-size: 9.5px; color: #0f172a; text-align: center; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px;">Engineering Mounting Layout Blueprint</div>
                 ${structureSvg}
               </div>
+              ` : ''}
             </div>
             ${footerHtml}
           </div>
@@ -3494,11 +3467,11 @@ function compileSunchaserPDFHtml(
         
         // Count manual rows and auto sizer rows
         const autoSizerRows = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id));
-        const manualBoqRows = allRows.filter((r: any) => !defaultAutoSizerIds.includes(r.id));
+        const manualBoqRows = allRows.filter((r: any) => r && r.type === 'item' && !defaultAutoSizerIds.includes(r.id));
         
         const isPackageRow = (r: any) => r.id && (r.id.startsWith('row-heading') || r.id.startsWith('row-item') || r.id.startsWith('row-subtotal'));
         const sourceUsed = manualBoqRows.some(isPackageRow) ? 'package_loaded' : (includeSizerItems ? 'auto_sizer' : 'manual_only');
-        const rows = includeSizerItems ? allRows : manualBoqRows;
+        const rows = includeSizerItems ? allRows.filter((r: any) => r && r.type === 'item') : manualBoqRows;
 
         console.log(`[PDF Compilation Debug Log]
           - manualBoqRows count: ${manualBoqRows.length}
@@ -3771,22 +3744,28 @@ function compileSunchaserPDFHtml(
           <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
             ${absoluteImagesHtml}
             <div>
+              ${useDefaultCompanyContent ? `
               <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
               <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</h2>
               <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
+              ` : ''}
               
+              ${p.bodyText ? `
               <div style="max-width: 440px; margin: 0 auto 40px auto; font-size: 12px; line-height: 1.6; color: #475569; font-weight: 500; font-style: italic;">
                 "${p.bodyText}"
               </div>
+              ` : ''}
 
               ${bodyImagesHtml}
 
+              ${useDefaultCompanyContent ? `
               <div style="border-top: 1.5px solid #cbd5e1; padding-top: 25px; font-size: 10.5px; color: #475569; max-width: 360px; margin: 0 auto; line-height: 1.5;">
                 <strong style="color: #0f172a; font-size: 11px;">Sunchaser Central Staging HQ</strong><br/>
                 ${settings.officeAddress}<br/>
                 Hotlines: ${settings.phoneNumbers}<br/>
                 Email: ${settings.billingEmail || 'billing@sunchaser-energy.com'} | Web: ${settings.websiteUrl || 'www.sunchaser-energy.com'}
               </div>
+              ` : ''}
             </div>
           </div>
         `;
@@ -4001,33 +3980,14 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
       return res.status(404).send("Lead not found.");
     }
     
-    // For auto sizer, we build a mock quote object from the lead parameters
-    const systemSizekW = (lead.monthlyBill && lead.monthlyBill > 1000)
-      ? Number((lead.monthlyBill / (26 * 35)).toFixed(1))
-      : 8.5;
-    const panelWattage = 400;
-    const panelCount = Math.ceil((systemSizekW * 1000) / panelWattage);
-    const mockQuote = {
-      systemSizekW,
-      panelCount,
-      panelType: `Sunchaser Premium ${panelWattage}W Mono-PERC Panels`,
-      inverterType: "Sunchaser Smart Inverter",
-      batteryCapacity: lead.backupRequirement || "None",
-      totalCost: Math.round(systemSizekW * 180000), // generic price estimate
-      structureType: lead.roofType || "Standard",
-      accessories: "Standard mechanical couplers, AC/DC DB box, copper cabling",
-      installationCharges: 75000,
-      netMeteringCharges: 90000,
-      paymentTerms: "50% Advance, 40% Delivery, 10% Commissioning",
-      warrantyTerms: "25 Years panel warranty, 10 Years inverter warranty",
-      termsAndConditions: "Standard Sunchaser terms apply.",
-      clientName: lead.name,
-      clientPhone: lead.phone,
-      clientEmail: lead.email,
-      clientAddress: lead.address,
-      cityArea: lead.location || "Lahore",
-      systemType: "On-grid"
-    };
+    const quoteId = String(req.query.quoteId || "");
+    if (!quoteId) {
+      return res.status(400).send("quoteId is required for auto sizer PDF.");
+    }
+    const quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer");
+    if (!quote) {
+      return res.status(404).send("Auto sizer quote not found for this lead.");
+    }
 
     const defaultAutoSizerIds = [
       'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
@@ -4039,15 +3999,15 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
       'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
     ];
     console.log(`[PDF BACKEND LOG] GET /api/export/pdf/auto-sizer/:leadId
-      - quoteId: N/A (Auto Sizer Mock)
-      - quote_type: auto_sizer
+      - quoteId: ${quote.id}
+      - quote_type: ${quote.quote_type || "auto_sizer"}
       - includeSizerItems: true
       - manual rows count: 0
       - auto rows count: ${defaultAutoSizerIds.length}
       - final rows count: ${defaultAutoSizerIds.length}
     `);
 
-    const pdfHtml = compileSunchaserPDFHtml('sizer', mockQuote, lead, activeState);
+    const pdfHtml = compileSunchaserPDFHtml('sizer', quote, lead, activeState);
     res.send(pdfHtml);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF structure: " + err.message);
@@ -4095,6 +4055,14 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       };
     }
 
+    if (lead && payload.quoteId) {
+      const exactManualQuote = lead.quotes?.find((q: any) => q.id === payload.quoteId && q.quote_type === "manual_boq");
+      if (!exactManualQuote) {
+        return res.status(404).send("Manual BOQ quote not found for this lead.");
+      }
+      payload = exactManualQuote;
+    }
+
     const options = {
       includedPages: payload.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
       templateId: payload.templateId || "tmpl-1",
@@ -4112,7 +4080,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
     ];
     const allRows = payload.boqRows || payload.boqItems || [];
     const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
-    const manualBoqCount = allRows.filter((r: any) => !defaultAutoSizerIds.includes(r.id)).length;
+    const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
     const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
     console.log(`[PDF BACKEND LOG] POST /api/export/pdf/manual-quote
       - quoteId: ${payload.id || 'N/A'}
@@ -4122,6 +4090,18 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       - auto rows count: ${autoSizerCount}
       - final rows count: ${finalCount}
     `);
+
+    const hasCompiledQuote = lead && lead.quotes && lead.quotes.some((q: any) => q.quote_type === 'manual_boq');
+
+    if (manualBoqCount === 0 || !hasCompiledQuote) {
+      res.send(`
+        <div style="padding: 40px; color: #d97706; font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; max-width: 500px; margin: 50px auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+          <h2 style="margin-top: 0; color: #92400e; font-size: 20px; font-weight: 700;">No BOQ items added yet.</h2>
+          <p style="color: #b45309; font-size: 14px; font-weight: 500; line-height: 1.5; margin-bottom: 0;">Please add BOQ rows and compile quote first.</p>
+        </div>
+      `);
+      return;
+    }
 
     const pdfHtml = compileSunchaserPDFHtml('manual', payload, lead, activeState, options);
     res.send(pdfHtml);
@@ -4209,12 +4189,12 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     if (quoteId) {
       quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId && q.quote_type === 'manual_boq');
     }
-    if (!quote) {
-      quote = lead.quotes && lead.quotes.find((q: any) => q.quote_type === 'manual_boq');
+    if (!quoteId) {
+      return res.status(400).send("quoteId is required for manual BOQ PDF.");
     }
 
     if (!quote) {
-      return res.status(404).send("No saved manual quotation found for this lead.");
+      return res.status(404).send("Manual BOQ quote not found for this lead.");
     }
 
     const options = {
@@ -4234,7 +4214,7 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     ];
     const allRows = quote.boqRows || quote.boqItems || [];
     const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
-    const manualBoqCount = allRows.filter((r: any) => !defaultAutoSizerIds.includes(r.id)).length;
+    const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
     const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
     console.log(`[PDF BACKEND LOG] GET /api/export/pdf/manual-quote/:leadId
       - quoteId: ${quote.id}
@@ -4244,6 +4224,16 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
       - auto rows count: ${autoSizerCount}
       - final rows count: ${finalCount}
     `);
+
+    if (manualBoqCount === 0) {
+      res.send(`
+        <div style="padding: 40px; color: #d97706; font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; max-width: 500px; margin: 50px auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+          <h2 style="margin-top: 0; color: #92400e; font-size: 20px; font-weight: 700;">No BOQ items added yet.</h2>
+          <p style="color: #b45309; font-size: 14px; font-weight: 500; line-height: 1.5; margin-bottom: 0;">Please add BOQ rows and compile quote first.</p>
+        </div>
+      `);
+      return;
+    }
 
     const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
     res.send(pdfHtml);
@@ -4266,21 +4256,18 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
     }
 
     const quoteId = req.query.quoteId;
-    let quote = null;
-    if (quoteId) {
-      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
+    if (!quoteId) {
+      return res.status(400).send("quoteId is required.");
     }
+    const quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
     if (!quote) {
-      quote = lead.quotes && lead.quotes.find((q: any) => q.quote_type === 'manual_boq');
-    }
-    if (!quote) {
-      quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
+      return res.status(404).send("Quote not found for this lead.");
     }
 
     if (quote && quote.quote_type === 'manual_boq') {
       res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}${req.query.quoteId ? `?quoteId=${req.query.quoteId}` : ""}`);
     } else {
-      res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}`);
+      res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}?quoteId=${quoteId}`);
     }
   } catch (err: any) {
     res.status(500).send("Error compiling Legacy PDF wrapper: " + err.message);
