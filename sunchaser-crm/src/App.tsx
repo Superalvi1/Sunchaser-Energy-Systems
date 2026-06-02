@@ -80,8 +80,10 @@ export default function App() {
         setActiveTab("Customer Portal");
       } else if (currentUser.role === "Survey Engineer" || currentUser.role === "Installation Team") {
         setActiveTab("Installer Deck");
-      } else if (currentUser.role === "Sales Executive") {
+      } else if (currentUser.role === "Sales Executive" || currentUser.role === "Sales Advisor") {
         setActiveTab("Sales Advisor");
+      } else if (currentUser.role === "Technical CEO") {
+        setActiveTab("Admin Dashboard");
       } else if (currentUser.role === "Sales Manager") {
         setActiveTab("CRM Database");
       } else {
@@ -312,10 +314,19 @@ export default function App() {
           { id: "Activity Telemetry", label: "Enterprise Tracing logs", icon: ClipboardList }
         ];
       case "Sales Executive":
+      case "Sales Advisor":
         return [
           { id: "CRM Database", label: "My CRM Leads", icon: Users },
           { id: "Sales Advisor", label: "Solar Sizing & Calculator", icon: FileText },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot }
+        ];
+      case "Technical CEO":
+        return [
+          { id: "Admin Dashboard", label: "Executive Dashboard", icon: Shield },
+          { id: "CRM Database", label: "CRM Database", icon: Users },
+          { id: "Sales Advisor", label: "Sales Advisor", icon: FileText },
+          { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
+          { id: "Activity Telemetry", label: "Activities & SMS Logs", icon: ClipboardList }
         ];
       case "Survey Engineer":
         return [
@@ -523,12 +534,9 @@ export default function App() {
                     
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {[
-                        { u: "admin", label: "Super Admin", desc: "Alex Admin", cap: "Unlocks metrics, full CRM, blueprints & server logs", col: "border-purple-900/40 hover:border-purple-500" },
-                        { u: "manager", label: "Sales Manager", desc: "Sarah Manager", cap: "CRM lead delegator, manager metrics, tracers", col: "border-indigo-900/40 hover:border-indigo-500" },
-                        { u: "sales", label: "Sales Executive", desc: "Sarah Connor", cap: "Sizing calculators, lead tracking, PDF quotations", col: "border-blue-900/40 hover:border-blue-500" },
-                        { u: "surveyor", label: "Survey Engineer", desc: "Bob Surveyor", cap: "Roof CAD maps drawing & measures audits", col: "border-amber-900/40 hover:border-amber-500" },
-                        { u: "installer", label: "Installation Team", desc: "Dave Installer", cap: "Staging, task checklists & commissioning", col: "border-emerald-950/40 hover:border-emerald-500" },
-                        { u: "customer", label: "Customer Portal", desc: "John Miller (lead-1)", cap: "View/sign proposal, net meter, file support cases", col: "border-pink-900/40 hover:border-pink-500" }
+                        { u: "allauddin", label: "Super Admin", desc: "Muhammad Allauddin", cap: "Full CRM, templates, admin controls & server logs", col: "border-purple-900/40 hover:border-purple-500" },
+                        { u: "raza", label: "Technical CEO", desc: "Raza", cap: "Executive dashboard, CRM oversight & quotations", col: "border-indigo-900/40 hover:border-indigo-500" },
+                        { u: "sales", label: "Sales Advisor", desc: "Sales", cap: "Lead tracking, manual BOQ & PDF quotations", col: "border-blue-900/40 hover:border-blue-500" }
                       ].map((pOpt) => (
                         <button
                           key={pOpt.u}
@@ -559,7 +567,7 @@ export default function App() {
           <div className="fade-in-entry space-y-8">
             
             {/* Super admin spreadsheet controls line */}
-            {(currentUser.role === "Super Admin" || currentUser.role === "Sales Manager") && (
+            {(currentUser.role === "Super Admin" || currentUser.role === "Technical CEO" || currentUser.role === "Sales Manager") && (
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-wrap justify-between items-center gap-3">
                 <div className="flex items-center gap-2">
                   <FileSpreadsheet className="h-5 w-5 text-amber-500" />

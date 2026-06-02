@@ -19,7 +19,12 @@ create table if not exists public.users (
   password text not null, -- stored as hash or plain for simple demo migration
   name text not null,
   email text not null,
-  role text not null check (role in ('Super Admin', 'Sales Manager', 'Sales Executive', 'Survey Engineer', 'Installation Team', 'Customer')),
+  role text not null check (role in (
+    'Super Admin', 'Technical CEO', 'Sales Advisor',
+    'Admin', 'Sales Manager', 'Sales Executive',
+    'Inventory Manager', 'Support Agent', 'Technician',
+    'Survey Engineer', 'Installation Team', 'Customer'
+  )),
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 

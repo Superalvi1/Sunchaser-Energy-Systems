@@ -1755,11 +1755,9 @@ export default function ManualAdminControl({
                   <tbody>
                     {/* Display actual seed logs */}
                     {[
-                      { id: "u-1", name: "Alex Admin", username: "admin", role: "Super Admin", pass: "123" },
-                      { id: "u-2", name: "Sarah Manager", username: "manager", role: "Sales Manager", pass: "123" },
-                      { id: "u-3", name: "Sarah Connor", username: "sales", role: "Sales Advisor", pass: "123" },
-                      { id: "u-4", name: "Bob Surveyor", username: "surveyor", role: "Surveyor Tech", pass: "123" },
-                      { id: "u-10", name: "Dave Installer", username: "technician", role: "Specialist Tech", pass: "123" },
+                      { id: "u-allauddin", name: "Muhammad Allauddin", username: "allauddin", role: "Super Admin", pass: "123" },
+                      { id: "u-raza", name: "Raza", username: "raza", role: "Technical CEO", pass: "123" },
+                      { id: "u-sales", name: "Sales Advisor", username: "sales", role: "Sales Advisor", pass: "123" },
                     ].map(st => (
                       <tr key={st.id} className="border-b border-neutral-850 hover:bg-neutral-800/10 text-neutral-200">
                         <td className="py-2.5 px-3">

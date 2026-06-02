@@ -366,6 +366,8 @@ export interface AppState {
 
 export type UserRole = 
   | 'Super Admin' 
+  | 'Technical CEO'
+  | 'Sales Advisor'
   | 'Admin'
   | 'Sales Manager' 
   | 'Sales Executive' 

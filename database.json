@@ -213,6 +213,33 @@
   "paymentTracks": {},
   "activityLogs": [
     {
+      "id": "log-1780411464401",
+      "timestamp": "2026-06-02T14:44:24.401Z",
+      "userId": "u-sales",
+      "userName": "Sales Advisor",
+      "role": "Sales Executive",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780411463911",
+      "timestamp": "2026-06-02T14:44:23.911Z",
+      "userId": "u-raza",
+      "userName": "Raza",
+      "role": "Sales Manager",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780411463424",
+      "timestamp": "2026-06-02T14:44:23.424Z",
+      "userId": "u-allauddin",
+      "userName": "Muhammad Allauddin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
       "id": "log-1780406139385",
       "timestamp": "2026-06-02T13:15:39.385Z",
       "userId": "admin",

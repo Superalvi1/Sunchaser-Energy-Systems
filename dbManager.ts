@@ -11,6 +11,22 @@ if (typeof globalThis.WebSocket === "undefined") {
 let clientInstance: SupabaseClient | null = null;
 let isConfigured = false;
 
+/** Map legacy Supabase role values to production app roles (until DB constraint includes new roles). */
+const PRODUCTION_APP_ROLE_BY_USERNAME: Record<string, string> = {
+  raza: "Technical CEO",
+  sales: "Sales Advisor",
+};
+
+export function resolveAppUserRole(username: string, dbRole: string): string {
+  return PRODUCTION_APP_ROLE_BY_USERNAME[String(username || "").toLowerCase()] || dbRole;
+}
+
+export function toSupabaseStorageRole(role: string): string {
+  if (role === "Technical CEO") return "Sales Manager";
+  if (role === "Sales Advisor") return "Sales Executive";
+  return role;
+}
+
 export function getSupabase(): SupabaseClient | null {
   if (clientInstance) return clientInstance;
 
@@ -91,15 +107,9 @@ export interface Database {
 
 export const initialSeed: Database = {
   users: [
-    { id: "u-1", username: "admin", password: "123", name: "Alex Admin", email: "admin@sunchaser.com", role: "Super Admin" },
-    { id: "u-2", username: "manager", password: "123", name: "Sarah Manager", email: "manager@sunchaser.com", role: "Sales Manager" },
-    { id: "u-3", username: "sales", password: "123", name: "Sarah Connor", email: "sarah.connor@sunchaser.com", role: "Sales Executive" },
-    { id: "u-4", username: "surveyor", password: "123", name: "Bob Surveyor", email: "bob@sunchaser.com", role: "Survey Engineer" },
-    { id: "u-5", username: "installer", password: "123", name: "Dave Installer", email: "dave@sunchaser.com", role: "Installation Team" },
-    { id: "u-7", username: "admin2", password: "123", name: "Alice Admin", email: "alice.admin@sunchaser.com", role: "Admin" },
-    { id: "u-8", username: "inventory", password: "123", name: "Ian Inventory", email: "ian@sunchaser.com", role: "Inventory Manager" },
-    { id: "u-9", username: "support", password: "123", name: "Sam Support", email: "sam@sunchaser.com", role: "Support Agent" },
-    { id: "u-10", username: "technician", password: "123", name: "Dave Installer", email: "dave.tech@sunchaser.com", role: "Technician" },
+    { id: "u-allauddin", username: "allauddin", password: "123", name: "Muhammad Allauddin", email: "allauddin@sunchaser-energy.com", role: "Super Admin" },
+    { id: "u-raza", username: "raza", password: "123", name: "Raza", email: "raza@sunchaser-energy.com", role: "Technical CEO" },
+    { id: "u-sales", username: "sales", password: "123", name: "Sales Advisor", email: "sales@sunchaser-energy.com", role: "Sales Advisor" },
   ],
   leads: [],
   tickets: [],
@@ -1231,8 +1241,17 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     logoUrl: qps.logo_url || qps.logoUrl
   }));
 
+  const usersMapped = (users || []).map((u: any) => ({
+    id: u.id,
+    username: u.username,
+    password: u.password,
+    name: u.name,
+    email: u.email,
+    role: resolveAppUserRole(u.username, u.role),
+  }));
+
   return {
-    users: users || [],
+    users: usersMapped,
     leads: leadsMapped,
     tickets: ticketsMapped,
     netMeteringHistory: [

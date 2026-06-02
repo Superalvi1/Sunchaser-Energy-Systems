@@ -13,7 +13,8 @@ import {
   calculateLeadScore,
   Database,
   persistQuotationToSupabase,
-  AUTO_SIZER_QUOTE_CREATION_ENABLED
+  AUTO_SIZER_QUOTE_CREATION_ENABLED,
+  resolveAppUserRole
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -359,7 +360,13 @@ app.post("/api/auth/login", async (req, res) => {
 
       if (users && users.length > 0) {
         const u = users[0];
-        const userObj = { id: u.id, username: u.username, name: u.name, email: u.email, role: u.role };
+        const userObj = {
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          email: u.email,
+          role: resolveAppUserRole(u.username, u.role),
+        };
         await appendActivityLog(u.id, u.name, u.role, "User Logged In", "Authorized access via Supabase PostgreSQL security clearance.");
         return res.json({ success: true, user: userObj });
       } else {

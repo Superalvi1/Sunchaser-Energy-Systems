@@ -1,84 +1,28 @@
 {
   "users": [
     {
-      "id": "u-1",
-      "username": "admin",
+      "id": "u-allauddin",
+      "username": "allauddin",
       "password": "123",
-      "name": "Alex Admin",
-      "email": "admin@sunchaser.com",
+      "name": "Muhammad Allauddin",
+      "email": "allauddin@sunchaser-energy.com",
       "role": "Super Admin"
     },
     {
-      "id": "u-2",
-      "username": "manager",
+      "id": "u-raza",
+      "username": "raza",
       "password": "123",
-      "name": "Sarah Manager",
-      "email": "manager@sunchaser.com",
-      "role": "Sales Manager"
+      "name": "Raza",
+      "email": "raza@sunchaser-energy.com",
+      "role": "Technical CEO"
     },
     {
-      "id": "u-3",
+      "id": "u-sales",
       "username": "sales",
       "password": "123",
-      "name": "Sarah Connor",
-      "email": "sarah.connor@sunchaser.com",
-      "role": "Sales Executive"
-    },
-    {
-      "id": "u-4",
-      "username": "surveyor",
-      "password": "123",
-      "name": "Bob Surveyor",
-      "email": "bob@sunchaser.com",
-      "role": "Survey Engineer"
-    },
-    {
-      "id": "u-5",
-      "username": "installer",
-      "password": "123",
-      "name": "Dave Installer",
-      "email": "dave@sunchaser.com",
-      "role": "Installation Team"
-    },
-    {
-      "id": "u-6",
-      "username": "customer",
-      "password": "123",
-      "name": "John Miller",
-      "email": "john.miller@gmail.com",
-      "role": "Customer"
-    },
-    {
-      "id": "u-7",
-      "username": "admin2",
-      "password": "123",
-      "name": "Alice Admin",
-      "email": "alice.admin@sunchaser.com",
-      "role": "Admin"
-    },
-    {
-      "id": "u-8",
-      "username": "inventory",
-      "password": "123",
-      "name": "Ian Inventory",
-      "email": "ian@sunchaser.com",
-      "role": "Inventory Manager"
-    },
-    {
-      "id": "u-9",
-      "username": "support",
-      "password": "123",
-      "name": "Sam Support",
-      "email": "sam@sunchaser.com",
-      "role": "Support Agent"
-    },
-    {
-      "id": "u-10",
-      "username": "technician",
-      "password": "123",
-      "name": "Dave Installer",
-      "email": "dave.tech@sunchaser.com",
-      "role": "Technician"
+      "name": "Sales Advisor",
+      "email": "sales@sunchaser-energy.com",
+      "role": "Sales Advisor"
     }
   ],
   "leads": [
