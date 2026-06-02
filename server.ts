@@ -514,7 +514,7 @@ app.post("/api/leads", async (req, res) => {
     address: address || "",
     status: "New",
     monthlyBill: (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill),
-    monthlyUnits: (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? (Number(monthlyBill) ? Number(monthlyBill) * 4 : 0) : Number(monthlyUnits),
+    monthlyUnits: (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? 0 : Number(monthlyUnits),
     sanctionedLoad: Number(sanctionedLoad) || 7,
     backupRequirement: backupRequirement || "None",
     location: location || "Springfield",
@@ -2420,6 +2420,20 @@ function parseExtendedSettings(bodyTextContent: string, pageType: string) {
   };
 }
 
+function buildIncludedPagesFromTemplate(activeState: Database, templateId: string): string[] {
+  const allDbPages = activeState.quoteTemplatePages || [];
+  const dbPages = allDbPages.filter((p: any) => (p.templateId || p.template_id) === templateId);
+  const types = new Set<string>();
+  dbPages.forEach((p: any) => {
+    if (p.isEnabled === false || p.is_enabled === false) return;
+    const t = p.pageType || p.page_type || "";
+    if (t === "terms1" || t === "terms2") types.add("terms");
+    else if (t.startsWith("structure_")) types.add("structure");
+    else types.add(t);
+  });
+  return Array.from(types);
+}
+
 // Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
 function compileSunchaserPDFHtml(
   mode: 'sizer' | 'manual' | 'preview',
@@ -2679,8 +2693,9 @@ function compileSunchaserPDFHtml(
 
   // Resolve template pages from database if available
   const templateId = options.templateId || "tmpl-1";
+  const strictTemplateOnly = mode === 'manual' || mode === 'preview';
   const allDbPages = activeState.quoteTemplatePages || [];
-  const dbPages = allDbPages.filter((p: any) => p.templateId === templateId);
+  const dbPages = allDbPages.filter((p: any) => (p.templateId || p.template_id) === templateId);
 
   const useDefaultCompanyContent = false;
 
@@ -2710,7 +2725,16 @@ function compileSunchaserPDFHtml(
     if (options.includedPages && Array.isArray(options.includedPages)) {
       return options.includedPages.includes(pageType);
     }
-    return true; // default to true if no inclusion array provided
+    if (strictTemplateOnly) {
+      return dbPages.some((p: any) => {
+        if (p.isEnabled === false || p.is_enabled === false) return false;
+        const t = p.pageType || p.page_type || "";
+        if (pageType === "terms") return t === "terms1" || t === "terms2";
+        if (pageType === "structure") return t.startsWith("structure_");
+        return t === pageType;
+      });
+    }
+    return true;
   };
 
   // 1. Cover Page Config
@@ -2930,8 +2954,8 @@ function compileSunchaserPDFHtml(
     }
   }
 
-  // If template pages are missing in remote DB, synthesize from includedPages so PDF is not blank
-  if (pagesList.length === 0 && options.includedPages?.length) {
+  // If template pages are missing in remote DB, synthesize from includedPages so PDF is not blank (not for strict manual/preview)
+  if (!strictTemplateOnly && pagesList.length === 0 && options.includedPages?.length) {
     options.includedPages.forEach((pageType: string, idx: number) => {
       if (!getIncludedFlagForPageType(pageType)) return;
       if (pageType.startsWith("structure_") && pageType !== activeStructurePageType) return;
@@ -2998,6 +3022,18 @@ function compileSunchaserPDFHtml(
       fAlignment = ext.footer.alignment || "left";
     } else if (ext.footer.mode === 'disabled') {
       fEnabled = false;
+    }
+
+    if (strictTemplateOnly) {
+      if (ext.header.mode !== 'custom') {
+        hEnabled = false;
+        hText = "";
+        hLogoUrl = "";
+      }
+      if (ext.footer.mode !== 'custom') {
+        fEnabled = false;
+        fText = "";
+      }
     }
 
     let headerHtml = "";
@@ -3073,6 +3109,43 @@ function compileSunchaserPDFHtml(
           `;
         }
       });
+    }
+
+    // Manual/preview PDFs: render only saved template fields (no legacy marketing/LESCO/bank blocks)
+    if (strictTemplateOnly && pageType !== 'boq') {
+      if (ext.layoutMode === 'full_page_image' || ext.layoutMode === 'image_only') {
+        let imageContent = "";
+        if (p.imageUrl) {
+          imageContent = `<img src="${p.imageUrl}" style="width: 100%; height: 100%; object-fit: contain; display: block; margin: auto;" alt="Full Page Asset" />`;
+        } else if (p.bgImageUrl) {
+          imageContent = `<div style="width: 100%; height: 100%; background: url('${p.bgImageUrl}') no-repeat center center / cover;"></div>`;
+        } else if (bodyImagesHtml) {
+          imageContent = bodyImagesHtml;
+        }
+        pagesHtml += `
+          <div class="page full-page-image-only" style="border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always; overflow: hidden;">
+            ${imageContent}
+          </div>
+        `;
+      } else {
+        const coverLogoHtml = (pageType === 'cover' && p.imageUrl)
+          ? `<img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="Logo" />`
+          : '';
+        pagesHtml += `
+          <div class="page${pageType === 'cover' ? ' cover' : ''}" ${pageStyleAttr} style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box;">
+            ${absoluteImagesHtml}
+            <div style="flex: 1; display: flex; flex-direction: column;">
+              ${headerHtml}
+              ${coverLogoHtml}
+              ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
+              ${p.bodyText ? `<div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 12px 0;">${p.bodyText.replace(/\\n/g, '<br/>')}</div>` : ''}
+              ${bodyImagesHtml}
+            </div>
+            ${footerHtml}
+          </div>
+        `;
+      }
+      return;
     }
 
     // Render full page image only if enabled
@@ -3501,7 +3574,7 @@ function compileSunchaserPDFHtml(
             ${absoluteImagesHtml}
             <div>
               ${headerHtml}
-              <div class="page-title">${mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)'}</div>
+              <div class="page-title">${p.title || (mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)')}</div>
               
               <div style="border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
                 <table class="boq-table">
@@ -3531,7 +3604,7 @@ function compileSunchaserPDFHtml(
                       <strong>Special Execution Notes:</strong><br/>
                       ${quoteObj.customNotes}
                     </div>
-                  ` : 'Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel.'}
+                  ` : (strictTemplateOnly ? '' : 'Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel.')}
                 </div>
                 
                 <div style="width: 46%;">
@@ -4133,12 +4206,13 @@ app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
       systemType: "Hybrid"
     };
 
+    const includedFromTemplate = buildIncludedPagesFromTemplate(activeState, templateId);
     const options = {
       templateId,
-      includedPages: ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final']
+      includedPages: includedFromTemplate
     };
 
-    const pdfHtml = compileSunchaserPDFHtml('preview', mockQuote, mockLead, activeState, options);
+    const pdfHtml = compileSunchaserPDFHtml('preview', { ...mockQuote, boqRows: [], boqItems: [] }, mockLead, activeState, options);
     res.send(pdfHtml);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF preview: " + err.message);

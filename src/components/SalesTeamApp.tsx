@@ -983,8 +983,7 @@ export default function SalesTeamApp({
       setFormRoofWidth(30);
       setFormRoofLength(25);
       setFormBackupReq(activeLead.backupRequirement || "None");
-      const initialUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
-      setFormMonthlyUnits(initialUnits);
+      setFormMonthlyUnits(Number(activeLead.monthlyUnits) > 0 ? Number(activeLead.monthlyUnits) : 0);
 
       // 2. Load manual BOQ quote only (never auto_sizer — isolated state per lead)
       const latestManualQuote = getLeadManualQuotes(activeLead).slice(-1)[0] || null;
@@ -2245,7 +2244,7 @@ export default function SalesTeamApp({
                     <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {lead.address || "Lahore, Pakistan"}</p>
                     
                     <div className="flex justify-between text-[9px] font-mono text-slate-500 pt-1.5 border-t border-slate-800/50">
-                      <span>Units: {lead.monthlyUnits || Math.round(lead.monthlyBill / 35)} kWh</span>
+                      <span>Units: {lead.monthlyUnits ? `${lead.monthlyUnits} kWh` : "0 kWh"}</span>
                       <span className="text-amber-500 font-bold">Prob: {lead.conversionProbability || 50}%</span>
                     </div>
                   </button>
@@ -2420,9 +2419,6 @@ export default function SalesTeamApp({
                                   setFormRoofWidth(parsed.width);
                                   setFormRoofLength(parsed.length);
                                   setBillLoading(false);
-
-                                  // Sync values
-                                  setSystemSizekW(cappedSize);
                                 }, 1500);
                               }}
                               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
