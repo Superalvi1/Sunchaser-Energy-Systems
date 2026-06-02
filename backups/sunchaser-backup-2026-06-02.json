@@ -1,0 +1,2584 @@
+{
+  "users": [
+    {
+      "id": "u-1",
+      "username": "admin",
+      "password": "123",
+      "name": "Alex Admin",
+      "email": "admin@sunchaser.com",
+      "role": "Super Admin"
+    },
+    {
+      "id": "u-2",
+      "username": "manager",
+      "password": "123",
+      "name": "Sarah Manager",
+      "email": "manager@sunchaser.com",
+      "role": "Sales Manager"
+    },
+    {
+      "id": "u-3",
+      "username": "sales",
+      "password": "123",
+      "name": "Sarah Connor",
+      "email": "sarah.connor@sunchaser.com",
+      "role": "Sales Executive"
+    },
+    {
+      "id": "u-4",
+      "username": "surveyor",
+      "password": "123",
+      "name": "Bob Surveyor",
+      "email": "bob@sunchaser.com",
+      "role": "Survey Engineer"
+    },
+    {
+      "id": "u-5",
+      "username": "installer",
+      "password": "123",
+      "name": "Dave Installer",
+      "email": "dave@sunchaser.com",
+      "role": "Installation Team"
+    },
+    {
+      "id": "u-7",
+      "username": "admin2",
+      "password": "123",
+      "name": "Alice Admin",
+      "email": "alice.admin@sunchaser.com",
+      "role": "Admin"
+    },
+    {
+      "id": "u-8",
+      "username": "inventory",
+      "password": "123",
+      "name": "Ian Inventory",
+      "email": "ian@sunchaser.com",
+      "role": "Inventory Manager"
+    },
+    {
+      "id": "u-9",
+      "username": "support",
+      "password": "123",
+      "name": "Sam Support",
+      "email": "sam@sunchaser.com",
+      "role": "Support Agent"
+    },
+    {
+      "id": "u-10",
+      "username": "technician",
+      "password": "123",
+      "name": "Dave Installer",
+      "email": "dave.tech@sunchaser.com",
+      "role": "Technician"
+    }
+  ],
+  "leads": [
+    {
+      "id": "lead-105",
+      "name": "alvidon",
+      "email": "allai@gmail.com",
+      "phone": "032184877879",
+      "address": "",
+      "status": "New",
+      "monthlyBill": 20000,
+      "monthlyUnits": 80000,
+      "sanctionedLoad": 7,
+      "backupRequirement": "None",
+      "location": "Springfield",
+      "roofType": "Asphalt Shingle",
+      "roofSpace": 2900,
+      "shading": "Low",
+      "rating": 3,
+      "assignedSalesperson": "Sarah Connor",
+      "createdAt": "2026-05-29T15:11:20.057Z",
+      "notes": "CRM Registered Candidate Profile",
+      "leadSource": "Web Search",
+      "engagementLevel": "Medium",
+      "quotes": [],
+      "conversionScore": 100,
+      "conversionProbability": 95
+    },
+    {
+      "id": "lead-1",
+      "name": "Arthur Dent",
+      "email": "arthur.dent@galaxy.com",
+      "phone": "0300-1234567",
+      "address": "Heart of Gold, Orbit",
+      "status": "Quoted",
+      "monthlyBill": 25000,
+      "monthlyUnits": 650,
+      "sanctionedLoad": 10,
+      "backupRequirement": "None",
+      "location": "Lahore",
+      "roofType": "Concrete",
+      "roofSpace": 1000,
+      "shading": "None",
+      "rating": 5,
+      "assignedSalesperson": "Sarah Connor",
+      "notes": "Seeded proposal verification record.",
+      "quotes": [
+        {
+          "id": "q-6",
+          "leadId": "lead-1",
+          "systemSizekW": 10,
+          "panelCount": 18,
+          "panelType": "Jinko 580W Panels",
+          "inverterType": "Goodwe 10kW Inverter",
+          "batteryCapacity": "",
+          "totalCost": 610500,
+          "federalTaxCredit": 0,
+          "netCost": 600500,
+          "estimatedAnnualSavings": 490000,
+          "paybackPeriodYears": 3.2,
+          "status": "Pending",
+          "createdAt": "2026-05-31T15:20:00Z",
+          "structureType": "standard",
+          "accessories": "Dual DC cables, PVC ducting & safety switches",
+          "installationCharges": 75000,
+          "netMeteringCharges": 95000,
+          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
+          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
+          "termsAndConditions": "Generation yield matches simulation rules.",
+          "clientName": "Arthur Dent",
+          "clientPhone": "0300-1234567",
+          "clientEmail": "arthur.dent@galaxy.com",
+          "clientAddress": "Heart of Gold, Orbit",
+          "cnic": "35201-1234567-1",
+          "cityArea": "Lahore",
+          "bdmName": "Sarah Connor",
+          "quoteDate": "2026-05-31",
+          "systemType": "Hybrid",
+          "panelBrand": "Jinko",
+          "panelWattage": 580,
+          "inverterBrand": "Goodwe",
+          "inverterCapacity": "10kW",
+          "batteryOption": "None",
+          "netMeteringRequired": "Yes",
+          "discount": 15000,
+          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
+          "lescoSettings": {
+            "meterNo": "LES-9988",
+            "consumerNo": "04-1234-567890",
+            "sanctionedLoad": "10",
+            "phaseType": "Three Phase"
+          },
+          "societyCharges": 5000,
+          "taxEnabled": false,
+          "taxRate": 0,
+          "taxAmount": 0,
+          "selectedStructure": "standard",
+          "customStructure": null,
+          "boqRows": [
+            {
+              "id": "panel_row",
+              "srNo": "",
+              "name": "AI Solar Panels",
+              "description": "Longi 580W N-Type PV Modules",
+              "unit": "Nos",
+              "qty": 18,
+              "rate": 20000,
+              "total": 360000,
+              "type": "item"
+            },
+            {
+              "id": "inverter_row",
+              "srNo": "",
+              "name": "AI Inverter Unit",
+              "description": "Goodwe 10kW Hybrid Inverter",
+              "unit": "No",
+              "qty": 1,
+              "rate": 280000,
+              "total": 280000,
+              "type": "item"
+            },
+            {
+              "id": "structure_row",
+              "srNo": "",
+              "name": "AI Mounting Frame",
+              "description": "Standard A-Frame Galvanized Railing",
+              "unit": "No",
+              "qty": 1,
+              "rate": 90000,
+              "total": 90000,
+              "type": "item"
+            },
+            {
+              "id": "net_metering_row",
+              "srNo": "",
+              "name": "AI Net Metering",
+              "description": "Bidirectional LESCO green-meter setup",
+              "unit": "Job",
+              "qty": 1,
+              "rate": 95000,
+              "total": 95000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-1",
+              "srNo": 1,
+              "name": "Main AC Distribution Box",
+              "description": "IP65 weatherproof steel cabinet with Schneider breakers",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 35000,
+              "total": 35000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-2",
+              "srNo": 2,
+              "name": "Main DC Junction Enclosure",
+              "description": "IP65 box with DC fuses, surge arresters, isolators",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 28000,
+              "total": 28000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-3",
+              "srNo": 3,
+              "name": "DC Cables 6mm PV-1F",
+              "description": "Single-core copper tinned cables for panel strings (100m)",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 18000,
+              "total": 18000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-4",
+              "srNo": 4,
+              "name": "AC Cables 4-Core 16mm",
+              "description": "Flexible multi-strand copper connection to main DB (50m)",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 24000,
+              "total": 24000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-5",
+              "srNo": 5,
+              "name": "Earth Wire 10mm Pure Copper",
+              "description": "AC-DC grounding safety conductors (80m)",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 15000,
+              "total": 15000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-6",
+              "srNo": 6,
+              "name": "Chemical Earthing Bore (DC)",
+              "description": "100ft bore with copper plate and resistivity compound",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 45000,
+              "total": 45000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-7",
+              "srNo": 7,
+              "name": "Chemical Earthing Bore (AC)",
+              "description": "100ft bore with copper plate and resistivity compound",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 45000,
+              "total": 45000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-8",
+              "srNo": 8,
+              "name": "Chemical Earthing Bore (Structure)",
+              "description": "100ft bore with copper plate and resistivity compound",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 45000,
+              "total": 45000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-9",
+              "srNo": 9,
+              "name": "Mughal Girder Uprights",
+              "description": "Heavy duty structural vertical columns for elevated mount",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 85000,
+              "total": 85000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-10",
+              "srNo": 10,
+              "name": "Hot-Dip Galvanized L-Cables",
+              "description": "L-bracket angle framing profiles and cross braces",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 65000,
+              "total": 65000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-11",
+              "srNo": 11,
+              "name": "Anchor Bolts rawl-plugs",
+              "description": "Stainless steel expansion anchors for roof safety",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 12000,
+              "total": 12000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-12",
+              "srNo": 12,
+              "name": "Flexible Conduit Pipes IP67",
+              "description": "Halogen-free corrugated wiring protection pipes",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 9500,
+              "total": 9500,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-13",
+              "srNo": 13,
+              "name": "Cable Trays 6-inch",
+              "description": "Galvanized sheet metal cable trays with covers",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 16000,
+              "total": 16000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-14",
+              "srNo": 14,
+              "name": "Ducting Channels PVC",
+              "description": "Perforated cable organizer channels for indoor wiring",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 7500,
+              "total": 7500,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-15",
+              "srNo": 15,
+              "name": "Schneider AC Breaker 32A",
+              "description": "Original 3-pole miniature circuit breaker",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 6800,
+              "total": 6800,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-16",
+              "srNo": 16,
+              "name": "Schneider DC Breaker 40A",
+              "description": "High voltage 1000V DC surge breaker",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 8200,
+              "total": 8200,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-17",
+              "srNo": 17,
+              "name": "Solis Smart Energy Meter",
+              "description": "Export credit tracking smart meter with CT sensors",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 22000,
+              "total": 22000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-18",
+              "srNo": 18,
+              "name": "Lightning Arrester Spike",
+              "description": "Copper Franklin-type protection rod on mast",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 18500,
+              "total": 18500,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-19",
+              "srNo": 19,
+              "name": "Civil Work Cement Foundation",
+              "description": "Concrete anchor block pads for mounting uprights",
+              "unit": "Job",
+              "qty": 1,
+              "rate": 30000,
+              "total": 30000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-20",
+              "srNo": 20,
+              "name": "Sunchaser Commissioning Labor",
+              "description": "Turnkey ISO alignment, safety terminations & tests",
+              "unit": "Job",
+              "qty": 1,
+              "rate": 75000,
+              "total": 75000,
+              "type": "item"
+            }
+          ],
+          "boqItems": [
+            {
+              "id": "panel_row",
+              "srNo": "",
+              "name": "AI Solar Panels",
+              "description": "Longi 580W N-Type PV Modules",
+              "unit": "Nos",
+              "qty": 18,
+              "rate": 20000,
+              "total": 360000,
+              "type": "item"
+            },
+            {
+              "id": "inverter_row",
+              "srNo": "",
+              "name": "AI Inverter Unit",
+              "description": "Goodwe 10kW Hybrid Inverter",
+              "unit": "No",
+              "qty": 1,
+              "rate": 280000,
+              "total": 280000,
+              "type": "item"
+            },
+            {
+              "id": "structure_row",
+              "srNo": "",
+              "name": "AI Mounting Frame",
+              "description": "Standard A-Frame Galvanized Railing",
+              "unit": "No",
+              "qty": 1,
+              "rate": 90000,
+              "total": 90000,
+              "type": "item"
+            },
+            {
+              "id": "net_metering_row",
+              "srNo": "",
+              "name": "AI Net Metering",
+              "description": "Bidirectional LESCO green-meter setup",
+              "unit": "Job",
+              "qty": 1,
+              "rate": 95000,
+              "total": 95000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-1",
+              "srNo": 1,
+              "name": "Main AC Distribution Box",
+              "description": "IP65 weatherproof steel cabinet with Schneider breakers",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 35000,
+              "total": 35000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-2",
+              "srNo": 2,
+              "name": "Main DC Junction Enclosure",
+              "description": "IP65 box with DC fuses, surge arresters, isolators",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 28000,
+              "total": 28000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-3",
+              "srNo": 3,
+              "name": "DC Cables 6mm PV-1F",
+              "description": "Single-core copper tinned cables for panel strings (100m)",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 18000,
+              "total": 18000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-4",
+              "srNo": 4,
+              "name": "AC Cables 4-Core 16mm",
+              "description": "Flexible multi-strand copper connection to main DB (50m)",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 24000,
+              "total": 24000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-5",
+              "srNo": 5,
+              "name": "Earth Wire 10mm Pure Copper",
+              "description": "AC-DC grounding safety conductors (80m)",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 15000,
+              "total": 15000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-6",
+              "srNo": 6,
+              "name": "Chemical Earthing Bore (DC)",
+              "description": "100ft bore with copper plate and resistivity compound",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 45000,
+              "total": 45000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-7",
+              "srNo": 7,
+              "name": "Chemical Earthing Bore (AC)",
+              "description": "100ft bore with copper plate and resistivity compound",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 45000,
+              "total": 45000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-8",
+              "srNo": 8,
+              "name": "Chemical Earthing Bore (Structure)",
+              "description": "100ft bore with copper plate and resistivity compound",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 45000,
+              "total": 45000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-9",
+              "srNo": 9,
+              "name": "Mughal Girder Uprights",
+              "description": "Heavy duty structural vertical columns for elevated mount",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 85000,
+              "total": 85000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-10",
+              "srNo": 10,
+              "name": "Hot-Dip Galvanized L-Cables",
+              "description": "L-bracket angle framing profiles and cross braces",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 65000,
+              "total": 65000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-11",
+              "srNo": 11,
+              "name": "Anchor Bolts rawl-plugs",
+              "description": "Stainless steel expansion anchors for roof safety",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 12000,
+              "total": 12000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-12",
+              "srNo": 12,
+              "name": "Flexible Conduit Pipes IP67",
+              "description": "Halogen-free corrugated wiring protection pipes",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 9500,
+              "total": 9500,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-13",
+              "srNo": 13,
+              "name": "Cable Trays 6-inch",
+              "description": "Galvanized sheet metal cable trays with covers",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 16000,
+              "total": 16000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-14",
+              "srNo": 14,
+              "name": "Ducting Channels PVC",
+              "description": "Perforated cable organizer channels for indoor wiring",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 7500,
+              "total": 7500,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-15",
+              "srNo": 15,
+              "name": "Schneider AC Breaker 32A",
+              "description": "Original 3-pole miniature circuit breaker",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 6800,
+              "total": 6800,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-16",
+              "srNo": 16,
+              "name": "Schneider DC Breaker 40A",
+              "description": "High voltage 1000V DC surge breaker",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 8200,
+              "total": 8200,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-17",
+              "srNo": 17,
+              "name": "Solis Smart Energy Meter",
+              "description": "Export credit tracking smart meter with CT sensors",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 22000,
+              "total": 22000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-18",
+              "srNo": 18,
+              "name": "Lightning Arrester Spike",
+              "description": "Copper Franklin-type protection rod on mast",
+              "unit": "Nos",
+              "qty": 1,
+              "rate": 18500,
+              "total": 18500,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-19",
+              "srNo": 19,
+              "name": "Civil Work Cement Foundation",
+              "description": "Concrete anchor block pads for mounting uprights",
+              "unit": "Job",
+              "qty": 1,
+              "rate": 30000,
+              "total": 30000,
+              "type": "item"
+            },
+            {
+              "id": "row-manual-20",
+              "srNo": 20,
+              "name": "Sunchaser Commissioning Labor",
+              "description": "Turnkey ISO alignment, safety terminations & tests",
+              "unit": "Job",
+              "qty": 1,
+              "rate": 75000,
+              "total": 75000,
+              "type": "item"
+            }
+          ],
+          "customNotes": "Verify customized BOQ isolation and images overlay rendering.",
+          "grandTotal": 610500,
+          "netTotal": 600500,
+          "templateId": "tmpl-1",
+          "includedPages": [
+            "cover",
+            "profile",
+            "ceo",
+            "boq",
+            "final"
+          ],
+          "includeSizerItems": false
+        }
+      ]
+    },
+    {
+      "id": "lead-103",
+      "name": "new1 test",
+      "email": "new1@example.com",
+      "phone": "0300-1234567",
+      "address": "DHA Phase 6, Lahore",
+      "status": "Quoted",
+      "monthlyBill": 45000,
+      "monthlyUnits": 1200,
+      "sanctionedLoad": 15,
+      "backupRequirement": "10kWh",
+      "location": "Lahore",
+      "roofType": "Standard Flat",
+      "roofSpace": 1200,
+      "shading": "None",
+      "rating": 3,
+      "assignedSalesperson": "Sarah Connor",
+      "createdAt": "2026-05-31T18:13:10.086Z",
+      "notes": "Testing manual BOQ isolation.",
+      "leadSource": "Manual Testing",
+      "engagementLevel": "High",
+      "quotes": [
+        {
+          "id": "q-1",
+          "idempotencyKey": "",
+          "systemSizekW": 10,
+          "panelCount": 18,
+          "panelType": "Longi 580W Panels",
+          "inverterType": "Goodwe 20kW Inverter",
+          "batteryCapacity": "",
+          "totalCost": 150000,
+          "federalTaxCredit": 0,
+          "netCost": 150000,
+          "estimatedAnnualSavings": 490000,
+          "paybackPeriodYears": 0.3,
+          "status": "Pending",
+          "createdAt": "2026-05-31T18:13:10.095Z",
+          "structureType": "Standard",
+          "accessories": "Dual DC cables, PVC ducting & safety switches",
+          "installationCharges": 75000,
+          "netMeteringCharges": 90000,
+          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
+          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
+          "termsAndConditions": "Generation yield matches simulation rules.",
+          "clientName": "new1 test",
+          "clientPhone": "0300-1234567",
+          "clientEmail": "new1@example.com",
+          "clientAddress": "DHA Phase 6, Lahore",
+          "cnic": "",
+          "cityArea": "Lahore",
+          "bdmName": "Sarah Connor",
+          "quoteDate": "2026-05-31",
+          "systemType": "Hybrid",
+          "panelBrand": "Brand X",
+          "panelWattage": 580,
+          "inverterBrand": "Brand Y",
+          "inverterCapacity": "10kW",
+          "batteryOption": "None",
+          "netMeteringRequired": "Yes",
+          "discount": 0,
+          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
+          "boqItems": [],
+          "lescoSettings": {
+            "meterNo": "",
+            "consumerNo": "",
+            "sanctionedLoad": "",
+            "phaseType": "Three Phase"
+          },
+          "societyCharges": 0,
+          "taxEnabled": false,
+          "taxRate": 0,
+          "taxAmount": 0,
+          "selectedStructure": "standard",
+          "customStructure": null,
+          "boqRows": [
+            {
+              "id": "manual-item-1",
+              "type": "item",
+              "name": "Custom Solar Panel A",
+              "brand": "Brand X",
+              "unit": "Pcs",
+              "qty": 2,
+              "rate": 50000,
+              "total": 100000
+            },
+            {
+              "id": "manual-item-2",
+              "type": "item",
+              "name": "Custom Hybrid Inverter B",
+              "brand": "Brand Y",
+              "unit": "Pcs",
+              "qty": 1,
+              "rate": 50000,
+              "total": 50000
+            }
+          ],
+          "customNotes": "",
+          "grandTotal": 150000,
+          "netTotal": 150000,
+          "quote_type": "manual_boq"
+        }
+      ],
+      "conversionScore": 100,
+      "conversionProbability": 95
+    },
+    {
+      "id": "lead-104",
+      "name": "new1 test",
+      "email": "new1@example.com",
+      "phone": "0300-1234567",
+      "address": "DHA Phase 6, Lahore",
+      "status": "Quoted",
+      "monthlyBill": 45000,
+      "monthlyUnits": 1200,
+      "sanctionedLoad": 15,
+      "backupRequirement": "10kWh",
+      "location": "Lahore",
+      "roofType": "Standard Flat",
+      "roofSpace": 1200,
+      "shading": "None",
+      "rating": 3,
+      "assignedSalesperson": "Sarah Connor",
+      "createdAt": "2026-05-31T18:13:47.334Z",
+      "notes": "Testing manual BOQ isolation.",
+      "leadSource": "Manual Testing",
+      "engagementLevel": "High",
+      "quotes": [
+        {
+          "id": "q-1",
+          "idempotencyKey": "",
+          "systemSizekW": 10,
+          "panelCount": 18,
+          "panelType": "Longi 580W Panels",
+          "inverterType": "Goodwe 20kW Inverter",
+          "batteryCapacity": "",
+          "totalCost": 150000,
+          "federalTaxCredit": 0,
+          "netCost": 150000,
+          "estimatedAnnualSavings": 490000,
+          "paybackPeriodYears": 0.3,
+          "status": "Pending",
+          "createdAt": "2026-05-31T18:13:47.338Z",
+          "structureType": "Standard",
+          "accessories": "Dual DC cables, PVC ducting & safety switches",
+          "installationCharges": 75000,
+          "netMeteringCharges": 90000,
+          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
+          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
+          "termsAndConditions": "Generation yield matches simulation rules.",
+          "clientName": "new1 test",
+          "clientPhone": "0300-1234567",
+          "clientEmail": "new1@example.com",
+          "clientAddress": "DHA Phase 6, Lahore",
+          "cnic": "",
+          "cityArea": "Lahore",
+          "bdmName": "Sarah Connor",
+          "quoteDate": "2026-05-31",
+          "systemType": "Hybrid",
+          "panelBrand": "Brand X",
+          "panelWattage": 580,
+          "inverterBrand": "Brand Y",
+          "inverterCapacity": "10kW",
+          "batteryOption": "None",
+          "netMeteringRequired": "Yes",
+          "discount": 0,
+          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
+          "boqItems": [],
+          "lescoSettings": {
+            "meterNo": "",
+            "consumerNo": "",
+            "sanctionedLoad": "",
+            "phaseType": "Three Phase"
+          },
+          "societyCharges": 0,
+          "taxEnabled": false,
+          "taxRate": 0,
+          "taxAmount": 0,
+          "selectedStructure": "standard",
+          "customStructure": null,
+          "boqRows": [
+            {
+              "id": "manual-item-1",
+              "type": "item",
+              "name": "Custom Solar Panel A",
+              "brand": "Brand X",
+              "unit": "Pcs",
+              "qty": 2,
+              "rate": 50000,
+              "total": 100000
+            },
+            {
+              "id": "manual-item-2",
+              "type": "item",
+              "name": "Custom Hybrid Inverter B",
+              "brand": "Brand Y",
+              "unit": "Pcs",
+              "qty": 1,
+              "rate": 50000,
+              "total": 50000
+            }
+          ],
+          "customNotes": "",
+          "grandTotal": 150000,
+          "netTotal": 150000,
+          "quote_type": "manual_boq"
+        }
+      ],
+      "conversionScore": 100,
+      "conversionProbability": 95
+    }
+  ],
+  "tickets": [],
+  "netMeteringHistory": [
+    {
+      "month": "Jan",
+      "consumption": 850,
+      "generation": 420
+    },
+    {
+      "month": "Feb",
+      "consumption": 790,
+      "generation": 510
+    },
+    {
+      "month": "Mar",
+      "consumption": 710,
+      "generation": 750
+    },
+    {
+      "month": "Apr",
+      "consumption": 680,
+      "generation": 980
+    },
+    {
+      "month": "May",
+      "consumption": 750,
+      "generation": 1220
+    }
+  ],
+  "inventory": [
+    {
+      "id": "p-longi",
+      "name": "Longi 580W Panels",
+      "category": "Panels",
+      "desc": "Tier-1 Mono-PERC high efficiency panels",
+      "stock": 500,
+      "cost": 19500
+    },
+    {
+      "id": "p-jinko",
+      "name": "Jinko 580W Panels",
+      "category": "Panels",
+      "desc": "Tiger Neo N-type premium panels",
+      "stock": 650,
+      "cost": 19800
+    },
+    {
+      "id": "p-jasolar",
+      "name": "JA Solar 580W Panels",
+      "category": "Panels",
+      "desc": "High reliability monocrystalline modules",
+      "stock": 400,
+      "cost": 19200
+    },
+    {
+      "id": "p-canadian",
+      "name": "Canadian Solar 580W Panels",
+      "category": "Panels",
+      "desc": "BiHiKu7 Bifacial high performance modules",
+      "stock": 300,
+      "cost": 21000
+    },
+    {
+      "id": "inv-goodwe",
+      "name": "Goodwe 20kW Inverter",
+      "category": "Inverters",
+      "desc": "Three-phase grid-tied smart inverter",
+      "stock": 25,
+      "cost": 260000
+    },
+    {
+      "id": "inv-solis",
+      "name": "Solis 15kW Inverter",
+      "category": "Inverters",
+      "desc": "On-grid solar synchronization inverter",
+      "stock": 30,
+      "cost": 220000
+    },
+    {
+      "id": "inv-growatt",
+      "name": "Growatt 5kW Hybrid Inverter",
+      "category": "Inverters",
+      "desc": "Dual MPPT hybrid storage controller",
+      "stock": 40,
+      "cost": 140000
+    },
+    {
+      "id": "inv-knox",
+      "name": "Knox 10kW Hybrid Inverter",
+      "category": "Inverters",
+      "desc": "Smart cloud monitoring enabled inverter",
+      "stock": 20,
+      "cost": 185000
+    },
+    {
+      "id": "bat-lithium",
+      "name": "Lithium Battery 10.24kWh",
+      "category": "Storage",
+      "desc": "LiFePO4 high cycle solar backup battery pack",
+      "stock": 50,
+      "cost": 450000
+    },
+    {
+      "id": "cable-dc",
+      "name": "DC Solar Cable 6mm (per meter)",
+      "category": "Cables",
+      "desc": "Tinned copper solar wire",
+      "stock": 5000,
+      "cost": 280
+    },
+    {
+      "id": "cable-ac",
+      "name": "AC Copper Cable 16mm (per meter)",
+      "category": "Cables",
+      "desc": "Multi-core AC connecting cable",
+      "stock": 2000,
+      "cost": 1350
+    },
+    {
+      "id": "earth-set",
+      "name": "Chemical Earthing Kit",
+      "category": "Earthing",
+      "desc": "Grounding rod with backfill compound",
+      "stock": 100,
+      "cost": 48000
+    },
+    {
+      "id": "db-equipped",
+      "name": "Fully Equipped AC/DC DB Box",
+      "category": "Distribution",
+      "desc": "Distribution panel with SPDs & breakers",
+      "stock": 80,
+      "cost": 70000
+    }
+  ],
+  "projects": [],
+  "netMeteringTrackers": {},
+  "paymentTracks": {},
+  "activityLogs": [
+    {
+      "id": "log-1780251227338",
+      "timestamp": "2026-05-31T18:13:47.338Z",
+      "userId": "sales",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-1 for new1 test"
+    },
+    {
+      "id": "log-1780251227334",
+      "timestamp": "2026-05-31T18:13:47.334Z",
+      "userId": "guest",
+      "userName": "new1 test",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780251190096",
+      "timestamp": "2026-05-31T18:13:10.096Z",
+      "userId": "sales",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-1 for new1 test"
+    },
+    {
+      "id": "log-1780251190088",
+      "timestamp": "2026-05-31T18:13:10.088Z",
+      "userId": "guest",
+      "userName": "new1 test",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780123771091",
+      "timestamp": "2026-05-30T06:49:31.091Z",
+      "userId": "u-11",
+      "userName": "Muhammad Allauddin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780123770292",
+      "timestamp": "2026-05-30T06:49:30.292Z",
+      "userId": "u-1",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780092597670",
+      "timestamp": "2026-05-29T22:09:57.670Z",
+      "userId": "u-1",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780092577289",
+      "timestamp": "2026-05-29T22:09:37.289Z",
+      "userId": "u-1",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780092574221",
+      "timestamp": "2026-05-29T22:09:34.221Z",
+      "userId": "u-1",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780067480058",
+      "timestamp": "2026-05-29T15:11:20.058Z",
+      "userId": "guest",
+      "userName": "alvidon",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780064092682",
+      "timestamp": "2026-05-29T14:14:52.682Z",
+      "userId": "u-1",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via local file persistence layout."
+    },
+    {
+      "id": "log-2",
+      "timestamp": "2026-05-12T14:20:00Z",
+      "userId": "u-3",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Formulated",
+      "details": "Drafted 8.5 kW panel layout with 1x Sunchaser Core storage battery ($19,500 total)"
+    }
+  ],
+  "whatsAppLogs": [
+    {
+      "id": "wa-1780251227339",
+      "timestamp": "2026-05-31T18:13:47.339Z",
+      "customerName": "new1 test",
+      "phone": "0300-1234567",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi new1 test! Sunchaser has unlocked your custom solar proposal: 10 kW with Goodwe 20kW Inverter. Total final cost is Rs. 150,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780251227335",
+      "timestamp": "2026-05-31T18:13:47.335Z",
+      "customerName": "new1 test",
+      "phone": "0300-1234567",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi new1 test! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780251190107",
+      "timestamp": "2026-05-31T18:13:10.107Z",
+      "customerName": "new1 test",
+      "phone": "0300-1234567",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi new1 test! Sunchaser has unlocked your custom solar proposal: 10 kW with Goodwe 20kW Inverter. Total final cost is Rs. 150,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780251190089",
+      "timestamp": "2026-05-31T18:13:10.089Z",
+      "customerName": "new1 test",
+      "phone": "0300-1234567",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi new1 test! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780067480060",
+      "timestamp": "2026-05-29T15:11:20.060Z",
+      "customerName": "alvidon",
+      "phone": "032184877879",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi alvidon! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    }
+  ],
+  "purchaseOrders": [
+    {
+      "id": "PO-9001",
+      "vendor": "Canadian Solar Ltd",
+      "itemId": "p-400",
+      "itemName": "Sunchaser Ultra 400W",
+      "quantity": 200,
+      "status": "Delivered",
+      "date": "2026-05-18",
+      "cost": 56000
+    },
+    {
+      "id": "PO-9002",
+      "vendor": "Enphase Energy",
+      "itemId": "inv-en",
+      "itemName": "Enphase IQ8 Microinverter",
+      "quantity": 500,
+      "status": "In Transit",
+      "date": "2026-05-24",
+      "cost": 90000
+    }
+  ],
+  "categories": [
+    {
+      "id": "cat-1",
+      "name": "Solar Systems",
+      "description": "Complete package solar generators and layout panels"
+    },
+    {
+      "id": "cat-2",
+      "name": "Solar Panels",
+      "description": "Premium photovoltaic silicon wafer panels"
+    },
+    {
+      "id": "cat-3",
+      "name": "Inverters",
+      "description": "Smart solar and battery power inverters"
+    },
+    {
+      "id": "cat-4",
+      "name": "Batteries",
+      "description": "Lithium iron phosphate storage cells"
+    },
+    {
+      "id": "cat-5",
+      "name": "EV Chargers",
+      "description": "Universal standard electric vehicle chargers"
+    },
+    {
+      "id": "cat-6",
+      "name": "Mobile Phones",
+      "description": "Next-gen communication handsets and devices"
+    },
+    {
+      "id": "cat-7",
+      "name": "Electronics",
+      "description": "Smart accessories and microprocessor electronics"
+    },
+    {
+      "id": "cat-8",
+      "name": "Accessories",
+      "description": "Peripheral mount brackets and device sound systems"
+    },
+    {
+      "id": "cat-9",
+      "name": "Appliances",
+      "description": "Energy star home appliances and micro-fridges"
+    },
+    {
+      "id": "cat-10",
+      "name": "Future Products",
+      "description": "Extended modules and service support care contracts"
+    }
+  ],
+  "products": [
+    {
+      "id": "p-sol-jinko-580",
+      "name": "Jinko Tiger Neo 580W Panel",
+      "category": "Solar Panels",
+      "brand": "Jinko",
+      "model": "Tiger Neo N-type 580W",
+      "sku": "JK-PAN-580N",
+      "price": 26000,
+      "discount": 1000,
+      "stock": 500,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 580,
+        "costPrice": 19500,
+        "description": "Jinko Tiger Neo N-type high efficiency monocrystalline bifacial panels."
+      }
+    },
+    {
+      "id": "p-sol-longi-575",
+      "name": "Longi Hi-MO 6 Explorer 575W",
+      "category": "Solar Panels",
+      "brand": "Longi",
+      "model": "Hi-MO 6 Explorer 575W",
+      "sku": "LG-PAN-575E",
+      "price": 25215,
+      "discount": 500,
+      "stock": 450,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 575,
+        "costPrice": 18900,
+        "description": "Longi Hi-MO 6 Explorer HPBC single glass modules."
+      }
+    },
+    {
+      "id": "p-sol-ja-550",
+      "name": "JA Solar DeepBlue 550W",
+      "category": "Solar Panels",
+      "brand": "JA Solar",
+      "model": "DeepBlue 3.0 550W",
+      "sku": "JA-PAN-550D",
+      "price": 19500,
+      "discount": 0,
+      "stock": 350,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 550,
+        "costPrice": 15500,
+        "description": "JA Solar DeepBlue 3.0 Mono-crystalline assembly."
+      }
+    },
+    {
+      "id": "p-sol-canadian-650",
+      "name": "Canadian Solar BiHiKu7 650W",
+      "category": "Solar Panels",
+      "brand": "Canadian Solar",
+      "model": "BiHiKu7 650W",
+      "sku": "CS-PAN-650B",
+      "price": 23000,
+      "discount": 1000,
+      "stock": 300,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 650,
+        "costPrice": 17500,
+        "description": "Canadian Solar BiHiKu7 double glass bifacial modules."
+      }
+    },
+    {
+      "id": "p-sol-trina-430",
+      "name": "Trina Vertex S+ 430W",
+      "category": "Solar Panels",
+      "brand": "Trina",
+      "model": "Vertex S+ 430W",
+      "sku": "TR-PAN-430V",
+      "price": 16000,
+      "discount": 500,
+      "stock": 400,
+      "images": [
+        "https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "25 Years",
+      "specifications": {
+        "wattage": 430,
+        "costPrice": 12500,
+        "description": "Trina Vertex S+ N-type dual glass solar modules."
+      }
+    },
+    {
+      "id": "p-inv-knox-10",
+      "name": "Knox Smart Sync 10kW Inverter",
+      "category": "Inverters",
+      "brand": "Knox",
+      "model": "KNS-10K-G3",
+      "sku": "KX-INV-10K",
+      "price": 400000,
+      "discount": 15000,
+      "stock": 120,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10000,
+        "costPrice": 320000,
+        "description": "Knox Smart Sync 10kW three phase dual MPPT grid tied inverter."
+      }
+    },
+    {
+      "id": "p-inv-solis-10",
+      "name": "Solis 3-Phase 10kW Inverter",
+      "category": "Inverters",
+      "brand": "Solis",
+      "model": "S6-GR3P10K",
+      "sku": "SL-INV-10K",
+      "price": 420000,
+      "discount": 10000,
+      "stock": 90,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10000,
+        "costPrice": 340000,
+        "description": "Solis S6 three phase grid-tied solar inverter."
+      }
+    },
+    {
+      "id": "p-inv-growatt-6",
+      "name": "Growatt Hybrid 6kW Inverter",
+      "category": "Inverters",
+      "brand": "Growatt",
+      "model": "MIN 6000TL-XH",
+      "sku": "GW-INV-6K",
+      "price": 280000,
+      "discount": 5000,
+      "stock": 80,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "5 Years",
+      "specifications": {
+        "wattage": 6000,
+        "costPrice": 220000,
+        "description": "Growatt MIN 6000TL-XH hybrid single phase storage inverter."
+      }
+    },
+    {
+      "id": "p-inv-nitrox-12",
+      "name": "Nitrox Hybrid 12kW Inverter",
+      "category": "Inverters",
+      "brand": "Nitrox",
+      "model": "S-12K-SG04LP3",
+      "sku": "NX-INV-12K",
+      "price": 580000,
+      "discount": 20000,
+      "stock": 65,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "5 Years",
+      "specifications": {
+        "wattage": 12000,
+        "costPrice": 480000,
+        "description": "Nitrox 12kW hybrid three phase storage inverter (low voltage battery supported)."
+      }
+    },
+    {
+      "id": "p-inv-fox-10",
+      "name": "Fox ESS 3-Phase 10kW Hybrid",
+      "category": "Inverters",
+      "brand": "Fox ESS",
+      "model": "H3-10.0-E",
+      "sku": "FX-INV-10K",
+      "price": 490000,
+      "discount": 10000,
+      "stock": 40,
+      "images": [
+        "https://images.unsplash.com/photo-1620038896894-9165b2fa2c6e?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10000,
+        "costPrice": 410000,
+        "description": "Fox ESS high performance H3 series 10kW hybrid inverter."
+      }
+    },
+    {
+      "id": "p-bat-dyness-5",
+      "name": "Dyness LFP 5.12kWh Battery",
+      "category": "Batteries",
+      "brand": "Dyness",
+      "model": "DL5.0C LFP",
+      "sku": "DN-BAT-5K",
+      "price": 235000,
+      "discount": 5000,
+      "stock": 150,
+      "images": [
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 5120,
+        "costPrice": 190000,
+        "description": "Dyness DL5.0C lithium iron phosphate (LiFePO4) 51.2V 100Ah rack battery."
+      }
+    },
+    {
+      "id": "p-bat-pylontech-48",
+      "name": "Pylontech US5000 4.8kWh",
+      "category": "Batteries",
+      "brand": "Pylontech",
+      "model": "US5000 48V",
+      "sku": "PT-BAT-48",
+      "price": 260000,
+      "discount": 10000,
+      "stock": 80,
+      "images": [
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 4800,
+        "costPrice": 215000,
+        "description": "Pylontech US5000 LFP lithium energy storage battery module."
+      }
+    },
+    {
+      "id": "p-bat-soluna-10",
+      "name": "Soluna EOS 10K Pack",
+      "category": "Batteries",
+      "brand": "Soluna",
+      "model": "EOS 10K LFP",
+      "sku": "SL-BAT-10K",
+      "price": 480000,
+      "discount": 15000,
+      "stock": 45,
+      "images": [
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 10240,
+        "costPrice": 380000,
+        "description": "Soluna EOS high capacity LFP stackable battery system."
+      }
+    },
+    {
+      "id": "p-bat-narada-48",
+      "name": "Narada LFP 100Ah Battery",
+      "category": "Batteries",
+      "brand": "Narada",
+      "model": "48NPFC100",
+      "sku": "ND-BAT-48",
+      "price": 210000,
+      "discount": 5000,
+      "stock": 95,
+      "images": [
+        "https://images.unsplash.com/photo-1620714223084-8fcacc6dfd8d?w=800&auto=format&fit=crop&q=60"
+      ],
+      "warrantyPeriod": "5 Years",
+      "specifications": {
+        "wattage": 4800,
+        "costPrice": 175000,
+        "description": "Narada 48V telecom-grade lithium iron phosphate rack batteries."
+      }
+    },
+    {
+      "id": "p-str-std",
+      "name": "Standard A-Frame Mount Rails",
+      "category": "Structure",
+      "brand": "Mughal",
+      "model": "Standard A-Frame (Roof)",
+      "sku": "MG-STR-STD",
+      "price": 4800,
+      "discount": 0,
+      "stock": 1000,
+      "images": [],
+      "warrantyPeriod": "10 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 3500,
+        "description": "Standard hot-dip galvanized L3 14 gauge frame roof mounts."
+      }
+    },
+    {
+      "id": "p-str-elv",
+      "name": "Elevated Steel Frame (10ft clearance)",
+      "category": "Structure",
+      "brand": "Mughal",
+      "model": "Elevated Frame (10ft)",
+      "sku": "MG-STR-ELV",
+      "price": 147600,
+      "discount": 5000,
+      "stock": 100,
+      "images": [],
+      "warrantyPeriod": "15 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 120000,
+        "description": "Hot-dip galvanized C-Channel / H-Beam heavy fabrication structure."
+      }
+    },
+    {
+      "id": "p-str-gir",
+      "name": "Premium Mughal Girder Heavy Frame",
+      "category": "Structure",
+      "brand": "Mughal",
+      "model": "Girder Heavy Frame",
+      "sku": "MG-STR-GIR",
+      "price": 180000,
+      "discount": 10000,
+      "stock": 80,
+      "images": [],
+      "warrantyPeriod": "15 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 140000,
+        "description": "Extreme wind shear resistant structural steel girder system."
+      }
+    },
+    {
+      "id": "p-cab-dc6",
+      "name": "Pakistan Cables 6mm Single Core DC",
+      "category": "Cables",
+      "brand": "Pakistan Cables",
+      "model": "6mm Single-Core DC Solar",
+      "sku": "PK-CAB-DC6",
+      "price": 280,
+      "discount": 10,
+      "stock": 5000,
+      "images": [],
+      "warrantyPeriod": "20 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 220,
+        "description": "Double insulated copper core DC solar cable per meter."
+      }
+    },
+    {
+      "id": "p-cab-ac16",
+      "name": "Fast Cables 16mm 4-Core AC Cable",
+      "category": "Cables",
+      "brand": "Fast Cables",
+      "model": "16mm 4-Core AC Copper",
+      "sku": "FC-CAB-AC16",
+      "price": 2200,
+      "discount": 100,
+      "stock": 2000,
+      "images": [],
+      "warrantyPeriod": "15 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 1800,
+        "description": "Standard connection copper cable for AC distribution box per meter."
+      }
+    },
+    {
+      "id": "p-pro-box",
+      "name": "DC Breaker & SPD Protection Box",
+      "category": "Protection",
+      "brand": "Chint",
+      "model": "DC Protection Box Equipped",
+      "sku": "CT-PRO-DCB",
+      "price": 22000,
+      "discount": 2000,
+      "stock": 150,
+      "images": [],
+      "warrantyPeriod": "3 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 15000,
+        "description": "DC box with 1000V fuses, DC SPD, and heavy circuit breakers."
+      }
+    },
+    {
+      "id": "p-acc-con",
+      "name": "PVC Conduit Ducting & MC4 Connectors",
+      "category": "Accessories",
+      "brand": "Beta",
+      "model": "Ducting Accessories Kit",
+      "sku": "BT-ACC-KIT",
+      "price": 18000,
+      "discount": 0,
+      "stock": 400,
+      "images": [],
+      "warrantyPeriod": "5 Years",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 12000,
+        "description": "Complete PVC conduit piping, ducting, flex pipes, joints, and MC4 kit."
+      }
+    },
+    {
+      "id": "p-net-lesco",
+      "name": "LESCO Bidirectional Green Meter Filing",
+      "category": "Net Metering",
+      "brand": "LESCO",
+      "model": "Three-Phase Green Metering",
+      "sku": "LE-NET-FIL",
+      "price": 90000,
+      "discount": 0,
+      "stock": 999,
+      "images": [],
+      "warrantyPeriod": "N/A",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 75000,
+        "description": "Bidirectional meter licensing, NEPRA application filing, demand notice audit."
+      }
+    },
+    {
+      "id": "p-civ-fnd",
+      "name": "Concrete Ballast Foundation Pillars",
+      "category": "Civil Works",
+      "brand": "Local",
+      "model": "Ballast Concrete Pad",
+      "sku": "LC-CIV-FND",
+      "price": 16000,
+      "discount": 0,
+      "stock": 500,
+      "images": [],
+      "warrantyPeriod": "N/A",
+      "specifications": {
+        "wattage": 0,
+        "costPrice": 11000,
+        "description": "1.5x1.5ft concrete blocks for anchor base foundation stabilization."
+      }
+    }
+  ],
+  "orders": [],
+  "warranties": [],
+  "notifications": [],
+  "solarPackages": [
+    {
+      "id": "sp-5kw-hybrid",
+      "name": "5kW Hybrid Solar System",
+      "panelBrand": "Jinko 580W Panels",
+      "inverterBrand": "Growatt 5kW Hybrid",
+      "batteryOption": "Lithium Battery 10.24kWh",
+      "price": 850000,
+      "structureType": "Standard",
+      "profitMargin": 0.25,
+      "enabled": true
+    },
+    {
+      "id": "sp-10kw-hybrid",
+      "name": "10kW Hybrid Solar System",
+      "panelBrand": "Jinko 580W Panels",
+      "inverterBrand": "Knox 10kW Hybrid",
+      "batteryOption": "Lithium Battery 10.24kWh",
+      "price": 1450000,
+      "structureType": "Standard",
+      "profitMargin": 0.3,
+      "enabled": true
+    },
+    {
+      "id": "sp-15kw-hybrid",
+      "name": "15kW Hybrid Solar System",
+      "panelBrand": "Jinko 580W Panels",
+      "inverterBrand": "Solis 15kW Inverter",
+      "batteryOption": "Lithium Battery 10.24kWh",
+      "price": 2150000,
+      "structureType": "Elevated",
+      "profitMargin": 0.32,
+      "enabled": true
+    },
+    {
+      "id": "sp-20kw-ongrid",
+      "name": "20kW On-grid Solar System",
+      "panelBrand": "Longi 580W Panels",
+      "inverterBrand": "Goodwe 20kW Inverter",
+      "batteryOption": "None",
+      "price": 2200000,
+      "structureType": "Girder",
+      "profitMargin": 0.28,
+      "enabled": true
+    },
+    {
+      "id": "sp-30kw-commercial",
+      "name": "30kW Commercial Solar System",
+      "panelBrand": "Canadian Solar 580W Panels",
+      "inverterBrand": "Goodwe 20kW Inverter",
+      "batteryOption": "None",
+      "price": 3100000,
+      "structureType": "Girder",
+      "profitMargin": 0.3,
+      "enabled": true
+    },
+    {
+      "id": "sp-custom",
+      "name": "Custom Solar System",
+      "panelBrand": "Jinko 580W Panels",
+      "inverterBrand": "Knox 10kW Hybrid",
+      "batteryOption": "None",
+      "price": 0,
+      "structureType": "Standard",
+      "profitMargin": 0.25,
+      "enabled": true
+    }
+  ],
+  "settings": {
+    "companyName": "Sunchaser Energy Systems",
+    "companyLogo": "https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?w=100&q=80",
+    "phoneNumber": "0309-0236666",
+    "whatsAppNumber": "0330-7776444",
+    "bankDetails": "SUNCHASER SOLAR LOGISTICS PVT LTD - Bank Alfalah DHA Phase 6 - Account: 5520-1014-4892-0199",
+    "termsAndConditions": "System activation and commissioning subject to grid interconnect agreements.",
+    "warrantyText": "Sunchaser certified modules are backed by a 25-Year performance warranty, and 10-Year hardware replacement guarantee.",
+    "taxSettings": "Lahore/Pakistan tax settings apply. Standard sales tax included.",
+    "currencySettings": "PKR (Rs.)",
+    "officeAddress": "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+    "phoneNumbers": "0309-0236666, 0330-7776444",
+    "bankAccounts": [
+      {
+        "title": "SUNCHASER ENERGY",
+        "bankName": "Allied Bank",
+        "accountNo": "04190010112276940012",
+        "iban": "PK81ABPA0010112276940012",
+        "isAlternate": false
+      },
+      {
+        "title": "AL ADAM",
+        "bankName": "Bank Alfalah",
+        "accountNo": "55265001858603",
+        "iban": "PK12ALFH5526005001858603",
+        "isAlternate": false
+      },
+      {
+        "title": "SIGNALS GLOBAL",
+        "bankName": "Allied Bank",
+        "accountNo": "09090010112284650035",
+        "iban": "N/A",
+        "isAlternate": false
+      },
+      {
+        "title": "HELIOS SOLAR ENERGY",
+        "bankName": "Meezan Bank",
+        "accountNo": "02490109527492",
+        "iban": "PK49MEZN0002490109527492",
+        "isAlternate": false
+      },
+      {
+        "title": "HELIOS SOLAR ENERGY",
+        "bankName": "Standard Chartered",
+        "accountNo": "1702559001",
+        "iban": "PK91SCBL0000001702559001",
+        "isAlternate": false
+      },
+      {
+        "title": "HELIOS SOLAR ENERGY",
+        "bankName": "UBL",
+        "accountNo": "1305307203838",
+        "iban": "PK93UNIL0109000307203838",
+        "isAlternate": false
+      },
+      {
+        "title": "HELIOS SOLAR ENERGY",
+        "bankName": "Habib Metro",
+        "accountNo": "6121020301714129916",
+        "iban": "PK42MPBL1210067140129916",
+        "isAlternate": false
+      },
+      {
+        "title": "HELIOS SOLAR ENERGY",
+        "bankName": "Al Habib Bank",
+        "accountNo": "03440981001290017",
+        "iban": "PK62BAHL0344098100129001",
+        "isAlternate": false
+      }
+    ],
+    "termsAndConditionsList": [
+      "Quotation and Payment Terms: 1.1. Quote Validity: This quotation is valid for three (3) calendar days from the date of issue.",
+      "1.2. Pricing: Quoted prices are final and inclusive of all applicable taxes as of the quotation date. Any new or additional taxes imposed after this date will be added to the final invoice.",
+      "1.3. Payment Schedule: Ninety percent (90%) of the total quoted price is due upon issuance of the Purchase Order (PO) or Work Order (WO). The remaining Ten percent (10%) is due upon successful installation of the solar energy system. CASH ON DELIVERY ALSO AVAILABLE.",
+      "1.4. Payment Methods: Payments to SUNCHASER ENERGY can be made via crossed cheques, pay orders, or online bank transfers.",
+      "1.5. Commencement of Work: The Company will commence installation or delivery processes only upon receipt of the initial payment as stipulated in Section 1.3.",
+      "Technical Specifications and Products: 2.1. System Functionality (On-Grid Systems): On-grid solar energy systems are designed to operate in conjunction with the utility grid and will not provide backup power during grid outages or at night.",
+      "2.2. Component Substitution: In the event of non-availability of specific solar panel or inverter sizes/brands, the Company reserves the right to substitute with alternative products of equivalent or superior quality and specifications. Should the installed capacity deviate by more than two percent (2%) from the quoted capacity due to such substitutions, prices will be adjusted accordingly.",
+      "2.3. Installation Standards: The Company will install the solar energy system and associated accessories in accordance with its standard policies and industry best practices. Any requirement for customization or alteration from the standard installation must be communicated and agreed upon in writing at the time of quotation.",
+      "2.4. Client Interference: The Company expects no interference from the Client or their representatives during the installation process. Any customization or alteration requested by the Client during installation that was not previously agreed upon will incur additional charges.",
+      "2.5. Grid Connection Requirement: The quoted system is designed based on the availability of a stable grid connection at the Client's site. The Company shall not be responsible for any issues or malfunctions arising if the Client subsequently disconnects from the grid.",
+      "2.6. Earthing: The included earthing system is solely for net metering compliance and inverter protection. Any additional protective earthing needs to be quoted separately.",
+      "Smart Online Services & Maintenance: 4.1. Remote Monitoring & Troubleshooting (Initial Year): The Company will provide 1 year of complimentary remote monitoring and troubleshooting services for complete solar energy systems, provided the Client has made full payment.",
+      "4.2. Service Extension: Should the Client wish to extend Smart Online Services beyond the initial year, a separate agreement will be required.",
+      "4.3. Self-Monitoring: Clients are welcome to utilize online monitoring functionalities independently without any charge.",
+      "4.4. On-Site Visits: The initial year of free services covers all on-grid, hybrid, and off-grid solar systems. Any unnecessary on-site visits requested by the Client that are not attributable to system malfunction or covered under warranty will be charged.",
+      "4.5. Elevated Structure Guarantee: A ten (10) year guarantee is provided for the elevated structure, based on SAP 2000 wind analysis report at 130 km/h, applicable to complete systems only.",
+      "4.6. Warranty Exclusions: No warranty or free services will be provided for physical damages to any products.",
+      "4.7. Wi-Fi Requirement: Continuous Wi-Fi/internet availability at the site is mandatory for free online monitoring services for on-grid and hybrid systems. On-site visits necessitated by the absence of Wi-Fi/internet will be charged.",
+      "Client's Scope of Work: The Client is solely responsible for: 5.1. Site Readiness: Ensuring the installation area is prepared, a stable grid connection is available, and there is clear and easy access to the site/rooftop.",
+      "5.2. Civil Works: All necessary civil works, unless explicitly included in the quotation.",
+      "5.3. Electrical Cabling (Exclusions): The provision of a four-core service cable from the Energy Meter to the Distribution Box (where the inverter will be installed), if required. Also excluded is the line cable from the distribution line to the Energy Meter, if required.",
+      "5.4. Wi-Fi Availability: Ensuring consistent Wi-Fi availability for online monitoring purposes.",
+      "5.5. Electricity Meter & Sanctioned Load (Net Metering): Ownership of the electricity meter and ensuring the availability of the sanctioned load, specifically for net metering installations.",
+      "5.6. Load Distribution: Managing and distributing the internal electrical load within the premises.",
+      "Advisory for Solar: Panels should be washed at Fajr. Panels should be washed/cleaned after every 15 days.",
+      "Force Majeure: Elevated Structure Guarantee: A ten (10) year guarantee is provided for the elevated structure, based on SAP 2000 wind analysis report at 100 km/h, applicable to complete systems only."
+    ],
+    "structureDescriptions": {
+      "standard": {
+        "en": "Premium Galvanized Standard Mounting Structure (L3 14 Gauge), wind resistant up to 130 km/h.",
+        "ur": "پریمیم گیلوانائزڈ سٹینڈرڈ ماونٹنگ سٹرکچر (ایل تھری 14 گیج)، 130 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔",
+        "rate": 4800,
+        "weight": "25 kg per panel frame",
+        "materialType": "Galvanized L3 Steel 14 Gauge",
+        "warranty": "10 Years Structural Warranty",
+        "windRating": "130 km/h wind shear certified"
+      },
+      "elevated": {
+        "en": "Premium Elevated Mounting Structure: Columns 62x125x3mm H Beam, Rafter:3\"x1.5\" Channel, Purlin:62x125x3mm H Beam, wind resistant up to 130 km/h.",
+        "ur": "پریمیم ایلیویٹڈ ماونٹنگ سٹرکچر: کالمز 62x125x3mm ایچ بیم، رافٹر 3\"x1.5\" چینل، پرلن 62x125x3mm ایچ بیم۔ 130 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔",
+        "rate": 147600,
+        "weight": "850 kg total weight",
+        "materialType": "Hot-Dip Galvanized H-Beam & C-Channel Mughal Steel",
+        "warranty": "15 Years Structural Warranty",
+        "windRating": "130 km/h wind shear certified"
+      },
+      "girder": {
+        "en": "Premium Mughal Girder Structure, 1600 grams per foot for heavy load and long spans. Wind-certified up to 150 km/h.",
+        "ur": "پریمیم مغل گارڈر سٹرکچر، 1600 گرام فی فٹ مضبوطی اور طویل لائف کے لیے۔ 150 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔",
+        "rate": 180000,
+        "weight": "1200 kg total weight",
+        "materialType": "Heavy Gauge Hot-Rolled Mughal Girder & Channel",
+        "warranty": "20 Years Structural Warranty",
+        "windRating": "150 km/h wind shear certified"
+      }
+    },
+    "boqMasterLibrary": [
+      {
+        "id": "panel_longi",
+        "category": "Solar Panels",
+        "brand": "Longi",
+        "model": "Hi-MO X10 645W",
+        "wattageCapacity": "645W",
+        "unit": "Pcs",
+        "costPrice": 22000,
+        "salePrice": 25215,
+        "warranty": "30 Years Warranty",
+        "description": "Longi Tier 1 A+ Grade Monocrystalline solar panels"
+      },
+      {
+        "id": "panel_jinko",
+        "category": "Solar Panels",
+        "brand": "Jinko",
+        "model": "Tiger Neo 580W",
+        "wattageCapacity": "580W",
+        "unit": "Pcs",
+        "costPrice": 18000,
+        "salePrice": 21000,
+        "warranty": "25 Years Warranty",
+        "description": "Jinko N-Type high efficiency monocrystalline solar panels"
+      },
+      {
+        "id": "panel_ja",
+        "category": "Solar Panels",
+        "brand": "JA Solar",
+        "model": "DeepBlue 550W",
+        "wattageCapacity": "550W",
+        "unit": "Pcs",
+        "costPrice": 17000,
+        "salePrice": 19500,
+        "warranty": "25 Years Warranty",
+        "description": "JA Solar Tier-1 A+ Grade Monocrystalline cells"
+      },
+      {
+        "id": "panel_canadian",
+        "category": "Solar Panels",
+        "brand": "Canadian Solar",
+        "model": "BiHiKu7 600W",
+        "wattageCapacity": "600W",
+        "unit": "Pcs",
+        "costPrice": 20000,
+        "salePrice": 23000,
+        "warranty": "25 Years Warranty",
+        "description": "Canadian Solar Bifacial Dual-Glass Tier-1 modules"
+      },
+      {
+        "id": "inverter_goodwe_10kw",
+        "category": "Inverter",
+        "brand": "Goodwe",
+        "model": "10kW Hybrid",
+        "wattageCapacity": "10kW",
+        "unit": "Pcs",
+        "costPrice": 360000,
+        "salePrice": 400000,
+        "warranty": "5 Years Local Warranty",
+        "description": "Goodwe 10kW Hybrid Inverter Pure Sinewave smart grid"
+      },
+      {
+        "id": "inverter_solis_10kw",
+        "category": "Inverter",
+        "brand": "Solis",
+        "model": "10kW Hybrid",
+        "wattageCapacity": "10kW",
+        "unit": "Pcs",
+        "costPrice": 350000,
+        "salePrice": 400000,
+        "warranty": "5 Years Local Warranty",
+        "description": "Solis 10kW Hybrid Inverter Pure Sinewave smart grid"
+      },
+      {
+        "id": "inverter_growatt_5kw",
+        "category": "Inverter",
+        "brand": "Growatt",
+        "model": "5kW Hybrid",
+        "wattageCapacity": "5kW",
+        "unit": "Pcs",
+        "costPrice": 180000,
+        "salePrice": 220000,
+        "warranty": "5 Years Local Warranty",
+        "description": "Growatt 5kW Hybrid Inverter Pure Sinewave"
+      },
+      {
+        "id": "inverter_goodwe_20kw",
+        "category": "Inverter",
+        "brand": "Goodwe",
+        "model": "20kW On-grid",
+        "wattageCapacity": "20kW",
+        "unit": "Pcs",
+        "costPrice": 240000,
+        "salePrice": 280000,
+        "warranty": "5 Years Warranty",
+        "description": "Goodwe 20kW On-grid Smart Sync Inverter"
+      },
+      {
+        "id": "battery_soluna_5kwh",
+        "category": "Battery",
+        "brand": "Soluna",
+        "model": "Soluna 51V 5kWh",
+        "wattageCapacity": "5kWh",
+        "unit": "Pcs",
+        "costPrice": 200000,
+        "salePrice": 235000,
+        "warranty": "10 Years Warranty",
+        "description": "Soluna LiFePO4 Lithium deep discharge storage battery pack"
+      },
+      {
+        "id": "battery_goodwe_pro",
+        "category": "Battery",
+        "brand": "Goodwe",
+        "model": "PRO Lithium 5.4kWh",
+        "wattageCapacity": "5.4kWh",
+        "unit": "Pcs",
+        "costPrice": 230000,
+        "salePrice": 270000,
+        "warranty": "10 Years Warranty",
+        "description": "Goodwe PRO Lithium storage battery pack"
+      },
+      {
+        "id": "cable_dc_4mm",
+        "category": "Cables & Conductors",
+        "brand": "GM/FAST",
+        "model": "4 sq.mm DC Cable",
+        "wattageCapacity": "N/A",
+        "unit": "Meter",
+        "costPrice": 200,
+        "salePrice": 250,
+        "warranty": "1 Year Free Service",
+        "description": "4 sq.mm, 1C s/c CU/XLPE/PVC Double Insulated Tin Coated DC Cable"
+      },
+      {
+        "id": "cable_dc_6mm",
+        "category": "Cables & Conductors",
+        "brand": "GM/FAST",
+        "model": "6 sq.mm DC Cable",
+        "wattageCapacity": "N/A",
+        "unit": "Meter",
+        "costPrice": 220,
+        "salePrice": 280,
+        "warranty": "1 Year Free Service",
+        "description": "6 sq.mm, 1C s/c CU/XLPE/PVC Double Insulated Tin Coated DC Cable"
+      },
+      {
+        "id": "cable_ac_copper",
+        "category": "Cables & Conductors",
+        "brand": "GM/FAST",
+        "model": "AC Copper Cable",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 8000,
+        "salePrice": 10000,
+        "warranty": "1 Year Free Service",
+        "description": "AC Copper flexible connection cable job"
+      },
+      {
+        "id": "supplies_pvc",
+        "category": "Ducts / Pipes / Conduits",
+        "brand": "Beta/Equivalent",
+        "model": "PVC Materials Job",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 12000,
+        "salePrice": 18000,
+        "warranty": "1 Year Free Service",
+        "description": "All type of PVC material including pipes, elbows, connectors, joints, bends, clumps, PVC trunks/ducts"
+      },
+      {
+        "id": "db_equipped",
+        "category": "DB Boxes",
+        "brand": "GADA/Chint",
+        "model": "Equipped DB Box",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 25000,
+        "salePrice": 32000,
+        "warranty": "1 Year Free Service",
+        "description": "Fine Powder Coated DB, Miniature Circuit Breakers (4Pole 63A & 2Pole 1000V), SPDs (40KA)"
+      },
+      {
+        "id": "structure_std",
+        "category": "Structure / Fabrication",
+        "brand": "Mughal",
+        "model": "Standard GI Structure L3",
+        "wattageCapacity": "N/A",
+        "unit": "Pcs",
+        "costPrice": 4000,
+        "salePrice": 4800,
+        "warranty": "10 Years Warranty",
+        "description": "Galvanized Iron Frame with Rawal Bolts (L3) 14 Gauge"
+      },
+      {
+        "id": "structure_elv",
+        "category": "Structure / Fabrication",
+        "brand": "Mughal",
+        "model": "Elevated Structure Spec",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 120000,
+        "salePrice": 147600,
+        "warranty": "15 Years Warranty",
+        "description": "Elevated Structure H-Beam/C-Channel Mughal Steel mechanical work"
+      },
+      {
+        "id": "structure_gdr",
+        "category": "Structure / Fabrication",
+        "brand": "Mughal",
+        "model": "Mughal Girder Custom",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 150000,
+        "salePrice": 180000,
+        "warranty": "20 Years Warranty",
+        "description": "Heavy Gauge Hot-Rolled Mughal Girder & Channel Frame"
+      },
+      {
+        "id": "civil_works",
+        "category": "Civil Works",
+        "brand": "Local",
+        "model": "Concrete Pillars Foundations",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 10000,
+        "salePrice": 16000,
+        "warranty": "N/A",
+        "description": "Foundation Work for Structure pillars with concrete filling"
+      },
+      {
+        "id": "installation_complete",
+        "category": "Installation & Commissioning",
+        "brand": "Sunchaser",
+        "model": "Complete Installation",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 60000,
+        "salePrice": 80000,
+        "warranty": "1 Year Free Service",
+        "description": "Installation of solar panels, electrical wiring, testing, and equipment commissioning"
+      },
+      {
+        "id": "transportation_job",
+        "category": "Transportation",
+        "brand": "Local",
+        "model": "Transportation & Logistics",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 8000,
+        "salePrice": 10000,
+        "warranty": "N/A",
+        "description": "Transportation, logistics freight and manual lifting"
+      },
+      {
+        "id": "net_metering_lesco",
+        "category": "Net Metering",
+        "brand": "LESCO",
+        "model": "Net Metering Process",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 75000,
+        "salePrice": 90000,
+        "warranty": "N/A",
+        "description": "LESCO three-phase net-metering licensing & demand notices processing"
+      },
+      {
+        "id": "designing_testing",
+        "category": "Survey / Designing / Testing",
+        "brand": "Helios",
+        "model": "Survey & Design Suite",
+        "wattageCapacity": "N/A",
+        "unit": "Job",
+        "costPrice": 3000,
+        "salePrice": 5000,
+        "warranty": "N/A",
+        "description": "Survey, Designing, Testing, Commissioning, Execution Project management"
+      }
+    ]
+  },
+  "websiteContent": {
+    "banners": [
+      {
+        "id": "b1",
+        "title": "Go Solar, Save Thousands",
+        "subtitle": "Sunchaser Professional installation sets starting from $2,420/kW",
+        "image": "https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?w=800&q=80"
+      },
+      {
+        "id": "b2",
+        "title": "Smart Home Automation Systems",
+        "subtitle": "Integrate solar power with advanced modern smart controls",
+        "image": "https://images.unsplash.com/photo-1558002038-1055907df827?w=800&q=80"
+      }
+    ],
+    "promotions": [
+      {
+        "id": "p1",
+        "title": "Summer Green Rebate",
+        "code": "SUMMER30",
+        "discount": "30% Federal Tax Credit Sync (ITC)",
+        "active": true
+      }
+    ],
+    "blogs": [
+      {
+        "id": "bg1",
+        "title": "How 400W Micro-Inverters Maximize Generation Shaded Overhangs",
+        "author": "Bob Surveyor",
+        "date": "June 2026"
+      }
+    ],
+    "faqs": [
+      {
+        "id": "f1",
+        "question": "How long does a 10kW residential installation process take?",
+        "answer": "Usually 3-4 days including staging permits and net metering configuration."
+      }
+    ],
+    "testimonials": [
+      {
+        "id": "t1",
+        "name": "Sarah Connor",
+        "quote": "Saving $200 a month on bills with zero net metering issues!"
+      }
+    ],
+    "serviceAreas": [
+      "Springfield",
+      "Capital District",
+      "Shelbyville",
+      "Westwood"
+    ]
+  },
+  "quotations": [],
+  "quoteTemplatePages": [
+    {
+      "id": "tmpl-p-1",
+      "templateId": "tmpl-1",
+      "template_id": "tmpl-1",
+      "pageType": "cover",
+      "page_type": "cover",
+      "title": "Arthur Dent Solar Capacity Engineering Quotation",
+      "bodyText": "Generational Energy Independence\nTechnical Feasibility & Engineering Quotation",
+      "body_text": "Generational Energy Independence\nTechnical Feasibility & Engineering Quotation",
+      "image_url": "https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/cover_foreground_1780091097583.png",
+      "imageUrl": "https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/cover_foreground_1780091097583.png",
+      "bg_image_url": "https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/cover_background_1780091097583.png",
+      "bgImageUrl": "https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/cover_background_1780091097583.png",
+      "is_enabled": true,
+      "isEnabled": true,
+      "sort_order": 1,
+      "sortOrder": 1
+    },
+    {
+      "id": "tmpl-p-2",
+      "templateId": "tmpl-1",
+      "template_id": "tmpl-1",
+      "pageType": "profile",
+      "page_type": "profile",
+      "title": "Sunchaser Group Profile",
+      "bodyText": "{\"bodyText\": \"Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry.\", \"layoutMode\": \"standard\", \"header\": {\"mode\": \"custom\", \"enabled\": true, \"text\": \"\\u2600\\ufe0f SUNCHASER ENERGY GROUP PROFILE\", \"logoUrl\": \"https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/sunchaser_logo_1780091097583.png\", \"logoSize\": \"25px\", \"lineColor\": \"#f59e0b\", \"alignment\": \"left\"}, \"footer\": {\"mode\": \"inherit\", \"enabled\": true, \"text\": \"\", \"lineColor\": \"#cbd5e1\", \"alignment\": \"left\"}, \"bodyImages\": []}",
+      "body_text": "{\"bodyText\": \"Sunchaser Energy operates under a unified consortium of specialized engineering, supply chain, and logistics enterprises. Together, we bring a level of structural reliability and direct import authorization unmatched in the local solar industry.\", \"layoutMode\": \"standard\", \"header\": {\"mode\": \"custom\", \"enabled\": true, \"text\": \"\\u2600\\ufe0f SUNCHASER ENERGY GROUP PROFILE\", \"logoUrl\": \"https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/sunchaser_logo_1780091097583.png\", \"logoSize\": \"25px\", \"lineColor\": \"#f59e0b\", \"alignment\": \"left\"}, \"footer\": {\"mode\": \"inherit\", \"enabled\": true, \"text\": \"\", \"lineColor\": \"#cbd5e1\", \"alignment\": \"left\"}, \"bodyImages\": []}",
+      "is_enabled": true,
+      "isEnabled": true,
+      "sort_order": 2,
+      "sortOrder": 2
+    },
+    {
+      "id": "tmpl-p-4",
+      "templateId": "tmpl-1",
+      "template_id": "tmpl-1",
+      "pageType": "ceo",
+      "page_type": "ceo",
+      "title": "Executive Board Assurances",
+      "bodyText": "{\"bodyText\": \"At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation.\", \"layoutMode\": \"standard\", \"header\": {\"mode\": \"inherit\", \"enabled\": true, \"text\": \"\", \"logoUrl\": \"\", \"logoSize\": \"25px\", \"lineColor\": \"#f59e0b\", \"alignment\": \"left\"}, \"footer\": {\"mode\": \"inherit\", \"enabled\": true, \"text\": \"\", \"lineColor\": \"#cbd5e1\", \"alignment\": \"left\"}, \"bodyImages\": [{\"url\": \"https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/body_image_1780091097583.png\", \"title\": \"Sunchaser Verification Stamp\", \"position\": \"middle\", \"alignment\": \"center\", \"width\": \"50%\", \"opacity\": 0.85, \"order\": 1}]}",
+      "body_text": "{\"bodyText\": \"At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation.\", \"layoutMode\": \"standard\", \"header\": {\"mode\": \"inherit\", \"enabled\": true, \"text\": \"\", \"logoUrl\": \"\", \"logoSize\": \"25px\", \"lineColor\": \"#f59e0b\", \"alignment\": \"left\"}, \"footer\": {\"mode\": \"inherit\", \"enabled\": true, \"text\": \"\", \"lineColor\": \"#cbd5e1\", \"alignment\": \"left\"}, \"bodyImages\": [{\"url\": \"https://lskchobfhyryjpxfpyzo.supabase.co/storage/v1/object/public/uploads/body_image_1780091097583.png\", \"title\": \"Sunchaser Verification Stamp\", \"position\": \"middle\", \"alignment\": \"center\", \"width\": \"50%\", \"opacity\": 0.85, \"order\": 1}]}",
+      "is_enabled": true,
+      "isEnabled": true,
+      "sort_order": 4,
+      "sortOrder": 4
+    },
+    {
+      "id": "tmpl-p-10",
+      "templateId": "tmpl-1",
+      "template_id": "tmpl-1",
+      "pageType": "final",
+      "page_type": "final",
+      "title": "Sunchaser Energy Systems",
+      "bodyText": "Thank you for choosing Sunchaser Energy Systems!",
+      "body_text": "Thank you for choosing Sunchaser Energy Systems!",
+      "is_enabled": true,
+      "isEnabled": true,
+      "sort_order": 13,
+      "sortOrder": 13
+    }
+  ],
+  "quoteTemplates": [
+    {
+      "id": "tmpl-1",
+      "name": "Sunchaser Official Proposal Template",
+      "is_active": true
+    }
+  ],
+  "bankAccounts": [
+    {
+      "id": "bank-1",
+      "bank_name": "Allied Bank Limited",
+      "account_title": "SUNCHASER ENERGY",
+      "account_number": "04190010112276940012",
+      "iban": "PK81ABPA0010112276940012",
+      "is_active": true,
+      "sort_order": 1
+    },
+    {
+      "id": "bank-2",
+      "bank_name": "Bank Alfalah Limited",
+      "account_title": "AL ADAM",
+      "account_number": "55265001858603",
+      "iban": "PK12ALFH5526005001858603",
+      "is_active": true,
+      "sort_order": 2
+    },
+    {
+      "id": "bank-3",
+      "bank_name": "Allied Bank Limited",
+      "account_title": "SIGNALS GLOBAL",
+      "account_number": "09090010112284650035",
+      "iban": "N/A",
+      "is_active": true,
+      "sort_order": 3
+    },
+    {
+      "id": "bank-4",
+      "bank_name": "Meezan Bank Limited",
+      "account_title": "HELIOS SOLAR ENERGY",
+      "account_number": "02490109527492",
+      "iban": "PK49MEZN0002490109527492",
+      "is_active": true,
+      "sort_order": 4
+    },
+    {
+      "id": "bank-5",
+      "bank_name": "Standard Chartered Bank",
+      "account_title": "HELIOS SOLAR ENERGY",
+      "account_number": "1702559001",
+      "iban": "PK91SCBL0000001702559001",
+      "is_active": true,
+      "sort_order": 5
+    },
+    {
+      "id": "bank-6",
+      "bank_name": "United Bank Limited",
+      "account_title": "HELIOS SOLAR ENERGY",
+      "account_number": "1305307203838",
+      "iban": "PK93UNIL0109000307203838",
+      "is_active": true,
+      "sort_order": 6
+    },
+    {
+      "id": "bank-7",
+      "bank_name": "Habib Metropolitan Bank",
+      "account_title": "HELIOS SOLAR ENERGY",
+      "account_number": "6121020301714129916",
+      "iban": "PK42MPBL1210067140129916",
+      "is_active": true,
+      "sort_order": 7
+    },
+    {
+      "id": "bank-8",
+      "bank_name": "Bank Al Habib Limited",
+      "account_title": "HELIOS SOLAR ENERGY",
+      "account_number": "03440981001290017",
+      "iban": "PK62BAHL0344098100129001",
+      "is_active": true,
+      "sort_order": 8
+    }
+  ],
+  "companyTerms": [
+    {
+      "id": "term-1",
+      "term_text": "Quotation validity: 3 days from date of issuance.",
+      "sort_order": 1
+    },
+    {
+      "id": "term-2",
+      "term_text": "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
+      "sort_order": 2
+    },
+    {
+      "id": "term-3",
+      "term_text": "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
+      "sort_order": 3
+    },
+    {
+      "id": "term-4",
+      "term_text": "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
+      "sort_order": 4
+    },
+    {
+      "id": "term-5",
+      "term_text": "Work will commence within 3 days after receipt of the advance payment.",
+      "sort_order": 5
+    },
+    {
+      "id": "term-6",
+      "term_text": "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
+      "sort_order": 6
+    },
+    {
+      "id": "term-7",
+      "term_text": "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
+      "sort_order": 7
+    },
+    {
+      "id": "term-8",
+      "term_text": "Client interference: Any on-site construction delays caused by the client will affect the completion timeline.",
+      "sort_order": 8
+    },
+    {
+      "id": "term-9",
+      "term_text": "Grid connection: Net metering facilitation requires valid property documents and sanctioned load compliance.",
+      "sort_order": 9
+    },
+    {
+      "id": "term-10",
+      "term_text": "System earthing: Dedicated chemical earthing bores will be created for DC, AC, and frame grounding safety.",
+      "sort_order": 10
+    },
+    {
+      "id": "term-11",
+      "term_text": "Smart online monitoring: Active monitoring requires stable client Wi-Fi connection at the inverter site.",
+      "sort_order": 11
+    },
+    {
+      "id": "term-12",
+      "term_text": "Wi-Fi requirement: Customer must provide stable continuous Wi-Fi access for monitoring data synch.",
+      "sort_order": 12
+    },
+    {
+      "id": "term-13",
+      "term_text": "Client scope of work: Providing masonry work access, temporary electricity & water during construction.",
+      "sort_order": 13
+    },
+    {
+      "id": "term-14",
+      "term_text": "Civil work exclusions: Cutting of structural concrete slabs or custom aesthetic tiles is excluded unless quoted.",
+      "sort_order": 14
+    },
+    {
+      "id": "term-15",
+      "term_text": "Net metering clearance remains the client's responsibility if document verification faults occur.",
+      "sort_order": 15
+    },
+    {
+      "id": "term-16",
+      "term_text": "Panel washing advisory: Clean arrays bi-weekly for optimal generation yield performance.",
+      "sort_order": 16
+    },
+    {
+      "id": "term-17",
+      "term_text": "Force majeure: Sunchaser is not liable for delays caused by national strikes, weather anomalies, or utility board freezes.",
+      "sort_order": 17
+    }
+  ],
+  "ceoMessages": [
+    {
+      "id": "ceo-1",
+      "name": "Muhammad Allauddin",
+      "designation": "CEO, Engineering & Operations",
+      "message": "At Sunchaser, our engineering philosophy is simple: we build systems that outlast a generation. We refuse to cut corners on material gauges, hot-dip zinc coating parameters, wire thicknesses, or chemical earthing bores. Every layout is physically verified, and every termination complies with ISO standards. Sunchaser means ultimate power security.",
+      "signature_url": "",
+      "photo_url": ""
+    },
+    {
+      "id": "ceo-2",
+      "name": "Barrister Raza Khan Niazi",
+      "designation": "CEO Strategy & Innovation / Compliance",
+      "message": "Liaison with utility boards and regulatory licensing can be daunting for clients. Sunchaser handles the entire paperwork and NEPRA filing process transparently. We promise that all governmental files are processed legally, demand notices are audited, and net metering activations are completed with maximal efficiency.",
+      "signature_url": "",
+      "photo_url": ""
+    }
+  ],
+  "socialLinks": [
+    {
+      "id": "soc-1",
+      "platform": "Customer Portal",
+      "url": "http://sunchaser.co/portal",
+      "qr_code_url": ""
+    },
+    {
+      "id": "soc-2",
+      "platform": "Corporate Registry",
+      "url": "http://sunchaser.co/registry",
+      "qr_code_url": ""
+    }
+  ],
+  "structureDescriptions": [
+    {
+      "id": "struct-1",
+      "structure_type": "standard",
+      "title": "Standard Structure",
+      "description_en": "Premium Galvanized Mounting Structure, wind resistant up to 130 km/h.",
+      "description_ur": "پریمیم گیلوانائزڈ ماونٹنگ سٹرکچر، 130 کلومیٹر فی گھنٹہ تک ہوا کے خلاف مزاحم۔",
+      "material_type": "Galvanized L3 Steel",
+      "weight": "Standard Frame",
+      "wind_rating": "130 km/h",
+      "warranty": "10 Years Warranty",
+      "image_url": ""
+    },
+    {
+      "id": "struct-2",
+      "structure_type": "elevated",
+      "title": "Elevated Structure",
+      "description_en": "10ft Roof clearance hot-dip galvanized elevated structure frame.",
+      "description_ur": "10 فٹ چھت کی اونچائی کا ہاٹ ڈِپ گیلوانائزڈ ایلیویٹڈ سٹرکچر فریم۔",
+      "material_type": "Hot-dip Galvanized Steel",
+      "weight": "Heavy Frame",
+      "wind_rating": "130 km/h",
+      "warranty": "10 Years Warranty",
+      "image_url": ""
+    },
+    {
+      "id": "struct-3",
+      "structure_type": "girder",
+      "title": "Girder Structure",
+      "description_en": "Heavy-Duty Mughal Girder Frame supporting extreme wind shear.",
+      "description_ur": "ہیوی ڈیوٹی مغل گارڈر فریم جو شدید ہوا کے دباؤ کو برداشت کرتا ہے۔",
+      "material_type": "Mughal Girder Steel",
+      "weight": "1600g/ft Structural Load",
+      "wind_rating": "150 km/h",
+      "warranty": "15 Years Warranty",
+      "image_url": ""
+    }
+  ],
+  "quotePdfSettings": [
+    {
+      "id": "settings-1",
+      "company_name": "SUNCHASER ENERGY SYSTEMS",
+      "office_address": "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+      "hotline_phones": "0309-0236666, 0330-7776444",
+      "billing_email": "billing@sunchaser-energy.com",
+      "website_url": "www.sunchaser-energy.com",
+      "logo_url": ""
+    }
+  ]
+}

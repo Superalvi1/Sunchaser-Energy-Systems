@@ -518,8 +518,8 @@ app.post("/api/leads", async (req, res) => {
     phone: phone || "",
     address: address || "",
     status: "New",
-    monthlyBill: Number(monthlyBill) || 150,
-    monthlyUnits: Number(monthlyUnits) || Number(monthlyBill) * 4,
+    monthlyBill: (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill),
+    monthlyUnits: (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? (Number(monthlyBill) ? Number(monthlyBill) * 4 : 0) : Number(monthlyUnits),
     sanctionedLoad: Number(sanctionedLoad) || 7,
     backupRequirement: backupRequirement || "None",
     location: location || "Springfield",
@@ -3553,13 +3553,13 @@ function compileSunchaserPDFHtml(
         netTotal = grossTotal - discountAmount + societyCharges + taxAmount;
 
         pagesHtml += `
-          <div class="page" style="padding: 12mm 15mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
+          <div class="page boq-page" style="padding: 12mm 15mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
             ${absoluteImagesHtml}
             <div>
               ${headerHtml}
               <div class="page-title">${mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)'}</div>
               
-              <div style="max-height: 200mm; overflow: hidden; border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
+              <div style="border: 1.5px solid #cbd5e1; border-radius: 6px; margin-top: 15px;">
                 <table class="boq-table">
                   <thead>
                     <tr style="height: 28px;">
@@ -3857,6 +3857,11 @@ function compileSunchaserPDFHtml(
           overflow: hidden;
           page-break-after: always;
         }
+        .page.boq-page {
+          height: auto !important;
+          min-height: 297mm;
+          overflow: visible !important;
+        }
         .page.cover {
           box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
@@ -3997,7 +4002,9 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
     }
     
     // For auto sizer, we build a mock quote object from the lead parameters
-    const systemSizekW = lead.monthlyBill ? Number((lead.monthlyBill / 26).toFixed(1)) : 8.5;
+    const systemSizekW = (lead.monthlyBill && lead.monthlyBill > 1000)
+      ? Number((lead.monthlyBill / (26 * 35)).toFixed(1))
+      : 8.5;
     const panelWattage = 400;
     const panelCount = Math.ceil((systemSizekW * 1000) / panelWattage);
     const mockQuote = {
@@ -4200,14 +4207,14 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     const quoteId = req.query.quoteId;
     let quote = null;
     if (quoteId) {
-      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
+      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId && q.quote_type === 'manual_boq');
     }
     if (!quote) {
-      quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
+      quote = lead.quotes && lead.quotes.find((q: any) => q.quote_type === 'manual_boq');
     }
 
     if (!quote) {
-      return res.status(404).send("No saved quotation found for this lead.");
+      return res.status(404).send("No saved manual quotation found for this lead.");
     }
 
     const options = {
@@ -4264,10 +4271,13 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
       quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId);
     }
     if (!quote) {
+      quote = lead.quotes && lead.quotes.find((q: any) => q.quote_type === 'manual_boq');
+    }
+    if (!quote) {
       quote = lead.quotes && lead.quotes.length > 0 ? lead.quotes[0] : null;
     }
 
-    if (quote) {
+    if (quote && quote.quote_type === 'manual_boq') {
       res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}${req.query.quoteId ? `?quoteId=${req.query.quoteId}` : ""}`);
     } else {
       res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}`);

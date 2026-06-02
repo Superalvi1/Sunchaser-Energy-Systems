@@ -927,8 +927,18 @@ export default function SalesTeamApp({
       setWarrantyTerms("25 year power degradation, 10 year inverter warranty");
       setTermsAndConditions("Quoted prices are valid for 3 days.");
 
+      // Reset sizer-specific form controls to prevent leftovers
+      setFormRoofWidth(30);
+      setFormRoofLength(25);
+      setFormBackupReq(activeLead.backupRequirement || "None");
+      const initialUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
+      setFormMonthlyUnits(initialUnits);
+
       // 2. Load latest quote details or lead details
-      const latestQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'manual_boq');
+      const latestManualQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'manual_boq');
+      const latestSizerQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'auto_sizer');
+      const latestQuote = latestManualQuote || latestSizerQuote || (activeLead.quotes && activeLead.quotes.length > 0 ? activeLead.quotes[0] : null);
+
       if (latestQuote) {
         setSystemSizekW(latestQuote.systemSizekW || 10);
         setSystemType(latestQuote.systemType || 'Hybrid');
@@ -977,8 +987,6 @@ export default function SalesTeamApp({
         }
       } else {
         // Default system size calculation
-        const assumedUnits = activeLead.monthlyUnits || (activeLead.monthlyBill ? Math.round(activeLead.monthlyBill / 35) : 980);
-        setFormMonthlyUnits(assumedUnits);
         const calcSize = activeLead.monthlyBill && activeLead.monthlyBill > 1000 ? Number((activeLead.monthlyBill / (26 * 35)).toFixed(1)) : 8.5;
         setSystemSizekW(calcSize);
       }
@@ -993,8 +1001,8 @@ export default function SalesTeamApp({
         } catch (e) {
           console.error("Failed to parse cached BOQ", e);
         }
-      } else if (latestQuote) {
-        const qRows = latestQuote.boqRows || latestQuote.boqItems || [];
+      } else if (latestManualQuote) {
+        const qRows = latestManualQuote.boqRows || latestManualQuote.boqItems || [];
         setBoqRows(qRows);
         setManualBoqItems(qRows);
       } else {
@@ -1218,7 +1226,24 @@ export default function SalesTeamApp({
         };
       }
 
-      const calculatedGrandTotal = boqRows
+      let finalBoqRows = boqRows;
+      let finalIncludeSizerItems = includeSizerItems;
+      if (activeModule === 'sizer') {
+        finalBoqRows = generateDefaultBoqRows(
+          systemSizekW,
+          systemType as any,
+          selectedStructure,
+          panelBrand,
+          panelWattage,
+          inverterBrand,
+          inverterCapacity,
+          batteryOption,
+          netMeteringRequired as any
+        );
+        finalIncludeSizerItems = true;
+      }
+
+      const calculatedGrandTotal = finalBoqRows
         .filter(r => r && r.type === 'item')
         .reduce((sum, r) => sum + (r.total || 0), 0);
 
@@ -1238,8 +1263,8 @@ export default function SalesTeamApp({
         totalCost: calculatedGrandTotal,
         structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
         accessories,
-        installationCharges: Number(boqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
-        netMeteringCharges: netMeteringRequired === "Yes" ? (Number(boqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
+        installationCharges: Number(finalBoqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
+        netMeteringCharges: netMeteringRequired === "Yes" ? (Number(finalBoqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
         paymentTerms: paymentSchedule,
         warrantyTerms,
         termsAndConditions,
@@ -1262,7 +1287,7 @@ export default function SalesTeamApp({
         netMeteringRequired,
         discount: Number(discount) || 0,
         paymentSchedule,
-        boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
+        boqItems: finalIncludeSizerItems ? finalBoqRows : finalBoqRows.filter(r => !isDefaultAutoSizerRow(r)),
 
         // Redesigned Manual Builder fields
         lescoSettings: {
@@ -1277,12 +1302,12 @@ export default function SalesTeamApp({
         taxAmount: calculatedTaxAmount,
         selectedStructure,
         customStructure: customStructurePayload,
-        boqRows: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
+        boqRows: finalIncludeSizerItems ? finalBoqRows : finalBoqRows.filter(r => !isDefaultAutoSizerRow(r)),
         customNotes,
         grandTotal: calculatedGrandTotal,
         netTotal: calculatedNetTotal,
         templateId: selectedTemplateId,
-        includeSizerItems,
+        includeSizerItems: finalIncludeSizerItems,
         includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
         quote_type: activeModule === 'sizer' ? 'auto_sizer' : 'manual_boq'
       };
