@@ -50,7 +50,8 @@ export function getSupabase(): SupabaseClient | null {
 }
 
 export function isSupabaseActive(): boolean {
-  return false;
+  if (isConfigured) return true;
+  return getSupabase() !== null;
 }
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
@@ -609,6 +610,140 @@ export function getDashboardStats(activeDb: Database) {
   };
 }
 
+const QUOTE_EXT_FALLBACK_PREFIX = "__SUNCHASER_EXT__:";
+
+export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
+  return {
+    clientName: quote.clientName,
+    clientPhone: quote.clientPhone,
+    clientEmail: quote.clientEmail,
+    clientAddress: quote.clientAddress,
+    cnic: quote.cnic,
+    cityArea: quote.cityArea,
+    bdmName: quote.bdmName,
+    quoteDate: quote.quoteDate,
+    systemType: quote.systemType,
+    panelBrand: quote.panelBrand,
+    panelWattage: quote.panelWattage,
+    inverterBrand: quote.inverterBrand,
+    inverterCapacity: quote.inverterCapacity,
+    batteryOption: quote.batteryOption,
+    netMeteringRequired: quote.netMeteringRequired,
+    discount: quote.discount,
+    paymentSchedule: quote.paymentSchedule,
+    boqItems: quote.boqItems,
+    lescoSettings: quote.lescoSettings,
+    societyCharges: quote.societyCharges,
+    taxEnabled: quote.taxEnabled,
+    taxRate: quote.taxRate,
+    taxAmount: quote.taxAmount,
+    selectedStructure: quote.selectedStructure,
+    customStructure: quote.customStructure,
+    boqRows: quote.boqRows,
+    customNotes: quote.customNotes,
+    grandTotal: quote.grandTotal,
+    netTotal: quote.netTotal,
+    idempotencyKey: quote.idempotencyKey,
+    templateId: quote.templateId,
+    includedPages: quote.includedPages,
+    includeSizerItems: quote.includeSizerItems === true,
+    quote_type: quote.quote_type || "auto_sizer",
+    termsAndConditions: quote.termsAndConditions,
+  };
+}
+
+export function parseQuotationExtendedData(row: any): Record<string, any> {
+  if (row?.extended_data) {
+    return typeof row.extended_data === "string"
+      ? JSON.parse(row.extended_data)
+      : row.extended_data;
+  }
+  const terms = row?.terms_and_conditions;
+  if (typeof terms === "string" && terms.startsWith(QUOTE_EXT_FALLBACK_PREFIX)) {
+    try {
+      return JSON.parse(terms.slice(QUOTE_EXT_FALLBACK_PREFIX.length));
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+export function buildQuotationSupabaseRow(
+  leadId: string,
+  customerId: string,
+  quote: any,
+  options?: { includeExtendedColumn?: boolean }
+): Record<string, any> {
+  const ext = buildQuoteExtendedPayload(quote);
+  const row: Record<string, any> = {
+    id: quote.id,
+    lead_id: leadId,
+    customer_id: customerId,
+    system_size_kw: quote.systemSizekW,
+    panel_count: quote.panelCount,
+    panel_type: quote.panelType,
+    inverter_type: quote.inverterType,
+    battery_capacity: quote.batteryCapacity,
+    total_cost: quote.totalCost,
+    federal_tax_credit: quote.federalTaxCredit ?? 0,
+    net_cost: quote.netCost,
+    estimated_annual_savings: quote.estimatedAnnualSavings,
+    payback_period_years: quote.paybackPeriodYears,
+    status: quote.status,
+    structure_type: quote.structureType,
+    accessories: quote.accessories,
+    installation_charges: quote.installationCharges || 0,
+    net_metering_charges: quote.netMeteringCharges || 0,
+    payment_terms: quote.paymentTerms,
+    warranty_terms: quote.warrantyTerms,
+    terms_and_conditions: quote.termsAndConditions,
+  };
+  if (options?.includeExtendedColumn !== false) {
+    row.extended_data = ext;
+  } else {
+    row.terms_and_conditions =
+      QUOTE_EXT_FALLBACK_PREFIX + JSON.stringify(ext);
+  }
+  return row;
+}
+
+export async function persistQuotationToSupabase(
+  supabase: SupabaseClient,
+  leadId: string,
+  customerId: string,
+  quote: any,
+  mode: "insert" | "upsert" = "insert"
+): Promise<{ ok: boolean; error?: string }> {
+  const withExt = buildQuotationSupabaseRow(leadId, customerId, quote, {
+    includeExtendedColumn: true,
+  });
+  const attempt =
+    mode === "upsert"
+      ? await supabase.from("quotations").upsert(withExt, { onConflict: "id" })
+      : await supabase.from("quotations").insert(withExt);
+
+  if (!attempt.error) return { ok: true };
+
+  const missingExt =
+    attempt.error.message?.includes("extended_data") ||
+    attempt.error.message?.includes("schema cache");
+  if (!missingExt) {
+    return { ok: false, error: attempt.error.message };
+  }
+
+  const fallback = buildQuotationSupabaseRow(leadId, customerId, quote, {
+    includeExtendedColumn: false,
+  });
+  const retry =
+    mode === "upsert"
+      ? await supabase.from("quotations").upsert(fallback, { onConflict: "id" })
+      : await supabase.from("quotations").insert(fallback);
+
+  if (retry.error) return { ok: false, error: retry.error.message };
+  return { ok: true };
+}
+
 /* --- SUPABASE GETTER / JOINER --- */
 export async function fetchAppStateFromSupabase(): Promise<Database> {
   const supabase = getSupabase();
@@ -710,7 +845,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     const quotes = (quotesData || [])
       .filter((q: any) => q.lead_id === lead.id)
       .map((q: any) => {
-        const ext = q.extended_data ? (typeof q.extended_data === 'string' ? JSON.parse(q.extended_data) : q.extended_data) : {};
+        const ext = parseQuotationExtendedData(q);
         return {
           id: q.id,
           systemSizekW: Number(q.system_size_kw),
@@ -1119,14 +1254,14 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     settings: settingsObj || (useLocalConfigFallback ? localBackup.settings : undefined),
     websiteContent: websiteContentObj || (useLocalConfigFallback ? localBackup.websiteContent : undefined),
     purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : (useLocalConfigFallback ? (localBackup.purchaseOrders || []) : []),
-    quoteTemplates: quoteTemplatesMapped.length > 0 ? quoteTemplatesMapped : (useLocalConfigFallback ? (localBackup.quoteTemplates || []) : []),
-    quoteTemplatePages: quoteTemplatePagesMapped.length > 0 ? quoteTemplatePagesMapped : (useLocalConfigFallback ? (localBackup.quoteTemplatePages || []) : []),
-    bankAccounts: bankAccountsMapped.length > 0 ? bankAccountsMapped : (useLocalConfigFallback ? (localBackup.bankAccounts || []) : []),
-    companyTerms: companyTermsMapped.length > 0 ? companyTermsMapped : (useLocalConfigFallback ? (localBackup.companyTerms || []) : []),
-    ceoMessages: ceoMessagesMapped.length > 0 ? ceoMessagesMapped : (useLocalConfigFallback ? (localBackup.ceoMessages || []) : []),
-    socialLinks: socialLinksMapped.length > 0 ? socialLinksMapped : (useLocalConfigFallback ? (localBackup.socialLinks || []) : []),
-    structureDescriptions: structureDescriptionsMapped.length > 0 ? structureDescriptionsMapped : (useLocalConfigFallback ? (localBackup.structureDescriptions || []) : []),
-    quotePdfSettings: quotePdfSettingsMapped.length > 0 ? quotePdfSettingsMapped : (useLocalConfigFallback ? (localBackup.quotePdfSettings || []) : [])
+    quoteTemplates: quoteTemplatesMapped.length > 0 ? quoteTemplatesMapped : (localBackup.quoteTemplates || initialSeed.quoteTemplates || []),
+    quoteTemplatePages: quoteTemplatePagesMapped.length > 0 ? quoteTemplatePagesMapped : (localBackup.quoteTemplatePages || initialSeed.quoteTemplatePages || []),
+    bankAccounts: bankAccountsMapped.length > 0 ? bankAccountsMapped : (localBackup.bankAccounts || initialSeed.bankAccounts || []),
+    companyTerms: companyTermsMapped.length > 0 ? companyTermsMapped : (localBackup.companyTerms || initialSeed.companyTerms || []),
+    ceoMessages: ceoMessagesMapped.length > 0 ? ceoMessagesMapped : (localBackup.ceoMessages || initialSeed.ceoMessages || []),
+    socialLinks: socialLinksMapped.length > 0 ? socialLinksMapped : (localBackup.socialLinks || initialSeed.socialLinks || []),
+    structureDescriptions: structureDescriptionsMapped.length > 0 ? structureDescriptionsMapped : (localBackup.structureDescriptions || initialSeed.structureDescriptions || []),
+    quotePdfSettings: quotePdfSettingsMapped.length > 0 ? quotePdfSettingsMapped : (localBackup.quotePdfSettings || initialSeed.quotePdfSettings || [])
   };
 }
 

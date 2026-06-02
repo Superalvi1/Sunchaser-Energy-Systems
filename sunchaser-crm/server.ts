@@ -11,7 +11,8 @@ import {
   initialSeed,
   getDashboardStats,
   calculateLeadScore,
-  Database
+  Database,
+  persistQuotationToSupabase
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -636,19 +637,36 @@ app.put("/api/leads/:id", async (req, res) => {
 app.delete("/api/leads/:id", async (req, res) => {
   loadDb();
   const { id } = req.params;
-  const index = db.leads.findIndex((l: any) => l.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: "Lead not found" });
-  }
+  const localLeadIndex = db.leads.findIndex((l: any) => l.id === id);
+  const localLeadExistsBefore = localLeadIndex !== -1;
+  console.log(`[DELETE TRACE] before delete lead=${id} localExists=${localLeadExistsBefore} localLeadsCount=${db.leads.length}`);
 
   // Remove from Supabase first when active (source of truth)
   if (isSupabaseActive()) {
     try {
       const supabase = getSupabase()!;
-      const { error } = await supabase.from("leads").delete().eq("id", id);
-      if (error) {
-        throw error;
+      // Explicit child cleanup before lead delete to avoid FK blocking when cascade is not configured.
+      const childTables = [
+        "quotations",
+        "projects",
+        "site_surveys",
+        "installation_tasks",
+        "net_metering_trackers",
+        "payments"
+      ];
+      for (const table of childTables) {
+        const { error: childDeleteError } = await supabase.from(table).delete().eq("lead_id", id);
+        if (childDeleteError) {
+          console.error(`[DELETE TRACE] child delete failed table=${table} lead=${id} error=${childDeleteError.message}`);
+          throw childDeleteError;
+        }
       }
+      const { error: leadDeleteError, count: leadDeleteCount } = await supabase
+        .from("leads")
+        .delete({ count: "exact" })
+        .eq("id", id);
+      if (leadDeleteError) throw leadDeleteError;
+      console.log(`[DELETE TRACE] after Supabase delete lead=${id} deletedRows=${leadDeleteCount ?? 0}`);
     } catch (err: any) {
       console.error("[Supabase Lead Deletion Error]:", err.message);
       return res.status(500).json({ error: "Failed to delete lead from Supabase." });
@@ -656,11 +674,13 @@ app.delete("/api/leads/:id", async (req, res) => {
   }
 
   // Remove from local in-memory DB
-  db.leads.splice(index, 1);
+  db.leads = db.leads.filter((l: any) => l.id !== id);
   db.projects = db.projects.filter((p: any) => p.leadId !== id);
   if (db.netMeteringTrackers[id]) delete db.netMeteringTrackers[id];
   if (db.paymentTracks[id]) delete db.paymentTracks[id];
+  console.log(`[DELETE TRACE] after local delete lead=${id} localExists=${db.leads.some((l: any) => l.id === id)} localLeadsCount=${db.leads.length}`);
   saveDb();
+  console.log(`[DELETE TRACE] after saveDb lead=${id}`);
 
   await appendActivityLog("admin", "Admin", "Super Admin", "Lead Deleted", `Deleted lead ${id}`);
   res.json({ success: true, message: `Lead ${id} and all related quotes/projects deleted successfully.` });
@@ -1132,65 +1152,16 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
         netTotal: newQuote.netTotal,
       });
 
-      const { error: insertError } = await supabase.from("quotations").insert({
-        id: newQuote.id,
-        lead_id: id,
-        customer_id: customerId,
-        system_size_kw: newQuote.systemSizekW,
-        panel_count: newQuote.panelCount,
-        panel_type: newQuote.panelType,
-        inverter_type: newQuote.inverterType,
-        battery_capacity: newQuote.batteryCapacity,
-        total_cost: newQuote.totalCost,
-        federal_tax_credit: 0,
-        net_cost: newQuote.netCost,
-        estimated_annual_savings: newQuote.estimatedAnnualSavings,
-        payback_period_years: newQuote.paybackPeriodYears,
-        status: newQuote.status,
-        structure_type: newQuote.structureType,
-        payment_terms: newQuote.paymentTerms,
-        warranty_terms: newQuote.warrantyTerms,
-        terms_and_conditions: newQuote.termsAndConditions,
-        extended_data: {
-          clientName: newQuote.clientName,
-          clientPhone: newQuote.clientPhone,
-          clientEmail: newQuote.clientEmail,
-          clientAddress: newQuote.clientAddress,
-          cnic: newQuote.cnic,
-          cityArea: newQuote.cityArea,
-          bdmName: newQuote.bdmName,
-          quoteDate: newQuote.quoteDate,
-          systemType: newQuote.systemType,
-          panelBrand: newQuote.panelBrand,
-          panelWattage: newQuote.panelWattage,
-          inverterBrand: newQuote.inverterBrand,
-          inverterCapacity: newQuote.inverterCapacity,
-          batteryOption: newQuote.batteryOption,
-          netMeteringRequired: newQuote.netMeteringRequired,
-          discount: newQuote.discount,
-          paymentSchedule: newQuote.paymentSchedule,
-          boqItems: newQuote.boqItems,
-          lescoSettings: newQuote.lescoSettings,
-          societyCharges: newQuote.societyCharges,
-          taxEnabled: newQuote.taxEnabled,
-          taxRate: newQuote.taxRate,
-          taxAmount: newQuote.taxAmount,
-          selectedStructure: newQuote.selectedStructure,
-          customStructure: newQuote.customStructure,
-          boqRows: newQuote.boqRows,
-          customNotes: newQuote.customNotes,
-          grandTotal: newQuote.grandTotal,
-          netTotal: newQuote.netTotal,
-          idempotencyKey: newQuote.idempotencyKey,
-          templateId: newQuote.templateId,
-          includedPages: newQuote.includedPages,
-          includeSizerItems: newQuote.includeSizerItems === true,
-          quote_type: newQuote.quote_type || "auto_sizer"
-        }
-      });
+      const insertResult = await persistQuotationToSupabase(
+        supabase,
+        id,
+        customerId,
+        newQuote,
+        "insert"
+      );
 
-      if (insertError) {
-        console.error("[Supabase Create Quotation Database Error]:", insertError.message);
+      if (!insertResult.ok) {
+        console.error("[Supabase Create Quotation Database Error]:", insertResult.error);
       } else {
         console.log(`[Supabase Create Quotation] Quote ${newQuote.id} inserted successfully.`);
       }
@@ -1261,65 +1232,16 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
       const supabase = getSupabase()!;
       const customerId = `cust-${id.replace("lead-", "")}`;
       
-      const { error: updateError } = await supabase.from("quotations").upsert({
-        id: quoteId,
-        lead_id: id,
-        customer_id: customerId,
-        system_size_kw: updatedQuote.systemSizekW,
-        panel_count: updatedQuote.panelCount,
-        panel_type: updatedQuote.panelType,
-        inverter_type: updatedQuote.inverterType,
-        battery_capacity: updatedQuote.batteryCapacity,
-        total_cost: updatedQuote.totalCost,
-        federal_tax_credit: 0,
-        net_cost: updatedQuote.netCost,
-        estimated_annual_savings: updatedQuote.estimatedAnnualSavings,
-        payback_period_years: updatedQuote.paybackPeriodYears,
-        status: updatedQuote.status,
-        structure_type: updatedQuote.structureType,
-        payment_terms: updatedQuote.paymentTerms,
-        warranty_terms: updatedQuote.warrantyTerms,
-        terms_and_conditions: updatedQuote.termsAndConditions,
-        extended_data: {
-          clientName: updatedQuote.clientName,
-          clientPhone: updatedQuote.clientPhone,
-          clientEmail: updatedQuote.clientEmail,
-          clientAddress: updatedQuote.clientAddress,
-          cnic: updatedQuote.cnic,
-          cityArea: updatedQuote.cityArea,
-          bdmName: updatedQuote.bdmName,
-          quoteDate: updatedQuote.quoteDate,
-          systemType: updatedQuote.systemType,
-          panelBrand: updatedQuote.panelBrand,
-          panelWattage: updatedQuote.panelWattage,
-          inverterBrand: updatedQuote.inverterBrand,
-          inverterCapacity: updatedQuote.inverterCapacity,
-          batteryOption: updatedQuote.batteryOption,
-          netMeteringRequired: updatedQuote.netMeteringRequired,
-          discount: updatedQuote.discount,
-          paymentSchedule: updatedQuote.paymentSchedule,
-          boqItems: updatedQuote.boqItems,
-          lescoSettings: updatedQuote.lescoSettings,
-          societyCharges: updatedQuote.societyCharges,
-          taxEnabled: updatedQuote.taxEnabled,
-          taxRate: updatedQuote.taxRate,
-          taxAmount: updatedQuote.taxAmount,
-          selectedStructure: updatedQuote.selectedStructure,
-          customStructure: updatedQuote.customStructure,
-          boqRows: updatedQuote.boqRows,
-          customNotes: updatedQuote.customNotes,
-          grandTotal: updatedQuote.grandTotal,
-          netTotal: updatedQuote.netTotal,
-          idempotencyKey: updatedQuote.idempotencyKey,
-          templateId: updatedQuote.templateId,
-          includedPages: updatedQuote.includedPages,
-          includeSizerItems: updatedQuote.includeSizerItems === true,
-          quote_type: updatedQuote.quote_type || "auto_sizer"
-        }
-      }, { onConflict: "id" });
+      const updateResult = await persistQuotationToSupabase(
+        supabase,
+        id,
+        customerId,
+        updatedQuote,
+        "upsert"
+      );
 
-      if (updateError) {
-        console.error("[Supabase Update Quotation Database Error]:", updateError.message);
+      if (!updateResult.ok) {
+        console.error("[Supabase Update Quotation Database Error]:", updateResult.error);
       }
     } catch (err: any) {
       console.error("[Supabase Update Quotation Error]:", err.message);
@@ -2963,13 +2885,6 @@ function compileSunchaserPDFHtml(
   // Sort by sortOrder
   pagesList.sort((a, b) => a.sortOrder - b.sortOrder);
 
-  // Diagnostic Logs
-  console.log(`[PDF Rendering Diagnostics]
-  - selected template id: ${templateId}
-  - number of pages loaded: ${dbPages.length}
-  - enabled page count: ${enabledDbPages.length}
-  `);
-
   const defaultAutoSizerIds = [
     'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
     'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
@@ -2979,6 +2894,49 @@ function compileSunchaserPDFHtml(
     'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
     'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
   ];
+
+  // Ensure BOQ page exists for manual quotes when template editor has no boq page configured
+  if (mode === "manual") {
+    const allRowsForCheck = quoteObj.boqRows || quoteObj.boqItems || [];
+    const manualRowCount = allRowsForCheck.filter(
+      (r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)
+    ).length;
+    const hasBoqPage = pagesList.some((p) => p.type === "boq");
+    if (manualRowCount > 0 && !hasBoqPage && getIncludedFlag("boq")) {
+      pagesList.push({
+        type: "boq",
+        sortOrder: 6,
+        dbPage: {
+          pageType: "boq",
+          title: "Bill of Quantities (BOQ)",
+          bodyText: "",
+          isEnabled: true,
+        },
+      });
+      pagesList.sort((a, b) => a.sortOrder - b.sortOrder);
+    }
+  }
+
+  // If template pages are missing in remote DB, synthesize from includedPages so PDF is not blank
+  if (pagesList.length === 0 && options.includedPages?.length) {
+    options.includedPages.forEach((pageType: string, idx: number) => {
+      if (!getIncludedFlagForPageType(pageType)) return;
+      if (pageType.startsWith("structure_") && pageType !== activeStructurePageType) return;
+      pagesList.push({
+        type: pageType,
+        sortOrder: idx + 1,
+        dbPage: { pageType, title: "", bodyText: "", isEnabled: true },
+      });
+    });
+  }
+
+  // Diagnostic Logs
+  console.log(`[PDF Rendering Diagnostics]
+  - selected template id: ${templateId}
+  - number of pages loaded: ${dbPages.length}
+  - enabled page count: ${enabledDbPages.length}
+  - rendered page count: ${pagesList.length}
+  `);
 
   let pagesHtml = "";
   pagesList.forEach((pageItem, pageIndex) => {
