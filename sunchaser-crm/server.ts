@@ -346,6 +346,12 @@ async function triggerWhatsAppNotification(customerName: string, phone: string, 
 // 1. Unified login endpoints
 app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedPassword = String(password ?? "");
+
+  if (!normalizedUsername || !normalizedPassword) {
+    return res.status(400).json({ error: "Username and password are required." });
+  }
 
   if (isSupabaseActive()) {
     try {
@@ -353,8 +359,8 @@ app.post("/api/auth/login", async (req, res) => {
       const { data: users, error } = await supabase
         .from("users")
         .select("*")
-        .eq("username", username.toLowerCase())
-        .eq("password", password);
+        .eq("username", normalizedUsername)
+        .eq("password", normalizedPassword);
 
       if (error) throw error;
 
@@ -380,7 +386,9 @@ app.post("/api/auth/login", async (req, res) => {
 
   // Fallback to local DB (runs only if Supabase is NOT active)
   const user = db.users.find(
-    (u: any) => u.username.toLowerCase() === username.toLowerCase() && u.password === password
+    (u: any) =>
+      String(u.username || "").trim().toLowerCase() === normalizedUsername &&
+      String(u.password) === normalizedPassword
   );
 
   if (!user) {
@@ -488,6 +496,85 @@ app.get("/api/diagnostics/db", async (req, res) => {
     localDbExists: fs.existsSync(DB_FILE),
     localUsersCount: db.users?.length || 0,
     nodeEnv: process.env.NODE_ENV,
+  });
+});
+
+app.get("/api/diagnostics/auth-users", async (req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+
+  let supabaseUrlMasked = "NONE";
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseUrlMasked = new URL(process.env.SUPABASE_URL).hostname;
+    } catch {
+      supabaseUrlMasked = "INVALID_URL_FORMAT";
+    }
+  }
+
+  if (!active || !supabase) {
+    return res.json({
+      supabaseActive: false,
+      supabaseHostname: supabaseUrlMasked,
+      users: [],
+      error: "Supabase is not active on this server.",
+    });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, username, name, email, role")
+      .order("username", { ascending: true });
+
+    if (error) throw error;
+
+    const users = (data || []).map((u: any) => ({
+      id: u.id,
+      username: u.username,
+      name: u.name,
+      email: u.email,
+      role: resolveAppUserRole(u.username, u.role),
+      dbRole: u.role,
+    }));
+
+    res.json({
+      supabaseActive: true,
+      supabaseHostname: supabaseUrlMasked,
+      userCount: users.length,
+      users,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      supabaseActive: true,
+      supabaseHostname: supabaseUrlMasked,
+      users: [],
+      error: err.message,
+    });
+  }
+});
+
+app.get("/api/diagnostics/api-config", (req, res) => {
+  let supabaseHostname = "NONE";
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHostname = new URL(process.env.SUPABASE_URL).hostname;
+    } catch {
+      supabaseHostname = "INVALID_URL_FORMAT";
+    }
+  }
+
+  const renderApiBase = `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
+
+  res.json({
+    productionRenderApiBaseUrl: "https://sunchaser-energy-systems.onrender.com",
+    currentServerApiBaseUrl: renderApiBase,
+    loginEndpoint: `${renderApiBase}/api/auth/login`,
+    recommendedVercelEnv: {
+      VITE_API_BASE_URL: "https://sunchaser-energy-systems.onrender.com",
+    },
+    supabaseHostname,
+    supabaseActive: isSupabaseActive(),
   });
 });
 
