@@ -14,7 +14,9 @@ import {
   Database,
   persistQuotationToSupabase,
   AUTO_SIZER_QUOTE_CREATION_ENABLED,
-  resolveAppUserRole
+  resolveAppUserRole,
+  fetchCustomerPortalData,
+  CustomerPortalAuthError
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -372,6 +374,7 @@ app.post("/api/auth/login", async (req, res) => {
           name: u.name,
           email: u.email,
           role: resolveAppUserRole(u.username, u.role),
+          customerId: u.customer_id || undefined,
         };
         await appendActivityLog(u.id, u.name, u.role, "User Logged In", "Authorized access via Supabase PostgreSQL security clearance.");
         return res.json({ success: true, user: userObj });
@@ -395,8 +398,65 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials. Sunchaser identity rejected." });
   }
 
+  const localUser = {
+    ...user,
+    role: resolveAppUserRole(user.username, user.role),
+    customerId: user.customerId || user.customer_id || undefined,
+  };
   await appendActivityLog(user.id, user.name, user.role, "User Logged In", "Authorized access via local file persistence layout.");
-  res.json({ success: true, user });
+  res.json({ success: true, user: localUser });
+});
+
+async function handleCustomerPortalMe(req: any, res: any) {
+  const userId = String(
+    req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || ""
+  ).trim();
+  const username = String(
+    req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || ""
+  ).trim();
+
+  if (!userId || !username) {
+    return res.status(400).json({ error: "userId and username are required." });
+  }
+
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalData(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) {
+      return res.status(403).json({ error: err.message });
+    }
+    console.error("[Customer Portal Error]:", err.message);
+    return res.status(500).json({ error: err.message || "Failed to load customer portal." });
+  }
+}
+
+app.get("/api/customer-portal/me", handleCustomerPortalMe);
+app.post("/api/customer-portal/me", handleCustomerPortalMe);
+
+app.get("/api/customer-portal/:customerId", async (req, res) => {
+  const userId = String(req.headers["x-sunchaser-user-id"] || req.query?.userId || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
+  const requestedCustomerId = String(req.params.customerId || "").trim();
+
+  if (!userId || !username) {
+    return res.status(400).json({ error: "userId and username are required." });
+  }
+
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalData(userId, username, db);
+    if (requestedCustomerId && data.customer?.id && data.customer.id !== requestedCustomerId) {
+      return res.status(403).json({ error: "You cannot access another customer's data." });
+    }
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) {
+      return res.status(403).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message || "Failed to load customer portal." });
+  }
 });
 
 // 2. Fetch ERP system state
@@ -3394,15 +3454,15 @@ function compileSunchaserPDFHtml(
             <div>
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
- 
+
               ${p.bodyText ? `
               <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
                 ${p.bodyText.replace(/\\n/g, '<br/>')}
               </div>
               ` : ''}
- 
+
               ${bodyImagesHtml}
- 
+
               ${useDefaultCompanyContent ? `
               <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
                 <div style="display: flex; gap: 10px; align-items: flex-start;">
@@ -3434,7 +3494,7 @@ function compileSunchaserPDFHtml(
                   </div>
                 </div>
               </div>
- 
+
               <div class="card" style="margin-top: 30px; border: 1px dashed #cbd5e1; background-color: #fafaf9;">
                 <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
                 <div style="display: flex; justify-content: space-around; align-items: center;">
@@ -4172,7 +4232,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       }
     }
     
-    // Create a mock lead object or find one if leadId is provided
+    // Create a lead object or find one if leadId is provided
     let lead = null;
     if (payload.leadId) {
       lead = activeState.leads.find((l: any) => l.id === payload.leadId);
@@ -4325,7 +4385,6 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     if (!lead) {
       return res.status(404).send("Lead not found.");
     }
-
     const quoteId = req.query.quoteId;
     let quote = null;
     if (quoteId) {

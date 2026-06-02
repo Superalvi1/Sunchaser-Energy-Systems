@@ -38,6 +38,12 @@ create table if not exists public.customers (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- Client portal links (additive; safe on existing databases)
+alter table public.users add column if not exists customer_id text references public.customers(id) on delete set null;
+alter table public.customers add column if not exists user_id text references public.users(id) on delete set null;
+create index if not exists users_customer_id_idx on public.users(customer_id);
+create index if not exists customers_user_id_idx on public.customers(user_id);
+
 -- 3. LEADS Table
 create table if not exists public.leads (
   id text primary key,

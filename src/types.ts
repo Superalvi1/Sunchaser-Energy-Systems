@@ -276,6 +276,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  customerId?: string;
 }
 
 export interface Project {

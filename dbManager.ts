@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import fs from "fs";
 import path from "path";
 import WebSocket from "ws";
+import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -110,6 +111,7 @@ export const initialSeed: Database = {
     { id: "u-allauddin", username: "allauddin", password: "123", name: "Muhammad Allauddin", email: "allauddin@sunchaser-energy.com", role: "Super Admin" },
     { id: "u-raza", username: "raza", password: "123", name: "Raza", email: "raza@sunchaser-energy.com", role: "Technical CEO" },
     { id: "u-sales", username: "sales", password: "123", name: "Sales Advisor", email: "sales@sunchaser-energy.com", role: "Sales Advisor" },
+    { id: "u-portal-client", username: "portalclient", password: "123", name: "Portal Client", email: "portalclient@test.local", role: "Customer" },
   ],
   leads: [],
   tickets: [],
@@ -1809,4 +1811,356 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
     console.error("❌ Exception during Supabase data migration:", err);
     return false;
   }
+}
+
+export class CustomerPortalAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CustomerPortalAuthError";
+  }
+}
+
+function mapLeadRowForPortal(
+  lead: any,
+  quotesData: any[],
+  surveysData: any[],
+  tasksData: any[],
+  projectsData: any[]
+): any {
+  const quotes = (quotesData || [])
+    .filter((q: any) => q.lead_id === lead.id)
+    .map((q: any) => ({
+      id: q.id,
+      systemSizekW: Number(q.system_size_kw),
+      panelCount: q.panel_count,
+      panelType: q.panel_type,
+      inverterType: q.inverter_type,
+      batteryCapacity: q.battery_capacity,
+      totalCost: Number(q.total_cost),
+      federalTaxCredit: Number(q.federal_tax_credit),
+      netCost: Number(q.net_cost),
+      estimatedAnnualSavings: Number(q.estimated_annual_savings),
+      paybackPeriodYears: Number(q.payback_period_years),
+      status: q.status,
+      createdAt: q.created_at,
+    }));
+
+  const s = (surveysData || []).find((sd: any) => sd.lead_id === lead.id);
+  const surveyObj = s
+    ? {
+        scheduledDate: s.scheduled_date,
+        status: s.status,
+        notes: s.notes,
+      }
+    : undefined;
+
+  const relatedTasks = (tasksData || [])
+    .filter((td: any) => td.lead_id === lead.id)
+    .map((t: any) => ({
+      id: t.id,
+      name: t.name,
+      done: t.done,
+    }));
+
+  let installationObj: any = undefined;
+  const proj = (projectsData || []).find((pd: any) => pd.lead_id === lead.id);
+  if (proj || relatedTasks.length > 0) {
+    installationObj = {
+      status:
+        lead.status === "Installed"
+          ? "Completed"
+          : lead.status === "Contracted"
+            ? "Scheduled"
+            : "In Progress",
+      scheduledDate: s?.scheduled_date || undefined,
+      progress:
+        lead.status === "Installed"
+          ? 100
+          : relatedTasks.length > 0
+            ? Math.round(
+                (relatedTasks.filter((t: any) => t.done).length / relatedTasks.length) * 100
+              )
+            : 0,
+      tasks: relatedTasks,
+    };
+  }
+
+  return {
+    id: lead.id,
+    name: lead.name,
+    email: lead.email,
+    phone: lead.phone,
+    address: lead.address,
+    status: lead.status,
+    createdAt: lead.created_at,
+    quotes,
+    survey: surveyObj,
+    installation: installationObj,
+  };
+}
+
+async function resolveCustomerIdForPortalUser(
+  supabase: SupabaseClient,
+  userRow: any
+): Promise<string | null> {
+  if (userRow.customer_id) return userRow.customer_id;
+
+  const { data: byUser } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("user_id", userRow.id)
+    .maybeSingle();
+  if (byUser?.id) return byUser.id;
+
+  const { data: byEmail } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("email", userRow.email)
+    .maybeSingle();
+  return byEmail?.id ?? null;
+}
+
+export async function fetchCustomerPortalData(
+  userId: string,
+  username: string,
+  localDb?: Database
+): Promise<any> {
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedUserId = String(userId || "").trim();
+
+  if (!normalizedUserId || !normalizedUsername) {
+    throw new CustomerPortalAuthError("User credentials required.");
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: userRow, error: userErr } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", normalizedUserId)
+      .single();
+
+    if (userErr || !userRow) {
+      throw new CustomerPortalAuthError("Invalid portal user.");
+    }
+    if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
+      throw new CustomerPortalAuthError("Invalid portal user.");
+    }
+    const role = resolveAppUserRole(userRow.username, userRow.role);
+    if (role !== "Customer") {
+      throw new CustomerPortalAuthError("Not authorized for customer portal.");
+    }
+
+    const customerId = await resolveCustomerIdForPortalUser(supabase, userRow);
+
+    let customer: any = null;
+    if (customerId) {
+      const { data: c } = await supabase.from("customers").select("*").eq("id", customerId).single();
+      if (c) {
+        customer = {
+          id: c.id,
+          name: c.name,
+          email: c.email,
+          phone: c.phone || undefined,
+          address: c.address || undefined,
+        };
+      }
+    }
+
+    let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false });
+    if (customerId) {
+      leadsQuery = leadsQuery.eq("customer_id", customerId);
+    } else {
+      leadsQuery = leadsQuery.eq("email", userRow.email).limit(1);
+    }
+    const { data: leadsData } = await leadsQuery;
+    const primaryLeadRow = (leadsData || [])[0];
+
+    let lead: any = null;
+    let project: any = null;
+    let netMetering: any = null;
+    let payment: any = null;
+
+    if (primaryLeadRow) {
+      const leadId = primaryLeadRow.id;
+      const [
+        { data: quotesData },
+        { data: surveysData },
+        { data: tasksData },
+        { data: projectsData },
+        { data: trackerRow },
+        { data: paymentRow },
+      ] = await Promise.all([
+        supabase.from("quotations").select("*").eq("lead_id", leadId),
+        supabase.from("site_surveys").select("*").eq("lead_id", leadId),
+        supabase.from("installation_tasks").select("*").eq("lead_id", leadId),
+        supabase.from("projects").select("*").eq("lead_id", leadId),
+        supabase.from("net_metering_trackers").select("*").eq("lead_id", leadId).maybeSingle(),
+        supabase.from("payments").select("*").eq("lead_id", leadId).maybeSingle(),
+      ]);
+
+      lead = mapLeadRowForPortal(
+        primaryLeadRow,
+        quotesData || [],
+        surveysData || [],
+        tasksData || [],
+        projectsData || []
+      );
+
+      const proj = (projectsData || [])[0];
+      if (proj) {
+        project = {
+          id: proj.id,
+          leadId: proj.lead_id,
+          customerName: proj.customer_name,
+          address: proj.address,
+          systemSizekW: Number(proj.system_size_kw || 0),
+          stage: proj.stage,
+          createdAt: proj.created_at,
+          updatedAt: proj.updated_at,
+        };
+      }
+
+      if (trackerRow) {
+        netMetering = {
+          leadId: trackerRow.lead_id,
+          documentsCollected: trackerRow.documents_collected,
+          applicationSubmitted: trackerRow.application_submitted,
+          discoInspection: trackerRow.disco_inspection,
+          demandNotice: trackerRow.demand_notice,
+          meterInstallation: trackerRow.meter_installation,
+          greenMeterActive: trackerRow.green_meter_active,
+        };
+      }
+
+      if (paymentRow) {
+        let milestones = [];
+        try {
+          milestones =
+            typeof paymentRow.milestones === "string"
+              ? JSON.parse(paymentRow.milestones)
+              : paymentRow.milestones || [];
+        } catch {
+          milestones = [];
+        }
+        payment = {
+          leadId: paymentRow.lead_id,
+          totalValue: Number(paymentRow.total_value || 0),
+          advanceReceived: Number(paymentRow.advance_received || 0),
+          pendingAmount: Number(paymentRow.pending_amount || 0),
+          reminderSent: paymentRow.reminder_sent,
+          invoiceStatus: paymentRow.invoice_status,
+          milestones,
+        };
+      }
+    }
+
+    const { data: ticketsData } = await supabase
+      .from("tickets")
+      .select("id, status, email")
+      .eq("email", userRow.email);
+    const openTicketsCount = (ticketsData || []).filter((t: any) =>
+      ["Open", "In Progress", "New", "Under Review", "Technician Assigned", "Visit Scheduled"].includes(
+        t.status
+      )
+    ).length;
+
+    const payload = buildClientPortalPayload({
+      customer,
+      lead,
+      project,
+      netMetering,
+      payment,
+      openTicketsCount,
+    });
+
+    return {
+      user: {
+        id: userRow.id,
+        username: userRow.username,
+        name: userRow.name,
+        email: userRow.email,
+        role,
+        customerId: customerId || undefined,
+      },
+      ...payload,
+    };
+  }
+
+  if (!localDb) {
+    throw new CustomerPortalAuthError("Database unavailable.");
+  }
+
+  const userRow = (localDb.users || []).find(
+    (u: any) =>
+      u.id === normalizedUserId &&
+      String(u.username || "").trim().toLowerCase() === normalizedUsername
+  );
+  if (!userRow) {
+    throw new CustomerPortalAuthError("Invalid portal user.");
+  }
+  const role = resolveAppUserRole(userRow.username, userRow.role);
+  if (role !== "Customer") {
+    throw new CustomerPortalAuthError("Not authorized for customer portal.");
+  }
+
+  const customerId = userRow.customerId || userRow.customer_id || null;
+  const lead =
+    (localDb.leads || []).find(
+      (l: any) =>
+        (customerId && l.customerId === customerId) ||
+        (!customerId && l.email === userRow.email)
+    ) || null;
+
+  const project =
+    (localDb.projects || []).find((p: any) => p.leadId === lead?.id) || null;
+  const netMetering = lead ? localDb.netMeteringTrackers?.[lead.id] : null;
+  const payment = lead ? localDb.paymentTracks?.[lead.id] : null;
+  const openTicketsCount = (localDb.tickets || []).filter(
+    (t: any) =>
+      t.email === userRow.email &&
+      ["Open", "In Progress", "New", "Under Review", "Technician Assigned", "Visit Scheduled"].includes(
+        t.status
+      )
+  ).length;
+
+  const customer =
+    customerId && lead
+      ? {
+          id: customerId,
+          name: lead.name,
+          email: lead.email,
+          phone: lead.phone,
+          address: lead.address,
+        }
+      : lead
+        ? {
+            id: customerId || `cust-${lead.id}`,
+            name: lead.name,
+            email: lead.email,
+            phone: lead.phone,
+            address: lead.address,
+          }
+        : null;
+
+  const payload = buildClientPortalPayload({
+    customer,
+    lead,
+    project,
+    netMetering,
+    payment,
+    openTicketsCount,
+  });
+
+  return {
+    user: {
+      id: userRow.id,
+      username: userRow.username,
+      name: userRow.name,
+      email: userRow.email,
+      role,
+      customerId: customerId || undefined,
+    },
+    ...payload,
+  };
 }

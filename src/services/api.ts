@@ -17,6 +17,41 @@ export async function fetchAppState(): Promise<AppState> {
   return res.json();
 }
 
+export type ClientPortalResponse = {
+  user: User;
+  customer: {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string;
+    address?: string;
+  } | null;
+  lead: unknown;
+  project: unknown;
+  dashboard: Record<string, unknown>;
+  tracker: { stages: unknown[]; progressPercent: number };
+};
+
+export async function fetchCustomerPortalMe(
+  userId: string,
+  username: string
+): Promise<ClientPortalResponse> {
+  const res = await apiFetch("/api/customer-portal/me", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Sunchaser-User-Id": userId,
+      "X-Sunchaser-Username": username,
+    },
+    body: JSON.stringify({ userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load customer portal.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",

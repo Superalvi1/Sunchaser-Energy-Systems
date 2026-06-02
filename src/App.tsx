@@ -8,7 +8,7 @@ import {
   fetchAppState, createLead, updateLead, scheduleSurvey, 
   submitSurveyReport, createQuote, acceptQuote, updateInstallation, 
   createTicket, replyToTicket, resolveTicket, loginUser, updateProjectStage, updateNetMetering, payMilestone, procureInventory,
-  setCurrencySymbol, API_BASE_URL, deleteLead, deleteQuote
+  setCurrencySymbol, API_BASE_URL, deleteLead, deleteQuote, fetchCustomerPortalMe
 } from "./services/api";
 
 declare const __GIT_COMMIT_HASH__: string;
@@ -17,6 +17,8 @@ declare const __BUILD_ENV__: string;
 
 // Submodule imports
 import CustomerPortal from "./components/CustomerPortal";
+import ClientPortalApp from "./components/ClientPortalApp";
+import type { ClientPortalPayload } from "./lib/clientPortalTracker";
 import SalesTeamApp from "./components/SalesTeamApp";
 import CRMApp from "./components/CRMApp";
 import InstallationTeamApp from "./components/InstallationTeamApp";
@@ -37,6 +39,29 @@ export default function App() {
 
   // Active workspace navigation
   const [activeTab, setActiveTab] = useState<string>("Overview");
+  const [portalData, setPortalData] = useState<ClientPortalPayload | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState<string | null>(null);
+
+  const loadCustomerPortal = async (user: User) => {
+    setPortalLoading(true);
+    setPortalError(null);
+    try {
+      const data = await fetchCustomerPortalMe(user.id, user.username);
+      setPortalData({
+        customer: data.customer,
+        lead: data.lead as ClientPortalPayload["lead"],
+        project: data.project as ClientPortalPayload["project"],
+        dashboard: data.dashboard as ClientPortalPayload["dashboard"],
+        tracker: data.tracker as ClientPortalPayload["tracker"],
+      });
+    } catch (err: any) {
+      setPortalError(err.message || "Unable to load your portal.");
+    } finally {
+      setPortalLoading(false);
+      setLoading(false);
+    }
+  };
 
   // Load backend database state on mount & synchronize
   const loadDatabaseState = async () => {
@@ -59,17 +84,21 @@ export default function App() {
 
 
   useEffect(() => {
-    // 1. Load data
-    loadDatabaseState();
-    
-    // 2. Load cached user session
     const cachedUser = localStorage.getItem("sunchaser_user");
+    let parsed: User | null = null;
     if (cachedUser) {
       try {
-        setCurrentUser(JSON.parse(cachedUser));
+        parsed = JSON.parse(cachedUser);
+        setCurrentUser(parsed);
       } catch (e) {
         localStorage.removeItem("sunchaser_user");
       }
+    }
+
+    if (parsed?.role === "Customer") {
+      loadCustomerPortal(parsed);
+    } else {
+      loadDatabaseState();
     }
   }, []);
 
@@ -108,8 +137,11 @@ export default function App() {
       if (res.success) {
         setCurrentUser(res.user);
         localStorage.setItem("sunchaser_user", JSON.stringify(res.user));
-        // Force refresh state to fetch activities correctly
-        await loadDatabaseState();
+        if (res.user.role === "Customer") {
+          await loadCustomerPortal(res.user);
+        } else {
+          await loadDatabaseState();
+        }
       }
     } catch (err: any) {
       setLoginError(err.message || "Invalid credentials. Try guest profiles.");
@@ -120,6 +152,8 @@ export default function App() {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setPortalData(null);
+    setPortalError(null);
     localStorage.removeItem("sunchaser_user");
     setActiveTab("Overview");
   };
@@ -327,6 +361,19 @@ export default function App() {
         return [];
     }
   };
+
+  if (currentUser?.role === "Customer") {
+    return (
+      <ClientPortalApp
+        user={currentUser}
+        data={portalData}
+        loading={portalLoading}
+        error={portalError}
+        onRefresh={() => loadCustomerPortal(currentUser)}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
