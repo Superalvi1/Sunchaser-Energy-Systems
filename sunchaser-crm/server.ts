@@ -34,7 +34,10 @@ import {
   createCustomerServiceRequest,
   fetchCustomerServiceRequestById,
   listAdminServiceRequests,
-  updateAdminServiceRequest
+  updateAdminServiceRequest,
+  fetchCustomerSavings,
+  fetchAdminCustomerSavings,
+  upsertAdminCustomerSavings
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -534,6 +537,48 @@ app.post("/api/customer-portal/warranty-claim", async (req, res) => {
   }
 });
 
+app.get("/api/customer-portal/savings/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const data = await fetchCustomerSavings(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/savings/me", query: "customer_savings_profiles" }));
+  }
+});
+
+app.get("/api/admin/customer-savings/:customerId", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const data = await fetchAdminCustomerSavings(userId, username, req.params.customerId, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/customer-savings", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const result = await upsertAdminCustomerSavings(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(200).json(result);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/customer-portal/service/me", async (req, res) => {
   const { userId, username } = readCustomerPortalAuth(req);
   if (!userId || !username) {
@@ -705,6 +750,31 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
   }
 });
 
+app.get("/api/diagnostics/phase5-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  let supabaseHost = null;
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHost = new URL(process.env.SUPABASE_URL).host;
+    } catch {
+      supabaseHost = process.env.SUPABASE_URL;
+    }
+  }
+  const tables = ["customer_savings_profiles"];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, supabaseHost, probes });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, code: error.code, message: error.message, details: error.details, hint: error.hint }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  return res.json({ supabaseActive: true, supabaseHost, probes });
+});
+
 app.get("/api/diagnostics/phase4-tables", async (_req, res) => {
   const supabase = getSupabase();
   const active = isSupabaseActive();
@@ -760,7 +830,7 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
   const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
   const requestedCustomerId = String(req.params.customerId || "").trim();
 
-  if (["service", "documents", "warranties", "support-tickets"].includes(requestedCustomerId)) {
+  if (["service", "documents", "warranties", "support-tickets", "savings"].includes(requestedCustomerId)) {
     return res.status(404).json({ error: "Not found." });
   }
 

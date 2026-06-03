@@ -28,6 +28,13 @@ import {
   SERVICE_TYPES,
   SERVICE_STATUSES,
 } from "./src/lib/clientPortalService.ts";
+import {
+  buildSavingsDashboard,
+  mapSavingsProfileRow,
+  isCustomerSavingsTableMissingError,
+  PERFORMANCE_STATUSES,
+  DEFAULT_UNIT_RATE_PKR,
+} from "./src/lib/clientPortalSavings.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -134,6 +141,7 @@ export interface Database {
   warrantyClaims?: any[];
   supportTicketUpdates?: any[];
   serviceRequests?: any[];
+  customerSavingsProfiles?: any[];
 }
 
 export const initialSeed: Database = {
@@ -148,6 +156,7 @@ export const initialSeed: Database = {
   warrantyClaims: [],
   supportTicketUpdates: [],
   serviceRequests: [],
+  customerSavingsProfiles: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -3558,4 +3567,267 @@ export async function updateAdminServiceRequest(
     created_at: row.createdAt || row.created_at,
     updated_at: row.updatedAt || row.updated_at,
   });
+}
+
+async function resolvePortalSystemSizeKw(
+  customerId: string,
+  localDb?: Database
+): Promise<{ projectId: string | null; systemSizeKw: number }> {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: projects } = await supabase
+      .from("projects")
+      .select("id, system_size_kw, lead_id")
+      .eq("customer_id", customerId)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    const proj = projects?.[0];
+    let systemSizeKw = Number(proj?.system_size_kw || 0);
+    const projectId = proj?.id ?? null;
+
+    if (systemSizeKw <= 0 && proj?.lead_id) {
+      const { data: quotes } = await supabase
+        .from("quotations")
+        .select("system_size_kw")
+        .eq("lead_id", proj.lead_id);
+      for (const q of quotes || []) {
+        systemSizeKw = Math.max(systemSizeKw, Number(q.system_size_kw || 0));
+      }
+    }
+
+    if (systemSizeKw <= 0) {
+      const { data: leads } = await supabase
+        .from("leads")
+        .select("id")
+        .eq("customer_id", customerId)
+        .limit(1);
+      const leadId = leads?.[0]?.id;
+      if (leadId) {
+        const { data: quotes } = await supabase
+          .from("quotations")
+          .select("system_size_kw")
+          .eq("lead_id", leadId);
+        for (const q of quotes || []) {
+          systemSizeKw = Math.max(systemSizeKw, Number(q.system_size_kw || 0));
+        }
+      }
+    }
+
+    return { projectId, systemSizeKw };
+  }
+
+  const proj = (localDb?.projects || []).find(
+    (p: any) => p.customerId === customerId || p.customer_id === customerId
+  );
+  let systemSizeKw = Number(proj?.systemSizekW || proj?.system_size_kw || 0);
+  const projectId = proj?.id ?? null;
+  if (systemSizeKw <= 0 && proj?.leadId) {
+    for (const q of localDb?.quotations || []) {
+      if (q.leadId === proj.leadId || q.lead_id === proj.leadId) {
+        systemSizeKw = Math.max(systemSizeKw, Number(q.systemSizekW || q.system_size_kw || 0));
+      }
+    }
+  }
+  return { projectId, systemSizeKw };
+}
+
+async function loadSavingsProfileRow(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_savings_profiles")
+      .select("*")
+      .eq("customer_id", customerId)
+      .maybeSingle();
+    if (error) {
+      if (isCustomerSavingsTableMissingError(error)) return null;
+      throw error;
+    }
+    return data ? mapSavingsProfileRow(data) : null;
+  }
+
+  const row = (localDb?.customerSavingsProfiles || []).find(
+    (r: any) => (r.customerId || r.customer_id) === customerId
+  );
+  if (!row) return null;
+  return mapSavingsProfileRow({
+    id: row.id,
+    customer_id: row.customerId || row.customer_id,
+    project_id: row.projectId || row.project_id,
+    system_size_kw: row.systemSizeKw ?? row.system_size_kw,
+    unit_rate: row.unitRate ?? row.unit_rate,
+    manual_today_generation: row.manualTodayGeneration ?? row.manual_today_generation,
+    manual_month_generation: row.manualMonthGeneration ?? row.manual_month_generation,
+    lifetime_generation: row.lifetimeGeneration ?? row.lifetime_generation,
+    performance_status: row.performanceStatus ?? row.performance_status,
+    notes: row.notes,
+    updated_by: row.updatedBy ?? row.updated_by,
+    created_at: row.createdAt || row.created_at,
+    updated_at: row.updatedAt || row.updated_at,
+  });
+}
+
+export async function fetchCustomerSavings(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const { projectId, systemSizeKw } = await resolvePortalSystemSizeKw(customerId!, localDb);
+  const profile = await loadSavingsProfileRow(customerId!, localDb);
+  const dashboard = buildSavingsDashboard({
+    customerId: customerId!,
+    projectId: profile?.projectId ?? projectId,
+    systemSizeKw,
+    profile,
+  });
+
+  return { customerId, dashboard, profile };
+}
+
+export async function fetchAdminCustomerSavings(
+  staffUserId: string,
+  staffUsername: string,
+  customerId: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const normalizedCustomerId = String(customerId || "").trim();
+  if (!normalizedCustomerId) {
+    throw new StaffPortalAuthError("customerId is required.");
+  }
+
+  const { projectId, systemSizeKw } = await resolvePortalSystemSizeKw(normalizedCustomerId, localDb);
+  const profile = await loadSavingsProfileRow(normalizedCustomerId, localDb);
+  const dashboard = buildSavingsDashboard({
+    customerId: normalizedCustomerId,
+    projectId: profile?.projectId ?? projectId,
+    systemSizeKw,
+    profile,
+  });
+
+  return { customerId: normalizedCustomerId, profile, dashboard };
+}
+
+export async function upsertAdminCustomerSavings(
+  staffUserId: string,
+  staffUsername: string,
+  body: {
+    customerId: string;
+    projectId?: string;
+    systemSizeKw?: number;
+    unitRate?: number;
+    manualTodayGeneration?: number;
+    manualMonthGeneration?: number;
+    lifetimeGeneration?: number;
+    performanceStatus?: string;
+    notes?: string;
+  },
+  localDb?: Database
+) {
+  const { user } = await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || "").trim();
+  if (!customerId) throw new StaffPortalAuthError("customerId is required.");
+
+  if (body.performanceStatus && !PERFORMANCE_STATUSES.includes(body.performanceStatus as any)) {
+    throw new StaffPortalAuthError("Invalid performance status.");
+  }
+
+  const { projectId: resolvedProjectId, systemSizeKw: resolvedKw } =
+    await resolvePortalSystemSizeKw(customerId, localDb);
+  const profileId = `csp-${customerId}`;
+  const now = new Date().toISOString();
+  const existing = await loadSavingsProfileRow(customerId, localDb);
+
+  const row = {
+    id: profileId,
+    customer_id: customerId,
+    project_id: body.projectId ?? existing?.projectId ?? resolvedProjectId,
+    system_size_kw:
+      body.systemSizeKw !== undefined
+        ? body.systemSizeKw
+        : existing?.systemSizeKw ?? (resolvedKw > 0 ? resolvedKw : null),
+    unit_rate:
+      body.unitRate !== undefined
+        ? body.unitRate
+        : existing?.unitRate ?? DEFAULT_UNIT_RATE_PKR,
+    manual_today_generation:
+      body.manualTodayGeneration !== undefined
+        ? body.manualTodayGeneration
+        : existing?.manualTodayGeneration ?? null,
+    manual_month_generation:
+      body.manualMonthGeneration !== undefined
+        ? body.manualMonthGeneration
+        : existing?.manualMonthGeneration ?? null,
+    lifetime_generation:
+      body.lifetimeGeneration !== undefined
+        ? body.lifetimeGeneration
+        : existing?.lifetimeGeneration ?? null,
+    performance_status:
+      body.performanceStatus !== undefined
+        ? body.performanceStatus
+        : existing?.performanceStatus ?? null,
+    notes: body.notes !== undefined ? body.notes : existing?.notes ?? null,
+    updated_by: user.name || user.username,
+    updated_at: now,
+    created_at: existing?.createdAt ?? now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_savings_profiles")
+      .upsert(row, { onConflict: "customer_id" })
+      .select("*")
+      .single();
+    if (error) {
+      if (isCustomerSavingsTableMissingError(error)) {
+        throw new StaffPortalAuthError(
+          "customer_savings_profiles table is missing. Run scripts/client-portal-phase5-schema.sql in Supabase."
+        );
+      }
+      throw error;
+    }
+    const profile = mapSavingsProfileRow(data);
+    const dashboard = buildSavingsDashboard({
+      customerId,
+      projectId: profile.projectId ?? resolvedProjectId,
+      systemSizeKw: resolvedKw,
+      profile,
+    });
+    return { profile, dashboard };
+  }
+
+  localDb!.customerSavingsProfiles = localDb!.customerSavingsProfiles || [];
+  const idx = localDb!.customerSavingsProfiles.findIndex(
+    (r: any) => (r.customerId || r.customer_id) === customerId
+  );
+  const localRow = {
+    id: profileId,
+    customerId,
+    projectId: row.project_id,
+    systemSizeKw: row.system_size_kw,
+    unitRate: row.unit_rate,
+    manualTodayGeneration: row.manual_today_generation,
+    manualMonthGeneration: row.manual_month_generation,
+    lifetimeGeneration: row.lifetime_generation,
+    performanceStatus: row.performance_status,
+    notes: row.notes,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+  if (idx >= 0) localDb!.customerSavingsProfiles[idx] = localRow;
+  else localDb!.customerSavingsProfiles.push(localRow);
+
+  const profile = mapSavingsProfileRow(row);
+  const dashboard = buildSavingsDashboard({
+    customerId,
+    projectId: profile.projectId ?? resolvedProjectId,
+    systemSizeKw: resolvedKw,
+    profile,
+  });
+  return { profile, dashboard };
 }

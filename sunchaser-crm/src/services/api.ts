@@ -333,6 +333,50 @@ export async function updateAdminServiceRequest(
   return res.json();
 }
 
+export async function fetchCustomerSavings(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/savings/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load savings dashboard.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminCustomerSavings(
+  staffUserId: string,
+  staffUsername: string,
+  customerId: string
+) {
+  const res = await apiFetch(
+    `/api/admin/customer-savings/${encodeURIComponent(customerId)}?userId=${encodeURIComponent(staffUserId)}&username=${encodeURIComponent(staffUsername)}`,
+    { headers: portalAuthHeaders(staffUserId, staffUsername) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load customer savings.");
+  }
+  return res.json();
+}
+
+export async function upsertAdminCustomerSavings(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/customer-savings", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save customer savings.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
