@@ -37,7 +37,13 @@ import {
   updateAdminServiceRequest,
   fetchCustomerSavings,
   fetchAdminCustomerSavings,
-  upsertAdminCustomerSavings
+  upsertAdminCustomerSavings,
+  fetchCustomerCarePortal,
+  subscribeCustomerToCarePlan,
+  createCarePortalServiceRequest,
+  listAdminCareSubscriptions,
+  fetchAdminCareRevenueSummary,
+  upsertAdminServiceVisitReport
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -582,6 +588,93 @@ app.post("/api/admin/customer-savings", async (req, res) => {
   }
 });
 
+app.get("/api/customer-portal/care/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const data = await fetchCustomerCarePortal(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/care/me", query: "subscription_plans, customer_subscriptions" }));
+  }
+});
+
+app.post("/api/customer-portal/care/subscribe", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const subscription = await subscribeCustomerToCarePlan(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(subscription);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "POST /api/customer-portal/care/subscribe", query: "insert customer_subscriptions" }));
+  }
+});
+
+app.post("/api/customer-portal/care/service-request", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const result = await createCarePortalServiceRequest(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(result);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "POST /api/customer-portal/care/service-request", query: "service_requests + credits" }));
+  }
+});
+
+app.get("/api/admin/care/subscriptions", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const data = await listAdminCareSubscriptions(userId, username, { segment: String(req.query.segment || "active") }, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/care/revenue-summary", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const data = await fetchAdminCareRevenueSummary(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/care/visit-reports", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const report = await upsertAdminServiceVisitReport(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(report);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/customer-portal/service/me", async (req, res) => {
   const { userId, username } = readCustomerPortalAuth(req);
   if (!userId || !username) {
@@ -753,6 +846,37 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
   }
 });
 
+app.get("/api/diagnostics/phase6-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  let supabaseHost = null;
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHost = new URL(process.env.SUPABASE_URL).host;
+    } catch {
+      supabaseHost = process.env.SUPABASE_URL;
+    }
+  }
+  const tables = [
+    "subscription_plans",
+    "customer_subscriptions",
+    "subscription_payments",
+    "service_visit_reports",
+    "service_visit_photos",
+  ];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, supabaseHost, probes });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, code: error.code, message: error.message, details: error.details, hint: error.hint }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  return res.json({ supabaseActive: true, supabaseHost, probes });
+});
+
 app.get("/api/diagnostics/phase5-tables", async (_req, res) => {
   const supabase = getSupabase();
   const active = isSupabaseActive();
@@ -833,7 +957,7 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
   const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
   const requestedCustomerId = String(req.params.customerId || "").trim();
 
-  if (["service", "documents", "warranties", "support-tickets", "savings"].includes(requestedCustomerId)) {
+  if (["service", "documents", "warranties", "support-tickets", "savings", "care"].includes(requestedCustomerId)) {
     return res.status(404).json({ error: "Not found." });
   }
 

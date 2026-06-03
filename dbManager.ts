@@ -35,6 +35,15 @@ import {
   PERFORMANCE_STATUSES,
   DEFAULT_UNIT_RATE_PKR,
 } from "./src/lib/clientPortalSavings.ts";
+import {
+  mapSubscriptionPlanRow,
+  mapCustomerSubscriptionRow,
+  mapServiceVisitReportRow,
+  isCareTablesMissingError,
+  DEFAULT_CARE_PLANS,
+  CARE_SERVICE_REQUEST_TYPES,
+  type CareServiceRequestKey,
+} from "./src/lib/clientPortalCare.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -142,6 +151,11 @@ export interface Database {
   supportTicketUpdates?: any[];
   serviceRequests?: any[];
   customerSavingsProfiles?: any[];
+  subscriptionPlans?: any[];
+  customerSubscriptions?: any[];
+  subscriptionPayments?: any[];
+  serviceVisitReports?: any[];
+  serviceVisitPhotos?: any[];
 }
 
 export const initialSeed: Database = {
@@ -157,6 +171,20 @@ export const initialSeed: Database = {
   supportTicketUpdates: [],
   serviceRequests: [],
   customerSavingsProfiles: [],
+  subscriptionPlans: DEFAULT_CARE_PLANS.map((p) => ({
+    id: p.id,
+    planCode: p.planCode,
+    plan_code: p.planCode,
+    name: p.name,
+    monthly_price: p.monthlyPrice,
+    features: p.features,
+    service_credits_per_month: p.serviceCreditsPerMonth,
+    sort_order: p.sortOrder,
+  })),
+  customerSubscriptions: [],
+  subscriptionPayments: [],
+  serviceVisitReports: [],
+  serviceVisitPhotos: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -3830,4 +3858,517 @@ export async function upsertAdminCustomerSavings(
     profile,
   });
   return { profile, dashboard };
+}
+
+function addMonthsToDateIso(days = 30): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function careRequestTypeToServiceType(key: string): string | null {
+  const found = CARE_SERVICE_REQUEST_TYPES.find((t) => t.key === key);
+  return found?.serviceType || null;
+}
+
+async function loadSubscriptionPlans(localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("subscription_plans")
+      .select("*")
+      .order("sort_order", { ascending: true });
+    if (error) {
+      if (isCareTablesMissingError(error)) return DEFAULT_CARE_PLANS;
+      throw error;
+    }
+    return (data || []).map(mapSubscriptionPlanRow);
+  }
+  const rows = localDb?.subscriptionPlans?.length
+    ? localDb.subscriptionPlans
+    : DEFAULT_CARE_PLANS.map((p) => ({
+        id: p.id,
+        plan_code: p.planCode,
+        name: p.name,
+        monthly_price: p.monthlyPrice,
+        features: p.features,
+        service_credits_per_month: p.serviceCreditsPerMonth,
+        sort_order: p.sortOrder,
+      }));
+  return rows.map(mapSubscriptionPlanRow);
+}
+
+async function loadPlanByCode(planCode: string, localDb?: Database) {
+  const plans = await loadSubscriptionPlans(localDb);
+  return plans.find((p) => p.planCode === planCode) || null;
+}
+
+async function loadCustomerActiveSubscription(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_subscriptions")
+      .select("*, subscription_plans(name, plan_code, monthly_price)")
+      .eq("customer_id", customerId)
+      .eq("status", "Active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      if (isCareTablesMissingError(error)) return null;
+      throw error;
+    }
+    if (!data) return null;
+    const planRow = (data as any).subscription_plans;
+    const plan = planRow
+      ? mapSubscriptionPlanRow({
+          id: data.plan_id,
+          plan_code: planRow.plan_code,
+          name: planRow.name,
+          monthly_price: planRow.monthly_price,
+          features: [],
+          service_credits_per_month: data.service_credits_limit,
+          sort_order: 0,
+        })
+      : undefined;
+    const mapped = mapCustomerSubscriptionRow(data, plan);
+    if (plan) {
+      mapped.planName = plan.name;
+      mapped.planCode = plan.planCode;
+    }
+    return mapped;
+  }
+
+  const rows = localDb?.customerSubscriptions || [];
+  const row = rows.find(
+    (r: any) =>
+      (r.customerId || r.customer_id) === customerId && (r.status || "Active") === "Active"
+  );
+  if (!row) return null;
+  const plans = await loadSubscriptionPlans(localDb);
+  const plan = plans.find((p) => p.id === (row.planId || row.plan_id));
+  return mapCustomerSubscriptionRow(
+    {
+      id: row.id,
+      customer_id: row.customerId || row.customer_id,
+      plan_id: row.planId || row.plan_id,
+      status: row.status,
+      start_date: row.startDate || row.start_date,
+      renewal_date: row.renewalDate || row.renewal_date,
+      service_credits_used: row.serviceCreditsUsed ?? row.service_credits_used,
+      service_credits_limit: row.serviceCreditsLimit ?? row.service_credits_limit,
+      created_at: row.createdAt || row.created_at,
+      updated_at: row.updatedAt || row.updated_at,
+    },
+    plan
+  );
+}
+
+async function loadCustomerVisitReports(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("service_visit_reports")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("visit_date", { ascending: false });
+    if (error) {
+      if (isCareTablesMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map(mapServiceVisitReportRow);
+  }
+  return (localDb?.serviceVisitReports || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) =>
+      mapServiceVisitReportRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        subscription_id: r.subscriptionId || r.subscription_id,
+        service_request_id: r.serviceRequestId || r.service_request_id,
+        technician: r.technician,
+        visit_date: r.visitDate || r.visit_date,
+        performance_improvement_notes: r.performanceImprovementNotes || r.performance_improvement_notes,
+        before_photo_url: r.beforePhotoUrl || r.before_photo_url,
+        after_photo_url: r.afterPhotoUrl || r.after_photo_url,
+        created_at: r.createdAt || r.created_at,
+        updated_at: r.updatedAt || r.updated_at,
+      })
+    );
+}
+
+export async function fetchCustomerCarePortal(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const plans = await loadSubscriptionPlans(localDb);
+  const subscription = await loadCustomerActiveSubscription(customerId!, localDb);
+  const visitReports = await loadCustomerVisitReports(customerId!, localDb);
+  return { customerId, plans, subscription, visitReports };
+}
+
+export async function subscribeCustomerToCarePlan(
+  userId: string,
+  username: string,
+  body: { planCode?: string; plan_code?: string },
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const planCode = String(body.planCode || body.plan_code || "").trim();
+  const plan = await loadPlanByCode(planCode, localDb);
+  if (!plan) throw new CustomerPortalAuthError("Invalid care plan.");
+
+  const existing = await loadCustomerActiveSubscription(customerId!, localDb);
+  if (existing) {
+    throw new CustomerPortalAuthError("You already have an active care subscription.");
+  }
+
+  const subId = `care-sub-${Date.now()}`;
+  const payId = `care-pay-${Date.now()}`;
+  const now = new Date().toISOString();
+  const startDate = todayIsoDate();
+  const renewalDate = addMonthsToDateIso(30);
+  const row = {
+    id: subId,
+    customer_id: customerId,
+    plan_id: plan.id,
+    status: "Active",
+    start_date: startDate,
+    renewal_date: renewalDate,
+    service_credits_used: 0,
+    service_credits_limit: plan.serviceCreditsPerMonth,
+    created_at: now,
+    updated_at: now,
+  };
+  const paymentRow = {
+    id: payId,
+    subscription_id: subId,
+    customer_id: customerId,
+    amount: plan.monthlyPrice,
+    status: "Paid",
+    paid_at: now,
+    created_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("customer_subscriptions").insert(row).select("*").single();
+    if (error) {
+      if (isCareTablesMissingError(error)) {
+        throw new CustomerPortalAuthError("Care plans are not available yet. Please contact support.");
+      }
+      throw error;
+    }
+    await supabase.from("subscription_payments").insert(paymentRow);
+    return mapCustomerSubscriptionRow(data, plan);
+  }
+
+  localDb!.customerSubscriptions = localDb!.customerSubscriptions || [];
+  localDb!.customerSubscriptions.push({
+    id: subId,
+    customerId,
+    planId: plan.id,
+    status: "Active",
+    startDate,
+    renewalDate,
+    serviceCreditsUsed: 0,
+    serviceCreditsLimit: plan.serviceCreditsPerMonth,
+    createdAt: now,
+    updatedAt: now,
+  });
+  localDb!.subscriptionPayments = localDb!.subscriptionPayments || [];
+  localDb!.subscriptionPayments.push({
+    id: payId,
+    subscriptionId: subId,
+    customerId,
+    amount: plan.monthlyPrice,
+    status: "Paid",
+    paidAt: now,
+    createdAt: now,
+  });
+  return mapCustomerSubscriptionRow(row, plan);
+}
+
+export async function createCarePortalServiceRequest(
+  userId: string,
+  username: string,
+  body: { requestType?: string; request_type?: string; notes?: string },
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const requestKey = String(body.requestType || body.request_type || "").trim() as CareServiceRequestKey;
+  const serviceType = careRequestTypeToServiceType(requestKey);
+  if (!serviceType) throw new CustomerPortalAuthError("Invalid care service request type.");
+
+  const subscription = await loadCustomerActiveSubscription(customerId!, localDb);
+  if (!subscription || subscription.status !== "Active") {
+    throw new CustomerPortalAuthError("An active care subscription is required to request visits.");
+  }
+  if (subscription.serviceCreditsUsed >= subscription.serviceCreditsLimit) {
+    throw new CustomerPortalAuthError("You have used all service credits for this billing period.");
+  }
+
+  const label = CARE_SERVICE_REQUEST_TYPES.find((t) => t.key === requestKey)?.label || serviceType;
+  const notes = body.notes
+    ? `${label} (Care Plan): ${body.notes}`
+    : `${label} — requested via Smart Care subscription.`;
+
+  const request = await createCustomerServiceRequest(
+    userId,
+    username,
+    { serviceType, notes },
+    localDb
+  );
+
+  const newUsed = subscription.serviceCreditsUsed + 1;
+  const now = new Date().toISOString();
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    await supabase
+      .from("customer_subscriptions")
+      .update({ service_credits_used: newUsed, updated_at: now })
+      .eq("id", subscription.id);
+  } else {
+    const idx = (localDb?.customerSubscriptions || []).findIndex((r: any) => r.id === subscription.id);
+    if (idx >= 0) {
+      localDb!.customerSubscriptions![idx].serviceCreditsUsed = newUsed;
+      localDb!.customerSubscriptions![idx].service_credits_used = newUsed;
+      localDb!.customerSubscriptions![idx].updatedAt = now;
+    }
+  }
+
+  return { request, subscription: { ...subscription, serviceCreditsUsed: newUsed } };
+}
+
+export async function listAdminCareSubscriptions(
+  userId: string,
+  username: string,
+  filter: { segment?: string },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(userId, username, localDb);
+  const segment = String(filter.segment || "active").toLowerCase();
+  const today = todayIsoDate();
+  const monthEnd = new Date();
+  monthEnd.setMonth(monthEnd.getMonth() + 1, 0);
+  const monthEndStr = monthEnd.toISOString().slice(0, 10);
+  const monthStart = `${today.slice(0, 7)}-01`;
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    let query = supabase
+      .from("customer_subscriptions")
+      .select("*, subscription_plans(name, plan_code, monthly_price)")
+      .order("renewal_date", { ascending: true });
+    if (segment === "active") query = query.eq("status", "Active");
+    else if (segment === "expired") query = query.eq("status", "Expired");
+    else if (segment === "renewals") {
+      query = query.eq("status", "Active").gte("renewal_date", today).lte("renewal_date", monthEndStr);
+    }
+    const { data, error } = await query;
+    if (error) {
+      if (isCareTablesMissingError(error)) return { segment, subscriptions: [] };
+      throw error;
+    }
+    const subscriptions = (data || []).map((row: any) => {
+      const pr = row.subscription_plans;
+      const plan = pr
+        ? mapSubscriptionPlanRow({
+            id: row.plan_id,
+            plan_code: pr.plan_code,
+            name: pr.name,
+            monthly_price: pr.monthly_price,
+            features: [],
+            service_credits_per_month: row.service_credits_limit,
+            sort_order: 0,
+          })
+        : undefined;
+      return mapCustomerSubscriptionRow(row, plan);
+    });
+    return { segment, subscriptions };
+  }
+
+  let rows = [...(localDb?.customerSubscriptions || [])];
+  if (segment === "active") rows = rows.filter((r) => r.status === "Active");
+  else if (segment === "expired") rows = rows.filter((r) => r.status === "Expired");
+  else if (segment === "renewals") {
+    rows = rows.filter(
+      (r) =>
+        r.status === "Active" &&
+        (r.renewalDate || r.renewal_date) >= today &&
+        (r.renewalDate || r.renewal_date) <= monthEndStr
+    );
+  }
+  const plans = await loadSubscriptionPlans(localDb);
+  const subscriptions = rows.map((r: any) => {
+    const plan = plans.find((p) => p.id === (r.planId || r.plan_id));
+    return mapCustomerSubscriptionRow(
+      {
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        plan_id: r.planId || r.plan_id,
+        status: r.status,
+        start_date: r.startDate || r.start_date,
+        renewal_date: r.renewalDate || r.renewal_date,
+        service_credits_used: r.serviceCreditsUsed ?? r.service_credits_used,
+        service_credits_limit: r.serviceCreditsLimit ?? r.service_credits_limit,
+        created_at: r.createdAt || r.created_at,
+        updated_at: r.updatedAt || r.updated_at,
+      },
+      plan
+    );
+  });
+  return { segment, subscriptions };
+}
+
+export async function fetchAdminCareRevenueSummary(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(userId, username, localDb);
+  const today = todayIsoDate();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const monthEnd = new Date();
+  monthEnd.setMonth(monthEnd.getMonth() + 1, 0);
+  const monthEndStr = monthEnd.toISOString().slice(0, 10);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_subscriptions")
+      .select("id, status, renewal_date, subscription_plans(monthly_price)")
+      .eq("status", "Active");
+    if (error) {
+      if (isCareTablesMissingError(error)) {
+        return { activePlans: 0, monthlyRecurringRevenue: 0, expiringThisMonth: 0 };
+      }
+      throw error;
+    }
+    const active = data || [];
+    let mrr = 0;
+    let expiring = 0;
+    for (const row of active) {
+      mrr += Number((row as any).subscription_plans?.monthly_price || 0);
+      const rd = row.renewal_date;
+      if (rd && rd >= monthStart && rd <= monthEndStr) expiring += 1;
+    }
+    return {
+      activePlans: active.length,
+      monthlyRecurringRevenue: mrr,
+      expiringThisMonth: expiring,
+    };
+  }
+
+  const active = (localDb?.customerSubscriptions || []).filter((r) => r.status === "Active");
+  const plans = await loadSubscriptionPlans(localDb);
+  let mrr = 0;
+  let expiring = 0;
+  for (const row of active) {
+    const plan = plans.find((p) => p.id === (row.planId || row.plan_id));
+    mrr += plan?.monthlyPrice || 0;
+    const rd = row.renewalDate || row.renewal_date;
+    if (rd && rd >= monthStart && rd <= monthEndStr) expiring += 1;
+  }
+  return {
+    activePlans: active.length,
+    monthlyRecurringRevenue: mrr,
+    expiringThisMonth: expiring,
+  };
+}
+
+export async function upsertAdminServiceVisitReport(
+  userId: string,
+  username: string,
+  body: {
+    customerId?: string;
+    customer_id?: string;
+    subscriptionId?: string;
+    serviceRequestId?: string;
+    technician?: string;
+    visitDate?: string;
+    performanceImprovementNotes?: string;
+    beforePhotoUrl?: string;
+    afterPhotoUrl?: string;
+  },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(userId, username, localDb);
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  if (!customerId) throw new StaffPortalAuthError("customerId is required.");
+
+  const reportId = `visit-rpt-${Date.now()}`;
+  const now = new Date().toISOString();
+  const row = {
+    id: reportId,
+    customer_id: customerId,
+    subscription_id: body.subscriptionId || null,
+    service_request_id: body.serviceRequestId || null,
+    technician: body.technician || null,
+    visit_date: body.visitDate || todayIsoDate(),
+    performance_improvement_notes: body.performanceImprovementNotes || null,
+    before_photo_url: body.beforePhotoUrl || null,
+    after_photo_url: body.afterPhotoUrl || null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("service_visit_reports").insert(row).select("*").single();
+    if (error) {
+      if (isCareTablesMissingError(error)) throw new StaffPortalAuthError("Visit reports table not ready.");
+      throw error;
+    }
+    const photos: { id: string; report_id: string; photo_type: string; photo_url: string; created_at: string }[] = [];
+    if (row.before_photo_url) {
+      photos.push({
+        id: `visit-photo-b-${Date.now()}`,
+        report_id: reportId,
+        photo_type: "before",
+        photo_url: row.before_photo_url,
+        created_at: now,
+      });
+    }
+    if (row.after_photo_url) {
+      photos.push({
+        id: `visit-photo-a-${Date.now() + 1}`,
+        report_id: reportId,
+        photo_type: "after",
+        photo_url: row.after_photo_url,
+        created_at: now,
+      });
+    }
+    if (photos.length) await supabase.from("service_visit_photos").insert(photos);
+    return mapServiceVisitReportRow(data);
+  }
+
+  localDb!.serviceVisitReports = localDb!.serviceVisitReports || [];
+  localDb!.serviceVisitReports.unshift({
+    id: reportId,
+    customerId,
+    subscriptionId: body.subscriptionId,
+    serviceRequestId: body.serviceRequestId,
+    technician: body.technician,
+    visitDate: row.visit_date,
+    performanceImprovementNotes: body.performanceImprovementNotes,
+    beforePhotoUrl: body.beforePhotoUrl,
+    afterPhotoUrl: body.afterPhotoUrl,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return mapServiceVisitReportRow(row);
 }

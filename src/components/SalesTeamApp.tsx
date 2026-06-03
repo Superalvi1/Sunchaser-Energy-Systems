@@ -10,6 +10,7 @@ import ClientPortalStaffTools from "./ClientPortalStaffTools";
 import SupportDeskStaff from "./SupportDeskStaff";
 import ServiceDeskStaff from "./ServiceDeskStaff";
 import CustomerSavingsStaff from "./CustomerSavingsStaff";
+import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
 import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
 
@@ -4716,6 +4717,7 @@ export default function SalesTeamApp({
           <SupportDeskStaff staffUser={staffUser} />
           <ServiceDeskStaff staffUser={staffUser} />
           <CustomerSavingsStaff staffUser={staffUser} />
+          <SubscriptionDeskStaff staffUser={staffUser} />
           <ClientPortalStaffTools staffUser={staffUser} />
         </div>
       )}

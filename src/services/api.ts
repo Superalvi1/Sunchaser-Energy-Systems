@@ -377,6 +377,101 @@ export async function upsertAdminCustomerSavings(
   return res.json();
 }
 
+export async function fetchCustomerCare(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/care/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load care plans.");
+  }
+  return res.json();
+}
+
+export async function subscribeCustomerCare(
+  userId: string,
+  username: string,
+  planCode: string
+) {
+  const res = await apiFetch("/api/customer-portal/care/subscribe", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ planCode }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to subscribe to care plan.");
+  }
+  return res.json();
+}
+
+export async function createCareServiceRequest(
+  userId: string,
+  username: string,
+  requestType: string,
+  notes?: string
+) {
+  const res = await apiFetch("/api/customer-portal/care/service-request", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ requestType, notes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to submit care visit request.");
+  }
+  return res.json();
+}
+
+export async function listAdminCareSubscriptions(
+  staffUserId: string,
+  staffUsername: string,
+  segment: "active" | "expired" | "renewals"
+) {
+  const q = new URLSearchParams({
+    userId: staffUserId,
+    username: staffUsername,
+    segment,
+  });
+  const res = await apiFetch(`/api/admin/care/subscriptions?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load subscriptions.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminCareRevenueSummary(staffUserId: string, staffUsername: string) {
+  const q = new URLSearchParams({ userId: staffUserId, username: staffUsername });
+  const res = await apiFetch(`/api/admin/care/revenue-summary?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load revenue summary.");
+  }
+  return res.json();
+}
+
+export async function createAdminVisitReport(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/care/visit-reports", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create visit report.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
