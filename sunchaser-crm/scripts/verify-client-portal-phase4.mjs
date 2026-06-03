@@ -45,16 +45,24 @@ let createdRequestId = null;
 
 total++;
 const phase4Probe = await fetch(`${API}/api/diagnostics/phase4-tables`);
-const phase4Body = await phase4Probe.json().catch(() => ({}));
+const phase4Raw = await phase4Probe.text();
+let phase4Body = {};
+try {
+  phase4Body = JSON.parse(phase4Raw);
+} catch {
+  phase4Body = {};
+}
 const tableOk = phase4Body.probes?.service_requests?.ok === true;
 console.log(
   `${tableOk ? "PASS" : "FAIL"}: service_requests table on production (${phase4Probe.status})`
 );
 if (tableOk) pass++;
-else if (phase4Probe.status === 404) {
+else if (phase4Raw.includes("<!doctype html")) {
+  console.log("  hint: API not deployed yet — wait for Render deploy of latest main");
+} else if (phase4Probe.status === 404) {
   console.log("  hint: deploy latest main so /api/diagnostics/phase4-tables exists");
 } else if (!tableOk) {
-  console.log("  hint: run scripts/client-portal-phase4-schema.sql in Supabase SQL Editor");
+  console.log("  hint: run scripts/client-portal-phase4-schema.sql in Supabase SQL Editor (xxtdfvgkurxabpbmjban)");
 }
 
 total++;

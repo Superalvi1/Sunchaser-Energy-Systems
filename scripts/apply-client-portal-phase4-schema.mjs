@@ -1,10 +1,10 @@
 /**
  * Apply Phase 4 schema to the Supabase project in SUPABASE_URL.
- * Requires direct Postgres access via SUPABASE_DB_URL (Dashboard → Settings → Database → Connection string).
+ * Uses direct Postgres (same pattern as scripts/sync-users-supabase.mjs).
  *
- * Example:
+ * Production example:
  *   SUPABASE_URL=https://xxtdfvgkurxabpbmjban.supabase.co \
- *   SUPABASE_DB_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres" \
+ *   SUPABASE_DB_PASSWORD='your-db-password' \
  *   node scripts/apply-client-portal-phase4-schema.mjs
  */
 import dotenv from "dotenv";
@@ -15,16 +15,22 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 dotenv.config({ path: path.join(root, ".env.local") });
-dotenv.config();
+dotenv.config({ path: path.join(root, ".env") });
+dotenv.config({ path: path.join(root, ".env.production") });
 
-const dbUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
+const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const dbPassword = process.env.SUPABASE_DB_PASSWORD;
 const sqlPath = path.join(__dirname, "client-portal-phase4-schema.sql");
 const sql = fs.readFileSync(sqlPath, "utf8");
 
 async function main() {
-  if (!dbUrl) {
-    console.error("Missing SUPABASE_DB_URL (or DATABASE_URL).");
-    console.error("Paste scripts/client-portal-phase4-schema.sql into Supabase SQL Editor instead.");
+  if (!url) {
+    console.error("Missing SUPABASE_URL (or VITE_SUPABASE_URL).");
+    process.exit(1);
+  }
+  if (!dbPassword) {
+    console.error("Missing SUPABASE_DB_PASSWORD.");
+    console.error("Run scripts/client-portal-phase4-schema.sql in Supabase SQL Editor instead.");
     process.exit(1);
   }
 
@@ -36,15 +42,25 @@ async function main() {
     process.exit(1);
   }
 
-  const client = new pg.default.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+  const ref = new URL(url.replace(/\/rest\/v1\/?$/, "")).hostname.split(".")[0];
+  const client = new pg.default.Client({
+    host: `db.${ref}.supabase.co`,
+    port: 5432,
+    database: "postgres",
+    user: "postgres",
+    password: dbPassword,
+    ssl: { rejectUnauthorized: false },
+  });
+
   await client.connect();
   try {
     await client.query(sql);
     const { rows } = await client.query(
       "select to_regclass('public.service_requests') as reg"
     );
-    console.log("service_requests table:", rows[0]?.reg || "missing");
-    process.exit(rows[0]?.reg ? 0 : 1);
+    const ok = Boolean(rows[0]?.reg);
+    console.log(ok ? "OK: public.service_requests exists" : "FAIL: table still missing");
+    process.exit(ok ? 0 : 1);
   } finally {
     await client.end();
   }
