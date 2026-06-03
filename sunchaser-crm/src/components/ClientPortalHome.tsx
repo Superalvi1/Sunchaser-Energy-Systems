@@ -161,8 +161,10 @@ export default function ClientPortalHome({ data, onRequestUpgrade, onOpenSupport
       <section className="bg-slate-900 border border-slate-800 rounded-3xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-bold text-white">Solar Pizza Tracker</h3>
-            <p className="text-[10px] text-slate-500 font-mono mt-0.5">Project timeline</p>
+            <h3 className="text-sm font-bold text-white">Project Tracker</h3>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+              {tracker?.trackerType === "industrial" ? "Industrial timeline" : "Residential timeline"}
+            </p>
           </div>
           <div className="text-right">
             <span className="text-2xl font-extrabold text-amber-400">

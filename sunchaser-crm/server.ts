@@ -43,7 +43,16 @@ import {
   createCarePortalServiceRequest,
   listAdminCareSubscriptions,
   fetchAdminCareRevenueSummary,
-  upsertAdminServiceVisitReport
+  upsertAdminServiceVisitReport,
+  fetchCustomerEquipment,
+  fetchCustomerInstallationPhotos,
+  fetchCustomerServiceHistory,
+  upsertAdminCustomerPortalProfile,
+  createAdminCustomerEquipment,
+  patchAdminCustomerEquipment,
+  createAdminInstallationPhoto,
+  createAdminAfterSalesServiceLog,
+  listAdminAfterSalesServiceLogs
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -675,6 +684,136 @@ app.post("/api/admin/care/visit-reports", async (req, res) => {
   }
 });
 
+app.post("/api/admin/customer-portal-profile", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const profile = await upsertAdminCustomerPortalProfile(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(200).json(profile);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/customer-equipment", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const row = await createAdminCustomerEquipment(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/customer-equipment/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const row = await patchAdminCustomerEquipment(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/installation-photos", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const photo = await createAdminInstallationPhoto(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(photo);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/after-sales-service-log", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const log = await createAdminAfterSalesServiceLog(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(log);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/after-sales-service-logs", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const data = await listAdminAfterSalesServiceLogs(userId, username, {
+      customerId: req.query.customerId as string,
+    }, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/equipment/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const data = await fetchCustomerEquipment(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/equipment/me", query: "customer_equipment" }));
+  }
+});
+
+app.get("/api/customer-portal/installation-photos/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const data = await fetchCustomerInstallationPhotos(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/installation-photos/me", query: "installation_photos" }));
+  }
+});
+
+app.get("/api/customer-portal/service-history/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const data = await fetchCustomerServiceHistory(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/service-history/me", query: "after_sales_service_logs" }));
+  }
+});
+
 app.get("/api/customer-portal/service/me", async (req, res) => {
   const { userId, username } = readCustomerPortalAuth(req);
   if (!userId || !username) {
@@ -846,6 +985,36 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
   }
 });
 
+app.get("/api/diagnostics/pakistan-aftersales-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  let supabaseHost = null;
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHost = new URL(process.env.SUPABASE_URL).host;
+    } catch {
+      supabaseHost = process.env.SUPABASE_URL;
+    }
+  }
+  const tables = [
+    "customer_portal_profiles",
+    "customer_equipment",
+    "installation_photos",
+    "after_sales_service_logs",
+  ];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, supabaseHost, probes });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, code: error.code, message: error.message }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  return res.json({ supabaseActive: true, supabaseHost, probes });
+});
+
 app.get("/api/diagnostics/phase6-tables", async (_req, res) => {
   const supabase = getSupabase();
   const active = isSupabaseActive();
@@ -957,7 +1126,7 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
   const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
   const requestedCustomerId = String(req.params.customerId || "").trim();
 
-  if (["service", "documents", "warranties", "support-tickets", "savings", "care"].includes(requestedCustomerId)) {
+  if (["service", "documents", "warranties", "support-tickets", "savings", "care", "equipment", "installation-photos", "service-history"].includes(requestedCustomerId)) {
     return res.status(404).json({ error: "Not found." });
   }
 

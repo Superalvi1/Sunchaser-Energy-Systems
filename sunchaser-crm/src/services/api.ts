@@ -87,7 +87,15 @@ export async function fetchCustomerPortalWarranties(userId: string, username: st
 export async function submitCustomerWarrantyClaim(
   userId: string,
   username: string,
-  body: { component: string; issueDescription: string; photoUrl?: string }
+  body: {
+    component: string;
+    issueDescription: string;
+    photoUrl?: string;
+    videoUrl?: string;
+    voiceNoteUrl?: string;
+    equipmentId?: string;
+    equipmentType?: string;
+  }
 ) {
   const res = await apiFetch("/api/customer-portal/warranty-claim", {
     method: "POST",
@@ -468,6 +476,145 @@ export async function createAdminVisitReport(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Failed to create visit report.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerEquipment(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/equipment/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load equipment.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerInstallationPhotos(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/installation-photos/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load installation photos.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerServiceHistory(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/service-history/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load service history.");
+  }
+  return res.json();
+}
+
+export async function upsertAdminPortalProfile(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/customer-portal-profile", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save portal profile.");
+  }
+  return res.json();
+}
+
+export async function createAdminCustomerEquipment(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/customer-equipment", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to add equipment.");
+  }
+  return res.json();
+}
+
+export async function patchAdminCustomerEquipment(
+  staffUserId: string,
+  staffUsername: string,
+  equipmentId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/admin/customer-equipment/${encodeURIComponent(equipmentId)}`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update equipment.");
+  }
+  return res.json();
+}
+
+export async function createAdminInstallationPhoto(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/installation-photos", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to upload installation photo.");
+  }
+  return res.json();
+}
+
+export async function createAdminAfterSalesServiceLog(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/after-sales-service-log", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save service log.");
+  }
+  return res.json();
+}
+
+export async function listAdminAfterSalesServiceLogs(
+  staffUserId: string,
+  staffUsername: string,
+  customerId?: string
+) {
+  const q = new URLSearchParams({
+    userId: staffUserId,
+    username: staffUsername,
+    ...(customerId ? { customerId } : {}),
+  });
+  const res = await apiFetch(`/api/admin/after-sales-service-logs?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load service logs.");
   }
   return res.json();
 }

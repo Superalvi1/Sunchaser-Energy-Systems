@@ -13,6 +13,7 @@ import {
   fetchCustomerServicePortal,
   fetchCustomerServiceRequestById,
   createCustomerServiceRequest,
+  fetchCustomerServiceHistory,
 } from "../services/api";
 import {
   SERVICE_TYPES,
@@ -34,6 +35,8 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
   const [view, setView] = useState<"list" | "create" | "detail">("list");
   const [detail, setDetail] = useState<ServiceRequestRecord | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [historyLogs, setHistoryLogs] = useState<any[]>([]);
+  const [freeService, setFreeService] = useState<any>(null);
 
   const [serviceType, setServiceType] = useState<(typeof SERVICE_TYPES)[number]>("Cleaning");
   const [preferredDate, setPreferredDate] = useState("");
@@ -44,9 +47,14 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchCustomerServicePortal(user.id, user.username);
+      const [data, history] = await Promise.all([
+        fetchCustomerServicePortal(user.id, user.username),
+        fetchCustomerServiceHistory(user.id, user.username),
+      ]);
       setSummary(data.summary);
       setRequests(data.requests || []);
+      setHistoryLogs(history.logs || []);
+      setFreeService(history.freeService || null);
     } catch (err: any) {
       setError(err.message || "Unable to load service data.");
     } finally {
@@ -294,6 +302,74 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
             </p>
           </div>
         </div>
+      </div>
+
+      {freeService && (
+        <div className="bg-slate-900 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
+          <p className="text-[10px] font-mono text-emerald-500 uppercase">Free service status</p>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <p className="text-slate-500">Status</p>
+              <p className="font-bold text-white">{freeService.status}</p>
+            </div>
+            <div>
+              <p className="text-slate-500">Covered until</p>
+              <p className="font-bold text-white">{freeService.coveredUntil || NO_DATA}</p>
+            </div>
+            <div>
+              <p className="text-slate-500">Services used</p>
+              <p className="font-bold text-amber-400">{freeService.servicesUsed}</p>
+            </div>
+          </div>
+          {freeService.usageBreakdown?.length > 0 && (
+            <ul className="text-[11px] text-slate-400 space-y-1 pt-1 border-t border-slate-800">
+              {freeService.usageBreakdown.map((u: { serviceType: string; count: number }) => (
+                <li key={u.serviceType}>
+                  {u.serviceType}: {u.count} time{u.count !== 1 ? "s" : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div>
+        <h4 className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Service history</h4>
+        {historyLogs.length === 0 ? (
+          <p className="text-xs text-slate-500 font-mono py-2">{NO_DATA}</p>
+        ) : (
+          <ul className="space-y-2">
+            {historyLogs.map((log) => (
+              <li key={log.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
+                <div className="flex justify-between gap-2">
+                  <p className="font-bold text-white">{log.serviceType}</p>
+                  <span className="text-slate-500">{log.serviceDate}</span>
+                </div>
+                {log.componentChanged && (
+                  <p className="text-slate-400">Component: {log.componentChanged}</p>
+                )}
+                {log.newComponentDetails && <p className="text-slate-400">{log.newComponentDetails}</p>}
+                {log.technicianName && <p className="text-slate-500">Technician: {log.technicianName}</p>}
+                <p className={log.underFreeService ? "text-emerald-400" : "text-amber-400"}>
+                  {log.underFreeService ? "Free service" : `Paid — PKR ${log.chargeAmount}`}
+                </p>
+                {log.customerVisibleNotes && (
+                  <p className="text-slate-300 leading-relaxed">{log.customerVisibleNotes}</p>
+                )}
+                {(log.beforePhotoUrl || log.afterPhotoUrl) && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {log.beforePhotoUrl && (
+                      <img src={log.beforePhotoUrl} alt="Before" className="rounded-lg h-20 w-full object-cover border border-slate-800" />
+                    )}
+                    {log.afterPhotoUrl && (
+                      <img src={log.afterPhotoUrl} alt="After" className="rounded-lg h-20 w-full object-cover border border-slate-800" />
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {error && (

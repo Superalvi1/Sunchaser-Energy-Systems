@@ -1,5 +1,12 @@
 import { Lead, NetMeteringTracker, PaymentTrack, Project } from "../types";
 import { NO_DATA } from "./clientPortalDisplay";
+import {
+  buildIndustrialTracker,
+  buildResidentialTracker,
+  type PortalTrackerType,
+  type PortalProfileRecord,
+  type FreeServiceSummary,
+} from "./clientPortalPakistan";
 
 export type TrackerStageStatus = "completed" | "active" | "pending";
 
@@ -36,7 +43,10 @@ export interface ClientPortalPayload {
   tracker: {
     stages: TrackerStage[];
     progressPercent: number;
+    trackerType?: PortalTrackerType;
   };
+  portalProfile?: PortalProfileRecord | null;
+  freeService?: FreeServiceSummary | null;
 }
 
 const STAGE_LABELS = [
@@ -98,6 +108,7 @@ export function buildClientPortalPayload(input: {
   netMetering?: NetMeteringTracker | null;
   payment?: PaymentTrack | null;
   openTicketsCount?: number;
+  trackerType?: PortalTrackerType;
 }): ClientPortalPayload {
   const { customer, lead, project } = input;
   const netMetering = input.netMetering || null;
@@ -134,22 +145,13 @@ export function buildClientPortalPayload(input: {
     project?.stage === "Completed" ||
     (installationDone && netMeteringApproved);
 
-  const stages: TrackerStage[] = [
-    stage("lead-created", STAGE_LABELS[0], !!lead, false, lead?.createdAt),
-    stage("site-survey", STAGE_LABELS[1], surveyDone, surveyActive, survey?.scheduledDate),
-    stage("design-approval", STAGE_LABELS[2], surveyDone, surveyActive && !surveyDone, survey?.scheduledDate),
-    stage("quotation-approved", STAGE_LABELS[3], quoteApproved, !!latestQuote && !quoteApproved, acceptedQuote?.createdAt || latestQuote?.createdAt),
-    stage("advance-received", STAGE_LABELS[4], advanceReceived, quoteApproved && !advanceReceived, null),
-    stage("equipment-procurement", STAGE_LABELS[5], procurementDone, advanceReceived && !procurementDone, project?.updatedAt),
-    stage("installation-scheduled", STAGE_LABELS[6], installationScheduled, procurementDone && !installationScheduled, installation?.scheduledDate),
-    stage("installation-completed", STAGE_LABELS[7], installationDone, installationScheduled && !installationDone, project?.updatedAt),
-    stage("net-metering-submitted", STAGE_LABELS[8], netMeteringSubmitted, installationDone && !netMeteringSubmitted, null),
-    stage("net-metering-approved", STAGE_LABELS[9], netMeteringApproved, netMeteringSubmitted && !netMeteringApproved, null),
-    stage("commissioned", STAGE_LABELS[10], commissioned, netMeteringApproved && !commissioned, project?.updatedAt),
-  ];
-
-  const completedCount = stages.filter((s) => s.status === "completed").length;
-  const progressPercent = Math.round((completedCount / stages.length) * 100);
+  const trackerType = input.trackerType || "residential";
+  const trackerBuilt =
+    trackerType === "industrial"
+      ? buildIndustrialTracker({ lead, project, netMetering, payment })
+      : buildResidentialTracker({ lead, project, payment });
+  const stages = trackerBuilt.stages;
+  const progressPercent = trackerBuilt.progressPercent;
 
   const systemSizeKw =
     project?.systemSizekW ??
@@ -191,6 +193,6 @@ export function buildClientPortalPayload(input: {
     lead,
     project,
     dashboard,
-    tracker: { stages, progressPercent },
+    tracker: { stages, progressPercent, trackerType },
   };
 }

@@ -44,6 +44,15 @@ import {
   CARE_SERVICE_REQUEST_TYPES,
   type CareServiceRequestKey,
 } from "./src/lib/clientPortalCare.ts";
+import {
+  mapPortalProfileRow,
+  mapEquipmentRow,
+  mapInstallationPhotoRow,
+  mapAfterSalesLogRow,
+  computeFreeServiceSummary,
+  isPakistanAftersalesTableMissingError,
+  type PortalTrackerType,
+} from "./src/lib/clientPortalPakistan.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -156,6 +165,10 @@ export interface Database {
   subscriptionPayments?: any[];
   serviceVisitReports?: any[];
   serviceVisitPhotos?: any[];
+  customerPortalProfiles?: any[];
+  customerEquipment?: any[];
+  installationPhotos?: any[];
+  afterSalesServiceLogs?: any[];
 }
 
 export const initialSeed: Database = {
@@ -185,6 +198,10 @@ export const initialSeed: Database = {
   subscriptionPayments: [],
   serviceVisitReports: [],
   serviceVisitPhotos: [],
+  customerPortalProfiles: [],
+  customerEquipment: [],
+  installationPhotos: [],
+  afterSalesServiceLogs: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -2158,6 +2175,14 @@ export async function fetchCustomerPortalData(
       }
     }
 
+    const portalProfile = customerId
+      ? await loadCustomerPortalProfileRow(customerId, localDb)
+      : null;
+    const trackerType: PortalTrackerType = portalProfile?.trackerType || "residential";
+    const serviceLogs = customerId
+      ? await loadAfterSalesLogsForCustomer(customerId, localDb, false)
+      : [];
+
     const payload = buildClientPortalPayload({
       customer,
       lead,
@@ -2165,8 +2190,11 @@ export async function fetchCustomerPortalData(
       netMetering,
       payment,
       openTicketsCount,
+      trackerType,
     });
     payload.dashboard.warrantySummary = warrantySummary;
+    payload.portalProfile = portalProfile;
+    payload.freeService = computeFreeServiceSummary(portalProfile, serviceLogs);
 
     return {
       user: {
@@ -2250,6 +2278,14 @@ export async function fetchCustomerPortalData(
           }
         : null;
 
+  const portalProfile = customerId
+    ? await loadCustomerPortalProfileRow(customerId, localDb)
+    : null;
+  const trackerType: PortalTrackerType = portalProfile?.trackerType || "residential";
+  const serviceLogs = customerId
+    ? await loadAfterSalesLogsForCustomer(customerId, localDb, false)
+    : [];
+
   const payload = buildClientPortalPayload({
     customer,
     lead,
@@ -2257,8 +2293,11 @@ export async function fetchCustomerPortalData(
     netMetering,
     payment,
     openTicketsCount,
+    trackerType,
   });
   payload.dashboard.warrantySummary = warrantySummary;
+  payload.portalProfile = portalProfile;
+  payload.freeService = computeFreeServiceSummary(portalProfile, serviceLogs);
 
   return {
     user: {
@@ -2462,15 +2501,27 @@ export async function fetchCustomerPortalWarranties(
 export async function createCustomerWarrantyClaim(
   userId: string,
   username: string,
-  body: { component: string; issueDescription: string; photoUrl?: string },
+  body: {
+    component: string;
+    issueDescription: string;
+    photoUrl?: string;
+    videoUrl?: string;
+    voiceNoteUrl?: string;
+    equipmentId?: string;
+    equipmentType?: string;
+  },
   localDb?: Database
 ) {
   const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
   assertCustomerScope(customerId);
 
-  const component = String(body.component || "").trim();
+  const component = String(body.component || body.equipmentType || "").trim();
   const issueDescription = String(body.issueDescription || "").trim();
   const photoUrl = body.photoUrl ? String(body.photoUrl).trim() : null;
+  const videoUrl = body.videoUrl ? String(body.videoUrl).trim() : null;
+  const voiceNoteUrl = body.voiceNoteUrl ? String(body.voiceNoteUrl).trim() : null;
+  const equipmentId = body.equipmentId ? String(body.equipmentId).trim() : null;
+  const equipmentType = body.equipmentType ? String(body.equipmentType).trim() : null;
   if (!component || !issueDescription) {
     throw new CustomerPortalAuthError("Component and issue description are required.");
   }
@@ -2493,17 +2544,22 @@ export async function createCustomerWarrantyClaim(
         { sender: "Customer", text: issueDescription, time: now },
       ]),
     });
+    const claimRow: Record<string, unknown> = {
+      id: claimId,
+      customer_id: customerId,
+      ticket_id: ticketId,
+      component,
+      issue_description: issueDescription,
+      photo_url: photoUrl,
+      video_url: videoUrl,
+      voice_note_url: voiceNoteUrl,
+      equipment_id: equipmentId,
+      equipment_type: equipmentType,
+      status: "New",
+    };
     const { data, error } = await supabase
       .from("warranty_claims")
-      .insert({
-        id: claimId,
-        customer_id: customerId,
-        ticket_id: ticketId,
-        component,
-        issue_description: issueDescription,
-        photo_url: photoUrl,
-        status: "New",
-      })
+      .insert(claimRow)
       .select("*")
       .single();
     if (error) throw error;
@@ -2517,6 +2573,10 @@ export async function createCustomerWarrantyClaim(
     component,
     issueDescription,
     photoUrl,
+    videoUrl,
+    voiceNoteUrl,
+    equipmentId,
+    equipmentType,
     status: "New",
     createdAt: now,
     updatedAt: now,
@@ -4371,4 +4431,426 @@ export async function upsertAdminServiceVisitReport(
     updatedAt: now,
   });
   return mapServiceVisitReportRow(row);
+}
+
+async function loadCustomerPortalProfileRow(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_portal_profiles")
+      .select("*")
+      .eq("customer_id", customerId)
+      .maybeSingle();
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) return null;
+      throw error;
+    }
+    return data ? mapPortalProfileRow(data) : null;
+  }
+  const row = (localDb?.customerPortalProfiles || []).find(
+    (r: any) => (r.customerId || r.customer_id) === customerId
+  );
+  if (!row) return null;
+  return mapPortalProfileRow({
+    id: row.id,
+    customer_id: row.customerId || row.customer_id,
+    project_id: row.projectId || row.project_id,
+    tracker_type: row.trackerType || row.tracker_type,
+    free_service_start_date: row.freeServiceStartDate || row.free_service_start_date,
+    free_service_end_date: row.freeServiceEndDate || row.free_service_end_date,
+    free_service_months: row.freeServiceMonths ?? row.free_service_months,
+    free_service_status: row.freeServiceStatus || row.free_service_status,
+  });
+}
+
+async function loadAfterSalesLogsForCustomer(
+  customerId: string,
+  localDb?: Database,
+  staffView = false
+) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("after_sales_service_logs")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("service_date", { ascending: false });
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map((r) => mapAfterSalesLogRow(r, staffView));
+  }
+  return (localDb?.afterSalesServiceLogs || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) =>
+      mapAfterSalesLogRow(
+        {
+          id: r.id,
+          customer_id: r.customerId || r.customer_id,
+          project_id: r.projectId || r.project_id,
+          service_type: r.serviceType || r.service_type,
+          component_changed: r.componentChanged || r.component_changed,
+          old_component_details: r.oldComponentDetails || r.old_component_details,
+          new_component_details: r.newComponentDetails || r.new_component_details,
+          quantity: r.quantity,
+          reason: r.reason,
+          technician_name: r.technicianName || r.technician_name,
+          service_date: r.serviceDate || r.service_date,
+          under_free_service: r.underFreeService ?? r.under_free_service,
+          charge_amount: r.chargeAmount ?? r.charge_amount,
+          before_photo_url: r.beforePhotoUrl || r.before_photo_url,
+          after_photo_url: r.afterPhotoUrl || r.after_photo_url,
+          customer_visible_notes: r.customerVisibleNotes || r.customer_visible_notes,
+          internal_notes: r.internalNotes || r.internal_notes,
+          voice_note_url: r.voiceNoteUrl || r.voice_note_url,
+          created_by: r.createdBy || r.created_by,
+          created_at: r.createdAt || r.created_at,
+        },
+        staffView
+      )
+    );
+}
+
+export async function upsertAdminCustomerPortalProfile(
+  staffUserId: string,
+  staffUsername: string,
+  body: {
+    customerId?: string;
+    customer_id?: string;
+    projectId?: string;
+    trackerType?: PortalTrackerType;
+    freeServiceMonths?: number;
+    freeServiceStartDate?: string;
+  },
+  localDb?: Database
+) {
+  const staff = await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  if (!customerId) throw new StaffPortalAuthError("customerId is required.");
+
+  const months = Number(body.freeServiceMonths || 6);
+  const startDate = body.freeServiceStartDate || new Date().toISOString().slice(0, 10);
+  const end = new Date(startDate.length === 10 ? `${startDate}T12:00:00` : startDate);
+  end.setMonth(end.getMonth() + months);
+  const endDate = end.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const status = endDate >= today ? "Active" : "Expired";
+  const profileId = `cpp-${customerId}`;
+  const now = new Date().toISOString();
+  const row = {
+    id: profileId,
+    customer_id: customerId,
+    project_id: body.projectId || null,
+    tracker_type: body.trackerType === "industrial" ? "industrial" : "residential",
+    free_service_start_date: startDate,
+    free_service_end_date: endDate,
+    free_service_months: months,
+    free_service_status: status,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_portal_profiles")
+      .upsert({ ...row, created_at: now }, { onConflict: "customer_id" })
+      .select("*")
+      .single();
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) {
+        throw new StaffPortalAuthError("Portal profiles table not ready. Run Pakistan after-sales SQL.");
+      }
+      throw error;
+    }
+    return mapPortalProfileRow(data);
+  }
+
+  localDb!.customerPortalProfiles = localDb!.customerPortalProfiles || [];
+  const idx = localDb!.customerPortalProfiles.findIndex(
+    (r: any) => (r.customerId || r.customer_id) === customerId
+  );
+  const localRow = { ...row, customerId, projectId: body.projectId, trackerType: row.tracker_type, createdAt: now, updatedAt: now };
+  if (idx >= 0) localDb!.customerPortalProfiles[idx] = localRow;
+  else localDb!.customerPortalProfiles.push(localRow);
+  return mapPortalProfileRow({ ...row, created_at: now });
+}
+
+export async function fetchCustomerEquipment(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_equipment")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("equipment_type");
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) return { customerId, equipment: [] };
+      throw error;
+    }
+    return { customerId, equipment: (data || []).map(mapEquipmentRow) };
+  }
+  const equipment = (localDb?.customerEquipment || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) => mapEquipmentRow({ ...r, customer_id: customerId, equipment_type: r.equipmentType || r.equipment_type }));
+  return { customerId, equipment };
+}
+
+export async function fetchCustomerInstallationPhotos(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("installation_photos")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false });
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) return { customerId, photos: [] };
+      throw error;
+    }
+    return { customerId, photos: (data || []).map(mapInstallationPhotoRow) };
+  }
+  const photos = (localDb?.installationPhotos || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) => mapInstallationPhotoRow({ ...r, customer_id: customerId, photo_category: r.photoCategory || r.photo_category, photo_url: r.photoUrl || r.photo_url, created_at: r.createdAt || r.created_at }));
+  return { customerId, photos };
+}
+
+export async function fetchCustomerServiceHistory(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+  const profile = await loadCustomerPortalProfileRow(customerId!, localDb);
+  const logs = await loadAfterSalesLogsForCustomer(customerId!, localDb, false);
+  return {
+    customerId,
+    logs,
+    freeService: computeFreeServiceSummary(profile, logs),
+  };
+}
+
+export async function createAdminCustomerEquipment(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  const equipmentType = String(body.equipmentType || body.equipment_type || "").trim();
+  if (!customerId || !equipmentType) throw new StaffPortalAuthError("customerId and equipmentType required.");
+
+  const id = `eq-${Date.now()}`;
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    customer_id: customerId,
+    project_id: body.projectId || body.project_id || null,
+    equipment_type: equipmentType,
+    brand: body.brand || null,
+    model: body.model || null,
+    serial_number: body.serialNumber || body.serial_number || null,
+    quantity: Number(body.quantity || 1),
+    installation_date: body.installationDate || body.installation_date || null,
+    warranty_start: body.warrantyStart || body.warranty_start || null,
+    warranty_end: body.warrantyEnd || body.warranty_end || null,
+    photo_url: body.photoUrl || body.photo_url || null,
+    notes: body.notes || null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("customer_equipment").insert(row).select("*").single();
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) throw new StaffPortalAuthError("Equipment table not ready.");
+      throw error;
+    }
+    return mapEquipmentRow(data);
+  }
+
+  localDb!.customerEquipment = localDb!.customerEquipment || [];
+  localDb!.customerEquipment.push({ ...row, customerId, equipmentType });
+  return mapEquipmentRow(row);
+}
+
+export async function patchAdminCustomerEquipment(
+  staffUserId: string,
+  staffUsername: string,
+  equipmentId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { updated_at: now };
+  const fields = [
+    ["brand", "brand"],
+    ["model", "model"],
+    ["serialNumber", "serial_number"],
+    ["serial_number", "serial_number"],
+    ["quantity", "quantity"],
+    ["installationDate", "installation_date"],
+    ["warrantyStart", "warranty_start"],
+    ["warrantyEnd", "warranty_end"],
+    ["photoUrl", "photo_url"],
+    ["notes", "notes"],
+  ] as const;
+  for (const [a, b] of fields) {
+    if (body[a] !== undefined) patch[b] = body[a];
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_equipment")
+      .update(patch)
+      .eq("id", equipmentId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return mapEquipmentRow(data);
+  }
+
+  const idx = (localDb?.customerEquipment || []).findIndex((r: any) => r.id === equipmentId);
+  if (idx < 0) throw new StaffPortalAuthError("Equipment not found.");
+  Object.assign(localDb!.customerEquipment![idx], patch);
+  return mapEquipmentRow(localDb!.customerEquipment![idx]);
+}
+
+export async function createAdminInstallationPhoto(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  const staff = await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  const photoUrl = String(body.photoUrl || body.photo_url || "").trim();
+  const photoCategory = String(body.photoCategory || body.photo_category || "").trim();
+  if (!customerId || !photoUrl || !photoCategory) {
+    throw new StaffPortalAuthError("customerId, photoCategory, and photoUrl are required.");
+  }
+
+  const id = `inst-photo-${Date.now()}`;
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    customer_id: customerId,
+    project_id: body.projectId || body.project_id || null,
+    photo_category: photoCategory,
+    photo_url: photoUrl,
+    caption: body.caption || null,
+    uploaded_by: staff.user?.name || staffUsername,
+    voice_note_url: body.voiceNoteUrl || body.voice_note_url || null,
+    created_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("installation_photos").insert(row).select("*").single();
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) throw new StaffPortalAuthError("Installation photos table not ready.");
+      throw error;
+    }
+    return mapInstallationPhotoRow(data);
+  }
+
+  localDb!.installationPhotos = localDb!.installationPhotos || [];
+  localDb!.installationPhotos.unshift(row);
+  return mapInstallationPhotoRow(row);
+}
+
+export async function createAdminAfterSalesServiceLog(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  const staff = await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  const serviceType = String(body.serviceType || body.service_type || "").trim();
+  if (!customerId || !serviceType) throw new StaffPortalAuthError("customerId and serviceType required.");
+
+  const id = `asl-${Date.now()}`;
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    customer_id: customerId,
+    project_id: body.projectId || body.project_id || null,
+    service_type: serviceType,
+    component_changed: body.componentChanged || body.component_changed || null,
+    old_component_details: body.oldComponentDetails || body.old_component_details || null,
+    new_component_details: body.newComponentDetails || body.new_component_details || null,
+    quantity: Number(body.quantity || 1),
+    reason: body.reason || null,
+    technician_name: body.technicianName || body.technician_name || staff.user?.name || staffUsername,
+    service_date: body.serviceDate || body.service_date || now.slice(0, 10),
+    under_free_service: !!(body.underFreeService ?? body.under_free_service),
+    charge_amount: Number(body.chargeAmount ?? body.charge_amount ?? 0),
+    before_photo_url: body.beforePhotoUrl || body.before_photo_url || null,
+    after_photo_url: body.afterPhotoUrl || body.after_photo_url || null,
+    customer_visible_notes: body.customerVisibleNotes || body.customer_visible_notes || null,
+    internal_notes: body.internalNotes || body.internal_notes || null,
+    voice_note_url: body.voiceNoteUrl || body.voice_note_url || null,
+    created_by: staff.user?.name || staffUsername,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("after_sales_service_logs").insert(row).select("*").single();
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) throw new StaffPortalAuthError("Service logs table not ready.");
+      throw error;
+    }
+    return mapAfterSalesLogRow(data, true);
+  }
+
+  localDb!.afterSalesServiceLogs = localDb!.afterSalesServiceLogs || [];
+  localDb!.afterSalesServiceLogs.unshift(row);
+  return mapAfterSalesLogRow(row, true);
+}
+
+export async function listAdminAfterSalesServiceLogs(
+  staffUserId: string,
+  staffUsername: string,
+  filter: { customerId?: string },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = filter.customerId ? String(filter.customerId).trim() : "";
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    let q = supabase.from("after_sales_service_logs").select("*").order("service_date", { ascending: false });
+    if (customerId) q = q.eq("customer_id", customerId);
+    const { data, error } = await q;
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) return { logs: [] };
+      throw error;
+    }
+    return { logs: (data || []).map((r) => mapAfterSalesLogRow(r, true)) };
+  }
+
+  let rows = [...(localDb?.afterSalesServiceLogs || [])];
+  if (customerId) rows = rows.filter((r: any) => (r.customerId || r.customer_id) === customerId);
+  return { logs: rows.map((r: any) => mapAfterSalesLogRow(r, true)) };
 }

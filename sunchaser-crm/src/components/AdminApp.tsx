@@ -9,6 +9,7 @@ import SupportDeskStaff from "./SupportDeskStaff";
 import ServiceDeskStaff from "./ServiceDeskStaff";
 import CustomerSavingsStaff from "./CustomerSavingsStaff";
 import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
+import AfterSalesStaffTools from "./AfterSalesStaffTools";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -1656,7 +1657,12 @@ export default function AdminApp({
         {activeSegment === 'service-desk' && <ServiceDeskStaff staffUser={staffUser} />}
         {activeSegment === 'savings-desk' && <CustomerSavingsStaff staffUser={staffUser} />}
         {activeSegment === 'subscription-desk' && <SubscriptionDeskStaff staffUser={staffUser} />}
-        {activeSegment === 'client-portal' && <ClientPortalStaffTools staffUser={staffUser} />}
+        {activeSegment === 'client-portal' && (
+          <>
+            <ClientPortalStaffTools staffUser={staffUser} />
+            <AfterSalesStaffTools staffUser={staffUser} />
+          </>
+        )}
         {activeSegment === 'control-panel' && (
           <ManualAdminControl
             leads={leads}
