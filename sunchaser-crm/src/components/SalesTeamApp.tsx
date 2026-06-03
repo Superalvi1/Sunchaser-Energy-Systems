@@ -5,11 +5,13 @@ import {
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
   Printer, Save
 } from "lucide-react";
-import { Lead, Quote, InventoryItem, BoqRow } from "../types";
+import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
+import ClientPortalStaffTools from "./ClientPortalStaffTools";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
 import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
 
 interface SalesTeamAppProps {
+  staffUser?: User;
   leads: Lead[];
   inventory: InventoryItem[];
   products: any[];
@@ -30,6 +32,7 @@ interface SalesTeamAppProps {
 }
 
 export default function SalesTeamApp({
+  staffUser,
   leads,
   inventory,
   products = [],
@@ -4704,6 +4707,12 @@ export default function SalesTeamApp({
           </div>
         )}
       </div>
+
+      {staffUser && (
+        <div className="mt-12 pt-8 border-t border-slate-800">
+          <ClientPortalStaffTools staffUser={staffUser} />
+        </div>
+      )}
 
     </div>
   );

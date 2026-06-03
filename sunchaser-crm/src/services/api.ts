@@ -52,6 +52,119 @@ export async function fetchCustomerPortalMe(
   return res.json();
 }
 
+function portalAuthHeaders(userId: string, username: string) {
+  return {
+    "Content-Type": "application/json",
+    "X-Sunchaser-User-Id": userId,
+    "X-Sunchaser-Username": username,
+  };
+}
+
+export async function fetchCustomerPortalDocuments(userId: string, username: string) {
+  const res = await apiFetch(
+    `/api/customer-portal/documents/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load documents.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerPortalWarranties(userId: string, username: string) {
+  const res = await apiFetch(
+    `/api/customer-portal/warranties/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load warranties.");
+  }
+  return res.json();
+}
+
+export async function submitCustomerWarrantyClaim(
+  userId: string,
+  username: string,
+  body: { component: string; issueDescription: string; photoUrl?: string }
+) {
+  const res = await apiFetch("/api/customer-portal/warranty-claim", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to submit warranty claim.");
+  }
+  return res.json();
+}
+
+export async function createAdminCustomerDocument(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/customer-documents", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save document.");
+  }
+  return res.json();
+}
+
+export async function upsertAdminCustomerWarranty(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/customer-warranties", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save warranty.");
+  }
+  return res.json();
+}
+
+export async function listAdminWarrantyClaims(staffUserId: string, staffUsername: string) {
+  const res = await apiFetch(
+    `/api/admin/warranty-claims?userId=${encodeURIComponent(staffUserId)}&username=${encodeURIComponent(staffUsername)}`,
+    { headers: portalAuthHeaders(staffUserId, staffUsername) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load warranty claims.");
+  }
+  return res.json();
+}
+
+export async function patchAdminWarrantyClaim(
+  staffUserId: string,
+  staffUsername: string,
+  claimId: string,
+  status: string
+) {
+  const res = await apiFetch(`/api/admin/warranty-claims/${claimId}`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, status }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update claim.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",

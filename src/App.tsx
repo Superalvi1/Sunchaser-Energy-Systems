@@ -608,6 +608,7 @@ export default function App() {
 
             {activeTab === "Sales Advisor" && (
               <SalesTeamApp
+                staffUser={currentUser}
                 leads={appState.leads}
                 inventory={appState.inventory}
                 products={appState.products || []}
@@ -674,6 +675,7 @@ export default function App() {
 
             {activeTab === "Admin Dashboard" && (
               <AdminApp
+                staffUser={currentUser}
                 leads={appState.leads}
                 tickets={appState.tickets}
                 inventory={appState.inventory}

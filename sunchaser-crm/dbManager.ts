@@ -3,6 +3,15 @@ import fs from "fs";
 import path from "path";
 import WebSocket from "ws";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
+import {
+  mapDocumentRow,
+  mapWarrantyClaimRow,
+  mapWarrantyRow,
+  buildDocumentWalletSlots,
+  buildWarrantyCenterCards,
+  type DocumentWalletType,
+  type WarrantyComponentType,
+} from "./src/lib/clientPortalPhase2.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -104,6 +113,9 @@ export interface Database {
   socialLinks?: any[];
   structureDescriptions?: any[];
   quotePdfSettings?: any[];
+  customerDocuments?: any[];
+  customerWarranties?: any[];
+  warrantyClaims?: any[];
 }
 
 export const initialSeed: Database = {
@@ -111,8 +123,11 @@ export const initialSeed: Database = {
     { id: "u-allauddin", username: "allauddin", password: "123", name: "Muhammad Allauddin", email: "allauddin@sunchaser-energy.com", role: "Super Admin" },
     { id: "u-raza", username: "raza", password: "123", name: "Raza", email: "raza@sunchaser-energy.com", role: "Technical CEO" },
     { id: "u-sales", username: "sales", password: "123", name: "Sales Advisor", email: "sales@sunchaser-energy.com", role: "Sales Advisor" },
-    { id: "u-portal-client", username: "portalclient", password: "123", name: "Portal Client", email: "portalclient@test.local", role: "Customer" },
+    { id: "u-portal-client", username: "portalclient", password: "123", name: "Portal Client", email: "portalclient@test.local", role: "Customer", customerId: "cust-demo-portal" },
   ],
+  customerDocuments: [],
+  customerWarranties: [],
+  warrantyClaims: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -2163,4 +2178,489 @@ export async function fetchCustomerPortalData(
     },
     ...payload,
   };
+}
+
+export class StaffPortalAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StaffPortalAuthError";
+  }
+}
+
+const STAFF_PORTAL_ROLES = new Set([
+  "Super Admin",
+  "Technical CEO",
+  "Sales Manager",
+  "Sales Advisor",
+  "Sales Executive",
+  "Admin",
+  "Inventory Manager",
+  "Support Agent",
+]);
+
+export async function verifyCustomerPortalUser(
+  userId: string,
+  username: string,
+  localDb?: Database
+): Promise<{ user: any; customerId: string | null; role: string }> {
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId || !normalizedUsername) {
+    throw new CustomerPortalAuthError("User credentials required.");
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: userRow, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", normalizedUserId)
+      .single();
+    if (error || !userRow) throw new CustomerPortalAuthError("Invalid portal user.");
+    if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
+      throw new CustomerPortalAuthError("Invalid portal user.");
+    }
+    const role = resolveAppUserRole(userRow.username, userRow.role);
+    if (role !== "Customer") throw new CustomerPortalAuthError("Not authorized for customer portal.");
+    const customerId = await resolveCustomerIdForPortalUser(supabase, userRow);
+    return { user: userRow, customerId, role };
+  }
+
+  if (!localDb) throw new CustomerPortalAuthError("Database unavailable.");
+  const userRow = (localDb.users || []).find(
+    (u: any) =>
+      u.id === normalizedUserId &&
+      String(u.username || "").trim().toLowerCase() === normalizedUsername
+  );
+  if (!userRow) throw new CustomerPortalAuthError("Invalid portal user.");
+  const role = resolveAppUserRole(userRow.username, userRow.role);
+  if (role !== "Customer") throw new CustomerPortalAuthError("Not authorized for customer portal.");
+  return {
+    user: userRow,
+    customerId: userRow.customerId || userRow.customer_id || null,
+    role,
+  };
+}
+
+export async function verifyStaffPortalUser(
+  userId: string,
+  username: string,
+  localDb?: Database
+): Promise<{ user: any; role: string }> {
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId || !normalizedUsername) {
+    throw new StaffPortalAuthError("Staff credentials required.");
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: userRow, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", normalizedUserId)
+      .single();
+    if (error || !userRow) throw new StaffPortalAuthError("Invalid staff user.");
+    if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
+      throw new StaffPortalAuthError("Invalid staff user.");
+    }
+    const role = resolveAppUserRole(userRow.username, userRow.role);
+    if (!STAFF_PORTAL_ROLES.has(role)) {
+      throw new StaffPortalAuthError("Not authorized for staff portal tools.");
+    }
+    return { user: userRow, role };
+  }
+
+  if (!localDb) throw new StaffPortalAuthError("Database unavailable.");
+  const userRow = (localDb.users || []).find(
+    (u: any) =>
+      u.id === normalizedUserId &&
+      String(u.username || "").trim().toLowerCase() === normalizedUsername
+  );
+  if (!userRow) throw new StaffPortalAuthError("Invalid staff user.");
+  const role = resolveAppUserRole(userRow.username, userRow.role);
+  if (!STAFF_PORTAL_ROLES.has(role)) {
+    throw new StaffPortalAuthError("Not authorized for staff portal tools.");
+  }
+  return { user: userRow, role };
+}
+
+function assertCustomerScope(customerId: string | null, requestedCustomerId?: string) {
+  if (!customerId) throw new CustomerPortalAuthError("Customer account is not linked to a project yet.");
+  if (requestedCustomerId && requestedCustomerId !== customerId) {
+    throw new CustomerPortalAuthError("You cannot access another customer's data.");
+  }
+}
+
+export async function fetchCustomerPortalDocuments(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_documents")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("uploaded_at", { ascending: false });
+    if (error) throw error;
+    const documents = (data || []).map(mapDocumentRow);
+    return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
+  }
+
+  const documents = (localDb!.customerDocuments || [])
+    .filter((d: any) => d.customerId === customerId || d.customer_id === customerId)
+    .map((d: any) =>
+      mapDocumentRow({
+        id: d.id,
+        customer_id: d.customerId || d.customer_id,
+        project_id: d.projectId || d.project_id,
+        document_type: d.documentType || d.document_type,
+        title: d.title,
+        file_url: d.fileUrl || d.file_url,
+        uploaded_by: d.uploadedBy || d.uploaded_by,
+        uploaded_at: d.uploadedAt || d.uploaded_at,
+      })
+    );
+  return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
+}
+
+export async function fetchCustomerPortalWarranties(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_warranties")
+      .select("*")
+      .eq("customer_id", customerId);
+    if (error) throw error;
+    const warranties = (data || []).map(mapWarrantyRow);
+    return { customerId, warranties, cards: buildWarrantyCenterCards(warranties) };
+  }
+
+  const warranties = (localDb!.customerWarranties || [])
+    .filter((w: any) => w.customerId === customerId || w.customer_id === customerId)
+    .map((w: any) =>
+      mapWarrantyRow({
+        id: w.id,
+        customer_id: w.customerId || w.customer_id,
+        project_id: w.projectId || w.project_id,
+        component_type: w.componentType || w.component_type,
+        brand: w.brand,
+        model: w.model,
+        serial_number: w.serialNumber || w.serial_number,
+        start_date: w.startDate || w.start_date,
+        end_date: w.endDate || w.end_date,
+      })
+    );
+  return { customerId, warranties, cards: buildWarrantyCenterCards(warranties) };
+}
+
+export async function createCustomerWarrantyClaim(
+  userId: string,
+  username: string,
+  body: { component: string; issueDescription: string; photoUrl?: string },
+  localDb?: Database
+) {
+  const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const component = String(body.component || "").trim();
+  const issueDescription = String(body.issueDescription || "").trim();
+  const photoUrl = body.photoUrl ? String(body.photoUrl).trim() : null;
+  if (!component || !issueDescription) {
+    throw new CustomerPortalAuthError("Component and issue description are required.");
+  }
+
+  const claimId = `wc-${Date.now()}`;
+  const ticketId = `ticket-wc-${Date.now()}`;
+  const now = new Date().toISOString();
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    await supabase.from("support_tickets").insert({
+      id: ticketId,
+      customer_name: user.name,
+      email: user.email,
+      subject: `Warranty: ${component}`,
+      description: issueDescription,
+      status: "New",
+      priority: "Medium",
+      messages: JSON.stringify([
+        { sender: "Customer", text: issueDescription, time: now },
+      ]),
+    });
+    const { data, error } = await supabase
+      .from("warranty_claims")
+      .insert({
+        id: claimId,
+        customer_id: customerId,
+        ticket_id: ticketId,
+        component,
+        issue_description: issueDescription,
+        photo_url: photoUrl,
+        status: "New",
+      })
+      .select("*")
+      .single();
+    if (error) throw error;
+    return mapWarrantyClaimRow(data);
+  }
+
+  const claim = {
+    id: claimId,
+    customerId,
+    ticketId,
+    component,
+    issueDescription,
+    photoUrl,
+    status: "New",
+    createdAt: now,
+    updatedAt: now,
+  };
+  localDb!.warrantyClaims = localDb!.warrantyClaims || [];
+  localDb!.warrantyClaims.unshift(claim);
+  localDb!.tickets = localDb!.tickets || [];
+  localDb!.tickets.unshift({
+    id: ticketId,
+    customerName: user.name,
+    email: user.email,
+    subject: `Warranty: ${component}`,
+    description: issueDescription,
+    status: "New",
+    priority: "Medium",
+    createdAt: now,
+    messages: [{ sender: "Customer", text: issueDescription, time: now }],
+  });
+  return mapWarrantyClaimRow({
+    id: claim.id,
+    customer_id: claim.customerId,
+    ticket_id: claim.ticketId,
+    component: claim.component,
+    issue_description: claim.issueDescription,
+    photo_url: claim.photoUrl,
+    status: claim.status,
+    created_at: claim.createdAt,
+    updated_at: claim.updatedAt,
+  });
+}
+
+export async function createAdminCustomerDocument(
+  staffUserId: string,
+  staffUsername: string,
+  body: {
+    customerId: string;
+    projectId?: string;
+    documentType: DocumentWalletType;
+    title: string;
+    fileUrl: string;
+    uploadedBy: string;
+  },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || "").trim();
+  if (!customerId) throw new StaffPortalAuthError("customerId is required.");
+
+  const doc = {
+    id: `doc-${Date.now()}`,
+    customer_id: customerId,
+    project_id: body.projectId || null,
+    document_type: body.documentType,
+    title: String(body.title || "").trim() || body.documentType,
+    file_url: String(body.fileUrl || "").trim(),
+    uploaded_by: String(body.uploadedBy || staffUsername).trim(),
+    uploaded_at: new Date().toISOString(),
+  };
+  if (!doc.file_url) throw new StaffPortalAuthError("fileUrl is required.");
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("customer_documents").insert(doc).select("*").single();
+    if (error) throw error;
+    return mapDocumentRow(data);
+  }
+
+  localDb!.customerDocuments = localDb!.customerDocuments || [];
+  localDb!.customerDocuments.unshift({
+    id: doc.id,
+    customerId: doc.customer_id,
+    projectId: doc.project_id,
+    documentType: doc.document_type,
+    title: doc.title,
+    fileUrl: doc.file_url,
+    uploadedBy: doc.uploaded_by,
+    uploadedAt: doc.uploaded_at,
+  });
+  return mapDocumentRow(doc);
+}
+
+export async function upsertAdminCustomerWarranty(
+  staffUserId: string,
+  staffUsername: string,
+  body: {
+    customerId: string;
+    projectId?: string;
+    componentType: WarrantyComponentType;
+    brand?: string;
+    model?: string;
+    serialNumber?: string;
+    startDate?: string;
+    endDate?: string;
+  },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const customerId = String(body.customerId || "").trim();
+  if (!customerId) throw new StaffPortalAuthError("customerId is required.");
+
+  const row = {
+    id: `cw-${body.componentType}-${customerId}`,
+    customer_id: customerId,
+    project_id: body.projectId || null,
+    component_type: body.componentType,
+    brand: body.brand || null,
+    model: body.model || null,
+    serial_number: body.serialNumber || null,
+    start_date: body.startDate || null,
+    end_date: body.endDate || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_warranties")
+      .upsert(row, { onConflict: "customer_id,component_type" })
+      .select("*")
+      .single();
+    if (error) {
+      const { data: data2, error: error2 } = await supabase
+        .from("customer_warranties")
+        .upsert({ ...row, id: `cw-${Date.now()}` })
+        .select("*")
+        .single();
+      if (error2) throw error2;
+      return mapWarrantyRow(data2);
+    }
+    return mapWarrantyRow(data);
+  }
+
+  localDb!.customerWarranties = localDb!.customerWarranties || [];
+  const idx = localDb!.customerWarranties.findIndex(
+    (w: any) =>
+      (w.customerId || w.customer_id) === customerId &&
+      (w.componentType || w.component_type) === body.componentType
+  );
+  const mapped = {
+    id: row.id,
+    customerId,
+    projectId: row.project_id,
+    componentType: row.component_type,
+    brand: row.brand,
+    model: row.model,
+    serialNumber: row.serial_number,
+    startDate: row.start_date,
+    endDate: row.end_date,
+  };
+  if (idx >= 0) localDb!.customerWarranties[idx] = mapped;
+  else localDb!.customerWarranties.push(mapped);
+  return mapWarrantyRow({
+    id: mapped.id,
+    customer_id: mapped.customerId,
+    project_id: mapped.projectId,
+    component_type: mapped.componentType,
+    brand: mapped.brand,
+    model: mapped.model,
+    serial_number: mapped.serialNumber,
+    start_date: mapped.startDate,
+    end_date: mapped.endDate,
+  });
+}
+
+export async function listAdminWarrantyClaims(
+  staffUserId: string,
+  staffUsername: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("warranty_claims")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map(mapWarrantyClaimRow);
+  }
+
+  return (localDb!.warrantyClaims || []).map((c: any) =>
+    mapWarrantyClaimRow({
+      id: c.id,
+      customer_id: c.customerId || c.customer_id,
+      ticket_id: c.ticketId || c.ticket_id,
+      component: c.component,
+      issue_description: c.issueDescription || c.issue_description,
+      photo_url: c.photoUrl || c.photo_url,
+      status: c.status,
+      created_at: c.createdAt || c.created_at,
+      updated_at: c.updatedAt || c.updated_at,
+    })
+  );
+}
+
+export async function patchAdminWarrantyClaim(
+  staffUserId: string,
+  staffUsername: string,
+  claimId: string,
+  status: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const allowed = ["New", "In Review", "Technician Assigned", "Resolved", "Rejected"];
+  if (!allowed.includes(status)) throw new StaffPortalAuthError("Invalid claim status.");
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("warranty_claims")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", claimId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    if (data.ticket_id) {
+      const ticketStatus =
+        status === "Resolved" ? "Resolved" : status === "Rejected" ? "Rejected" : "In Progress";
+      await supabase.from("support_tickets").update({ status: ticketStatus }).eq("id", data.ticket_id);
+    }
+    return mapWarrantyClaimRow(data);
+  }
+
+  const claim = (localDb!.warrantyClaims || []).find((c: any) => c.id === claimId);
+  if (!claim) throw new StaffPortalAuthError("Warranty claim not found.");
+  claim.status = status;
+  claim.updatedAt = new Date().toISOString();
+  return mapWarrantyClaimRow({
+    id: claim.id,
+    customer_id: claim.customerId || claim.customer_id,
+    ticket_id: claim.ticketId || claim.ticket_id,
+    component: claim.component,
+    issue_description: claim.issueDescription || claim.issue_description,
+    photo_url: claim.photoUrl || claim.photo_url,
+    status: claim.status,
+    created_at: claim.createdAt || claim.created_at,
+    updated_at: claim.updatedAt || claim.updated_at,
+  });
 }

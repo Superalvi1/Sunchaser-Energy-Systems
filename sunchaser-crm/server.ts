@@ -16,7 +16,15 @@ import {
   AUTO_SIZER_QUOTE_CREATION_ENABLED,
   resolveAppUserRole,
   fetchCustomerPortalData,
-  CustomerPortalAuthError
+  CustomerPortalAuthError,
+  StaffPortalAuthError,
+  fetchCustomerPortalDocuments,
+  fetchCustomerPortalWarranties,
+  createCustomerWarrantyClaim,
+  createAdminCustomerDocument,
+  upsertAdminCustomerWarranty,
+  listAdminWarrantyClaims,
+  patchAdminWarrantyClaim
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -456,6 +464,109 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
       return res.status(403).json({ error: err.message });
     }
     return res.status(500).json({ error: err.message || "Failed to load customer portal." });
+  }
+});
+
+function readPortalAuth(req: any) {
+  return {
+    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || "").trim(),
+  };
+}
+
+app.get("/api/customer-portal/documents/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalDocuments(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to load documents." });
+  }
+});
+
+app.get("/api/customer-portal/warranties/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalWarranties(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to load warranties." });
+  }
+});
+
+app.post("/api/customer-portal/warranty-claim", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const claim = await createCustomerWarrantyClaim(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(claim);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to submit warranty claim." });
+  }
+});
+
+app.post("/api/admin/customer-documents", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  try {
+    loadDb();
+    const doc = await createAdminCustomerDocument(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(doc);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to save document." });
+  }
+});
+
+app.post("/api/admin/customer-warranties", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  try {
+    loadDb();
+    const row = await upsertAdminCustomerWarranty(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to save warranty." });
+  }
+});
+
+app.get("/api/admin/warranty-claims", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  try {
+    loadDb();
+    const claims = await listAdminWarrantyClaims(userId, username, db);
+    return res.json({ claims });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to load warranty claims." });
+  }
+});
+
+app.patch("/api/admin/warranty-claims/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  const { status } = req.body || {};
+  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  try {
+    loadDb();
+    const claim = await patchAdminWarrantyClaim(userId, username, req.params.id, status, db);
+    saveDb();
+    return res.json(claim);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Failed to update warranty claim." });
   }
 });
 
