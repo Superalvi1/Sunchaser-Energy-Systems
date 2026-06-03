@@ -7,12 +7,14 @@ import {
   Home,
   FolderOpen,
   Shield,
+  Headphones,
 } from "lucide-react";
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import ClientPortalHome from "./ClientPortalHome";
 import ClientPortalDocuments from "./ClientPortalDocuments";
 import ClientPortalWarranties from "./ClientPortalWarranties";
+import ClientPortalSupport from "./ClientPortalSupport";
 
 interface ClientPortalAppProps {
   user: User;
@@ -23,7 +25,7 @@ interface ClientPortalAppProps {
   onLogout: () => void;
 }
 
-type PortalTab = "home" | "documents" | "warranty";
+type PortalTab = "home" | "documents" | "warranty" | "support";
 
 export default function ClientPortalApp({
   user,
@@ -40,6 +42,7 @@ export default function ClientPortalApp({
     { id: "home", label: "Home", icon: Home },
     { id: "documents", label: "Documents", icon: FolderOpen },
     { id: "warranty", label: "Warranty", icon: Shield },
+    { id: "support", label: "Support", icon: Headphones },
   ];
 
   return (
@@ -125,6 +128,7 @@ export default function ClientPortalApp({
 
         {activeTab === "documents" && <ClientPortalDocuments user={user} />}
         {activeTab === "warranty" && <ClientPortalWarranties user={user} />}
+        {activeTab === "support" && <ClientPortalSupport user={user} />}
       </main>
     </div>
   );

@@ -165,6 +165,91 @@ export async function patchAdminWarrantyClaim(
   return res.json();
 }
 
+export async function fetchCustomerSupportTickets(userId: string, username: string) {
+  const res = await apiFetch(
+    `/api/customer-portal/support-tickets/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load support tickets.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerSupportTicketById(
+  userId: string,
+  username: string,
+  ticketId: string
+) {
+  const res = await apiFetch(
+    `/api/customer-portal/support-tickets/${encodeURIComponent(ticketId)}?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load ticket.");
+  }
+  return res.json();
+}
+
+export async function createCustomerSupportTicket(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/customer-portal/support-tickets", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create ticket.");
+  }
+  return res.json();
+}
+
+export async function listAdminSupportTickets(
+  staffUserId: string,
+  staffUsername: string,
+  filters?: { status?: string; category?: string; priority?: string }
+) {
+  const q = new URLSearchParams({
+    userId: staffUserId,
+    username: staffUsername,
+    ...(filters?.status ? { status: filters.status } : {}),
+    ...(filters?.category ? { category: filters.category } : {}),
+    ...(filters?.priority ? { priority: filters.priority } : {}),
+  });
+  const res = await apiFetch(`/api/admin/support-tickets?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load support tickets.");
+  }
+  return res.json();
+}
+
+export async function updateAdminSupportTicket(
+  staffUserId: string,
+  staffUsername: string,
+  ticketId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/admin/support-tickets/${encodeURIComponent(ticketId)}`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update ticket.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",

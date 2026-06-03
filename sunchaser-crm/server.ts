@@ -24,7 +24,12 @@ import {
   createAdminCustomerDocument,
   upsertAdminCustomerWarranty,
   listAdminWarrantyClaims,
-  patchAdminWarrantyClaim
+  patchAdminWarrantyClaim,
+  fetchCustomerSupportTickets,
+  fetchCustomerSupportTicketById,
+  createCustomerSupportTicket,
+  listAdminSupportTickets,
+  updateAdminSupportTicket
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -443,6 +448,194 @@ async function handleCustomerPortalMe(req: any, res: any) {
 app.get("/api/customer-portal/me", handleCustomerPortalMe);
 app.post("/api/customer-portal/me", handleCustomerPortalMe);
 
+function readPortalAuth(req: any) {
+  return {
+    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || "").trim(),
+  };
+}
+
+function formatPortalApiError(err: any, context: { endpoint: string; query: string }) {
+  console.error(`[Customer Portal Phase2] ${context.endpoint}`, {
+    message: err?.message,
+    code: err?.code,
+    details: err?.details,
+    hint: err?.hint,
+    stack: err?.stack,
+    query: context.query,
+  });
+  return {
+    error: err?.message || "Request failed.",
+    code: err?.code,
+    details: err?.details,
+    hint: err?.hint,
+    endpoint: context.endpoint,
+    query: context.query,
+    supabaseUrl: process.env.SUPABASE_URL || null,
+  };
+}
+
+app.get("/api/customer-portal/documents/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const query =
+    'supabase.from("customer_documents").select("*").eq("customer_id", <resolvedCustomerId>).order("uploaded_at", { ascending: false })';
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalDocuments(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/documents/me", query }));
+  }
+});
+
+app.get("/api/customer-portal/warranties/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const query =
+    'supabase.from("customer_warranties").select("*").eq("customer_id", <resolvedCustomerId>)';
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalWarranties(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/warranties/me", query }));
+  }
+});
+
+app.post("/api/customer-portal/warranty-claim", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const query =
+    'supabase.from("support_tickets").insert(...); supabase.from("warranty_claims").insert(...)';
+  try {
+    loadDb();
+    const claim = await createCustomerWarrantyClaim(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(claim);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "POST /api/customer-portal/warranty-claim", query }));
+  }
+});
+
+app.get("/api/customer-portal/support-tickets/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerSupportTickets(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/support-tickets/me", query: "support_tickets by customer_id" }));
+  }
+});
+
+app.post("/api/customer-portal/support-tickets", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const ticket = await createCustomerSupportTicket(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(ticket);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "POST /api/customer-portal/support-tickets", query: "insert support_tickets" }));
+  }
+});
+
+app.get("/api/customer-portal/support-tickets/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerSupportTicketById(userId, username, req.params.id, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/support-tickets/:id", query: "support_tickets single" }));
+  }
+});
+
+app.get("/api/admin/support-tickets", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const tickets = await listAdminSupportTickets(
+      userId,
+      username,
+      {
+        status: req.query.status as string,
+        category: req.query.category as string,
+        priority: req.query.priority as string,
+      },
+      db
+    );
+    return res.json({ tickets });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/support-tickets/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const ticket = await updateAdminSupportTicket(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(ticket);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const ticket = await updateAdminSupportTicket(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(ticket);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/diagnostics/phase2-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  let supabaseHost = null;
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHost = new URL(process.env.SUPABASE_URL).host;
+    } catch {
+      supabaseHost = process.env.SUPABASE_URL;
+    }
+  }
+  const tables = ["customer_documents", "customer_warranties", "warranty_claims"];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, supabaseHost, probes });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, code: error.code, message: error.message, details: error.details, hint: error.hint }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  return res.json({ supabaseActive: true, supabaseHost, probes });
+});
+
 app.get("/api/customer-portal/:customerId", async (req, res) => {
   const userId = String(req.headers["x-sunchaser-user-id"] || req.query?.userId || "").trim();
   const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
@@ -464,53 +657,6 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
       return res.status(403).json({ error: err.message });
     }
     return res.status(500).json({ error: err.message || "Failed to load customer portal." });
-  }
-});
-
-function readPortalAuth(req: any) {
-  return {
-    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || "").trim(),
-  };
-}
-
-app.get("/api/customer-portal/documents/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
-  try {
-    loadDb();
-    const data = await fetchCustomerPortalDocuments(userId, username, db);
-    return res.json(data);
-  } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
-    return res.status(500).json({ error: err.message || "Failed to load documents." });
-  }
-});
-
-app.get("/api/customer-portal/warranties/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
-  try {
-    loadDb();
-    const data = await fetchCustomerPortalWarranties(userId, username, db);
-    return res.json(data);
-  } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
-    return res.status(500).json({ error: err.message || "Failed to load warranties." });
-  }
-});
-
-app.post("/api/customer-portal/warranty-claim", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
-  try {
-    loadDb();
-    const claim = await createCustomerWarrantyClaim(userId, username, req.body || {}, db);
-    saveDb();
-    return res.status(201).json(claim);
-  } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
-    return res.status(500).json({ error: err.message || "Failed to submit warranty claim." });
   }
 });
 

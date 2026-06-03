@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { 
   TrendingUp, BarChart4, ClipboardList, ShieldAlert, Package, 
-  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen
+  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen, Headphones
 } from "lucide-react";
 import { Lead, Ticket, InventoryItem, DashboardStats, Product, User } from "../types";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
+import SupportDeskStaff from "./SupportDeskStaff";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -68,7 +69,7 @@ export default function AdminApp({
   staffUser
 }: AdminAppProps) {
   const [activeSegment, setActiveSegment] = useState<
-    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal'
+    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk'
   >('overview');
 
   // Procurement local form states
@@ -263,6 +264,16 @@ export default function AdminApp({
           }`}
         >
           <ClipboardList className="w-4 h-4 inline mr-1" /> Quotation Templates
+        </button>
+        <button
+          onClick={() => setActiveSegment('support-desk')}
+          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
+            activeSegment === 'support-desk'
+              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
+              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
+          }`}
+        >
+          <Headphones className="w-4 h-4 inline mr-1" /> Support Desk
         </button>
         <button
           onClick={() => setActiveSegment('client-portal')}
@@ -1608,6 +1619,7 @@ export default function AdminApp({
 
           </div>
         )}
+        {activeSegment === 'support-desk' && <SupportDeskStaff staffUser={staffUser} />}
         {activeSegment === 'client-portal' && <ClientPortalStaffTools staffUser={staffUser} />}
         {activeSegment === 'control-panel' && (
           <ManualAdminControl

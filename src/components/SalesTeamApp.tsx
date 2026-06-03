@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
+import SupportDeskStaff from "./SupportDeskStaff";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
 import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
 
@@ -4709,7 +4710,8 @@ export default function SalesTeamApp({
       </div>
 
       {staffUser && (
-        <div className="mt-12 pt-8 border-t border-slate-800">
+        <div className="mt-12 pt-8 border-t border-slate-800 space-y-12">
+          <SupportDeskStaff staffUser={staffUser} />
           <ClientPortalStaffTools staffUser={staffUser} />
         </div>
       )}

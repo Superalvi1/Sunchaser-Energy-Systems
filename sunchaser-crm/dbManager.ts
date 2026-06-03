@@ -12,6 +12,14 @@ import {
   type DocumentWalletType,
   type WarrantyComponentType,
 } from "./src/lib/clientPortalPhase2.ts";
+import {
+  mapSupportTicketRow,
+  mapSupportTicketUpdateRow,
+  customerTimeline,
+  SUPPORT_CATEGORIES,
+  SUPPORT_PRIORITIES,
+  SUPPORT_STATUSES,
+} from "./src/lib/clientPortalSupport.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -116,6 +124,7 @@ export interface Database {
   customerDocuments?: any[];
   customerWarranties?: any[];
   warrantyClaims?: any[];
+  supportTicketUpdates?: any[];
 }
 
 export const initialSeed: Database = {
@@ -128,6 +137,7 @@ export const initialSeed: Database = {
   customerDocuments: [],
   customerWarranties: [],
   warrantyClaims: [],
+  supportTicketUpdates: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -2663,4 +2673,515 @@ export async function patchAdminWarrantyClaim(
     created_at: claim.createdAt || claim.created_at,
     updated_at: claim.updatedAt || claim.updated_at,
   });
+}
+
+async function fetchTicketUpdates(
+  supabase: SupabaseClient,
+  ticketIds: string[]
+): Promise<Record<string, any[]>> {
+  if (ticketIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("support_ticket_updates")
+    .select("*")
+    .in("ticket_id", ticketIds)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  const byTicket: Record<string, any[]> = {};
+  (data || []).forEach((row: any) => {
+    if (!byTicket[row.ticket_id]) byTicket[row.ticket_id] = [];
+    byTicket[row.ticket_id].push(row);
+  });
+  return byTicket;
+}
+
+async function insertTicketUpdate(
+  supabase: SupabaseClient | null,
+  localDb: Database | undefined,
+  input: {
+    ticketId: string;
+    status?: string;
+    note?: string;
+    visibility: "customer" | "internal" | "system";
+    createdBy: string;
+  }
+) {
+  const row = {
+    id: `stu-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    ticket_id: input.ticketId,
+    status: input.status || null,
+    note: input.note || null,
+    visibility: input.visibility,
+    created_by: input.createdBy,
+    created_at: new Date().toISOString(),
+  };
+
+  if (supabase) {
+    const { error } = await supabase.from("support_ticket_updates").insert(row);
+    if (error) throw error;
+    return mapSupportTicketUpdateRow(row);
+  }
+
+  localDb!.supportTicketUpdates = localDb!.supportTicketUpdates || [];
+  localDb!.supportTicketUpdates.push({
+    id: row.id,
+    ticketId: row.ticket_id,
+    status: row.status,
+    note: row.note,
+    visibility: row.visibility,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  });
+  return mapSupportTicketUpdateRow(row);
+}
+
+function mapTicketWithTimeline(row: any, updates: any[]): any {
+  const timeline = (updates || []).map(mapSupportTicketUpdateRow);
+  return mapSupportTicketRow(row, timeline);
+}
+
+function ticketBelongsToCustomer(row: any, customerId: string | null, email: string) {
+  if (customerId && row.customer_id === customerId) return true;
+  return String(row.email || "").toLowerCase() === String(email || "").toLowerCase();
+}
+
+export async function fetchCustomerSupportTickets(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    let query = supabase.from("support_tickets").select("*").order("created_at", { ascending: false });
+    if (customerId) {
+      query = query.eq("customer_id", customerId);
+    } else {
+      query = query.eq("email", user.email);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    const ids = (data || []).map((t: any) => t.id);
+    const updatesByTicket = await fetchTicketUpdates(supabase, ids);
+    const tickets = (data || []).map((row: any) =>
+      mapTicketWithTimeline(row, updatesByTicket[row.id] || [])
+    );
+    return { customerId, tickets };
+  }
+
+  const tickets = (localDb!.tickets || [])
+    .filter((t: any) =>
+      customerId
+        ? t.customerId === customerId || t.customer_id === customerId
+        : t.email === user.email
+    )
+    .map((t: any) => {
+      const updates = (localDb!.supportTicketUpdates || []).filter(
+        (u: any) => (u.ticketId || u.ticket_id) === t.id
+      );
+      return mapTicketWithTimeline(
+        {
+          id: t.id,
+          customer_id: t.customerId || t.customer_id,
+          customer_name: t.customerName,
+          email: t.email,
+          category: t.category,
+          priority: t.priority,
+          subject: t.subject,
+          description: t.description,
+          fault_code: t.faultCode,
+          photo_url: t.photoUrl,
+          preferred_visit_date: t.preferredVisitDate,
+          assigned_technician: t.assignedTechnician,
+          scheduled_visit_date: t.scheduledVisitDate,
+          status: t.status,
+          customer_visible_notes: t.customerVisibleNotes,
+          internal_notes: t.internalNotes,
+          resolution_summary: t.resolutionSummary,
+          created_at: t.createdAt,
+          updated_at: t.updatedAt || t.createdAt,
+        },
+        updates.map((u: any) => ({
+          id: u.id,
+          ticket_id: u.ticketId || u.ticket_id,
+          status: u.status,
+          note: u.note,
+          visibility: u.visibility,
+          created_by: u.createdBy || u.created_by,
+          created_at: u.createdAt || u.created_at,
+        }))
+      );
+    });
+  return { customerId, tickets };
+}
+
+export async function fetchCustomerSupportTicketById(
+  userId: string,
+  username: string,
+  ticketId: string,
+  localDb?: Database
+) {
+  const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: row, error } = await supabase.from("support_tickets").select("*").eq("id", ticketId).single();
+    if (error || !row) throw new CustomerPortalAuthError("Ticket not found.");
+    if (!ticketBelongsToCustomer(row, customerId, user.email)) {
+      throw new CustomerPortalAuthError("You cannot access another customer's ticket.");
+    }
+    const updatesByTicket = await fetchTicketUpdates(supabase, [ticketId]);
+    const ticket = mapTicketWithTimeline(row, updatesByTicket[ticketId] || []);
+    return {
+      ticket: {
+        ...ticket,
+        timeline: customerTimeline(ticket.timeline),
+        internalNotes: undefined,
+      },
+    };
+  }
+
+  const row = (localDb!.tickets || []).find((t: any) => t.id === ticketId);
+  if (!row) throw new CustomerPortalAuthError("Ticket not found.");
+  if (
+    !ticketBelongsToCustomer(
+      { customer_id: row.customerId || row.customer_id, email: row.email },
+      customerId,
+      user.email
+    )
+  ) {
+    throw new CustomerPortalAuthError("You cannot access another customer's ticket.");
+  }
+  const updates = (localDb!.supportTicketUpdates || []).filter(
+    (u: any) => (u.ticketId || u.ticket_id) === ticketId
+  );
+  const ticket = mapTicketWithTimeline(
+    {
+      id: row.id,
+      customer_id: row.customerId || row.customer_id,
+      customer_name: row.customerName,
+      email: row.email,
+      category: row.category,
+      priority: row.priority,
+      subject: row.subject,
+      description: row.description,
+      fault_code: row.faultCode,
+      photo_url: row.photoUrl,
+      preferred_visit_date: row.preferredVisitDate,
+      assigned_technician: row.assignedTechnician,
+      scheduled_visit_date: row.scheduledVisitDate,
+      status: row.status,
+      customer_visible_notes: row.customerVisibleNotes,
+      internal_notes: row.internalNotes,
+      resolution_summary: row.resolutionSummary,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt || row.createdAt,
+    },
+    updates.map((u: any) => ({
+      id: u.id,
+      ticket_id: u.ticketId || u.ticket_id,
+      status: u.status,
+      note: u.note,
+      visibility: u.visibility,
+      created_by: u.createdBy || u.created_by,
+      created_at: u.createdAt || u.created_at,
+    }))
+  );
+  return {
+    ticket: {
+      ...ticket,
+      timeline: customerTimeline(ticket.timeline),
+      internalNotes: undefined,
+    },
+  };
+}
+
+export async function createCustomerSupportTicket(
+  userId: string,
+  username: string,
+  body: {
+    category: string;
+    priority: string;
+    subject: string;
+    description: string;
+    faultCode?: string;
+    photoUrl?: string;
+    preferredVisitDate?: string;
+  },
+  localDb?: Database
+) {
+  const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  const category = String(body.category || "").trim();
+  const priority = String(body.priority || "Medium").trim();
+  const subject = String(body.subject || "").trim();
+  const description = String(body.description || "").trim();
+
+  if (!subject || !description) {
+    throw new CustomerPortalAuthError("Subject and description are required.");
+  }
+  if (!SUPPORT_CATEGORIES.includes(category as any)) {
+    throw new CustomerPortalAuthError("Invalid ticket category.");
+  }
+  if (!SUPPORT_PRIORITIES.includes(priority as any)) {
+    throw new CustomerPortalAuthError("Invalid priority.");
+  }
+
+  const ticketId = `ticket-st-${Date.now()}`;
+  const now = new Date().toISOString();
+  const row = {
+    id: ticketId,
+    customer_id: customerId,
+    customer_name: user.name,
+    email: user.email,
+    category,
+    priority,
+    subject,
+    description,
+    fault_code: body.faultCode || null,
+    photo_url: body.photoUrl || null,
+    preferred_visit_date: body.preferredVisitDate || null,
+    status: "New",
+    messages: JSON.stringify([{ sender: "Customer", text: description, time: now }]),
+    assigned_technician: null,
+    scheduled_visit_date: null,
+    customer_visible_notes: null,
+    internal_notes: null,
+    resolution_summary: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("support_tickets").insert(row).select("*").single();
+    if (error) throw error;
+    await insertTicketUpdate(supabase, undefined, {
+      ticketId,
+      status: "New",
+      note: "Support ticket created by customer.",
+      visibility: "system",
+      createdBy: user.name,
+    });
+    return mapTicketWithTimeline(data, [
+      {
+        id: `stu-${Date.now()}`,
+        ticket_id: ticketId,
+        status: "New",
+        note: "Support ticket created by customer.",
+        visibility: "system",
+        created_by: user.name,
+        created_at: now,
+      },
+    ]);
+  }
+
+  localDb!.tickets = localDb!.tickets || [];
+  localDb!.tickets.unshift({
+    id: ticketId,
+    customerId,
+    customerName: user.name,
+    email: user.email,
+    category,
+    priority,
+    subject,
+    description,
+    faultCode: body.faultCode,
+    photoUrl: body.photoUrl,
+    preferredVisitDate: body.preferredVisitDate,
+    status: "New",
+    createdAt: now,
+    updatedAt: now,
+    messages: [{ sender: "Customer", text: description, time: now }],
+  });
+  await insertTicketUpdate(null, localDb, {
+    ticketId,
+    status: "New",
+    note: "Support ticket created by customer.",
+    visibility: "system",
+    createdBy: user.name,
+  });
+  return mapTicketWithTimeline(row, []);
+}
+
+export async function listAdminSupportTickets(
+  staffUserId: string,
+  staffUsername: string,
+  filters: { status?: string; category?: string; priority?: string },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    let query = supabase.from("support_tickets").select("*");
+    if (filters.status) query = query.eq("status", filters.status);
+    if (filters.category) query = query.eq("category", filters.category);
+    if (filters.priority) query = query.eq("priority", filters.priority);
+    let { data, error } = await query.order("updated_at", { ascending: false });
+    if (error) {
+      const fallback = await query.order("created_at", { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
+    if (error) throw error;
+    const ids = (data || []).map((t: any) => t.id);
+    const updatesByTicket = await fetchTicketUpdates(supabase, ids);
+    return (data || []).map((row: any) => mapTicketWithTimeline(row, updatesByTicket[row.id] || []));
+  }
+
+  let list = [...(localDb!.tickets || [])];
+  if (filters.status) list = list.filter((t: any) => t.status === filters.status);
+  if (filters.category) list = list.filter((t: any) => t.category === filters.category);
+  if (filters.priority) list = list.filter((t: any) => t.priority === filters.priority);
+  return list.map((t: any) =>
+    mapTicketWithTimeline(
+      {
+        id: t.id,
+        customer_id: t.customerId,
+        customer_name: t.customerName,
+        email: t.email,
+        category: t.category,
+        priority: t.priority,
+        subject: t.subject,
+        description: t.description,
+        fault_code: t.faultCode,
+        photo_url: t.photoUrl,
+        preferred_visit_date: t.preferredVisitDate,
+        assigned_technician: t.assignedTechnician,
+        scheduled_visit_date: t.scheduledVisitDate,
+        status: t.status,
+        customer_visible_notes: t.customerVisibleNotes,
+        internal_notes: t.internalNotes,
+        resolution_summary: t.resolutionSummary,
+        created_at: t.createdAt,
+        updated_at: t.updatedAt,
+      },
+      []
+    )
+  );
+}
+
+export async function updateAdminSupportTicket(
+  staffUserId: string,
+  staffUsername: string,
+  ticketId: string,
+  body: {
+    status?: string;
+    assignedTechnician?: string;
+    scheduledVisitDate?: string;
+    customerVisibleNote?: string;
+    internalNote?: string;
+    resolutionSummary?: string;
+  },
+  localDb?: Database
+) {
+  const { user } = await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const patch: any = { updated_at: new Date().toISOString() };
+
+  if (body.status) {
+    if (!SUPPORT_STATUSES.includes(body.status as any)) {
+      throw new StaffPortalAuthError("Invalid ticket status.");
+    }
+    patch.status = body.status;
+  }
+  if (body.assignedTechnician !== undefined) patch.assigned_technician = body.assignedTechnician || null;
+  if (body.scheduledVisitDate !== undefined) patch.scheduled_visit_date = body.scheduledVisitDate || null;
+  if (body.resolutionSummary !== undefined) patch.resolution_summary = body.resolutionSummary || null;
+
+  const existingRow = await getTicketRow(ticketId, localDb);
+  if (body.customerVisibleNote) {
+    const existing = existingRow?.customer_visible_notes || existingRow?.customerVisibleNotes || "";
+    patch.customer_visible_notes = existing
+      ? `${existing}\n${body.customerVisibleNote}`
+      : body.customerVisibleNote;
+  }
+  if (body.internalNote) {
+    const existing = existingRow?.internal_notes || existingRow?.internalNotes || "";
+    patch.internal_notes = existing ? `${existing}\n${body.internalNote}` : body.internalNote;
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("support_tickets")
+      .update(patch)
+      .eq("id", ticketId)
+      .select("*")
+      .single();
+    if (error) throw error;
+
+    if (body.status) {
+      await insertTicketUpdate(supabase, undefined, {
+        ticketId,
+        status: body.status,
+        note: `Status updated to ${body.status}.`,
+        visibility: "customer",
+        createdBy: user.name,
+      });
+    }
+    if (body.customerVisibleNote) {
+      await insertTicketUpdate(supabase, undefined, {
+        ticketId,
+        note: body.customerVisibleNote,
+        visibility: "customer",
+        createdBy: user.name,
+      });
+    }
+    if (body.internalNote) {
+      await insertTicketUpdate(supabase, undefined, {
+        ticketId,
+        note: body.internalNote,
+        visibility: "internal",
+        createdBy: user.name,
+      });
+    }
+
+    const updatesByTicket = await fetchTicketUpdates(supabase, [ticketId]);
+    return mapTicketWithTimeline(data, updatesByTicket[ticketId] || []);
+  }
+
+  const ticket = (localDb!.tickets || []).find((t: any) => t.id === ticketId);
+  if (!ticket) throw new StaffPortalAuthError("Ticket not found.");
+  Object.assign(ticket, {
+    status: patch.status ?? ticket.status,
+    assignedTechnician: patch.assigned_technician ?? ticket.assignedTechnician,
+    scheduledVisitDate: patch.scheduled_visit_date ?? ticket.scheduledVisitDate,
+    customerVisibleNotes: patch.customer_visible_notes ?? ticket.customerVisibleNotes,
+    internalNotes: patch.internal_notes ?? ticket.internalNotes,
+    resolutionSummary: patch.resolution_summary ?? ticket.resolutionSummary,
+    updatedAt: patch.updated_at,
+  });
+  return mapTicketWithTimeline(
+    {
+      id: ticket.id,
+      customer_id: ticket.customerId,
+      customer_name: ticket.customerName,
+      email: ticket.email,
+      category: ticket.category,
+      priority: ticket.priority,
+      subject: ticket.subject,
+      description: ticket.description,
+      fault_code: ticket.faultCode,
+      photo_url: ticket.photoUrl,
+      preferred_visit_date: ticket.preferredVisitDate,
+      assigned_technician: ticket.assignedTechnician,
+      scheduled_visit_date: ticket.scheduledVisitDate,
+      status: ticket.status,
+      customer_visible_notes: ticket.customerVisibleNotes,
+      internal_notes: ticket.internalNotes,
+      resolution_summary: ticket.resolutionSummary,
+      created_at: ticket.createdAt,
+      updated_at: ticket.updatedAt,
+    },
+    []
+  );
+}
+
+async function getTicketRow(ticketId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data } = await supabase.from("support_tickets").select("*").eq("id", ticketId).single();
+    return data;
+  }
+  return (localDb?.tickets || []).find((t: any) => t.id === ticketId);
 }
