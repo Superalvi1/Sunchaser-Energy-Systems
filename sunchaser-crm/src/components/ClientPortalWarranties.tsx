@@ -85,7 +85,7 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
       <div className="grid grid-cols-1 gap-3">
         {cards.map((card) => {
           const w = card.warranty;
-          const status = w?.status || "Not available yet";
+          const status = w?.status || "No data available";
           return (
             <div key={card.type} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
               <div className="flex items-start justify-between gap-2">
@@ -125,7 +125,7 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
                   </div>
                 </dl>
               ) : (
-                <p className="text-xs text-slate-500 mt-2 font-mono">Not available yet</p>
+                <p className="text-xs text-slate-500 mt-2 font-mono">No data available</p>
               )}
             </div>
           );

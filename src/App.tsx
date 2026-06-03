@@ -16,8 +16,8 @@ declare const __BUILD_TIME__: string;
 declare const __BUILD_ENV__: string;
 
 // Submodule imports
-import CustomerPortal from "./components/CustomerPortal";
 import ClientPortalApp from "./components/ClientPortalApp";
+import ClientPortalStaffNotice from "./components/ClientPortalStaffNotice";
 import type { ClientPortalPayload } from "./lib/clientPortalTracker";
 import SalesTeamApp from "./components/SalesTeamApp";
 import CRMApp from "./components/CRMApp";
@@ -106,7 +106,7 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       if (currentUser.role === "Customer") {
-        setActiveTab("Customer Portal");
+        setActiveTab("home");
       } else if (currentUser.role === "Survey Engineer" || currentUser.role === "Installation Team") {
         setActiveTab("Installer Deck");
       } else if (currentUser.role === "Sales Executive" || currentUser.role === "Sales Advisor") {
@@ -318,7 +318,6 @@ export default function App() {
           { id: "CRM Database", label: "CRM Database", icon: Users },
           { id: "Sales Advisor", label: "Sales Advisor", icon: FileText },
           { id: "Installer Deck", label: "Installer Deck", icon: Wrench },
-          { id: "Customer Portal", label: "Customer Portal", icon: UserCircle },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
           { id: "Activity Telemetry", label: "Activities & SMS Logs", icon: ClipboardList }
         ];
@@ -588,24 +587,6 @@ export default function App() {
             )}
 
             {/* Component Layout Routing conditional switcher */}
-            {activeTab === "Customer Portal" && (
-              <CustomerPortal
-                leads={appState.leads}
-                tickets={appState.tickets}
-                netMeteringList={appState.netMeteringHistory}
-                onAddLead={handleAddLead}
-                onAcceptQuote={handleAcceptQuote}
-                onCreateTicket={handleCreateTicket}
-                onReplyTicket={handleReplyTicket}
-                categories={appState.categories || []}
-                products={appState.products || []}
-                orders={appState.orders || []}
-                warranties={appState.warranties || []}
-                notifications={appState.notifications || []}
-                onRefreshState={loadDatabaseState}
-              />
-            )}
-
             {activeTab === "Sales Advisor" && (
               <SalesTeamApp
                 staffUser={currentUser}

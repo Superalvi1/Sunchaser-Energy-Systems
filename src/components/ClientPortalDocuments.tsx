@@ -68,7 +68,7 @@ export default function ClientPortalDocuments({ user }: ClientPortalDocumentsPro
                 </a>
               </>
             ) : (
-              <p className="text-xs text-slate-500 mt-1 font-mono">No document uploaded yet.</p>
+              <p className="text-xs text-slate-500 mt-1 font-mono">No data available</p>
             )}
           </div>
         </div>

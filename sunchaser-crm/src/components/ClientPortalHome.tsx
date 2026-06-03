@@ -9,9 +9,11 @@ import {
   Gauge,
   Shield,
   Headphones,
-  Calendar,
+  TrendingUp,
+  ArrowUpCircle,
 } from "lucide-react";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
+import { NO_DATA, displayKw, displayOrNoData } from "../lib/clientPortalDisplay";
 
 function StatusBadge({ status }: { status: "completed" | "active" | "pending" }) {
   if (status === "completed") {
@@ -56,21 +58,59 @@ function DashboardCard({
 }
 
 interface ClientPortalHomeProps {
-  displayName: string;
   data: ClientPortalPayload | null;
+  onRequestUpgrade: () => void;
+  onOpenSupport: () => void;
 }
 
-export default function ClientPortalHome({ displayName, data }: ClientPortalHomeProps) {
+export default function ClientPortalHome({ data, onRequestUpgrade, onOpenSupport }: ClientPortalHomeProps) {
   const dashboard = data?.dashboard;
   const tracker = data?.tracker;
+  const customer = data?.customer;
+  const projectStatus = displayOrNoData(dashboard?.projectStatus);
 
   return (
     <>
-      <section className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-5 shadow-lg">
-        <p className="text-[10px] font-mono uppercase tracking-widest text-amber-500 mb-1">Welcome</p>
-        <h2 className="text-xl font-extrabold text-white mb-1">{displayName}</h2>
-        <p className="text-xs text-slate-400">
-          Track your solar journey from survey through installation and net metering.
+      <section className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-5 shadow-lg space-y-3">
+        <p className="text-[10px] font-mono uppercase tracking-widest text-amber-500">Your account</p>
+        <dl className="grid grid-cols-1 gap-2 text-xs">
+          <div>
+            <dt className="text-slate-500 font-mono text-[10px] uppercase">Customer name</dt>
+            <dd className="font-bold text-white">{displayOrNoData(customer?.name)}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500 font-mono text-[10px] uppercase">Email</dt>
+            <dd className="text-slate-300 break-all">{displayOrNoData(customer?.email)}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500 font-mono text-[10px] uppercase">Customer ID</dt>
+            <dd className="text-slate-300 font-mono">{displayOrNoData(customer?.id)}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500 font-mono text-[10px] uppercase">Project status</dt>
+            <dd className="text-amber-400/90 font-semibold">{projectStatus}</dd>
+          </div>
+        </dl>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onRequestUpgrade}
+            className="bg-amber-500 text-slate-950 font-bold rounded-xl px-3 py-2 text-[11px] flex items-center gap-1.5"
+          >
+            <ArrowUpCircle className="w-3.5 h-3.5" />
+            Request Upgrade
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSupport}
+            className="bg-slate-950 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 text-[11px] flex items-center gap-1.5"
+          >
+            <TrendingUp className="w-3.5 h-3.5" />
+            Solar Savings
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500 font-mono">
+          Solar savings: {displayOrNoData(dashboard?.solarSavingsAnnual)}
         </p>
       </section>
 
@@ -79,28 +119,42 @@ export default function ClientPortalHome({ displayName, data }: ClientPortalHome
           Project overview
         </h3>
         <div className="grid grid-cols-2 gap-3">
+          <DashboardCard icon={Zap} label="System size" value={displayKw(dashboard?.systemSizeKw ?? null)} />
+          <DashboardCard icon={Gauge} label="Project status" value={projectStatus} />
           <DashboardCard
-            icon={Zap}
-            label="System size"
-            value={
-              dashboard?.systemSizeKw != null ? `${dashboard.systemSizeKw} kW` : "Not available yet"
-            }
+            icon={FileText}
+            label="Quotation"
+            value={displayOrNoData(dashboard?.quotationStatus)}
           />
-          <DashboardCard icon={Gauge} label="Project status" value={dashboard?.projectStatus || "Pending"} />
-          <DashboardCard icon={FileText} label="Quotation" value={dashboard?.quotationStatus || "Pending"} />
           <DashboardCard
             icon={Wrench}
             label="Installation"
-            value={dashboard?.installationStatus || "Not available yet"}
+            value={displayOrNoData(dashboard?.installationStatus)}
           />
-          <DashboardCard icon={Shield} label="Net metering" value={dashboard?.netMeteringStatus || "Pending"} />
-          <DashboardCard icon={Shield} label="Warranty" value={dashboard?.warrantySummary || "Pending"} />
+          <DashboardCard
+            icon={Shield}
+            label="Net metering"
+            value={displayOrNoData(dashboard?.netMeteringStatus)}
+          />
+          <DashboardCard
+            icon={Shield}
+            label="Warranty"
+            value={displayOrNoData(dashboard?.warrantySummary)}
+          />
           <DashboardCard
             icon={Headphones}
             label="Open tickets"
-            value={String(dashboard?.openTicketsCount ?? 0)}
+            value={
+              dashboard?.openTicketsCount != null
+                ? String(dashboard.openTicketsCount)
+                : NO_DATA
+            }
           />
-          <DashboardCard icon={Calendar} label="Next service" value={dashboard?.nextServiceDue || "Pending"} />
+          <DashboardCard
+            icon={TrendingUp}
+            label="Solar savings"
+            value={displayOrNoData(dashboard?.solarSavingsAnnual)}
+          />
         </div>
       </section>
 
@@ -111,56 +165,58 @@ export default function ClientPortalHome({ displayName, data }: ClientPortalHome
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">Project timeline</p>
           </div>
           <div className="text-right">
-            <span className="text-2xl font-extrabold text-amber-400">{tracker?.progressPercent ?? 0}%</span>
+            <span className="text-2xl font-extrabold text-amber-400">
+              {data?.lead ? `${tracker?.progressPercent ?? 0}%` : NO_DATA}
+            </span>
             <p className="text-[9px] text-slate-500 uppercase font-mono">Complete</p>
           </div>
         </div>
-        <div className="h-2 bg-slate-950 rounded-full overflow-hidden mb-5 border border-slate-800">
-          <div
-            className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-500"
-            style={{ width: `${tracker?.progressPercent ?? 0}%` }}
-          />
-        </div>
-        <ul className="space-y-3">
-          {(tracker?.stages || []).map((s) => (
-            <li
-              key={s.id}
-              className={`flex items-start gap-3 p-3 rounded-2xl border ${
-                s.status === "active"
-                  ? "border-amber-500/40 bg-amber-950/20"
-                  : s.status === "completed"
-                    ? "border-emerald-900/40 bg-emerald-950/10"
-                    : "border-slate-800 bg-slate-950/50"
-              }`}
-            >
-              <div className="mt-0.5 shrink-0">
-                {s.status === "completed" ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                ) : s.status === "active" ? (
-                  <Clock className="w-5 h-5 text-amber-500" />
-                ) : (
-                  <Circle className="w-5 h-5 text-slate-600" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-200">{s.label}</span>
-                  <StatusBadge status={s.status} />
-                </div>
-                <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                  {s.date ? s.date : "No date recorded yet"}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ul>
+        {!data?.lead ? (
+          <p className="text-center text-xs text-slate-500 font-mono py-6">{NO_DATA}</p>
+        ) : (
+          <>
+            <div className="h-2 bg-slate-950 rounded-full overflow-hidden mb-5 border border-slate-800">
+              <div
+                className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-500"
+                style={{ width: `${tracker?.progressPercent ?? 0}%` }}
+              />
+            </div>
+            <ul className="space-y-3">
+              {(tracker?.stages || []).map((s) => (
+                <li
+                  key={s.id}
+                  className={`flex items-start gap-3 p-3 rounded-2xl border ${
+                    s.status === "active"
+                      ? "border-amber-500/40 bg-amber-950/20"
+                      : s.status === "completed"
+                        ? "border-emerald-900/40 bg-emerald-950/10"
+                        : "border-slate-800 bg-slate-950/50"
+                  }`}
+                >
+                  <div className="mt-0.5 shrink-0">
+                    {s.status === "completed" ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    ) : s.status === "active" ? (
+                      <Clock className="w-5 h-5 text-amber-500" />
+                    ) : (
+                      <Circle className="w-5 h-5 text-slate-600" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-200">{s.label}</span>
+                      <StatusBadge status={s.status} />
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1 font-mono">
+                      {s.date ? s.date : NO_DATA}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
-
-      {!data?.lead && (
-        <p className="text-center text-xs text-slate-500 font-mono px-4">
-          Your project record is not linked yet. Our team will connect your account shortly.
-        </p>
-      )}
     </>
   );
 }

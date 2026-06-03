@@ -2032,7 +2032,16 @@ export async function fetchCustomerPortalData(
         projectsData || []
       );
 
-      const proj = (projectsData || [])[0];
+      let proj = (projectsData || [])[0];
+      if (!proj && customerId) {
+        const { data: projByCustomer } = await supabase
+          .from("projects")
+          .select("*")
+          .eq("customer_id", customerId)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        proj = (projByCustomer || [])[0];
+      }
       if (proj) {
         project = {
           id: proj.id,
@@ -2080,15 +2089,27 @@ export async function fetchCustomerPortalData(
       }
     }
 
-    const { data: ticketsData } = await supabase
-      .from("tickets")
-      .select("id, status, email")
-      .eq("email", userRow.email);
-    const openTicketsCount = (ticketsData || []).filter((t: any) =>
-      ["Open", "In Progress", "New", "Under Review", "Technician Assigned", "Visit Scheduled"].includes(
-        t.status
-      )
+    let supportTicketsQuery = supabase.from("support_tickets").select("id, status, email, customer_id");
+    if (customerId) {
+      supportTicketsQuery = supportTicketsQuery.eq("customer_id", customerId);
+    } else {
+      supportTicketsQuery = supportTicketsQuery.eq("email", userRow.email);
+    }
+    const { data: ticketsData } = await supportTicketsQuery;
+    const openTicketsCount = (ticketsData || []).filter(
+      (t: any) => !["Closed", "Resolved"].includes(t.status)
     ).length;
+
+    let warrantySummary = "No data available";
+    if (customerId) {
+      const { data: warrRows } = await supabase
+        .from("customer_warranties")
+        .select("id, component_type, end_date")
+        .eq("customer_id", customerId);
+      if (warrRows && warrRows.length > 0) {
+        warrantySummary = `${warrRows.length} registered component(s)`;
+      }
+    }
 
     const payload = buildClientPortalPayload({
       customer,
@@ -2098,6 +2119,7 @@ export async function fetchCustomerPortalData(
       payment,
       openTicketsCount,
     });
+    payload.dashboard.warrantySummary = warrantySummary;
 
     return {
       user: {
@@ -2138,16 +2160,29 @@ export async function fetchCustomerPortalData(
     ) || null;
 
   const project =
-    (localDb.projects || []).find((p: any) => p.leadId === lead?.id) || null;
+    (localDb.projects || []).find(
+      (p: any) =>
+        p.leadId === lead?.id ||
+        (customerId && (p.customerId === customerId || p.customer_id === customerId))
+    ) || null;
   const netMetering = lead ? localDb.netMeteringTrackers?.[lead.id] : null;
   const payment = lead ? localDb.paymentTracks?.[lead.id] : null;
   const openTicketsCount = (localDb.tickets || []).filter(
     (t: any) =>
-      t.email === userRow.email &&
-      ["Open", "In Progress", "New", "Under Review", "Technician Assigned", "Visit Scheduled"].includes(
-        t.status
-      )
+      (customerId
+        ? t.customerId === customerId || t.customer_id === customerId
+        : t.email === userRow.email) && !["Closed", "Resolved"].includes(t.status)
   ).length;
+
+  let warrantySummary = "No data available";
+  const warrLocal = (localDb.customerWarranties || []).filter(
+    (w: any) =>
+      w.customerId === customerId ||
+      w.customer_id === customerId
+  );
+  if (warrLocal.length > 0) {
+    warrantySummary = `${warrLocal.length} registered component(s)`;
+  }
 
   const customer =
     customerId && lead
@@ -2176,6 +2211,7 @@ export async function fetchCustomerPortalData(
     payment,
     openTicketsCount,
   });
+  payload.dashboard.warrantySummary = warrantySummary;
 
   return {
     user: {

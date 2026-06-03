@@ -1,4 +1,5 @@
 import { Lead, NetMeteringTracker, PaymentTrack, Project } from "../types";
+import { NO_DATA } from "./clientPortalDisplay";
 
 export type TrackerStageStatus = "completed" | "active" | "pending";
 
@@ -18,6 +19,7 @@ export interface ClientPortalDashboard {
   warrantySummary: string;
   openTicketsCount: number;
   nextServiceDue: string;
+  solarSavingsAnnual: string;
 }
 
 export interface ClientPortalPayload {
@@ -155,25 +157,33 @@ export function buildClientPortalPayload(input: {
     latestQuote?.systemSizekW ??
     null;
 
+  const savingsNum = acceptedQuote?.estimatedAnnualSavings ?? latestQuote?.estimatedAnnualSavings;
+  const solarSavingsAnnual =
+    savingsNum != null && !Number.isNaN(Number(savingsNum))
+      ? `Est. ${Number(savingsNum).toLocaleString()} / year`
+      : NO_DATA;
+
   const dashboard: ClientPortalDashboard = {
     systemSizeKw,
-    projectStatus: project?.stage || lead?.status || "Not available yet",
+    projectStatus: project?.stage || lead?.status || NO_DATA,
     quotationStatus: acceptedQuote
       ? "Approved"
       : latestQuote
         ? latestQuote.status
-        : "Pending",
-    installationStatus: installation?.status || (lead?.status === "Installed" ? "Completed" : "Not available yet"),
+        : NO_DATA,
+    installationStatus:
+      installation?.status || (lead?.status === "Installed" ? "Completed" : NO_DATA),
     netMeteringStatus: netMeteringApproved
       ? "Approved"
       : netMeteringSubmitted
         ? "Submitted"
         : netMetering?.documentsCollected
           ? "Documents collected"
-          : "Pending",
-    warrantySummary: "Warranty details will appear here once your system is commissioned.",
+          : NO_DATA,
+    warrantySummary: NO_DATA,
     openTicketsCount,
-    nextServiceDue: "Next service schedule will be shared after handover.",
+    nextServiceDue: NO_DATA,
+    solarSavingsAnnual,
   };
 
   return {

@@ -19,7 +19,7 @@ export const WARRANTY_COMPONENT_TYPES = [
 
 export type WarrantyComponentType = (typeof WARRANTY_COMPONENT_TYPES)[number]["type"];
 
-export type WarrantyLifecycleStatus = "Active" | "Expiring Soon" | "Expired" | "Not available yet";
+export type WarrantyLifecycleStatus = "Active" | "Expiring Soon" | "Expired" | "No data available";
 
 export interface CustomerDocumentRecord {
   id: string;
@@ -63,11 +63,11 @@ export function computeWarrantyLifecycle(endDate?: string | null): {
   remainingLabel: string;
 } {
   if (!endDate) {
-    return { status: "Not available yet", remainingLabel: "—" };
+    return { status: "No data available" as WarrantyLifecycleStatus, remainingLabel: "—" };
   }
   const end = new Date(endDate);
   if (Number.isNaN(end.getTime())) {
-    return { status: "Not available yet", remainingLabel: "—" };
+    return { status: "No data available" as WarrantyLifecycleStatus, remainingLabel: "—" };
   }
   const now = new Date();
   const ms = end.getTime() - now.getTime();

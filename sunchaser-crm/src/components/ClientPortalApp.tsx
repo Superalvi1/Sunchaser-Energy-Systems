@@ -36,7 +36,8 @@ export default function ClientPortalApp({
   onLogout,
 }: ClientPortalAppProps) {
   const [activeTab, setActiveTab] = useState<PortalTab>("home");
-  const displayName = data?.customer?.name || user.name;
+  const projectStatus =
+    data?.project?.stage || data?.dashboard?.projectStatus || "No data available";
 
   const tabs: { id: PortalTab; label: string; icon: React.ElementType }[] = [
     { id: "home", label: "Home", icon: Home },
@@ -54,8 +55,15 @@ export default function ClientPortalApp({
               <Sun className="h-5 w-5 text-slate-950" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-sm font-extrabold truncate">Sunchaser Client Portal</h1>
-              <p className="text-[10px] text-slate-500 font-mono truncate">{user.username}</p>
+              <h1 className="text-sm font-extrabold truncate">
+                {data?.customer?.name || user.name}
+              </h1>
+              <p className="text-[10px] text-slate-500 font-mono truncate">
+                {data?.customer?.email || user.email}
+              </p>
+              <p className="text-[9px] text-slate-600 font-mono truncate">
+                ID: {data?.customer?.id || "No data available"} · {projectStatus}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -121,7 +129,11 @@ export default function ClientPortalApp({
                 </button>
               </div>
             ) : (
-              <ClientPortalHome displayName={displayName} data={data} />
+              <ClientPortalHome
+                data={data}
+                onRequestUpgrade={() => setActiveTab("support")}
+                onOpenSupport={() => setActiveTab("support")}
+              />
             )}
           </>
         )}
