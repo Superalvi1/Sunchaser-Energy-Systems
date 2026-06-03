@@ -53,6 +53,11 @@ import {
   isPakistanAftersalesTableMissingError,
   type PortalTrackerType,
 } from "./src/lib/clientPortalPakistan.ts";
+import {
+  mapMaintenanceRecordRow,
+  buildServiceHistoryDashboard,
+  type MaintenanceRecord,
+} from "./src/lib/clientPortalServiceHistory.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -4460,6 +4465,7 @@ async function loadCustomerPortalProfileRow(customerId: string, localDb?: Databa
     free_service_end_date: row.freeServiceEndDate || row.free_service_end_date,
     free_service_months: row.freeServiceMonths ?? row.free_service_months,
     free_service_status: row.freeServiceStatus || row.free_service_status,
+    next_recommended_service_date: row.nextRecommendedServiceDate || row.next_recommended_service_date,
   });
 }
 
@@ -4522,31 +4528,44 @@ export async function upsertAdminCustomerPortalProfile(
     trackerType?: PortalTrackerType;
     freeServiceMonths?: number;
     freeServiceStartDate?: string;
+    nextRecommendedServiceDate?: string;
+    next_recommended_service_date?: string;
   },
   localDb?: Database
 ) {
-  const staff = await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
   const customerId = String(body.customerId || body.customer_id || "").trim();
   if (!customerId) throw new StaffPortalAuthError("customerId is required.");
 
-  const months = Number(body.freeServiceMonths || 6);
-  const startDate = body.freeServiceStartDate || new Date().toISOString().slice(0, 10);
+  const existing = await loadCustomerPortalProfileRow(customerId, localDb);
+  const months = Number(body.freeServiceMonths ?? existing?.freeServiceMonths ?? 6);
+  const startDate =
+    body.freeServiceStartDate || existing?.freeServiceStartDate || new Date().toISOString().slice(0, 10);
   const end = new Date(startDate.length === 10 ? `${startDate}T12:00:00` : startDate);
   end.setMonth(end.getMonth() + months);
   const endDate = end.toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
   const status = endDate >= today ? "Active" : "Expired";
-  const profileId = `cpp-${customerId}`;
+  const profileId = existing?.id || `cpp-${customerId}`;
   const now = new Date().toISOString();
+  const trackerType =
+    body.trackerType === "industrial" || body.trackerType === "residential"
+      ? body.trackerType
+      : existing?.trackerType || "residential";
   const row = {
     id: profileId,
     customer_id: customerId,
-    project_id: body.projectId || null,
-    tracker_type: body.trackerType === "industrial" ? "industrial" : "residential",
+    project_id: body.projectId ?? existing?.projectId ?? null,
+    tracker_type: trackerType,
     free_service_start_date: startDate,
     free_service_end_date: endDate,
     free_service_months: months,
     free_service_status: status,
+    next_recommended_service_date:
+      body.nextRecommendedServiceDate ||
+      body.next_recommended_service_date ||
+      existing?.nextRecommendedServiceDate ||
+      null,
     updated_at: now,
   };
 
@@ -4628,6 +4647,25 @@ export async function fetchCustomerInstallationPhotos(
   return { customerId, photos };
 }
 
+async function loadMaintenanceRecordsForCustomer(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("after_sales_service_logs")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("service_date", { ascending: false });
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map(mapMaintenanceRecordRow);
+  }
+  return (localDb?.afterSalesServiceLogs || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) => mapMaintenanceRecordRow(r));
+}
+
 export async function fetchCustomerServiceHistory(
   userId: string,
   username: string,
@@ -4636,11 +4674,15 @@ export async function fetchCustomerServiceHistory(
   const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
   assertCustomerScope(customerId);
   const profile = await loadCustomerPortalProfileRow(customerId!, localDb);
-  const logs = await loadAfterSalesLogsForCustomer(customerId!, localDb, false);
+  const timeline = await loadMaintenanceRecordsForCustomer(customerId!, localDb);
+  const legacyLogs = await loadAfterSalesLogsForCustomer(customerId!, localDb, false);
+  const summary = buildServiceHistoryDashboard(timeline, profile);
   return {
     customerId,
-    logs,
-    freeService: computeFreeServiceSummary(profile, logs),
+    logs: legacyLogs,
+    timeline,
+    summary,
+    freeService: computeFreeServiceSummary(profile, legacyLogs),
   };
 }
 
@@ -4790,6 +4832,10 @@ export async function createAdminAfterSalesServiceLog(
 
   const id = `asl-${Date.now()}`;
   const now = new Date().toISOString();
+  const warrantyCovered = !!(body.warrantyCovered ?? body.warranty_covered ?? body.underFreeService ?? body.under_free_service);
+  const laborCost = Number(body.laborCost ?? body.labor_cost ?? 0);
+  const partsCost = Number(body.partsCost ?? body.parts_cost ?? 0);
+  const chargeAmount = Number(body.chargeAmount ?? body.charge_amount ?? laborCost + partsCost);
   const row = {
     id,
     customer_id: customerId,
@@ -4798,15 +4844,26 @@ export async function createAdminAfterSalesServiceLog(
     component_changed: body.componentChanged || body.component_changed || null,
     old_component_details: body.oldComponentDetails || body.old_component_details || null,
     new_component_details: body.newComponentDetails || body.new_component_details || null,
+    replacement_parts: body.replacementParts || body.replacement_parts || null,
     quantity: Number(body.quantity || 1),
     reason: body.reason || null,
+    description: body.description || body.customerVisibleNotes || body.customer_visible_notes || null,
     technician_name: body.technicianName || body.technician_name || staff.user?.name || staffUsername,
     service_date: body.serviceDate || body.service_date || now.slice(0, 10),
-    under_free_service: !!(body.underFreeService ?? body.under_free_service),
-    charge_amount: Number(body.chargeAmount ?? body.charge_amount ?? 0),
+    under_free_service: warrantyCovered,
+    warranty_covered: warrantyCovered,
+    labor_cost: laborCost,
+    parts_cost: partsCost,
+    charge_amount: chargeAmount,
+    performance_improvement_pct:
+      body.performanceImprovementPct != null
+        ? Number(body.performanceImprovementPct)
+        : body.performance_improvement_pct != null
+          ? Number(body.performance_improvement_pct)
+          : null,
     before_photo_url: body.beforePhotoUrl || body.before_photo_url || null,
     after_photo_url: body.afterPhotoUrl || body.after_photo_url || null,
-    customer_visible_notes: body.customerVisibleNotes || body.customer_visible_notes || null,
+    customer_visible_notes: body.customerVisibleNotes || body.customer_visible_notes || body.description || null,
     internal_notes: body.internalNotes || body.internal_notes || null,
     voice_note_url: body.voiceNoteUrl || body.voice_note_url || null,
     created_by: staff.user?.name || staffUsername,
@@ -4821,12 +4878,21 @@ export async function createAdminAfterSalesServiceLog(
       if (isPakistanAftersalesTableMissingError(error)) throw new StaffPortalAuthError("Service logs table not ready.");
       throw error;
     }
-    return mapAfterSalesLogRow(data, true);
+    return mapMaintenanceRecordRow(data);
   }
 
   localDb!.afterSalesServiceLogs = localDb!.afterSalesServiceLogs || [];
   localDb!.afterSalesServiceLogs.unshift(row);
-  return mapAfterSalesLogRow(row, true);
+  return mapMaintenanceRecordRow(row);
+}
+
+export async function createAdminMaintenanceRecord(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  return createAdminAfterSalesServiceLog(staffUserId, staffUsername, body, localDb);
 }
 
 export async function listAdminAfterSalesServiceLogs(
@@ -4847,10 +4913,10 @@ export async function listAdminAfterSalesServiceLogs(
       if (isPakistanAftersalesTableMissingError(error)) return { logs: [] };
       throw error;
     }
-    return { logs: (data || []).map((r) => mapAfterSalesLogRow(r, true)) };
+    return { logs: (data || []).map((r) => mapMaintenanceRecordRow(r)) };
   }
 
   let rows = [...(localDb?.afterSalesServiceLogs || [])];
   if (customerId) rows = rows.filter((r: any) => (r.customerId || r.customer_id) === customerId);
-  return { logs: rows.map((r: any) => mapAfterSalesLogRow(r, true)) };
+  return { logs: rows.map((r: any) => mapMaintenanceRecordRow(r)) };
 }

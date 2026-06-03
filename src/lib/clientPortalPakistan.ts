@@ -52,6 +52,7 @@ export interface PortalProfileRecord {
   freeServiceEndDate?: string | null;
   freeServiceMonths: number;
   freeServiceStatus: string;
+  nextRecommendedServiceDate?: string | null;
 }
 
 export interface EquipmentRecord {
@@ -170,6 +171,7 @@ export function mapPortalProfileRow(row: any): PortalProfileRecord {
     freeServiceEndDate: row.free_service_end_date,
     freeServiceMonths: Number(row.free_service_months || 6),
     freeServiceStatus: row.free_service_status || "Not Started",
+    nextRecommendedServiceDate: row.next_recommended_service_date,
   };
 }
 

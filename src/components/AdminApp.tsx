@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { 
   TrendingUp, BarChart4, ClipboardList, ShieldAlert, Package, 
-  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen, Headphones, Wrench, Zap, Heart
+  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen, Headphones, Wrench, Zap, Heart, History
 } from "lucide-react";
 import { Lead, Ticket, InventoryItem, DashboardStats, Product, User } from "../types";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
@@ -10,6 +10,7 @@ import ServiceDeskStaff from "./ServiceDeskStaff";
 import CustomerSavingsStaff from "./CustomerSavingsStaff";
 import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
 import AfterSalesStaffTools from "./AfterSalesStaffTools";
+import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -73,7 +74,7 @@ export default function AdminApp({
   staffUser
 }: AdminAppProps) {
   const [activeSegment, setActiveSegment] = useState<
-    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk'
+    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk' | 'asset-maintenance'
   >('overview');
 
   // Procurement local form states
@@ -308,6 +309,16 @@ export default function AdminApp({
           }`}
         >
           <Heart className="w-4 h-4 inline mr-1" /> Subscription Desk
+        </button>
+        <button
+          onClick={() => setActiveSegment('asset-maintenance')}
+          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
+            activeSegment === 'asset-maintenance'
+              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
+              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
+          }`}
+        >
+          <History className="w-4 h-4 inline mr-1" /> Asset &amp; Maintenance
         </button>
         <button
           onClick={() => setActiveSegment('client-portal')}
@@ -1657,6 +1668,7 @@ export default function AdminApp({
         {activeSegment === 'service-desk' && <ServiceDeskStaff staffUser={staffUser} />}
         {activeSegment === 'savings-desk' && <CustomerSavingsStaff staffUser={staffUser} />}
         {activeSegment === 'subscription-desk' && <SubscriptionDeskStaff staffUser={staffUser} />}
+        {activeSegment === 'asset-maintenance' && <AssetMaintenanceLogStaff staffUser={staffUser} />}
         {activeSegment === 'client-portal' && (
           <>
             <ClientPortalStaffTools staffUser={staffUser} />

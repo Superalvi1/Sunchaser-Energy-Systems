@@ -52,7 +52,8 @@ import {
   patchAdminCustomerEquipment,
   createAdminInstallationPhoto,
   createAdminAfterSalesServiceLog,
-  listAdminAfterSalesServiceLogs
+  listAdminAfterSalesServiceLogs,
+  createAdminMaintenanceRecord
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -754,6 +755,20 @@ app.post("/api/admin/after-sales-service-log", async (req, res) => {
   }
 });
 
+app.post("/api/admin/maintenance-records", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const record = await createAdminMaintenanceRecord(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(record);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/after-sales-service-logs", async (req, res) => {
   const { userId, username } = readPortalAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
@@ -983,6 +998,26 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/api/diagnostics/phase7-columns", async (_req, res) => {
+  const supabase = getSupabase();
+  if (!isSupabaseActive() || !supabase) {
+    return res.json({ supabaseActive: false, probes: {} });
+  }
+  const { data, error } = await supabase
+    .from("after_sales_service_logs")
+    .select("warranty_covered, performance_improvement_pct, labor_cost")
+    .limit(1);
+  const ok = !error;
+  return res.json({
+    supabaseActive: true,
+    probes: {
+      phase7_columns: ok
+        ? { ok: true }
+        : { ok: false, message: error?.message, hint: "Run scripts/client-portal-phase7-schema.sql" },
+    },
+  });
 });
 
 app.get("/api/diagnostics/pakistan-aftersales-tables", async (_req, res) => {

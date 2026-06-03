@@ -599,6 +599,23 @@ export async function createAdminAfterSalesServiceLog(
   return res.json();
 }
 
+export async function createAdminMaintenanceRecord(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/maintenance-records", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create maintenance record.");
+  }
+  return res.json();
+}
+
 export async function listAdminAfterSalesServiceLogs(
   staffUserId: string,
   staffUsername: string,
