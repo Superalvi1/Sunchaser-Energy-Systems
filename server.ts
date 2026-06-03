@@ -53,7 +53,10 @@ import {
   createAdminInstallationPhoto,
   createAdminAfterSalesServiceLog,
   listAdminAfterSalesServiceLogs,
-  createAdminMaintenanceRecord
+  createAdminMaintenanceRecord,
+  fetchCustomerEnergyMonitor,
+  upsertAdminEnergyDevice,
+  fetchAdminEnergyMonitoring
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -769,6 +772,49 @@ app.post("/api/admin/maintenance-records", async (req, res) => {
   }
 });
 
+app.get("/api/customer-portal/energy/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  try {
+    loadDb();
+    const data = await fetchCustomerEnergyMonitor(userId, username, db);
+    saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/energy/me", query: "customer_energy_devices" }));
+  }
+});
+
+app.post("/api/admin/energy/devices", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const device = await upsertAdminEnergyDevice(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(device);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/energy/monitoring", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const data = await fetchAdminEnergyMonitoring(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/after-sales-service-logs", async (req, res) => {
   const { userId, username } = readPortalAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
@@ -998,6 +1044,31 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/api/diagnostics/phase8-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  let supabaseHost = null;
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHost = new URL(process.env.SUPABASE_URL).host;
+    } catch {
+      supabaseHost = process.env.SUPABASE_URL;
+    }
+  }
+  const tables = ["customer_energy_devices", "energy_alerts"];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, supabaseHost, probes });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, code: error.code, message: error.message }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  return res.json({ supabaseActive: true, supabaseHost, probes });
 });
 
 app.get("/api/diagnostics/phase7-columns", async (_req, res) => {

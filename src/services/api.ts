@@ -636,6 +636,46 @@ export async function listAdminAfterSalesServiceLogs(
   return res.json();
 }
 
+export async function fetchCustomerEnergyMonitor(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/energy/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load energy monitor.");
+  }
+  return res.json();
+}
+
+export async function upsertAdminEnergyDevice(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/energy/devices", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to register energy device.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminEnergyMonitoring(staffUserId: string, staffUsername: string) {
+  const q = new URLSearchParams({ userId: staffUserId, username: staffUsername });
+  const res = await apiFetch(`/api/admin/energy/monitoring?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load energy monitoring.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",

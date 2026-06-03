@@ -58,6 +58,16 @@ import {
   buildServiceHistoryDashboard,
   type MaintenanceRecord,
 } from "./src/lib/clientPortalServiceHistory.ts";
+import { getEnergyAdapter } from "./src/lib/energyMonitor/adapters/index.ts";
+import type { UnifiedEnergyReading } from "./src/lib/energyMonitor/types.ts";
+import {
+  mapEnergyDeviceRow,
+  mapEnergyAlertRow,
+  buildSavingsFromInverterReading,
+  evaluateEnergyAlerts,
+  providerKeyForBrand,
+  isEnergyTablesMissingError,
+} from "./src/lib/clientPortalEnergy.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -174,6 +184,8 @@ export interface Database {
   customerEquipment?: any[];
   installationPhotos?: any[];
   afterSalesServiceLogs?: any[];
+  customerEnergyDevices?: any[];
+  energyAlerts?: any[];
 }
 
 export const initialSeed: Database = {
@@ -207,6 +219,8 @@ export const initialSeed: Database = {
   customerEquipment: [],
   installationPhotos: [],
   afterSalesServiceLogs: [],
+  customerEnergyDevices: [],
+  energyAlerts: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -4919,4 +4933,413 @@ export async function listAdminAfterSalesServiceLogs(
   let rows = [...(localDb?.afterSalesServiceLogs || [])];
   if (customerId) rows = rows.filter((r: any) => (r.customerId || r.customer_id) === customerId);
   return { logs: rows.map((r: any) => mapMaintenanceRecordRow(r)) };
+}
+
+async function loadCustomerEnergyDevices(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_energy_devices")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: true });
+    if (error) {
+      if (isEnergyTablesMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map(mapEnergyDeviceRow);
+  }
+  return (localDb?.customerEnergyDevices || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) =>
+      mapEnergyDeviceRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        brand: r.brand,
+        device_serial: r.deviceSerial || r.device_serial,
+        plant_id: r.plantId || r.plant_id,
+        api_provider: r.apiProvider || r.api_provider,
+        status: r.status,
+        last_sync: r.lastSync || r.last_sync,
+        unit_rate_pkr: r.unitRatePkr ?? r.unit_rate_pkr,
+        created_at: r.createdAt || r.created_at,
+        updated_at: r.updatedAt || r.updated_at,
+      })
+    );
+}
+
+async function loadOpenEnergyAlerts(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("energy_alerts")
+      .select("*")
+      .eq("customer_id", customerId)
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) {
+      if (isEnergyTablesMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map(mapEnergyAlertRow);
+  }
+  return (localDb?.energyAlerts || [])
+    .filter(
+      (r: any) =>
+        (r.customerId || r.customer_id) === customerId && (r.status || "open") === "open"
+    )
+    .map((r: any) =>
+      mapEnergyAlertRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        device_id: r.deviceId || r.device_id,
+        alert_type: r.alertType || r.alert_type,
+        severity: r.severity,
+        message: r.message,
+        status: r.status,
+        created_at: r.createdAt || r.created_at,
+      })
+    );
+}
+
+async function resolveUnitRateForCustomer(customerId: string, deviceRate: number, localDb?: Database) {
+  if (deviceRate > 0) return deviceRate;
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data } = await supabase
+      .from("customer_savings_profiles")
+      .select("unit_rate")
+      .eq("customer_id", customerId)
+      .maybeSingle();
+    if (data?.unit_rate != null) return Number(data.unit_rate);
+  } else {
+    const row = (localDb?.customerSavingsProfiles || []).find(
+      (r: any) => (r.customerId || r.customer_id) === customerId
+    );
+    if (row?.unitRate != null || row?.unit_rate != null) {
+      return Number(row.unitRate ?? row.unit_rate);
+    }
+  }
+  return DEFAULT_UNIT_RATE_PKR;
+}
+
+async function syncEnergyDeviceReading(
+  device: ReturnType<typeof mapEnergyDeviceRow>,
+  localDb?: Database
+): Promise<{ reading: UnifiedEnergyReading | null; status: string; lastSync: string }> {
+  const adapter = getEnergyAdapter(device.brand, device.apiProvider);
+  const now = new Date().toISOString();
+  if (!adapter) {
+    return { reading: null, status: "Error", lastSync: now };
+  }
+  try {
+    const reading = await adapter.fetchReading({
+      deviceSerial: device.deviceSerial,
+      plantId: device.plantId,
+      apiProvider: device.apiProvider,
+    });
+    const status = "Online";
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      await supabase
+        .from("customer_energy_devices")
+        .update({ status, last_sync: now, updated_at: now })
+        .eq("id", device.id);
+    } else {
+      const idx = (localDb?.customerEnergyDevices || []).findIndex((r: any) => r.id === device.id);
+      if (idx >= 0) {
+        localDb!.customerEnergyDevices![idx].status = status;
+        localDb!.customerEnergyDevices![idx].lastSync = now;
+        localDb!.customerEnergyDevices![idx].last_sync = now;
+      }
+    }
+    return { reading, status, lastSync: now };
+  } catch {
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      await supabase
+        .from("customer_energy_devices")
+        .update({ status: "Offline", updated_at: now })
+        .eq("id", device.id);
+    }
+    return { reading: null, status: "Offline", lastSync: now };
+  }
+}
+
+async function persistEnergyAlerts(
+  customerId: string,
+  deviceId: string,
+  candidates: { alertType: string; severity: string; message: string }[],
+  localDb?: Database
+) {
+  const existing = await loadOpenEnergyAlerts(customerId, localDb);
+  for (const c of candidates) {
+    if (existing.some((a) => a.deviceId === deviceId && a.alertType === c.alertType)) continue;
+    const id = `energy-alert-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const row = {
+      id,
+      customer_id: customerId,
+      device_id: deviceId,
+      alert_type: c.alertType,
+      severity: c.severity,
+      message: c.message,
+      status: "open",
+      created_at: new Date().toISOString(),
+    };
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      await supabase.from("energy_alerts").insert(row);
+    } else {
+      localDb!.energyAlerts = localDb!.energyAlerts || [];
+      localDb!.energyAlerts.unshift(row);
+    }
+  }
+}
+
+export async function fetchCustomerEnergyMonitor(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const devices = await loadCustomerEnergyDevices(customerId!, localDb);
+  let reading: UnifiedEnergyReading | null = null;
+  let primaryBrand: string | null = null;
+  let lastSync: string | null = null;
+  let liveData = false;
+
+  for (const device of devices) {
+    const synced = await syncEnergyDeviceReading(device, localDb);
+    device.status = synced.status;
+    device.lastSync = synced.lastSync;
+    if (synced.reading && !reading) {
+      reading = synced.reading;
+      primaryBrand = device.brand;
+      lastSync = synced.lastSync;
+      liveData = true;
+      const alerts = evaluateEnergyAlerts(synced.reading, device);
+      await persistEnergyAlerts(customerId!, device.id, alerts, localDb);
+    } else if (!reading && synced.status === "Offline") {
+      await persistEnergyAlerts(
+        customerId!,
+        device.id,
+        evaluateEnergyAlerts(null, { ...device, status: "Offline" }),
+        localDb
+      );
+    }
+  }
+
+  const primary = devices[0];
+  const unitRate = primary
+    ? await resolveUnitRateForCustomer(customerId!, primary.unitRatePkr, localDb)
+    : DEFAULT_UNIT_RATE_PKR;
+
+  const savings = reading
+    ? buildSavingsFromInverterReading(reading, unitRate)
+    : {
+        dailySavingsPkr: 0,
+        monthlySavingsPkr: 0,
+        yearlySavingsPkr: 0,
+        unitRatePkr: unitRate,
+        fromLiveData: false,
+      };
+
+  const alerts = await loadOpenEnergyAlerts(customerId!, localDb);
+
+  return {
+    customerId,
+    devices,
+    reading,
+    savings,
+    alerts,
+    primaryBrand,
+    lastSync,
+    liveData,
+  };
+}
+
+export async function upsertAdminEnergyDevice(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  const brand = String(body.brand || "").trim();
+  const deviceSerial = String(body.deviceSerial || body.device_serial || "").trim();
+  const plantId = body.plantId || body.plant_id ? String(body.plantId || body.plant_id) : null;
+  const unitRatePkr =
+    body.unitRatePkr != null
+      ? Number(body.unitRatePkr)
+      : body.unit_rate_pkr != null
+        ? Number(body.unit_rate_pkr)
+        : DEFAULT_UNIT_RATE_PKR;
+
+  if (!customerId || !brand || !deviceSerial) {
+    throw new StaffPortalAuthError("customerId, brand, and deviceSerial are required.");
+  }
+
+  const apiProvider = String(body.apiProvider || body.api_provider || providerKeyForBrand(brand));
+  const id = String(body.id || `energy-dev-${Date.now()}`);
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    customer_id: customerId,
+    brand,
+    device_serial: deviceSerial,
+    plant_id: plantId,
+    api_provider: apiProvider,
+    status: "Offline",
+    last_sync: null,
+    unit_rate_pkr: unitRatePkr,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("customer_energy_devices").upsert(row).select("*").single();
+    if (error) {
+      if (isEnergyTablesMissingError(error)) {
+        throw new StaffPortalAuthError(
+          "Energy monitor tables missing. Run scripts/client-portal-phase8-schema.sql in Supabase."
+        );
+      }
+      throw error;
+    }
+    return mapEnergyDeviceRow(data);
+  }
+
+  localDb!.customerEnergyDevices = localDb!.customerEnergyDevices || [];
+  const idx = localDb!.customerEnergyDevices.findIndex((r: any) => r.id === id);
+  const localRow = {
+    id,
+    customerId,
+    brand,
+    deviceSerial,
+    plantId,
+    apiProvider,
+    status: "Offline",
+    unitRatePkr,
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (idx >= 0) localDb!.customerEnergyDevices[idx] = localRow;
+  else localDb!.customerEnergyDevices.push(localRow);
+  return mapEnergyDeviceRow(row);
+}
+
+export async function fetchAdminEnergyMonitoring(
+  staffUserId: string,
+  staffUsername: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: devices, error: devErr } = await supabase
+      .from("customer_energy_devices")
+      .select("*")
+      .order("last_sync", { ascending: false });
+    if (devErr) {
+      if (isEnergyTablesMissingError(devErr)) {
+        return { onlineCount: 0, offlineCount: 0, openAlerts: 0, customers: [] };
+      }
+      throw devErr;
+    }
+    const { data: alerts } = await supabase
+      .from("energy_alerts")
+      .select("*")
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    const { data: customers } = await supabase.from("customers").select("id, name");
+
+    const byCustomer: Record<string, any> = {};
+    for (const d of devices || []) {
+      const cid = d.customer_id;
+      if (!byCustomer[cid]) {
+        const cust = (customers || []).find((c: any) => c.id === cid);
+        byCustomer[cid] = {
+          customerId: cid,
+          customerName: cust?.name,
+          devices: [],
+          alerts: [],
+        };
+      }
+      byCustomer[cid].devices.push(mapEnergyDeviceRow(d));
+    }
+    for (const a of alerts || []) {
+      const cid = a.customer_id;
+      if (!byCustomer[cid]) {
+        byCustomer[cid] = { customerId: cid, devices: [], alerts: [] };
+      }
+      byCustomer[cid].alerts.push(mapEnergyAlertRow(a));
+    }
+
+    const list = Object.values(byCustomer);
+    const onlineCount = (devices || []).filter((d) => d.status === "Online").length;
+    const offlineCount = (devices || []).filter((d) => d.status !== "Online").length;
+    return {
+      onlineCount,
+      offlineCount,
+      openAlerts: (alerts || []).length,
+      customers: list,
+    };
+  }
+
+  const devices = (localDb?.customerEnergyDevices || []).map((r: any) =>
+    mapEnergyDeviceRow({
+      id: r.id,
+      customer_id: r.customerId || r.customer_id,
+      brand: r.brand,
+      device_serial: r.deviceSerial || r.device_serial,
+      plant_id: r.plantId || r.plant_id,
+      api_provider: r.apiProvider || r.api_provider,
+      status: r.status,
+      last_sync: r.lastSync || r.last_sync,
+      unit_rate_pkr: r.unitRatePkr ?? r.unit_rate_pkr,
+      created_at: r.createdAt || r.created_at,
+      updated_at: r.updatedAt || r.updated_at,
+    })
+  );
+  const alerts = (localDb?.energyAlerts || [])
+    .filter((r: any) => r.status === "open")
+    .map((r: any) =>
+      mapEnergyAlertRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        device_id: r.deviceId || r.device_id,
+        alert_type: r.alertType || r.alert_type,
+        severity: r.severity,
+        message: r.message,
+        status: r.status,
+        created_at: r.createdAt || r.created_at,
+      })
+    );
+  const byCustomer: Record<string, any> = {};
+  for (const d of devices) {
+    if (!byCustomer[d.customerId]) {
+      byCustomer[d.customerId] = { customerId: d.customerId, devices: [], alerts: [] };
+    }
+    byCustomer[d.customerId].devices.push(d);
+  }
+  for (const a of alerts) {
+    if (!byCustomer[a.customerId]) {
+      byCustomer[a.customerId] = { customerId: a.customerId, devices: [], alerts: [] };
+    }
+    byCustomer[a.customerId].alerts.push(a);
+  }
+  return {
+    onlineCount: devices.filter((d) => d.status === "Online").length,
+    offlineCount: devices.filter((d) => d.status !== "Online").length,
+    openAlerts: alerts.length,
+    customers: Object.values(byCustomer),
+  };
 }
