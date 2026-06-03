@@ -23,6 +23,8 @@ import {
 import {
   mapServiceRequestRow,
   buildServiceMaintenanceSummary,
+  buildEmptyServicePortalPayload,
+  isServiceRequestsTableMissingError,
   SERVICE_TYPES,
   SERVICE_STATUSES,
 } from "./src/lib/clientPortalService.ts";
@@ -3269,7 +3271,12 @@ export async function fetchCustomerServicePortal(
       .select("*")
       .eq("customer_id", customerId)
       .order("updated_at", { ascending: false });
-    if (error) throw error;
+    if (error) {
+      if (isServiceRequestsTableMissingError(error)) {
+        return buildEmptyServicePortalPayload(customerId!);
+      }
+      throw error;
+    }
     const requests = (data || []).map(mapServiceRequestRow);
     return {
       customerId,
@@ -3315,11 +3322,20 @@ export async function createCustomerServiceRequest(
     preferredDate?: string;
     preferredTime?: string;
     notes?: string;
+    customer_id?: string;
+    customerId?: string;
   },
   localDb?: Database
 ) {
   const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
   assertCustomerScope(customerId);
+
+  if (body.customer_id || body.customerId) {
+    const attempted = String(body.customer_id || body.customerId);
+    if (attempted !== customerId) {
+      throw new CustomerPortalAuthError("You cannot create a request for another customer.");
+    }
+  }
 
   const serviceType = String(body.serviceType || "").trim();
   if (!SERVICE_TYPES.includes(serviceType as any)) {
@@ -3350,7 +3366,14 @@ export async function createCustomerServiceRequest(
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const { data, error } = await supabase.from("service_requests").insert(row).select("*").single();
-    if (error) throw error;
+    if (error) {
+      if (isServiceRequestsTableMissingError(error)) {
+        throw new CustomerPortalAuthError(
+          "Service scheduling is not available yet. Please contact support."
+        );
+      }
+      throw error;
+    }
     return mapServiceRequestRow(data);
   }
 
@@ -3376,7 +3399,10 @@ export async function fetchCustomerServiceRequestById(
   requestId: string,
   localDb?: Database
 ) {
-  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  const { customerId, role } = await verifyCustomerPortalUser(userId, username, localDb);
+  if (role !== "Customer") {
+    throw new CustomerPortalAuthError("Not authorized for customer portal.");
+  }
   assertCustomerScope(customerId);
 
   if (isSupabaseActive()) {
@@ -3386,6 +3412,9 @@ export async function fetchCustomerServiceRequestById(
       .select("*")
       .eq("id", requestId)
       .single();
+    if (isServiceRequestsTableMissingError(error)) {
+      throw new CustomerPortalAuthError("Service request not found.");
+    }
     if (error || !data) throw new CustomerPortalAuthError("Service request not found.");
     if (!serviceRequestBelongsToCustomer(data, customerId!)) {
       throw new CustomerPortalAuthError("You cannot access another customer's service request.");

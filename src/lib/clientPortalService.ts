@@ -28,7 +28,13 @@ export const SERVICE_TIME_SLOTS = [
 export interface ServiceMaintenanceSummary {
   lastCleaningDate: string | null;
   nextRecommendedCleaningDate: string | null;
+  /** Primary status label for the customer service hub */
+  status: string;
+  /** @deprecated alias of status — kept for backward compatibility */
   serviceStatus: string;
+  openRequestsCount: number;
+  latestRequest: ServiceRequestRecord | null;
+  availableServiceTypes: readonly ServiceType[];
 }
 
 export interface ServiceRequestRecord {
@@ -111,15 +117,39 @@ export function buildServiceMaintenanceSummary(
   const active = requests.find(
     (r) => r.status !== "Completed" && r.status !== "Cancelled"
   );
-  const serviceStatus = active
+  const status = active
     ? active.status
     : lastCleaningDate
       ? "Up to date"
       : "No service history";
 
+  const openRequestsCount = requests.filter(
+    (r) => r.status !== "Completed" && r.status !== "Cancelled"
+  ).length;
+
   return {
     lastCleaningDate,
     nextRecommendedCleaningDate,
-    serviceStatus,
+    status,
+    serviceStatus: status,
+    openRequestsCount,
+    latestRequest: requests[0] || null,
+    availableServiceTypes: SERVICE_TYPES,
   };
+}
+
+export function buildEmptyServicePortalPayload(customerId: string) {
+  const summary = buildServiceMaintenanceSummary([]);
+  return {
+    customerId,
+    summary,
+    requests: [] as ServiceRequestRecord[],
+  };
+}
+
+export function isServiceRequestsTableMissingError(err: any): boolean {
+  return (
+    err?.code === "PGRST205" &&
+    String(err?.message || "").toLowerCase().includes("service_requests")
+  );
 }

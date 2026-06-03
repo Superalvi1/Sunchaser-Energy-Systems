@@ -290,7 +290,7 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
           <div>
             <p className="text-[10px] font-mono text-slate-500 uppercase">Service status</p>
             <p className="text-sm font-semibold text-white">
-              {summary?.serviceStatus || NO_DATA}
+              {summary?.status || summary?.serviceStatus || NO_DATA}
             </p>
           </div>
         </div>

@@ -460,6 +460,14 @@ function readPortalAuth(req: any) {
   };
 }
 
+/** Customer portal service routes: identity must come from headers only (no body/query override). */
+function readCustomerPortalAuth(req: any) {
+  return {
+    userId: String(req.headers["x-sunchaser-user-id"] || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || "").trim(),
+  };
+}
+
 function formatPortalApiError(err: any, context: { endpoint: string; query: string }) {
   console.error(`[Customer Portal Phase2] ${context.endpoint}`, {
     message: err?.message,
@@ -527,8 +535,10 @@ app.post("/api/customer-portal/warranty-claim", async (req, res) => {
 });
 
 app.get("/api/customer-portal/service/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
   try {
     loadDb();
     const data = await fetchCustomerServicePortal(userId, username, db);
@@ -540,11 +550,19 @@ app.get("/api/customer-portal/service/me", async (req, res) => {
 });
 
 app.post("/api/customer-portal/service-requests", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
+  const { serviceType, preferredDate, preferredTime, notes } = req.body || {};
   try {
     loadDb();
-    const request = await createCustomerServiceRequest(userId, username, req.body || {}, db);
+    const request = await createCustomerServiceRequest(
+      userId,
+      username,
+      { serviceType, preferredDate, preferredTime, notes },
+      db
+    );
     saveDb();
     return res.status(201).json(request);
   } catch (err: any) {
@@ -554,8 +572,10 @@ app.post("/api/customer-portal/service-requests", async (req, res) => {
 });
 
 app.get("/api/customer-portal/service-requests/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) {
+    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
+  }
   try {
     loadDb();
     const data = await fetchCustomerServiceRequestById(userId, username, req.params.id, db);
@@ -685,6 +705,31 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
   }
 });
 
+app.get("/api/diagnostics/phase4-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  let supabaseHost = null;
+  if (process.env.SUPABASE_URL) {
+    try {
+      supabaseHost = new URL(process.env.SUPABASE_URL).host;
+    } catch {
+      supabaseHost = process.env.SUPABASE_URL;
+    }
+  }
+  const tables = ["service_requests"];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, supabaseHost, probes });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, code: error.code, message: error.message, details: error.details, hint: error.hint }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  return res.json({ supabaseActive: true, supabaseHost, probes });
+});
+
 app.get("/api/diagnostics/phase2-tables", async (_req, res) => {
   const supabase = getSupabase();
   const active = isSupabaseActive();
@@ -714,6 +759,10 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
   const userId = String(req.headers["x-sunchaser-user-id"] || req.query?.userId || "").trim();
   const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
   const requestedCustomerId = String(req.params.customerId || "").trim();
+
+  if (["service", "documents", "warranties", "support-tickets"].includes(requestedCustomerId)) {
+    return res.status(404).json({ error: "Not found." });
+  }
 
   if (!userId || !username) {
     return res.status(400).json({ error: "userId and username are required." });
