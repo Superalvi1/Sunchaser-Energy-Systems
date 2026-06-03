@@ -20,6 +20,12 @@ import {
   SUPPORT_PRIORITIES,
   SUPPORT_STATUSES,
 } from "./src/lib/clientPortalSupport.ts";
+import {
+  mapServiceRequestRow,
+  buildServiceMaintenanceSummary,
+  SERVICE_TYPES,
+  SERVICE_STATUSES,
+} from "./src/lib/clientPortalService.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -125,6 +131,7 @@ export interface Database {
   customerWarranties?: any[];
   warrantyClaims?: any[];
   supportTicketUpdates?: any[];
+  serviceRequests?: any[];
 }
 
 export const initialSeed: Database = {
@@ -138,6 +145,7 @@ export const initialSeed: Database = {
   customerWarranties: [],
   warrantyClaims: [],
   supportTicketUpdates: [],
+  serviceRequests: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -3220,4 +3228,305 @@ async function getTicketRow(ticketId: string, localDb?: Database) {
     return data;
   }
   return (localDb?.tickets || []).find((t: any) => t.id === ticketId);
+}
+
+async function resolveProjectIdForCustomer(
+  customerId: string,
+  localDb?: Database
+): Promise<string | null> {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("customer_id", customerId)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    return data?.[0]?.id || null;
+  }
+  const proj = (localDb?.projects || []).find(
+    (p: any) => p.customerId === customerId || p.customer_id === customerId
+  );
+  return proj?.id || null;
+}
+
+function serviceRequestBelongsToCustomer(row: any, customerId: string) {
+  return String(row.customer_id || row.customerId || "") === customerId;
+}
+
+export async function fetchCustomerServicePortal(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("service_requests")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+    const requests = (data || []).map(mapServiceRequestRow);
+    return {
+      customerId,
+      summary: buildServiceMaintenanceSummary(requests),
+      requests,
+    };
+  }
+
+  const rows = (localDb!.serviceRequests || []).filter(
+    (r: any) => serviceRequestBelongsToCustomer(r, customerId!)
+  );
+  const requests = rows.map((r: any) =>
+    mapServiceRequestRow({
+      id: r.id,
+      customer_id: r.customerId || r.customer_id,
+      project_id: r.projectId || r.project_id,
+      service_type: r.serviceType || r.service_type,
+      status: r.status,
+      preferred_date: r.preferredDate || r.preferred_date,
+      preferred_time: r.preferredTime || r.preferred_time,
+      notes: r.notes,
+      assigned_technician: r.assignedTechnician || r.assigned_technician,
+      scheduled_visit_date: r.scheduledVisitDate || r.scheduled_visit_date,
+      before_photo_url: r.beforePhotoUrl || r.before_photo_url,
+      after_photo_url: r.afterPhotoUrl || r.after_photo_url,
+      completion_notes: r.completionNotes || r.completion_notes,
+      created_at: r.createdAt || r.created_at,
+      updated_at: r.updatedAt || r.updated_at,
+    })
+  );
+  return {
+    customerId,
+    summary: buildServiceMaintenanceSummary(requests),
+    requests,
+  };
+}
+
+export async function createCustomerServiceRequest(
+  userId: string,
+  username: string,
+  body: {
+    serviceType: string;
+    preferredDate?: string;
+    preferredTime?: string;
+    notes?: string;
+  },
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const serviceType = String(body.serviceType || "").trim();
+  if (!SERVICE_TYPES.includes(serviceType as any)) {
+    throw new CustomerPortalAuthError("Invalid service type.");
+  }
+
+  const requestId = `svc-req-${Date.now()}`;
+  const now = new Date().toISOString();
+  const projectId = await resolveProjectIdForCustomer(customerId!, localDb);
+  const row = {
+    id: requestId,
+    customer_id: customerId,
+    project_id: projectId,
+    service_type: serviceType,
+    status: "Submitted",
+    preferred_date: body.preferredDate || null,
+    preferred_time: body.preferredTime || null,
+    notes: body.notes || null,
+    assigned_technician: null,
+    scheduled_visit_date: null,
+    before_photo_url: null,
+    after_photo_url: null,
+    completion_notes: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("service_requests").insert(row).select("*").single();
+    if (error) throw error;
+    return mapServiceRequestRow(data);
+  }
+
+  localDb!.serviceRequests = localDb!.serviceRequests || [];
+  localDb!.serviceRequests.unshift({
+    id: requestId,
+    customerId,
+    projectId,
+    serviceType,
+    status: "Submitted",
+    preferredDate: body.preferredDate,
+    preferredTime: body.preferredTime,
+    notes: body.notes,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return mapServiceRequestRow(row);
+}
+
+export async function fetchCustomerServiceRequestById(
+  userId: string,
+  username: string,
+  requestId: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("service_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+    if (error || !data) throw new CustomerPortalAuthError("Service request not found.");
+    if (!serviceRequestBelongsToCustomer(data, customerId!)) {
+      throw new CustomerPortalAuthError("You cannot access another customer's service request.");
+    }
+    return { request: mapServiceRequestRow(data) };
+  }
+
+  const row = (localDb!.serviceRequests || []).find((r: any) => r.id === requestId);
+  if (!row || !serviceRequestBelongsToCustomer(row, customerId!)) {
+    throw new CustomerPortalAuthError("Service request not found.");
+  }
+  return {
+    request: mapServiceRequestRow({
+      id: row.id,
+      customer_id: row.customerId || row.customer_id,
+      project_id: row.projectId || row.project_id,
+      service_type: row.serviceType || row.service_type,
+      status: row.status,
+      preferred_date: row.preferredDate || row.preferred_date,
+      preferred_time: row.preferredTime || row.preferred_time,
+      notes: row.notes,
+      assigned_technician: row.assignedTechnician || row.assigned_technician,
+      scheduled_visit_date: row.scheduledVisitDate || row.scheduled_visit_date,
+      before_photo_url: row.beforePhotoUrl || row.before_photo_url,
+      after_photo_url: row.afterPhotoUrl || row.after_photo_url,
+      completion_notes: row.completionNotes || row.completion_notes,
+      created_at: row.createdAt || row.created_at,
+      updated_at: row.updatedAt || row.updated_at,
+    }),
+  };
+}
+
+export async function listAdminServiceRequests(
+  staffUserId: string,
+  staffUsername: string,
+  filters: { status?: string },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    let query = supabase.from("service_requests").select("*");
+    if (filters.status) query = query.eq("status", filters.status);
+    const { data, error } = await query.order("updated_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map(mapServiceRequestRow);
+  }
+
+  let list = [...(localDb!.serviceRequests || [])];
+  if (filters.status) list = list.filter((r: any) => r.status === filters.status);
+  return list.map((r: any) =>
+    mapServiceRequestRow({
+      id: r.id,
+      customer_id: r.customerId || r.customer_id,
+      project_id: r.projectId || r.project_id,
+      service_type: r.serviceType || r.service_type,
+      status: r.status,
+      preferred_date: r.preferredDate || r.preferred_date,
+      preferred_time: r.preferredTime || r.preferred_time,
+      notes: r.notes,
+      assigned_technician: r.assignedTechnician || r.assigned_technician,
+      scheduled_visit_date: r.scheduledVisitDate || r.scheduled_visit_date,
+      before_photo_url: r.beforePhotoUrl || r.before_photo_url,
+      after_photo_url: r.afterPhotoUrl || r.after_photo_url,
+      completion_notes: r.completionNotes || r.completion_notes,
+      created_at: r.createdAt || r.created_at,
+      updated_at: r.updatedAt || r.updated_at,
+    })
+  );
+}
+
+export async function updateAdminServiceRequest(
+  staffUserId: string,
+  staffUsername: string,
+  requestId: string,
+  body: {
+    status?: string;
+    assignedTechnician?: string;
+    scheduledVisitDate?: string;
+    beforePhotoUrl?: string;
+    afterPhotoUrl?: string;
+    completionNotes?: string;
+  },
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const patch: any = { updated_at: new Date().toISOString() };
+
+  if (body.status) {
+    if (!SERVICE_STATUSES.includes(body.status as any)) {
+      throw new StaffPortalAuthError("Invalid service status.");
+    }
+    patch.status = body.status;
+  }
+  if (body.assignedTechnician !== undefined) {
+    patch.assigned_technician = body.assignedTechnician || null;
+  }
+  if (body.scheduledVisitDate !== undefined) {
+    patch.scheduled_visit_date = body.scheduledVisitDate || null;
+  }
+  if (body.beforePhotoUrl !== undefined) patch.before_photo_url = body.beforePhotoUrl || null;
+  if (body.afterPhotoUrl !== undefined) patch.after_photo_url = body.afterPhotoUrl || null;
+  if (body.completionNotes !== undefined) patch.completion_notes = body.completionNotes || null;
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("service_requests")
+      .update(patch)
+      .eq("id", requestId)
+      .select("*")
+      .single();
+    if (error || !data) throw new StaffPortalAuthError("Service request not found.");
+    return mapServiceRequestRow(data);
+  }
+
+  const row = (localDb!.serviceRequests || []).find((r: any) => r.id === requestId);
+  if (!row) throw new StaffPortalAuthError("Service request not found.");
+  if (patch.status) row.status = patch.status;
+  if (body.assignedTechnician !== undefined) row.assignedTechnician = patch.assigned_technician;
+  if (body.scheduledVisitDate !== undefined) row.scheduledVisitDate = patch.scheduled_visit_date;
+  if (body.beforePhotoUrl !== undefined) row.beforePhotoUrl = patch.before_photo_url;
+  if (body.afterPhotoUrl !== undefined) row.afterPhotoUrl = patch.after_photo_url;
+  if (body.completionNotes !== undefined) row.completionNotes = patch.completion_notes;
+  row.updatedAt = patch.updated_at;
+  return mapServiceRequestRow({
+    id: row.id,
+    customer_id: row.customerId || row.customer_id,
+    project_id: row.projectId || row.project_id,
+    service_type: row.serviceType || row.service_type,
+    status: row.status,
+    preferred_date: row.preferredDate || row.preferred_date,
+    preferred_time: row.preferredTime || row.preferred_time,
+    notes: row.notes,
+    assigned_technician: row.assignedTechnician || row.assigned_technician,
+    scheduled_visit_date: row.scheduledVisitDate || row.scheduled_visit_date,
+    before_photo_url: row.beforePhotoUrl || row.before_photo_url,
+    after_photo_url: row.afterPhotoUrl || row.after_photo_url,
+    completion_notes: row.completionNotes || row.completion_notes,
+    created_at: row.createdAt || row.created_at,
+    updated_at: row.updatedAt || row.updated_at,
+  });
 }

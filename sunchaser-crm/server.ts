@@ -29,7 +29,12 @@ import {
   fetchCustomerSupportTicketById,
   createCustomerSupportTicket,
   listAdminSupportTickets,
-  updateAdminSupportTicket
+  updateAdminSupportTicket,
+  fetchCustomerServicePortal,
+  createCustomerServiceRequest,
+  fetchCustomerServiceRequestById,
+  listAdminServiceRequests,
+  updateAdminServiceRequest
 } from "./dbManager.js";
 
 if (fs.existsSync(".env.local")) {
@@ -518,6 +523,75 @@ app.post("/api/customer-portal/warranty-claim", async (req, res) => {
   } catch (err: any) {
     if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json(formatPortalApiError(err, { endpoint: "POST /api/customer-portal/warranty-claim", query }));
+  }
+});
+
+app.get("/api/customer-portal/service/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerServicePortal(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/service/me", query: "service_requests by customer_id" }));
+  }
+});
+
+app.post("/api/customer-portal/service-requests", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const request = await createCustomerServiceRequest(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(request);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "POST /api/customer-portal/service-requests", query: "insert service_requests" }));
+  }
+});
+
+app.get("/api/customer-portal/service-requests/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerServiceRequestById(userId, username, req.params.id, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/service-requests/:id", query: "service_requests single" }));
+  }
+});
+
+app.get("/api/admin/service-requests", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const requests = await listAdminServiceRequests(userId, username, {
+      status: req.query.status as string,
+    }, db);
+    return res.json({ requests });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/service-requests/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const request = await updateAdminServiceRequest(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(request);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 

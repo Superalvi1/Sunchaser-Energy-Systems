@@ -213,6 +213,60 @@
   "paymentTracks": {},
   "activityLogs": [
     {
+      "id": "log-1780482545631",
+      "timestamp": "2026-06-03T10:29:05.631Z",
+      "userId": "u-sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780482545197",
+      "timestamp": "2026-06-03T10:29:05.197Z",
+      "userId": "u-raza",
+      "userName": "Barrister Raza Khan Niazi",
+      "role": "Sales Manager",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780482544690",
+      "timestamp": "2026-06-03T10:29:04.690Z",
+      "userId": "u-allauddin",
+      "userName": "Muhammad Allauddin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780416613351",
+      "timestamp": "2026-06-02T16:10:13.351Z",
+      "userId": "u-sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780416612649",
+      "timestamp": "2026-06-02T16:10:12.649Z",
+      "userId": "u-raza",
+      "userName": "Barrister Raza Khan Niazi",
+      "role": "Sales Manager",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
+      "id": "log-1780416611729",
+      "timestamp": "2026-06-02T16:10:11.729Z",
+      "userId": "u-allauddin",
+      "userName": "Muhammad Allauddin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Authorized access via Supabase PostgreSQL security clearance."
+    },
+    {
       "id": "log-1780411464401",
       "timestamp": "2026-06-02T14:44:24.401Z",
       "userId": "u-sales",

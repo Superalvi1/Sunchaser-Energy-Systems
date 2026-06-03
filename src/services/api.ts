@@ -250,6 +250,89 @@ export async function updateAdminSupportTicket(
   return res.json();
 }
 
+export async function fetchCustomerServicePortal(userId: string, username: string) {
+  const res = await apiFetch(
+    `/api/customer-portal/service/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load service portal.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerServiceRequestById(
+  userId: string,
+  username: string,
+  requestId: string
+) {
+  const res = await apiFetch(
+    `/api/customer-portal/service-requests/${encodeURIComponent(requestId)}?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load service request.");
+  }
+  return res.json();
+}
+
+export async function createCustomerServiceRequest(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/customer-portal/service-requests", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create service request.");
+  }
+  return res.json();
+}
+
+export async function listAdminServiceRequests(
+  staffUserId: string,
+  staffUsername: string,
+  filters?: { status?: string }
+) {
+  const q = new URLSearchParams({
+    userId: staffUserId,
+    username: staffUsername,
+    ...(filters?.status ? { status: filters.status } : {}),
+  });
+  const res = await apiFetch(`/api/admin/service-requests?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load service requests.");
+  }
+  return res.json();
+}
+
+export async function updateAdminServiceRequest(
+  staffUserId: string,
+  staffUsername: string,
+  requestId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/admin/service-requests/${encodeURIComponent(requestId)}`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update service request.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
