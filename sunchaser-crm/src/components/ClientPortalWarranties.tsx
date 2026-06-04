@@ -6,6 +6,7 @@ import {
   submitCustomerWarrantyClaim,
   fetchCustomerEquipment,
   fetchCustomerInstallationPhotos,
+  fetchCustomerProjectDeliveryMe,
 } from "../services/api";
 import { WARRANTY_COMPONENT_TYPES } from "../lib/clientPortalPhase2";
 import { EQUIPMENT_TYPES } from "../lib/clientPortalPakistan";
@@ -27,6 +28,7 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
   const [cards, setCards] = useState<any[]>([]);
   const [equipment, setEquipment] = useState<any[]>([]);
   const [photos, setPhotos] = useState<any[]>([]);
+  const [installedRegistry, setInstalledRegistry] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [component, setComponent] = useState(WARRANTY_COMPONENT_TYPES[0].label);
   const [equipmentId, setEquipmentId] = useState("");
@@ -41,14 +43,16 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
     setLoading(true);
     setError(null);
     try {
-      const [warr, equip, inst] = await Promise.all([
+      const [warr, equip, inst, delivery] = await Promise.all([
         fetchCustomerPortalWarranties(user.id, user.username),
         fetchCustomerEquipment(user.id, user.username),
         fetchCustomerInstallationPhotos(user.id, user.username),
+        fetchCustomerProjectDeliveryMe(user.id, user.username).catch(() => null),
       ]);
       setCards(warr.cards || []);
       setEquipment(equip.equipment || []);
       setPhotos(inst.photos || []);
+      setInstalledRegistry(delivery?.installedEquipment || []);
     } catch (err: any) {
       setError(err.message || "Unable to load warranties.");
     } finally {
@@ -149,6 +153,30 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
           })}
         </div>
       </div>
+
+      {installedRegistry.length > 0 && (
+        <div>
+          <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 px-1 mb-3 flex items-center gap-2">
+            <Package className="w-3.5 h-3.5" /> Installed equipment registry
+          </h3>
+          <div className="space-y-2">
+            {installedRegistry.map((eq) => (
+              <div key={eq.id} className="bg-slate-900 border border-amber-900/30 rounded-xl p-3 text-xs">
+                <p className="font-bold text-white">{eq.equipmentType}</p>
+                <p className="text-slate-400 mt-1">
+                  {[eq.brand, eq.model].filter(Boolean).join(" · ")}
+                  {eq.serialNumber ? ` · S/N ${eq.serialNumber}` : ""}
+                </p>
+                {(eq.warrantyStartDate || eq.warrantyEndDate) && (
+                  <p className="text-slate-500 mt-1">
+                    Warranty {eq.warrantyStartDate || "—"} → {eq.warrantyEndDate || "—"}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 px-1 mb-3 flex items-center gap-2">

@@ -22,6 +22,7 @@ import {
 } from "../services/api";
 import type { TechnicalJobCard, TechnicalJobsDashboard } from "../lib/technicalStaff";
 import { SAFETY_CHECKLIST_ITEMS, EQUIPMENT_CAPTURE_TYPES } from "../lib/technicalStaff";
+import TechnicalDeliveryPanel from "./TechnicalDeliveryPanel";
 
 interface TechnicalStaffAppProps {
   user: User;
@@ -49,6 +50,7 @@ export default function TechnicalStaffApp({
   onLogout,
   onShowWelcomeGuide,
 }: TechnicalStaffAppProps) {
+  const [workMode, setWorkMode] = useState<"jobs" | "deliveries">("jobs");
   const [dashboard, setDashboard] = useState<TechnicalJobsDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -382,6 +384,26 @@ export default function TechnicalStaffApp({
       </header>
 
       <main className="flex-1 px-4 py-4 max-w-lg mx-auto w-full space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setWorkMode("jobs")}
+            className={`py-2 rounded-xl text-xs font-bold ${workMode === "jobs" ? "bg-amber-500 text-slate-950" : "bg-slate-800"}`}
+          >
+            Field jobs
+          </button>
+          <button
+            type="button"
+            onClick={() => setWorkMode("deliveries")}
+            className={`py-2 rounded-xl text-xs font-bold ${workMode === "deliveries" ? "bg-amber-500 text-slate-950" : "bg-slate-800"}`}
+          >
+            Deliveries
+          </button>
+        </div>
+        {workMode === "deliveries" ? (
+          <TechnicalDeliveryPanel user={user} />
+        ) : (
+          <>
         {syncError && (
           <div className="bg-rose-950/40 border border-rose-800 text-rose-200 text-sm p-3 rounded-2xl">
             {syncError}
@@ -449,6 +471,8 @@ export default function TechnicalStaffApp({
             )}
           </>
         ) : null}
+          </>
+        )}
       </main>
     </div>
   );

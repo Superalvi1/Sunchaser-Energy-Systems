@@ -173,6 +173,7 @@ export default function ClientPortalApp({
               </div>
             ) : (
               <ClientPortalHome
+                user={user}
                 data={data}
                 onRequestUpgrade={() => setActiveTab("support")}
                 onOpenSupport={() => setActiveTab("support")}

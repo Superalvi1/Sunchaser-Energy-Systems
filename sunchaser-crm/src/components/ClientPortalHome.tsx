@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import { NO_DATA, displayKw, displayOrNoData } from "../lib/clientPortalDisplay";
+import { User } from "../types";
+import { fetchCustomerProjectDeliveryMe } from "../services/api";
 
 function StatusBadge({ status }: { status: "completed" | "active" | "pending" }) {
   if (status === "completed") {
@@ -58,19 +60,53 @@ function DashboardCard({
 }
 
 interface ClientPortalHomeProps {
+  user: User;
   data: ClientPortalPayload | null;
   onRequestUpgrade: () => void;
   onOpenSupport: () => void;
 }
 
-export default function ClientPortalHome({ data, onRequestUpgrade, onOpenSupport }: ClientPortalHomeProps) {
+export default function ClientPortalHome({ user, data, onRequestUpgrade, onOpenSupport }: ClientPortalHomeProps) {
   const dashboard = data?.dashboard;
   const tracker = data?.tracker;
   const customer = data?.customer;
   const projectStatus = displayOrNoData(dashboard?.projectStatus);
+  const [delivery, setDelivery] = useState<any | null>(null);
+
+  useEffect(() => {
+    fetchCustomerProjectDeliveryMe(user.id, user.username)
+      .then(setDelivery)
+      .catch(() => setDelivery(null));
+  }, [user.id, user.username]);
 
   return (
     <>
+      {delivery?.delivery && delivery.progress && (
+        <section className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-3">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-amber-500">Your solar delivery</p>
+          <p className="font-bold text-white">{delivery.delivery.projectTitle}</p>
+          <p className="text-xs text-slate-400">
+            {delivery.delivery.systemType} · {delivery.delivery.systemSizeKw ?? "—"} kW · {delivery.delivery.deliveryStatus}
+          </p>
+          <ol className="space-y-2">
+            {delivery.progress.steps.map((step: { label: string; status: string }) => (
+              <li key={step.label} className="flex items-center justify-between text-sm">
+                <span className="text-slate-200">{step.label}</span>
+                <StatusBadge
+                  status={
+                    step.status === "completed"
+                      ? "completed"
+                      : step.status === "active"
+                        ? "active"
+                        : "pending"
+                  }
+                />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
       <section className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-5 shadow-lg space-y-3">
         <p className="text-[10px] font-mono uppercase tracking-widest text-amber-500">Your account</p>
         <dl className="grid grid-cols-1 gap-2 text-xs">

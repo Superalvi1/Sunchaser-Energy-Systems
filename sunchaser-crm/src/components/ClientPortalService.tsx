@@ -13,6 +13,7 @@ import {
   fetchCustomerServicePortal,
   fetchCustomerServiceRequestById,
   createCustomerServiceRequest,
+  fetchCustomerProjectDeliveryMe,
 } from "../services/api";
 import {
   SERVICE_TYPES,
@@ -38,14 +39,21 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
   const [preferredDate, setPreferredDate] = useState("");
   const [preferredTime, setPreferredTime] = useState(SERVICE_TIME_SLOTS[0]);
   const [notes, setNotes] = useState("");
+  const [deliveryPhotos, setDeliveryPhotos] = useState<any[]>([]);
+  const [handoverComplete, setHandoverComplete] = useState(false);
 
   const loadList = async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchCustomerServicePortal(user.id, user.username);
+      const [data, delivery] = await Promise.all([
+        fetchCustomerServicePortal(user.id, user.username),
+        fetchCustomerProjectDeliveryMe(user.id, user.username).catch(() => null),
+      ]);
       setSummary(data.summary);
       setRequests(data.requests || []);
+      setDeliveryPhotos(delivery?.photos || []);
+      setHandoverComplete(!!delivery?.handoverComplete);
     } catch (err: any) {
       setError(err.message || "Unable to load service data.");
     } finally {
@@ -264,6 +272,27 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
           <Plus className="w-3.5 h-3.5" /> Request
         </button>
       </div>
+
+      {(deliveryPhotos.length > 0 || handoverComplete) && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2">
+          <p className="text-xs font-mono font-bold uppercase text-amber-500">Installation & handover</p>
+          {handoverComplete && (
+            <p className="text-sm text-emerald-400 font-semibold">Handover completed — your system is live.</p>
+          )}
+          {deliveryPhotos.length > 0 && (
+            <ul className="space-y-2 text-xs">
+              {deliveryPhotos.map((p) => (
+                <li key={p.id} className="text-slate-300">
+                  <span className="text-slate-500">{p.photoCategory}: </span>
+                  <a href={p.photoUrl} className="text-amber-400 underline break-all" target="_blank" rel="noreferrer">
+                    View photo
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-2">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-start gap-3">

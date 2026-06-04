@@ -67,6 +67,19 @@ import {
   completeOnboarding,
   resetOnboarding,
 } from "./dbManager.js";
+import {
+  listAdminProjectDeliveries,
+  createAdminProjectDelivery,
+  patchAdminProjectDelivery,
+  addAdminProjectDeliveryItems,
+  listTechnicalProjectDeliveriesForUser,
+  getTechnicalProjectDeliveryById,
+  postTechnicalInstalledEquipment,
+  postTechnicalProjectDeliveryPhotos,
+  patchTechnicalProjectDeliveryStatus,
+  fetchCustomerProjectDeliveryMe,
+  ProjectDeliveryDbError,
+} from "./projectDeliveryDb.js";
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
@@ -1170,6 +1183,171 @@ app.post("/api/onboarding/reset", async (req, res) => {
     if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/api/admin/project-deliveries", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const list = await listAdminProjectDeliveries(userId, username, db);
+    return res.json(list);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/project-deliveries", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const row = await createAdminProjectDelivery(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/project-deliveries/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const row = await patchAdminProjectDelivery(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/project-deliveries/:id/items", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const items = await addAdminProjectDeliveryItems(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(items);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/technical/project-deliveries/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const list = await listTechnicalProjectDeliveriesForUser(userId, username, db);
+    return res.json({ deliveries: list });
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/technical/project-deliveries/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await getTechnicalProjectDeliveryById(userId, username, req.params.id, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/technical/project-deliveries/:id/installed-equipment", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await postTechnicalInstalledEquipment(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(data);
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/technical/project-deliveries/:id/photos", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await postTechnicalProjectDeliveryPhotos(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(data);
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/technical/project-deliveries/:id/status", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await patchTechnicalProjectDeliveryStatus(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/project-delivery/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerProjectDeliveryMe(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/diagnostics/phase10-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  const tables = [
+    "project_deliveries",
+    "project_delivery_items",
+    "project_installed_equipment",
+    "project_installation_photos",
+    "project_delivery_updates",
+  ];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, probes, schemaScript: "scripts/client-portal-phase10-schema.sql" });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, message: error.message }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  const phase10Ready = tables.every((t) => probes[t]?.ok === true);
+  return res.json({
+    supabaseActive: true,
+    schemaScript: "scripts/client-portal-phase10-schema.sql",
+    phase10Ready,
+    probes,
+  });
 });
 
 app.get("/api/diagnostics/phase9-tables", async (_req, res) => {

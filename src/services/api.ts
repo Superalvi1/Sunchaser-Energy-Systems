@@ -1097,6 +1097,175 @@ export async function postTechnicalEquipment(
   return res.json();
 }
 
+export async function fetchAdminProjectDeliveries(staffUserId: string, staffUsername: string) {
+  const q = new URLSearchParams({ userId: staffUserId, username: staffUsername });
+  const res = await apiFetch(`/api/admin/project-deliveries?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load project deliveries.");
+  }
+  return res.json();
+}
+
+export async function createAdminProjectDelivery(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/project-deliveries", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ ...body, userId: staffUserId, username: staffUsername }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create project delivery.");
+  }
+  return res.json();
+}
+
+export async function patchAdminProjectDelivery(
+  staffUserId: string,
+  staffUsername: string,
+  deliveryId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/admin/project-deliveries/${encodeURIComponent(deliveryId)}`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ ...body, userId: staffUserId, username: staffUsername }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update project delivery.");
+  }
+  return res.json();
+}
+
+export async function addAdminProjectDeliveryItems(
+  staffUserId: string,
+  staffUsername: string,
+  deliveryId: string,
+  items: unknown[]
+) {
+  const res = await apiFetch(`/api/admin/project-deliveries/${encodeURIComponent(deliveryId)}/items`, {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ items, userId: staffUserId, username: staffUsername }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to add delivery items.");
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalProjectDeliveriesMe(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/technical/project-deliveries/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load assigned deliveries.");
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalProjectDeliveryById(
+  userId: string,
+  username: string,
+  deliveryId: string
+) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}?${q}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load delivery.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalDeliveryInstalledEquipment(
+  userId: string,
+  username: string,
+  deliveryId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}/installed-equipment`,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify({ ...body, userId, username }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save installed equipment.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalDeliveryPhoto(
+  userId: string,
+  username: string,
+  deliveryId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}/photos`,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify({ ...body, userId, username }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to upload photo.");
+  }
+  return res.json();
+}
+
+export async function patchTechnicalDeliveryStatus(
+  userId: string,
+  username: string,
+  deliveryId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}/status`,
+    {
+      method: "PATCH",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify({ ...body, userId, username }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update delivery status.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerProjectDeliveryMe(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/customer-portal/project-delivery/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load project delivery.");
+  }
+  return res.json();
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {
