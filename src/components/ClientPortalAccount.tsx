@@ -1,27 +1,20 @@
-import React, { useState } from "react";
+import React from "react";
 import {
-  Activity,
-  ChevronDown,
-  ChevronRight,
-  Heart,
-  History,
+  BookOpen,
   LogOut,
   Mail,
   MapPin,
   Phone,
   RefreshCw,
-  Shield,
-  Sparkles,
   User as UserIcon,
-  Wrench,
-  Zap,
-  BookOpen,
 } from "lucide-react";
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import { displayOrNoData } from "../lib/clientPortalDisplay";
 import { portal } from "../lib/clientPortalUi";
 import type { AccountScreen } from "./ClientPortalAccount.types";
+import ClientPortalPremiumServices from "./ClientPortalPremiumServices";
+import type { PortalServiceId } from "./ClientPortalPremiumServices";
 
 export type { AccountScreen } from "./ClientPortalAccount.types";
 
@@ -34,16 +27,6 @@ interface ClientPortalAccountProps {
   onShowWelcomeGuide?: () => void;
 }
 
-const MORE_SERVICES: { id: AccountScreen; title: string; icon: React.ElementType }[] = [
-  { id: "system", title: "My solar system", icon: Zap },
-  { id: "warranty", title: "Warranty", icon: Shield },
-  { id: "service", title: "Service visits", icon: Wrench },
-  { id: "history", title: "Service history", icon: History },
-  { id: "savings", title: "Solar savings", icon: Sparkles },
-  { id: "energy", title: "Energy monitor", icon: Activity },
-  { id: "care", title: "Care plans", icon: Heart },
-];
-
 export default function ClientPortalAccount({
   user,
   data,
@@ -52,8 +35,9 @@ export default function ClientPortalAccount({
   onLogout,
   onShowWelcomeGuide,
 }: ClientPortalAccountProps) {
-  const [showMore, setShowMore] = useState(false);
   const customer = data?.customer;
+
+  const openService = (id: PortalServiceId) => onNavigate(id);
 
   return (
     <div className="space-y-6 pb-4">
@@ -102,34 +86,7 @@ export default function ClientPortalAccount({
         </div>
       </section>
 
-      <button
-        type="button"
-        onClick={() => setShowMore((v) => !v)}
-        className={`${portal.card} ${portal.cardPad} w-full flex items-center justify-between`}
-      >
-        <span className="text-sm font-semibold text-slate-200">All portal modules</span>
-        <ChevronDown className={`h-5 w-5 text-slate-500 transition ${showMore ? "rotate-180" : ""}`} />
-      </button>
-
-      {showMore && (
-        <div className="space-y-2 -mt-2">
-          {MORE_SERVICES.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onNavigate(item.id)}
-                className={`${portal.card} ${portal.cardPad} w-full flex items-center gap-3 text-left`}
-              >
-                <Icon className="h-5 w-5 text-amber-400 shrink-0" />
-                <span className="flex-1 text-sm font-medium text-slate-200">{item.title}</span>
-                <ChevronRight className="h-4 w-4 text-slate-600" />
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <ClientPortalPremiumServices onOpen={openService} />
 
       <div className={`${portal.card} overflow-hidden`}>
         {onShowWelcomeGuide && (

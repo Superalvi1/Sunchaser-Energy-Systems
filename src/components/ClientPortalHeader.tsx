@@ -1,7 +1,7 @@
 import React from "react";
 import { LogOut, MessageCircle, Phone } from "lucide-react";
 import type { CompanyBranding } from "../lib/branding";
-import { portal, supportPhoneFromBranding, whatsAppHref } from "../lib/clientPortalUi";
+import { CUSTOMER_PORTAL_VERSION, portal, supportPhoneFromBranding, whatsAppHref } from "../lib/clientPortalUi";
 import { withOfficialBranding } from "../lib/brandingAssets";
 import AppLogo from "./AppLogo";
 
@@ -46,6 +46,12 @@ export default function ClientPortalHeader({
             </p>
             <h1 className="text-lg font-bold text-white truncate mt-0.5">{customerName}</h1>
             <p className="text-[11px] text-slate-500 font-mono mt-1 truncate">ID {customerId}</p>
+            <p
+              className="text-[9px] font-semibold text-amber-400/80 mt-1 tracking-wide"
+              data-portal-version={CUSTOMER_PORTAL_VERSION}
+            >
+              {CUSTOMER_PORTAL_VERSION}
+            </p>
           </div>
           <button
             type="button"
