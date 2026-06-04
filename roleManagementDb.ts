@@ -40,36 +40,57 @@ function mapRoleRow(row: any, permissions: PermissionKey[] = []) {
 const localRoles: any[] = [];
 const localRolePerms: Record<string, PermissionKey[]> = {};
 
-async function seedSystemRoles(localDb?: Database) {
+/** Insert system roles / default permissions only when rows are missing — never overwrite edits. */
+async function seedSystemRoles(_localDb?: Database) {
   try {
-  for (const name of APP_ROLES) {
-    const id = `role-${slugify(name)}`;
-    const perms = [...(ROLE_PERMISSIONS[name as keyof typeof ROLE_PERMISSIONS] || [])];
-    const row = {
-      id,
-      name,
-      slug: slugify(name),
-      is_system: true,
-      cloned_from: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    if (isSupabaseActive()) {
-      const supabase = getSupabase()!;
-      await supabase.from("roles").upsert(row, { onConflict: "id" });
-      for (const key of ALL_PERMISSION_KEYS) {
-        await supabase.from("role_permissions").upsert(
-          { role_id: id, permission_key: key, enabled: perms.includes(key) },
-          { onConflict: "role_id,permission_key" }
-        );
+    for (const name of APP_ROLES) {
+      const id = `role-${slugify(name)}`;
+      const defaultPerms = [...(ROLE_PERMISSIONS[name as keyof typeof ROLE_PERMISSIONS] || [])];
+      const row = {
+        id,
+        name,
+        slug: slugify(name),
+        is_system: true,
+        cloned_from: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      if (isSupabaseActive()) {
+        const supabase = getSupabase()!;
+        const { data: existingRole } = await supabase.from("roles").select("id").eq("id", id).maybeSingle();
+        if (!existingRole) {
+          const { error: roleErr } = await supabase.from("roles").insert(row);
+          if (roleErr) throw roleErr;
+        }
+
+        const { data: existingPermRows, error: permListErr } = await supabase
+          .from("role_permissions")
+          .select("permission_key")
+          .eq("role_id", id);
+        if (permListErr) throw permListErr;
+
+        const existingKeys = new Set((existingPermRows || []).map((p: { permission_key: string }) => p.permission_key));
+        const missingRows = ALL_PERMISSION_KEYS.filter((key) => !existingKeys.has(key)).map((key) => ({
+          role_id: id,
+          permission_key: key,
+          enabled: defaultPerms.includes(key),
+        }));
+
+        if (missingRows.length) {
+          const { error: insertErr } = await supabase.from("role_permissions").insert(missingRows);
+          if (insertErr) throw insertErr;
+        }
+      } else {
+        const idx = localRoles.findIndex((r) => r.id === id);
+        if (idx < 0) {
+          localRoles.push(row);
+          localRolePerms[id] = defaultPerms;
+        } else if (!localRolePerms[id]?.length) {
+          localRolePerms[id] = defaultPerms;
+        }
       }
-    } else {
-      const idx = localRoles.findIndex((r) => r.id === id);
-      if (idx >= 0) localRoles[idx] = row;
-      else localRoles.push(row);
-      localRolePerms[id] = perms;
     }
-  }
   } catch (err) {
     console.warn("[roles] seed skipped (tables may not exist yet):", (err as Error).message);
   }
