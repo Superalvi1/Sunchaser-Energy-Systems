@@ -29,8 +29,10 @@ import {
   fetchTechnicalJobsMe,
   fetchOnboardingMe,
   completeOnboarding,
+  fetchApiHealth,
 } from "./services/api";
 import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
+import { isNativeApp } from "./lib/appPlatform";
 
 declare const __GIT_COMMIT_HASH__: string;
 declare const __BUILD_TIME__: string;
@@ -178,13 +180,22 @@ export default function App() {
     if (cachedUser) {
       try {
         parsed = JSON.parse(cachedUser);
-        setCurrentUser(parsed);
-      } catch (e) {
+      } catch {
         localStorage.removeItem("sunchaser_user");
       }
     }
 
+    void fetchApiHealth();
+
+    if (isNativeApp()) {
+      // Android/iOS: never auto-sync /api/state — show login until explicit sign-in
+      if (parsed?.username) setUsername(parsed.username);
+      setLoading(false);
+      return;
+    }
+
     if (parsed) {
+      setCurrentUser(parsed);
       loadSessionForUser(parsed);
       refreshOnboardingGate(parsed, forceWelcomeGuide);
     } else {

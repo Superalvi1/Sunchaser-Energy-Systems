@@ -2,6 +2,8 @@ import { Lead, Ticket, AppState, Quote, User } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
   STARTUP_FETCH_TIMEOUT_MS,
+  logApiFailure,
+  readApiErrorBody,
   toConnectionError,
 } from "../lib/startupFetch.ts";
 
@@ -34,12 +36,36 @@ export async function fetchWithTimeout(
   }
 }
 
+export async function fetchApiHealth(): Promise<boolean> {
+  const url = `${API_BASE_URL}/health`;
+  try {
+    const res = await fetchWithTimeout("/health", undefined, 8000);
+    if (!res.ok) {
+      const body = await readApiErrorBody(res);
+      logApiFailure("fetchApiHealth", url, res.status, body);
+      return false;
+    }
+    console.log("[API] health ok", url, res.status);
+    return true;
+  } catch (err) {
+    logApiFailure("fetchApiHealth", url, null, {}, err);
+    return false;
+  }
+}
+
 export async function fetchAppState(): Promise<AppState> {
+  const url = `${API_BASE_URL}/api/state`;
   try {
     const res = await fetchWithTimeout("/api/state");
-    if (!res.ok) throw new Error(CONNECTION_ERROR_MESSAGE);
+    if (!res.ok) {
+      const body = await readApiErrorBody(res);
+      logApiFailure("fetchAppState", url, res.status, body);
+      throw new Error(CONNECTION_ERROR_MESSAGE);
+    }
     return res.json();
   } catch (err) {
+    if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
+    logApiFailure("fetchAppState", url, null, {}, err);
     throw toConnectionError(err);
   }
 }
@@ -63,6 +89,7 @@ export async function fetchCustomerPortalMe(
   userId: string,
   username: string
 ): Promise<ClientPortalResponse> {
+  const url = `${API_BASE_URL}/api/customer-portal/me`;
   try {
     const res = await fetchWithTimeout("/api/customer-portal/me", {
       method: "POST",
@@ -74,11 +101,14 @@ export async function fetchCustomerPortalMe(
       body: JSON.stringify({ userId, username }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || CONNECTION_ERROR_MESSAGE);
+      const body = await readApiErrorBody(res);
+      logApiFailure("fetchCustomerPortalMe", url, res.status, body);
+      throw new Error(CONNECTION_ERROR_MESSAGE);
     }
     return res.json();
   } catch (err) {
+    if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
+    logApiFailure("fetchCustomerPortalMe", url, null, {}, err);
     throw toConnectionError(err);
   }
 }
@@ -1053,16 +1083,21 @@ export async function resetOnboarding(userId: string, username: string) {
 
 export async function fetchTechnicalJobsMe(userId: string, username: string) {
   const q = new URLSearchParams({ userId, username });
+  const path = `/api/technical/jobs/me?${q}`;
+  const url = `${API_BASE_URL}${path}`;
   try {
-    const res = await fetchWithTimeout(`/api/technical/jobs/me?${q}`, {
+    const res = await fetchWithTimeout(path, {
       headers: portalAuthHeaders(userId, username),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || CONNECTION_ERROR_MESSAGE);
+      const body = await readApiErrorBody(res);
+      logApiFailure("fetchTechnicalJobsMe", url, res.status, body);
+      throw new Error(CONNECTION_ERROR_MESSAGE);
     }
     return res.json();
   } catch (err) {
+    if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
+    logApiFailure("fetchTechnicalJobsMe", url, null, {}, err);
     throw toConnectionError(err);
   }
 }
