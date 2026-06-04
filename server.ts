@@ -646,7 +646,11 @@ app.get("/api/auth/roles-matrix", async (req, res) => {
   try {
     loadDb();
     const payload = await getRolesMatrixFromDb(userId || null, username || null, db);
-    return res.json(payload);
+    return res.json({
+      ...payload,
+      permissionKeys: payload.permissionKeys || [...ALL_PERMISSION_KEYS],
+      permissionLabels: payload.permissionLabels || PERMISSION_LABELS,
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
