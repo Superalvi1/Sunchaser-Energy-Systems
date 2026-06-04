@@ -1,11 +1,18 @@
 export const DOCUMENT_WALLET_TYPES = [
   { type: "quotation_pdf", label: "Quotation PDF" },
   { type: "agreement", label: "Agreement" },
+  { type: "agreement_word", label: "Agreement (Word)" },
+  { type: "agreement_excel", label: "Agreement / BOQ (Excel)" },
+  { type: "boq_excel", label: "BOQ (Excel)" },
   { type: "invoice", label: "Invoice" },
-  { type: "warranty_certificate", label: "Warranty Certificate" },
-  { type: "net_metering_documents", label: "Net Metering Documents" },
-  { type: "completion_certificate", label: "Completion Certificate" },
-  { type: "product_datasheet", label: "Product Datasheets" },
+  { type: "warranty_certificate", label: "Warranty Card" },
+  { type: "net_metering_documents", label: "Net Metering" },
+  { type: "completion_certificate", label: "Completion Report" },
+  { type: "site_survey_report", label: "Site Survey Report" },
+  { type: "cnic_copy", label: "CNIC Copy" },
+  { type: "electricity_bill", label: "Electricity Bill" },
+  { type: "product_datasheet", label: "Product Datasheet" },
+  { type: "other", label: "Other" },
 ] as const;
 
 export type DocumentWalletType = (typeof DOCUMENT_WALLET_TYPES)[number]["type"];
@@ -25,11 +32,41 @@ export interface CustomerDocumentRecord {
   id: string;
   customerId: string;
   projectId?: string | null;
-  documentType: DocumentWalletType;
+  documentType: DocumentWalletType | string;
   title: string;
   fileUrl: string;
+  fileName?: string | null;
   uploadedBy: string;
   uploadedAt: string;
+  visibleToCustomer: boolean;
+  internalOnly: boolean;
+  notes?: string | null;
+  mimeType?: string | null;
+}
+
+export interface CustomerSystemProfile {
+  customerId: string;
+  systemSizeKw?: number | null;
+  systemType?: "On-grid" | "Hybrid" | "Off-grid" | null;
+  panelBrand?: string | null;
+  panelWattage?: number | null;
+  panelQuantity?: number | null;
+  inverterBrand?: string | null;
+  inverterSizeKw?: number | null;
+  batteryBrand?: string | null;
+  batteryCapacityKwh?: number | null;
+  structureType?: string | null;
+  installationDate?: string | null;
+  warrantyStart?: string | null;
+  warrantyEnd?: string | null;
+  netMeteringStatus?: string | null;
+  meterNumber?: string | null;
+  consumerNumber?: string | null;
+  sanctionedLoadKw?: number | null;
+  siteAddress?: string | null;
+  notes?: string | null;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
 }
 
 export interface CustomerWarrantyRecord {
@@ -82,6 +119,9 @@ export function computeWarrantyLifecycle(endDate?: string | null): {
 }
 
 export function mapDocumentRow(row: any): CustomerDocumentRecord {
+  const internalOnly = !!(row.internal_only ?? row.internalOnly);
+  const visible =
+    row.visible_to_customer ?? row.visibleToCustomer ?? !internalOnly;
   return {
     id: row.id,
     customerId: row.customer_id,
@@ -89,8 +129,13 @@ export function mapDocumentRow(row: any): CustomerDocumentRecord {
     documentType: row.document_type,
     title: row.title,
     fileUrl: row.file_url,
+    fileName: row.file_name || row.fileName || null,
     uploadedBy: row.uploaded_by,
     uploadedAt: row.uploaded_at,
+    visibleToCustomer: visible !== false && !internalOnly,
+    internalOnly,
+    notes: row.notes || null,
+    mimeType: row.mime_type || row.mimeType || null,
   };
 }
 
@@ -125,24 +170,55 @@ export function mapWarrantyClaimRow(row: any): WarrantyClaimRecord {
   };
 }
 
+export function mapCustomerSystemRow(row: any): CustomerSystemProfile {
+  return {
+    customerId: row.customer_id,
+    systemSizeKw: row.system_size_kw,
+    systemType: row.system_type,
+    panelBrand: row.panel_brand,
+    panelWattage: row.panel_wattage,
+    panelQuantity: row.panel_quantity,
+    inverterBrand: row.inverter_brand,
+    inverterSizeKw: row.inverter_size_kw,
+    batteryBrand: row.battery_brand,
+    batteryCapacityKwh: row.battery_capacity_kwh,
+    structureType: row.structure_type,
+    installationDate: row.installation_date,
+    warrantyStart: row.warranty_start,
+    warrantyEnd: row.warranty_end,
+    netMeteringStatus: row.net_metering_status,
+    meterNumber: row.meter_number,
+    consumerNumber: row.consumer_number,
+    sanctionedLoadKw: row.sanctioned_load_kw,
+    siteAddress: row.site_address,
+    notes: row.notes,
+    updatedAt: row.updated_at,
+    updatedBy: row.updated_by,
+  };
+}
+
 export function buildDocumentWalletSlots(documents: CustomerDocumentRecord[]) {
-  return DOCUMENT_WALLET_TYPES.map((slot) => {
-    const doc = documents
-      .filter((d) => d.documentType === slot.type)
-      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0];
-    return {
-      ...slot,
-      document: doc || null,
-    };
-  });
+  const primaryTypes = [
+    "quotation_pdf",
+    "agreement",
+    "invoice",
+    "warranty_certificate",
+    "net_metering_documents",
+    "completion_certificate",
+  ];
+  return DOCUMENT_WALLET_TYPES.filter((s) => primaryTypes.includes(s.type) || s.type === "agreement_word").map(
+    (slot) => {
+      const doc = documents
+        .filter((d) => d.documentType === slot.type || (slot.type === "agreement" && d.documentType === "agreement_word"))
+        .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0];
+      return { ...slot, document: doc || null };
+    }
+  );
 }
 
 export function buildWarrantyCenterCards(warranties: CustomerWarrantyRecord[]) {
   return WARRANTY_COMPONENT_TYPES.map((slot) => {
     const row = warranties.find((w) => w.componentType === slot.type);
-    return {
-      ...slot,
-      warranty: row || null,
-    };
+    return { ...slot, warranty: row || null };
   });
 }

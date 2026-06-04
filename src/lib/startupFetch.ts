@@ -58,3 +58,20 @@ export function toConnectionError(err: unknown): Error {
   }
   return new Error(CONNECTION_ERROR_MESSAGE);
 }
+
+/** Login: keep backend auth messages; only map true network/timeout failures. */
+export function toLoginError(err: unknown): Error {
+  if (err instanceof Error && err.message === LOGIN_UNABLE_CONNECT_MESSAGE) {
+    return err;
+  }
+  if (err instanceof Error && err.name === "AbortError") {
+    return new Error(LOGIN_UNABLE_CONNECT_MESSAGE);
+  }
+  if (isNetworkFetchError(err)) {
+    return new Error(LOGIN_UNABLE_CONNECT_MESSAGE);
+  }
+  if (err instanceof Error && err.message) {
+    return err;
+  }
+  return new Error(LOGIN_UNABLE_CONNECT_MESSAGE);
+}

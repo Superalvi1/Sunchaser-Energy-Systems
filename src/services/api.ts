@@ -8,6 +8,7 @@ import {
   logApiFailure,
   readApiErrorBody,
   toConnectionError,
+  toLoginError,
 } from "../lib/startupFetch.ts";
 
 const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
@@ -156,6 +157,13 @@ function portalAuthHeaders(userId: string, username: string) {
     "Content-Type": "application/json",
     "X-Sunchaser-User-Id": userId,
     "X-Sunchaser-Username": username,
+  };
+}
+
+function staffPortalHeaders(userId: string, username: string, role: string) {
+  return {
+    ...portalAuthHeaders(userId, username),
+    "X-Sunchaser-Role": role,
   };
 }
 
@@ -825,10 +833,158 @@ export async function resetPasswordWithToken(token: string, password: string) {
   return data as { ok: boolean; message: string };
 }
 
-export async function fetchRolesMatrix() {
-  const res = await apiFetch("/api/auth/roles-matrix");
+export async function fetchRolesMatrix(staffUserId?: string, staffUsername?: string) {
+  const q = new URLSearchParams();
+  if (staffUserId) q.set("userId", staffUserId);
+  if (staffUsername) q.set("username", staffUsername);
+  const suffix = q.toString() ? `?${q}` : "";
+  const res = await apiFetch(`/api/auth/roles-matrix${suffix}`, {
+    headers:
+      staffUserId && staffUsername
+        ? portalAuthHeaders(staffUserId, staffUsername)
+        : undefined,
+  });
   if (!res.ok) throw new Error("Failed to load roles matrix.");
   return res.json();
+}
+
+export async function fetchAdminRoles(staff: User) {
+  const res = await apiFetch("/api/admin/roles", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load roles.");
+  return data as { roles: any[] };
+}
+
+export async function createAdminRole(staff: User, body: Record<string, unknown>) {
+  return staffPortalJsonRequest(
+    "createAdminRole",
+    "/api/admin/roles",
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to create role"
+  );
+}
+
+export async function updateAdminRole(staff: User, roleId: string, body: Record<string, unknown>) {
+  return staffPortalJsonRequest(
+    "updateAdminRole",
+    `/api/admin/roles/${roleId}`,
+    {
+      method: "PATCH",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to update role"
+  );
+}
+
+export async function cloneAdminRole(staff: User, roleId: string, name: string) {
+  return staffPortalJsonRequest(
+    "cloneAdminRole",
+    `/api/admin/roles/${roleId}/clone`,
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify({ name }),
+    },
+    "Failed to clone role"
+  );
+}
+
+export async function deleteAdminRole(staff: User, roleId: string) {
+  return staffPortalJsonRequest(
+    "deleteAdminRole",
+    `/api/admin/roles/${roleId}`,
+    {
+      method: "DELETE",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+    },
+    "Failed to delete role"
+  );
+}
+
+export async function fetchCustomerAccounts(staff: User) {
+  const q = new URLSearchParams({ role: staff.role });
+  const res = await apiFetch(`/api/admin/customer-accounts?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load customers.");
+  return data as { accounts: any[] };
+}
+
+export async function fetchCustomerSystem(staff: User, customerId: string) {
+  const q = new URLSearchParams({ role: staff.role });
+  const res = await apiFetch(`/api/admin/customer-systems/${customerId}?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load system profile.");
+  return data as { system: any };
+}
+
+export async function saveCustomerSystem(staff: User, body: Record<string, unknown>) {
+  return staffPortalJsonRequest(
+    "saveCustomerSystem",
+    "/api/admin/customer-systems",
+    {
+      method: "PUT",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify({ ...body, role: staff.role }),
+    },
+    "Failed to save system profile"
+  );
+}
+
+export async function fetchAdminCustomerDocumentsList(staff: User, customerId: string) {
+  const q = new URLSearchParams({ role: staff.role });
+  const res = await apiFetch(`/api/admin/customer-documents/${customerId}?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load documents.");
+  return data as { documents: any[] };
+}
+
+export async function uploadAdminCustomerDocument(
+  staff: User,
+  body: {
+    customerId: string;
+    base64Data: string;
+    fileName: string;
+    mimeType?: string;
+    documentType: string;
+    title?: string;
+    visibleToCustomer?: boolean;
+    internalOnly?: boolean;
+    notes?: string;
+  }
+) {
+  return staffPortalJsonRequest(
+    "uploadAdminCustomerDocument",
+    "/api/admin/customer-documents/upload",
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify({ ...body, role: staff.role }),
+    },
+    "Failed to upload document"
+  );
+}
+
+export async function fetchCustomerPortalSystem(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/customer-portal/system/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load system details.");
+  return data as { system: any };
 }
 
 export async function fetchAdminUsers(userId: string, username: string) {
@@ -952,18 +1108,7 @@ export async function loginUser(body: { username: string; password?: string }): 
     return parsed as { success: boolean; user: User };
   } catch (err) {
     console.error("Login error:", err);
-    if (err instanceof Error && err.message === LOGIN_UNABLE_CONNECT_MESSAGE) {
-      throw err;
-    }
-    if (err instanceof Error && err.message) {
-      if (
-        err.message.includes("Login failed") ||
-        err.message.includes("Invalid credentials")
-      ) {
-        throw err;
-      }
-    }
-    throw new Error(LOGIN_UNABLE_CONNECT_MESSAGE);
+    throw toLoginError(err);
   } finally {
     clearTimeout(timer);
   }

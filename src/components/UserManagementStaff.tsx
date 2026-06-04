@@ -7,7 +7,11 @@ import {
   Shield,
   UserPlus,
   Table,
+  Settings2,
+  UserCircle,
 } from "lucide-react";
+import RoleManagementPanel from "./RoleManagementPanel";
+import CustomerProfileStaff from "./CustomerProfileStaff";
 import type { User } from "../types";
 import {
   fetchAdminUsers,
@@ -18,17 +22,18 @@ import {
   updateAdminUser,
   fetchRolesMatrix,
 } from "../services/api";
-import { isSuperAdmin, APP_ROLES, ADMIN_ONLY_CREATE_ROLES } from "../lib/roles";
+import { isSuperAdmin, canManageCustomers, APP_ROLES, ADMIN_ONLY_CREATE_ROLES } from "../lib/roles";
 import type { PermissionKey } from "../lib/roles";
 
 interface UserManagementStaffProps {
   staffUser: User;
 }
 
-type Tab = "pending" | "users" | "matrix";
+type Tab = "pending" | "users" | "roles" | "customers" | "matrix";
 
 export default function UserManagementStaff({ staffUser }: UserManagementStaffProps) {
   const allowed = isSuperAdmin(staffUser.username, staffUser.role);
+  const showCustomers = canManageCustomers(staffUser.username, staffUser.role);
   const [tab, setTab] = useState<Tab>("pending");
   const [users, setUsers] = useState<User[]>([]);
   const [pending, setPending] = useState<User[]>([]);
@@ -55,7 +60,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       const [all, pend, mx] = await Promise.all([
         fetchAdminUsers(staffUser.id, staffUser.username),
         fetchPendingUsers(staffUser.id, staffUser.username),
-        fetchRolesMatrix(),
+        fetchRolesMatrix(staffUser.id, staffUser.username),
       ]);
       setUsers(all.users);
       setPending(pend.users);
@@ -147,7 +152,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       {msg && <p className="text-xs text-amber-400 font-mono">{msg}</p>}
 
       <div className="flex flex-wrap gap-2 text-xs font-bold">
-        {(["pending", "users", "matrix"] as Tab[]).map((t) => (
+        {(["pending", "users", "roles", ...(showCustomers ? (["customers"] as Tab[]) : []), "matrix"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -158,7 +163,15 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
                 : "bg-slate-950 border-slate-800 text-slate-400"
             }`}
           >
-            {t === "pending" ? `Approval queue (${pending.length})` : t === "users" ? "All users" : "Permissions"}
+            {t === "pending"
+              ? `Approval queue (${pending.length})`
+              : t === "users"
+                ? "All users"
+                : t === "roles"
+                  ? "Roles"
+                  : t === "customers"
+                    ? "Customer profiles"
+                    : "Permissions matrix"}
           </button>
         ))}
       </div>
@@ -221,6 +234,10 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
             ))
           )}
         </ul>
+      ) : tab === "roles" ? (
+        <RoleManagementPanel staffUser={staffUser} />
+      ) : tab === "customers" && showCustomers ? (
+        <CustomerProfileStaff staffUser={staffUser} />
       ) : tab === "users" ? (
         <div className="overflow-x-auto">
           <table className="w-full text-xs font-mono border-collapse">

@@ -19,6 +19,7 @@ import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import ClientPortalHome from "./ClientPortalHome";
 import ClientPortalDocuments from "./ClientPortalDocuments";
+import ClientPortalSystem from "./ClientPortalSystem";
 import ClientPortalWarranties from "./ClientPortalWarranties";
 import ClientPortalSupport from "./ClientPortalSupport";
 import ClientPortalService from "./ClientPortalService";
@@ -40,6 +41,7 @@ interface ClientPortalAppProps {
 
 type PortalTab =
   | "home"
+  | "system"
   | "documents"
   | "warranty"
   | "support"
@@ -65,6 +67,7 @@ export default function ClientPortalApp({
 
   const tabs: { id: PortalTab; label: string; icon: React.ElementType }[] = [
     { id: "home", label: "Home", icon: Home },
+    { id: "system", label: "My System", icon: Zap },
     { id: "documents", label: "Documents", icon: FolderOpen },
     { id: "payments", label: "Payments", icon: Receipt },
     { id: "warranty", label: "Warranty", icon: Shield },
@@ -186,6 +189,7 @@ export default function ClientPortalApp({
           </>
         )}
 
+        {activeTab === "system" && <ClientPortalSystem user={user} />}
         {activeTab === "documents" && <ClientPortalDocuments user={user} />}
         {activeTab === "payments" && <ClientPortalPayments user={user} />}
         {activeTab === "warranty" && <ClientPortalWarranties user={user} />}

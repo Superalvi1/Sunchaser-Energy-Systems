@@ -107,22 +107,24 @@ import {
   UserAuthError,
 } from "./userAuthDb.js";
 import {
-  APP_ROLES,
-  ROLE_PERMISSIONS,
-  PERMISSION_LABELS,
-  SELF_REGISTER_ROLES,
-  ADMIN_ONLY_CREATE_ROLES,
-} from "./src/lib/roles.js";
-
-function getRolesMatrixPayload() {
-  return {
-    roles: APP_ROLES,
-    selfRegisterRoles: SELF_REGISTER_ROLES,
-    adminOnlyCreateRoles: ADMIN_ONLY_CREATE_ROLES,
-    permissions: ROLE_PERMISSIONS,
-    permissionLabels: PERMISSION_LABELS,
-  };
-}
+  listManagedRoles,
+  createManagedRole,
+  updateManagedRole,
+  deleteManagedRole,
+  cloneManagedRole,
+  getRolesMatrixFromDb,
+  RoleManagementError,
+} from "./roleManagementDb.js";
+import {
+  listCustomerPortalAccounts,
+  getCustomerSystemProfile,
+  upsertCustomerSystemProfile,
+  listAdminCustomerDocuments,
+  assignCustomerDocument,
+  uploadFileToCustomerStorage,
+  fetchCustomerPortalSystemMe,
+  CustomerProfileError,
+} from "./customerProfileDb.js";
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
@@ -551,6 +553,7 @@ function readStaffAuth(req: express.Request) {
   return {
     userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
     username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
+    role: String(req.headers["x-sunchaser-role"] || req.query?.role || req.body?.role || "").trim(),
   };
 }
 
@@ -636,8 +639,211 @@ app.post("/api/admin/users/:id/reject", async (req, res) => {
   }
 });
 
-app.get("/api/auth/roles-matrix", (_req, res) => {
-  return res.json(getRolesMatrixPayload());
+app.get("/api/auth/roles-matrix", async (req, res) => {
+  const userId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
+  try {
+    loadDb();
+    const payload = await getRolesMatrixFromDb(userId || null, username || null, db);
+    return res.json(payload);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/roles", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const roles = await listManagedRoles(userId, username, db);
+    return res.json({ roles });
+  } catch (err: any) {
+    if (err instanceof RoleManagementError || err instanceof UserAuthError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/roles", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const role = await createManagedRole(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json({ role });
+  } catch (err: any) {
+    if (err instanceof RoleManagementError || err instanceof UserAuthError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/roles/:id", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const role = await updateManagedRole(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json({ role });
+  } catch (err: any) {
+    if (err instanceof RoleManagementError || err instanceof UserAuthError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/roles/:id/clone", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const role = await cloneManagedRole(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.status(201).json({ role });
+  } catch (err: any) {
+    if (err instanceof RoleManagementError || err instanceof UserAuthError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/roles/:id", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const result = await deleteManagedRole(userId, username, req.params.id, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof RoleManagementError || err instanceof UserAuthError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-accounts", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  try {
+    loadDb();
+    const accounts = await listCustomerPortalAccounts(userId, username, role, db);
+    return res.json({ accounts });
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-systems/:customerId", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  const role = String(req.query.role || "");
+  try {
+    loadDb();
+    const system = await getCustomerSystemProfile(userId, username, role, req.params.customerId, db);
+    return res.json({ system });
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/customer-systems", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  const role = String(req.body?.role || "");
+  try {
+    loadDb();
+    const system = await upsertCustomerSystemProfile(userId, username, role, req.body || {}, db);
+    saveDb();
+    return res.json({ system });
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  const role = String(req.query.role || "");
+  try {
+    loadDb();
+    const documents = await listAdminCustomerDocuments(
+      userId,
+      username,
+      role,
+      req.params.customerId,
+      db
+    );
+    return res.json({ documents });
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/customer-documents/assign", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  const role = String(req.body?.role || "");
+  try {
+    loadDb();
+    const doc = await assignCustomerDocument(userId, username, role, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(doc);
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/customer-documents/upload", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  const { customerId, base64Data, fileName, mimeType, documentType, title, visibleToCustomer, internalOnly, notes } =
+    req.body || {};
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const { url, storagePath } = await uploadFileToCustomerStorage(
+      String(customerId),
+      String(base64Data),
+      String(fileName || "document"),
+      mimeType
+    );
+    const role = String(req.body?.role || "");
+    const doc = await assignCustomerDocument(userId, username, role, {
+      customerId: String(customerId),
+      documentType: documentType || "other",
+      title: title || fileName,
+      fileUrl: url,
+      fileName,
+      mimeType,
+      storagePath,
+      visibleToCustomer: visibleToCustomer !== false,
+      internalOnly: !!internalOnly,
+      notes,
+      uploadedBy: username,
+    }, db);
+    saveDb();
+    return res.status(201).json(doc);
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/system/me", async (req, res) => {
+  const userId = String(req.query.userId || "").trim();
+  const username = String(req.query.username || "").trim();
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalSystemMe(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 async function handleCustomerPortalMe(req: any, res: any) {

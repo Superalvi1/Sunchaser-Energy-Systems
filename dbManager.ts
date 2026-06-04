@@ -2473,9 +2473,21 @@ export async function fetchCustomerPortalDocuments(
       .from("customer_documents")
       .select("*")
       .eq("customer_id", customerId)
+      .eq("visible_to_customer", true)
       .order("uploaded_at", { ascending: false });
-    if (error) throw error;
-    const documents = (data || []).map(mapDocumentRow);
+    if (error) {
+      const fallback = await supabase
+        .from("customer_documents")
+        .select("*")
+        .eq("customer_id", customerId)
+        .order("uploaded_at", { ascending: false });
+      if (fallback.error) throw error;
+      const documents = (fallback.data || [])
+        .map(mapDocumentRow)
+        .filter((d) => d.visibleToCustomer && !d.internalOnly);
+      return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
+    }
+    const documents = (data || []).map(mapDocumentRow).filter((d) => !d.internalOnly);
     return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
   }
 
@@ -2491,8 +2503,11 @@ export async function fetchCustomerPortalDocuments(
         file_url: d.fileUrl || d.file_url,
         uploaded_by: d.uploadedBy || d.uploaded_by,
         uploaded_at: d.uploadedAt || d.uploaded_at,
+        visible_to_customer: d.visibleToCustomer ?? d.visible_to_customer,
+        internal_only: d.internalOnly ?? d.internal_only,
       })
-    );
+    )
+    .filter((d) => d.visibleToCustomer && !d.internalOnly);
   return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
 }
 
@@ -2660,6 +2675,8 @@ export async function createAdminCustomerDocument(
   const customerId = String(body.customerId || "").trim();
   if (!customerId) throw new StaffPortalAuthError("customerId is required.");
 
+  const internalOnly = !!(body as any).internalOnly;
+  const visibleToCustomer = (body as any).visibleToCustomer !== false && !internalOnly;
   const doc = {
     id: `doc-${Date.now()}`,
     customer_id: customerId,
@@ -2667,6 +2684,12 @@ export async function createAdminCustomerDocument(
     document_type: body.documentType,
     title: String(body.title || "").trim() || body.documentType,
     file_url: String(body.fileUrl || "").trim(),
+    file_name: (body as any).fileName || null,
+    mime_type: (body as any).mimeType || null,
+    storage_path: (body as any).storagePath || null,
+    visible_to_customer: visibleToCustomer,
+    internal_only: internalOnly,
+    notes: (body as any).notes || null,
     uploaded_by: String(body.uploadedBy || staffUsername).trim(),
     uploaded_at: new Date().toISOString(),
   };
