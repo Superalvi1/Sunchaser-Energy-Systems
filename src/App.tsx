@@ -26,9 +26,11 @@ import {
   deleteLead,
   deleteQuote,
   fetchCustomerPortalMe,
+  fetchTechnicalJobsMe,
   fetchOnboardingMe,
   completeOnboarding,
 } from "./services/api";
+import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
 
 declare const __GIT_COMMIT_HASH__: string;
 declare const __BUILD_TIME__: string;
@@ -47,10 +49,15 @@ import AIAssistant from "./components/AIAssistant";
 import AdminApp from "./components/AdminApp";
 import { isTechnicalStaffRole } from "./lib/technicalStaff";
 
+function needsCrmAppState(role: string) {
+  return role !== "Customer" && !isTechnicalStaffRole(role);
+}
+
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionSyncError, setSessionSyncError] = useState<string | null>(null);
   
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -70,6 +77,7 @@ export default function App() {
   const loadCustomerPortal = async (user: User) => {
     setPortalLoading(true);
     setPortalError(null);
+    console.log("Home screen API request:", `${API_BASE_URL}/api/customer-portal/me`);
     try {
       const data = await fetchCustomerPortalMe(user.id, user.username);
       setPortalData({
@@ -80,15 +88,34 @@ export default function App() {
         tracker: data.tracker as ClientPortalPayload["tracker"],
       });
     } catch (err: any) {
-      setPortalError(err.message || "Unable to load your portal.");
+      setPortalError(err.message || CONNECTION_ERROR_MESSAGE);
     } finally {
       setPortalLoading(false);
       setLoading(false);
     }
   };
 
-  // Load backend database state on mount & synchronize
+  const loadTechnicalSession = async (user: User) => {
+    const jobsUrl = `${API_BASE_URL}/api/technical/jobs/me`;
+    console.log("Home screen API request:", jobsUrl);
+    setLoading(true);
+    setSessionSyncError(null);
+    try {
+      await fetchTechnicalJobsMe(user.id, user.username);
+    } catch (err: any) {
+      console.error("Technical session load failed:", jobsUrl, err);
+      setSessionSyncError(err.message || CONNECTION_ERROR_MESSAGE);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Staff/admin CRM state — only after login, not on guest boot
   const loadDatabaseState = async () => {
+    const homeStateUrl = `${API_BASE_URL}/api/state`;
+    console.log("Home screen API request:", homeStateUrl);
+    setLoading(true);
+    setSessionSyncError(null);
     try {
       const state = await fetchAppState();
       setAppState(state);
@@ -99,9 +126,25 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      console.error(err);
-      setError("Unable to sync with Sunchaser central grids. Please click refresh.");
+      console.error("CRM state load failed:", homeStateUrl, err);
+      setSessionSyncError(err.message || CONNECTION_ERROR_MESSAGE);
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSessionForUser = async (user: User) => {
+    if (user.role === "Customer") {
+      await loadCustomerPortal(user);
+      return;
+    }
+    if (isTechnicalStaffRole(user.role)) {
+      await loadTechnicalSession(user);
+      return;
+    }
+    if (needsCrmAppState(user.role)) {
+      await loadDatabaseState();
+    } else {
       setLoading(false);
     }
   };
@@ -141,15 +184,11 @@ export default function App() {
       }
     }
 
-    if (parsed?.role === "Customer") {
-      loadCustomerPortal(parsed);
-    } else if (parsed && isTechnicalStaffRole(parsed.role)) {
-      setLoading(false);
-    } else {
-      loadDatabaseState();
-    }
     if (parsed) {
+      loadSessionForUser(parsed);
       refreshOnboardingGate(parsed, forceWelcomeGuide);
+    } else {
+      setLoading(false);
     }
   }, []);
 
@@ -188,13 +227,7 @@ export default function App() {
       if (res.success) {
         setCurrentUser(res.user);
         localStorage.setItem("sunchaser_user", JSON.stringify(res.user));
-        if (res.user.role === "Customer") {
-          await loadCustomerPortal(res.user);
-        } else if (isTechnicalStaffRole(res.user.role)) {
-          setLoading(false);
-        } else {
-          await loadDatabaseState();
-        }
+        await loadSessionForUser(res.user);
         await refreshOnboardingGate(res.user);
       }
     } catch (err: any) {
@@ -208,8 +241,17 @@ export default function App() {
     setCurrentUser(null);
     setPortalData(null);
     setPortalError(null);
+    setSessionSyncError(null);
+    setAppState(null);
+    setError(null);
+    setLoading(false);
     localStorage.removeItem("sunchaser_user");
     setActiveTab("Overview");
+  };
+
+  const retrySessionSync = () => {
+    if (!currentUser) return;
+    loadSessionForUser(currentUser);
   };
 
   /* --- DATA MUTATION PROXIES --- */
@@ -444,13 +486,41 @@ export default function App() {
 
   if (currentUser && isTechnicalStaffRole(currentUser.role)) {
     return (
-      <TechnicalStaffApp
-        user={currentUser}
-        onLogout={handleLogout}
-        onShowWelcomeGuide={() => setShowOnboarding(true)}
-      />
+      <>
+        {sessionSyncError && (
+          <div className="bg-amber-950/40 border-b border-amber-900/50 px-4 py-2 text-center text-xs text-amber-200">
+            {sessionSyncError}{" "}
+            <button
+              type="button"
+              onClick={retrySessionSync}
+              className="underline font-bold text-amber-400 ml-1"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+        <TechnicalStaffApp
+          user={currentUser}
+          onLogout={handleLogout}
+          onShowWelcomeGuide={() => setShowOnboarding(true)}
+        />
+      </>
     );
   }
+
+  const connectionRetryPanel = (
+    <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl text-slate-300 text-sm max-w-xl mx-auto text-center space-y-4 shadow-sm">
+      <Shield className="h-10 w-10 text-amber-500 mx-auto" />
+      <p>{sessionSyncError || CONNECTION_ERROR_MESSAGE}</p>
+      <button
+        type="button"
+        onClick={retrySessionSync}
+        className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-2.5 px-6 rounded-xl transition text-xs cursor-pointer"
+      >
+        Try again
+      </button>
+    </div>
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
@@ -471,13 +541,15 @@ export default function App() {
 
           <div className="flex items-center gap-3 flex-wrap">
             {/* Sync trigger */}
-            <button
-              onClick={loadDatabaseState}
-              className="bg-slate-800 hover:bg-slate-700 p-2.5 rounded-xl text-slate-350 transition hover:text-white"
-              title="Force Sync Database State"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
+            {currentUser && needsCrmAppState(currentUser.role) ? (
+              <button
+                onClick={loadDatabaseState}
+                className="bg-slate-800 hover:bg-slate-700 p-2.5 rounded-xl text-slate-350 transition hover:text-white"
+                title="Force Sync Database State"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            ) : null}
 
             {currentUser && !isTechnicalStaffRole(currentUser.role) && currentUser.role !== "Customer" ? (
               <button
@@ -541,26 +613,10 @@ export default function App() {
       {/* Main Container body scope */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 h-full">
         
-        {/* Loading screen */}
-        {loading && !appState ? (
+        {loading && currentUser && needsCrmAppState(currentUser.role) && !appState ? (
           <div className="py-24 text-center">
             <Loader2 className="h-12 w-12 text-amber-500 animate-spin mx-auto mb-4" />
-            <span className="text-sm font-semibold text-slate-400 font-mono">Synchronizing Sunchaser Solar Data Grid...</span>
-          </div>
-        ) : error ? (
-          /* Error screen */
-          <div className="bg-rose-950/20 border border-rose-900 p-8 rounded-3xl text-rose-300 text-sm max-w-xl mx-auto text-center space-y-4 shadow-sm">
-            <Shield className="h-10 w-10 text-rose-500 mx-auto" />
-            <div>
-              <strong className="block font-bold mb-1 text-rose-400">Database Coherence Alert</strong>
-              <span>{error}</span>
-            </div>
-            <button
-              onClick={loadDatabaseState}
-              className="bg-rose-900 hover:bg-rose-850 text-white font-bold py-2.5 px-6 rounded-xl transition text-xs cursor-pointer"
-            >
-              Retry Central Link
-            </button>
+            <span className="text-sm font-semibold text-slate-400 font-mono">Loading your workspace…</span>
           </div>
         ) : !currentUser ? (
           /* ---------------- AUTHENTICATION HUB PANEL ---------------- */
@@ -633,9 +689,16 @@ export default function App() {
               </div>
             </div>
           </div>
+        ) : currentUser && sessionSyncError && needsCrmAppState(currentUser.role) && !appState ? (
+          connectionRetryPanel
         ) : appState ? (
           /* ---------------- AUTHORIZED DASHBOARD VIEWPORT ---------------- */
           <div className="fade-in-entry space-y-8">
+            {error && (
+              <div className="bg-rose-950/20 border border-rose-900 px-4 py-2 rounded-xl text-rose-300 text-xs">
+                {error}
+              </div>
+            )}
             
             {/* Super admin spreadsheet controls line */}
             {(currentUser.role === "Super Admin" || currentUser.role === "Technical CEO" || currentUser.role === "Sales Manager") && (
@@ -856,12 +919,9 @@ export default function App() {
             )}
 
           </div>
-        ) : (
-          <div className="py-24 text-center text-slate-400 font-mono">
-            <Inbox className="h-10 w-10 mx-auto opacity-50 mb-2" />
-            <span>Connection pipeline down. Please refresh.</span>
-          </div>
-        )}
+        ) : currentUser ? (
+          connectionRetryPanel
+        ) : null}
       </main>
 
       {/* Humble Footer */}

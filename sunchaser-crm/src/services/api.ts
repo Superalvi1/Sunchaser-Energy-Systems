@@ -1,4 +1,9 @@
 import { Lead, Ticket, AppState, Quote, User } from "../types";
+import {
+  CONNECTION_ERROR_MESSAGE,
+  STARTUP_FETCH_TIMEOUT_MS,
+  toConnectionError,
+} from "../lib/startupFetch.ts";
 
 const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
 
@@ -6,15 +11,37 @@ export const API_BASE_URL = (
   (import.meta as any).env.VITE_API_BASE_URL || RENDER_PRODUCTION_API
 ).replace(/\/$/, "");
 
+console.log("API URL:", API_BASE_URL);
+
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
   return fetch(url, init);
 }
 
+export async function fetchWithTimeout(
+  path: string,
+  init?: RequestInit,
+  timeoutMs = STARTUP_FETCH_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await apiFetch(path, { ...init, signal: controller.signal });
+  } catch (err) {
+    throw toConnectionError(err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchAppState(): Promise<AppState> {
-  const res = await apiFetch("/api/state");
-  if (!res.ok) throw new Error("Failed to fetch Sunchaser state.");
-  return res.json();
+  try {
+    const res = await fetchWithTimeout("/api/state");
+    if (!res.ok) throw new Error(CONNECTION_ERROR_MESSAGE);
+    return res.json();
+  } catch (err) {
+    throw toConnectionError(err);
+  }
 }
 
 export type ClientPortalResponse = {
@@ -36,20 +63,24 @@ export async function fetchCustomerPortalMe(
   userId: string,
   username: string
 ): Promise<ClientPortalResponse> {
-  const res = await apiFetch("/api/customer-portal/me", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Sunchaser-User-Id": userId,
-      "X-Sunchaser-Username": username,
-    },
-    body: JSON.stringify({ userId, username }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to load customer portal.");
+  try {
+    const res = await fetchWithTimeout("/api/customer-portal/me", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Sunchaser-User-Id": userId,
+        "X-Sunchaser-Username": username,
+      },
+      body: JSON.stringify({ userId, username }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || CONNECTION_ERROR_MESSAGE);
+    }
+    return res.json();
+  } catch (err) {
+    throw toConnectionError(err);
   }
-  return res.json();
 }
 
 function portalAuthHeaders(userId: string, username: string) {
@@ -1022,14 +1053,18 @@ export async function resetOnboarding(userId: string, username: string) {
 
 export async function fetchTechnicalJobsMe(userId: string, username: string) {
   const q = new URLSearchParams({ userId, username });
-  const res = await apiFetch(`/api/technical/jobs/me?${q}`, {
-    headers: portalAuthHeaders(userId, username),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to load technical jobs.");
+  try {
+    const res = await fetchWithTimeout(`/api/technical/jobs/me?${q}`, {
+      headers: portalAuthHeaders(userId, username),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || CONNECTION_ERROR_MESSAGE);
+    }
+    return res.json();
+  } catch (err) {
+    throw toConnectionError(err);
   }
-  return res.json();
 }
 
 export async function fetchTechnicalJobById(userId: string, username: string, jobId: string) {
