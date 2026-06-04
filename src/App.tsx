@@ -30,6 +30,7 @@ import {
   fetchOnboardingMe,
   completeOnboarding,
   fetchApiHealth,
+  ensurePreLoginHealth,
 } from "./services/api";
 import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
 import { isNativeApp } from "./lib/appPlatform";
@@ -234,14 +235,24 @@ export default function App() {
     setLoginLoading(true);
     setLoginError(null);
     try {
+      await ensurePreLoginHealth();
       const res = await loginUser({ username, password });
-      if (res.success) {
-        setCurrentUser(res.user);
-        localStorage.setItem("sunchaser_user", JSON.stringify(res.user));
-        await loadSessionForUser(res.user);
-        await refreshOnboardingGate(res.user);
+      if (!res.success) {
+        setLoginError("Login Authorization Rejected.");
+        return;
       }
+      setCurrentUser(res.user);
+      localStorage.setItem("sunchaser_user", JSON.stringify(res.user));
+      try {
+        await loadSessionForUser(res.user);
+      } catch (sessionErr: any) {
+        console.error("Post-login session load failed:", sessionErr);
+        setLoginError(sessionErr.message || CONNECTION_ERROR_MESSAGE);
+        return;
+      }
+      await refreshOnboardingGate(res.user);
     } catch (err: any) {
+      console.error("Login submit failed:", err);
       setLoginError(err.message || "Invalid credentials. Try guest profiles.");
     } finally {
       setLoginLoading(false);

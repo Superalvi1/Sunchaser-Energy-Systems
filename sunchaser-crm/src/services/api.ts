@@ -1,7 +1,10 @@
 import { Lead, Ticket, AppState, Quote, User } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
+  LOGIN_FETCH_TIMEOUT_MS,
+  SERVER_UNAVAILABLE_MESSAGE,
   STARTUP_FETCH_TIMEOUT_MS,
+  isNetworkFetchError,
   logApiFailure,
   readApiErrorBody,
   toConnectionError,
@@ -37,19 +40,37 @@ export async function fetchWithTimeout(
 }
 
 export async function fetchApiHealth(): Promise<boolean> {
-  const url = `${API_BASE_URL}/health`;
   try {
-    const res = await fetchWithTimeout("/health", undefined, 8000);
+    await ensurePreLoginHealth();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Lightweight probe before login — does not use /api/state. */
+export async function ensurePreLoginHealth(): Promise<void> {
+  const url = `${API_BASE_URL}/health`;
+  console.log("Pre-login health URL:", url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await apiFetch("/health", { signal: controller.signal });
+    console.log("Pre-login health status:", res.status);
     if (!res.ok) {
       const body = await readApiErrorBody(res);
-      logApiFailure("fetchApiHealth", url, res.status, body);
-      return false;
+      logApiFailure("preLoginHealth", url, res.status, body);
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
     }
-    console.log("[API] health ok", url, res.status);
-    return true;
   } catch (err) {
-    logApiFailure("fetchApiHealth", url, null, {}, err);
-    return false;
+    console.error("Pre-login health error:", err);
+    if (err instanceof Error && err.message === SERVER_UNAVAILABLE_MESSAGE) {
+      throw err;
+    }
+    logApiFailure("preLoginHealth", url, null, {}, err);
+    throw new Error(SERVER_UNAVAILABLE_MESSAGE);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -738,16 +759,55 @@ export async function fetchAdminEnergyMonitoring(staffUserId: string, staffUsern
 }
 
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
-  const res = await apiFetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Login Authorization Rejected.");
+  const url = `${API_BASE_URL}/api/auth/login`;
+  const payload = { username: body.username, password: body.password };
+  console.log("Login URL:", url);
+  console.log("Login payload:", { username: payload.username, password: "[redacted]" });
+  try {
+    const res = await fetchWithTimeout(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      LOGIN_FETCH_TIMEOUT_MS
+    );
+    console.log("Login response status:", res.status);
+    const responseText = await res.text();
+    let parsed: { success?: boolean; user?: User; error?: string } = {};
+    try {
+      parsed = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      console.error("Login error: non-JSON response body", responseText.slice(0, 200));
+      throw new Error(CONNECTION_ERROR_MESSAGE);
+    }
+    if (!res.ok) {
+      console.error("Login error:", {
+        status: res.status,
+        backendError: parsed.error || null,
+        body: parsed,
+      });
+      throw new Error(parsed.error || `Login failed (HTTP ${res.status}).`);
+    }
+    console.log("Login success for user:", parsed.user?.username, parsed.user?.role);
+    return parsed as { success: boolean; user: User };
+  } catch (err) {
+    console.error("Login error:", err);
+    if (err instanceof Error && err.message && err.message !== CONNECTION_ERROR_MESSAGE) {
+      if (
+        err.message.includes("Login failed") ||
+        err.message.includes("Invalid credentials") ||
+        err.message === SERVER_UNAVAILABLE_MESSAGE
+      ) {
+        throw err;
+      }
+    }
+    if (isNetworkFetchError(err)) {
+      throw new Error(CONNECTION_ERROR_MESSAGE);
+    }
+    throw toConnectionError(err);
   }
-  return res.json();
 }
 
 export async function createLead(data: Partial<Lead>): Promise<Lead> {

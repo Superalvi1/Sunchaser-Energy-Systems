@@ -1,7 +1,12 @@
 export const STARTUP_FETCH_TIMEOUT_MS = 12000;
 
+export const LOGIN_FETCH_TIMEOUT_MS = 15000;
+
 export const CONNECTION_ERROR_MESSAGE =
   "Connection issue. Please check internet and try again.";
+
+export const SERVER_UNAVAILABLE_MESSAGE =
+  "Server is waking up or internet is unavailable. Please try again in 30 seconds.";
 
 export async function readApiErrorBody(
   res: Response
@@ -32,11 +37,23 @@ export function logApiFailure(
   });
 }
 
+export function isNetworkFetchError(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (err instanceof Error && /failed to fetch/i.test(err.message)) return true;
+  return false;
+}
+
 export function toConnectionError(err: unknown): Error {
   if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) {
     return err;
   }
+  if (err instanceof Error && err.message === SERVER_UNAVAILABLE_MESSAGE) {
+    return err;
+  }
   if (err instanceof Error && err.name === "AbortError") {
+    return new Error(CONNECTION_ERROR_MESSAGE);
+  }
+  if (isNetworkFetchError(err)) {
     return new Error(CONNECTION_ERROR_MESSAGE);
   }
   return new Error(CONNECTION_ERROR_MESSAGE);
