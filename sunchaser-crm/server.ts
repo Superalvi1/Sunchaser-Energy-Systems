@@ -1184,21 +1184,42 @@ app.get("/api/diagnostics/phase9-tables", async (_req, res) => {
     }
   }
   const probes: Record<string, any> = {};
+  const schemaScript = "scripts/client-portal-phase9-schema.sql";
   if (!active || !supabase) {
-    return res.json({ supabaseActive: false, supabaseHost, probes });
+    return res.json({ supabaseActive: false, supabaseHost, schemaScript, probes });
   }
   const { data: tju, error: tjuErr } = await supabase.from("technical_job_updates").select("id").limit(1);
   probes.technical_job_updates = tjuErr
-    ? { ok: false, message: tjuErr.message }
+    ? { ok: false, message: tjuErr.message, hint: `Run ${schemaScript} in Supabase` }
     : { ok: true, sampleCount: tju?.length ?? 0 };
-  const { data: users, error: usersErr } = await supabase
+
+  const { data: userRow, error: usersErr } = await supabase
     .from("users")
-    .select("onboarding_completed")
-    .limit(1);
-  probes.users_onboarding_columns = usersErr
-    ? { ok: false, message: usersErr.message, hint: "Run scripts/client-portal-phase9-schema.sql" }
-    : { ok: true };
-  return res.json({ supabaseActive: true, supabaseHost, probes });
+    .select("id, onboarding_completed, onboarding_completed_at")
+    .limit(1)
+    .maybeSingle();
+  const hasCompletedCol =
+    !usersErr && userRow != null && Object.prototype.hasOwnProperty.call(userRow, "onboarding_completed");
+  const hasCompletedAtCol =
+    !usersErr && userRow != null && Object.prototype.hasOwnProperty.call(userRow, "onboarding_completed_at");
+  probes.users_onboarding_completed = {
+    ok: hasCompletedCol,
+    message: usersErr?.message,
+    hint: hasCompletedCol ? undefined : `Run ${schemaScript} — add users.onboarding_completed`,
+  };
+  probes.users_onboarding_completed_at = {
+    ok: hasCompletedAtCol,
+    message: usersErr?.message,
+    hint: hasCompletedAtCol ? undefined : `Run ${schemaScript} — add users.onboarding_completed_at`,
+  };
+  probes.users_onboarding_columns = {
+    ok: hasCompletedCol && hasCompletedAtCol,
+    columns: ["onboarding_completed", "onboarding_completed_at"],
+    hint: `Run ${schemaScript} in Supabase SQL Editor`,
+  };
+  probes.phase9_schema_ready =
+    probes.technical_job_updates.ok === true && probes.users_onboarding_columns.ok === true;
+  return res.json({ supabaseActive: true, supabaseHost, schemaScript, probes });
 });
 
 app.get("/api/diagnostics/phase8-tables", async (_req, res) => {

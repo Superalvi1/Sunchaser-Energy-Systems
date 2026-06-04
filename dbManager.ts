@@ -5415,7 +5415,14 @@ function technicianMatchesAssignee(assignee: string | null | undefined, user: an
   if (!a) return false;
   const name = String(user.name || "").trim().toLowerCase();
   const username = String(user.username || "").trim().toLowerCase();
-  return a === name || a === username || a.includes(name) || name.includes(a);
+  const userId = String(user.id || "").trim().toLowerCase();
+  return (
+    a === name ||
+    a === username ||
+    a === userId ||
+    (name.length > 2 && (a.includes(name) || name.includes(a))) ||
+    (username.length > 2 && (a.includes(username) || username.includes(a)))
+  );
 }
 
 function mapServiceTypeToJobType(serviceType: string): string {
@@ -6186,7 +6193,15 @@ export async function completeOnboarding(
       .eq("id", userId)
       .select("onboarding_completed, onboarding_completed_at")
       .single();
-    if (error) throw error;
+    if (error) {
+      const msg = String(error.message || "");
+      if (msg.includes("onboarding_completed")) {
+        throw new TechnicalStaffAuthError(
+          "Onboarding columns missing. Run scripts/client-portal-phase9-schema.sql in Supabase."
+        );
+      }
+      throw error;
+    }
     return {
       onboardingCompleted: !!data.onboarding_completed,
       onboardingCompletedAt: data.onboarding_completed_at,
@@ -6218,7 +6233,15 @@ export async function resetOnboarding(
       .eq("id", userId)
       .select("onboarding_completed, onboarding_completed_at")
       .single();
-    if (error) throw error;
+    if (error) {
+      const msg = String(error.message || "");
+      if (msg.includes("onboarding_completed")) {
+        throw new TechnicalStaffAuthError(
+          "Onboarding columns missing. Run scripts/client-portal-phase9-schema.sql in Supabase."
+        );
+      }
+      throw error;
+    }
     return {
       onboardingCompleted: !!data.onboarding_completed,
       onboardingCompletedAt: data.onboarding_completed_at,
