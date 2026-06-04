@@ -1,10 +1,19 @@
 import React, { useEffect, useState } from "react";
-import { Download, FileText, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { User } from "../types";
 import { customerInvoicePdfUrl, fetchCustomerPortalInvoicesMe } from "../services/api";
+import { portal } from "../lib/clientPortalUi";
+
+const statusStyle: Record<string, string> = {
+  Paid: "bg-emerald-500/15 text-emerald-400",
+  Partial: "bg-amber-500/15 text-amber-400",
+  Unpaid: "bg-white/[0.06] text-slate-400",
+  Overdue: "bg-red-500/15 text-red-400",
+};
 
 export default function ClientPortalInvoices({ user }: { user: User }) {
   const [invoices, setInvoices] = useState<any[]>([]);
+  const [payableBalance, setPayableBalance] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,7 +24,10 @@ export default function ClientPortalInvoices({ user }: { user: User }) {
       setError(null);
       try {
         const data = await fetchCustomerPortalInvoicesMe(user.id, user.username);
-        if (!cancelled) setInvoices(data.invoices || []);
+        if (!cancelled) {
+          setInvoices(data.invoices || []);
+          setPayableBalance(Number(data.payableBalance ?? 0));
+        }
       } catch (e: any) {
         if (!cancelled) setError(e.message);
       } finally {
@@ -29,57 +41,59 @@ export default function ClientPortalInvoices({ user }: { user: User }) {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-amber-400" />
+      <div className="flex justify-center py-8">
+        <Loader2 className="w-7 h-7 animate-spin text-amber-400" />
       </div>
     );
   }
 
   if (error) {
-    return <p className="text-sm text-red-400 p-4">{error}</p>;
-  }
-
-  if (!invoices.length) {
-    return (
-      <p className="text-sm text-slate-500 p-6 text-center">
-        No invoices yet. Your account manager will share invoices here.
-      </p>
-    );
+    return <p className="text-sm text-red-400">{error}</p>;
   }
 
   return (
-    <div className="space-y-4 p-4">
-      <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-        <FileText className="w-4 h-4 text-amber-400" />
-        My Invoices
-      </h2>
-      {invoices.map((inv) => (
-        <div
-          key={inv.id}
-          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3"
-        >
-          <div>
-            <div className="font-bold text-slate-100">{inv.invoiceNumber}</div>
-            <div className="text-[10px] text-slate-500">{inv.invoiceDate}</div>
-            <div className="text-xs mt-2">
-              Total PKR {Number(inv.grandTotal).toLocaleString()} · Paid PKR{" "}
-              {Number(inv.paidAmount).toLocaleString()}
-            </div>
-            <div className="text-xs text-amber-400 font-bold">
-              Balance PKR {Number(inv.balanceDue).toLocaleString()} · {inv.paymentStatus}
+    <div className="space-y-4">
+      <div className={`${portal.card} ${portal.cardPad}`}>
+        <p className={portal.label}>Total payable</p>
+        <p className={`${portal.heroMetric} text-amber-400 mt-1`}>PKR {payableBalance.toLocaleString()}</p>
+      </div>
+
+      {!invoices.length ? (
+        <p className="text-sm text-slate-500 text-center py-6">No invoices yet.</p>
+      ) : (
+        invoices.map((inv) => (
+          <div key={inv.id} className={`${portal.card} ${portal.cardPad}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-base font-semibold text-white">{inv.invoiceNumber}</p>
+                <p className="text-sm text-slate-500 mt-0.5">{inv.invoiceDate}</p>
+                <p className="text-sm text-slate-400 mt-2">
+                  PKR {Number(inv.grandTotal).toLocaleString()} · Balance{" "}
+                  <span className="font-semibold text-amber-400">
+                    {Number(inv.balanceDue).toLocaleString()}
+                  </span>
+                </p>
+                <span
+                  className={`inline-block mt-2 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    statusStyle[inv.paymentStatus] || statusStyle.Unpaid
+                  }`}
+                >
+                  {inv.paymentStatus}
+                </span>
+              </div>
+              <a
+                href={customerInvoicePdfUrl(inv.id, user.id, user.username)}
+                target="_blank"
+                rel="noreferrer"
+                className={portal.btnPrimary + " !py-2.5 !px-4 text-xs shrink-0"}
+              >
+                <Download className="w-4 h-4" />
+                PDF
+              </a>
             </div>
           </div>
-          <a
-            href={customerInvoicePdfUrl(inv.id, user.id, user.username)}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold"
-          >
-            <Download className="w-4 h-4" />
-            Download PDF
-          </a>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 }

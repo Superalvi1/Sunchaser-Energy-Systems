@@ -1,39 +1,35 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Sun,
-  LogOut,
-  RefreshCw,
-  Loader2,
-  Home,
   FolderOpen,
-  Shield,
   Headphones,
-  Wrench,
-  Zap,
-  Heart,
-  History,
-  Activity,
-  Receipt,
-  FileText,
+  Home,
+  Loader2,
+  User,
+  Wallet,
 } from "lucide-react";
-import { User } from "../types";
+import { User as UserType } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
+import { DEFAULT_BRANDING, type CompanyBranding } from "../lib/branding";
+import { CUSTOMER_PORTAL_VERSION, portal } from "../lib/clientPortalUi";
+import { fetchCompanyBranding } from "../services/api";
 import ClientPortalHome from "./ClientPortalHome";
 import ClientPortalDocuments from "./ClientPortalDocuments";
-import ClientPortalSystem from "./ClientPortalSystem";
-import ClientPortalWarranties from "./ClientPortalWarranties";
 import ClientPortalSupport from "./ClientPortalSupport";
-import ClientPortalService from "./ClientPortalService";
-import ClientPortalSavings from "./ClientPortalSavings";
-import ClientPortalCare from "./ClientPortalCare";
-import ClientPortalServiceHistory from "./ClientPortalServiceHistory";
-import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
 import ClientPortalPayments from "./ClientPortalPayments";
 import ClientPortalInvoices from "./ClientPortalInvoices";
+import ClientPortalAccount, { type AccountScreen } from "./ClientPortalAccount";
+import ClientPortalSystem from "./ClientPortalSystem";
+import ClientPortalWarranties from "./ClientPortalWarranties";
+import ClientPortalService from "./ClientPortalService";
+import ClientPortalServiceHistory from "./ClientPortalServiceHistory";
+import ClientPortalSavings from "./ClientPortalSavings";
+import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
+import ClientPortalCare from "./ClientPortalCare";
+import PortalScreen from "./PortalScreen";
 import AppLogo from "./AppLogo";
 
 interface ClientPortalAppProps {
-  user: User;
+  user: UserType;
   data: ClientPortalPayload | null;
   loading: boolean;
   error: string | null;
@@ -42,19 +38,25 @@ interface ClientPortalAppProps {
   onShowWelcomeGuide?: () => void;
 }
 
-type PortalTab =
-  | "home"
-  | "system"
-  | "documents"
-  | "warranty"
-  | "support"
-  | "service"
-  | "history"
-  | "savings"
-  | "energy"
-  | "care"
-  | "payments"
-  | "invoices";
+type MainTab = "home" | "documents" | "payments" | "support" | "account";
+
+const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
+  { id: "home", label: "Home", icon: Home },
+  { id: "documents", label: "Documents", icon: FolderOpen },
+  { id: "payments", label: "Payments", icon: Wallet },
+  { id: "support", label: "Support", icon: Headphones },
+  { id: "account", label: "Account", icon: User },
+];
+
+const ACCOUNT_TITLES: Record<Exclude<AccountScreen, "menu">, { title: string; subtitle?: string }> = {
+  system: { title: "My solar system", subtitle: "Equipment installed at your site" },
+  warranty: { title: "Warranty", subtitle: "Coverage and handover" },
+  service: { title: "Service", subtitle: "Visits and technician support" },
+  history: { title: "Service history", subtitle: "Past maintenance records" },
+  savings: { title: "Solar savings", subtitle: "Performance and estimates" },
+  energy: { title: "Energy monitor", subtitle: "Production insights" },
+  care: { title: "Care plans", subtitle: "Protection options" },
+};
 
 export default function ClientPortalApp({
   user,
@@ -65,145 +67,179 @@ export default function ClientPortalApp({
   onLogout,
   onShowWelcomeGuide,
 }: ClientPortalAppProps) {
-  const [activeTab, setActiveTab] = useState<PortalTab>("home");
-  const projectStatus =
-    data?.project?.stage || data?.dashboard?.projectStatus || "No data available";
+  const [mainTab, setMainTab] = useState<MainTab>("home");
+  const [accountScreen, setAccountScreen] = useState<AccountScreen>("menu");
+  const [branding, setBranding] = useState<CompanyBranding>(DEFAULT_BRANDING);
 
-  const tabs: { id: PortalTab; label: string; icon: React.ElementType }[] = [
-    { id: "home", label: "Home", icon: Home },
-    { id: "system", label: "My System", icon: Zap },
-    { id: "documents", label: "Documents", icon: FolderOpen },
-    { id: "payments", label: "Payments", icon: Receipt },
-    { id: "invoices", label: "Invoices", icon: FileText },
-    { id: "warranty", label: "My Warranty", icon: Shield },
-    { id: "support", label: "Support", icon: Headphones },
-    { id: "service", label: "Service", icon: Wrench },
-    { id: "history", label: "Service History", icon: History },
-    { id: "savings", label: "Savings", icon: Zap },
-    { id: "energy", label: "Energy Monitor", icon: Activity },
-    { id: "care", label: "Care Plans", icon: Heart },
-  ];
+  useEffect(() => {
+    fetchCompanyBranding()
+      .then((b) => setBranding({ ...DEFAULT_BRANDING, ...b }))
+      .catch(() => setBranding(DEFAULT_BRANDING));
+  }, []);
+
+  const selectMainTab = (tab: MainTab) => {
+    setMainTab(tab);
+    if (tab === "account") setAccountScreen("menu");
+  };
+
+  const renderAccountSub = () => {
+    const meta = accountScreen !== "menu" ? ACCOUNT_TITLES[accountScreen] : null;
+    const back = () => setAccountScreen("menu");
+
+    const wrap = (child: React.ReactNode) => (
+      <PortalScreen title={meta!.title} subtitle={meta?.subtitle} onBack={back}>
+        {child}
+      </PortalScreen>
+    );
+
+    switch (accountScreen) {
+      case "system":
+        return wrap(<ClientPortalSystem user={user} />);
+      case "warranty":
+        return wrap(<ClientPortalWarranties user={user} />);
+      case "service":
+        return wrap(<ClientPortalService user={user} />);
+      case "history":
+        return wrap(<ClientPortalServiceHistory user={user} />);
+      case "savings":
+        return wrap(<ClientPortalSavings user={user} />);
+      case "energy":
+        return wrap(<ClientPortalEnergyMonitor user={user} />);
+      case "care":
+        return wrap(<ClientPortalCare user={user} />);
+      default:
+        return (
+          <ClientPortalAccount
+            user={user}
+            data={data}
+            onNavigate={setAccountScreen}
+            onRefresh={onRefresh}
+            onLogout={onLogout}
+            onShowWelcomeGuide={onShowWelcomeGuide}
+          />
+        );
+    }
+  };
+
+  const renderMain = () => {
+    if (mainTab === "home") {
+      if (loading && !data) {
+        return (
+          <div className="py-24 text-center">
+            <Loader2 className="h-10 w-10 text-amber-400 animate-spin mx-auto" />
+            <p className="text-sm text-slate-500 mt-4">Loading your project…</p>
+          </div>
+        );
+      }
+      if (error) {
+        return (
+          <div className={`${portal.card} ${portal.cardPad} text-center`}>
+            <p className="text-sm text-red-400">{error}</p>
+            <button type="button" onClick={onRefresh} className={`${portal.btnPrimary} mt-4`}>
+              Try again
+            </button>
+          </div>
+        );
+      }
+      return (
+        <ClientPortalHome
+          user={user}
+          data={data}
+          branding={branding}
+          onOpenDocuments={() => selectMainTab("documents")}
+          onOpenPayments={() => selectMainTab("payments")}
+          onOpenSupport={() => selectMainTab("support")}
+        />
+      );
+    }
+
+    if (mainTab === "documents") {
+      return (
+        <PortalScreen title="Documents" subtitle="Quotations, agreements, and certificates">
+          <ClientPortalDocuments user={user} />
+        </PortalScreen>
+      );
+    }
+
+    if (mainTab === "payments") {
+      return (
+        <PortalScreen title="Payments" subtitle="Milestones, receipts, and invoices">
+          <div className="space-y-8">
+            <ClientPortalPayments user={user} />
+            <div className={portal.divider + " pt-6"}>
+              <p className={portal.titleSm + " mb-4"}>Invoices</p>
+              <ClientPortalInvoices user={user} />
+            </div>
+          </div>
+        </PortalScreen>
+      );
+    }
+
+    if (mainTab === "support") {
+      return (
+        <PortalScreen title="Support" subtitle="We're here to help">
+          <ClientPortalSupport user={user} branding={branding} />
+        </PortalScreen>
+      );
+    }
+
+    if (mainTab === "account") {
+      return renderAccountSub();
+    }
+
+    return null;
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 shadow-md">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+    <div className={portal.shell}>
+      <header className={portal.header}>
+        <div className={`${portal.main} py-4 flex items-center justify-between gap-3`}>
           <div className="flex items-center gap-3 min-w-0">
-            <AppLogo className="h-10 w-auto shrink-0" />
+            <AppLogo logoUrl={branding.logoUrl} className="h-9 w-auto shrink-0" />
             <div className="min-w-0">
-              <h1 className="text-sm font-extrabold truncate">
+              <p className="text-[11px] font-medium text-slate-500">Sunchaser Energy</p>
+              <p className="text-sm font-semibold text-white truncate">
                 {data?.customer?.name || user.name}
-              </h1>
-              <p className="text-[10px] text-slate-500 font-mono truncate">
-                {data?.customer?.email || user.email}
               </p>
-              <p className="text-[9px] text-slate-600 font-mono truncate">
-                ID: {data?.customer?.id || "No data available"} · {projectStatus}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {onShowWelcomeGuide && (
-              <button
-                type="button"
-                onClick={onShowWelcomeGuide}
-                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold px-2.5"
-                title="View Welcome Guide Again"
+              <p
+                className="text-[10px] font-semibold text-amber-400/90 mt-0.5 tracking-wide"
+                data-portal-version={CUSTOMER_PORTAL_VERSION}
               >
-                Guide
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onRefresh}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            </button>
-            <button
-              type="button"
-              onClick={onLogout}
-              className="p-2 rounded-xl bg-red-950/50 border border-red-900/40 text-red-400"
-              title="Logout"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-        <nav className="border-t border-slate-800/80 px-4 pb-3 pt-2" aria-label="Portal sections">
-          <div className="max-w-3xl mx-auto">
-            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2 text-center">
-              All portal sections
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveTab(tab.id)}
-                    aria-current={isActive ? "page" : undefined}
-                    className={`py-2.5 px-1.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 min-h-[58px] transition-colors ${
-                      isActive
-                        ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
-                        : "bg-slate-950 text-slate-400 border border-slate-800 hover:border-slate-600"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" aria-hidden />
-                    <span className="text-center leading-tight">{tab.label}</span>
-                  </button>
-                );
-              })}
+                {CUSTOMER_PORTAL_VERSION}
+              </p>
             </div>
           </div>
-        </nav>
+          {mainTab !== "home" && (
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/80 shrink-0">
+              {MAIN_TABS.find((t) => t.id === mainTab)?.label}
+            </span>
+          )}
+        </div>
       </header>
 
-      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 space-y-6 pb-10">
-        {activeTab === "home" && (
-          <>
-            {loading && !data ? (
-              <div className="py-20 text-center">
-                <Loader2 className="h-10 w-10 text-amber-500 animate-spin mx-auto mb-3" />
-                <p className="text-sm text-slate-400">Loading your project…</p>
-              </div>
-            ) : error ? (
-              <div className="bg-rose-950/30 border border-rose-900 rounded-2xl p-6 text-center text-rose-300 text-sm">
-                {error}
-                <button
-                  type="button"
-                  onClick={onRefresh}
-                  className="mt-4 block mx-auto text-xs font-bold text-amber-400 underline"
-                >
-                  Try again
-                </button>
-              </div>
-            ) : (
-              <ClientPortalHome
-                user={user}
-                data={data}
-                onRequestUpgrade={() => setActiveTab("support")}
-                onOpenSupport={() => setActiveTab("support")}
-              />
-            )}
-          </>
-        )}
+      <main className={`${portal.main} ${portal.mainWithNav}`}>{renderMain()}</main>
 
-        {activeTab === "system" && <ClientPortalSystem user={user} />}
-        {activeTab === "documents" && <ClientPortalDocuments user={user} />}
-        {activeTab === "payments" && <ClientPortalPayments user={user} />}
-        {activeTab === "invoices" && <ClientPortalInvoices user={user} />}
-        {activeTab === "warranty" && <ClientPortalWarranties user={user} />}
-        {activeTab === "support" && <ClientPortalSupport user={user} />}
-        {activeTab === "service" && <ClientPortalService user={user} />}
-        {activeTab === "history" && <ClientPortalServiceHistory user={user} />}
-        {activeTab === "savings" && <ClientPortalSavings user={user} />}
-        {activeTab === "energy" && <ClientPortalEnergyMonitor user={user} />}
-        {activeTab === "care" && <ClientPortalCare user={user} />}
-      </main>
+      <nav className={portal.nav} aria-label="Main navigation">
+        <div className={portal.navInner}>
+          {MAIN_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const active = mainTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => selectMainTab(tab.id)}
+                aria-current={active ? "page" : undefined}
+                className={`${portal.navBtn} ${active ? portal.navBtnActive : portal.navBtnIdle}`}
+              >
+                <Icon className={`h-6 w-6 ${active ? "stroke-[2.5px]" : ""}`} strokeWidth={active ? 2.5 : 2} />
+                <span className="text-[10px] font-semibold truncate max-w-full">{tab.label}</span>
+                {active && <span className="h-1 w-1 rounded-full bg-amber-400 mt-0.5" />}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }

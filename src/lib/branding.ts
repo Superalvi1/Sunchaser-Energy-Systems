@@ -1,6 +1,7 @@
 export type CompanyBranding = {
   companyName: string;
   officeAddress: string;
+  officeLocations?: string[];
   phoneNumbers: string;
   billingEmail: string;
   websiteUrl: string;
@@ -9,22 +10,35 @@ export type CompanyBranding = {
   splashImageUrl: string;
   primaryColor: string;
   secondaryColor: string;
+  accentColor?: string;
   terms: string;
+  signatureUrl?: string;
+  googleReviewUrl?: string;
 };
+
+export const DEFAULT_OFFICE_LOCATIONS = [
+  "Lahore: Plaza No. 47-MB, 2nd Floor, DHA Phase 6",
+  "Rawalpindi: Office address",
+  "Multan: Office address",
+  "Faisalabad: Office address",
+];
 
 export const DEFAULT_BRANDING: CompanyBranding = {
   companyName: "Sunchaser Energy Systems",
-  officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
-  phoneNumbers: "0309-0236666, 0330-7776444",
-  billingEmail: "billing@sunchaser-energy.com",
+  officeAddress: DEFAULT_OFFICE_LOCATIONS.join(" | "),
+  officeLocations: DEFAULT_OFFICE_LOCATIONS,
+  phoneNumbers: "0321-8486752, 0309-0236666",
+  billingEmail: "ceo.sunchaser@gmail.com",
   websiteUrl: "www.sunchaser-energy.com",
-  logoUrl: "/sunchaser-logo.svg",
-  appIconUrl: "/icon-192.png",
-  splashImageUrl: "/sunchaser-logo.svg",
-  primaryColor: "#f59e0b",
-  secondaryColor: "#0f172a",
+  logoUrl: "/sunchaser-logo.png",
+  appIconUrl: "/sunchaser-logo.png",
+  splashImageUrl: "/sunchaser-logo.png",
+  primaryColor: "#7c6cf0",
+  secondaryColor: "#1a2b4c",
+  accentColor: "#c5a028",
   terms:
-    "Payment is due by the due date. Bank transfer details are shown on the invoice. Thank you for choosing Sunchaser.",
+    "Payment is due by the due date. Bank transfer details are shown on the invoice. Thank you for choosing Sunchaser Energy Systems.",
+  googleReviewUrl: "",
 };
 
 export function mergeBranding(raw?: Partial<CompanyBranding> | null): CompanyBranding {

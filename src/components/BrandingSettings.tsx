@@ -61,6 +61,10 @@ export default function BrandingSettings({ staffUser }: { staffUser: User }) {
         {field("phoneNumbers", "Phone")}
         {field("billingEmail", "Billing email")}
         {field("websiteUrl", "Website")}
+        {field(
+          "googleReviewUrl",
+          "Google Review URL (customer portal — shown when project is complete)"
+        )}
         {field("logoUrl", "Logo URL (login, sidebar, PDF)")}
         {field("appIconUrl", "App icon URL (PWA / Android)")}
         {field("splashImageUrl", "Splash screen image URL")}
