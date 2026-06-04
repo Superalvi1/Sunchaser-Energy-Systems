@@ -22,7 +22,7 @@ import {
 } from "../services/api";
 import type { TechnicalJobCard, TechnicalJobsDashboard } from "../lib/technicalStaff";
 import { SAFETY_CHECKLIST_ITEMS, EQUIPMENT_CAPTURE_TYPES } from "../lib/technicalStaff";
-import TechnicalDeliveryPanel from "./TechnicalDeliveryPanel";
+import InstallationCompletionPanel from "./InstallationCompletionPanel";
 
 interface TechnicalStaffAppProps {
   user: User;
@@ -401,7 +401,7 @@ export default function TechnicalStaffApp({
           </button>
         </div>
         {workMode === "deliveries" ? (
-          <TechnicalDeliveryPanel user={user} />
+          <InstallationCompletionPanel user={user} />
         ) : (
           <>
         {syncError && (

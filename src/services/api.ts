@@ -1700,6 +1700,104 @@ export async function fetchCustomerProjectDeliveryMe(userId: string, username: s
   return res.json();
 }
 
+export async function fetchTechnicalCompletionStatus(
+  userId: string,
+  username: string,
+  deliveryId: string
+) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}/completion-status?${q}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load completion status.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalCompletionMedia(
+  userId: string,
+  username: string,
+  deliveryId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}/completion-media`,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to upload proof.");
+  }
+  return res.json();
+}
+
+export async function patchTechnicalCompletionStage(
+  userId: string,
+  username: string,
+  deliveryId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(
+    `/api/technical/project-deliveries/${encodeURIComponent(deliveryId)}/completion-stage`,
+    {
+      method: "PATCH",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update stage.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminCompletionGaps(staff: User) {
+  const res = await apiFetch("/api/admin/project-completion/gaps", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load completion gaps.");
+  }
+  return res.json();
+}
+
+export function warrantyHandoverPdfUrl(
+  deliveryId: string,
+  opts?: { staff?: User; portalUserId?: string; portalUsername?: string }
+) {
+  const q = new URLSearchParams();
+  if (opts?.staff) {
+    q.set("userId", opts.staff.id);
+    q.set("username", opts.staff.username);
+  }
+  if (opts?.portalUserId && opts?.portalUsername) {
+    q.set("portalUserId", opts.portalUserId);
+    q.set("portalUsername", opts.portalUsername);
+  }
+  const suffix = q.toString() ? `?${q}` : "";
+  return `${API_BASE_URL}/api/export/pdf/warranty-handover/${encodeURIComponent(deliveryId)}${suffix}`;
+}
+
+export async function fetchCustomerWarrantyHandoverMe(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/warranty-handover/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load warranty handover.");
+  }
+  return res.json();
+}
+
 export async function fetchAdminFinanceSummary(userId: string, username: string) {
   const res = await apiFetch("/api/admin/finance/summary", {
     headers: portalAuthHeaders(userId, username),

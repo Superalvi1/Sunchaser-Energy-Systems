@@ -17,6 +17,7 @@ import {
   warrantyComponentForEquipmentType,
   type ProjectDeliveryRecord,
 } from "./src/lib/projectDelivery.ts";
+import { assertCompletionProofForHandover } from "./projectCompletionDb.js";
 
 export class ProjectDeliveryDbError extends Error {
   constructor(message: string) {
@@ -49,6 +50,8 @@ function mapDeliveryRow(row: any): ProjectDeliveryRecord {
     installationAddress: row.installation_address || row.installationAddress,
     expectedInstallationDate: row.expected_installation_date || row.expectedInstallationDate,
     deliveryStatus: row.delivery_status || row.deliveryStatus,
+    completionStage: row.completion_stage || row.completionStage || "Survey",
+    batteryApplicable: row.battery_applicable !== false && row.batteryApplicable !== false,
     safetyChecklist: row.safety_checklist || row.safetyChecklist || {},
     createdAt: row.created_at || row.createdAt,
     updatedAt: row.updated_at || row.updatedAt,
@@ -598,6 +601,8 @@ export async function patchTechnicalProjectDeliveryStatus(
   const previous = bundle.delivery.deliveryStatus;
   const now = new Date().toISOString();
   const safety = body.safetyChecklist || body.safety_checklist;
+
+  await assertCompletionProofForHandover(deliveryId, status, localDb);
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;

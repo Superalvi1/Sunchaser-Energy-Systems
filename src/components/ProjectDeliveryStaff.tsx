@@ -11,6 +11,7 @@ import WhatsAppModule from "./WhatsAppModule";
 import { resolveLeadPhoneFromLeads } from "../lib/whatsapp";
 import { Lead } from "../types";
 import { PLANNED_ITEM_CATEGORIES, SYSTEM_TYPES, PROJECT_TYPES } from "../lib/projectDelivery";
+import ProjectCompletionGapsStaff from "./ProjectCompletionGapsStaff";
 
 interface ProjectDeliveryStaffProps {
   staffUser: User;
@@ -101,6 +102,8 @@ export default function ProjectDeliveryStaff({ staffUser, leads = [] }: ProjectD
         <Package className="h-6 w-6 text-amber-500" />
         <h2 className="text-xl font-extrabold">Project Delivery</h2>
       </div>
+
+      <ProjectCompletionGapsStaff staffUser={staffUser} />
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 grid gap-3 text-sm">
         <p className="text-xs text-slate-400 font-mono uppercase">Create delivery project</p>

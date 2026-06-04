@@ -139,6 +139,8 @@ export type ProjectDeliveryRecord = {
   installationAddress?: string | null;
   expectedInstallationDate?: string | null;
   deliveryStatus: string;
+  completionStage?: string;
+  batteryApplicable?: boolean;
   safetyChecklist?: Record<string, boolean>;
   createdAt: string;
   updatedAt: string;

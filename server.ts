@@ -81,6 +81,15 @@ import {
   ProjectDeliveryDbError,
 } from "./projectDeliveryDb.js";
 import {
+  getCompletionStatusBundle,
+  postTechnicalCompletionMedia,
+  patchTechnicalCompletionStage,
+  listAdminCompletionGaps,
+  compileWarrantyHandoverHtmlForDelivery,
+  fetchCustomerWarrantyHandoverMe,
+  ProjectCompletionDbError,
+} from "./projectCompletionDb.js";
+import {
   fetchAdminFinanceSummary,
   listAdminFinanceProjects,
   getAdminFinanceProjectById,
@@ -1717,6 +1726,98 @@ app.get("/api/customer-portal/project-delivery/me", async (req, res) => {
   try {
     loadDb();
     const data = await fetchCustomerProjectDeliveryMe(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/technical/project-deliveries/:id/completion-status", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  try {
+    loadDb();
+    const status = await getCompletionStatusBundle(req.params.id, db);
+    return res.json(status);
+  } catch (err: any) {
+    if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/technical/project-deliveries/:id/completion-media", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  try {
+    loadDb();
+    const media = await postTechnicalCompletionMedia(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.status(201).json({ media });
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/technical/project-deliveries/:id/completion-stage", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  try {
+    loadDb();
+    const result = await patchTechnicalCompletionStage(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/project-completion/gaps", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await listAdminCompletionGaps(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/export/pdf/warranty-handover/:deliveryId", async (req, res) => {
+  const staffId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
+  const staffUsername = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
+  const portalUserId = String(req.query.portalUserId || "").trim();
+  const portalUsername = String(req.query.portalUsername || "").trim();
+  try {
+    loadDb();
+    if (portalUserId && portalUsername) {
+      const portal = await fetchCustomerWarrantyHandoverMe(portalUserId, portalUsername, db);
+      if (!portal.deliveryId || portal.deliveryId !== req.params.deliveryId) {
+        return res.status(403).json({ error: "Access denied." });
+      }
+    }
+    const html = await compileWarrantyHandoverHtmlForDelivery(req.params.deliveryId, db);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/warranty-handover/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerWarrantyHandoverMe(userId, username, db);
     return res.json(data);
   } catch (err: any) {
     if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });

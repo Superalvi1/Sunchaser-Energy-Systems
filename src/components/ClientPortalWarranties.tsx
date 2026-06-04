@@ -7,6 +7,8 @@ import {
   fetchCustomerEquipment,
   fetchCustomerInstallationPhotos,
   fetchCustomerProjectDeliveryMe,
+  fetchCustomerWarrantyHandoverMe,
+  warrantyHandoverPdfUrl,
 } from "../services/api";
 import { WARRANTY_COMPONENT_TYPES } from "../lib/clientPortalPhase2";
 import { EQUIPMENT_TYPES } from "../lib/clientPortalPakistan";
@@ -29,6 +31,7 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
   const [equipment, setEquipment] = useState<any[]>([]);
   const [photos, setPhotos] = useState<any[]>([]);
   const [installedRegistry, setInstalledRegistry] = useState<any[]>([]);
+  const [handover, setHandover] = useState<any | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [component, setComponent] = useState(WARRANTY_COMPONENT_TYPES[0].label);
   const [equipmentId, setEquipmentId] = useState("");
@@ -43,16 +46,18 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
     setLoading(true);
     setError(null);
     try {
-      const [warr, equip, inst, delivery] = await Promise.all([
+      const [warr, equip, inst, delivery, handoverRes] = await Promise.all([
         fetchCustomerPortalWarranties(user.id, user.username),
         fetchCustomerEquipment(user.id, user.username),
         fetchCustomerInstallationPhotos(user.id, user.username),
         fetchCustomerProjectDeliveryMe(user.id, user.username).catch(() => null),
+        fetchCustomerWarrantyHandoverMe(user.id, user.username).catch(() => null),
       ]);
       setCards(warr.cards || []);
       setEquipment(equip.equipment || []);
       setPhotos(inst.photos || []);
       setInstalledRegistry(delivery?.installedEquipment || []);
+      setHandover(handoverRes);
     } catch (err: any) {
       setError(err.message || "Unable to load warranties.");
     } finally {
@@ -109,8 +114,44 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
     <section className="space-y-6">
       <div>
         <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 px-1 mb-3">
-          Warranty Center
+          My Warranty
         </h3>
+        {handover?.handover && (
+          <div className="mb-4 bg-slate-900 border border-amber-900/40 rounded-2xl p-4 space-y-2">
+            <p className="text-sm font-bold text-amber-400">Warranty handover</p>
+            <p className="text-xs text-slate-400">
+              Stage: {handover.handover.completionStage}
+              {handover.handover.installationDate
+                ? ` · Installed ${handover.handover.installationDate}`
+                : ""}
+            </p>
+            {handover.handover.warrantyStart && (
+              <p className="text-xs text-slate-300">
+                Coverage {handover.handover.warrantyStart} → {handover.handover.warrantyEnd || "—"}
+              </p>
+            )}
+            {handover.handover.canDownloadPdf && handover.deliveryId ? (
+              <a
+                href={warrantyHandoverPdfUrl(handover.deliveryId, {
+                  portalUserId: user.id,
+                  portalUsername: user.username,
+                })}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block mt-2 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold"
+              >
+                Download warranty handover PDF
+              </a>
+            ) : (
+              <p className="text-[10px] text-slate-500">
+                Handover PDF available when installation proof is complete.
+                {handover.handover.missing?.length
+                  ? ` Pending: ${handover.handover.missing.join(", ")}`
+                  : ""}
+              </p>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-3">
           {cards.map((card) => {
             const w = card.warranty;

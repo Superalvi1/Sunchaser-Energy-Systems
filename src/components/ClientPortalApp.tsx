@@ -75,7 +75,7 @@ export default function ClientPortalApp({
     { id: "documents", label: "Documents", icon: FolderOpen },
     { id: "payments", label: "Payments", icon: Receipt },
     { id: "invoices", label: "Invoices", icon: FileText },
-    { id: "warranty", label: "Warranty", icon: Shield },
+    { id: "warranty", label: "My Warranty", icon: Shield },
     { id: "support", label: "Support", icon: Headphones },
     { id: "service", label: "Service", icon: Wrench },
     { id: "history", label: "Service History", icon: History },
