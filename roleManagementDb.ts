@@ -160,7 +160,7 @@ export async function getRolesMatrixFromDb(
     }
   }
   return {
-    roles: APP_ROLES,
+    roles: [...APP_ROLES],
     selfRegisterRoles: ["Customer", "Technician", "Sales Executive"],
     adminOnlyCreateRoles: [
       "Director",
@@ -171,7 +171,7 @@ export async function getRolesMatrixFromDb(
     ],
     permissions: ROLE_PERMISSIONS,
     permissionLabels: PERMISSION_LABELS,
-    permissionKeys: ALL_PERMISSION_KEYS,
+    permissionKeys: [...ALL_PERMISSION_KEYS],
     dynamic: false,
   };
 }

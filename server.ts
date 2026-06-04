@@ -125,6 +125,7 @@ import {
   fetchCustomerPortalSystemMe,
   CustomerProfileError,
 } from "./customerProfileDb.js";
+import { ALL_PERMISSION_KEYS, PERMISSION_LABELS } from "./src/lib/roles.js";
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
