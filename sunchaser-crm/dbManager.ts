@@ -58,6 +58,22 @@ import {
   buildServiceHistoryDashboard,
   type MaintenanceRecord,
 } from "./src/lib/clientPortalServiceHistory.ts";
+import { getEnergyAdapter } from "./src/lib/energyMonitor/adapters/index.ts";
+import type { UnifiedEnergyReading } from "./src/lib/energyMonitor/types.ts";
+import {
+  mapEnergyDeviceRow,
+  mapEnergyAlertRow,
+  buildSavingsFromInverterReading,
+  evaluateEnergyAlerts,
+  providerKeyForBrand,
+  isEnergyTablesMissingError,
+} from "./src/lib/clientPortalEnergy.ts";
+import {
+  TECHNICAL_JOB_STATUSES,
+  TECHNICAL_STAFF_ROLES,
+  type TechnicalJobCard,
+  type TechnicalJobsDashboard,
+} from "./src/lib/technicalStaff.ts";
 
 // Polyfill WebSocket globally for Node.js < 22 environments where Supabase Realtime requires it
 if (typeof globalThis.WebSocket === "undefined") {
@@ -174,6 +190,9 @@ export interface Database {
   customerEquipment?: any[];
   installationPhotos?: any[];
   afterSalesServiceLogs?: any[];
+  customerEnergyDevices?: any[];
+  energyAlerts?: any[];
+  technicalJobUpdates?: any[];
 }
 
 export const initialSeed: Database = {
@@ -207,6 +226,8 @@ export const initialSeed: Database = {
   customerEquipment: [],
   installationPhotos: [],
   afterSalesServiceLogs: [],
+  customerEnergyDevices: [],
+  energyAlerts: [],
   leads: [],
   tickets: [],
   netMeteringHistory: [
@@ -4919,4 +4940,1297 @@ export async function listAdminAfterSalesServiceLogs(
   let rows = [...(localDb?.afterSalesServiceLogs || [])];
   if (customerId) rows = rows.filter((r: any) => (r.customerId || r.customer_id) === customerId);
   return { logs: rows.map((r: any) => mapMaintenanceRecordRow(r)) };
+}
+
+async function loadCustomerEnergyDevices(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("customer_energy_devices")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: true });
+    if (error) {
+      if (isEnergyTablesMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map(mapEnergyDeviceRow);
+  }
+  return (localDb?.customerEnergyDevices || [])
+    .filter((r: any) => (r.customerId || r.customer_id) === customerId)
+    .map((r: any) =>
+      mapEnergyDeviceRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        brand: r.brand,
+        device_serial: r.deviceSerial || r.device_serial,
+        plant_id: r.plantId || r.plant_id,
+        api_provider: r.apiProvider || r.api_provider,
+        status: r.status,
+        last_sync: r.lastSync || r.last_sync,
+        unit_rate_pkr: r.unitRatePkr ?? r.unit_rate_pkr,
+        created_at: r.createdAt || r.created_at,
+        updated_at: r.updatedAt || r.updated_at,
+      })
+    );
+}
+
+async function loadOpenEnergyAlerts(customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("energy_alerts")
+      .select("*")
+      .eq("customer_id", customerId)
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) {
+      if (isEnergyTablesMissingError(error)) return [];
+      throw error;
+    }
+    return (data || []).map(mapEnergyAlertRow);
+  }
+  return (localDb?.energyAlerts || [])
+    .filter(
+      (r: any) =>
+        (r.customerId || r.customer_id) === customerId && (r.status || "open") === "open"
+    )
+    .map((r: any) =>
+      mapEnergyAlertRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        device_id: r.deviceId || r.device_id,
+        alert_type: r.alertType || r.alert_type,
+        severity: r.severity,
+        message: r.message,
+        status: r.status,
+        created_at: r.createdAt || r.created_at,
+      })
+    );
+}
+
+async function resolveUnitRateForCustomer(customerId: string, deviceRate: number, localDb?: Database) {
+  if (deviceRate > 0) return deviceRate;
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data } = await supabase
+      .from("customer_savings_profiles")
+      .select("unit_rate")
+      .eq("customer_id", customerId)
+      .maybeSingle();
+    if (data?.unit_rate != null) return Number(data.unit_rate);
+  } else {
+    const row = (localDb?.customerSavingsProfiles || []).find(
+      (r: any) => (r.customerId || r.customer_id) === customerId
+    );
+    if (row?.unitRate != null || row?.unit_rate != null) {
+      return Number(row.unitRate ?? row.unit_rate);
+    }
+  }
+  return DEFAULT_UNIT_RATE_PKR;
+}
+
+async function syncEnergyDeviceReading(
+  device: ReturnType<typeof mapEnergyDeviceRow>,
+  localDb?: Database
+): Promise<{ reading: UnifiedEnergyReading | null; status: string; lastSync: string }> {
+  const adapter = getEnergyAdapter(device.brand, device.apiProvider);
+  const now = new Date().toISOString();
+  if (!adapter) {
+    return { reading: null, status: "Error", lastSync: now };
+  }
+  try {
+    const reading = await adapter.fetchReading({
+      deviceSerial: device.deviceSerial,
+      plantId: device.plantId,
+      apiProvider: device.apiProvider,
+    });
+    const status = "Online";
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      await supabase
+        .from("customer_energy_devices")
+        .update({ status, last_sync: now, updated_at: now })
+        .eq("id", device.id);
+    } else {
+      const idx = (localDb?.customerEnergyDevices || []).findIndex((r: any) => r.id === device.id);
+      if (idx >= 0) {
+        localDb!.customerEnergyDevices![idx].status = status;
+        localDb!.customerEnergyDevices![idx].lastSync = now;
+        localDb!.customerEnergyDevices![idx].last_sync = now;
+      }
+    }
+    return { reading, status, lastSync: now };
+  } catch {
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      await supabase
+        .from("customer_energy_devices")
+        .update({ status: "Offline", updated_at: now })
+        .eq("id", device.id);
+    }
+    return { reading: null, status: "Offline", lastSync: now };
+  }
+}
+
+async function persistEnergyAlerts(
+  customerId: string,
+  deviceId: string,
+  candidates: { alertType: string; severity: string; message: string }[],
+  localDb?: Database
+) {
+  const existing = await loadOpenEnergyAlerts(customerId, localDb);
+  for (const c of candidates) {
+    if (existing.some((a) => a.deviceId === deviceId && a.alertType === c.alertType)) continue;
+    const id = `energy-alert-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const row = {
+      id,
+      customer_id: customerId,
+      device_id: deviceId,
+      alert_type: c.alertType,
+      severity: c.severity,
+      message: c.message,
+      status: "open",
+      created_at: new Date().toISOString(),
+    };
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      await supabase.from("energy_alerts").insert(row);
+    } else {
+      localDb!.energyAlerts = localDb!.energyAlerts || [];
+      localDb!.energyAlerts.unshift(row);
+    }
+  }
+}
+
+export async function fetchCustomerEnergyMonitor(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
+
+  const devices = await loadCustomerEnergyDevices(customerId!, localDb);
+  let reading: UnifiedEnergyReading | null = null;
+  let primaryBrand: string | null = null;
+  let lastSync: string | null = null;
+  let liveData = false;
+
+  for (const device of devices) {
+    const synced = await syncEnergyDeviceReading(device, localDb);
+    device.status = synced.status;
+    device.lastSync = synced.lastSync;
+    if (synced.reading && !reading) {
+      reading = synced.reading;
+      primaryBrand = device.brand;
+      lastSync = synced.lastSync;
+      liveData = true;
+      const alerts = evaluateEnergyAlerts(synced.reading, device);
+      await persistEnergyAlerts(customerId!, device.id, alerts, localDb);
+    } else if (!reading && synced.status === "Offline") {
+      await persistEnergyAlerts(
+        customerId!,
+        device.id,
+        evaluateEnergyAlerts(null, { ...device, status: "Offline" }),
+        localDb
+      );
+    }
+  }
+
+  const primary = devices[0];
+  const unitRate = primary
+    ? await resolveUnitRateForCustomer(customerId!, primary.unitRatePkr, localDb)
+    : DEFAULT_UNIT_RATE_PKR;
+
+  const savings = reading
+    ? buildSavingsFromInverterReading(reading, unitRate)
+    : {
+        dailySavingsPkr: 0,
+        monthlySavingsPkr: 0,
+        yearlySavingsPkr: 0,
+        unitRatePkr: unitRate,
+        fromLiveData: false,
+      };
+
+  const alerts = await loadOpenEnergyAlerts(customerId!, localDb);
+
+  return {
+    customerId,
+    devices,
+    reading,
+    savings,
+    alerts,
+    primaryBrand,
+    lastSync,
+    liveData,
+  };
+}
+
+export async function upsertAdminEnergyDevice(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  const brand = String(body.brand || "").trim();
+  const deviceSerial = String(body.deviceSerial || body.device_serial || "").trim();
+  const plantId = body.plantId || body.plant_id ? String(body.plantId || body.plant_id) : null;
+  const unitRatePkr =
+    body.unitRatePkr != null
+      ? Number(body.unitRatePkr)
+      : body.unit_rate_pkr != null
+        ? Number(body.unit_rate_pkr)
+        : DEFAULT_UNIT_RATE_PKR;
+
+  if (!customerId || !brand || !deviceSerial) {
+    throw new StaffPortalAuthError("customerId, brand, and deviceSerial are required.");
+  }
+
+  const apiProvider = String(body.apiProvider || body.api_provider || providerKeyForBrand(brand));
+  const id = String(body.id || `energy-dev-${Date.now()}`);
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    customer_id: customerId,
+    brand,
+    device_serial: deviceSerial,
+    plant_id: plantId,
+    api_provider: apiProvider,
+    status: "Offline",
+    last_sync: null,
+    unit_rate_pkr: unitRatePkr,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("customer_energy_devices").upsert(row).select("*").single();
+    if (error) {
+      if (isEnergyTablesMissingError(error)) {
+        throw new StaffPortalAuthError(
+          "Energy monitor tables missing. Run scripts/client-portal-phase8-schema.sql in Supabase."
+        );
+      }
+      throw error;
+    }
+    return mapEnergyDeviceRow(data);
+  }
+
+  localDb!.customerEnergyDevices = localDb!.customerEnergyDevices || [];
+  const idx = localDb!.customerEnergyDevices.findIndex((r: any) => r.id === id);
+  const localRow = {
+    id,
+    customerId,
+    brand,
+    deviceSerial,
+    plantId,
+    apiProvider,
+    status: "Offline",
+    unitRatePkr,
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (idx >= 0) localDb!.customerEnergyDevices[idx] = localRow;
+  else localDb!.customerEnergyDevices.push(localRow);
+  return mapEnergyDeviceRow(row);
+}
+
+export async function fetchAdminEnergyMonitoring(
+  staffUserId: string,
+  staffUsername: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: devices, error: devErr } = await supabase
+      .from("customer_energy_devices")
+      .select("*")
+      .order("last_sync", { ascending: false });
+    if (devErr) {
+      if (isEnergyTablesMissingError(devErr)) {
+        return { onlineCount: 0, offlineCount: 0, openAlerts: 0, customers: [] };
+      }
+      throw devErr;
+    }
+    const { data: alerts } = await supabase
+      .from("energy_alerts")
+      .select("*")
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    const { data: customers } = await supabase.from("customers").select("id, name");
+
+    const byCustomer: Record<string, any> = {};
+    for (const d of devices || []) {
+      const cid = d.customer_id;
+      if (!byCustomer[cid]) {
+        const cust = (customers || []).find((c: any) => c.id === cid);
+        byCustomer[cid] = {
+          customerId: cid,
+          customerName: cust?.name,
+          devices: [],
+          alerts: [],
+        };
+      }
+      byCustomer[cid].devices.push(mapEnergyDeviceRow(d));
+    }
+    for (const a of alerts || []) {
+      const cid = a.customer_id;
+      if (!byCustomer[cid]) {
+        byCustomer[cid] = { customerId: cid, devices: [], alerts: [] };
+      }
+      byCustomer[cid].alerts.push(mapEnergyAlertRow(a));
+    }
+
+    const list = Object.values(byCustomer);
+    const onlineCount = (devices || []).filter((d) => d.status === "Online").length;
+    const offlineCount = (devices || []).filter((d) => d.status !== "Online").length;
+    return {
+      onlineCount,
+      offlineCount,
+      openAlerts: (alerts || []).length,
+      customers: list,
+    };
+  }
+
+  const devices = (localDb?.customerEnergyDevices || []).map((r: any) =>
+    mapEnergyDeviceRow({
+      id: r.id,
+      customer_id: r.customerId || r.customer_id,
+      brand: r.brand,
+      device_serial: r.deviceSerial || r.device_serial,
+      plant_id: r.plantId || r.plant_id,
+      api_provider: r.apiProvider || r.api_provider,
+      status: r.status,
+      last_sync: r.lastSync || r.last_sync,
+      unit_rate_pkr: r.unitRatePkr ?? r.unit_rate_pkr,
+      created_at: r.createdAt || r.created_at,
+      updated_at: r.updatedAt || r.updated_at,
+    })
+  );
+  const alerts = (localDb?.energyAlerts || [])
+    .filter((r: any) => r.status === "open")
+    .map((r: any) =>
+      mapEnergyAlertRow({
+        id: r.id,
+        customer_id: r.customerId || r.customer_id,
+        device_id: r.deviceId || r.device_id,
+        alert_type: r.alertType || r.alert_type,
+        severity: r.severity,
+        message: r.message,
+        status: r.status,
+        created_at: r.createdAt || r.created_at,
+      })
+    );
+  const byCustomer: Record<string, any> = {};
+  for (const d of devices) {
+    if (!byCustomer[d.customerId]) {
+      byCustomer[d.customerId] = { customerId: d.customerId, devices: [], alerts: [] };
+    }
+    byCustomer[d.customerId].devices.push(d);
+  }
+  for (const a of alerts) {
+    if (!byCustomer[a.customerId]) {
+      byCustomer[a.customerId] = { customerId: a.customerId, devices: [], alerts: [] };
+    }
+    byCustomer[a.customerId].alerts.push(a);
+  }
+  return {
+    onlineCount: devices.filter((d) => d.status === "Online").length,
+    offlineCount: devices.filter((d) => d.status !== "Online").length,
+    openAlerts: alerts.length,
+    customers: Object.values(byCustomer),
+  };
+}
+
+/* --- Phase 9: Technical Staff Portal + Onboarding --- */
+
+export class TechnicalStaffAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TechnicalStaffAuthError";
+  }
+}
+
+const TECHNICAL_ROLES_SET = new Set<string>(TECHNICAL_STAFF_ROLES);
+
+function isTechnicalJobUpdatesTableMissingError(err: any) {
+  const msg = String(err?.message || "").toLowerCase();
+  return err?.code === "42P01" || msg.includes("technical_job_updates");
+}
+
+export async function verifyTechnicalStaffUser(
+  userId: string,
+  username: string,
+  localDb?: Database
+): Promise<{ user: any; role: string }> {
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId || !normalizedUsername) {
+    throw new TechnicalStaffAuthError("Technical staff credentials required.");
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: userRow, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", normalizedUserId)
+      .single();
+    if (error || !userRow) throw new TechnicalStaffAuthError("Invalid technical staff user.");
+    if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
+      throw new TechnicalStaffAuthError("Invalid technical staff user.");
+    }
+    const role = resolveAppUserRole(userRow.username, userRow.role);
+    if (!TECHNICAL_ROLES_SET.has(role)) {
+      throw new TechnicalStaffAuthError("Not authorized for technical staff portal.");
+    }
+    return { user: userRow, role };
+  }
+
+  if (!localDb) throw new TechnicalStaffAuthError("Database unavailable.");
+  const userRow = (localDb.users || []).find(
+    (u: any) =>
+      u.id === normalizedUserId &&
+      String(u.username || "").trim().toLowerCase() === normalizedUsername
+  );
+  if (!userRow) throw new TechnicalStaffAuthError("Invalid technical staff user.");
+  const role = resolveAppUserRole(userRow.username, userRow.role);
+  if (!TECHNICAL_ROLES_SET.has(role)) {
+    throw new TechnicalStaffAuthError("Not authorized for technical staff portal.");
+  }
+  return { user: userRow, role };
+}
+
+function technicianMatchesAssignee(assignee: string | null | undefined, user: any) {
+  const a = String(assignee || "").trim().toLowerCase();
+  if (!a) return false;
+  const name = String(user.name || "").trim().toLowerCase();
+  const username = String(user.username || "").trim().toLowerCase();
+  return a === name || a === username || a.includes(name) || name.includes(a);
+}
+
+function mapServiceTypeToJobType(serviceType: string): string {
+  const t = String(serviceType || "").trim();
+  if (t === "Cleaning") return "Panel Cleaning";
+  if (t === "Inspection") return "Physical Inspection";
+  if (t === "Warranty Visit") return "Warranty Claim";
+  if (t === "Emergency Visit") return "Emergency Visit";
+  if (t === "Battery Health Check") return "Battery Health Check";
+  return t || "Physical Inspection";
+}
+
+function mapTicketCategoryToJobType(category: string, priority: string): string {
+  const c = String(category || "").toLowerCase();
+  if (c.includes("inverter")) return "Inverter Fault";
+  if (c.includes("breaker")) return "Breaker Replacement";
+  if (c.includes("warranty")) return "Warranty Claim";
+  if (String(priority || "").toLowerCase() === "emergency") return "Emergency Visit";
+  return "Physical Inspection";
+}
+
+function overlayTechnicalStatus(
+  jobId: string,
+  defaultStatus: string,
+  updates: any[]
+): string {
+  const latest = updates
+    .filter((u) => u.job_id === jobId || u.jobId === jobId)
+    .sort(
+      (a, b) =>
+        new Date(b.updated_at || b.updatedAt || 0).getTime() -
+        new Date(a.updated_at || a.updatedAt || 0).getTime()
+    )[0];
+  if (latest?.status && TECHNICAL_JOB_STATUSES.includes(latest.status)) return latest.status;
+  const s = String(defaultStatus || "Assigned");
+  if (TECHNICAL_JOB_STATUSES.includes(s as any)) return s;
+  if (s === "Submitted" || s === "Scheduled") return "Assigned";
+  if (s === "In Progress" || s === "Technician Assigned") return "Started";
+  if (s === "Resolved" || s === "Completed" || s === "Closed") return "Completed";
+  return "Assigned";
+}
+
+async function fetchTechnicalJobUpdates(localDb?: Database): Promise<any[]> {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("technical_job_updates")
+      .select("*")
+      .order("updated_at", { ascending: false });
+    if (error) {
+      if (isTechnicalJobUpdatesTableMissingError(error)) return [];
+      throw error;
+    }
+    return data || [];
+  }
+  return localDb?.technicalJobUpdates || [];
+}
+
+async function loadCustomerBasics(customerId: string, localDb?: Database) {
+  const empty = { name: "Customer", phone: "", address: "" };
+  if (!customerId) return empty;
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data } = await supabase.from("customers").select("name, phone, address").eq("id", customerId).maybeSingle();
+    if (data) {
+      return {
+        name: data.name || "Customer",
+        phone: data.phone || "",
+        address: data.address || "",
+      };
+    }
+  }
+  const lead = (localDb?.leads || []).find(
+    (l: any) => l.customerId === customerId || l.customer_id === customerId
+  );
+  if (lead) {
+    return {
+      name: lead.name || "Customer",
+      phone: lead.phone || "",
+      address: lead.address || lead.siteAddress || "",
+    };
+  }
+  return empty;
+}
+
+async function buildTechnicalJobsForUser(
+  user: any,
+  role: string,
+  localDb?: Database
+): Promise<TechnicalJobCard[]> {
+  const jobs: TechnicalJobCard[] = [];
+  const updates = await fetchTechnicalJobUpdates(localDb);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const pushJob = (card: TechnicalJobCard) => {
+    if (jobs.some((j) => j.id === card.id)) return;
+    jobs.push({
+      ...card,
+      status: overlayTechnicalStatus(card.id, card.status, updates),
+    });
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+
+    if (role === "Survey Engineer") {
+      const { data: leads } = await supabase.from("leads").select("*").limit(200);
+      for (const lead of leads || []) {
+        const surveyDone = !!(lead.survey && (lead.survey.completed || lead.survey_completed));
+        if (surveyDone) continue;
+        if (!["Quoted", "Contracted", "Survey Scheduled", "In Progress"].includes(String(lead.status || ""))) {
+          if (String(lead.status || "") === "New" || String(lead.status || "") === "Lost") continue;
+        }
+        const cid = lead.customer_id || lead.customerId || null;
+        const basics = cid ? await loadCustomerBasics(cid, localDb) : { name: lead.name, phone: lead.phone || "", address: lead.address || "" };
+        pushJob({
+          id: `lead-surv-${lead.id}`,
+          customerId: cid,
+          projectId: null,
+          customerName: basics.name || lead.name,
+          customerPhone: basics.phone || lead.phone || "",
+          siteAddress: basics.address || lead.address || "",
+          jobType: "Site Survey",
+          priority: "Normal",
+          scheduledDate: lead.survey_date || lead.surveyDate || today,
+          scheduledTime: null,
+          status: "Assigned",
+          assignedTechnician: user.name,
+          assignedUserId: user.id,
+        });
+      }
+    }
+
+    if (role === "Installation Team") {
+      const { data: leads } = await supabase.from("leads").select("*").limit(200);
+      for (const lead of leads || []) {
+        const inst = lead.installation || {};
+        const progress = Number(inst.progress ?? inst.installationProgress ?? 0);
+        if (progress >= 100) continue;
+        if (!["Contracted", "Installation", "In Progress"].includes(String(lead.status || ""))) continue;
+        const cid = lead.customer_id || lead.customerId || null;
+        const basics = cid ? await loadCustomerBasics(cid, localDb) : { name: lead.name, phone: lead.phone || "", address: lead.address || "" };
+        pushJob({
+          id: `lead-inst-${lead.id}`,
+          customerId: cid,
+          projectId: null,
+          customerName: basics.name || lead.name,
+          customerPhone: basics.phone || lead.phone || "",
+          siteAddress: basics.address || lead.address || "",
+          jobType: "Installation",
+          priority: "Normal",
+          scheduledDate: today,
+          scheduledTime: null,
+          status: progress > 0 ? "Started" : "Assigned",
+          assignedTechnician: user.name,
+          assignedUserId: user.id,
+        });
+      }
+    }
+
+    const { data: svcRows } = await supabase.from("service_requests").select("*").order("updated_at", { ascending: false }).limit(100);
+    for (const row of svcRows || []) {
+      if (!technicianMatchesAssignee(row.assigned_technician, user) && role !== "Survey Engineer" && role !== "Installation Team") {
+        continue;
+      }
+      if ((role === "Survey Engineer" || role === "Installation Team") && !technicianMatchesAssignee(row.assigned_technician, user)) {
+        continue;
+      }
+      const cid = row.customer_id;
+      const basics = await loadCustomerBasics(cid, localDb);
+      pushJob({
+        id: `svc-${row.id}`,
+        customerId: cid,
+        projectId: row.project_id,
+        customerName: basics.name,
+        customerPhone: basics.phone,
+        siteAddress: basics.address,
+        jobType: mapServiceTypeToJobType(row.service_type),
+        priority: row.service_type === "Emergency Visit" ? "Emergency" : "Normal",
+        scheduledDate: row.scheduled_visit_date || row.preferred_date || null,
+        scheduledTime: row.preferred_time || null,
+        status: row.status || "Assigned",
+        assignedTechnician: row.assigned_technician || user.name,
+        assignedUserId: user.id,
+        serviceRequestId: row.id,
+        notes: row.notes,
+      });
+    }
+
+    const { data: tickets } = await supabase.from("support_tickets").select("*").order("updated_at", { ascending: false }).limit(80);
+    for (const t of tickets || []) {
+      if (!technicianMatchesAssignee(t.assigned_technician, user)) continue;
+      if (t.status === "Closed" || t.status === "Resolved") continue;
+      const cid = t.customer_id;
+      const basics = await loadCustomerBasics(cid, localDb);
+      pushJob({
+        id: `sup-${t.id}`,
+        customerId: cid,
+        projectId: null,
+        customerName: basics.name,
+        customerPhone: basics.phone,
+        siteAddress: basics.address,
+        jobType: mapTicketCategoryToJobType(t.category, t.priority),
+        priority: t.priority || "Normal",
+        scheduledDate: t.preferred_visit_date || today,
+        scheduledTime: t.preferred_visit_time || null,
+        status: t.status || "Assigned",
+        assignedTechnician: t.assigned_technician || user.name,
+        assignedUserId: user.id,
+        supportTicketId: t.id,
+        notes: t.description,
+      });
+    }
+
+    const { data: claims } = await supabase.from("warranty_claims").select("*").order("updated_at", { ascending: false }).limit(50);
+    for (const c of claims || []) {
+      if (!["New", "In Review", "Technician Assigned"].includes(String(c.status || ""))) continue;
+      const cid = c.customer_id;
+      const basics = await loadCustomerBasics(cid, localDb);
+      pushJob({
+        id: `war-${c.id}`,
+        customerId: cid,
+        projectId: null,
+        customerName: basics.name,
+        customerPhone: basics.phone,
+        siteAddress: basics.address,
+        jobType: "Warranty Claim",
+        priority: "Normal",
+        scheduledDate: today,
+        scheduledTime: null,
+        status: c.status === "Technician Assigned" ? "Assigned" : "Assigned",
+        assignedTechnician: user.name,
+        assignedUserId: user.id,
+        warrantyClaimId: c.id,
+        notes: c.issue_description,
+      });
+    }
+  } else if (localDb) {
+    for (const lead of localDb.leads || []) {
+      if (role === "Survey Engineer") {
+        const surveyDone = !!(lead.survey?.completed);
+        if (!surveyDone && lead.status !== "New" && lead.status !== "Lost") {
+          pushJob({
+            id: `lead-surv-${lead.id}`,
+            customerId: lead.customerId || null,
+            projectId: null,
+            customerName: lead.name,
+            customerPhone: lead.phone || "",
+            siteAddress: lead.address || "",
+            jobType: "Site Survey",
+            priority: "Normal",
+            scheduledDate: today,
+            scheduledTime: null,
+            status: "Assigned",
+            assignedTechnician: user.name,
+            assignedUserId: user.id,
+          });
+        }
+      }
+      if (role === "Installation Team" && ["Contracted", "Installation", "In Progress"].includes(lead.status)) {
+        const progress = Number(lead.installation?.progress || 0);
+        if (progress < 100) {
+          pushJob({
+            id: `lead-inst-${lead.id}`,
+            customerId: lead.customerId || null,
+            projectId: null,
+            customerName: lead.name,
+            customerPhone: lead.phone || "",
+            siteAddress: lead.address || "",
+            jobType: "Installation",
+            priority: "Normal",
+            scheduledDate: today,
+            scheduledTime: null,
+            status: progress > 0 ? "Started" : "Assigned",
+            assignedTechnician: user.name,
+            assignedUserId: user.id,
+          });
+        }
+      }
+    }
+    for (const row of localDb.serviceRequests || []) {
+      if (!technicianMatchesAssignee(row.assignedTechnician || row.assigned_technician, user)) continue;
+      pushJob({
+        id: `svc-${row.id}`,
+        customerId: row.customerId || row.customer_id,
+        projectId: row.projectId || row.project_id,
+        customerName: "Customer",
+        customerPhone: "",
+        siteAddress: "",
+        jobType: mapServiceTypeToJobType(row.serviceType || row.service_type),
+        priority: "Normal",
+        scheduledDate: row.scheduledVisitDate || row.scheduled_visit_date || row.preferredDate || null,
+        scheduledTime: row.preferredTime || row.preferred_time || null,
+        status: row.status || "Assigned",
+        assignedTechnician: row.assignedTechnician || row.assigned_technician || user.name,
+        assignedUserId: user.id,
+        serviceRequestId: row.id,
+        notes: row.notes,
+      });
+    }
+    for (const t of localDb.tickets || []) {
+      if (!technicianMatchesAssignee(t.assignedTechnician, user)) continue;
+      if (t.status === "Closed" || t.status === "Resolved") continue;
+      pushJob({
+        id: `sup-${t.id}`,
+        customerId: t.customerId,
+        projectId: null,
+        customerName: t.customerName || "Customer",
+        customerPhone: t.customerPhone || "",
+        siteAddress: t.siteAddress || "",
+        jobType: mapTicketCategoryToJobType(t.category, t.priority),
+        priority: t.priority || "Normal",
+        scheduledDate: today,
+        scheduledTime: t.preferredVisitTime || null,
+        status: t.status || "Assigned",
+        assignedTechnician: t.assignedTechnician || user.name,
+        assignedUserId: user.id,
+        supportTicketId: t.id,
+        notes: t.description,
+      });
+    }
+    for (const c of localDb.warrantyClaims || []) {
+      if (!["New", "In Review", "Technician Assigned"].includes(c.status)) continue;
+      pushJob({
+        id: `war-${c.id}`,
+        customerId: c.customerId || c.customer_id,
+        projectId: null,
+        customerName: "Customer",
+        customerPhone: "",
+        siteAddress: "",
+        jobType: "Warranty Claim",
+        priority: "Normal",
+        scheduledDate: today,
+        scheduledTime: null,
+        status: "Assigned",
+        assignedTechnician: user.name,
+        assignedUserId: user.id,
+        warrantyClaimId: c.id,
+        notes: c.issueDescription || c.issue_description,
+      });
+    }
+  }
+
+  return jobs;
+}
+
+function buildTechnicalDashboard(jobs: TechnicalJobCard[]): TechnicalJobsDashboard {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayAssigned = jobs.filter(
+    (j) => j.scheduledDate === today && j.status !== "Completed"
+  ).length;
+  return {
+    todayAssigned,
+    pendingSurveys: jobs.filter((j) => j.jobType === "Site Survey" && j.status !== "Completed").length,
+    installationTasks: jobs.filter((j) => j.jobType === "Installation" && j.status !== "Completed").length,
+    serviceVisits: jobs.filter(
+      (j) =>
+        ["Panel Cleaning", "Physical Inspection", "Battery Health Check"].includes(String(j.jobType)) &&
+        j.status !== "Completed"
+    ).length,
+    warrantyVisits: jobs.filter((j) => j.jobType === "Warranty Claim" && j.status !== "Completed").length,
+    emergencyTickets: jobs.filter(
+      (j) => j.priority === "Emergency" || j.jobType === "Emergency Visit"
+    ).length,
+    completedJobs: jobs.filter((j) => j.status === "Completed").length,
+    jobs,
+  };
+}
+
+export async function listTechnicalJobsForUser(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { user, role } = await verifyTechnicalStaffUser(userId, username, localDb);
+  const jobs = await buildTechnicalJobsForUser(user, role, localDb);
+  return buildTechnicalDashboard(jobs);
+}
+
+export async function getTechnicalJobById(
+  userId: string,
+  username: string,
+  jobId: string,
+  localDb?: Database
+) {
+  const { user } = await verifyTechnicalStaffUser(userId, username, localDb);
+  const jobs = await buildTechnicalJobsForUser(user, (await verifyTechnicalStaffUser(userId, username, localDb)).role, localDb);
+  const job = jobs.find((j) => j.id === jobId);
+  if (!job) throw new TechnicalStaffAuthError("Job not found or not assigned to you.");
+
+  const updates = (await fetchTechnicalJobUpdates(localDb)).filter(
+    (u) => (u.job_id || u.jobId) === jobId
+  );
+  const latest = updates[0];
+  return {
+    job,
+    latestUpdate: latest
+      ? {
+          technicianNotes: latest.technician_notes,
+          beforePhotoUrl: latest.before_photo_url,
+          afterPhotoUrl: latest.after_photo_url,
+          inverterPhotoUrl: latest.inverter_photo_url,
+          dbPhotoUrl: latest.db_photo_url,
+          replacedComponentDetails: latest.replaced_component_details,
+          customerSignatureUrl: latest.customer_signature_url,
+          safetyChecklist: latest.safety_checklist || {},
+          status: latest.status,
+        }
+      : null,
+  };
+}
+
+async function upsertTechnicalJobUpdateRow(
+  row: Record<string, unknown>,
+  localDb?: Database
+) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("technical_job_updates").insert(row).select("*").single();
+    if (error) {
+      if (isTechnicalJobUpdatesTableMissingError(error)) {
+        throw new TechnicalStaffAuthError("Technical job updates table not ready. Run phase 9 schema.");
+      }
+      throw error;
+    }
+    return data;
+  }
+  localDb!.technicalJobUpdates = localDb!.technicalJobUpdates || [];
+  localDb!.technicalJobUpdates.unshift(row);
+  return row;
+}
+
+async function applyTechnicalJobCompletion(
+  job: TechnicalJobCard,
+  body: Record<string, unknown>,
+  staffName: string,
+  localDb?: Database
+) {
+  const customerId = job.customerId;
+  if (!customerId) return;
+
+  const serviceType = String(job.jobType || "Physical Inspection");
+  const now = new Date().toISOString();
+  const logBody = {
+    customerId,
+    projectId: job.projectId,
+    serviceType,
+    description: body.technicianNotes || body.technician_notes || `Field visit completed for ${job.jobType}`,
+    technicianName: staffName,
+    serviceDate: now.slice(0, 10),
+    beforePhotoUrl: body.beforePhotoUrl || body.before_photo_url,
+    afterPhotoUrl: body.afterPhotoUrl || body.after_photo_url,
+    customerVisibleNotes: body.technicianNotes || body.technician_notes,
+    warrantyCovered: job.jobType === "Warranty Claim",
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const logId = `asl-tech-${Date.now()}`;
+    await supabase.from("after_sales_service_logs").insert({
+      id: logId,
+      customer_id: customerId,
+      project_id: job.projectId,
+      service_type: serviceType,
+      description: logBody.description,
+      technician_name: staffName,
+      service_date: logBody.serviceDate,
+      under_free_service: logBody.warrantyCovered,
+      warranty_covered: logBody.warrantyCovered,
+      before_photo_url: logBody.beforePhotoUrl || null,
+      after_photo_url: logBody.afterPhotoUrl || null,
+      customer_visible_notes: logBody.customerVisibleNotes || null,
+      created_by: staffName,
+      created_at: now,
+      updated_at: now,
+      quantity: 1,
+      labor_cost: 0,
+      parts_cost: 0,
+      charge_amount: 0,
+    });
+
+    if (logBody.beforePhotoUrl || logBody.afterPhotoUrl) {
+      const category =
+        job.jobType === "Installation" ? "installation_complete" : "service_visit";
+      if (logBody.beforePhotoUrl) {
+        await supabase.from("installation_photos").insert({
+          id: `inst-tech-b-${Date.now()}`,
+          customer_id: customerId,
+          project_id: job.projectId,
+          photo_category: category,
+          photo_url: logBody.beforePhotoUrl,
+          caption: "Before — technical staff",
+          uploaded_by: staffName,
+          created_at: now,
+        });
+      }
+      if (logBody.afterPhotoUrl) {
+        await supabase.from("installation_photos").insert({
+          id: `inst-tech-a-${Date.now() + 1}`,
+          customer_id: customerId,
+          project_id: job.projectId,
+          photo_category: category,
+          photo_url: logBody.afterPhotoUrl,
+          caption: "After — technical staff",
+          uploaded_by: staffName,
+          created_at: now,
+        });
+      }
+    }
+
+    if (job.serviceRequestId) {
+      await supabase
+        .from("service_requests")
+        .update({
+          status: "Completed",
+          completion_notes: logBody.description,
+          after_photo_url: logBody.afterPhotoUrl || null,
+          before_photo_url: logBody.beforePhotoUrl || null,
+          updated_at: now,
+        })
+        .eq("id", job.serviceRequestId);
+
+      const { data: sub } = await supabase
+        .from("customer_subscriptions")
+        .select("id")
+        .eq("customer_id", customerId)
+        .eq("status", "active")
+        .limit(1);
+      if (sub?.length) {
+        await supabase.from("service_visit_reports").insert({
+          id: `visit-tech-${Date.now()}`,
+          customer_id: customerId,
+          subscription_id: sub[0].id,
+          service_request_id: job.serviceRequestId,
+          technician: staffName,
+          visit_date: now.slice(0, 10),
+          performance_improvement_notes: logBody.description,
+          before_photo_url: logBody.beforePhotoUrl || null,
+          after_photo_url: logBody.afterPhotoUrl || null,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    }
+
+    if (job.warrantyClaimId) {
+      await supabase
+        .from("warranty_claims")
+        .update({ status: "Resolved", updated_at: now })
+        .eq("id", job.warrantyClaimId);
+    }
+
+    if (job.supportTicketId) {
+      await supabase
+        .from("support_tickets")
+        .update({ status: "Resolved", updated_at: now })
+        .eq("id", job.supportTicketId);
+    }
+  } else if (localDb) {
+    localDb.afterSalesServiceLogs = localDb.afterSalesServiceLogs || [];
+    localDb.afterSalesServiceLogs.unshift({
+      id: `asl-tech-${Date.now()}`,
+      customerId,
+      serviceType,
+      description: logBody.description,
+      technicianName: staffName,
+      serviceDate: logBody.serviceDate,
+      beforePhotoUrl: logBody.beforePhotoUrl,
+      afterPhotoUrl: logBody.afterPhotoUrl,
+      createdAt: now,
+    });
+    if (job.serviceRequestId) {
+      const sr = (localDb.serviceRequests || []).find((r: any) => r.id === job.serviceRequestId);
+      if (sr) {
+        sr.status = "Completed";
+        sr.completionNotes = logBody.description;
+      }
+    }
+  }
+}
+
+export async function patchTechnicalJobStatus(
+  userId: string,
+  username: string,
+  jobId: string,
+  status: string,
+  localDb?: Database
+) {
+  const { user } = await verifyTechnicalStaffUser(userId, username, localDb);
+  if (!TECHNICAL_JOB_STATUSES.includes(status as any)) {
+    throw new TechnicalStaffAuthError("Invalid job status.");
+  }
+  const detail = await getTechnicalJobById(userId, username, jobId, localDb);
+  const now = new Date().toISOString();
+  const row = {
+    id: `tju-${Date.now()}`,
+    job_id: jobId,
+    job_type: detail.job.jobType,
+    customer_id: detail.job.customerId,
+    project_id: detail.job.projectId,
+    assigned_user_id: user.id,
+    status,
+    created_at: now,
+    updated_at: now,
+  };
+  await upsertTechnicalJobUpdateRow(row, localDb);
+  if (status === "Completed") {
+    await applyTechnicalJobCompletion(detail.job, {}, user.name, localDb);
+  }
+  return { jobId, status };
+}
+
+export async function postTechnicalJobUpdate(
+  userId: string,
+  username: string,
+  jobId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  const { user } = await verifyTechnicalStaffUser(userId, username, localDb);
+  const detail = await getTechnicalJobById(userId, username, jobId, localDb);
+  const status = String(body.status || detail.job.status || "Assigned");
+  if (!TECHNICAL_JOB_STATUSES.includes(status as any)) {
+    throw new TechnicalStaffAuthError("Invalid job status.");
+  }
+  const now = new Date().toISOString();
+  const row = {
+    id: `tju-${Date.now()}`,
+    job_id: jobId,
+    job_type: detail.job.jobType,
+    customer_id: detail.job.customerId,
+    project_id: detail.job.projectId,
+    assigned_user_id: user.id,
+    status,
+    technician_notes: body.technicianNotes || body.technician_notes || null,
+    before_photo_url: body.beforePhotoUrl || body.before_photo_url || null,
+    after_photo_url: body.afterPhotoUrl || body.after_photo_url || null,
+    inverter_photo_url: body.inverterPhotoUrl || body.inverter_photo_url || null,
+    db_photo_url: body.dbPhotoUrl || body.db_photo_url || null,
+    replaced_component_details: body.replacedComponentDetails || body.replaced_component_details || null,
+    customer_signature_url: body.customerSignatureUrl || body.customer_signature_url || null,
+    safety_checklist: body.safetyChecklist || body.safety_checklist || {},
+    created_at: now,
+    updated_at: now,
+  };
+  const saved = await upsertTechnicalJobUpdateRow(row, localDb);
+  if (status === "Completed") {
+    await applyTechnicalJobCompletion(detail.job, body, user.name, localDb);
+  }
+  return { update: saved, job: detail.job };
+}
+
+export async function postTechnicalEquipment(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  const { user } = await verifyTechnicalStaffUser(userId, username, localDb);
+  const customerId = String(body.customerId || body.customer_id || "").trim();
+  const equipmentType = String(body.equipmentType || body.equipment_type || "").trim();
+  if (!customerId || !equipmentType) {
+    throw new TechnicalStaffAuthError("customerId and equipmentType are required.");
+  }
+
+  const id = `eq-tech-${Date.now()}`;
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    customer_id: customerId,
+    project_id: body.projectId || body.project_id || null,
+    equipment_type: equipmentType,
+    brand: body.brand || null,
+    model: body.model || null,
+    serial_number: body.serialNumber || body.serial_number || null,
+    quantity: Number(body.quantity || 1),
+    installation_date: body.installationDate || body.installation_date || now.slice(0, 10),
+    warranty_start: body.warrantyStart || body.warranty_start || null,
+    warranty_end: body.warrantyEnd || body.warranty_end || null,
+    photo_url: body.photoUrl || body.photo_url || null,
+    notes: body.notes || null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("customer_equipment").insert(row).select("*").single();
+    if (error) {
+      if (isPakistanAftersalesTableMissingError(error)) {
+        throw new TechnicalStaffAuthError("Equipment registry table not ready.");
+      }
+      throw error;
+    }
+    return mapEquipmentRow(data);
+  }
+
+  localDb!.customerEquipment = localDb!.customerEquipment || [];
+  localDb!.customerEquipment.push(row);
+  return mapEquipmentRow(row);
+}
+
+function mapOnboardingUser(user: any) {
+  return {
+    onboardingCompleted: !!(user.onboarding_completed ?? user.onboardingCompleted),
+    onboardingCompletedAt: user.onboarding_completed_at || user.onboardingCompletedAt || null,
+  };
+}
+
+export async function fetchOnboardingMe(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId || !normalizedUsername) {
+    throw new TechnicalStaffAuthError("userId and username required.");
+  }
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: userRow, error } = await supabase.from("users").select("*").eq("id", normalizedUserId).single();
+    if (error || !userRow) throw new TechnicalStaffAuthError("User not found.");
+    if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
+      throw new TechnicalStaffAuthError("User not found.");
+    }
+    const role = resolveAppUserRole(userRow.username, userRow.role);
+    return {
+      userId: userRow.id,
+      role,
+      isCustomer: role === "Customer",
+      isTechnicalStaff: TECHNICAL_ROLES_SET.has(role),
+      ...mapOnboardingUser(userRow),
+    };
+  }
+
+  if (!localDb) throw new TechnicalStaffAuthError("Database unavailable.");
+  const userRow = (localDb.users || []).find(
+    (u: any) =>
+      u.id === normalizedUserId &&
+      String(u.username || "").trim().toLowerCase() === normalizedUsername
+  );
+  if (!userRow) throw new TechnicalStaffAuthError("User not found.");
+  const role = resolveAppUserRole(userRow.username, userRow.role);
+  return {
+    userId: userRow.id,
+    role,
+    isCustomer: role === "Customer",
+    isTechnicalStaff: TECHNICAL_ROLES_SET.has(role),
+    ...mapOnboardingUser(userRow),
+  };
+}
+
+export async function completeOnboarding(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  await fetchOnboardingMe(userId, username, localDb);
+  const now = new Date().toISOString();
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("users")
+      .update({ onboarding_completed: true, onboarding_completed_at: now })
+      .eq("id", userId)
+      .select("onboarding_completed, onboarding_completed_at")
+      .single();
+    if (error) throw error;
+    return {
+      onboardingCompleted: !!data.onboarding_completed,
+      onboardingCompletedAt: data.onboarding_completed_at,
+    };
+  }
+
+  const userRow = (localDb!.users || []).find((u: any) => u.id === userId);
+  if (userRow) {
+    userRow.onboardingCompleted = true;
+    userRow.onboarding_completed = true;
+    userRow.onboardingCompletedAt = now;
+    userRow.onboarding_completed_at = now;
+  }
+  return { onboardingCompleted: true, onboardingCompletedAt: now };
+}
+
+export async function resetOnboarding(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  await fetchOnboardingMe(userId, username, localDb);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase
+      .from("users")
+      .update({ onboarding_completed: false, onboarding_completed_at: null })
+      .eq("id", userId)
+      .select("onboarding_completed, onboarding_completed_at")
+      .single();
+    if (error) throw error;
+    return {
+      onboardingCompleted: !!data.onboarding_completed,
+      onboardingCompletedAt: data.onboarding_completed_at,
+    };
+  }
+
+  const userRow = (localDb!.users || []).find((u: any) => u.id === userId);
+  if (userRow) {
+    userRow.onboardingCompleted = false;
+    userRow.onboarding_completed = false;
+    userRow.onboardingCompletedAt = null;
+    userRow.onboarding_completed_at = null;
+  }
+  return { onboardingCompleted: false, onboardingCompletedAt: null };
 }

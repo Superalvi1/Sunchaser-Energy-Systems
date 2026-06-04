@@ -277,6 +277,8 @@ export interface User {
   email: string;
   role: UserRole;
   customerId?: string;
+  onboardingCompleted?: boolean;
+  onboardingCompletedAt?: string;
 }
 
 export interface Project {
@@ -383,6 +385,7 @@ export type UserRole =
   | 'Inventory Manager'
   | 'Support Agent'
   | 'Technician'
+  | 'Service Technician'
   | 'Survey Engineer'
   | 'Installation Team'
   | 'Customer';

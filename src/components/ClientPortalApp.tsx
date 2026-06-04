@@ -33,6 +33,7 @@ interface ClientPortalAppProps {
   error: string | null;
   onRefresh: () => void;
   onLogout: () => void;
+  onShowWelcomeGuide?: () => void;
 }
 
 type PortalTab =
@@ -53,6 +54,7 @@ export default function ClientPortalApp({
   error,
   onRefresh,
   onLogout,
+  onShowWelcomeGuide,
 }: ClientPortalAppProps) {
   const [activeTab, setActiveTab] = useState<PortalTab>("home");
   const projectStatus =
@@ -91,6 +93,16 @@ export default function ClientPortalApp({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {onShowWelcomeGuide && (
+              <button
+                type="button"
+                onClick={onShowWelcomeGuide}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold px-2.5"
+                title="View Welcome Guide Again"
+              >
+                Guide
+              </button>
+            )}
             <button
               type="button"
               onClick={onRefresh}

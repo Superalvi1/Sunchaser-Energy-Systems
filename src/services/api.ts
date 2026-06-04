@@ -982,6 +982,121 @@ export async function deleteQuote(leadId: string, quoteId: string): Promise<any>
   return res.json();
 }
 
+export async function fetchOnboardingMe(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/onboarding/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load onboarding.");
+  }
+  return res.json();
+}
+
+export async function completeOnboarding(userId: string, username: string) {
+  const res = await apiFetch("/api/onboarding/complete", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to complete onboarding.");
+  }
+  return res.json();
+}
+
+export async function resetOnboarding(userId: string, username: string) {
+  const res = await apiFetch("/api/onboarding/reset", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to reset onboarding.");
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalJobsMe(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/technical/jobs/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load technical jobs.");
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalJobById(userId: string, username: string, jobId: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/technical/jobs/${encodeURIComponent(jobId)}?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load job.");
+  }
+  return res.json();
+}
+
+export async function patchTechnicalJobStatus(
+  userId: string,
+  username: string,
+  jobId: string,
+  status: string
+) {
+  const res = await apiFetch(`/api/technical/jobs/${encodeURIComponent(jobId)}/status`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ status, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update job status.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalJobUpdate(
+  userId: string,
+  username: string,
+  jobId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/technical/jobs/${encodeURIComponent(jobId)}/update`, {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save job update.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalEquipment(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/technical/equipment", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to add equipment.");
+  }
+  return res.json();
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {

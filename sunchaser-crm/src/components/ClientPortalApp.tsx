@@ -12,6 +12,7 @@ import {
   Zap,
   Heart,
   History,
+  Activity,
 } from "lucide-react";
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
@@ -23,6 +24,7 @@ import ClientPortalService from "./ClientPortalService";
 import ClientPortalSavings from "./ClientPortalSavings";
 import ClientPortalCare from "./ClientPortalCare";
 import ClientPortalServiceHistory from "./ClientPortalServiceHistory";
+import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
 
 interface ClientPortalAppProps {
   user: User;
@@ -31,9 +33,19 @@ interface ClientPortalAppProps {
   error: string | null;
   onRefresh: () => void;
   onLogout: () => void;
+  onShowWelcomeGuide?: () => void;
 }
 
-type PortalTab = "home" | "documents" | "warranty" | "support" | "service" | "history" | "savings" | "care";
+type PortalTab =
+  | "home"
+  | "documents"
+  | "warranty"
+  | "support"
+  | "service"
+  | "history"
+  | "savings"
+  | "energy"
+  | "care";
 
 export default function ClientPortalApp({
   user,
@@ -42,6 +54,7 @@ export default function ClientPortalApp({
   error,
   onRefresh,
   onLogout,
+  onShowWelcomeGuide,
 }: ClientPortalAppProps) {
   const [activeTab, setActiveTab] = useState<PortalTab>("home");
   const projectStatus =
@@ -55,6 +68,7 @@ export default function ClientPortalApp({
     { id: "service", label: "Service", icon: Wrench },
     { id: "history", label: "Service History", icon: History },
     { id: "savings", label: "Savings", icon: Zap },
+    { id: "energy", label: "Energy Monitor", icon: Activity },
     { id: "care", label: "Care Plans", icon: Heart },
   ];
 
@@ -79,6 +93,16 @@ export default function ClientPortalApp({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {onShowWelcomeGuide && (
+              <button
+                type="button"
+                onClick={onShowWelcomeGuide}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold px-2.5"
+                title="View Welcome Guide Again"
+              >
+                Guide
+              </button>
+            )}
             <button
               type="button"
               onClick={onRefresh}
@@ -97,28 +121,35 @@ export default function ClientPortalApp({
             </button>
           </div>
         </div>
-        <div className="border-t border-slate-800/80 px-4 pb-2">
-          <div className="max-w-3xl mx-auto flex gap-2 overflow-x-auto">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap ${
-                    activeTab === tab.id
-                      ? "bg-amber-500 text-slate-950"
-                      : "bg-slate-950 text-slate-400 border border-slate-800"
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {tab.label}
-                </button>
-              );
-            })}
+        <nav className="border-t border-slate-800/80 px-4 pb-3 pt-2" aria-label="Portal sections">
+          <div className="max-w-3xl mx-auto">
+            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2 text-center">
+              All portal sections
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    aria-current={isActive ? "page" : undefined}
+                    className={`py-2.5 px-1.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 min-h-[58px] transition-colors ${
+                      isActive
+                        ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
+                        : "bg-slate-950 text-slate-400 border border-slate-800 hover:border-slate-600"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" aria-hidden />
+                    <span className="text-center leading-tight">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </nav>
       </header>
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 space-y-6 pb-10">
@@ -156,6 +187,7 @@ export default function ClientPortalApp({
         {activeTab === "service" && <ClientPortalService user={user} />}
         {activeTab === "history" && <ClientPortalServiceHistory user={user} />}
         {activeTab === "savings" && <ClientPortalSavings user={user} />}
+        {activeTab === "energy" && <ClientPortalEnergyMonitor user={user} />}
         {activeTab === "care" && <ClientPortalCare user={user} />}
       </main>
     </div>

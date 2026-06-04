@@ -636,6 +636,46 @@ export async function listAdminAfterSalesServiceLogs(
   return res.json();
 }
 
+export async function fetchCustomerEnergyMonitor(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/energy/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load energy monitor.");
+  }
+  return res.json();
+}
+
+export async function upsertAdminEnergyDevice(
+  staffUserId: string,
+  staffUsername: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/energy/devices", {
+    method: "POST",
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to register energy device.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminEnergyMonitoring(staffUserId: string, staffUsername: string) {
+  const q = new URLSearchParams({ userId: staffUserId, username: staffUsername });
+  const res = await apiFetch(`/api/admin/energy/monitoring?${q}`, {
+    headers: portalAuthHeaders(staffUserId, staffUsername),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load energy monitoring.");
+  }
+  return res.json();
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
@@ -939,6 +979,121 @@ export async function deleteQuote(leadId: string, quoteId: string): Promise<any>
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete quote.");
+  return res.json();
+}
+
+export async function fetchOnboardingMe(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/onboarding/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load onboarding.");
+  }
+  return res.json();
+}
+
+export async function completeOnboarding(userId: string, username: string) {
+  const res = await apiFetch("/api/onboarding/complete", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to complete onboarding.");
+  }
+  return res.json();
+}
+
+export async function resetOnboarding(userId: string, username: string) {
+  const res = await apiFetch("/api/onboarding/reset", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to reset onboarding.");
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalJobsMe(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/technical/jobs/me?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load technical jobs.");
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalJobById(userId: string, username: string, jobId: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/technical/jobs/${encodeURIComponent(jobId)}?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load job.");
+  }
+  return res.json();
+}
+
+export async function patchTechnicalJobStatus(
+  userId: string,
+  username: string,
+  jobId: string,
+  status: string
+) {
+  const res = await apiFetch(`/api/technical/jobs/${encodeURIComponent(jobId)}/status`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ status, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update job status.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalJobUpdate(
+  userId: string,
+  username: string,
+  jobId: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/technical/jobs/${encodeURIComponent(jobId)}/update`, {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to save job update.");
+  }
+  return res.json();
+}
+
+export async function postTechnicalEquipment(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/technical/equipment", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to add equipment.");
+  }
   return res.json();
 }
 

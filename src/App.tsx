@@ -4,11 +4,30 @@ import {
   Loader2, Inbox, RefreshCw, LogOut, Lock, Key, ClipboardList, Send, FileSpreadsheet, Download
 } from "lucide-react";
 import { AppState, UserRole, User } from "./types";
-import { 
-  fetchAppState, createLead, updateLead, scheduleSurvey, 
-  submitSurveyReport, createQuote, acceptQuote, updateInstallation, 
-  createTicket, replyToTicket, resolveTicket, loginUser, updateProjectStage, updateNetMetering, payMilestone, procureInventory,
-  setCurrencySymbol, API_BASE_URL, deleteLead, deleteQuote, fetchCustomerPortalMe
+import {
+  fetchAppState,
+  createLead,
+  updateLead,
+  scheduleSurvey,
+  submitSurveyReport,
+  createQuote,
+  acceptQuote,
+  updateInstallation,
+  createTicket,
+  replyToTicket,
+  resolveTicket,
+  loginUser,
+  updateProjectStage,
+  updateNetMetering,
+  payMilestone,
+  procureInventory,
+  setCurrencySymbol,
+  API_BASE_URL,
+  deleteLead,
+  deleteQuote,
+  fetchCustomerPortalMe,
+  fetchOnboardingMe,
+  completeOnboarding,
 } from "./services/api";
 
 declare const __GIT_COMMIT_HASH__: string;
@@ -22,8 +41,11 @@ import type { ClientPortalPayload } from "./lib/clientPortalTracker";
 import SalesTeamApp from "./components/SalesTeamApp";
 import CRMApp from "./components/CRMApp";
 import InstallationTeamApp from "./components/InstallationTeamApp";
+import TechnicalStaffApp from "./components/TechnicalStaffApp";
+import WelcomeWizard from "./components/WelcomeWizard";
 import AIAssistant from "./components/AIAssistant";
 import AdminApp from "./components/AdminApp";
+import { isTechnicalStaffRole } from "./lib/technicalStaff";
 
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
@@ -42,6 +64,8 @@ export default function App() {
   const [portalData, setPortalData] = useState<ClientPortalPayload | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [forceWelcomeGuide, setForceWelcomeGuide] = useState(false);
 
   const loadCustomerPortal = async (user: User) => {
     setPortalLoading(true);
@@ -82,6 +106,28 @@ export default function App() {
     }
   };
 
+  const refreshOnboardingGate = async (user: User, force = false) => {
+    try {
+      const ob = await fetchOnboardingMe(user.id, user.username);
+      setShowOnboarding(force || !ob.onboardingCompleted);
+    } catch {
+      setShowOnboarding(force || !user.onboardingCompleted);
+    }
+  };
+
+  const handleOnboardingComplete = async () => {
+    if (!currentUser) return;
+    await completeOnboarding(currentUser.id, currentUser.username);
+    const updated = {
+      ...currentUser,
+      onboardingCompleted: true,
+      onboardingCompletedAt: new Date().toISOString(),
+    };
+    setCurrentUser(updated);
+    localStorage.setItem("sunchaser_user", JSON.stringify(updated));
+    setShowOnboarding(false);
+    setForceWelcomeGuide(false);
+  };
 
   useEffect(() => {
     const cachedUser = localStorage.getItem("sunchaser_user");
@@ -97,8 +143,13 @@ export default function App() {
 
     if (parsed?.role === "Customer") {
       loadCustomerPortal(parsed);
+    } else if (parsed && isTechnicalStaffRole(parsed.role)) {
+      setLoading(false);
     } else {
       loadDatabaseState();
+    }
+    if (parsed) {
+      refreshOnboardingGate(parsed, forceWelcomeGuide);
     }
   }, []);
 
@@ -107,8 +158,8 @@ export default function App() {
     if (currentUser) {
       if (currentUser.role === "Customer") {
         setActiveTab("home");
-      } else if (currentUser.role === "Survey Engineer" || currentUser.role === "Installation Team") {
-        setActiveTab("Installer Deck");
+      } else if (isTechnicalStaffRole(currentUser.role)) {
+        setActiveTab("Field Portal");
       } else if (currentUser.role === "Sales Executive" || currentUser.role === "Sales Advisor") {
         setActiveTab("Sales Advisor");
       } else if (currentUser.role === "Technical CEO") {
@@ -139,9 +190,12 @@ export default function App() {
         localStorage.setItem("sunchaser_user", JSON.stringify(res.user));
         if (res.user.role === "Customer") {
           await loadCustomerPortal(res.user);
+        } else if (isTechnicalStaffRole(res.user.role)) {
+          setLoading(false);
         } else {
           await loadDatabaseState();
         }
+        await refreshOnboardingGate(res.user);
       }
     } catch (err: any) {
       setLoginError(err.message || "Invalid credentials. Try guest profiles.");
@@ -344,13 +398,10 @@ export default function App() {
           { id: "Activity Telemetry", label: "Activities & SMS Logs", icon: ClipboardList }
         ];
       case "Survey Engineer":
-        return [
-          { id: "Installer Deck", label: "Roof CAD Site Surveys", icon: Wrench }
-        ];
       case "Installation Team":
-        return [
-          { id: "Installer Deck", label: "Grid Deployment Staging", icon: Wrench }
-        ];
+      case "Service Technician":
+      case "Technician":
+        return [{ id: "Field Portal", label: "Field Portal", icon: Wrench }];
       case "Customer":
         return [
           { id: "Customer Portal", label: "My Sunchaser Home Portal", icon: UserCircle },
@@ -361,6 +412,22 @@ export default function App() {
     }
   };
 
+  if (currentUser && showOnboarding) {
+    const variant =
+      currentUser.role === "Customer"
+        ? "customer"
+        : isTechnicalStaffRole(currentUser.role)
+          ? "technical"
+          : "staff";
+    return (
+      <WelcomeWizard
+        variant={variant}
+        roleLabel={currentUser.role}
+        onComplete={handleOnboardingComplete}
+      />
+    );
+  }
+
   if (currentUser?.role === "Customer") {
     return (
       <ClientPortalApp
@@ -370,6 +437,17 @@ export default function App() {
         error={portalError}
         onRefresh={() => loadCustomerPortal(currentUser)}
         onLogout={handleLogout}
+        onShowWelcomeGuide={() => setShowOnboarding(true)}
+      />
+    );
+  }
+
+  if (currentUser && isTechnicalStaffRole(currentUser.role)) {
+    return (
+      <TechnicalStaffApp
+        user={currentUser}
+        onLogout={handleLogout}
+        onShowWelcomeGuide={() => setShowOnboarding(true)}
       />
     );
   }
@@ -401,6 +479,15 @@ export default function App() {
               <RefreshCw className="h-4 w-4" />
             </button>
 
+            {currentUser && !isTechnicalStaffRole(currentUser.role) && currentUser.role !== "Customer" ? (
+              <button
+                type="button"
+                onClick={() => setShowOnboarding(true)}
+                className="text-[10px] font-bold text-amber-400 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl hover:bg-slate-800"
+              >
+                View Welcome Guide Again
+              </button>
+            ) : null}
             {currentUser ? (
               /* User authenticated menu panel */
               <div className="flex items-center gap-3 bg-slate-950/80 border border-slate-800 rounded-2xl p-1.5 pl-3">
