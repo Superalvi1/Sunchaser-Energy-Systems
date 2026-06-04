@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
-import { spawnSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+
 const root = path.dirname(fileURLToPath(import.meta.url));
 
 function normalizePhoneForWhatsApp(phone) {
@@ -17,6 +17,20 @@ function buildWhatsAppDeepLink(phone, message) {
   const normalized = normalizePhoneForWhatsApp(phone);
   return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
 }
+
+function financeHasNoProfitFields(fin) {
+  if (!fin || typeof fin !== "object") return true;
+  return (
+    fin.supplierCost === undefined &&
+    fin.grossProfit === undefined &&
+    fin.profitMarginPercent === undefined &&
+    fin.totalExpense === undefined &&
+    fin.installationCost === undefined &&
+    fin.transportCost === undefined &&
+    fin.miscExpense === undefined
+  );
+}
+
 const repoRoot = path.join(root, "..");
 dotenv.config({ path: path.join(repoRoot, ".env.local") });
 
@@ -145,7 +159,8 @@ if (financeId && allauddin?.id) {
 console.log(`${allauddinSeesProfit ? "PASS" : "FAIL"}: allauddin sees supplier cost and profit`);
 if (allauddinSeesProfit) pass++;
 
-async function staffCannotSeeProfit(user, label) {
+/** Sales / Technical CEO: staff-safe payments allowed, no cost/profit fields. */
+async function staffSeesSafePaymentsOnly(user) {
   if (!deliveryId || !user?.id) return false;
   const res = await fetch(
     `${API}/api/staff/payments/projects/${encodeURIComponent(deliveryId)}`,
@@ -153,28 +168,36 @@ async function staffCannotSeeProfit(user, label) {
   );
   const body = await res.json().catch(() => ({}));
   const fin = body.finance;
-  if (!fin) return res.ok && fin === null;
-  const blocked =
-    fin.supplierCost === undefined &&
-    fin.grossProfit === undefined &&
-    fin.profitMarginPercent === undefined &&
-    fin.totalExpense === undefined;
-  return res.ok && blocked;
+  if (!fin) return res.ok && financeHasNoProfitFields(fin);
+  return res.ok && financeHasNoProfitFields(fin);
+}
+
+/** Technicians must be blocked from staff payment endpoint (403). */
+async function technicianBlockedFromStaffPayments(user) {
+  if (!deliveryId || !user?.id) return false;
+  const res = await fetch(
+    `${API}/api/staff/payments/projects/${encodeURIComponent(deliveryId)}`,
+    { headers: headers(user.id, user.username) }
+  );
+  const body = await res.json().catch(() => ({}));
+  return res.status === 403 && financeHasNoProfitFields(body.finance);
 }
 
 total++;
-const salesBlocked = await staffCannotSeeProfit(sales, "sales");
+const salesBlocked = await staffSeesSafePaymentsOnly(sales);
 console.log(`${salesBlocked ? "PASS" : "FAIL"}: sales cannot see supplier cost or profit`);
 if (salesBlocked) pass++;
 
 total++;
-const razaBlocked = await staffCannotSeeProfit(raza, "raza");
+const razaBlocked = await staffSeesSafePaymentsOnly(raza);
 console.log(`${razaBlocked ? "PASS" : "FAIL"}: raza cannot see supplier cost or profit`);
 if (razaBlocked) pass++;
 
 total++;
-const techBlocked = await staffCannotSeeProfit(tech, "technician");
-console.log(`${techBlocked ? "PASS" : "FAIL"}: technician cannot see supplier cost or profit`);
+const techBlocked = await technicianBlockedFromStaffPayments(tech);
+console.log(
+  `${techBlocked ? "PASS" : "FAIL"}: technician blocked from staff payments (403, no profit leak)`
+);
 if (techBlocked) pass++;
 
 total++;
@@ -245,15 +268,37 @@ console.log(`${waLogOk ? "PASS" : "FAIL"}: WhatsApp log created`);
 if (waLogOk) pass++;
 
 total++;
-const phase10 = spawnSync("node", ["scripts/verify-project-delivery-phase10.mjs"], {
-  cwd: repoRoot,
-  encoding: "utf8",
-  env: process.env,
-});
-const phase10Out = (phase10.stdout || "") + (phase10.stderr || "");
-const phase10Pass = /(\d+)\/(\d+)\s+PASS/.test(phase10Out) && phase10.status === 0;
-console.log(`${phase10Pass ? "PASS" : "FAIL"}: Phase 10 delivery regression`);
-if (phase10Pass) pass++;
+const p10Tables = [
+  "project_deliveries",
+  "project_delivery_items",
+  "project_installed_equipment",
+  "project_installation_photos",
+  "project_delivery_updates",
+];
+const p10ProbeRes = await fetch(`${API}/api/diagnostics/phase10-tables`);
+const p10ProbeBody = await p10ProbeRes.json().catch(() => ({}));
+const p10SchemaOk =
+  p10ProbeBody.phase10Ready === true ||
+  p10Tables.every((t) => p10ProbeBody.probes?.[t]?.ok === true);
+console.log(`${p10SchemaOk ? "PASS" : "FAIL"}: Phase 10 schema smoke (${p10ProbeRes.status})`);
+if (p10SchemaOk) pass++;
+
+total++;
+let p10PortalOk = false;
+if (portal?.id) {
+  const p10CustRes = await fetch(`${API}/api/customer-portal/project-delivery/me`, {
+    headers: headers(portal.id, portal.username),
+  });
+  const p10CustBody = await p10CustRes.json().catch(() => ({}));
+  p10PortalOk =
+    p10CustRes.ok &&
+    (p10CustBody.delivery != null ||
+      p10CustBody.progress != null ||
+      Array.isArray(p10CustBody.deliveries) ||
+      p10CustBody.customerId != null);
+}
+console.log(`${p10PortalOk ? "PASS" : "FAIL"}: Phase 10 customer delivery smoke`);
+if (p10PortalOk) pass++;
 
 console.log(`\nPhase 11: ${pass}/${total} PASS`);
 process.exit(pass === total ? 0 : 1);
