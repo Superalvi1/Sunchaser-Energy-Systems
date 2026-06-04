@@ -6,9 +6,7 @@ import {
   ChevronRight,
   FileText,
   Headphones,
-  Star,
-  Sun,
-  Zap,
+  Receipt,
 } from "lucide-react";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import { displayKw, displayOrNoData, NO_DATA } from "../lib/clientPortalDisplay";
@@ -17,14 +15,22 @@ import {
   buildPremiumProjectTimeline,
   premiumTimelinePercent,
 } from "../lib/clientPortalPremiumTimeline";
-import { portal, resolveGoogleReviewUrl } from "../lib/clientPortalUi";
+import { buildCustomerHealthMetrics } from "../lib/clientPortalHealth";
+import { portal } from "../lib/clientPortalUi";
 import type { CompanyBranding } from "../lib/branding";
 import { User } from "../types";
 import {
   fetchCustomerPortalSystem,
   fetchCustomerPortalPaymentsMe,
   fetchCustomerProjectDeliveryMe,
+  fetchCustomerPortalInvoicesMe,
+  fetchCustomerSupportTickets,
+  fetchCustomerPortalWarranties,
 } from "../services/api";
+import type { PortalServiceId } from "./ClientPortalPremiumServices";
+import ClientPortalPremiumServices from "./ClientPortalPremiumServices";
+import ClientPortalHealthScore from "./ClientPortalHealthScore";
+import ClientPortalGoogleReview from "./ClientPortalGoogleReview";
 
 function TimelineDot({ status }: { status: "completed" | "active" | "pending" }) {
   if (status === "completed") {
@@ -55,6 +61,7 @@ interface ClientPortalHomeProps {
   onOpenDocuments: () => void;
   onOpenPayments: () => void;
   onOpenSupport: () => void;
+  onOpenService: (id: PortalServiceId) => void;
 }
 
 export default function ClientPortalHome({
@@ -64,11 +71,16 @@ export default function ClientPortalHome({
   onOpenDocuments,
   onOpenPayments,
   onOpenSupport,
+  onOpenService,
 }: ClientPortalHomeProps) {
   const customer = data?.customer;
+  const dash = data?.dashboard;
   const [system, setSystem] = useState<any>(null);
   const [delivery, setDelivery] = useState<any | null>(null);
   const [payments, setPayments] = useState<any>(null);
+  const [latestInvoice, setLatestInvoice] = useState<any>(null);
+  const [latestTicket, setLatestTicket] = useState<any>(null);
+  const [warrantySummary, setWarrantySummary] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCustomerPortalSystem(user.id, user.username)
@@ -80,130 +92,165 @@ export default function ClientPortalHome({
     fetchCustomerPortalPaymentsMe(user.id, user.username)
       .then(setPayments)
       .catch(() => setPayments(null));
-  }, [user.id, user.username]);
+    fetchCustomerPortalInvoicesMe(user.id, user.username)
+      .then((res) => {
+        const list = res.invoices || [];
+        setLatestInvoice(list.length ? list[0] : null);
+      })
+      .catch(() => setLatestInvoice(null));
+    fetchCustomerSupportTickets(user.id, user.username)
+      .then((res) => {
+        const list = res.tickets || [];
+        setLatestTicket(list.length ? list[0] : null);
+      })
+      .catch(() => setLatestTicket(null));
+    fetchCustomerPortalWarranties(user.id, user.username)
+      .then((res) => {
+        const cards = res.cards || [];
+        const active = cards.find((c: any) => c.status === "Active");
+        setWarrantySummary(active?.title || cards[0]?.status || dash?.warrantySummary || null);
+      })
+      .catch(() => setWarrantySummary(dash?.warrantySummary || null));
+  }, [user.id, user.username, dash?.warrantySummary]);
 
   const timeline = buildPremiumProjectTimeline(data, delivery);
   const timelinePct = premiumTimelinePercent(timeline);
   const completed = isProjectCompleted(data, delivery);
   const headline = projectStatusHeadline(data);
-  const customerName = displayOrNoData(customer?.name || user.name);
+  const projectStatus = dash?.projectStatus || headline;
 
   const totals = payments?.totals || {};
-  const projectValue = Number(totals.invoiceAmount || 0);
-  const paid = Number(totals.amountPaid || 0);
   const balance = Number(totals.balanceRemaining || 0);
-  const payPct = projectValue > 0 ? Math.min(100, Math.round((paid / projectValue) * 100)) : 0;
+  const payPct =
+    Number(totals.invoiceAmount || 0) > 0
+      ? Math.min(100, Math.round((Number(totals.amountPaid || 0) / Number(totals.invoiceAmount)) * 100))
+      : 0;
 
   const sys = system || {};
-  const panelLine =
-    sys.panelBrand && sys.panelQuantity
-      ? `${sys.panelBrand} · ${sys.panelQuantity}× ${sys.panelWattage || "?"}W`
-      : displayOrNoData(sys.panelBrand);
-  const inverterLine =
-    sys.inverterBrand && sys.inverterSizeKw
-      ? `${sys.inverterBrand} · ${sys.inverterSizeKw} kW`
-      : displayOrNoData(sys.inverterBrand);
-  const batteryLine =
-    sys.batteryBrand && sys.batteryCapacityKwh
-      ? `${sys.batteryBrand} · ${sys.batteryCapacityKwh} kWh`
-      : sys.batteryBrand
-        ? displayOrNoData(sys.batteryBrand)
-        : null;
+  const panelBrand = displayOrNoData(sys.panelBrand || sys.panelType);
+  const inverterBrand = displayOrNoData(sys.inverterBrand);
+  const batteryBrand = displayOrNoData(sys.batteryBrand || (sys.batteryCapacityKwh ? "Installed" : null));
+  const netMetering = displayOrNoData(sys.netMeteringStatus ?? dash?.netMeteringStatus);
+  const warrantyRemaining = displayOrNoData(warrantySummary || dash?.warrantySummary);
+
+  const healthMetrics = buildCustomerHealthMetrics(data, {
+    netMetering: netMetering !== NO_DATA ? netMetering : undefined,
+    warrantyLabel: warrantyRemaining !== NO_DATA ? warrantyRemaining : undefined,
+    serviceDue: dash?.nextServiceDue,
+    systemHealthLabel: dash?.installationStatus?.toLowerCase().includes("complete")
+      ? "Operational"
+      : dash?.installationStatus,
+  });
 
   return (
     <div className="space-y-8 pb-4">
-      {/* 1. Customer + project status */}
-      <section className={`${portal.card} overflow-hidden`}>
-        <div className="px-5 pt-6 pb-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm text-slate-500">Welcome back</p>
-              <h1 className="text-2xl font-semibold text-white mt-1 tracking-tight">{customerName}</h1>
-            </div>
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/15">
-              <Sun className="h-6 w-6 text-amber-400" />
-            </span>
-          </div>
-          <p className="text-lg text-slate-200 mt-5 leading-snug font-medium">{headline}</p>
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-slate-500 mb-2">
-              <span>Project progress</span>
-              <span className="text-amber-400 font-semibold">{timelinePct}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-700"
-                style={{ width: `${timelinePct}%` }}
-              />
-            </div>
-          </div>
+      {/* Project status + key metrics */}
+      <section className={`${portal.card} ${portal.cardPad}`}>
+        <p className={portal.label}>Project status</p>
+        <p className="text-xl font-semibold text-white mt-1">{headline}</p>
+        <div className="mt-4 flex justify-between text-xs text-slate-500 mb-2">
+          <span>Milestone progress</span>
+          <span className="text-amber-400 font-semibold">{timelinePct}%</span>
         </div>
-        {completed && (
-          <div className="px-5 py-4 bg-emerald-500/10 border-t border-emerald-500/20">
-            <p className="text-sm font-semibold text-emerald-300">Project completed</p>
-            <a
-              href={resolveGoogleReviewUrl(branding)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`${portal.btnPrimary} w-full mt-3 !text-sm`}
-            >
-              <Star className="h-4 w-4 fill-current" />
-              Leave Google Review
-            </a>
-          </div>
-        )}
+        <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-400"
+            style={{ width: `${timelinePct}%` }}
+          />
+        </div>
       </section>
 
-      {/* 2. Solar system summary */}
+      {/* Dashboard grid */}
       <section className={`${portal.card} ${portal.cardPad}`}>
-        <div className="flex items-center gap-2 mb-5">
-          <Zap className="h-5 w-5 text-amber-400" />
-          <h2 className={portal.titleSm}>Solar system</h2>
-        </div>
-        <dl className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <dt className={portal.label}>System size</dt>
-              <dd className={`${portal.value} mt-1`}>{displayKw(sys.systemSizeKw ?? data?.dashboard?.systemSizeKw)}</dd>
-            </div>
-            <div>
-              <dt className={portal.label}>System type</dt>
-              <dd className={`${portal.value} mt-1`}>{displayOrNoData(sys.systemType)}</dd>
-            </div>
+        <h2 className={portal.titleSm + " mb-4"}>Your solar dashboard</h2>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
+          <div>
+            <dt className={portal.label}>System size</dt>
+            <dd className={`${portal.value} mt-1`}>{displayKw(sys.systemSizeKw ?? dash?.systemSizeKw)}</dd>
           </div>
           <div>
-            <dt className={portal.label}>Panels</dt>
-            <dd className={`${portal.value} mt-1`}>{panelLine}</dd>
+            <dt className={portal.label}>Panel brand</dt>
+            <dd className={`${portal.value} mt-1 text-sm`}>{panelBrand}</dd>
           </div>
           <div>
-            <dt className={portal.label}>Inverter</dt>
-            <dd className={`${portal.value} mt-1`}>{inverterLine}</dd>
+            <dt className={portal.label}>Inverter brand</dt>
+            <dd className={`${portal.value} mt-1 text-sm`}>{inverterBrand}</dd>
           </div>
-          {batteryLine && (
-            <div>
-              <dt className={portal.label}>Battery</dt>
-              <dd className={`${portal.value} mt-1`}>{batteryLine}</dd>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-4 pt-1">
-            <div>
-              <dt className={portal.label}>Structure</dt>
-              <dd className={`${portal.value} mt-1`}>{displayOrNoData(sys.structureType)}</dd>
-            </div>
-            <div>
-              <dt className={portal.label}>Net metering</dt>
-              <dd className={`${portal.value} mt-1`}>
-                {displayOrNoData(sys.netMeteringStatus ?? data?.dashboard?.netMeteringStatus)}
-              </dd>
-            </div>
+          <div>
+            <dt className={portal.label}>Battery brand</dt>
+            <dd className={`${portal.value} mt-1 text-sm`}>{batteryBrand}</dd>
+          </div>
+          <div>
+            <dt className={portal.label}>Net metering</dt>
+            <dd className={`${portal.value} mt-1 text-sm`}>{netMetering}</dd>
+          </div>
+          <div>
+            <dt className={portal.label}>Warranty remaining</dt>
+            <dd className={`${portal.value} mt-1 text-sm`}>{warrantyRemaining}</dd>
+          </div>
+          <div>
+            <dt className={portal.label}>Outstanding balance</dt>
+            <dd className="text-base font-bold text-amber-400 mt-1">
+              {balance ? `PKR ${balance.toLocaleString()}` : NO_DATA}
+            </dd>
+          </div>
+          <div>
+            <dt className={portal.label}>Payment progress</dt>
+            <dd className={`${portal.value} mt-1`}>{payPct}%</dd>
           </div>
         </dl>
       </section>
 
-      {/* 3. Project timeline */}
+      <ClientPortalHealthScore metrics={healthMetrics} />
+
+      {/* Latest invoice & support */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={onOpenPayments}
+          className={`${portal.card} ${portal.cardPad} text-left w-full`}
+        >
+          <Receipt className="h-5 w-5 text-amber-400 mb-2" />
+          <p className={portal.label}>Latest invoice</p>
+          {latestInvoice ? (
+            <>
+              <p className="text-sm font-semibold text-white mt-1">{latestInvoice.invoiceNumber}</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                PKR {Number(latestInvoice.balanceDue || 0).toLocaleString()} due · {latestInvoice.paymentStatus}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500 mt-1">No invoices yet</p>
+          )}
+          <ChevronRight className="h-4 w-4 text-slate-600 mt-2" />
+        </button>
+        <button
+          type="button"
+          onClick={onOpenSupport}
+          className={`${portal.card} ${portal.cardPad} text-left w-full`}
+        >
+          <Headphones className="h-5 w-5 text-amber-400 mb-2" />
+          <p className={portal.label}>Latest support ticket</p>
+          {latestTicket ? (
+            <>
+              <p className="text-sm font-semibold text-white mt-1 truncate">{latestTicket.subject}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{latestTicket.status}</p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500 mt-1">No tickets — we&apos;re here if you need us</p>
+          )}
+          <ChevronRight className="h-4 w-4 text-slate-600 mt-2" />
+        </button>
+      </div>
+
+      {completed && customer?.id && (
+        <ClientPortalGoogleReview customerId={customer.id} branding={branding} />
+      )}
+
+      {/* Timeline */}
       <section className={`${portal.card} ${portal.cardPad}`}>
         <h2 className={portal.titleSm}>Project timeline</h2>
-        <p className={portal.subtitle + " mt-1 mb-6"}>Track every milestone to commissioning</p>
+        <p className={portal.subtitle + " mt-1 mb-6"}>From quotation to warranty active</p>
         <ol className="space-y-0">
           {timeline.map((s, i, arr) => (
             <li key={s.id} className="flex gap-4 pb-7 last:pb-0">
@@ -214,69 +261,48 @@ export default function ClientPortalHome({
               <div className="flex-1 pt-1">
                 <p
                   className={`text-sm font-semibold ${
-                    s.status === "active" ? "text-amber-400" : s.status === "completed" ? "text-slate-200" : "text-slate-500"
+                    s.status === "active"
+                      ? "text-amber-400"
+                      : s.status === "completed"
+                        ? "text-slate-200"
+                        : "text-slate-500"
                   }`}
                 >
                   {s.label}
                 </p>
-                <p className="text-xs text-slate-600 mt-0.5">{s.date || (s.status === "pending" ? "Upcoming" : "—")}</p>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  {s.date || (s.status === "pending" ? "Upcoming" : "—")}
+                </p>
               </div>
             </li>
           ))}
         </ol>
       </section>
 
-      {/* 4. Payment progress */}
-      <section className={`${portal.card} ${portal.cardPad}`}>
-        <h2 className={portal.titleSm}>Payments</h2>
-        <p className={portal.subtitle + " mt-1 mb-5"}>Project value and balance</p>
-        <div className="grid grid-cols-3 gap-3 text-center mb-5">
-          <div className={portal.cardMuted + " py-3 px-2"}>
-            <p className="text-[10px] text-slate-500 uppercase">Total</p>
-            <p className="text-sm font-bold text-white mt-1">
-              {projectValue ? projectValue.toLocaleString() : NO_DATA}
-            </p>
-          </div>
-          <div className={portal.cardMuted + " py-3 px-2"}>
-            <p className="text-[10px] text-slate-500 uppercase">Paid</p>
-            <p className="text-sm font-bold text-emerald-400 mt-1">{paid.toLocaleString()}</p>
-          </div>
-          <div className={portal.cardMuted + " py-3 px-2"}>
-            <p className="text-[10px] text-slate-500 uppercase">Due</p>
-            <p className="text-sm font-bold text-amber-400 mt-1">{balance.toLocaleString()}</p>
-          </div>
+      <ClientPortalPremiumServices onOpen={onOpenService} />
+
+      {/* Quick access to main tabs */}
+      <section>
+        <h2 className={portal.titleSm + " mb-3"}>Quick access</h2>
+        <div className="grid grid-cols-3 gap-2">
+          <button type="button" onClick={onOpenDocuments} className={portal.btnSecondary + " flex-col !py-4 !text-xs"}>
+            <FileText className="h-4 w-4 text-amber-400" />
+            Documents
+          </button>
+          <button type="button" onClick={onOpenPayments} className={portal.btnSecondary + " flex-col !py-4 !text-xs"}>
+            <Receipt className="h-4 w-4 text-amber-400" />
+            Payments
+          </button>
+          <button type="button" onClick={onOpenSupport} className={portal.btnPrimary + " flex-col !py-4 !text-xs"}>
+            <Headphones className="h-4 w-4" />
+            Support
+          </button>
         </div>
-        <p className="text-[10px] text-slate-600 text-center mb-2">PKR · Payment progress {payPct}%</p>
-        <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden mb-5">
-          <div
-            className="h-full rounded-full bg-emerald-500/80 transition-all"
-            style={{ width: `${payPct}%` }}
-          />
-        </div>
-        <button type="button" onClick={onOpenPayments} className={portal.btnSecondary + " w-full"}>
-          View invoices &amp; receipts
-          <ChevronRight className="h-4 w-4" />
-        </button>
       </section>
 
-      {/* 5. Quick actions */}
-      <section>
-        <h2 className={portal.titleSm + " mb-4"}>Quick actions</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <button type="button" onClick={onOpenDocuments} className={portal.btnSecondary + " flex-col !py-5"}>
-            <FileText className="h-5 w-5 text-amber-400" />
-            <span>Documents</span>
-          </button>
-          <button type="button" onClick={onOpenPayments} className={portal.btnSecondary + " flex-col !py-5"}>
-            <span className="text-lg font-bold text-white">PKR</span>
-            <span className="text-xs">Payments</span>
-          </button>
-          <button type="button" onClick={onOpenSupport} className={portal.btnPrimary + " col-span-2 !py-4"}>
-            <Headphones className="h-5 w-5" />
-            Get support
-          </button>
-        </div>
-      </section>
+      <p className="text-center text-[10px] text-slate-600 pb-2">
+        Status: {projectStatus} · All portal modules available below and in Account
+      </p>
     </div>
   );
 }

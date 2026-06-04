@@ -10,9 +10,13 @@ import {
 import { User as UserType } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import { DEFAULT_BRANDING, type CompanyBranding } from "../lib/branding";
+import { withOfficialBranding } from "../lib/brandingAssets";
 import { CUSTOMER_PORTAL_VERSION, portal } from "../lib/clientPortalUi";
 import { fetchCompanyBranding } from "../services/api";
+import { displayOrNoData } from "../lib/clientPortalDisplay";
+import { projectStatusHeadline } from "../lib/clientPortalCompletion";
 import ClientPortalHome from "./ClientPortalHome";
+import ClientPortalHeader from "./ClientPortalHeader";
 import ClientPortalDocuments from "./ClientPortalDocuments";
 import ClientPortalSupport from "./ClientPortalSupport";
 import ClientPortalPayments from "./ClientPortalPayments";
@@ -26,7 +30,7 @@ import ClientPortalSavings from "./ClientPortalSavings";
 import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
 import ClientPortalCare from "./ClientPortalCare";
 import PortalScreen from "./PortalScreen";
-import AppLogo from "./AppLogo";
+import type { PortalServiceId } from "./ClientPortalPremiumServices";
 
 interface ClientPortalAppProps {
   user: UserType;
@@ -48,15 +52,36 @@ const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
   { id: "account", label: "Account", icon: User },
 ];
 
-const ACCOUNT_TITLES: Record<Exclude<AccountScreen, "menu">, { title: string; subtitle?: string }> = {
+const SERVICE_TITLES: Record<PortalServiceId, { title: string; subtitle?: string }> = {
   system: { title: "My solar system", subtitle: "Equipment installed at your site" },
-  warranty: { title: "Warranty", subtitle: "Coverage and handover" },
-  service: { title: "Service", subtitle: "Visits and technician support" },
+  warranty: { title: "Warranty", subtitle: "Coverage, claims, and handover" },
+  service: { title: "Service requests", subtitle: "Visits and technician support" },
   history: { title: "Service history", subtitle: "Past maintenance records" },
   savings: { title: "Solar savings", subtitle: "Performance and estimates" },
   energy: { title: "Energy monitor", subtitle: "Production insights" },
   care: { title: "Care plans", subtitle: "Protection options" },
 };
+
+function renderServiceModule(id: PortalServiceId, user: UserType) {
+  switch (id) {
+    case "system":
+      return <ClientPortalSystem user={user} />;
+    case "warranty":
+      return <ClientPortalWarranties user={user} />;
+    case "service":
+      return <ClientPortalService user={user} />;
+    case "history":
+      return <ClientPortalServiceHistory user={user} />;
+    case "savings":
+      return <ClientPortalSavings user={user} />;
+    case "energy":
+      return <ClientPortalEnergyMonitor user={user} />;
+    case "care":
+      return <ClientPortalCare user={user} />;
+    default:
+      return null;
+  }
+}
 
 export default function ClientPortalApp({
   user,
@@ -69,60 +94,64 @@ export default function ClientPortalApp({
 }: ClientPortalAppProps) {
   const [mainTab, setMainTab] = useState<MainTab>("home");
   const [accountScreen, setAccountScreen] = useState<AccountScreen>("menu");
+  const [homeService, setHomeService] = useState<PortalServiceId | null>(null);
   const [branding, setBranding] = useState<CompanyBranding>(DEFAULT_BRANDING);
 
   useEffect(() => {
     fetchCompanyBranding()
-      .then((b) => setBranding({ ...DEFAULT_BRANDING, ...b }))
-      .catch(() => setBranding(DEFAULT_BRANDING));
+      .then((b) => setBranding(withOfficialBranding(b)))
+      .catch(() => setBranding(withOfficialBranding(DEFAULT_BRANDING)));
   }, []);
 
   const selectMainTab = (tab: MainTab) => {
     setMainTab(tab);
+    setHomeService(null);
     if (tab === "account") setAccountScreen("menu");
   };
 
+  const openService = (id: PortalServiceId) => {
+    setMainTab("home");
+    setHomeService(id);
+  };
+
+  const customerName = displayOrNoData(data?.customer?.name || user.name);
+  const customerId = displayOrNoData(data?.customer?.id);
+  const projectStatus = data?.dashboard?.projectStatus || projectStatusHeadline(data);
+
   const renderAccountSub = () => {
-    const meta = accountScreen !== "menu" ? ACCOUNT_TITLES[accountScreen] : null;
+    const meta = accountScreen !== "menu" ? SERVICE_TITLES[accountScreen as PortalServiceId] : null;
     const back = () => setAccountScreen("menu");
 
-    const wrap = (child: React.ReactNode) => (
-      <PortalScreen title={meta!.title} subtitle={meta?.subtitle} onBack={back}>
-        {child}
-      </PortalScreen>
-    );
-
-    switch (accountScreen) {
-      case "system":
-        return wrap(<ClientPortalSystem user={user} />);
-      case "warranty":
-        return wrap(<ClientPortalWarranties user={user} />);
-      case "service":
-        return wrap(<ClientPortalService user={user} />);
-      case "history":
-        return wrap(<ClientPortalServiceHistory user={user} />);
-      case "savings":
-        return wrap(<ClientPortalSavings user={user} />);
-      case "energy":
-        return wrap(<ClientPortalEnergyMonitor user={user} />);
-      case "care":
-        return wrap(<ClientPortalCare user={user} />);
-      default:
-        return (
-          <ClientPortalAccount
-            user={user}
-            data={data}
-            onNavigate={setAccountScreen}
-            onRefresh={onRefresh}
-            onLogout={onLogout}
-            onShowWelcomeGuide={onShowWelcomeGuide}
-          />
-        );
+    if (accountScreen !== "menu" && meta) {
+      return (
+        <PortalScreen title={meta.title} subtitle={meta.subtitle} onBack={back}>
+          {renderServiceModule(accountScreen as PortalServiceId, user)}
+        </PortalScreen>
+      );
     }
+
+    return (
+      <ClientPortalAccount
+        user={user}
+        data={data}
+        onNavigate={setAccountScreen}
+        onRefresh={onRefresh}
+        onLogout={onLogout}
+        onShowWelcomeGuide={onShowWelcomeGuide}
+      />
+    );
   };
 
   const renderMain = () => {
     if (mainTab === "home") {
+      if (homeService) {
+        const meta = SERVICE_TITLES[homeService];
+        return (
+          <PortalScreen title={meta.title} subtitle={meta.subtitle} onBack={() => setHomeService(null)}>
+            {renderServiceModule(homeService, user)}
+          </PortalScreen>
+        );
+      }
       if (loading && !data) {
         return (
           <div className="py-24 text-center">
@@ -149,13 +178,14 @@ export default function ClientPortalApp({
           onOpenDocuments={() => selectMainTab("documents")}
           onOpenPayments={() => selectMainTab("payments")}
           onOpenSupport={() => selectMainTab("support")}
+          onOpenService={openService}
         />
       );
     }
 
     if (mainTab === "documents") {
       return (
-        <PortalScreen title="Documents" subtitle="Quotations, agreements, and certificates">
+        <PortalScreen title="Documents" subtitle="Quotations, agreements, warranties, and certificates">
           <ClientPortalDocuments user={user} />
         </PortalScreen>
       );
@@ -177,7 +207,7 @@ export default function ClientPortalApp({
 
     if (mainTab === "support") {
       return (
-        <PortalScreen title="Support" subtitle="We're here to help">
+        <PortalScreen title="Support" subtitle="Tickets, WhatsApp, and call support">
           <ClientPortalSupport user={user} branding={branding} />
         </PortalScreen>
       );
@@ -192,32 +222,22 @@ export default function ClientPortalApp({
 
   return (
     <div className={portal.shell}>
-      <header className={portal.header}>
-        <div className={`${portal.main} py-4 flex items-center justify-between gap-3`}>
-          <div className="flex items-center gap-3 min-w-0">
-            <AppLogo logoUrl={branding.logoUrl} className="h-9 w-auto shrink-0" />
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium text-slate-500">Sunchaser Energy</p>
-              <p className="text-sm font-semibold text-white truncate">
-                {data?.customer?.name || user.name}
-              </p>
-              <p
-                className="text-[10px] font-semibold text-amber-400/90 mt-0.5 tracking-wide"
-                data-portal-version={CUSTOMER_PORTAL_VERSION}
-              >
-                {CUSTOMER_PORTAL_VERSION}
-              </p>
-            </div>
-          </div>
-          {mainTab !== "home" && (
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/80 shrink-0">
-              {MAIN_TABS.find((t) => t.id === mainTab)?.label}
-            </span>
-          )}
-        </div>
-      </header>
+      <ClientPortalHeader
+        branding={branding}
+        customerName={customerName}
+        customerId={customerId}
+        projectStatus={projectStatus}
+        onLogout={onLogout}
+      />
 
       <main className={`${portal.main} ${portal.mainWithNav}`}>{renderMain()}</main>
+
+      <p
+        className="text-center text-[9px] text-slate-600 pb-1"
+        data-portal-version={CUSTOMER_PORTAL_VERSION}
+      >
+        {CUSTOMER_PORTAL_VERSION}
+      </p>
 
       <nav className={portal.nav} aria-label="Main navigation">
         <div className={portal.navInner}>

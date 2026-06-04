@@ -1,5 +1,6 @@
 import React from "react";
 import { DEFAULT_BRANDING } from "../lib/branding";
+import { OFFICIAL_SUNCHASER_LOGO, resolveOfficialLogoUrl } from "../lib/brandingAssets";
 
 type AppLogoProps = {
   className?: string;
@@ -9,16 +10,17 @@ type AppLogoProps = {
 
 export default function AppLogo({
   className = "h-10 w-auto",
-  logoUrl = DEFAULT_BRANDING.logoUrl,
+  logoUrl,
   alt = DEFAULT_BRANDING.companyName,
 }: AppLogoProps) {
+  const src = resolveOfficialLogoUrl(logoUrl || DEFAULT_BRANDING.logoUrl);
   return (
     <img
-      src={logoUrl || DEFAULT_BRANDING.logoUrl}
+      src={src}
       alt={alt}
       className={className}
       onError={(e) => {
-        (e.target as HTMLImageElement).src = DEFAULT_BRANDING.logoUrl;
+        (e.target as HTMLImageElement).src = OFFICIAL_SUNCHASER_LOGO;
       }}
     />
   );

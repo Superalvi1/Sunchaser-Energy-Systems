@@ -107,7 +107,7 @@ export default function ClientPortalAccount({
         onClick={() => setShowMore((v) => !v)}
         className={`${portal.card} ${portal.cardPad} w-full flex items-center justify-between`}
       >
-        <span className="text-sm font-semibold text-slate-200">More services</span>
+        <span className="text-sm font-semibold text-slate-200">All portal modules</span>
         <ChevronDown className={`h-5 w-5 text-slate-500 transition ${showMore ? "rotate-180" : ""}`} />
       </button>
 

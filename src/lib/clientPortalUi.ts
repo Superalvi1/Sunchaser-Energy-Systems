@@ -1,7 +1,7 @@
 import { DEFAULT_BRANDING } from "./branding";
 
 /** Visible on live portal — confirms v2 premium shell is deployed. */
-export const CUSTOMER_PORTAL_VERSION = "Customer Portal v2.0 Premium";
+export const CUSTOMER_PORTAL_VERSION = "Customer Portal v2.1 Premium";
 
 /** Premium dark mobile portal (banking / Tesla / SolarEdge style). */
 export const portal = {

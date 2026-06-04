@@ -1,26 +1,22 @@
 {
-  "short_name": "Sunchaser CRM",
-  "name": "Sunchaser Energy Systems CRM",
+  "short_name": "Sunchaser",
+  "name": "Sunchaser Energy Systems",
   "icons": [
     {
-      "src": "/sunchaser-logo.svg",
-      "type": "image/svg+xml",
-      "sizes": "any"
+      "src": "/sunchaser-logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
     },
     {
-      "src": "/icon-192.png",
+      "src": "/sunchaser-logo.png",
       "type": "image/png",
       "sizes": "192x192"
-    },
-    {
-      "src": "/icon-512.png",
-      "type": "image/png",
-      "sizes": "512x512"
     }
   ],
   "start_url": "/",
-  "background_color": "#09090b",
-  "theme_color": "#f59e0b",
+  "background_color": "#0a0e17",
+  "theme_color": "#1a2b4c",
   "display": "standalone",
   "orientation": "portrait"
 }
