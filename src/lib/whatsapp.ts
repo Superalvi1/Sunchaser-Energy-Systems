@@ -11,6 +11,8 @@ export const WHATSAPP_MESSAGE_TYPES = [
   "warranty_claim_received",
   "payment_balance_reminder",
   "care_plan_renewal_reminder",
+  "invoice_sent",
+  "invoice_payment_reminder",
 ] as const;
 
 export type WhatsAppMessageType = (typeof WHATSAPP_MESSAGE_TYPES)[number];
@@ -27,6 +29,7 @@ export type WhatsAppTemplateVars = {
   ticketStatus?: string;
   planName?: string;
   companyName?: string;
+  invoiceNumber?: string;
 };
 
 const DEFAULT_COMPANY = "Sunchaser Energy Systems";
@@ -64,6 +67,10 @@ export function buildWhatsAppMessageBody(
       return `Hello ${name}, your remaining project balance is ${fmtAmount(vars.balance)}. Please contact ${company} for payment options.`;
     case "care_plan_renewal_reminder":
       return `Hello ${name}, your care plan${vars.planName ? ` (${vars.planName})` : ""} renewal is due soon. — ${company}`;
+    case "invoice_sent":
+      return `Hello ${name}, your invoice${vars.invoiceNumber ? ` ${vars.invoiceNumber}` : ""} from ${company} is ready. Total: ${fmtAmount(vars.amount)}. Please review and arrange payment. Thank you.`;
+    case "invoice_payment_reminder":
+      return `Hello ${name}, friendly reminder: invoice${vars.invoiceNumber ? ` ${vars.invoiceNumber}` : ""} balance ${fmtAmount(vars.balance)} is due. — ${company}`;
     default:
       return `Hello ${name}, message from ${company}.`;
   }
@@ -95,6 +102,8 @@ export const WHATSAPP_TEMPLATE_LABELS: Record<WhatsAppMessageType, string> = {
   warranty_claim_received: "Warranty claim",
   payment_balance_reminder: "Balance reminder",
   care_plan_renewal_reminder: "Care renewal",
+  invoice_sent: "Send invoice",
+  invoice_payment_reminder: "Invoice payment reminder",
 };
 
 /** Resolve CRM lead phone from portal customer id or email (no schema change). */

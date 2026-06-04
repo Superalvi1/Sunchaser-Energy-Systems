@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { 
   TrendingUp, BarChart4, ClipboardList, ShieldAlert, Package, 
-  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen, Headphones, Wrench, Zap, Heart, History, Activity, Truck, UserCog
+  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen, Headphones, Wrench, Zap, Heart, History, Activity, Truck, UserCog, FileText
 } from "lucide-react";
 import UserManagementStaff from "./UserManagementStaff";
 import { isSuperAdmin } from "../lib/roles";
@@ -16,7 +16,10 @@ import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import EnergyMonitoringStaff from "./EnergyMonitoringStaff";
 import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
 import ProjectFinanceStaff from "./ProjectFinanceStaff";
+import InvoiceStaff from "./InvoiceStaff";
+import BrandingSettings from "./BrandingSettings";
 import { canViewProjectProfit } from "../lib/projectFinance";
+import { canCreateInvoice } from "../lib/invoices";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -80,11 +83,13 @@ export default function AdminApp({
   staffUser
 }: AdminAppProps) {
   const [activeSegment, setActiveSegment] = useState<
-    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk' | 'asset-maintenance' | 'energy-monitoring' | 'project-delivery' | 'project-finance' | 'user-management'
+    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk' | 'asset-maintenance' | 'energy-monitoring' | 'project-delivery' | 'project-finance' | 'invoices' | 'branding' | 'user-management'
   >('overview');
 
   const showFinanceAdmin = canViewProjectProfit(staffUser.role, staffUser.username);
+  const showInvoices = canCreateInvoice(staffUser.username, staffUser.role);
   const showUserManagement = isSuperAdmin(staffUser.username, staffUser.role);
+  const showBranding = isSuperAdmin(staffUser.username, staffUser.role);
 
   // Procurement local form states
   const [vendor, setVendor] = useState("Canadian Solar Ltd");
@@ -359,6 +364,30 @@ export default function AdminApp({
             }`}
           >
             <DollarSign className="w-4 h-4 inline mr-1" /> Project Finance
+          </button>
+        )}
+        {showInvoices && (
+          <button
+            onClick={() => setActiveSegment('invoices')}
+            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSegment === 'invoices'
+                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
+                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
+            }`}
+          >
+            <FileText className="w-4 h-4 inline mr-1" /> Invoices
+          </button>
+        )}
+        {showBranding && (
+          <button
+            onClick={() => setActiveSegment('branding')}
+            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSegment === 'branding'
+                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
+                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
+            }`}
+          >
+            <Settings2 className="w-4 h-4 inline mr-1" /> Branding
           </button>
         )}
         <button
@@ -1732,6 +1761,12 @@ export default function AdminApp({
         )}
         {activeSegment === 'project-finance' && showFinanceAdmin && (
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />
+        )}
+        {activeSegment === 'invoices' && showInvoices && (
+          <InvoiceStaff staffUser={staffUser} products={products} leads={leads} />
+        )}
+        {activeSegment === 'branding' && showBranding && (
+          <BrandingSettings staffUser={staffUser} />
         )}
         {activeSegment === 'client-portal' && (
           <>

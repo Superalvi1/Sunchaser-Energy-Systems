@@ -48,6 +48,7 @@ import TechnicalStaffApp from "./components/TechnicalStaffApp";
 import WelcomeWizard from "./components/WelcomeWizard";
 import AIAssistant from "./components/AIAssistant";
 import AdminApp from "./components/AdminApp";
+import AppLogo from "./components/AppLogo";
 import { isTechnicalStaffRole } from "./lib/technicalStaff";
 
 function needsCrmAppState(role: string) {
@@ -526,9 +527,7 @@ export default function App() {
       <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-tr from-amber-400 to-orange-500 p-2.5 rounded-2xl shadow-inner shadow-amber-300">
-              <Sun className="h-6 w-6 text-slate-950 animate-spin-slow" />
-            </div>
+            <AppLogo className="h-11 w-auto" />
             <div>
               <h1 className="text-lg font-extrabold tracking-tight font-sans">
                 SUNCHASER <span className="text-amber-400 font-medium">Energy Systems</span>

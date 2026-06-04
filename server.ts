@@ -126,6 +126,20 @@ import {
   CustomerProfileError,
 } from "./customerProfileDb.js";
 import { ALL_PERMISSION_KEYS, PERMISSION_LABELS } from "./src/lib/roles.js";
+import {
+  listAdminInvoices,
+  getAdminInvoiceById,
+  createAdminInvoice,
+  updateAdminInvoice,
+  recordInvoicePayment,
+  fetchCustomerPortalInvoicesMe,
+  setInvoicePdfUrl,
+  syncInvoiceToCustomerDocuments,
+  InvoiceDbError,
+} from "./invoiceDb.js";
+import { compileInvoicePDFHtml } from "./invoicePdf.js";
+import { getCompanyBranding, saveCompanyBranding } from "./brandingDb.js";
+import { mergeBranding } from "./src/lib/branding.js";
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
@@ -1778,6 +1792,162 @@ app.patch("/api/admin/finance/projects/:id", async (req, res) => {
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof ProjectFinanceDbError) return res.status(404).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/branding", async (_req, res) => {
+  try {
+    loadDb();
+    const branding = await getCompanyBranding(db);
+    return res.json({ branding });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/branding", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const branding = await getCompanyBranding(db);
+    return res.json({ branding });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/branding", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const branding = await saveCompanyBranding(userId, username, req.body || {}, db);
+    saveDb();
+    return res.json({ branding });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/invoices", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const invoices = await listAdminInvoices(userId, username, role, db);
+    return res.json({ invoices });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/invoices/:id", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const invoice = await getAdminInvoiceById(userId, username, role, req.params.id, db);
+    return res.json({ invoice });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/invoices", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const invoice = await createAdminInvoice(userId, username, role, req.body || {}, db);
+    saveDb();
+    return res.status(201).json({ invoice });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/invoices/:id", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const invoice = await updateAdminInvoice(userId, username, role, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json({ invoice });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/invoices/:id/payments", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const result = await recordInvoicePayment(userId, username, role, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(result);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/export/pdf/invoice/:id", async (req, res) => {
+  const staffId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
+  const staffUsername = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
+  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
+  const customerUserId = String(req.query.portalUserId || "").trim();
+  const customerUsername = String(req.query.portalUsername || "").trim();
+  try {
+    loadDb();
+    let invoice;
+    if (staffId && staffUsername && !customerUserId) {
+      invoice = await getAdminInvoiceById(staffId, staffUsername, role, req.params.id, db);
+    } else if (customerUserId && customerUsername) {
+      const portal = await fetchCustomerPortalInvoicesMe(customerUserId, customerUsername, db);
+      invoice = portal.invoices.find((i) => i.id === req.params.id);
+      if (!invoice) return res.status(404).json({ error: "Invoice not found." });
+    } else {
+      return res.status(400).json({ error: "Auth required." });
+    }
+    const branding = mergeBranding(await getCompanyBranding(db));
+    const banks = (db.bankAccounts || []).filter((b: any) => b.isActive !== false && b.is_active !== false);
+    const html = compileInvoicePDFHtml(invoice, {
+      ...branding,
+      bankAccounts: banks,
+    });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError || err instanceof CustomerPortalAuthError) {
+      return res.status(403).json({ error: err.message });
+    }
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/invoices/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalInvoicesMe(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });

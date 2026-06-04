@@ -10,6 +10,7 @@ import {
 import { LOGIN_UNABLE_CONNECT_MESSAGE } from "../lib/startupFetch";
 import { SELF_REGISTER_ROLES } from "../lib/roles";
 import type { User } from "../types";
+import AppLogo from "./AppLogo";
 
 type AuthMode = "login" | "register" | "forgot" | "reset" | "verify";
 
@@ -161,6 +162,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6 fade-in-entry">
       <div className="text-center space-y-2">
+        <AppLogo className="h-14 w-auto mx-auto mb-2" />
         <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold">
           SUNCHASER ACCESS
         </span>

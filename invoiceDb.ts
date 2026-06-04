@@ -1,0 +1,571 @@
+import {
+  getSupabase,
+  isSupabaseActive,
+  type Database,
+  verifyStaffPortalUser,
+  verifyCustomerPortalUser,
+  StaffPortalAuthError,
+  CustomerPortalAuthError,
+} from "./dbManager.js";
+import {
+  canCreateInvoice,
+  canViewAllInvoices,
+  computeInvoiceTotals,
+  derivePaymentStatus,
+  type InvoiceLineItem,
+  type InvoicePaymentMethod,
+  type InvoiceRecord,
+} from "./src/lib/invoices.ts";
+import { uploadFileToCustomerStorage, assignCustomerDocument } from "./customerProfileDb.js";
+
+export class InvoiceDbError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+function isInvoiceTableMissing(err: any) {
+  const msg = String(err?.message || "").toLowerCase();
+  return err?.code === "42P01" || msg.includes("invoices") || msg.includes("invoice_items");
+}
+
+function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] = []): InvoiceRecord {
+  return {
+    id: row.id,
+    invoiceNumber: row.invoice_number || row.invoiceNumber,
+    invoiceDate: row.invoice_date || row.invoiceDate,
+    dueDate: row.due_date || row.dueDate || null,
+    customerId: row.customer_id || row.customerId || null,
+    customerName: row.customer_name || row.customerName,
+    customerPhone: row.customer_phone || row.customerPhone || null,
+    customerAddress: row.customer_address || row.customerAddress || null,
+    cnicNtn: row.cnic_ntn || row.cnicNtn || null,
+    leadId: row.lead_id || row.leadId || null,
+    quotationId: row.quotation_id || row.quotationId || null,
+    projectId: row.project_id || row.projectId || null,
+    subtotal: Number(row.subtotal ?? 0),
+    discountAmount: Number(row.discount_amount ?? row.discountAmount ?? 0),
+    taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
+    grandTotal: Number(row.grand_total ?? row.grandTotal ?? 0),
+    paidAmount: Number(row.paid_amount ?? row.paidAmount ?? 0),
+    balanceDue: Number(row.balance_due ?? row.balanceDue ?? 0),
+    paymentStatus: row.payment_status || row.paymentStatus || "Unpaid",
+    notes: row.notes || null,
+    terms: row.terms || null,
+    pdfUrl: row.pdf_url || row.pdfUrl || null,
+    items,
+    payments,
+    createdBy: row.created_by || row.createdBy,
+    updatedBy: row.updated_by || row.updatedBy,
+    createdAt: row.created_at || row.createdAt,
+    updatedAt: row.updated_at || row.updatedAt,
+  };
+}
+
+function mapItemRow(row: any): InvoiceLineItem {
+  return {
+    id: row.id,
+    sortOrder: row.sort_order ?? row.sortOrder,
+    description: row.description,
+    qty: Number(row.qty ?? 1),
+    unit: row.unit || "pcs",
+    rate: Number(row.rate ?? 0),
+    taxPercent: Number(row.tax_percent ?? row.taxPercent ?? 0),
+    discountAmount: Number(row.discount_amount ?? row.discountAmount ?? 0),
+    lineTotal: Number(row.line_total ?? row.lineTotal ?? 0),
+    productId: row.product_id || row.productId || null,
+    notes: row.notes || null,
+  };
+}
+
+async function assertInvoiceStaff(userId: string, username: string, localDb?: Database) {
+  const { user, role } = await verifyStaffPortalUser(userId, username, localDb);
+  if (!canCreateInvoice(user.username || username, role)) {
+    throw new StaffPortalAuthError("You do not have permission to manage invoices.", 403);
+  }
+  return { user, role };
+}
+
+async function nextInvoiceNumber(localDb?: Database): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `INV-${year}-`;
+  let count = 0;
+  if (isSupabaseActive()) {
+    const { count: c, error } = await getSupabase()!
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .like("invoice_number", `${prefix}%`);
+    if (!error && c != null) count = c;
+  } else {
+    const rows = (localDb as any)?.invoices || [];
+    count = rows.filter((r: any) => String(r.invoice_number || r.invoiceNumber || "").startsWith(prefix)).length;
+  }
+  return `${prefix}${String(count + 1).padStart(4, "0")}`;
+}
+
+async function loadItems(invoiceId: string, localDb?: Database): Promise<InvoiceLineItem[]> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("invoice_items")
+      .select("*")
+      .eq("invoice_id", invoiceId)
+      .order("sort_order");
+    if (error) throw error;
+    return (data || []).map(mapItemRow);
+  }
+  return ((localDb as any)?.invoiceItems || [])
+    .filter((r: any) => (r.invoice_id || r.invoiceId) === invoiceId)
+    .map(mapItemRow);
+}
+
+async function loadPayments(invoiceId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("invoice_payments")
+      .select("*")
+      .eq("invoice_id", invoiceId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      invoiceId: row.invoice_id,
+      amount: Number(row.amount),
+      paymentMethod: row.payment_method,
+      paymentDate: row.payment_date,
+      receiptUrl: row.receipt_url || null,
+      notes: row.notes || null,
+      recordedBy: row.recorded_by || null,
+      createdAt: row.created_at,
+    }));
+  }
+  return ((localDb as any)?.invoicePayments || [])
+    .filter((r: any) => (r.invoice_id || r.invoiceId) === invoiceId)
+    .map((row: any) => ({
+      id: row.id,
+      invoiceId: row.invoice_id || row.invoiceId,
+      amount: Number(row.amount),
+      paymentMethod: row.payment_method || row.paymentMethod,
+      paymentDate: row.payment_date || row.paymentDate,
+      receiptUrl: row.receipt_url || row.receiptUrl || null,
+      notes: row.notes || null,
+      recordedBy: row.recorded_by || row.recordedBy || null,
+    }));
+}
+
+async function recalcPaidTotals(invoiceId: string, localDb?: Database) {
+  const payments = await loadPayments(invoiceId, localDb);
+  return payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+}
+
+export async function listAdminInvoices(
+  userId: string,
+  username: string,
+  role: string,
+  localDb?: Database
+): Promise<InvoiceRecord[]> {
+  await assertInvoiceStaff(userId, username, localDb);
+  const viewAll = canViewAllInvoices(username, role);
+
+  if (isSupabaseActive()) {
+    try {
+      let q = getSupabase()!.from("invoices").select("*").order("invoice_date", { ascending: false });
+      const { data, error } = await q;
+      if (error) throw error;
+      const rows = data || [];
+      const out: InvoiceRecord[] = [];
+      for (const row of rows) {
+        const items = await loadItems(row.id, localDb);
+        const payments = await loadPayments(row.id, localDb);
+        out.push(mapInvoiceRow(row, items, payments));
+      }
+      if (!viewAll) {
+        return out.filter((inv) => inv.createdBy === username);
+      }
+      return out;
+    } catch (err: any) {
+      if (isInvoiceTableMissing(err)) return [];
+      throw err;
+    }
+  }
+
+  const rows = ((localDb as any)?.invoices || []).slice().reverse();
+  const out: InvoiceRecord[] = [];
+  for (const row of rows) {
+    const items = await loadItems(row.id, localDb);
+    const payments = await loadPayments(row.id, localDb);
+    const inv = mapInvoiceRow(row, items, payments);
+    if (viewAll || inv.createdBy === username) out.push(inv);
+  }
+  return out;
+}
+
+export async function getAdminInvoiceById(
+  userId: string,
+  username: string,
+  role: string,
+  invoiceId: string,
+  localDb?: Database
+): Promise<InvoiceRecord> {
+  await assertInvoiceStaff(userId, username, localDb);
+  const viewAll = canViewAllInvoices(username, role);
+
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("invoices")
+      .select("*")
+      .eq("id", invoiceId)
+      .single();
+    if (error) throw new InvoiceDbError("Invoice not found.", 404);
+    if (!viewAll && (data.created_by || data.createdBy) !== username) {
+      throw new StaffPortalAuthError("Access denied.", 403);
+    }
+    const items = await loadItems(invoiceId, localDb);
+    const payments = await loadPayments(invoiceId, localDb);
+    return mapInvoiceRow(data, items, payments);
+  }
+
+  const row = ((localDb as any)?.invoices || []).find((r: any) => r.id === invoiceId);
+  if (!row) throw new InvoiceDbError("Invoice not found.", 404);
+  const inv = mapInvoiceRow(row, await loadItems(invoiceId, localDb), await loadPayments(invoiceId, localDb));
+  if (!viewAll && inv.createdBy !== username) throw new StaffPortalAuthError("Access denied.", 403);
+  return inv;
+}
+
+export async function createAdminInvoice(
+  userId: string,
+  username: string,
+  role: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+): Promise<InvoiceRecord> {
+  await assertInvoiceStaff(userId, username, localDb);
+  const id = `inv-${Date.now()}`;
+  const invoiceNumber = String(body.invoiceNumber || "") || (await nextInvoiceNumber(localDb));
+  const rawItems = (body.items as InvoiceLineItem[]) || [];
+  const totals = computeInvoiceTotals(
+    rawItems,
+    Number(body.discountAmount ?? body.discount_amount ?? 0),
+    Number(body.invoiceTaxPercent ?? body.invoice_tax_percent ?? 0)
+  );
+  const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
+  const grandTotal = totals.grandTotal;
+  const balanceDue = Math.max(0, Math.round((grandTotal - paidAmount) * 100) / 100);
+  const paymentStatus = derivePaymentStatus(
+    grandTotal,
+    paidAmount,
+    String(body.dueDate || body.due_date || "") || null,
+    body.paymentStatus as any
+  );
+
+  const row = {
+    id,
+    invoice_number: invoiceNumber,
+    invoice_date: body.invoiceDate || body.invoice_date || new Date().toISOString().slice(0, 10),
+    due_date: body.dueDate || body.due_date || null,
+    customer_id: body.customerId || body.customer_id || null,
+    customer_name: String(body.customerName || body.customer_name || "Customer"),
+    customer_phone: body.customerPhone || body.customer_phone || null,
+    customer_address: body.customerAddress || body.customer_address || null,
+    cnic_ntn: body.cnicNtn || body.cnic_ntn || null,
+    lead_id: body.leadId || body.lead_id || null,
+    quotation_id: body.quotationId || body.quotation_id || null,
+    project_id: body.projectId || body.project_id || null,
+    subtotal: totals.subtotal,
+    discount_amount: totals.discountAmount,
+    tax_amount: totals.taxAmount,
+    grand_total: grandTotal,
+    paid_amount: paidAmount,
+    balance_due: balanceDue,
+    payment_status: paymentStatus,
+    notes: body.notes || null,
+    terms: body.terms || null,
+    pdf_url: null,
+    created_by: username,
+    updated_by: username,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const itemRows = totals.items.map((it, idx) => ({
+    id: it.id || `item-${Date.now()}-${idx}`,
+    invoice_id: id,
+    sort_order: idx,
+    description: it.description,
+    qty: it.qty,
+    unit: it.unit || "pcs",
+    rate: it.rate,
+    tax_percent: it.taxPercent,
+    discount_amount: it.discountAmount,
+    line_total: it.lineTotal,
+    product_id: it.productId || null,
+    notes: it.notes || null,
+  }));
+
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("invoices").insert(row);
+    if (error) throw error;
+    if (itemRows.length) {
+      const { error: iErr } = await getSupabase()!.from("invoice_items").insert(itemRows);
+      if (iErr) throw iErr;
+    }
+  } else {
+    const db = localDb as any;
+    db.invoices = db.invoices || [];
+    db.invoiceItems = db.invoiceItems || [];
+    db.invoices.push(row);
+    db.invoiceItems.push(...itemRows);
+  }
+
+  return getAdminInvoiceById(userId, username, role, id, localDb);
+}
+
+export async function updateAdminInvoice(
+  userId: string,
+  username: string,
+  role: string,
+  invoiceId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+): Promise<InvoiceRecord> {
+  await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+
+  const rawItems = body.items as InvoiceLineItem[] | undefined;
+  let patch: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+    updated_by: username,
+  };
+
+  if (rawItems) {
+    const totals = computeInvoiceTotals(
+      rawItems,
+      Number(body.discountAmount ?? body.discount_amount ?? 0),
+      Number(body.invoiceTaxPercent ?? body.invoice_tax_percent ?? 0)
+    );
+    const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
+    const balanceDue = Math.max(0, totals.grandTotal - paidAmount);
+    patch = {
+      ...patch,
+      subtotal: totals.subtotal,
+      discount_amount: totals.discountAmount,
+      tax_amount: totals.taxAmount,
+      grand_total: totals.grandTotal,
+      paid_amount: paidAmount,
+      balance_due: balanceDue,
+      payment_status: derivePaymentStatus(
+        totals.grandTotal,
+        paidAmount,
+        String(body.dueDate || body.due_date || "") || null,
+        body.paymentStatus as any
+      ),
+    };
+
+    const itemRows = totals.items.map((it, idx) => ({
+      id: it.id || `item-${Date.now()}-${idx}`,
+      invoice_id: invoiceId,
+      sort_order: idx,
+      description: it.description,
+      qty: it.qty,
+      unit: it.unit || "pcs",
+      rate: it.rate,
+      tax_percent: it.taxPercent,
+      discount_amount: it.discountAmount,
+      line_total: it.lineTotal,
+      product_id: it.productId || null,
+      notes: it.notes || null,
+    }));
+
+    if (isSupabaseActive()) {
+      await getSupabase()!.from("invoice_items").delete().eq("invoice_id", invoiceId);
+      if (itemRows.length) await getSupabase()!.from("invoice_items").insert(itemRows);
+    } else {
+      const db = localDb as any;
+      db.invoiceItems = (db.invoiceItems || []).filter(
+        (r: any) => (r.invoice_id || r.invoiceId) !== invoiceId
+      );
+      db.invoiceItems.push(...itemRows);
+    }
+  }
+
+  const scalarFields: [string, string][] = [
+    ["invoice_date", "invoiceDate"],
+    ["due_date", "dueDate"],
+    ["customer_id", "customerId"],
+    ["customer_name", "customerName"],
+    ["customer_phone", "customerPhone"],
+    ["customer_address", "customerAddress"],
+    ["cnic_ntn", "cnicNtn"],
+    ["lead_id", "leadId"],
+    ["quotation_id", "quotationId"],
+    ["project_id", "projectId"],
+    ["notes", "notes"],
+    ["terms", "terms"],
+    ["pdf_url", "pdfUrl"],
+  ];
+  for (const [dbKey, bodyKey] of scalarFields) {
+    if (body[bodyKey] !== undefined || body[dbKey] !== undefined) {
+      patch[dbKey] = body[bodyKey] ?? body[dbKey];
+    }
+  }
+
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+    if (error) throw error;
+  } else {
+    const db = localDb as any;
+    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
+    if (idx >= 0) Object.assign(db.invoices[idx], patch);
+  }
+
+  return getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+}
+
+export async function recordInvoicePayment(
+  userId: string,
+  username: string,
+  role: string,
+  invoiceId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const amount = Number(body.amount || 0);
+  if (amount <= 0) throw new InvoiceDbError("Payment amount must be positive.");
+
+  let receiptUrl = body.receiptUrl || body.receipt_url || null;
+  let receiptStoragePath = body.receiptStoragePath || body.receipt_storage_path || null;
+  if (body.base64Receipt && body.fileName) {
+    const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+    const cid = inv.customerId || "general";
+    const up = await uploadFileToCustomerStorage(
+      cid,
+      String(body.base64Receipt),
+      String(body.fileName),
+      body.mimeType as string | undefined
+    );
+    receiptUrl = up.url;
+    receiptStoragePath = up.storagePath;
+  }
+
+  const payId = `pay-${Date.now()}`;
+  const payRow = {
+    id: payId,
+    invoice_id: invoiceId,
+    amount,
+    payment_method: body.paymentMethod || body.payment_method || "Cash",
+    payment_date: body.paymentDate || body.payment_date || new Date().toISOString().slice(0, 10),
+    receipt_url: receiptUrl,
+    receipt_storage_path: receiptStoragePath,
+    notes: body.notes || null,
+    recorded_by: username,
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("invoice_payments").insert(payRow);
+    if (error) throw error;
+  } else {
+    const db = localDb as any;
+    db.invoicePayments = db.invoicePayments || [];
+    db.invoicePayments.push(payRow);
+  }
+
+  const paidTotal = await recalcPaidTotals(invoiceId, localDb);
+  const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const balanceDue = Math.max(0, inv.grandTotal - paidTotal);
+  const paymentStatus = derivePaymentStatus(inv.grandTotal, paidTotal, inv.dueDate);
+
+  const patch = {
+    paid_amount: paidTotal,
+    balance_due: balanceDue,
+    payment_status: paymentStatus,
+    updated_at: new Date().toISOString(),
+    updated_by: username,
+  };
+
+  if (isSupabaseActive()) {
+    await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+  } else {
+    const db = localDb as any;
+    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
+    if (idx >= 0) Object.assign(db.invoices[idx], patch);
+  }
+
+  return { payment: payRow, invoice: await getAdminInvoiceById(userId, username, role, invoiceId, localDb) };
+}
+
+export async function fetchCustomerPortalInvoicesMe(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  if (!customerId) throw new CustomerPortalAuthError("Customer not linked.", 403);
+
+  if (isSupabaseActive()) {
+    try {
+      const { data, error } = await getSupabase()!
+        .from("invoices")
+        .select("*")
+        .eq("customer_id", customerId)
+        .order("invoice_date", { ascending: false });
+      if (error) throw error;
+      const out: InvoiceRecord[] = [];
+      for (const row of data || []) {
+        out.push(
+          mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb))
+        );
+      }
+      return { invoices: out };
+    } catch (err: any) {
+      if (isInvoiceTableMissing(err)) return { invoices: [] };
+      throw err;
+    }
+  }
+
+  const rows = ((localDb as any)?.invoices || []).filter(
+    (r: any) => (r.customer_id || r.customerId) === customerId
+  );
+  const out: InvoiceRecord[] = [];
+  for (const row of rows) {
+    out.push(mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb)));
+  }
+  return { invoices: out };
+}
+
+export async function setInvoicePdfUrl(
+  invoiceId: string,
+  pdfUrl: string,
+  localDb?: Database
+) {
+  const patch = { pdf_url: pdfUrl, updated_at: new Date().toISOString() };
+  if (isSupabaseActive()) {
+    await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+  } else {
+    const db = localDb as any;
+    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
+    if (idx >= 0) Object.assign(db.invoices[idx], patch);
+  }
+}
+
+export async function syncInvoiceToCustomerDocuments(
+  userId: string,
+  username: string,
+  role: string,
+  invoice: InvoiceRecord,
+  pdfUrl: string,
+  localDb?: Database
+) {
+  if (!invoice.customerId) return null;
+  return assignCustomerDocument(userId, username, role, {
+    customerId: invoice.customerId,
+    documentType: "invoice",
+    title: `Invoice ${invoice.invoiceNumber}`,
+    fileUrl: pdfUrl,
+    fileName: `${invoice.invoiceNumber}.pdf`,
+    visibleToCustomer: true,
+    internalOnly: false,
+    notes: `Grand total PKR ${invoice.grandTotal.toLocaleString()}`,
+  }, localDb);
+}

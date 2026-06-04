@@ -1827,6 +1827,115 @@ export async function fetchAdminWhatsAppLogs(userId: string, username: string) {
   return res.json();
 }
 
+export async function fetchCompanyBranding() {
+  const res = await apiFetch("/api/branding");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load branding.");
+  return data.branding as Record<string, string>;
+}
+
+export async function updateAdminBranding(staff: User, body: Record<string, unknown>) {
+  return staffPortalJsonRequest(
+    "updateAdminBranding",
+    "/api/admin/branding",
+    {
+      method: "PATCH",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to save branding"
+  );
+}
+
+export async function fetchAdminInvoices(staff: User) {
+  const res = await apiFetch("/api/admin/invoices", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load invoices.");
+  return data as { invoices: any[] };
+}
+
+export async function fetchAdminInvoice(staff: User, invoiceId: string) {
+  const res = await apiFetch(`/api/admin/invoices/${encodeURIComponent(invoiceId)}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Invoice not found.");
+  return data as { invoice: any };
+}
+
+export async function createAdminInvoice(staff: User, body: Record<string, unknown>) {
+  return staffPortalJsonRequest(
+    "createAdminInvoice",
+    "/api/admin/invoices",
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to create invoice"
+  );
+}
+
+export async function updateAdminInvoice(staff: User, invoiceId: string, body: Record<string, unknown>) {
+  return staffPortalJsonRequest(
+    "updateAdminInvoice",
+    `/api/admin/invoices/${encodeURIComponent(invoiceId)}`,
+    {
+      method: "PATCH",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to update invoice"
+  );
+}
+
+export async function recordAdminInvoicePayment(
+  staff: User,
+  invoiceId: string,
+  body: Record<string, unknown>
+) {
+  return staffPortalJsonRequest(
+    "recordAdminInvoicePayment",
+    `/api/admin/invoices/${encodeURIComponent(invoiceId)}/payments`,
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to record payment"
+  );
+}
+
+export function invoicePdfUrl(
+  invoiceId: string,
+  staff?: { id: string; username: string; role: string }
+) {
+  const q = new URLSearchParams();
+  if (staff) {
+    q.set("userId", staff.id);
+    q.set("username", staff.username);
+    q.set("role", staff.role);
+  }
+  const suffix = q.toString() ? `?${q}` : "";
+  return `${API_BASE_URL}/api/export/pdf/invoice/${encodeURIComponent(invoiceId)}${suffix}`;
+}
+
+export async function fetchCustomerPortalInvoicesMe(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/invoices/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load invoices.");
+  return data as { invoices: any[] };
+}
+
+export function customerInvoicePdfUrl(invoiceId: string, userId: string, username: string) {
+  const q = new URLSearchParams({ portalUserId: userId, portalUsername: username });
+  return `${API_BASE_URL}/api/export/pdf/invoice/${encodeURIComponent(invoiceId)}?${q}`;
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {

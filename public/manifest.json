@@ -3,6 +3,11 @@
   "name": "Sunchaser Energy Systems CRM",
   "icons": [
     {
+      "src": "/sunchaser-logo.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    },
+    {
       "src": "/icon-192.png",
       "type": "image/png",
       "sizes": "192x192"

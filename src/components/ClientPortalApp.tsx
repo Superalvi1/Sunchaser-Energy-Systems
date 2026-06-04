@@ -14,6 +14,7 @@ import {
   History,
   Activity,
   Receipt,
+  FileText,
 } from "lucide-react";
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
@@ -28,6 +29,8 @@ import ClientPortalCare from "./ClientPortalCare";
 import ClientPortalServiceHistory from "./ClientPortalServiceHistory";
 import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
 import ClientPortalPayments from "./ClientPortalPayments";
+import ClientPortalInvoices from "./ClientPortalInvoices";
+import AppLogo from "./AppLogo";
 
 interface ClientPortalAppProps {
   user: User;
@@ -50,7 +53,8 @@ type PortalTab =
   | "savings"
   | "energy"
   | "care"
-  | "payments";
+  | "payments"
+  | "invoices";
 
 export default function ClientPortalApp({
   user,
@@ -70,6 +74,7 @@ export default function ClientPortalApp({
     { id: "system", label: "My System", icon: Zap },
     { id: "documents", label: "Documents", icon: FolderOpen },
     { id: "payments", label: "Payments", icon: Receipt },
+    { id: "invoices", label: "Invoices", icon: FileText },
     { id: "warranty", label: "Warranty", icon: Shield },
     { id: "support", label: "Support", icon: Headphones },
     { id: "service", label: "Service", icon: Wrench },
@@ -84,9 +89,7 @@ export default function ClientPortalApp({
       <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="bg-gradient-to-tr from-amber-400 to-orange-500 p-2 rounded-xl shrink-0">
-              <Sun className="h-5 w-5 text-slate-950" />
-            </div>
+            <AppLogo className="h-10 w-auto shrink-0" />
             <div className="min-w-0">
               <h1 className="text-sm font-extrabold truncate">
                 {data?.customer?.name || user.name}
@@ -192,6 +195,7 @@ export default function ClientPortalApp({
         {activeTab === "system" && <ClientPortalSystem user={user} />}
         {activeTab === "documents" && <ClientPortalDocuments user={user} />}
         {activeTab === "payments" && <ClientPortalPayments user={user} />}
+        {activeTab === "invoices" && <ClientPortalInvoices user={user} />}
         {activeTab === "warranty" && <ClientPortalWarranties user={user} />}
         {activeTab === "support" && <ClientPortalSupport user={user} />}
         {activeTab === "service" && <ClientPortalService user={user} />}
