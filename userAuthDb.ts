@@ -181,13 +181,21 @@ export async function registerUser(
   };
 
   if (role === "Customer") {
-    row.customer_id = `cust-${id.replace(/^u-/, "")}`;
+    const customerId = `cust-${id.replace(/^u-/, "")}`;
+    row.customer_id = customerId;
+    await ensureCustomerRecord(customerId, { name, email }, localDb);
   }
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const { error } = await supabase.from("users").insert(row);
     if (error) throw error;
+    if (role === "Customer" && row.customer_id) {
+      await getSupabase()!
+        .from("customers")
+        .update({ user_id: id })
+        .eq("id", row.customer_id);
+    }
   } else if (localDb) {
     localDb.users = localDb.users || [];
     localDb.users.push(row);
@@ -417,15 +425,73 @@ export async function createUserByAdmin(
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  if (role === "Customer") row.customer_id = String(body.customerId || `cust-${id.replace(/^u-/, "")}`);
+  if (role === "Customer") {
+    const customerId = String(body.customerId || `cust-${id.replace(/^u-/, "")}`);
+    row.customer_id = customerId;
+    await ensureCustomerRecord(
+      customerId,
+      { name, email, userId: id, phone: String(body.phone || "") },
+      localDb
+    );
+  }
 
   if (isSupabaseActive()) {
     const { error } = await getSupabase()!.from("users").insert(row);
     if (error) throw error;
+    if (role === "Customer" && row.customer_id) {
+      await getSupabase()!
+        .from("customers")
+        .update({ user_id: id })
+        .eq("id", row.customer_id);
+    }
   } else if (localDb) {
     localDb.users.push(row);
   }
   return mapUserRow(row);
+}
+
+async function ensureCustomerRecord(
+  customerId: string,
+  opts: { name: string; email: string; userId?: string; phone?: string },
+  localDb?: Database
+) {
+  const now = new Date().toISOString();
+  const customerRow = {
+    id: customerId,
+    name: opts.name,
+    email: opts.email,
+    phone: opts.phone || null,
+    address: null,
+    created_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: existing } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("id", customerId)
+      .maybeSingle();
+    if (existing) {
+      const patch: Record<string, unknown> = { name: opts.name, email: opts.email };
+      if (opts.userId) patch.user_id = opts.userId;
+      await supabase.from("customers").update(patch).eq("id", customerId);
+      return;
+    }
+    const { error } = await supabase.from("customers").insert(customerRow);
+    if (error) throw error;
+    return;
+  }
+
+  const db = localDb as any;
+  if (!db) return;
+  db.customers = db.customers || [];
+  const idx = db.customers.findIndex((c: any) => c.id === customerId);
+  if (idx >= 0) {
+    db.customers[idx] = { ...db.customers[idx], ...customerRow };
+  } else {
+    db.customers.push(customerRow);
+  }
 }
 
 export async function updateUserByAdmin(
