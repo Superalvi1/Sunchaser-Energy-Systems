@@ -46,7 +46,7 @@ export default function ProjectFinanceStaff({ staffUser }: ProjectFinanceStaffPr
 
   useEffect(() => {
     load();
-  }, [staffUser.id, allowed]);
+  }, [staffUser.id, staffUser.username, staffUser.role]);
 
   const selected = projects.find((p) => p.id === selectedId);
 

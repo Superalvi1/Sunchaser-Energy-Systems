@@ -53,7 +53,7 @@ export default function ProjectDeliveryStaff({ staffUser }: ProjectDeliveryStaff
 
   useEffect(() => {
     load();
-  }, [staffUser.id]);
+  }, [staffUser.id, staffUser.username]);
 
   const handleCreate = async () => {
     setMsg(null);
