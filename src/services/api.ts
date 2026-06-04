@@ -2,9 +2,8 @@ import { Lead, Ticket, AppState, Quote, User } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
   LOGIN_FETCH_TIMEOUT_MS,
-  SERVER_UNAVAILABLE_MESSAGE,
+  LOGIN_UNABLE_CONNECT_MESSAGE,
   STARTUP_FETCH_TIMEOUT_MS,
-  isNetworkFetchError,
   logApiFailure,
   readApiErrorBody,
   toConnectionError,
@@ -34,42 +33,6 @@ export async function fetchWithTimeout(
     return await apiFetch(path, { ...init, signal: controller.signal });
   } catch (err) {
     throw toConnectionError(err);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export async function fetchApiHealth(): Promise<boolean> {
-  const url = `${API_BASE_URL}/health`;
-  try {
-    await ensurePreLoginHealth();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Lightweight probe before login — does not use /api/state. */
-export async function ensurePreLoginHealth(): Promise<void> {
-  const url = `${API_BASE_URL}/health`;
-  console.log("Pre-login health URL:", url);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await apiFetch("/health", { signal: controller.signal });
-    console.log("Pre-login health status:", res.status);
-    if (!res.ok) {
-      const body = await readApiErrorBody(res);
-      logApiFailure("preLoginHealth", url, res.status, body);
-      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
-    }
-  } catch (err) {
-    console.error("Pre-login health error:", err);
-    if (err instanceof Error && err.message === SERVER_UNAVAILABLE_MESSAGE) {
-      throw err;
-    }
-    logApiFailure("preLoginHealth", url, null, {}, err);
-    throw new Error(SERVER_UNAVAILABLE_MESSAGE);
   } finally {
     clearTimeout(timer);
   }
@@ -764,16 +727,15 @@ export async function loginUser(body: { username: string; password?: string }): 
   const payload = { username: body.username, password: body.password };
   console.log("Login URL:", url);
   console.log("Login payload:", { username: payload.username, password: "[redacted]" });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOGIN_FETCH_TIMEOUT_MS);
   try {
-    const res = await fetchWithTimeout(
-      "/api/auth/login",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-      LOGIN_FETCH_TIMEOUT_MS
-    );
+    const res = await apiFetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
     console.log("Login response status:", res.status);
     const responseText = await res.text();
     let parsed: { success?: boolean; user?: User; error?: string } = {};
@@ -781,7 +743,7 @@ export async function loginUser(body: { username: string; password?: string }): 
       parsed = responseText ? JSON.parse(responseText) : {};
     } catch {
       console.error("Login error: non-JSON response body", responseText.slice(0, 200));
-      throw new Error(CONNECTION_ERROR_MESSAGE);
+      throw new Error(LOGIN_UNABLE_CONNECT_MESSAGE);
     }
     if (!res.ok) {
       console.error("Login error:", {
@@ -795,19 +757,20 @@ export async function loginUser(body: { username: string; password?: string }): 
     return parsed as { success: boolean; user: User };
   } catch (err) {
     console.error("Login error:", err);
-    if (err instanceof Error && err.message && err.message !== CONNECTION_ERROR_MESSAGE) {
+    if (err instanceof Error && err.message === LOGIN_UNABLE_CONNECT_MESSAGE) {
+      throw err;
+    }
+    if (err instanceof Error && err.message) {
       if (
         err.message.includes("Login failed") ||
-        err.message.includes("Invalid credentials") ||
-        err.message === SERVER_UNAVAILABLE_MESSAGE
+        err.message.includes("Invalid credentials")
       ) {
         throw err;
       }
     }
-    if (isNetworkFetchError(err)) {
-      throw new Error(CONNECTION_ERROR_MESSAGE);
-    }
-    throw toConnectionError(err);
+    throw new Error(LOGIN_UNABLE_CONNECT_MESSAGE);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

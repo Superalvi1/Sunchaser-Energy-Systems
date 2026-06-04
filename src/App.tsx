@@ -29,10 +29,8 @@ import {
   fetchTechnicalJobsMe,
   fetchOnboardingMe,
   completeOnboarding,
-  fetchApiHealth,
-  ensurePreLoginHealth,
 } from "./services/api";
-import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
+import { CONNECTION_ERROR_MESSAGE, LOGIN_UNABLE_CONNECT_MESSAGE } from "./lib/startupFetch";
 import { isNativeApp } from "./lib/appPlatform";
 
 declare const __GIT_COMMIT_HASH__: string;
@@ -186,8 +184,6 @@ export default function App() {
       }
     }
 
-    void fetchApiHealth();
-
     if (isNativeApp()) {
       // Android/iOS: never auto-sync /api/state — show login until explicit sign-in
       if (parsed?.username) setUsername(parsed.username);
@@ -235,7 +231,6 @@ export default function App() {
     setLoginLoading(true);
     setLoginError(null);
     try {
-      await ensurePreLoginHealth();
       const res = await loginUser({ username, password });
       if (!res.success) {
         setLoginError("Login Authorization Rejected.");
@@ -253,7 +248,7 @@ export default function App() {
       await refreshOnboardingGate(res.user);
     } catch (err: any) {
       console.error("Login submit failed:", err);
-      setLoginError(err.message || "Invalid credentials. Try guest profiles.");
+      setLoginError(err.message || LOGIN_UNABLE_CONNECT_MESSAGE);
     } finally {
       setLoginLoading(false);
     }
@@ -694,7 +689,7 @@ export default function App() {
                       {loginLoading ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
-                          <span>Authorizing Identity...</span>
+                          <span>Connecting to Sunchaser...</span>
                         </>
                       ) : (
                         <>
