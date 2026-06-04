@@ -270,6 +270,8 @@ export interface DashboardStats {
   leadsByStatus: Record<string, number>;
 }
 
+export type AccountStatus = "Pending" | "Approved" | "Suspended" | "Rejected";
+
 export interface User {
   id: string;
   username: string;
@@ -277,8 +279,13 @@ export interface User {
   email: string;
   role: UserRole;
   customerId?: string;
+  accountStatus?: AccountStatus;
+  emailVerified?: boolean;
   onboardingCompleted?: boolean;
   onboardingCompletedAt?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  rejectedReason?: string;
 }
 
 export interface Project {
@@ -375,18 +382,20 @@ export interface AppState {
   quotePdfSettings?: any[];
 }
 
-export type UserRole = 
-  | 'Super Admin' 
-  | 'Technical CEO'
-  | 'Sales Advisor'
-  | 'Admin'
-  | 'Sales Manager' 
-  | 'Sales Executive' 
-  | 'Inventory Manager'
-  | 'Support Agent'
-  | 'Technician'
-  | 'Service Technician'
-  | 'Survey Engineer'
-  | 'Installation Team'
-  | 'Customer';
+export type UserRole =
+  | "Super Admin"
+  | "Director"
+  | "Technical CEO"
+  | "Admin"
+  | "Accounts Manager"
+  | "Sales Manager"
+  | "Sales Executive"
+  | "Sales Advisor"
+  | "Inventory Manager"
+  | "Support Agent"
+  | "Technician"
+  | "Service Technician"
+  | "Survey Engineer"
+  | "Installation Team"
+  | "Customer";
 

@@ -779,6 +779,144 @@ export async function fetchAdminEnergyMonitoring(staffUserId: string, staffUsern
   return res.json();
 }
 
+export async function registerUser(body: {
+  username: string;
+  password: string;
+  name: string;
+  email: string;
+  role: string;
+}) {
+  const res = await apiFetch("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Registration failed.");
+  return data as { user: User; message: string; needsApproval?: boolean; verificationUrl?: string | null };
+}
+
+export async function verifyEmailToken(token: string) {
+  const res = await apiFetch(`/api/auth/verify-email?token=${encodeURIComponent(token)}`, { method: "GET" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Verification failed.");
+  return data as { ok: boolean; message: string };
+}
+
+export async function requestPasswordReset(email: string) {
+  const res = await apiFetch("/api/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Request failed.");
+  return data as { ok: boolean; message: string; resetUrl?: string };
+}
+
+export async function resetPasswordWithToken(token: string, password: string) {
+  const res = await apiFetch("/api/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Reset failed.");
+  return data as { ok: boolean; message: string };
+}
+
+export async function fetchRolesMatrix() {
+  const res = await apiFetch("/api/auth/roles-matrix");
+  if (!res.ok) throw new Error("Failed to load roles matrix.");
+  return res.json();
+}
+
+export async function fetchAdminUsers(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/admin/users?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load users.");
+  return data as { users: User[] };
+}
+
+export async function fetchPendingUsers(userId: string, username: string) {
+  const q = new URLSearchParams({ userId, username });
+  const res = await apiFetch(`/api/admin/users/pending?${q}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load pending users.");
+  return data as { users: User[] };
+}
+
+export async function approveAdminUser(userId: string, username: string, targetId: string) {
+  return staffPortalJsonRequest(
+    "approveAdminUser",
+    `/api/admin/users/${targetId}/approve`,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify({ userId, username }),
+    },
+    "Failed to approve user"
+  );
+}
+
+export async function rejectAdminUser(
+  userId: string,
+  username: string,
+  targetId: string,
+  reason: string
+) {
+  return staffPortalJsonRequest(
+    "rejectAdminUser",
+    `/api/admin/users/${targetId}/reject`,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify({ userId, username, reason }),
+    },
+    "Failed to reject user"
+  );
+}
+
+export async function createAdminUser(
+  actorId: string,
+  actorUsername: string,
+  body: Record<string, unknown>
+) {
+  return staffPortalJsonRequest<{ user: User }>(
+    "createAdminUser",
+    "/api/admin/users",
+    {
+      method: "POST",
+      headers: portalAuthHeaders(actorId, actorUsername),
+      body: JSON.stringify({ ...body, userId: actorId, username: actorUsername }),
+    },
+    "Failed to create user"
+  );
+}
+
+export async function updateAdminUser(
+  actorId: string,
+  actorUsername: string,
+  targetId: string,
+  body: Record<string, unknown>
+) {
+  return staffPortalJsonRequest<{ user: User }>(
+    "updateAdminUser",
+    `/api/admin/users/${targetId}`,
+    {
+      method: "PATCH",
+      headers: portalAuthHeaders(actorId, actorUsername),
+      body: JSON.stringify({ ...body, userId: actorId, username: actorUsername }),
+    },
+    "Failed to update user"
+  );
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const url = `${API_BASE_URL}/api/auth/login`;
   const payload = { username: body.username, password: body.password };
@@ -1521,16 +1659,16 @@ export async function logWhatsAppOpened(
   username: string,
   body: Record<string, unknown>
 ) {
-  const res = await apiFetch("/api/whatsapp/log-opened", {
-    method: "POST",
-    headers: portalAuthHeaders(userId, username),
-    body: JSON.stringify({ ...body, userId, username }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to log WhatsApp action.");
-  }
-  return res.json();
+  return staffPortalJsonRequest(
+    "logWhatsAppOpened",
+    "/api/whatsapp/log-opened",
+    {
+      method: "POST",
+      headers: portalAuthHeaders(userId, username),
+      body: JSON.stringify({ ...body, userId, username }),
+    },
+    "Failed to log WhatsApp action"
+  );
 }
 
 export async function fetchAdminWhatsAppLogs(userId: string, username: string) {

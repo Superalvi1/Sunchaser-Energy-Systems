@@ -7,14 +7,17 @@ import {
   addAdminProjectDeliveryItems,
   fetchStaffProjectPayments,
 } from "../services/api";
-import WhatsAppActionButton from "./WhatsAppActionButton";
+import WhatsAppModule from "./WhatsAppModule";
+import { resolveLeadPhoneFromLeads } from "../lib/whatsapp";
+import { Lead } from "../types";
 import { PLANNED_ITEM_CATEGORIES, SYSTEM_TYPES, PROJECT_TYPES } from "../lib/projectDelivery";
 
 interface ProjectDeliveryStaffProps {
   staffUser: User;
+  leads?: Lead[];
 }
 
-export default function ProjectDeliveryStaff({ staffUser }: ProjectDeliveryStaffProps) {
+export default function ProjectDeliveryStaff({ staffUser, leads = [] }: ProjectDeliveryStaffProps) {
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
@@ -190,24 +193,19 @@ export default function ProjectDeliveryStaff({ staffUser }: ProjectDeliveryStaff
                     {(fin.balanceRemaining || 0).toLocaleString()} · {fin.paymentStatus}
                   </p>
                 )}
-                <div className="flex flex-wrap gap-2">
-                  <WhatsAppActionButton
-                    staffUser={staffUser}
-                    phone="923001234567"
-                    messageType="installation_scheduled"
-                    vars={{ projectTitle: d.projectTitle, date: d.expectedInstallationDate }}
-                    customerId={d.customerId}
-                    projectDeliveryId={d.id}
-                  />
-                  <WhatsAppActionButton
-                    staffUser={staffUser}
-                    phone="923001234567"
-                    messageType="payment_balance_reminder"
-                    vars={{ balance: fin?.balanceRemaining ?? 0 }}
-                    customerId={d.customerId}
-                    projectDeliveryId={d.id}
-                  />
-                </div>
+                <WhatsAppModule
+                  staffUser={staffUser}
+                  preset="project"
+                  phone={resolveLeadPhoneFromLeads(leads, { customerId: d.customerId })}
+                  customerId={d.customerId}
+                  projectDeliveryId={d.id}
+                  templateVars={{
+                    projectTitle: d.projectTitle,
+                    date: d.expectedInstallationDate,
+                    balance: fin?.balanceRemaining ?? 0,
+                  }}
+                  compact
+                />
               </li>
             );
           })}

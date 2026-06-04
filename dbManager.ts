@@ -85,8 +85,9 @@ let isConfigured = false;
 
 /** Map legacy Supabase role values to production app roles (until DB constraint includes new roles). */
 const PRODUCTION_APP_ROLE_BY_USERNAME: Record<string, string> = {
-  raza: "Technical CEO",
-  sales: "Sales Advisor",
+  raza: "Director",
+  sales: "Sales Executive",
+  allauddin: "Super Admin",
 };
 
 export function resolveAppUserRole(username: string, dbRole: string): string {
@@ -94,8 +95,9 @@ export function resolveAppUserRole(username: string, dbRole: string): string {
 }
 
 export function toSupabaseStorageRole(role: string): string {
-  if (role === "Technical CEO") return "Sales Manager";
+  if (role === "Technical CEO" || role === "Director") return "Sales Manager";
   if (role === "Sales Advisor") return "Sales Executive";
+  if (role === "Accounts Manager") return "Admin";
   return role;
 }
 

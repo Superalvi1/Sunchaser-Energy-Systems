@@ -14,6 +14,7 @@ import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
 import AfterSalesStaffTools from "./AfterSalesStaffTools";
 import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
+import WhatsAppModule from "./WhatsAppModule";
 import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
 
 interface SalesTeamAppProps {
@@ -2287,7 +2288,25 @@ export default function SalesTeamApp({
                   </div>
                 </div>
 
-                <div className="flex gap-2 self-start md:self-center">
+                <div className="flex flex-col gap-3 self-start md:self-end w-full md:max-w-md">
+                <WhatsAppModule
+                  staffUser={staffUser}
+                  preset="quotation"
+                  phone={clientPhone || activeLead.phone}
+                  onPhoneChange={setClientPhone}
+                  onPhonePersist={async (p) => {
+                    setClientPhone(p);
+                    await onUpdateLead(activeLead.id, { phone: p });
+                  }}
+                  customerName={activeLead.name}
+                  leadId={activeLead.id}
+                  templateVars={{
+                    customerName: activeLead.name,
+                    amount: activeLead.quotes?.slice(-1)[0]?.totalCost,
+                  }}
+                  compact
+                />
+                <div className="flex gap-2 flex-wrap">
                   {AUTO_SIZER_QUOTE_CREATION_ENABLED && (
                   <button
                     type="button"
@@ -2318,6 +2337,7 @@ export default function SalesTeamApp({
                   >
                     <Download className="h-3.5 w-3.5" /> Download Saved Quote PDF
                   </button>
+                </div>
                 </div>
               </div>
 

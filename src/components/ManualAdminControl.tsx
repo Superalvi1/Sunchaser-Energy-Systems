@@ -5,10 +5,12 @@ import {
   Wrench, Layers, Settings2, Globe, Activity, FileSpreadsheet, 
   UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye
 } from "lucide-react";
-import { Lead, Ticket, InventoryItem, Product } from "../types";
+import { Lead, Ticket, InventoryItem, Product, User } from "../types";
 import { currencySymbol, API_BASE_URL } from "../services/api";
+import WhatsAppModule from "./WhatsAppModule";
 
 interface ManualAdminControlProps {
+  staffUser: User;
   leads: Lead[];
   tickets: Ticket[];
   inventory: InventoryItem[];
@@ -24,6 +26,7 @@ interface ManualAdminControlProps {
 }
 
 export default function ManualAdminControl({
+  staffUser,
   leads,
   tickets,
   inventory,
@@ -1082,6 +1085,25 @@ export default function ManualAdminControl({
                         <X className="h-4 w-4" />
                       </button>
                     </div>
+
+                    <WhatsAppModule
+                      staffUser={staffUser}
+                      preset="customer"
+                      phone={drilldownCust.phone}
+                      onPhonePersist={(p) => {
+                        const lead = leads.find((l) => l.id === drilldownCust.id);
+                        if (lead) {
+                          fetch(`${API_BASE_URL}/api/leads/${lead.id}`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ ...lead, phone: p }),
+                          }).then(() => onRefreshState());
+                        }
+                      }}
+                      customerName={drilldownCust.name}
+                      leadId={drilldownCust.id}
+                      customerId={`cust-${drilldownCust.id.replace(/^lead-/, "")}`}
+                    />
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-mono">
                       {/* Sub card A: Orders and projects tracker */}

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { DollarSign, Loader2, MessageCircle, Save } from "lucide-react";
-import { User } from "../types";
+import { Lead, User } from "../types";
+import { resolveLeadPhoneFromLeads } from "../lib/whatsapp";
+import WhatsAppModule from "./WhatsAppModule";
 import {
   fetchAdminFinanceSummary,
   fetchAdminFinanceProjects,
@@ -9,13 +11,12 @@ import {
   fetchAdminWhatsAppLogs,
 } from "../services/api";
 import { canViewProjectProfit } from "../lib/projectFinance";
-import WhatsAppActionButton from "./WhatsAppActionButton";
-
 interface ProjectFinanceStaffProps {
   staffUser: User;
+  leads?: Lead[];
 }
 
-export default function ProjectFinanceStaff({ staffUser }: ProjectFinanceStaffProps) {
+export default function ProjectFinanceStaff({ staffUser, leads = [] }: ProjectFinanceStaffProps) {
   const allowed = canViewProjectProfit(staffUser.role, staffUser.username);
   const [summary, setSummary] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
@@ -46,7 +47,7 @@ export default function ProjectFinanceStaff({ staffUser }: ProjectFinanceStaffPr
 
   useEffect(() => {
     load();
-  }, [staffUser.id, staffUser.username, staffUser.role]);
+  }, [staffUser.id, allowed]);
 
   const selected = projects.find((p) => p.id === selectedId);
 
@@ -246,16 +247,17 @@ export default function ProjectFinanceStaff({ staffUser }: ProjectFinanceStaffPr
                 Create
               </button>
             )}
-            <WhatsAppActionButton
+            <WhatsAppModule
               staffUser={staffUser}
-              phone="923001234567"
-              messageType="payment_balance_reminder"
-              vars={{
-                customerName: "Customer",
-                balance: selected?.balanceRemaining ?? draft.saleValue,
-              }}
+              preset="project"
+              phone={resolveLeadPhoneFromLeads(leads, { customerId: draft.customerId })}
               customerId={draft.customerId}
               projectDeliveryId={draft.projectDeliveryId}
+              templateVars={{
+                balance: selected?.balanceRemaining ?? draft.saleValue,
+                projectTitle: selected?.projectTitle,
+              }}
+              compact
             />
           </div>
         </div>

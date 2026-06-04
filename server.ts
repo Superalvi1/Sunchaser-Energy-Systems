@@ -92,6 +92,37 @@ import {
   listAdminWhatsAppLogs,
   ProjectFinanceDbError,
 } from "./projectFinanceDb.js";
+import {
+  authenticateUser,
+  registerUser,
+  verifyEmailToken,
+  requestPasswordReset,
+  resetPasswordWithToken,
+  listUsersForAdmin,
+  listPendingUsers,
+  approveUser,
+  rejectUser,
+  createUserByAdmin,
+  updateUserByAdmin,
+  UserAuthError,
+} from "./userAuthDb.js";
+import {
+  APP_ROLES,
+  ROLE_PERMISSIONS,
+  PERMISSION_LABELS,
+  SELF_REGISTER_ROLES,
+  ADMIN_ONLY_CREATE_ROLES,
+} from "./src/lib/roles.js";
+
+function getRolesMatrixPayload() {
+  return {
+    roles: APP_ROLES,
+    selfRegisterRoles: SELF_REGISTER_ROLES,
+    adminOnlyCreateRoles: ADMIN_ONLY_CREATE_ROLES,
+    permissions: ROLE_PERMISSIONS,
+    permissionLabels: PERMISSION_LABELS,
+  };
+}
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
@@ -422,7 +453,7 @@ async function triggerWhatsAppNotification(customerName: string, phone: string, 
 
 /* --- REST SYSTEM API GATEWAYS --- */
 
-// 1. Unified login endpoints
+// 1. Auth — login, register, verify, reset, admin user management
 app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
   const normalizedUsername = String(username || "").trim().toLowerCase();
@@ -432,60 +463,181 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(400).json({ error: "Username and password are required." });
   }
 
-  if (isSupabaseActive()) {
-    try {
-      const supabase = getSupabase()!;
-      const { data: users, error } = await supabase
-        .from("users")
-        .select("*")
-        .eq("username", normalizedUsername)
-        .eq("password", normalizedPassword);
-
-      if (error) throw error;
-
-      if (users && users.length > 0) {
-        const u = users[0];
-        const userObj = {
-          id: u.id,
-          username: u.username,
-          name: u.name,
-          email: u.email,
-          role: resolveAppUserRole(u.username, u.role),
-          customerId: u.customer_id || undefined,
-          onboardingCompleted: !!(u.onboarding_completed ?? u.onboardingCompleted),
-          onboardingCompletedAt: u.onboarding_completed_at || u.onboardingCompletedAt || undefined,
-        };
-        await appendActivityLog(u.id, u.name, u.role, "User Logged In", "Authorized access via Supabase PostgreSQL security clearance.");
-        return res.json({ success: true, user: userObj });
-      } else {
-        return res.status(401).json({ error: "Invalid credentials. Sunchaser identity rejected." });
-      }
-    } catch (err: any) {
-      console.error("[Supabase Login Error]:", err.message);
-      return res.status(500).json({ error: `Supabase database error: ${err.message}` });
+  try {
+    loadDb();
+    const user = await authenticateUser(normalizedUsername, normalizedPassword, db);
+    await appendActivityLog(
+      user.id,
+      user.name,
+      user.role,
+      "User Logged In",
+      `Role ${user.role} · status ${user.accountStatus}`
+    );
+    return res.json({ success: true, user });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) {
+      return res.status(err.statusCode).json({ error: err.message });
     }
+    console.error("[Login Error]:", err);
+    return res.status(500).json({ error: err.message || "Login failed." });
   }
+});
 
-  // Fallback to local DB (runs only if Supabase is NOT active)
-  const user = db.users.find(
-    (u: any) =>
-      String(u.username || "").trim().toLowerCase() === normalizedUsername &&
-      String(u.password) === normalizedPassword
-  );
-
-  if (!user) {
-    return res.status(401).json({ error: "Invalid credentials. Sunchaser identity rejected." });
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    loadDb();
+    const result = await registerUser(req.body || {}, db);
+    saveDb();
+    return res.status(201).json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
+});
 
-  const localUser = {
-    ...user,
-    role: resolveAppUserRole(user.username, user.role),
-    customerId: user.customerId || user.customer_id || undefined,
-    onboardingCompleted: !!(user.onboarding_completed ?? user.onboardingCompleted),
-    onboardingCompletedAt: user.onboarding_completed_at || user.onboardingCompletedAt || undefined,
+app.post("/api/auth/verify-email", async (req, res) => {
+  try {
+    loadDb();
+    const result = await verifyEmailToken(req.body?.token || req.query?.token, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/auth/verify-email", async (req, res) => {
+  try {
+    loadDb();
+    const result = await verifyEmailToken(String(req.query?.token || ""), db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    loadDb();
+    const result = await requestPasswordReset(String(req.body?.email || ""), db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    loadDb();
+    const result = await resetPasswordWithToken(
+      String(req.body?.token || ""),
+      String(req.body?.password || ""),
+      db
+    );
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+function readStaffAuth(req: express.Request) {
+  return {
+    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
   };
-  await appendActivityLog(user.id, user.name, user.role, "User Logged In", "Authorized access via local file persistence layout.");
-  res.json({ success: true, user: localUser });
+}
+
+app.get("/api/admin/users", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const users = await listUsersForAdmin(userId, username, db);
+    return res.json({ users });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/users/pending", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const users = await listPendingUsers(userId, username, db);
+    return res.json({ users });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const user = await createUserByAdmin(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json({ user });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/users/:id", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const user = await updateUserByAdmin(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json({ user });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users/:id/approve", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const result = await approveUser(userId, username, req.params.id, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users/:id/reject", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const result = await rejectUser(
+      userId,
+      username,
+      req.params.id,
+      String(req.body?.reason || ""),
+      db
+    );
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/auth/roles-matrix", (_req, res) => {
+  return res.json(getRolesMatrixPayload());
 });
 
 async function handleCustomerPortalMe(req: any, res: any) {

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { 
   Sun, Users, Wrench, Bot, Shield, FileText, UserCircle, 
-  Loader2, Inbox, RefreshCw, LogOut, Lock, Key, ClipboardList, Send, FileSpreadsheet, Download
+  Loader2, Inbox, RefreshCw, LogOut, ClipboardList, Send, FileSpreadsheet, Download
 } from "lucide-react";
+import AuthHub from "./components/AuthHub";
 import { AppState, UserRole, User } from "./types";
 import {
   fetchAppState,
@@ -16,7 +17,6 @@ import {
   createTicket,
   replyToTicket,
   resolveTicket,
-  loginUser,
   updateProjectStage,
   updateNetMetering,
   payMilestone,
@@ -30,7 +30,7 @@ import {
   fetchOnboardingMe,
   completeOnboarding,
 } from "./services/api";
-import { CONNECTION_ERROR_MESSAGE, LOGIN_UNABLE_CONNECT_MESSAGE } from "./lib/startupFetch";
+import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
 import { isNativeApp } from "./lib/appPlatform";
 
 declare const __GIT_COMMIT_HASH__: string;
@@ -62,10 +62,7 @@ export default function App() {
   
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginLoading, setLoginLoading] = useState(false);
+  const [cachedUsername, setCachedUsername] = useState("");
 
   // Active workspace navigation
   const [activeTab, setActiveTab] = useState<string>("Overview");
@@ -186,7 +183,7 @@ export default function App() {
 
     if (isNativeApp()) {
       // Android/iOS: never auto-sync /api/state — show login until explicit sign-in
-      if (parsed?.username) setUsername(parsed.username);
+      if (parsed?.username) setCachedUsername(parsed.username);
       setLoading(false);
       return;
     }
@@ -209,7 +206,9 @@ export default function App() {
         setActiveTab("Field Portal");
       } else if (currentUser.role === "Sales Executive" || currentUser.role === "Sales Advisor") {
         setActiveTab("Sales Advisor");
-      } else if (currentUser.role === "Technical CEO") {
+      } else if (currentUser.role === "Technical CEO" || currentUser.role === "Director") {
+        setActiveTab("Admin Dashboard");
+      } else if (currentUser.role === "Admin" || currentUser.role === "Accounts Manager") {
         setActiveTab("Admin Dashboard");
       } else if (currentUser.role === "Sales Manager") {
         setActiveTab("CRM Database");
@@ -221,37 +220,11 @@ export default function App() {
 
   /* --- AUTH HANDLERS --- */
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username || !password) {
-      setLoginError("Please enter both username and password.");
-      return;
-    }
-    
-    setLoginLoading(true);
-    setLoginError(null);
-    try {
-      const res = await loginUser({ username, password });
-      if (!res.success) {
-        setLoginError("Login Authorization Rejected.");
-        return;
-      }
-      setCurrentUser(res.user);
-      localStorage.setItem("sunchaser_user", JSON.stringify(res.user));
-      try {
-        await loadSessionForUser(res.user);
-      } catch (sessionErr: any) {
-        console.error("Post-login session load failed:", sessionErr);
-        setLoginError(sessionErr.message || CONNECTION_ERROR_MESSAGE);
-        return;
-      }
-      await refreshOnboardingGate(res.user);
-    } catch (err: any) {
-      console.error("Login submit failed:", err);
-      setLoginError(err.message || LOGIN_UNABLE_CONNECT_MESSAGE);
-    } finally {
-      setLoginLoading(false);
-    }
+  const handleAuthLoginSuccess = async (user: User) => {
+    setCurrentUser(user);
+    localStorage.setItem("sunchaser_user", JSON.stringify(user));
+    await loadSessionForUser(user);
+    await refreshOnboardingGate(user);
   };
 
   const handleLogout = () => {
@@ -449,12 +422,20 @@ export default function App() {
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot }
         ];
       case "Technical CEO":
+      case "Director":
         return [
           { id: "Admin Dashboard", label: "Executive Dashboard", icon: Shield },
           { id: "CRM Database", label: "CRM Database", icon: Users },
           { id: "Sales Advisor", label: "Sales Advisor", icon: FileText },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
           { id: "Activity Telemetry", label: "Activities & SMS Logs", icon: ClipboardList }
+        ];
+      case "Admin":
+      case "Accounts Manager":
+        return [
+          { id: "Admin Dashboard", label: "Admin Dashboard", icon: Shield },
+          { id: "CRM Database", label: "CRM Database", icon: Users },
+          { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
         ];
       case "Survey Engineer":
       case "Installation Team":
@@ -636,76 +617,7 @@ export default function App() {
             <span className="text-sm font-semibold text-slate-400 font-mono">Loading your workspace…</span>
           </div>
         ) : !currentUser ? (
-          /* ---------------- AUTHENTICATION HUB PANEL ---------------- */
-          <div className="max-w-4xl mx-auto space-y-8 py-6 fade-in-entry">
-            <div className="text-center space-y-2">
-              <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold">
-                ERP CONTROL NODE ACCESS GATES
-              </span>
-              <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight font-sans text-white">
-                Solar Business Login Hub
-              </h2>
-              <p className="text-slate-400 text-sm max-w-lg mx-auto">
-                Secure access gateway for Sunchaser Energy Systems administrators, engineering surveyors, sales reps, and customer accounts.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 max-w-md gap-8 items-stretch pt-4 mx-auto">
-              <div className="w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Lock className="text-amber-500 h-5 w-5" />
-                    <h3 className="text-lg font-bold">Sign In Secures</h3>
-                  </div>
-                  <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs font-mono">
-                    <div className="space-y-1">
-                      <label className="text-slate-400 block font-semibold">Username ID</label>
-                      <input
-                        type="text"
-                        placeholder="Enter your username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-amber-500 text-sm font-sans"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-slate-400 block font-semibold">Key Password</label>
-                      <input
-                        type="password"
-                        placeholder="Enter password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-amber-500 text-sm"
-                      />
-                    </div>
-                    {loginError && (
-                      <p className="text-red-400 text-center font-semibold text-[11px] pt-1 leading-snug">{loginError}</p>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={loginLoading}
-                      className="w-full bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-extrabold text-sm py-3 px-4 rounded-xl transition cursor-pointer font-sans shadow shadow-amber-500/20 active:translate-y-px flex items-center justify-center gap-2"
-                    >
-                      {loginLoading ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin text-slate-950" />
-                          <span>Connecting to Sunchaser...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Key className="h-4 w-4" />
-                          <span>Enter Command Console</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
-                <div className="pt-4 border-t border-slate-800/70 text-[10px] text-slate-500 leading-relaxed font-mono">
-                   * Encryption Hash: SHA-256 AES Secures
-                </div>
-              </div>
-            </div>
-          </div>
+          <AuthHub onLoginSuccess={handleAuthLoginSuccess} initialUsername={cachedUsername} />
         ) : currentUser && sessionSyncError && needsCrmAppState(currentUser.role) && !appState ? (
           connectionRetryPanel
         ) : appState ? (
@@ -777,8 +689,9 @@ export default function App() {
               />
             )}
 
-            {activeTab === "CRM Database" && (
+            {activeTab === "CRM Database" && currentUser && (
               <CRMApp
+                staffUser={currentUser}
                 leads={appState.leads}
                 onUpdateLead={handleUpdateLead}
                 onAddLead={handleAddLead}

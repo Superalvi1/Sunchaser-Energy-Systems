@@ -3,10 +3,12 @@ import {
   Users, Search, Filter, Mail, Phone, Calendar, ArrowRightLeft, 
   Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox
 } from "lucide-react";
-import { Lead } from "../types";
+import { Lead, User } from "../types";
 import { runAiLeadScoring, currencySymbol } from "../services/api";
+import WhatsAppModule from "./WhatsAppModule";
 
 interface CRMAppProps {
+  staffUser: User;
   leads: Lead[];
   onUpdateLead: (id: string, updatedData: any) => void;
   onAddLead: (data: any) => void;
@@ -14,6 +16,7 @@ interface CRMAppProps {
 }
 
 export default function CRMApp({
+  staffUser,
   leads,
   onUpdateLead,
   onAddLead,
@@ -425,6 +428,22 @@ export default function CRMApp({
                         &ldquo;{lead.notes}&rdquo;
                       </p>
                     )}
+
+                    <WhatsAppModule
+                      staffUser={staffUser}
+                      preset="lead"
+                      phone={lead.phone}
+                      onPhonePersist={(p) => onUpdateLead(lead.id, { phone: p })}
+                      customerName={lead.name}
+                      leadId={lead.id}
+                      customerId={`cust-${lead.id.replace(/^lead-/, "")}`}
+                      templateVars={{
+                        customerName: lead.name,
+                        amount: lead.quotes?.[0]?.totalCost,
+                        balance: lead.quotes?.[0]?.totalCost,
+                      }}
+                      compact
+                    />
 
                     {/* Standard Action items bar */}
                     <div className="flex flex-wrap justify-between items-center gap-3 pt-2.5 border-t border-slate-800/50">

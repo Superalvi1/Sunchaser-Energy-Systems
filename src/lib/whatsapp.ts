@@ -1,9 +1,13 @@
+import type { Lead } from "../types";
+
 export const WHATSAPP_MESSAGE_TYPES = [
+  "open_chat",
   "quotation_sent",
   "advance_payment_reminder",
   "installation_scheduled",
   "technician_assigned",
   "service_ticket_received",
+  "support_ticket_update",
   "warranty_claim_received",
   "payment_balance_reminder",
   "care_plan_renewal_reminder",
@@ -19,6 +23,8 @@ export type WhatsAppTemplateVars = {
   date?: string;
   technicianName?: string;
   ticketId?: string;
+  ticketSubject?: string;
+  ticketStatus?: string;
   planName?: string;
   companyName?: string;
 };
@@ -38,6 +44,8 @@ export function buildWhatsAppMessageBody(
   const company = vars.companyName || DEFAULT_COMPANY;
   const name = vars.customerName || "Customer";
   switch (messageType) {
+    case "open_chat":
+      return `Hello ${name}, this is ${company}. How can we help you today?`;
     case "quotation_sent":
       return `Hello ${name}, your solar quotation from ${company} is ready. Please review and let us know if you have any questions.`;
     case "advance_payment_reminder":
@@ -48,6 +56,8 @@ export function buildWhatsAppMessageBody(
       return `Hello ${name}, technician ${vars.technicianName || "our team"} has been assigned to your project${vars.projectTitle ? ` (${vars.projectTitle})` : ""}. — ${company}`;
     case "service_ticket_received":
       return `Hello ${name}, we have received your service request${vars.ticketId ? ` (${vars.ticketId})` : ""}. Our team will update you shortly. — ${company}`;
+    case "support_ticket_update":
+      return `Hello ${name}, update on your support ticket${vars.ticketId ? ` ${vars.ticketId}` : ""}${vars.ticketSubject ? ` (${vars.ticketSubject})` : ""}: status is ${vars.ticketStatus || "In Review"}${vars.date ? `, visit scheduled ${vars.date}` : ""}${vars.technicianName ? `, technician ${vars.technicianName}` : ""}. — ${company}`;
     case "warranty_claim_received":
       return `Hello ${name}, your warranty claim has been received and is under review. — ${company}`;
     case "payment_balance_reminder":
@@ -75,12 +85,39 @@ export function buildWhatsAppDeepLink(phone: string, message: string): string {
 }
 
 export const WHATSAPP_TEMPLATE_LABELS: Record<WhatsAppMessageType, string> = {
-  quotation_sent: "Send quotation message",
-  advance_payment_reminder: "Send payment reminder",
-  installation_scheduled: "Send installation update",
+  open_chat: "Open WhatsApp",
+  quotation_sent: "Send quotation",
+  advance_payment_reminder: "Payment reminder",
+  installation_scheduled: "Installation schedule",
   technician_assigned: "Technician assigned",
-  service_ticket_received: "Send service update",
-  warranty_claim_received: "Warranty claim received",
-  payment_balance_reminder: "Payment balance reminder",
-  care_plan_renewal_reminder: "Care plan renewal reminder",
+  service_ticket_received: "Service request",
+  support_ticket_update: "Ticket update",
+  warranty_claim_received: "Warranty claim",
+  payment_balance_reminder: "Balance reminder",
+  care_plan_renewal_reminder: "Care renewal",
 };
+
+/** Resolve CRM lead phone from portal customer id or email (no schema change). */
+export function resolveLeadPhoneFromLeads(
+  leads: Lead[],
+  opts: { customerId?: string | null; email?: string | null; name?: string | null }
+): string {
+  const email = opts.email?.trim().toLowerCase();
+  if (email) {
+    const byEmail = leads.find((l) => l.email?.trim().toLowerCase() === email);
+    if (byEmail?.phone) return byEmail.phone;
+  }
+  const customerId = opts.customerId?.trim();
+  if (customerId) {
+    const byCust = leads.find(
+      (l) => `cust-${l.id.replace(/^lead-/, "")}` === customerId || l.id === customerId
+    );
+    if (byCust?.phone) return byCust.phone;
+  }
+  const name = opts.name?.trim();
+  if (name) {
+    const byName = leads.find((l) => l.name === name);
+    if (byName?.phone) return byName.phone;
+  }
+  return "";
+}

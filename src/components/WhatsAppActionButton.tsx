@@ -19,6 +19,7 @@ interface WhatsAppActionButtonProps {
   customerId?: string;
   leadId?: string;
   projectDeliveryId?: string;
+  supportTicketId?: string;
   className?: string;
 }
 
@@ -31,6 +32,7 @@ export default function WhatsAppActionButton({
   customerId,
   leadId,
   projectDeliveryId,
+  supportTicketId,
   className = "",
 }: WhatsAppActionButtonProps) {
   const [busy, setBusy] = useState(false);
@@ -48,10 +50,11 @@ export default function WhatsAppActionButton({
         phone,
         messageType,
         messageBody,
-        vars,
+        vars: { ...vars, ticketId: vars.ticketId || supportTicketId },
         customerId,
         leadId,
         projectDeliveryId,
+        supportTicketId,
       });
     } catch {
       /* still open WhatsApp even if log fails */

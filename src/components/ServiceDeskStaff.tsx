@@ -7,12 +7,16 @@ import {
   SERVICE_STATUSES,
   type ServiceRequestRecord,
 } from "../lib/clientPortalService";
+import { resolveLeadPhoneFromLeads } from "../lib/whatsapp";
+import WhatsAppModule from "./WhatsAppModule";
+import { Lead } from "../types";
 
 interface ServiceDeskStaffProps {
   staffUser: User;
+  leads?: Lead[];
 }
 
-export default function ServiceDeskStaff({ staffUser }: ServiceDeskStaffProps) {
+export default function ServiceDeskStaff({ staffUser, leads = [] }: ServiceDeskStaffProps) {
   const [requests, setRequests] = useState<ServiceRequestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<ServiceRequestRecord | null>(null);
@@ -192,6 +196,24 @@ export default function ServiceDeskStaff({ staffUser }: ServiceDeskStaffProps) {
               <p className="text-[10px] text-slate-600">
                 Types: {SERVICE_TYPES.join(", ")}
               </p>
+              <WhatsAppModule
+                staffUser={staffUser}
+                preset="project"
+                phone={resolveLeadPhoneFromLeads(leads, { customerId: selected.customerId })}
+                customerId={selected.customerId}
+                templateVars={{
+                  customerName: selected.customerId,
+                  date: scheduledVisit,
+                  technicianName: technician,
+                  ticketId: selected.requestNumber,
+                }}
+                actions={[
+                  "open_chat",
+                  "service_ticket_received",
+                  "installation_scheduled",
+                  "payment_balance_reminder",
+                ]}
+              />
               {msg && <p className="text-xs text-amber-400">{msg}</p>}
               <button
                 type="button"

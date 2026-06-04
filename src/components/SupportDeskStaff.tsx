@@ -8,12 +8,16 @@ import {
   SUPPORT_STATUSES,
   type SupportTicketRecord,
 } from "../lib/clientPortalSupport";
+import { resolveLeadPhoneFromLeads } from "../lib/whatsapp";
+import WhatsAppModule from "./WhatsAppModule";
+import { Lead } from "../types";
 
 interface SupportDeskStaffProps {
   staffUser: User;
+  leads?: Lead[];
 }
 
-export default function SupportDeskStaff({ staffUser }: SupportDeskStaffProps) {
+export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskStaffProps) {
   const [tickets, setTickets] = useState<SupportTicketRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<SupportTicketRecord | null>(null);
@@ -213,6 +217,25 @@ export default function SupportDeskStaff({ staffUser }: SupportDeskStaffProps) {
                 onChange={(e) => setResolution(e.target.value)}
                 rows={2}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
+              />
+              <WhatsAppModule
+                staffUser={staffUser}
+                preset="support_ticket"
+                phone={resolveLeadPhoneFromLeads(leads, {
+                  customerId: selected.customerId,
+                  email: selected.email,
+                  name: selected.customerName,
+                })}
+                customerId={selected.customerId || undefined}
+                customerName={selected.customerName}
+                templateVars={{
+                  customerName: selected.customerName,
+                  ticketId: selected.ticketNumber,
+                  ticketSubject: selected.subject,
+                  ticketStatus: status,
+                  date: scheduledVisit,
+                  technicianName: technician,
+                }}
               />
               <button
                 type="button"

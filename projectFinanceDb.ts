@@ -434,9 +434,13 @@ export async function logWhatsAppMessageOpened(
   const phone = String(body.phone || "");
   if (!phone) throw new ProjectFinanceDbError("phone is required.");
 
-  const messageBody =
+  let messageBody =
     String(body.messageBody || body.message_body || "") ||
     buildWhatsAppMessageBody(messageType as WhatsAppMessageType, vars as any);
+  const ticketRef = body.supportTicketId ?? body.support_ticket_id;
+  if (ticketRef) {
+    messageBody = `[ticket:${ticketRef}] ${messageBody}`;
+  }
 
   const id = `wa-${Date.now()}`;
   const row = {
