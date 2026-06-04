@@ -4,6 +4,7 @@ import {
   LOGIN_FETCH_TIMEOUT_MS,
   LOGIN_UNABLE_CONNECT_MESSAGE,
   STARTUP_FETCH_TIMEOUT_MS,
+  isNetworkFetchError,
   logApiFailure,
   readApiErrorBody,
   toConnectionError,
@@ -20,6 +21,58 @@ console.log("API URL:", API_BASE_URL);
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
   return fetch(url, init);
+}
+
+/** Staff portal PATCH/POST with request/response logging and backend error text. */
+async function staffPortalJsonRequest<T>(
+  label: string,
+  path: string,
+  init: RequestInit,
+  fallbackError: string
+): Promise<T> {
+  const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
+  const method = init.method || "GET";
+  let payloadLog: unknown;
+  if (typeof init.body === "string") {
+    try {
+      payloadLog = JSON.parse(init.body);
+    } catch {
+      payloadLog = init.body;
+    }
+  }
+  console.log(`[API] ${label} request`, { url, method, payload: payloadLog });
+
+  let res: Response;
+  try {
+    res = await apiFetch(path, init);
+  } catch (err) {
+    console.error(`[API] ${label} network error`, err);
+    if (isNetworkFetchError(err)) {
+      throw new Error(
+        `${fallbackError}: ${err instanceof Error ? err.message : "network error"}`
+      );
+    }
+    throw err;
+  }
+
+  const text = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    parsed = { raw: text.slice(0, 500) };
+  }
+  console.log(`[API] ${label} response`, { status: res.status, body: parsed });
+
+  if (!res.ok) {
+    const backendError =
+      (typeof parsed.error === "string" && parsed.error) ||
+      (typeof parsed.message === "string" && parsed.message) ||
+      `${fallbackError} (HTTP ${res.status})`;
+    logApiFailure(label, url, res.status, parsed);
+    throw new Error(backendError);
+  }
+  return parsed as T;
 }
 
 export async function fetchWithTimeout(
@@ -292,16 +345,18 @@ export async function updateAdminSupportTicket(
   ticketId: string,
   body: Record<string, unknown>
 ) {
-  const res = await apiFetch(`/api/admin/support-tickets/${encodeURIComponent(ticketId)}`, {
-    method: "PATCH",
-    headers: portalAuthHeaders(staffUserId, staffUsername),
-    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to update ticket.");
-  }
-  return res.json();
+  const path = `/api/admin/support-tickets/${encodeURIComponent(ticketId)}/update`;
+  const payload = { userId: staffUserId, username: staffUsername, ...body };
+  return staffPortalJsonRequest(
+    "updateAdminSupportTicket",
+    path,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(staffUserId, staffUsername),
+      body: JSON.stringify(payload),
+    },
+    "Failed to update support ticket"
+  );
 }
 
 export async function fetchCustomerServicePortal(userId: string, username: string) {
@@ -375,16 +430,18 @@ export async function updateAdminServiceRequest(
   requestId: string,
   body: Record<string, unknown>
 ) {
-  const res = await apiFetch(`/api/admin/service-requests/${encodeURIComponent(requestId)}`, {
-    method: "PATCH",
-    headers: portalAuthHeaders(staffUserId, staffUsername),
-    body: JSON.stringify({ userId: staffUserId, username: staffUsername, ...body }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to update service request.");
-  }
-  return res.json();
+  const path = `/api/admin/service-requests/${encodeURIComponent(requestId)}/update`;
+  const payload = { userId: staffUserId, username: staffUsername, ...body };
+  return staffPortalJsonRequest(
+    "updateAdminServiceRequest",
+    path,
+    {
+      method: "POST",
+      headers: portalAuthHeaders(staffUserId, staffUsername),
+      body: JSON.stringify(payload),
+    },
+    "Failed to update service request"
+  );
 }
 
 export async function fetchCustomerSavings(userId: string, username: string) {

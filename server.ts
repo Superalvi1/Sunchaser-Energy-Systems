@@ -123,7 +123,7 @@ app.use((req, res, next) => {
   } else {
     res.setHeader("Access-Control-Allow-Origin", "*");
   }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Sunchaser-User-Id, X-Sunchaser-Username"
@@ -981,6 +981,20 @@ app.get("/api/admin/service-requests", async (req, res) => {
 });
 
 app.patch("/api/admin/service-requests/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const request = await updateAdminServiceRequest(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(request);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/service-requests/:id/update", async (req, res) => {
   const { userId, username } = readPortalAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
   try {
