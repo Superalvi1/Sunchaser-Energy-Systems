@@ -6175,31 +6175,56 @@ setInterval(async () => {
 
 // Simple health check and status endpoints for separated deployments
 app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
+  res.json({ status: "ok", service: "sunchaser-crm" });
 });
 
-app.get("/", (req, res) => {
-  res.send("Sunchaser CRM backend running");
-});
+/* --- VITE / PRODUCTION SPA --- */
+function shouldServeBuiltFrontend() {
+  if (process.env.NODE_ENV === "production") return true;
+  const indexPath = path.join(process.cwd(), "dist", "index.html");
+  return fs.existsSync(indexPath);
+}
 
-/* --- VITE SERVICE INITIALIZATION --- */
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  if (!shouldServeBuiltFrontend()) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: "spa"
+      appType: "spa",
     });
     app.use(vite.middlewares);
+    console.log("[Sunchaser] Vite dev middleware — SPA at /");
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    const indexPath = path.join(distPath, "index.html");
+    if (!fs.existsSync(indexPath)) {
+      console.error("[Sunchaser] dist/index.html missing — run npm run build");
+    }
+    app.use(
+      express.static(distPath, {
+        index: "index.html",
+        setHeaders(res, filePath) {
+          if (filePath.endsWith("server.cjs") || filePath.endsWith(".map")) {
+            res.setHeader("Cache-Control", "no-store");
+          }
+        },
+      })
+    );
+    app.get("*", (req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      if (
+        req.path.startsWith("/api") ||
+        req.path === "/health" ||
+        req.path.startsWith("/uploads")
+      ) {
+        return next();
+      }
+      res.sendFile(indexPath, (err) => (err ? next(err) : undefined));
     });
+    console.log("[Sunchaser] Serving React SPA from dist/ at /");
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Sunchaser Energy ERP] backend active. Intress routing Port ${PORT}`);
+    console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
   });
 }
 

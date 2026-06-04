@@ -62,10 +62,10 @@ Choose either Render or Railway to host the backend Express server.
 4.  **Deploy**: Railway will deploy the service automatically. Under the service's **Settings** tab, click **Generate Domain** or set a custom domain, and copy the resulting backend URL.
 
 ### Backend Verification & Health Checks
-Once the service is active, verify that the backend is responding using the following endpoints:
-*   **Root Status Check**:
-    *   **URL**: `GET /`
-    *   **Expected Response**: `"Sunchaser CRM backend running"` (confirms routing is active)
+Once the service is active, verify deployment using:
+*   **Web app (React CRM)**:
+    *   **URL**: `GET /` (e.g. `https://sunchaser-energy-systems.onrender.com/`)
+    *   **Expected Response**: Sunchaser login hub HTML (same URL serves API + SPA)
 *   **Deployment Health Endpoint**:
     *   **URL**: `GET /health`
     *   **Expected Response**: `{ "status": "ok" }` (used by Render/Railway for automated health monitoring)
