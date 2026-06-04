@@ -3,6 +3,9 @@ import { DEFAULT_BRANDING } from "./branding";
 
 /** Official uploaded Sunchaser logo (PNG in /public). */
 export const OFFICIAL_SUNCHASER_LOGO = "/sunchaser-logo.png";
+export const OFFICIAL_INVOICE_LOGO = "/sunchaser-logo.png";
+export const OFFICIAL_CEO_SIGNATURE = "/sunchaser-ceo-signature.png";
+export const OFFICIAL_BANK_ACCOUNTS_IMAGE = "/sunchaser-bank-accounts.png";
 
 const LEGACY_LOGO_PATHS = ["/sunchaser-logo.svg", "", "icon-192.png", "icon-512.png"];
 
@@ -18,7 +21,11 @@ export function withOfficialBranding(raw?: Partial<CompanyBranding> | null): Com
   return {
     ...merged,
     logoUrl: logo,
+    invoiceLogoUrl: resolveOfficialLogoUrl(merged.invoiceLogoUrl || merged.logoUrl),
     appIconUrl: resolveOfficialLogoUrl(merged.appIconUrl),
     splashImageUrl: resolveOfficialLogoUrl(merged.splashImageUrl),
+    signatureUrl: String(merged.signatureUrl || "").trim() || OFFICIAL_CEO_SIGNATURE,
+    bankAccountsImageUrl:
+      String(merged.bankAccountsImageUrl || "").trim() || OFFICIAL_BANK_ACCOUNTS_IMAGE,
   };
 }

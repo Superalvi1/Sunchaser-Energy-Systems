@@ -65,7 +65,10 @@ export default function BrandingSettings({ staffUser }: { staffUser: User }) {
           "googleReviewUrl",
           "Google Review URL (customer portal — shown when project is complete)"
         )}
-        {field("logoUrl", "Logo URL (login, sidebar, PDF)")}
+        {field("logoUrl", "Logo URL (login, sidebar)")}
+        {field("invoiceLogoUrl", "Invoice gold logo URL (Premium Invoice v3)")}
+        {field("signatureUrl", "CEO signature image URL (invoice footer)")}
+        {field("bankAccountsImageUrl", "Bank accounts image URL (invoice page 2)")}
         {field("appIconUrl", "App icon URL (PWA / Android)")}
         {field("splashImageUrl", "Splash screen image URL")}
         {field("primaryColor", "Primary color", "color")}

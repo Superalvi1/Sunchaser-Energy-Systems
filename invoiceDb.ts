@@ -17,6 +17,12 @@ import {
   type InvoiceRecord,
 } from "./src/lib/invoices.ts";
 import { uploadFileToCustomerStorage, assignCustomerDocument } from "./customerProfileDb.js";
+import { amountInWordsPkr } from "./src/lib/amountInWords.ts";
+import {
+  decodeInvoiceMeta,
+  encodeInvoiceNotes,
+  type InvoicePdfMeta,
+} from "./src/lib/invoicePdfMeta.ts";
 
 export class InvoiceDbError extends Error {
   statusCode: number;
@@ -36,7 +42,14 @@ function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] 
     id: row.id,
     invoiceNumber: row.invoice_number || row.invoiceNumber,
     invoiceDate: row.invoice_date || row.invoiceDate,
+    invoiceTime: row.invoice_time || row.invoiceTime || null,
     dueDate: row.due_date || row.dueDate || null,
+    poNumber: row.po_number || row.poNumber || null,
+    poDate: row.po_date || row.poDate || null,
+    paymentTerms: row.payment_terms || row.paymentTerms || null,
+    paymentMode: row.payment_mode || row.paymentMode || null,
+    amountInWords: row.amount_in_words || row.amountInWords || null,
+    previousBalance: Number(row.previous_balance ?? row.previousBalance ?? 0),
     customerId: row.customer_id || row.customerId || null,
     customerName: row.customer_name || row.customerName,
     customerPhone: row.customer_phone || row.customerPhone || null,
@@ -68,6 +81,7 @@ function mapItemRow(row: any): InvoiceLineItem {
   return {
     id: row.id,
     sortOrder: row.sort_order ?? row.sortOrder,
+    itemName: row.item_name || row.itemName || row.description,
     description: row.description,
     qty: Number(row.qty ?? 1),
     unit: row.unit || "pcs",
@@ -259,11 +273,22 @@ export async function createAdminInvoice(
     body.paymentStatus as any
   );
 
+  const amountWords =
+    String(body.amountInWords || body.amount_in_words || "") ||
+    amountInWordsPkr(totals.grandTotal);
+
   const row = {
     id,
     invoice_number: invoiceNumber,
     invoice_date: body.invoiceDate || body.invoice_date || new Date().toISOString().slice(0, 10),
+    invoice_time: body.invoiceTime || body.invoice_time || null,
     due_date: body.dueDate || body.due_date || null,
+    po_number: body.poNumber || body.po_number || null,
+    po_date: body.poDate || body.po_date || null,
+    payment_terms: body.paymentTerms || body.payment_terms || null,
+    payment_mode: body.paymentMode || body.payment_mode || null,
+    amount_in_words: amountWords,
+    previous_balance: Number(body.previousBalance ?? body.previous_balance ?? 0),
     customer_id: body.customerId || body.customer_id || null,
     customer_name: String(body.customerName || body.customer_name || "Customer"),
     customer_phone: body.customerPhone || body.customer_phone || null,
@@ -279,7 +304,10 @@ export async function createAdminInvoice(
     paid_amount: paidAmount,
     balance_due: balanceDue,
     payment_status: paymentStatus,
-    notes: body.notes || null,
+    notes: encodeInvoiceNotes(
+      String(body.notes || ""),
+      (body.invoiceMeta as InvoicePdfMeta | undefined) || undefined
+    ),
     terms: body.terms || null,
     pdf_url: null,
     created_by: username,
@@ -292,7 +320,8 @@ export async function createAdminInvoice(
     id: it.id || `item-${Date.now()}-${idx}`,
     invoice_id: id,
     sort_order: idx,
-    description: it.description,
+    item_name: it.itemName || it.description,
+    description: it.description || it.itemName || "Item",
     qty: it.qty,
     unit: it.unit || "pcs",
     rate: it.rate,
@@ -329,7 +358,7 @@ export async function updateAdminInvoice(
   body: Record<string, unknown>,
   localDb?: Database
 ): Promise<InvoiceRecord> {
-  await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const existing = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
 
   const rawItems = body.items as InvoiceLineItem[] | undefined;
   let patch: Record<string, unknown> = {
@@ -343,7 +372,10 @@ export async function updateAdminInvoice(
       Number(body.discountAmount ?? body.discount_amount ?? 0),
       Number(body.invoiceTaxPercent ?? body.invoice_tax_percent ?? 0)
     );
-    const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
+    const paidAmount =
+      body.paidAmount !== undefined || body.paid_amount !== undefined
+        ? Number(body.paidAmount ?? body.paid_amount ?? 0)
+        : existing.paidAmount;
     const balanceDue = Math.max(0, totals.grandTotal - paidAmount);
     patch = {
       ...patch,
@@ -361,11 +393,17 @@ export async function updateAdminInvoice(
       ),
     };
 
+    const amountWords =
+      String(body.amountInWords || body.amount_in_words || "") ||
+      amountInWordsPkr(totals.grandTotal);
+    patch.amount_in_words = amountWords;
+
     const itemRows = totals.items.map((it, idx) => ({
       id: it.id || `item-${Date.now()}-${idx}`,
       invoice_id: invoiceId,
       sort_order: idx,
-      description: it.description,
+      item_name: it.itemName || it.description,
+      description: it.description || it.itemName || "Item",
       qty: it.qty,
       unit: it.unit || "pcs",
       rate: it.rate,
@@ -388,9 +426,29 @@ export async function updateAdminInvoice(
     }
   }
 
+  if (body.paidAmount !== undefined || body.paid_amount !== undefined) {
+    const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
+    const balanceDue = Math.max(0, Math.round((existing.grandTotal - paidAmount) * 100) / 100);
+    patch.paid_amount = paidAmount;
+    patch.balance_due = balanceDue;
+    patch.payment_status = derivePaymentStatus(
+      existing.grandTotal,
+      paidAmount,
+      String(body.dueDate || body.due_date || existing.dueDate || "") || null,
+      body.paymentStatus as any
+    );
+  }
+
   const scalarFields: [string, string][] = [
     ["invoice_date", "invoiceDate"],
+    ["invoice_time", "invoiceTime"],
     ["due_date", "dueDate"],
+    ["po_number", "poNumber"],
+    ["po_date", "poDate"],
+    ["payment_terms", "paymentTerms"],
+    ["payment_mode", "paymentMode"],
+    ["amount_in_words", "amountInWords"],
+    ["previous_balance", "previousBalance"],
     ["customer_id", "customerId"],
     ["customer_name", "customerName"],
     ["customer_phone", "customerPhone"],
@@ -407,6 +465,19 @@ export async function updateAdminInvoice(
     if (body[bodyKey] !== undefined || body[dbKey] !== undefined) {
       patch[dbKey] = body[bodyKey] ?? body[dbKey];
     }
+  }
+
+  if (body.invoiceMeta !== undefined || body.notes !== undefined) {
+    const meta =
+      body.invoiceMeta !== undefined
+        ? (body.invoiceMeta as InvoicePdfMeta)
+        : decodeInvoiceMeta(existing.notes);
+    const userNotes =
+      body.notes !== undefined ? String(body.notes) : undefined;
+    patch.notes = encodeInvoiceNotes(
+      userNotes !== undefined ? userNotes : existing.notes || "",
+      meta || undefined
+    );
   }
 
   if (isSupabaseActive()) {
@@ -517,9 +588,10 @@ export async function fetchCustomerPortalInvoicesMe(
           mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb))
         );
       }
-      return { invoices: out };
+      const payableBalance = out.reduce((s, inv) => s + Number(inv.balanceDue || 0), 0);
+      return { invoices: out, payableBalance: Math.round(payableBalance * 100) / 100 };
     } catch (err: any) {
-      if (isInvoiceTableMissing(err)) return { invoices: [] };
+      if (isInvoiceTableMissing(err)) return { invoices: [], payableBalance: 0 };
       throw err;
     }
   }
@@ -531,7 +603,8 @@ export async function fetchCustomerPortalInvoicesMe(
   for (const row of rows) {
     out.push(mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb)));
   }
-  return { invoices: out };
+  const payableBalance = out.reduce((s, inv) => s + Number(inv.balanceDue || 0), 0);
+  return { invoices: out, payableBalance: Math.round(payableBalance * 100) / 100 };
 }
 
 export async function setInvoicePdfUrl(

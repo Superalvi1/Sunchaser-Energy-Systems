@@ -14,6 +14,10 @@ export type CompanyBranding = {
   terms: string;
   signatureUrl?: string;
   googleReviewUrl?: string;
+  /** Gold logo for premium invoices (defaults to official PNG). */
+  invoiceLogoUrl?: string;
+  /** Full-width bank accounts reference image for invoice page 2. */
+  bankAccountsImageUrl?: string;
 };
 
 export const DEFAULT_OFFICE_LOCATIONS = [
@@ -39,6 +43,9 @@ export const DEFAULT_BRANDING: CompanyBranding = {
   terms:
     "Payment is due by the due date. Bank transfer details are shown on the invoice. Thank you for choosing Sunchaser Energy Systems.",
   googleReviewUrl: "",
+  invoiceLogoUrl: "/sunchaser-logo.png",
+  bankAccountsImageUrl: "/sunchaser-bank-accounts.png",
+  signatureUrl: "/sunchaser-ceo-signature.png",
 };
 
 export function mergeBranding(raw?: Partial<CompanyBranding> | null): CompanyBranding {

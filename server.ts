@@ -147,6 +147,8 @@ import {
   InvoiceDbError,
 } from "./invoiceDb.js";
 import { compileInvoicePDFHtml } from "./invoicePdf.js";
+import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
+import { listPartyLedgers, getPartyLedgerDetail } from "./partyLedgerDb.js";
 import { getCompanyBranding, saveCompanyBranding } from "./brandingDb.js";
 import { mergeBranding } from "./src/lib/branding.js";
 
@@ -1932,6 +1934,38 @@ app.patch("/api/admin/branding", async (req, res) => {
   }
 });
 
+app.get("/api/admin/parties", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const parties = await listPartyLedgers(userId, username, role, db);
+    return res.json({ parties });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/parties/:partyKey", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await getPartyLedgerDetail(
+      userId,
+      username,
+      role,
+      decodeURIComponent(req.params.partyKey),
+      db
+    );
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/invoices", async (req, res) => {
   const { userId, username, role } = readStaffAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
@@ -2023,12 +2057,8 @@ app.get("/api/export/pdf/invoice/:id", async (req, res) => {
     } else {
       return res.status(400).json({ error: "Auth required." });
     }
-    const branding = mergeBranding(await getCompanyBranding(db));
-    const banks = (db.bankAccounts || []).filter((b: any) => b.isActive !== false && b.is_active !== false);
-    const html = compileInvoicePDFHtml(invoice, {
-      ...branding,
-      bankAccounts: banks,
-    });
+    const { invoice: inv, branding, options } = await buildInvoicePdfPayload(invoice, db);
+    const html = compileInvoicePDFHtml(inv, branding, options);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
