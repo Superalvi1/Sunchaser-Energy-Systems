@@ -13,6 +13,8 @@ import AfterSalesStaffTools from "./AfterSalesStaffTools";
 import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import EnergyMonitoringStaff from "./EnergyMonitoringStaff";
 import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
+import ProjectFinanceStaff from "./ProjectFinanceStaff";
+import { canViewProjectProfit } from "../lib/projectFinance";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -76,8 +78,10 @@ export default function AdminApp({
   staffUser
 }: AdminAppProps) {
   const [activeSegment, setActiveSegment] = useState<
-    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk' | 'asset-maintenance' | 'energy-monitoring' | 'project-delivery'
+    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk' | 'asset-maintenance' | 'energy-monitoring' | 'project-delivery' | 'project-finance'
   >('overview');
+
+  const showFinanceAdmin = canViewProjectProfit(staffUser.role, staffUser.username);
 
   // Procurement local form states
   const [vendor, setVendor] = useState("Canadian Solar Ltd");
@@ -342,6 +346,18 @@ export default function AdminApp({
         >
           <Truck className="w-4 h-4 inline mr-1" /> Project Delivery
         </button>
+        {showFinanceAdmin && (
+          <button
+            onClick={() => setActiveSegment('project-finance')}
+            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSegment === 'project-finance'
+                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
+                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
+            }`}
+          >
+            <DollarSign className="w-4 h-4 inline mr-1" /> Project Finance
+          </button>
+        )}
         <button
           onClick={() => setActiveSegment('client-portal')}
           className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
@@ -1693,6 +1709,9 @@ export default function AdminApp({
         {activeSegment === 'asset-maintenance' && <AssetMaintenanceLogStaff staffUser={staffUser} />}
         {activeSegment === 'energy-monitoring' && <EnergyMonitoringStaff staffUser={staffUser} />}
         {activeSegment === 'project-delivery' && <ProjectDeliveryStaff staffUser={staffUser} />}
+        {activeSegment === 'project-finance' && showFinanceAdmin && (
+          <ProjectFinanceStaff staffUser={staffUser} />
+        )}
         {activeSegment === 'client-portal' && (
           <>
             <ClientPortalStaffTools staffUser={staffUser} />

@@ -1266,6 +1266,133 @@ export async function fetchCustomerProjectDeliveryMe(userId: string, username: s
   return res.json();
 }
 
+export async function fetchAdminFinanceSummary(userId: string, username: string) {
+  const res = await apiFetch("/api/admin/finance/summary", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load finance summary.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminFinanceProjects(userId: string, username: string) {
+  const res = await apiFetch("/api/admin/finance/projects", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load finance projects.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminFinanceProjectById(
+  userId: string,
+  username: string,
+  id: string
+) {
+  const res = await apiFetch(`/api/admin/finance/projects/${encodeURIComponent(id)}`, {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load finance record.");
+  }
+  return res.json();
+}
+
+export async function createAdminFinanceProject(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/admin/finance/projects", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create finance record.");
+  }
+  return res.json();
+}
+
+export async function patchAdminFinanceProject(
+  userId: string,
+  username: string,
+  id: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch(`/api/admin/finance/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update finance record.");
+  }
+  return res.json();
+}
+
+export async function fetchStaffProjectPayments(
+  userId: string,
+  username: string,
+  projectDeliveryId: string
+) {
+  const res = await apiFetch(
+    `/api/staff/payments/projects/${encodeURIComponent(projectDeliveryId)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load project payments.");
+  }
+  return res.json();
+}
+
+export async function fetchCustomerPortalPaymentsMe(userId: string, username: string) {
+  const res = await apiFetch("/api/customer-portal/payments/me", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load payments.");
+  }
+  return res.json();
+}
+
+export async function logWhatsAppOpened(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>
+) {
+  const res = await apiFetch("/api/whatsapp/log-opened", {
+    method: "POST",
+    headers: portalAuthHeaders(userId, username),
+    body: JSON.stringify({ ...body, userId, username }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to log WhatsApp action.");
+  }
+  return res.json();
+}
+
+export async function fetchAdminWhatsAppLogs(userId: string, username: string) {
+  const res = await apiFetch("/api/admin/whatsapp/logs", {
+    headers: portalAuthHeaders(userId, username),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load WhatsApp logs.");
+  }
+  return res.json();
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {

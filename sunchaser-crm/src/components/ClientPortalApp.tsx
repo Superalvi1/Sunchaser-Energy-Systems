@@ -13,6 +13,7 @@ import {
   Heart,
   History,
   Activity,
+  Receipt,
 } from "lucide-react";
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
@@ -25,6 +26,7 @@ import ClientPortalSavings from "./ClientPortalSavings";
 import ClientPortalCare from "./ClientPortalCare";
 import ClientPortalServiceHistory from "./ClientPortalServiceHistory";
 import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
+import ClientPortalPayments from "./ClientPortalPayments";
 
 interface ClientPortalAppProps {
   user: User;
@@ -45,7 +47,8 @@ type PortalTab =
   | "history"
   | "savings"
   | "energy"
-  | "care";
+  | "care"
+  | "payments";
 
 export default function ClientPortalApp({
   user,
@@ -63,6 +66,7 @@ export default function ClientPortalApp({
   const tabs: { id: PortalTab; label: string; icon: React.ElementType }[] = [
     { id: "home", label: "Home", icon: Home },
     { id: "documents", label: "Documents", icon: FolderOpen },
+    { id: "payments", label: "Payments", icon: Receipt },
     { id: "warranty", label: "Warranty", icon: Shield },
     { id: "support", label: "Support", icon: Headphones },
     { id: "service", label: "Service", icon: Wrench },
@@ -183,6 +187,7 @@ export default function ClientPortalApp({
         )}
 
         {activeTab === "documents" && <ClientPortalDocuments user={user} />}
+        {activeTab === "payments" && <ClientPortalPayments user={user} />}
         {activeTab === "warranty" && <ClientPortalWarranties user={user} />}
         {activeTab === "support" && <ClientPortalSupport user={user} />}
         {activeTab === "service" && <ClientPortalService user={user} />}

@@ -198,6 +198,8 @@ export interface Database {
   projectInstalledEquipment?: any[];
   projectInstallationPhotos?: any[];
   projectDeliveryUpdates?: any[];
+  projectFinanceRecords?: any[];
+  whatsappMessageLogs?: any[];
 }
 
 export const initialSeed: Database = {

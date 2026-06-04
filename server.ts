@@ -80,6 +80,18 @@ import {
   fetchCustomerProjectDeliveryMe,
   ProjectDeliveryDbError,
 } from "./projectDeliveryDb.js";
+import {
+  fetchAdminFinanceSummary,
+  listAdminFinanceProjects,
+  getAdminFinanceProjectById,
+  createAdminFinanceProject,
+  patchAdminFinanceProject,
+  getStaffProjectPayments,
+  fetchCustomerPortalPaymentsMe,
+  logWhatsAppMessageOpened,
+  listAdminWhatsAppLogs,
+  ProjectFinanceDbError,
+} from "./projectFinanceDb.js";
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
@@ -1319,6 +1331,155 @@ app.get("/api/customer-portal/project-delivery/me", async (req, res) => {
     if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/api/admin/finance/summary", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await fetchAdminFinanceSummary(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/finance/projects", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const list = await listAdminFinanceProjects(userId, username, db);
+    return res.json(list);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/finance/projects/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const row = await getAdminFinanceProjectById(userId, username, req.params.id, db);
+    return res.json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectFinanceDbError) return res.status(404).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/finance/projects", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const row = await createAdminFinanceProject(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/finance/projects/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const row = await patchAdminFinanceProject(userId, username, req.params.id, req.body || {}, db);
+    saveDb();
+    return res.json(row);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectFinanceDbError) return res.status(404).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/staff/payments/projects/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await getStaffProjectPayments(userId, username, req.params.id, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/payments/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalPaymentsMe(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/whatsapp/log-opened", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const log = await logWhatsAppMessageOpened(userId, username, req.body || {}, db);
+    saveDb();
+    return res.status(201).json(log);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/whatsapp/logs", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const logs = await listAdminWhatsAppLogs(userId, username, db);
+    return res.json({ logs });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/diagnostics/phase11-tables", async (_req, res) => {
+  const supabase = getSupabase();
+  const active = isSupabaseActive();
+  const tables = ["project_finance_records", "whatsapp_message_logs"];
+  const probes: Record<string, any> = {};
+  if (!active || !supabase) {
+    return res.json({ supabaseActive: false, probes, schemaScript: "scripts/client-portal-phase11-schema.sql" });
+  }
+  for (const table of tables) {
+    const { data, error } = await supabase.from(table).select("id").limit(1);
+    probes[table] = error
+      ? { ok: false, message: error.message }
+      : { ok: true, sampleCount: data?.length ?? 0 };
+  }
+  const phase11Ready = tables.every((t) => probes[t]?.ok === true);
+  return res.json({
+    supabaseActive: true,
+    schemaScript: "scripts/client-portal-phase11-schema.sql",
+    phase11Ready,
+    probes,
+  });
 });
 
 app.get("/api/diagnostics/phase10-tables", async (_req, res) => {
