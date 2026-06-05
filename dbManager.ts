@@ -860,6 +860,13 @@ export function generateQuotationId(): string {
   return `q-${randomUUID()}`;
 }
 
+/** Legacy per-lead ids from database.json (q-1, q-2) collide globally in Supabase. */
+export function isLegacySequentialQuotationId(id: string): boolean {
+  return /^q-\d+$/.test(String(id || "").trim());
+}
+
+type TableFetchResult<T> = { data: T; tableAvailable: boolean };
+
 function isQuotationDuplicateKeyError(message?: string): boolean {
   return (
     !!message &&
@@ -879,6 +886,35 @@ async function quotationIdExistsInSupabase(
     .eq("id", id)
     .maybeSingle();
   return !error && !!data;
+}
+
+async function resolveQuotationIdForPersist(
+  supabase: SupabaseClient,
+  quote: { id?: string },
+  leadId: string,
+  mode: "insert" | "upsert"
+): Promise<void> {
+  if (!quote.id) {
+    quote.id = generateQuotationId();
+    return;
+  }
+
+  const { data } = await supabase
+    .from("quotations")
+    .select("id, lead_id")
+    .eq("id", quote.id)
+    .maybeSingle();
+
+  if (!data) {
+    if (isLegacySequentialQuotationId(quote.id)) {
+      quote.id = generateQuotationId();
+    }
+    return;
+  }
+
+  if (data.lead_id === leadId && mode === "upsert") return;
+
+  quote.id = generateQuotationId();
 }
 
 async function persistQuotationRow(
@@ -963,18 +999,27 @@ export async function persistQuotationToSupabase(
   quote: any,
   mode: "insert" | "upsert" = "insert"
 ): Promise<{ ok: boolean; error?: string; quoteId?: string }> {
-  if (mode === "insert" && (await quotationIdExistsInSupabase(supabase, quote.id))) {
-    quote.id = generateQuotationId();
+  await resolveQuotationIdForPersist(supabase, quote, leadId, mode);
+
+  const maxAttempts = mode === "insert" ? 5 : 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (mode === "insert" && attempt > 0) {
+      quote.id = generateQuotationId();
+    } else if (mode === "insert" && attempt === 0 && (await quotationIdExistsInSupabase(supabase, quote.id))) {
+      quote.id = generateQuotationId();
+    }
+
+    const result = await persistQuotationRow(supabase, leadId, customerId, quote, mode);
+    if (result.ok) return { ok: true, quoteId: quote.id };
+
+    if (mode === "insert" && isQuotationDuplicateKeyError(result.error)) {
+      continue;
+    }
+
+    return { ...result, quoteId: quote.id };
   }
 
-  let result = await persistQuotationRow(supabase, leadId, customerId, quote, mode);
-
-  if (mode === "insert" && !result.ok && isQuotationDuplicateKeyError(result.error)) {
-    quote.id = generateQuotationId();
-    result = await persistQuotationRow(supabase, leadId, customerId, quote, mode);
-  }
-
-  return { ...result, quoteId: quote.id };
+  return { ok: false, error: "Exhausted quotation persist retries", quoteId: quote.id };
 }
 
 /* --- SUPABASE GETTER / JOINER --- */
@@ -995,19 +1040,38 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     // ignore
   }
 
-  // Safe table fetch function that prevents crashing if a table hasn't been created yet
-  const safeFetch = async (tableName: string, defaultVal: any = []) => {
+  const safeFetchEx = async (
+    tableName: string,
+    defaultVal: any = []
+  ): Promise<TableFetchResult<any[]>> => {
     try {
       const { data, error } = await supabase.from(tableName).select("*");
       if (error) {
         console.warn(`[Supabase Warning] Could not fetch table '${tableName}' (might not exist yet):`, error.message);
-        return defaultVal;
+        return { data: defaultVal, tableAvailable: false };
       }
-      return data || defaultVal;
+      return { data: data || [], tableAvailable: true };
     } catch (err: any) {
       console.warn(`[Supabase Error] Exception fetching table '${tableName}':`, err.message);
-      return defaultVal;
+      return { data: defaultVal, tableAvailable: false };
     }
+  };
+
+  // Safe table fetch function that prevents crashing if a table hasn't been created yet
+  const safeFetch = async (tableName: string, defaultVal: any = []) => {
+    const result = await safeFetchEx(tableName, defaultVal);
+    return result.data;
+  };
+
+  const pickQuotationTableData = <T>(
+    mapped: T[],
+    fetchResult: TableFetchResult<any[]>,
+    seedKey: keyof Database
+  ): T[] => {
+    if (fetchResult.tableAvailable) return mapped;
+    const backup = localBackup[seedKey as string];
+    const seed = initialSeed[seedKey as keyof typeof initialSeed];
+    return (backup as T[]) || (seed as T[]) || [];
   };
 
   const supabaseClient = supabase;
@@ -1035,14 +1099,14 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     settingsData,
     websiteContentData,
     purchaseOrdersData,
-    quoteTemplatesData,
-    quoteTemplatePagesData,
-    bankAccountsData,
-    companyTermsData,
-    ceoMessagesData,
-    socialLinksData,
-    structureDescriptionsData,
-    quotePdfSettingsData
+    quoteTemplatesResult,
+    quoteTemplatePagesResult,
+    bankAccountsResult,
+    companyTermsResult,
+    ceoMessagesResult,
+    socialLinksResult,
+    structureDescriptionsResult,
+    quotePdfSettingsResult
   ] = await Promise.all([
     safeFetch("users"),
     fetchLeadsFromSupabase(supabaseClient, { activeOnly: true }),
@@ -1065,15 +1129,24 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     safeFetch("settings"),
     safeFetch("website_content"),
     safeFetch("purchase_orders"),
-    safeFetch("quote_templates"),
-    safeFetch("quote_template_pages"),
-    safeFetch("bank_accounts"),
-    safeFetch("company_terms"),
-    safeFetch("ceo_messages"),
-    safeFetch("social_links"),
-    safeFetch("structure_descriptions"),
-    safeFetch("quote_pdf_settings")
+    safeFetchEx("quote_templates"),
+    safeFetchEx("quote_template_pages"),
+    safeFetchEx("bank_accounts"),
+    safeFetchEx("company_terms"),
+    safeFetchEx("ceo_messages"),
+    safeFetchEx("social_links"),
+    safeFetchEx("structure_descriptions"),
+    safeFetchEx("quote_pdf_settings")
   ]);
+
+  const quoteTemplatesData = quoteTemplatesResult.data;
+  const quoteTemplatePagesData = quoteTemplatePagesResult.data;
+  const bankAccountsData = bankAccountsResult.data;
+  const companyTermsData = companyTermsResult.data;
+  const ceoMessagesData = ceoMessagesResult.data;
+  const socialLinksData = socialLinksResult.data;
+  const structureDescriptionsData = structureDescriptionsResult.data;
+  const quotePdfSettingsData = quotePdfSettingsResult.data;
 
   // Assemble active leads with nested attributes
   const leadsMapped = filterActiveLeads(leadsData || []).map((lead: any) => {
@@ -1468,7 +1541,10 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     hotlinePhones: qps.hotline_phones || qps.hotlinePhones,
     billingEmail: qps.billing_email || qps.billingEmail,
     websiteUrl: qps.website_url || qps.websiteUrl,
-    logoUrl: qps.logo_url || qps.logoUrl
+    logoUrl: qps.logo_url || qps.logoUrl,
+    globalPdfHeader: qps.global_pdf_header || qps.globalPdfHeader || null,
+    globalPdfFooter: qps.global_pdf_footer || qps.globalPdfFooter || null,
+    useDefaultCompanyContent: !!(qps.use_default_company_content ?? qps.useDefaultCompanyContent),
   }));
 
   const usersMapped = (users || []).map((u: any) => ({
@@ -1506,14 +1582,14 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     settings: settingsObj || (useLocalConfigFallback ? localBackup.settings : undefined),
     websiteContent: websiteContentObj || (useLocalConfigFallback ? localBackup.websiteContent : undefined),
     purchaseOrders: purchaseOrdersMapped.length > 0 ? purchaseOrdersMapped : (useLocalConfigFallback ? (localBackup.purchaseOrders || []) : []),
-    quoteTemplates: quoteTemplatesMapped.length > 0 ? quoteTemplatesMapped : (localBackup.quoteTemplates || initialSeed.quoteTemplates || []),
-    quoteTemplatePages: quoteTemplatePagesMapped.length > 0 ? quoteTemplatePagesMapped : (localBackup.quoteTemplatePages || initialSeed.quoteTemplatePages || []),
-    bankAccounts: bankAccountsMapped.length > 0 ? bankAccountsMapped : (localBackup.bankAccounts || initialSeed.bankAccounts || []),
-    companyTerms: companyTermsMapped.length > 0 ? companyTermsMapped : (localBackup.companyTerms || initialSeed.companyTerms || []),
-    ceoMessages: ceoMessagesMapped.length > 0 ? ceoMessagesMapped : (localBackup.ceoMessages || initialSeed.ceoMessages || []),
-    socialLinks: socialLinksMapped.length > 0 ? socialLinksMapped : (localBackup.socialLinks || initialSeed.socialLinks || []),
-    structureDescriptions: structureDescriptionsMapped.length > 0 ? structureDescriptionsMapped : (localBackup.structureDescriptions || initialSeed.structureDescriptions || []),
-    quotePdfSettings: quotePdfSettingsMapped.length > 0 ? quotePdfSettingsMapped : (localBackup.quotePdfSettings || initialSeed.quotePdfSettings || [])
+    quoteTemplates: pickQuotationTableData(quoteTemplatesMapped, quoteTemplatesResult, "quoteTemplates"),
+    quoteTemplatePages: pickQuotationTableData(quoteTemplatePagesMapped, quoteTemplatePagesResult, "quoteTemplatePages"),
+    bankAccounts: pickQuotationTableData(bankAccountsMapped, bankAccountsResult, "bankAccounts"),
+    companyTerms: pickQuotationTableData(companyTermsMapped, companyTermsResult, "companyTerms"),
+    ceoMessages: pickQuotationTableData(ceoMessagesMapped, ceoMessagesResult, "ceoMessages"),
+    socialLinks: pickQuotationTableData(socialLinksMapped, socialLinksResult, "socialLinks"),
+    structureDescriptions: pickQuotationTableData(structureDescriptionsMapped, structureDescriptionsResult, "structureDescriptions"),
+    quotePdfSettings: pickQuotationTableData(quotePdfSettingsMapped, quotePdfSettingsResult, "quotePdfSettings")
   };
 }
 
@@ -1624,65 +1700,7 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
 
         if (l.quotes) {
           for (const q of l.quotes) {
-            await supabase.from("quotations").upsert({
-              id: q.id,
-              lead_id: l.id,
-              customer_id: customerId,
-              system_size_kw: q.systemSizekW || 0,
-              panel_count: q.panelCount || 0,
-              panel_type: q.panelType || "Sunchaser Ultra 400W",
-              inverter_type: q.inverterType || "Enphase IQ8 Microinverter",
-              battery_capacity: q.batteryCapacity || "",
-              total_cost: q.totalCost || 0,
-              federal_tax_credit: q.federalTaxCredit || 0,
-              net_cost: q.netCost || 0,
-              estimated_annual_savings: q.estimatedAnnualSavings || 0,
-              payback_period_years: q.paybackPeriodYears || 0,
-              status: q.status || "Pending",
-              structure_type: q.structureType || "",
-              accessories: q.accessories || "",
-              installation_charges: q.installationCharges || 0,
-              net_metering_charges: q.netMeteringCharges || 0,
-              payment_terms: q.paymentTerms || "",
-              warranty_terms: q.warrantyTerms || "",
-              terms_and_conditions: q.termsAndConditions || "",
-              extended_data: {
-                clientName: q.clientName,
-                clientPhone: q.clientPhone,
-                clientEmail: q.clientEmail,
-                clientAddress: q.clientAddress,
-                cnic: q.cnic,
-                cityArea: q.cityArea,
-                bdmName: q.bdmName,
-                quoteDate: q.quoteDate,
-                systemType: q.systemType,
-                panelBrand: q.panelBrand,
-                panelWattage: q.panelWattage,
-                inverterBrand: q.inverterBrand,
-                inverterCapacity: q.inverterCapacity,
-                batteryOption: q.batteryOption,
-                netMeteringRequired: q.netMeteringRequired,
-                discount: q.discount,
-                paymentSchedule: q.paymentSchedule,
-                boqItems: q.boqItems,
-                lescoSettings: q.lescoSettings,
-                societyCharges: q.societyCharges,
-                taxEnabled: q.taxEnabled,
-                taxRate: q.taxRate,
-                taxAmount: q.taxAmount,
-                selectedStructure: q.selectedStructure,
-                customStructure: q.customStructure,
-                boqRows: q.boqRows,
-                customNotes: q.customNotes,
-                grandTotal: q.grandTotal,
-                netTotal: q.netTotal,
-                templateId: q.templateId,
-                includedPages: q.includedPages,
-                includeSizerItems: q.includeSizerItems === true,
-                quote_type: q.quote_type || "auto_sizer"
-              },
-              created_at: q.createdAt || new Date().toISOString()
-            }, { onConflict: "id" });
+            await persistQuotationToSupabase(supabase, l.id, customerId, { ...q }, "upsert");
           }
         }
       }
@@ -2028,7 +2046,10 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
           hotline_phones: qps.hotlinePhones || qps.hotline_phones,
           billing_email: qps.billingEmail || qps.billing_email,
           website_url: qps.websiteUrl || qps.website_url,
-          logo_url: qps.logoUrl || qps.logo_url || ""
+          logo_url: qps.logoUrl || qps.logo_url || "",
+          global_pdf_header: qps.globalPdfHeader || qps.global_pdf_header || null,
+          global_pdf_footer: qps.globalPdfFooter || qps.global_pdf_footer || null,
+          use_default_company_content: !!(qps.useDefaultCompanyContent ?? qps.use_default_company_content),
         }, { onConflict: "id" });
       }
     }

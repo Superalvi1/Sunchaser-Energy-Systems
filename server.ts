@@ -2711,6 +2711,47 @@ app.get("/api/diagnostics/db", async (req, res) => {
   });
 });
 
+app.get("/api/diagnostics/quotation-settings", async (req, res) => {
+  const QUOTATION_TABLES = [
+    "quote_templates",
+    "quote_template_pages",
+    "bank_accounts",
+    "company_terms",
+    "ceo_messages",
+    "structure_descriptions",
+    "quote_pdf_settings",
+    "social_links",
+  ];
+  const active = isSupabaseActive();
+  if (!active) {
+    return res.json({ supabaseActive: false, tables: {}, source: "local" });
+  }
+  const supabase = getSupabase()!;
+  const tables: Record<string, { ok: boolean; count?: number; error?: string }> = {};
+  for (const table of QUOTATION_TABLES) {
+    const { count, error } = await supabase.from(table).select("*", { count: "exact", head: true });
+    tables[table] = error ? { ok: false, error: error.message } : { ok: true, count: count ?? 0 };
+  }
+  let stateSample: any = {};
+  try {
+    const state = await fetchAppStateFromSupabase();
+    stateSample = {
+      quoteTemplates: (state.quoteTemplates || []).length,
+      quoteTemplatePages: (state.quoteTemplatePages || []).length,
+      bankAccounts: (state.bankAccounts || []).length,
+      companyTerms: (state.companyTerms || []).length,
+      ceoMessages: (state.ceoMessages || []).length,
+      structureDescriptions: (state.structureDescriptions || []).length,
+      quotePdfSettings: (state.quotePdfSettings || []).length,
+      socialLinks: (state.socialLinks || []).length,
+      pdfCompanyName: state.quotePdfSettings?.[0]?.companyName || null,
+    };
+  } catch (err: any) {
+    stateSample = { error: err.message };
+  }
+  res.json({ supabaseActive: true, tables, stateSample, primarySource: "supabase" });
+});
+
 app.get("/api/diagnostics/auth-users", async (req, res) => {
   const supabase = getSupabase();
   const active = isSupabaseActive();
@@ -3549,7 +3590,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     }
   }
 
-  await appendActivityLog("sales", bdmName || "Sarah Connor", "Sales Executive", "Quotation Written", `Formulated quote ${quoteId} for ${lead.name}`);
+  await appendActivityLog("sales", bdmName || "Sarah Connor", "Sales Executive", "Quotation Written", `Formulated quote ${newQuote.id} for ${lead.name}`);
   const msgText = `☀️ Hi ${lead.name}! Sunchaser has unlocked your custom solar proposal: ${newQuote.systemSizekW} kW with ${newQuote.inverterType}. Total final cost is Rs. ${newQuote.netCost.toLocaleString()}. Open file: http://sunchaser.co/portal`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "quote_generation", msgText);
 
@@ -4395,9 +4436,12 @@ app.post("/api/db/update", async (req, res) => {
     if (action === "add") {
       db[table].unshift(data);
     } else if (action === "edit") {
-      const idx = db[table].findIndex((item: any) => item.id === id);
+      const editId = id || data?.id;
+      const idx = db[table].findIndex((item: any) => item.id === editId);
       if (idx !== -1) {
         db[table][idx] = { ...db[table][idx], ...data };
+      } else if (editId) {
+        db[table].push({ ...data, id: editId });
       }
     } else if (action === "delete") {
       db[table] = db[table].filter((item: any) => item.id !== id);
@@ -4650,7 +4694,11 @@ app.post("/api/db/update", async (req, res) => {
             hotline_phones: data.hotlinePhones || data.hotline_phones,
             billing_email: data.billingEmail || data.billing_email,
             website_url: data.websiteUrl || data.website_url,
-            logo_url: data.logoUrl || data.logo_url || ""
+            logo_url: data.logoUrl || data.logo_url || "",
+            global_pdf_header: data.globalPdfHeader || data.global_pdf_header || null,
+            global_pdf_footer: data.globalPdfFooter || data.global_pdf_footer || null,
+            use_default_company_content: !!(data.useDefaultCompanyContent ?? data.use_default_company_content),
+            updated_at: new Date().toISOString(),
           };
         }
 
@@ -4819,8 +4867,43 @@ function buildIncludedPagesFromTemplate(activeState: Database, templateId: strin
 
 const OFFICIAL_QUOTE_LOGO = "/assets/sunchaser-logo.png";
 
-function resolveQuotePdfLogoUrl(_raw?: string | null): string {
-  return OFFICIAL_QUOTE_LOGO;
+function resolveQuotePdfLogoUrl(raw?: string | null): string {
+  const trimmed = String(raw || "").trim();
+  return trimmed || OFFICIAL_QUOTE_LOGO;
+}
+
+function resolveQuotePdfBranding(activeState: Database) {
+  const pdf = (activeState.quotePdfSettings || [])[0] || {};
+  const companyName =
+    pdf.companyName ||
+    pdf.company_name ||
+    "Sunchaser Energy Systems";
+  const logoUrl = resolveQuotePdfLogoUrl(pdf.logoUrl || pdf.logo_url);
+  const savedHeader = pdf.globalPdfHeader || pdf.global_pdf_header || null;
+  const savedFooter = pdf.globalPdfFooter || pdf.global_pdf_footer || null;
+  return {
+    companyName,
+    officeAddress:
+      pdf.officeAddress ||
+      pdf.office_address ||
+      "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+    phoneNumbers:
+      pdf.hotlinePhones ||
+      pdf.hotline_phones ||
+      "0309-0236666, 0330-7776444",
+    billingEmail:
+      pdf.billingEmail ||
+      pdf.billing_email ||
+      "billing@sunchaser-energy.com",
+    websiteUrl:
+      pdf.websiteUrl ||
+      pdf.website_url ||
+      "www.sunchaser-energy.com",
+    logoUrl,
+    useDefaultCompanyContent: !!(pdf.useDefaultCompanyContent ?? pdf.use_default_company_content),
+    globalPdfHeader: savedHeader,
+    globalPdfFooter: savedFooter,
+  };
 }
 
 // Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
@@ -4831,14 +4914,7 @@ function compileSunchaserPDFHtml(
   activeState: Database,
   options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean } = {}
 ): string {
-  const settings = {
-    companyName: "Sunchaser Energy Systems",
-    officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
-    phoneNumbers: "0309-0236666, 0330-7776444",
-    billingEmail: "billing@sunchaser-energy.com",
-    websiteUrl: "www.sunchaser-energy.com",
-    ...(activeState.settings || {})
-  };
+  const settings = resolveQuotePdfBranding(activeState);
 
   // PKR Formatting helper
   const formatPKR = (val: number) => {
@@ -4973,9 +5049,9 @@ function compileSunchaserPDFHtml(
         <div class="container">
           <div class="header">
             <div style="display:flex;align-items:center;gap:12px;">
-              <img src="${OFFICIAL_QUOTE_LOGO}" style="max-height:48px;object-fit:contain;" alt="Sunchaser Energy Systems" />
+              <img src="${settings.logoUrl}" style="max-height:48px;object-fit:contain;" alt="${settings.companyName}" />
               <div>
-              <div class="title">SUNCHASER ENERGY SYSTEMS</div>
+              <div class="title">${settings.companyName.toUpperCase()}</div>
               <div class="subtitle">Technical Capacity & Sizing Assessment Summary</div>
               </div>
             </div>
@@ -5058,7 +5134,7 @@ function compileSunchaserPDFHtml(
           </div>
           
           <div style="margin-top: 30px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 15px; font-size: 9px; color: #64748b;">
-            <strong>Sunchaser Energy Systems Staging Division</strong> | DHA Phase 6, Lahore | Hotlines: 0309-0236666, 0330-7776444
+            <strong>${settings.companyName}</strong> | ${settings.officeAddress} | Hotlines: ${settings.phoneNumbers}
           </div>
         </div>
       </body>
@@ -5066,21 +5142,24 @@ function compileSunchaserPDFHtml(
     `;
   }
 
-  // Global Header & Footer configs
-  const globalHeader = (activeState.settings && activeState.settings.globalPdfHeader) || {
-    enabled: true,
-    text: "☀️ SUNCHASER ENERGY",
-    logoUrl: OFFICIAL_QUOTE_LOGO,
-    logoSize: "25px",
-    lineColor: "#f59e0b",
-    alignment: "left"
+  // Global Header & Footer configs — primary source: quote_pdf_settings (Supabase)
+  const savedHeader = settings.globalPdfHeader;
+  const savedFooter = settings.globalPdfFooter;
+  const useDefaultCompanyContent = settings.useDefaultCompanyContent === true;
+  const globalHeader = {
+    enabled: savedHeader?.enabled !== false,
+    text: savedHeader?.text || `☀️ ${settings.companyName.toUpperCase()}`,
+    logoUrl: savedHeader?.logoUrl || settings.logoUrl,
+    logoSize: savedHeader?.logoSize || "25px",
+    lineColor: savedHeader?.lineColor || "#f59e0b",
+    alignment: savedHeader?.alignment || "left",
   };
 
-  const globalFooter = (activeState.settings && activeState.settings.globalPdfFooter) || {
-    enabled: true,
-    text: "Sunchaser Energy Systems Proposal",
-    lineColor: "#cbd5e1",
-    alignment: "left"
+  const globalFooter = {
+    enabled: savedFooter?.enabled !== false,
+    text: savedFooter?.text || `${settings.companyName} Proposal`,
+    lineColor: savedFooter?.lineColor || "#cbd5e1",
+    alignment: savedFooter?.alignment || "left",
   };
 
   // Resolve template pages from database if available
@@ -5088,8 +5167,6 @@ function compileSunchaserPDFHtml(
   const strictTemplateOnly = mode === 'manual' || mode === 'preview';
   const allDbPages = activeState.quoteTemplatePages || [];
   const dbPages = allDbPages.filter((p: any) => (p.templateId || p.template_id) === templateId);
-
-  const useDefaultCompanyContent = false;
 
   const getPageConfig = (pageType: string, defaultTitle: string, defaultBody: string) => {
     const dbPage = dbPages.find((p: any) => p.pageType === pageType);
@@ -5416,18 +5493,6 @@ function compileSunchaserPDFHtml(
       fEnabled = false;
     }
 
-    if (strictTemplateOnly) {
-      if (ext.header.mode !== 'custom') {
-        hEnabled = false;
-        hText = "";
-        hLogoUrl = "";
-      }
-      if (ext.footer.mode !== 'custom') {
-        fEnabled = false;
-        fText = "";
-      }
-    }
-
     let headerHtml = "";
     if (hEnabled) {
       hLogoUrl = resolveQuotePdfLogoUrl(hLogoUrl);
@@ -5504,8 +5569,21 @@ function compileSunchaserPDFHtml(
       });
     }
 
-    // Manual/preview PDFs: render only saved template fields (no legacy marketing/LESCO/bank blocks)
-    if (strictTemplateOnly && pageType !== 'boq') {
+    // Manual/preview: simplified layout for static template pages only.
+    // Cover, bank, CEO, terms, structure, signoff, and final need Supabase-driven branding/content.
+    const needsDynamicQuoteContent =
+      pageType === "cover" ||
+      pageType === "bank" ||
+      pageType === "final" ||
+      pageType === "ceo" ||
+      pageType === "signoff" ||
+      pageType === "terms1" ||
+      pageType === "terms2" ||
+      pageType === "structure" ||
+      pageType.startsWith("structure_") ||
+      pageType === "qr";
+
+    if (strictTemplateOnly && pageType !== "boq" && !needsDynamicQuoteContent) {
       if (ext.layoutMode === 'full_page_image' || ext.layoutMode === 'image_only') {
         let imageContent = "";
         if (p.imageUrl) {
@@ -5563,12 +5641,12 @@ function compileSunchaserPDFHtml(
             ${absoluteImagesHtml}
             <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
               <div style="display: flex; align-items: center; gap: 12px;">
-                ${p.imageUrl ? `
-                  <img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
+                ${p.imageUrl || settings.logoUrl ? `
+                  <img src="${p.imageUrl || settings.logoUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
                 ` : (useDefaultCompanyContent ? `
                   <div style="background-color: #0f172a; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
                   <div>
-                    <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">SUNCHASER ENERGY</div>
+                    <div style="font-weight: 850; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">${settings.companyName.toUpperCase()}</div>
                     <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #d97706; font-weight: bold;">Generational Infrastructure</div>
                   </div>
                 ` : '')}
@@ -5616,7 +5694,7 @@ function compileSunchaserPDFHtml(
 
             <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto;">
               <div>
-                <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">Sunchaser Energy Lahore Office</div>
+                <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">${settings.companyName}</div>
                 <div>${settings.officeAddress}</div>
                 <div style="color: #d97706;">Hotlines: ${settings.phoneNumbers}</div>
               </div>
@@ -6183,7 +6261,7 @@ function compileSunchaserPDFHtml(
             <div>
               ${useDefaultCompanyContent ? `
               <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
-              <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</h2>
+              <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">${settings.companyName.toUpperCase()}</h2>
               <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
               ` : ''}
               
@@ -6197,10 +6275,10 @@ function compileSunchaserPDFHtml(
 
               ${useDefaultCompanyContent ? `
               <div style="border-top: 1.5px solid #cbd5e1; padding-top: 25px; font-size: 10.5px; color: #475569; max-width: 360px; margin: 0 auto; line-height: 1.5;">
-                <strong style="color: #0f172a; font-size: 11px;">Sunchaser Central Staging HQ</strong><br/>
+                <strong style="color: #0f172a; font-size: 11px;">${settings.companyName}</strong><br/>
                 ${settings.officeAddress}<br/>
                 Hotlines: ${settings.phoneNumbers}<br/>
-                Email: ${settings.billingEmail || 'billing@sunchaser-energy.com'} | Web: ${settings.websiteUrl || 'www.sunchaser-energy.com'}
+                Email: ${settings.billingEmail} | Web: ${settings.websiteUrl}
               </div>
               ` : ''}
             </div>
@@ -6893,7 +6971,48 @@ function shouldServeBuiltFrontend() {
   return fs.existsSync(indexPath);
 }
 
+function resolveServerBuildMeta() {
+  const bundlePath = path.relative(process.cwd(), __filename) || __filename;
+  let commitHash =
+    process.env.RENDER_GIT_COMMIT?.slice(0, 7) ||
+    process.env.SERVER_BUILD_COMMIT ||
+    "unknown";
+  if (commitHash === "unknown") {
+    try {
+      const { execSync } = require("child_process") as typeof import("child_process");
+      commitHash = execSync("git rev-parse --short HEAD", {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      // Render/production may not have .git at runtime
+    }
+  }
+  let version = process.env.SERVER_BUILD_VERSION || process.env.npm_package_version || "0.0.0";
+  if (version === "0.0.0") {
+    try {
+      const pkg = JSON.parse(
+        fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")
+      );
+      version = pkg.version || version;
+    } catch {
+      // ignore
+    }
+  }
+  return { bundlePath, commitHash, version };
+}
+
+function logServerBuildIdentity() {
+  const { bundlePath, commitHash, version } = resolveServerBuildMeta();
+  console.log(`[SERVER_BUILD_VERSION] ${version}`);
+  console.log(`[COMMIT_HASH] ${commitHash}`);
+  console.log(`[SERVER_BUNDLE_PATH] ${bundlePath}`);
+  console.log(`Running bundle:\n${bundlePath}\n\nCommit:\n${commitHash}`);
+}
+
 async function startServer() {
+  logServerBuildIdentity();
+
   if (!shouldServeBuiltFrontend()) {
     const vite = await createViteServer({
       server: { middlewareMode: true },

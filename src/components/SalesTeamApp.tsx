@@ -220,31 +220,45 @@ export default function SalesTeamApp({
   }, [printPageData]);
 
   useEffect(() => {
-    if (settings) {
-      if (settings.globalPdfHeader) {
-        setGlobalHeaderEnabled(settings.globalPdfHeader.enabled !== false);
-        setGlobalHeaderText(settings.globalPdfHeader.text || "☀️ SUNCHASER ENERGY");
-        setGlobalHeaderLogoUrl(
-          resolveOfficialLogoUrl(settings.globalPdfHeader.logoUrl || OFFICIAL_SUNCHASER_LOGO)
-        );
-        setGlobalHeaderLogoSize(settings.globalPdfHeader.logoSize || "25px");
-        setGlobalHeaderLineColor(settings.globalPdfHeader.lineColor || "#f59e0b");
-        setGlobalHeaderAlignment(settings.globalPdfHeader.alignment || "left");
-      }
-      if (settings.globalPdfFooter) {
-        setGlobalFooterEnabled(settings.globalPdfFooter.enabled !== false);
-        setGlobalFooterText(settings.globalPdfFooter.text || "Sunchaser Energy Systems Proposal");
-        setGlobalFooterLineColor(settings.globalPdfFooter.lineColor || "#cbd5e1");
-        setGlobalFooterAlignment(settings.globalPdfFooter.alignment || "left");
-      }
-      setUseDefaultCompanyContent(settings.useDefaultCompanyContent === true);
+    const pdfCfg = quotePdfSettings?.[0];
+    const header = pdfCfg?.globalPdfHeader || settings?.globalPdfHeader;
+    const footer = pdfCfg?.globalPdfFooter || settings?.globalPdfFooter;
+    if (header) {
+      setGlobalHeaderEnabled(header.enabled !== false);
+      setGlobalHeaderText(header.text || `☀️ ${pdfCfg?.companyName || "SUNCHASER ENERGY"}`);
+      setGlobalHeaderLogoUrl(
+        resolveOfficialLogoUrl(header.logoUrl || pdfCfg?.logoUrl || OFFICIAL_SUNCHASER_LOGO)
+      );
+      setGlobalHeaderLogoSize(header.logoSize || "25px");
+      setGlobalHeaderLineColor(header.lineColor || "#f59e0b");
+      setGlobalHeaderAlignment(header.alignment || "left");
     }
-  }, [settings]);
+    if (footer) {
+      setGlobalFooterEnabled(footer.enabled !== false);
+      setGlobalFooterText(footer.text || `${pdfCfg?.companyName || "Sunchaser Energy Systems"} Proposal`);
+      setGlobalFooterLineColor(footer.lineColor || "#cbd5e1");
+      setGlobalFooterAlignment(footer.alignment || "left");
+    }
+    if (pdfCfg || settings) {
+      setUseDefaultCompanyContent(
+        pdfCfg?.useDefaultCompanyContent === true || settings?.useDefaultCompanyContent === true
+      );
+    }
+  }, [settings, quotePdfSettings]);
 
   const handleSaveGlobalPdfSettings = async () => {
     try {
-      const updatedSettings = {
-        ...settings,
+      const base = quotePdfSettings?.[0] || {
+        id: "settings-1",
+        companyName: "SUNCHASER ENERGY SYSTEMS",
+        officeAddress: "",
+        hotlinePhones: "",
+        billingEmail: "",
+        websiteUrl: "",
+        logoUrl: "",
+      };
+      const updatedPdfSettings = {
+        ...base,
         useDefaultCompanyContent,
         globalPdfHeader: {
           enabled: globalHeaderEnabled,
@@ -252,14 +266,14 @@ export default function SalesTeamApp({
           logoUrl: globalHeaderLogoUrl,
           logoSize: globalHeaderLogoSize,
           lineColor: globalHeaderLineColor,
-          alignment: globalHeaderAlignment
+          alignment: globalHeaderAlignment,
         },
         globalPdfFooter: {
           enabled: globalFooterEnabled,
           text: globalFooterText,
           lineColor: globalFooterLineColor,
-          alignment: globalFooterAlignment
-        }
+          alignment: globalFooterAlignment,
+        },
       };
 
       const response = await fetch(`${API_BASE_URL}/api/db/update`, {
@@ -267,9 +281,10 @@ export default function SalesTeamApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "edit",
-          table: "settings",
-          data: updatedSettings
-        })
+          table: "quotePdfSettings",
+          data: updatedPdfSettings,
+          id: updatedPdfSettings.id,
+        }),
       });
 
       if (!response.ok) {
