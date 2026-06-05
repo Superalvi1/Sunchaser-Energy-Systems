@@ -16,6 +16,11 @@ import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
+import { OFFICIAL_SUNCHASER_LOGO, resolveOfficialLogoUrl } from "../lib/brandingAssets";
+import {
+  getLatestSavedQuote,
+  getLeadManualQuotesSorted,
+} from "../lib/quoteSelection";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -65,12 +70,15 @@ export default function SalesTeamApp({
 
   const activeLead = leads.find(l => l.id === selectedLeadId);
 
-  const getLeadManualQuotes = (lead: Lead | null | undefined) =>
-    (lead?.quotes || []).filter((q: any) => q.quote_type === "manual_boq");
+  const getLeadManualQuotes = (lead: Lead | null | undefined) => getLeadManualQuotesSorted(lead);
+
+  const latestManualSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "manual_boq") : null;
+  const latestAutoSizerSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "auto_sizer") : null;
 
   // Modular routing tab selector
   const [activeModule, setActiveModule] = useState<'sizer' | 'boq_builder' | 'templates' | 'quotes' | 'products'>('boq_builder');
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
+  const [sizerEditingQuoteId, setSizerEditingQuoteId] = useState<string | null>(null);
 
   // Quote formulator local state
   const [systemSizekW, setSystemSizekW] = useState<number>(8.5);
@@ -213,7 +221,9 @@ export default function SalesTeamApp({
       if (settings.globalPdfHeader) {
         setGlobalHeaderEnabled(settings.globalPdfHeader.enabled !== false);
         setGlobalHeaderText(settings.globalPdfHeader.text || "☀️ SUNCHASER ENERGY");
-        setGlobalHeaderLogoUrl(settings.globalPdfHeader.logoUrl || "");
+        setGlobalHeaderLogoUrl(
+          resolveOfficialLogoUrl(settings.globalPdfHeader.logoUrl || OFFICIAL_SUNCHASER_LOGO)
+        );
         setGlobalHeaderLogoSize(settings.globalPdfHeader.logoSize || "25px");
         setGlobalHeaderLineColor(settings.globalPdfHeader.lineColor || "#f59e0b");
         setGlobalHeaderAlignment(settings.globalPdfHeader.alignment || "left");
@@ -891,7 +901,6 @@ export default function SalesTeamApp({
     if (activeModule === "boq_builder") {
       setBoqRows(packageRows);
       setManualBoqItems(packageRows);
-      triggerAutosave(packageRows);
     }
   };
 
@@ -935,7 +944,6 @@ export default function SalesTeamApp({
     
     setBoqRows(copiedRows);
     setManualBoqItems(copiedRows);
-    triggerAutosave(copiedRows);
     console.log(`[Manual BOQ Builder] Copied ${copiedRows.length} rows from Auto Sizer, rewritten IDs to manual.`);
   };
 
@@ -995,78 +1003,13 @@ export default function SalesTeamApp({
       setFormBackupReq(activeLead.backupRequirement || "None");
       setFormMonthlyUnits(Number(activeLead.monthlyUnits) > 0 ? Number(activeLead.monthlyUnits) : 0);
 
-      // 2. Load manual BOQ quote only (never auto_sizer — isolated state per lead)
-      const latestManualQuote = getLeadManualQuotes(activeLead).slice(-1)[0] || null;
-
-      if (latestManualQuote) {
-        const latestQuote = latestManualQuote;
-        setSystemSizekW(latestQuote.systemSizekW || 10);
-        setSystemType(latestQuote.systemType || 'Hybrid');
-        setPanelBrand(latestQuote.panelBrand || "Jinko");
-        setPanelWattage(latestQuote.panelWattage || 580);
-        setInverterBrand(latestQuote.inverterBrand || "Knox");
-        setInverterCapacity(latestQuote.inverterCapacity || "10kW");
-        setBatteryOption(latestQuote.batteryOption || "None");
-        setSelectedStructure(latestQuote.selectedStructure || 'standard');
-        setNetMeteringRequired(latestQuote.netMeteringRequired || 'Yes');
-        setDiscount(latestQuote.discount || 0);
-        setPaymentSchedule(latestQuote.paymentSchedule || "50% Advance, 40% Delivery, 10% Commissioning");
-        setLescoMeterNo(latestQuote.lescoSettings?.meterNo || "");
-        setLescoConsumerNo(latestQuote.lescoSettings?.consumerNo || "");
-        setLescoSanctionedLoad(latestQuote.lescoSettings?.sanctionedLoad || "");
-        setLescoPhaseType(latestQuote.lescoSettings?.phaseType || 'Three Phase');
-        setSocietyCharges(latestQuote.societyCharges || 0);
-        setTaxEnabled(latestQuote.taxEnabled || false);
-        setTaxRate(latestQuote.taxRate || 17);
-        setCustomNotes(latestQuote.customNotes || "");
-        setIncludeSizerItems(false);
-        if (latestManualQuote.id) setEditingQuoteId(latestManualQuote.id);
-        setSelectedTemplateId(latestQuote.templateId || "tmpl-1");
-        setAccessories(latestQuote.accessories || "Dual DC cables, PVC ducting & safety switches");
-        setWarrantyTerms(latestQuote.warrantyTerms || "25 year power degradation, 10 year inverter warranty");
-        setTermsAndConditions(latestQuote.termsAndConditions || "Quoted prices are valid for 3 days.");
-        
-        if (latestQuote.customStructure) {
-          setCustomStructName(latestQuote.customStructure.name || "");
-          setCustomStructDescEn(latestQuote.customStructure.descEn || "");
-          setCustomStructDescUr(latestQuote.customStructure.descUr || "");
-          setCustomStructRate(latestQuote.customStructure.rate || 0);
-          setCustomStructWeight(latestQuote.customStructure.weight || "");
-          setCustomStructMaterial(latestQuote.customStructure.materialType || "");
-          setCustomStructWarranty(latestQuote.customStructure.warranty || "");
-          setCustomStructWind(latestQuote.customStructure.windRating || "");
-        }
-
-        if (latestQuote.includedPages && Array.isArray(latestQuote.includedPages)) {
-          const pageMapping: Record<string, boolean> = {
-            cover: false, profile: false, qr: false, ceo: false, structure: false, boq: false, terms: false, signoff: false, bank: false, final: false
-          };
-          latestQuote.includedPages.forEach((p: string) => {
-            pageMapping[p] = true;
-          });
-          setIncludedPages(pageMapping);
-        }
-      } else {
-        setSystemSizekW(10);
-      }
-
-      // 3. Load BOQ rows (manual quote + per-lead cache only)
-      const cachedBoq = localStorage.getItem(`sunchaser_boq_${activeLead.id}`);
-      if (cachedBoq) {
-        try {
-          const parsed = JSON.parse(cachedBoq);
-          setBoqRows(parsed);
-          setManualBoqItems(parsed);
-        } catch (e) {
-          console.error("Failed to parse cached BOQ", e);
-        }
-      } else if (latestManualQuote) {
-        const qRows = latestManualQuote.boqRows || latestManualQuote.boqItems || [];
-        setBoqRows(qRows);
-        setManualBoqItems(qRows);
-      } else {
-        setBoqRows([]);
-        setManualBoqItems([]);
+      // REMOVED: auto-quote on lead create (phantom data bug fix) — new quote starts empty until explicit edit/load
+      setSystemSizekW(10);
+      setBoqRows([]);
+      setManualBoqItems([]);
+      setSizerEditingQuoteId(null);
+      if (activeLead?.id) {
+        localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
       }
     }
   }, [selectedLeadId, leads]);
@@ -1103,12 +1046,8 @@ export default function SalesTeamApp({
     }
   }, [activeModule, boqRows, activeLead, editingQuoteId]);
 
-  // Sync rows to localStorage on edit
-  const triggerAutosave = (updatedRows: BoqRow[]) => {
-    if (activeLead) {
-      localStorage.setItem(`sunchaser_boq_${activeLead.id}`, JSON.stringify(updatedRows));
-    }
-  };
+  // REMOVED: auto-quote on lead create (phantom data bug fix) — no localStorage draft restore
+  const triggerAutosave = (_updatedRows: BoqRow[]) => {};
 
   // Excel Manual Builder Cell Handlers
   const handleCellChange = (index: number, field: keyof BoqRow, value: any) => {
@@ -1249,13 +1188,104 @@ export default function SalesTeamApp({
     triggerAutosave(calculated);
   };
 
-  // Compile Quote Payload & Send to API
+  const handleSaveSizerQuote = async () => {
+    if (!activeLead || savingQuote) return;
+    if (!AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+      setSubmitError("Auto Sizer quote saving is disabled.");
+      return;
+    }
+    setSubmitError(null);
+    setSavingQuote(true);
+    try {
+      const sizerKw = systemSizekW;
+      const sizerRows = generateDefaultBoqRows(
+        sizerKw,
+        systemType as any,
+        selectedStructure,
+        panelBrand,
+        panelWattage,
+        inverterBrand,
+        inverterCapacity,
+        batteryOption,
+        netMeteringRequired as any
+      );
+      const itemRows = sizerRows.filter((r) => r && r.type === "item");
+      if (itemRows.length === 0) {
+        setSubmitError("No BOQ items to save.");
+        return;
+      }
+      const panelsCount = Math.ceil((sizerKw * 1000) / panelWattage);
+      const grand = itemRows.reduce((s, r) => s + (r.total || 0), 0);
+      const idempotencyKey = `ik-sizer-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const quoteData = {
+        idempotencyKey,
+        systemSizekW: sizerKw,
+        panelCount: panelsCount,
+        panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
+        inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
+        batteryCapacity: batteryOption !== "None" ? batteryOption : "",
+        totalCost: grand,
+        structureType: selectedStructure,
+        systemType,
+        panelBrand,
+        panelWattage,
+        inverterBrand,
+        inverterCapacity,
+        batteryOption,
+        netMeteringRequired,
+        boqRows: sizerRows,
+        boqItems: sizerRows,
+        quote_type: "auto_sizer",
+        source: "autosizer",
+        clientName: activeLead.name,
+        clientPhone: activeLead.phone,
+        clientEmail: activeLead.email,
+        clientAddress: activeLead.address,
+        cityArea: activeLead.location || "Lahore",
+      };
+
+      if (sizerEditingQuoteId) {
+        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quoteId: sizerEditingQuoteId, ...quoteData }),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to update auto sizer quote.");
+        }
+      } else {
+        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/create-quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(quoteData),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to save auto sizer quote.");
+        }
+        const savedLead = await res.json();
+        const saved = getLatestSavedQuote(savedLead, "auto_sizer");
+        if (saved?.id) setSizerEditingQuoteId(saved.id);
+      }
+
+      setQuoteCreatedConfirm(true);
+      setTimeout(() => setQuoteCreatedConfirm(false), 8000);
+      if (onRefreshState) await onRefreshState();
+    } catch (err: any) {
+      setSubmitError(err.message || "Failed to save auto sizer quote.");
+    } finally {
+      setSavingQuote(false);
+    }
+  };
+
+  // Compile Quote Payload & Send to API (Manual BOQ — explicit save only)
   const handleSaveQuote = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!activeLead) return;
     if (savingQuote) return;
-    if (activeModule === "sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
-      setSubmitError("Auto Sizer quote saving is temporarily disabled. Use Manual BOQ Builder.");
+    if (activeModule === "sizer") {
+      await handleSaveSizerQuote();
       return;
     }
     setSubmitError(null);
@@ -1289,21 +1319,8 @@ export default function SalesTeamApp({
         };
       }
 
-      let finalBoqRows = boqRows;
+      const finalBoqRows = boqRows;
       const finalIncludeSizerItems = false;
-      if (activeModule === "sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED) {
-        finalBoqRows = generateDefaultBoqRows(
-          systemSizekW,
-          systemType as any,
-          selectedStructure,
-          panelBrand,
-          panelWattage,
-          inverterBrand,
-          inverterCapacity,
-          batteryOption,
-          netMeteringRequired as any
-        );
-      }
       const manualOnlyRows = finalBoqRows.filter(
         (r) => r && (r.type !== "item" || !isDefaultAutoSizerRow(r))
       );
@@ -1379,7 +1396,8 @@ export default function SalesTeamApp({
         templateId: selectedTemplateId,
         includeSizerItems: finalIncludeSizerItems,
         includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
-        quote_type: "manual_boq"
+        quote_type: "manual_boq",
+        source: "manual",
       };
 
       let savedQuoteId = editingQuoteId;
@@ -1413,7 +1431,7 @@ export default function SalesTeamApp({
       }
 
       if (savedQuoteId) setEditingQuoteId(savedQuoteId);
-      localStorage.setItem(`sunchaser_boq_${activeLead.id}`, JSON.stringify(manualOnlyRows));
+      if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
 
       setQuoteCreatedConfirm(true);
       setTimeout(() => setQuoteCreatedConfirm(false), 8000);
@@ -1430,19 +1448,11 @@ export default function SalesTeamApp({
   const handleDownloadManualQuotePDF = () => {
     if (!activeLead) return;
 
-    const getManualItemsCount = () => boqRows.filter(r => r && r.type === 'item' && !isDefaultAutoSizerRow(r)).length;
-    const isQuoteCompiled = () => activeLead.quotes && activeLead.quotes.some((q: any) => q.quote_type === 'manual_boq');
-
-    if (getManualItemsCount() === 0 || !isQuoteCompiled()) {
-      alert("No BOQ items added yet.");
-      return;
-    }
-
     const targetManualQuote = editingQuoteId
       ? activeLead.quotes?.find((q: any) => q.id === editingQuoteId && q.quote_type === "manual_boq")
-      : activeLead.quotes?.find((q: any) => q.quote_type === "manual_boq");
+      : getLatestSavedQuote(activeLead, "manual_boq");
     if (!targetManualQuote) {
-      alert("No BOQ items added yet.");
+      alert("Save a quote first.");
       return;
     }
     window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${targetManualQuote.id}`, "_blank");
@@ -2162,12 +2172,13 @@ export default function SalesTeamApp({
     ? formMonthlyUnits > 3500
     : formMonthlyUnits > 60000;
 
-  const actualPanelCount = Math.ceil((actualSystemSizekW * 1000) / 580);
+  const sizerPreviewKw = activeModule === "sizer" ? systemSizekW : actualSystemSizekW;
+  const actualPanelCount = Math.ceil((sizerPreviewKw * 1000) / (panelWattage || 580));
   const inverterRec = `${inverterBrand} ${inverterCapacity} Inverter`;
-  const monthlyGeneration = Math.round(actualSystemSizekW * sunHours * 30 * 0.82);
+  const monthlyGeneration = Math.round(sizerPreviewKw * sunHours * 30 * 0.82);
   const monthlySavingsAmt = Math.round(monthlyGeneration * tariffRate);
   
-  const calculatedTotalCost = Math.round((actualSystemSizekW * 1550) + (actualSystemSizekW * 450) + 1200 + installationCharges + netMeteringCharges);
+  const calculatedTotalCost = Math.round((sizerPreviewKw * 1550) + (sizerPreviewKw * 450) + 1200 + installationCharges + netMeteringCharges);
   const calculatedROI = Number(((monthlySavingsAmt * 12 / calculatedTotalCost) * 100).toFixed(1));
   const calculatedPayback = Number((calculatedTotalCost / (monthlySavingsAmt * 12)).toFixed(1));
 
@@ -2310,30 +2321,26 @@ export default function SalesTeamApp({
                   {AUTO_SIZER_QUOTE_CREATION_ENABLED && (
                   <button
                     type="button"
+                    disabled={!latestAutoSizerSavedQuote}
+                    title={!latestAutoSizerSavedQuote ? "Save a quote first" : "Download latest Auto Sizer PDF"}
                     onClick={() => {
-                      const latestAutoQuote = activeLead.quotes?.find((q: any) => q.quote_type === "auto_sizer");
-                      if (!latestAutoQuote) {
-                        alert("No Auto Sizer quote saved yet.");
-                        return;
-                      }
-                      window.open(`${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${latestAutoQuote.id}`, "_blank");
+                      if (!latestAutoSizerSavedQuote) return;
+                      window.open(
+                        `${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${latestAutoSizerSavedQuote.id}`,
+                        "_blank"
+                      );
                     }}
-                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
                     <Download className="h-3.5 w-3.5 text-amber-500" /> Download Auto Sizer PDF
                   </button>
                   )}
                   <button
                     type="button"
-                    onClick={() => {
-                      const latestManualQuote = activeLead.quotes?.find((q: any) => q.quote_type === "manual_boq");
-                      if (!latestManualQuote) {
-                        alert("No BOQ items added yet.");
-                        return;
-                      }
-                      window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${latestManualQuote.id}`, "_blank");
-                    }}
-                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer animate-pulse"
+                    disabled={!latestManualSavedQuote}
+                    title={!latestManualSavedQuote ? "Save a quote first" : "Download latest saved manual quote PDF"}
+                    onClick={handleDownloadManualQuotePDF}
+                    className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                   >
                     <Download className="h-3.5 w-3.5" /> Download Saved Quote PDF
                   </button>
@@ -2594,17 +2601,37 @@ export default function SalesTeamApp({
                         </div>
                       )}
 
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">System size (kW)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={systemSizekW}
+                          onChange={(e) => setSystemSizekW(Number(e.target.value) || 0)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white font-mono"
+                        />
+                      </div>
+
                       <button
                         type="button"
-                        disabled
-                        title="Auto Sizer quote saving is temporarily disabled. Use Manual BOQ Builder."
-                        className="w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow flex items-center justify-center gap-2 bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-750"
+                        disabled={savingQuote || !AUTO_SIZER_QUOTE_CREATION_ENABLED}
+                        onClick={() => handleSaveSizerQuote()}
+                        className="w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 transition"
                       >
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span>Compile &amp; Save Sizer Quotation (Disabled)</span>
+                        {savingQuote ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Saving Quote...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>Save Quote</span>
+                          </>
+                        )}
                       </button>
                       <p className="text-[10px] text-slate-500 font-mono text-center">
-                        Auto Sizer is preview-only. Save quotations in Manual BOQ Builder.
+                        Auto Sizer uses local fields only until you click Save Quote.
                       </p>
                     </div>
 
@@ -2634,7 +2661,7 @@ export default function SalesTeamApp({
                       <div className="grid grid-cols-2 gap-3 font-mono text-xs">
                         <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
                           <span className="text-[8px] text-slate-500 uppercase block">Offset Requirement</span>
-                          <span className="text-xs font-bold text-white block mt-0.5">{actualSystemSizekW} kW Array</span>
+                          <span className="text-xs font-bold text-white block mt-0.5">{sizerPreviewKw} kW Array</span>
                         </div>
                         <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
                           <span className="text-[8px] text-slate-500 uppercase block">Solar Panel Count</span>
@@ -2764,6 +2791,18 @@ export default function SalesTeamApp({
                     </div>
                     
                     <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingQuoteId(null);
+                          setBoqRows([]);
+                          setManualBoqItems([]);
+                          if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        New Quote
+                      </button>
                       <select
                         onChange={(e) => {
                           if (e.target.value) {
@@ -3237,7 +3276,7 @@ export default function SalesTeamApp({
                         {quoteCreatedConfirm && (
                           <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 text-xs font-bold rounded-xl text-left flex items-center gap-1">
                             <CheckCircle2 className="h-4 w-4 text-emerald-400 animate-bounce" />
-                            <span>Quotation successfully compiled &amp; saved!</span>
+                            <span>Quote saved</span>
                           </div>
                         )}
 
@@ -3255,7 +3294,7 @@ export default function SalesTeamApp({
                           ) : (
                             <>
                               <CheckCircle2 className="h-4 w-4" />
-                              <span>{editingQuoteId ? 'Update Edited Quote' : 'Save & Compile BOQ Quote'}</span>
+                              <span>{editingQuoteId ? "Update Manual Quote" : "Save Manual Quote"}</span>
                             </>
                           )}
                         </button>

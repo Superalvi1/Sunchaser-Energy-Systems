@@ -23,7 +23,7 @@ export function compileWarrantyHandoverPDFHtml(
 ) {
   const d = data.delivery;
   const company = branding.companyName;
-  const logo = branding.logoUrl || "/sunchaser-logo.png";
+  const logo = branding.logoUrl || "/assets/sunchaser-logo.png";
   const primary = branding.primaryColor || "#f59e0b";
 
   const panels = data.items.filter((i) => String(i.item_category || i.itemCategory || "").toLowerCase().includes("panel"));

@@ -1945,6 +1945,24 @@ export async function updateAdminBranding(staff: User, body: Record<string, unkn
   );
 }
 
+export async function fetchAdminParties(staff: User) {
+  const res = await apiFetch("/api/admin/parties", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load parties.");
+  return data as { parties: any[] };
+}
+
+export async function fetchAdminPartyLedger(staff: User, partyKey: string) {
+  const res = await apiFetch(`/api/admin/parties/${encodeURIComponent(partyKey)}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load party ledger.");
+  return data as { party: any; transactions: any[] };
+}
+
 export async function fetchAdminInvoices(staff: User) {
   const res = await apiFetch("/api/admin/invoices", {
     headers: staffPortalHeaders(staff.id, staff.username, staff.role),
@@ -2026,7 +2044,7 @@ export async function fetchCustomerPortalInvoicesMe(userId: string, username: st
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Failed to load invoices.");
-  return data as { invoices: any[] };
+  return data as { invoices: any[]; payableBalance?: number };
 }
 
 export function customerInvoicePdfUrl(invoiceId: string, userId: string, username: string) {

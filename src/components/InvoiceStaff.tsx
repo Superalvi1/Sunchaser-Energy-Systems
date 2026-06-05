@@ -193,7 +193,7 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
       invoiceTaxPercent: "0",
       paidAmount: String(inv.paidAmount ?? 0),
       previousBalance: String(inv.previousBalance ?? 0),
-      notes: inv.notes || "",
+      notes: stripInvoiceMeta(inv.notes) || "",
       terms: inv.terms || "",
       projectNumber: meta?.project?.projectNumber || inv.projectId || "",
       systemSize: meta?.project?.systemSize || "",

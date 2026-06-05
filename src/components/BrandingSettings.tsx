@@ -65,12 +65,12 @@ export default function BrandingSettings({ staffUser }: { staffUser: User }) {
           "googleReviewUrl",
           "Google Review URL (customer portal — shown when project is complete)"
         )}
-        {field("logoUrl", "Logo URL (login, sidebar)")}
-        {field("invoiceLogoUrl", "Invoice gold logo URL (Premium Invoice v3)")}
+        {field("logoUrl", "Logo (fixed: /assets/sunchaser-logo.png)")}
+        {field("invoiceLogoUrl", "Invoice logo (fixed: /assets/sunchaser-logo.png)")}
         {field("signatureUrl", "CEO signature image URL (invoice footer)")}
         {field("bankAccountsImageUrl", "Bank accounts image URL (invoice page 2)")}
-        {field("appIconUrl", "App icon URL (PWA / Android)")}
-        {field("splashImageUrl", "Splash screen image URL")}
+        {field("appIconUrl", "App icon (fixed: /assets/sunchaser-logo.png)")}
+        {field("splashImageUrl", "Splash (fixed: /assets/sunchaser-logo.png)")}
         {field("primaryColor", "Primary color", "color")}
         {field("secondaryColor", "Secondary color", "color")}
         <label className="block text-xs text-neutral-400">

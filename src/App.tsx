@@ -770,6 +770,10 @@ export default function App() {
                   }
                 }}
                 onRefreshState={loadDatabaseState}
+                onQuickAction={(action) => {
+                  if (action === "lead" || action === "customer") setActiveTab("CRM Database");
+                  else if (action === "quotation") setActiveTab("Sales Advisor");
+                }}
               />
             )}
 

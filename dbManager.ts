@@ -144,8 +144,8 @@ export function isSupabaseActive(): boolean {
   return getSupabase() !== null;
 }
 
-/** When false, CRM must not persist auto_sizer quotations (manual BOQ only). */
-export const AUTO_SIZER_QUOTE_CREATION_ENABLED = false;
+/** Auto Sizer persists only on explicit Save Quote (never on lead create). */
+export const AUTO_SIZER_QUOTE_CREATION_ENABLED = true;
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
 export interface Database {
@@ -787,8 +787,18 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     includedPages: quote.includedPages,
     includeSizerItems: quote.includeSizerItems === true,
     quote_type: quote.quote_type || (AUTO_SIZER_QUOTE_CREATION_ENABLED ? "auto_sizer" : "manual_boq"),
+    source: quote.source || quote.quote_type || "manual",
+    updatedAt: quote.updatedAt || quote.updated_at || quote.createdAt || quote.created_at,
     termsAndConditions: quote.termsAndConditions,
   };
+}
+
+function sortQuotesNewestFirst(quotes: any[]): any[] {
+  return [...quotes].sort((a, b) => {
+    const ta = new Date(a.updatedAt || a.updated_at || a.createdAt || a.created_at || 0).getTime();
+    const tb = new Date(b.updatedAt || b.updated_at || b.createdAt || b.created_at || 0).getTime();
+    return tb - ta;
+  });
 }
 
 export function parseQuotationExtendedData(row: any): Record<string, any> {
@@ -981,34 +991,37 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
 
   // Assemble leads with nested attributes
   const leadsMapped = (leadsData || []).map((lead: any) => {
-    const quotes = (quotesData || [])
-      .filter((q: any) => q.lead_id === lead.id)
-      .map((q: any) => {
-        const ext = parseQuotationExtendedData(q);
-        return {
-          id: q.id,
-          systemSizekW: Number(q.system_size_kw),
-          panelCount: q.panel_count,
-          panelType: q.panel_type,
-          inverterType: q.inverter_type,
-          batteryCapacity: q.battery_capacity,
-          totalCost: Number(q.total_cost),
-          federalTaxCredit: Number(q.federal_tax_credit),
-          netCost: Number(q.net_cost),
-          estimatedAnnualSavings: Number(q.estimated_annual_savings),
-          paybackPeriodYears: Number(q.payback_period_years),
-          status: q.status,
-          createdAt: q.created_at,
-          structureType: q.structure_type,
-          accessories: q.accessories,
-          installationCharges: Number(q.installation_charges || 0),
-          netMeteringCharges: Number(q.net_metering_charges || 0),
-          paymentTerms: q.payment_terms,
-          warrantyTerms: q.warranty_terms,
-          termsAndConditions: q.terms_and_conditions,
-          ...ext
-        };
-      });
+    const quotes = sortQuotesNewestFirst(
+      (quotesData || [])
+        .filter((q: any) => q.lead_id === lead.id)
+        .map((q: any) => {
+          const ext = parseQuotationExtendedData(q);
+          return {
+            id: q.id,
+            systemSizekW: Number(q.system_size_kw),
+            panelCount: q.panel_count,
+            panelType: q.panel_type,
+            inverterType: q.inverter_type,
+            batteryCapacity: q.battery_capacity,
+            totalCost: Number(q.total_cost),
+            federalTaxCredit: Number(q.federal_tax_credit),
+            netCost: Number(q.net_cost),
+            estimatedAnnualSavings: Number(q.estimated_annual_savings),
+            paybackPeriodYears: Number(q.payback_period_years),
+            status: q.status,
+            createdAt: q.created_at,
+            structureType: q.structure_type,
+            accessories: q.accessories,
+            installationCharges: Number(q.installation_charges || 0),
+            netMeteringCharges: Number(q.net_metering_charges || 0),
+            paymentTerms: q.payment_terms,
+            warrantyTerms: q.warranty_terms,
+            termsAndConditions: q.terms_and_conditions,
+            ...ext,
+            updatedAt: ext.updatedAt || q.updated_at || q.created_at,
+          };
+        })
+    );
 
     const s = (surveysData || []).find((sd: any) => sd.lead_id === lead.id);
     let surveyObj: any = undefined;

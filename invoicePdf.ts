@@ -114,7 +114,7 @@ export function compileInvoicePDFHtml(
   const phones = branding.phoneNumbers || "0321-8486752, 0309-0236666";
   const email = branding.billingEmail || "ceo.sunchaser@gmail.com";
   const website = branding.websiteUrl || "www.sunchaser-energy.com";
-  const logo = branding.invoiceLogoUrl || branding.logoUrl || "/sunchaser-logo.png";
+  const logo = branding.invoiceLogoUrl || branding.logoUrl || "/assets/sunchaser-logo.png";
   const signature = branding.signatureUrl || "/sunchaser-ceo-signature.png";
   const bankImage = branding.bankAccountsImageUrl || "/sunchaser-bank-accounts.png";
   const terms =

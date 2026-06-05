@@ -1,7 +1,14 @@
 import React, { useState } from "react";
-import { 
-  TrendingUp, BarChart4, ClipboardList, ShieldAlert, Package, 
-  RefreshCcw, DollarSign, Award, Users, Settings2, Trash2, FolderOpen, Headphones, Wrench, Zap, Heart, History, Activity, Truck, UserCog, FileText
+import {
+  TrendingUp,
+  BarChart4,
+  ShieldAlert,
+  Package,
+  RefreshCcw,
+  DollarSign,
+  Users,
+  Settings2,
+  Trash2,
 } from "lucide-react";
 import UserManagementStaff from "./UserManagementStaff";
 import { isSuperAdmin } from "../lib/roles";
@@ -17,6 +24,7 @@ import EnergyMonitoringStaff from "./EnergyMonitoringStaff";
 import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
 import ProjectFinanceStaff from "./ProjectFinanceStaff";
 import InvoiceStaff from "./InvoiceStaff";
+import PartyLedgerStaff from "./PartyLedgerStaff";
 import BrandingSettings from "./BrandingSettings";
 import { canViewProjectProfit } from "../lib/projectFinance";
 import { canCreateInvoice } from "../lib/invoices";
@@ -25,6 +33,8 @@ import {
   AreaChart, Area, PieChart, Pie, Cell 
 } from "recharts";
 import ManualAdminControl from "./ManualAdminControl";
+import AdminModuleNav, { type AdminSegmentId, type AdminQuickAction } from "./AdminModuleNav";
+import AdminProductsPanel from "./AdminProductsPanel";
 import { currencySymbol, API_BASE_URL } from "../services/api";
 
 interface AdminAppProps {
@@ -53,6 +63,7 @@ interface AdminAppProps {
   onProcureInventory: (vendor: string, itemId: string, quantity: number) => Promise<void>;
   onRefreshState: () => void;
   staffUser: User;
+  onQuickAction?: (action: AdminQuickAction) => void;
 }
 
 export default function AdminApp({
@@ -80,11 +91,16 @@ export default function AdminApp({
   onResolveTicket,
   onProcureInventory,
   onRefreshState,
-  staffUser
+  staffUser,
+  onQuickAction,
 }: AdminAppProps) {
-  const [activeSegment, setActiveSegment] = useState<
-    'overview' | 'sales' | 'inventory' | 'tickets' | 'control-panel' | 'pdf-templates' | 'client-portal' | 'support-desk' | 'service-desk' | 'savings-desk' | 'subscription-desk' | 'asset-maintenance' | 'energy-monitoring' | 'project-delivery' | 'project-finance' | 'invoices' | 'branding' | 'user-management'
-  >('overview');
+  const [activeSegment, setActiveSegment] = useState<AdminSegmentId>("overview");
+
+  const selectSegment = (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => {
+    setActiveSegment(id);
+    if (options?.settingsSubTab) setSelectedSubTab("settings");
+    else if (id === "pdf-templates") setSelectedSubTab("pages");
+  };
 
   const showFinanceAdmin = canViewProjectProfit(staffUser.role, staffUser.username);
   const showInvoices = canCreateInvoice(staffUser.username, staffUser.role);
@@ -232,201 +248,20 @@ export default function AdminApp({
         </div>
       </div>
 
-      {/* Internal segment selector */}
-      <div className="flex gap-2 border-b border-neutral-800 pb-3 flex-wrap">
-        <button
-          onClick={() => setActiveSegment('overview')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'overview'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <BarChart4 className="w-4 h-4 inline mr-1" /> Business Analytics
-        </button>
-        <button
-          onClick={() => setActiveSegment('sales')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'sales'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Award className="w-4 h-4 inline mr-1" /> Sales Performance
-        </button>
-        <button
-          onClick={() => setActiveSegment('inventory')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'inventory'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Package className="w-4 h-4 inline mr-1" /> Hardware Inventory
-        </button>
-        <button
-          onClick={() => setActiveSegment('tickets')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'tickets'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <ShieldAlert className="w-4 h-4 inline mr-1" /> Support Tickets
-        </button>
-        <button
-          onClick={() => setActiveSegment('pdf-templates')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'pdf-templates'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <ClipboardList className="w-4 h-4 inline mr-1" /> Quotation Templates
-        </button>
-        <button
-          onClick={() => setActiveSegment('support-desk')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'support-desk'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Headphones className="w-4 h-4 inline mr-1" /> Support Desk
-        </button>
-        <button
-          onClick={() => setActiveSegment('service-desk')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'service-desk'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Wrench className="w-4 h-4 inline mr-1" /> Service Desk
-        </button>
-        <button
-          onClick={() => setActiveSegment('savings-desk')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'savings-desk'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Zap className="w-4 h-4 inline mr-1" /> Savings Desk
-        </button>
-        <button
-          onClick={() => setActiveSegment('subscription-desk')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'subscription-desk'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Heart className="w-4 h-4 inline mr-1" /> Subscription Desk
-        </button>
-        <button
-          onClick={() => setActiveSegment('asset-maintenance')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'asset-maintenance'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <History className="w-4 h-4 inline mr-1" /> Asset &amp; Maintenance
-        </button>
-        <button
-          onClick={() => setActiveSegment('energy-monitoring')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'energy-monitoring'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Activity className="w-4 h-4 inline mr-1" /> Energy Monitoring
-        </button>
-        <button
-          onClick={() => setActiveSegment('project-delivery')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'project-delivery'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <Truck className="w-4 h-4 inline mr-1" /> Project Delivery
-        </button>
-        {showFinanceAdmin && (
-          <button
-            onClick={() => setActiveSegment('project-finance')}
-            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-              activeSegment === 'project-finance'
-                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-            }`}
-          >
-            <DollarSign className="w-4 h-4 inline mr-1" /> Project Finance
-          </button>
-        )}
-        {showInvoices && (
-          <button
-            onClick={() => setActiveSegment('invoices')}
-            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-              activeSegment === 'invoices'
-                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-            }`}
-          >
-            <FileText className="w-4 h-4 inline mr-1" /> Invoices
-          </button>
-        )}
-        {showBranding && (
-          <button
-            onClick={() => setActiveSegment('branding')}
-            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-              activeSegment === 'branding'
-                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-            }`}
-          >
-            <Settings2 className="w-4 h-4 inline mr-1" /> Branding
-          </button>
-        )}
-        <button
-          onClick={() => setActiveSegment('client-portal')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'client-portal'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-          }`}
-        >
-          <FolderOpen className="w-4 h-4 inline mr-1" /> Client Portal Tools
-        </button>
-        {showUserManagement && (
-          <button
-            onClick={() => setActiveSegment('user-management')}
-            className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-              activeSegment === 'user-management'
-                ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-                : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-            }`}
-          >
-            <UserCog className="w-4 h-4 inline mr-1" /> Users & Approvals
-          </button>
-        )}
-        <button
-          onClick={() => setActiveSegment('control-panel')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition cursor-pointer ${
-            activeSegment === 'control-panel'
-              ? "bg-neutral-950 border border-amber-500/40 text-neutral-100"
-              : "bg-neutral-955 text-neutral-405 border border-neutral-850 hover:bg-neutral-800"
-            }`}
-        >
-          <Settings2 className="w-4 h-4 inline mr-1" /> Manual Control Panel
-        </button>
-      </div>
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        <AdminModuleNav
+          activeSegment={activeSegment}
+          pdfSubTab={selectedSubTab}
+          onSelect={selectSegment}
+          showFinanceAdmin={showFinanceAdmin}
+          showInvoices={showInvoices}
+          showBranding={showBranding}
+          showUserManagement={showUserManagement}
+          onQuickAction={onQuickAction}
+        />
 
-      {/* Segment Workspace rendering */}
-      <div className="grid grid-cols-1 gap-8">
-        {activeSegment === 'overview' && (
+        <div className="flex-1 min-w-0 w-full space-y-6">
+          {(activeSegment === "overview" || activeSegment === "reports") && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Leads status tracker Recharts */}
             <div className="lg:col-span-8 bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-sm space-y-4">
@@ -1762,6 +1597,9 @@ export default function AdminApp({
         {activeSegment === 'project-finance' && showFinanceAdmin && (
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />
         )}
+        {activeSegment === 'parties' && showInvoices && (
+          <PartyLedgerStaff staffUser={staffUser} />
+        )}
         {activeSegment === 'invoices' && showInvoices && (
           <InvoiceStaff staffUser={staffUser} products={products} leads={leads} />
         )}
@@ -1794,6 +1632,8 @@ export default function AdminApp({
             onRefreshState={onRefreshState}
           />
         )}
+        {activeSegment === "products" && <AdminProductsPanel products={products} />}
+        </div>
       </div>
     </div>
   );

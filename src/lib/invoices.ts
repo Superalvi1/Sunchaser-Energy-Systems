@@ -9,6 +9,7 @@ export type InvoicePaymentMethod = (typeof PAYMENT_METHODS)[number];
 export type InvoiceLineItem = {
   id?: string;
   sortOrder?: number;
+  itemName?: string;
   description: string;
   qty: number;
   unit: string;
@@ -20,11 +21,41 @@ export type InvoiceLineItem = {
   notes?: string | null;
 };
 
+export type PartyLedgerSummary = {
+  partyKey: string;
+  customerId: string | null;
+  name: string;
+  phone: string | null;
+  billingAddress: string | null;
+  totalSales: number;
+  receivedAmount: number;
+  balanceDue: number;
+  invoiceCount: number;
+};
+
+export type PartyLedgerTransaction = {
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string | null;
+  grandTotal: number;
+  paidAmount: number;
+  balanceDue: number;
+  paymentStatus: InvoicePaymentStatus;
+};
+
 export type InvoiceRecord = {
   id: string;
   invoiceNumber: string;
   invoiceDate: string;
+  invoiceTime?: string | null;
   dueDate: string | null;
+  poNumber?: string | null;
+  poDate?: string | null;
+  paymentTerms?: string | null;
+  paymentMode?: string | null;
+  amountInWords?: string | null;
+  previousBalance?: number;
   customerId: string | null;
   customerName: string;
   customerPhone: string | null;

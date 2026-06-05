@@ -151,6 +151,11 @@ import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
 import { listPartyLedgers, getPartyLedgerDetail } from "./partyLedgerDb.js";
 import { getCompanyBranding, saveCompanyBranding } from "./brandingDb.js";
 import { mergeBranding } from "./src/lib/branding.js";
+import {
+  countQuoteItemRows,
+  getLatestSavedQuote,
+  getQuoteSortTime,
+} from "./src/lib/quoteSelection.ts";
 
 if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
@@ -2726,7 +2731,8 @@ app.post("/api/leads", async (req, res) => {
     notes: notes || "Submitted via Sunchaser Sizing Calculator.",
     leadSource: leadSource || "Self-registration Web Portal",
     engagementLevel: engagementLevel || "Medium",
-    quotes: []
+    // REMOVED: auto-quote on lead create (phantom data bug fix)
+    quotes: [],
   };
 
   calculateLeadScore(newLead);
@@ -2795,9 +2801,12 @@ app.put("/api/leads/:id", async (req, res) => {
     return res.status(404).json({ error: "Lead not found" });
   }
 
+  // REMOVED: auto-quote on lead create (phantom data bug fix) — never merge quotes from PUT body
+  const { quotes: _ignoredQuotes, ...leadPatch } = req.body || {};
   db.leads[index] = {
     ...db.leads[index],
-    ...req.body
+    ...leadPatch,
+    quotes: db.leads[index].quotes || [],
   };
 
   calculateLeadScore(db.leads[index]);
@@ -3237,8 +3246,15 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
   const lead = db.leads.find((l: any) => l.id === id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  if (quote_type === "auto_sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+  const resolvedQuoteType = quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq";
+  if (resolvedQuoteType === "auto_sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
     return res.status(403).json({ error: "Auto Sizer quote creation is temporarily disabled. Use Manual BOQ Builder." });
+  }
+
+  const incomingRows = boqRows || boqItems || [];
+  const itemCount = incomingRows.filter((r: any) => r && r.type === "item").length;
+  if (itemCount === 0) {
+    return res.status(400).json({ error: "Save a quote with at least one BOQ item before persisting." });
   }
 
   // 1. Idempotency Key check to block duplicate submits
@@ -3326,7 +3342,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     customNotes: customNotes || "",
     grandTotal: Number(grandTotal) || cost,
     netTotal: Number(netTotal) || netCost,
-    quote_type: quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq"
+    quote_type: resolvedQuoteType,
+    source: resolvedQuoteType === "auto_sizer" ? "autosizer" : "manual",
+    updatedAt: new Date().toISOString(),
   };
 
   lead.quotes = [newQuote, ...(lead.quotes || [])];
@@ -3425,15 +3443,24 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   }
 
   const existingQuote = lead.quotes[quoteIndex];
+  const mergedRows = payload.boqRows || payload.boqItems || existingQuote.boqRows || existingQuote.boqItems || [];
+  const mergedItemCount = mergedRows.filter((r: any) => r && r.type === "item").length;
+  if (mergedItemCount === 0) {
+    return res.status(400).json({ error: "Cannot save quote with zero BOQ items." });
+  }
+
+  const resolvedUpdateType =
+    payload.quote_type === "auto_sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED
+      ? "auto_sizer"
+      : "manual_boq";
+
   const updatedQuote = {
     ...existingQuote,
     ...payload,
     id: quoteId,
-    quote_type:
-      payload.quote_type === "auto_sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED
-        ? "auto_sizer"
-        : "manual_boq",
-    updatedAt: new Date().toISOString()
+    quote_type: resolvedUpdateType,
+    source: resolvedUpdateType === "auto_sizer" ? "autosizer" : "manual",
+    updatedAt: new Date().toISOString(),
   };
 
   lead.quotes[quoteIndex] = updatedQuote;
@@ -4633,6 +4660,12 @@ function buildIncludedPagesFromTemplate(activeState: Database, templateId: strin
   return Array.from(types);
 }
 
+const OFFICIAL_QUOTE_LOGO = "/assets/sunchaser-logo.png";
+
+function resolveQuotePdfLogoUrl(_raw?: string | null): string {
+  return OFFICIAL_QUOTE_LOGO;
+}
+
 // Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
 function compileSunchaserPDFHtml(
   mode: 'sizer' | 'manual' | 'preview',
@@ -4782,9 +4815,12 @@ function compileSunchaserPDFHtml(
         </div>
         <div class="container">
           <div class="header">
-            <div>
-              <div class="title">☀️ SUNCHASER ENERGY SYSTEMS</div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <img src="${OFFICIAL_QUOTE_LOGO}" style="max-height:48px;object-fit:contain;" alt="Sunchaser Energy Systems" />
+              <div>
+              <div class="title">SUNCHASER ENERGY SYSTEMS</div>
               <div class="subtitle">Technical Capacity & Sizing Assessment Summary</div>
+              </div>
             </div>
             <div style="text-align: right; font-size: 10px;">
               <strong>Date:</strong> ${new Date().toLocaleDateString()}<br/>
@@ -4877,7 +4913,7 @@ function compileSunchaserPDFHtml(
   const globalHeader = (activeState.settings && activeState.settings.globalPdfHeader) || {
     enabled: true,
     text: "☀️ SUNCHASER ENERGY",
-    logoUrl: "",
+    logoUrl: OFFICIAL_QUOTE_LOGO,
     logoSize: "25px",
     lineColor: "#f59e0b",
     alignment: "left"
@@ -5237,6 +5273,7 @@ function compileSunchaserPDFHtml(
 
     let headerHtml = "";
     if (hEnabled) {
+      hLogoUrl = resolveQuotePdfLogoUrl(hLogoUrl);
       let justifyValue = "space-between";
       let alignValue = "center";
       let flexDir = "row";
@@ -6226,13 +6263,15 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
       return res.status(404).send("Lead not found.");
     }
     
-    const quoteId = String(req.query.quoteId || "");
-    if (!quoteId) {
-      return res.status(400).send("quoteId is required for auto sizer PDF.");
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer");
+    } else {
+      quote = getLatestSavedQuote(lead, "auto_sizer");
     }
-    const quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer");
     if (!quote) {
-      return res.status(404).send("Auto sizer quote not found for this lead.");
+      return res.status(404).send("Save a quote first.");
     }
 
     const defaultAutoSizerIds = [
@@ -6430,17 +6469,17 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     if (!lead) {
       return res.status(404).send("Lead not found.");
     }
-    const quoteId = req.query.quoteId;
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
     let quote = null;
     if (quoteId) {
-      quote = lead.quotes && lead.quotes.find((q: any) => q.id === quoteId && q.quote_type === 'manual_boq');
-    }
-    if (!quoteId) {
-      return res.status(400).send("quoteId is required for manual BOQ PDF.");
+      quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq");
+    } else {
+      // ORDER BY updated_at DESC LIMIT 1 — most recent explicitly saved manual quote
+      quote = getLatestSavedQuote(lead, "manual_boq");
     }
 
     if (!quote) {
-      return res.status(404).send("Manual BOQ quote not found for this lead.");
+      return res.status(404).send("Save a quote first.");
     }
 
     const options = {

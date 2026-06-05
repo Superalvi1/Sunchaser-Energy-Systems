@@ -3,13 +3,13 @@
   "name": "Sunchaser Energy Systems",
   "icons": [
     {
-      "src": "/sunchaser-logo.png",
+      "src": "/assets/sunchaser-logo.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any maskable"
     },
     {
-      "src": "/sunchaser-logo.png",
+      "src": "/assets/sunchaser-logo.png",
       "type": "image/png",
       "sizes": "192x192"
     }

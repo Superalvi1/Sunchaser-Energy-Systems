@@ -1,17 +1,14 @@
 import type { CompanyBranding } from "./branding";
 import { DEFAULT_BRANDING } from "./branding";
 
-/** Official uploaded Sunchaser logo (PNG in /public). */
-export const OFFICIAL_SUNCHASER_LOGO = "/sunchaser-logo.png";
-export const OFFICIAL_INVOICE_LOGO = "/sunchaser-logo.png";
+/** Official uploaded Sunchaser logo (PNG in /public/assets). */
+export const OFFICIAL_SUNCHASER_LOGO = "/assets/sunchaser-logo.png";
+export const OFFICIAL_INVOICE_LOGO = "/assets/sunchaser-logo.png";
 export const OFFICIAL_CEO_SIGNATURE = "/sunchaser-ceo-signature.png";
 export const OFFICIAL_BANK_ACCOUNTS_IMAGE = "/sunchaser-bank-accounts.png";
 
-const LEGACY_LOGO_PATHS = ["/sunchaser-logo.svg", "", "icon-192.png", "icon-512.png"];
-
-export function resolveOfficialLogoUrl(url?: string | null): string {
-  const u = String(url || "").trim();
-  if (u && !LEGACY_LOGO_PATHS.includes(u) && !/placeholder/i.test(u)) return u;
+/** Always use the official uploaded asset (ignores legacy SVG, icons, and remote placeholders). */
+export function resolveOfficialLogoUrl(_url?: string | null): string {
   return OFFICIAL_SUNCHASER_LOGO;
 }
 
