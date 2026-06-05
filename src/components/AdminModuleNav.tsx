@@ -33,6 +33,7 @@ export type AdminSegmentId =
   | "pdf-templates"
   | "invoices"
   | "parties"
+  | "finance-dashboard"
   | "project-finance"
   | "project-delivery"
   | "asset-maintenance"
@@ -71,6 +72,7 @@ type AdminModuleNavProps = {
   pdfSubTab?: "pages" | "banks" | "terms" | "ceo" | "structures" | "settings";
   onSelect: (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => void;
   showFinanceAdmin: boolean;
+  showFinanceDashboard: boolean;
   showInvoices: boolean;
   showBranding: boolean;
   showUserManagement: boolean;
@@ -152,11 +154,12 @@ function SidebarItem({
 
 export function buildAdminNavGroups(opts: {
   showFinanceAdmin: boolean;
+  showFinanceDashboard: boolean;
   showInvoices: boolean;
   showBranding: boolean;
   showUserManagement: boolean;
 }): NavGroup[] {
-  const { showFinanceAdmin, showInvoices, showBranding, showUserManagement } = opts;
+  const { showFinanceAdmin, showFinanceDashboard, showInvoices, showBranding, showUserManagement } = opts;
 
   return [
     {
@@ -207,6 +210,16 @@ export function buildAdminNavGroups(opts: {
                 description: "Customer balances and history",
                 icon: BookOpen,
               },
+              ...(showFinanceDashboard
+                ? [
+                    {
+                      id: "finance-dashboard" as const,
+                      title: "Finance Dashboard",
+                      description: "AR aging, collections & KPIs",
+                      icon: DollarSign,
+                    },
+                  ]
+                : []),
             ]
           : []),
         ...(showFinanceAdmin
@@ -366,6 +379,7 @@ export default function AdminModuleNav({
   pdfSubTab = "pages",
   onSelect,
   showFinanceAdmin,
+  showFinanceDashboard,
   showInvoices,
   showBranding,
   showUserManagement,
@@ -378,11 +392,12 @@ export default function AdminModuleNav({
     () =>
       buildAdminNavGroups({
         showFinanceAdmin,
+        showFinanceDashboard,
         showInvoices,
         showBranding,
         showUserManagement,
       }),
-    [showFinanceAdmin, showInvoices, showBranding, showUserManagement]
+    [showFinanceAdmin, showFinanceDashboard, showInvoices, showBranding, showUserManagement]
   );
 
   const q = query.trim().toLowerCase();

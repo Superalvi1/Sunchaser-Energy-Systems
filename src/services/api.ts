@@ -1981,6 +1981,15 @@ export async function fetchAdminParties(staff: User) {
   return data as { parties: any[] };
 }
 
+export async function fetchFinanceDashboard(staff: User) {
+  const res = await apiFetch("/api/admin/finance/dashboard", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load finance dashboard.");
+  return data;
+}
+
 export async function fetchAdminPartyLedger(staff: User, partyKey: string) {
   const res = await apiFetch(`/api/admin/parties/${encodeURIComponent(partyKey)}`, {
     headers: staffPortalHeaders(staff.id, staff.username, staff.role),

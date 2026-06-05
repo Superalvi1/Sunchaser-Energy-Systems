@@ -75,9 +75,13 @@ type PaymentModalState = {
 export default function PartyLedgerStaff({
   staffUser,
   onEditInvoice,
+  initialPartyKey,
+  onInitialPartyConsumed,
 }: {
   staffUser: StaffUser;
   onEditInvoice?: (invoiceId: string) => void;
+  initialPartyKey?: string | null;
+  onInitialPartyConsumed?: () => void;
 }) {
   const allowed = canCreateInvoice(staffUser.username, staffUser.role);
   const [parties, setParties] = useState<PartyLedgerSummary[]>([]);
@@ -145,6 +149,12 @@ export default function PartyLedgerStaff({
     setMobileShowList(false);
     await loadDetail(key);
   };
+
+  useEffect(() => {
+    if (!initialPartyKey || loading) return;
+    void selectParty(initialPartyKey);
+    onInitialPartyConsumed?.();
+  }, [initialPartyKey, loading, onInitialPartyConsumed]);
 
   const filteredParties = useMemo(() => {
     const q = search.trim().toLowerCase();

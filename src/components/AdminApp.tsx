@@ -25,9 +25,11 @@ import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
 import ProjectFinanceStaff from "./ProjectFinanceStaff";
 import InvoiceStaff from "./InvoiceStaff";
 import PartyLedgerStaff from "./PartyLedgerStaff";
+import FinanceDashboardStaff from "./FinanceDashboardStaff";
 import BrandingSettings from "./BrandingSettings";
 import { canViewProjectProfit } from "../lib/projectFinance";
 import { canCreateInvoice } from "../lib/invoices";
+import { canViewFinanceDashboard } from "../lib/financeDashboard";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -98,6 +100,7 @@ export default function AdminApp({
 }: AdminAppProps) {
   const [activeSegment, setActiveSegment] = useState<AdminSegmentId>("overview");
   const [invoiceEditId, setInvoiceEditId] = useState<string | null>(null);
+  const [partyLedgerKey, setPartyLedgerKey] = useState<string | null>(null);
 
   const selectSegment = (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => {
     setActiveSegment(id);
@@ -106,6 +109,7 @@ export default function AdminApp({
   };
 
   const showFinanceAdmin = canViewProjectProfit(staffUser.role, staffUser.username);
+  const showFinanceDashboard = canViewFinanceDashboard(staffUser.username, staffUser.role);
   const showInvoices = canCreateInvoice(staffUser.username, staffUser.role);
   const showUserManagement = isSuperAdmin(staffUser.username, staffUser.role);
   const showBranding = isSuperAdmin(staffUser.username, staffUser.role);
@@ -258,6 +262,7 @@ export default function AdminApp({
           pdfSubTab={selectedSubTab}
           onSelect={selectSegment}
           showFinanceAdmin={showFinanceAdmin}
+          showFinanceDashboard={showFinanceDashboard}
           showInvoices={showInvoices}
           showBranding={showBranding}
           showUserManagement={showUserManagement}
@@ -1631,9 +1636,24 @@ export default function AdminApp({
         {activeSegment === 'project-finance' && showFinanceAdmin && (
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />
         )}
+        {activeSegment === "finance-dashboard" && showFinanceDashboard && (
+          <FinanceDashboardStaff
+            staffUser={staffUser}
+            onOpenLedger={(partyKey) => {
+              setPartyLedgerKey(partyKey);
+              setActiveSegment("parties");
+            }}
+            onEditInvoice={(invoiceId) => {
+              setInvoiceEditId(invoiceId);
+              setActiveSegment("invoices");
+            }}
+          />
+        )}
         {activeSegment === 'parties' && showInvoices && (
           <PartyLedgerStaff
             staffUser={staffUser}
+            initialPartyKey={partyLedgerKey}
+            onInitialPartyConsumed={() => setPartyLedgerKey(null)}
             onEditInvoice={(invoiceId) => {
               setInvoiceEditId(invoiceId);
               setActiveSegment("invoices");
