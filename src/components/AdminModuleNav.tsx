@@ -36,6 +36,7 @@ export type AdminSegmentId =
   | "finance-dashboard"
   | "project-finance"
   | "project-delivery"
+  | "project-operations"
   | "asset-maintenance"
   | "service-desk"
   | "tickets"
@@ -73,6 +74,7 @@ type AdminModuleNavProps = {
   onSelect: (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => void;
   showFinanceAdmin: boolean;
   showFinanceDashboard: boolean;
+  showProjectOperations: boolean;
   showInvoices: boolean;
   showBranding: boolean;
   showUserManagement: boolean;
@@ -155,11 +157,12 @@ function SidebarItem({
 export function buildAdminNavGroups(opts: {
   showFinanceAdmin: boolean;
   showFinanceDashboard: boolean;
+  showProjectOperations: boolean;
   showInvoices: boolean;
   showBranding: boolean;
   showUserManagement: boolean;
 }): NavGroup[] {
-  const { showFinanceAdmin, showFinanceDashboard, showInvoices, showBranding, showUserManagement } = opts;
+  const { showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement } = opts;
 
   return [
     {
@@ -244,6 +247,16 @@ export function buildAdminNavGroups(opts: {
           description: "Install stages and handover",
           icon: Truck,
         },
+        ...(showProjectOperations
+          ? [
+              {
+                id: "project-operations" as const,
+                title: "Project Operations",
+                description: "Pipeline, delays, and team KPIs",
+                icon: Activity,
+              },
+            ]
+          : []),
         {
           id: "asset-maintenance",
           title: "Asset & Maintenance",
@@ -380,6 +393,7 @@ export default function AdminModuleNav({
   onSelect,
   showFinanceAdmin,
   showFinanceDashboard,
+  showProjectOperations,
   showInvoices,
   showBranding,
   showUserManagement,
@@ -393,11 +407,12 @@ export default function AdminModuleNav({
       buildAdminNavGroups({
         showFinanceAdmin,
         showFinanceDashboard,
+        showProjectOperations,
         showInvoices,
         showBranding,
         showUserManagement,
       }),
-    [showFinanceAdmin, showFinanceDashboard, showInvoices, showBranding, showUserManagement]
+    [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement]
   );
 
   const q = query.trim().toLowerCase();

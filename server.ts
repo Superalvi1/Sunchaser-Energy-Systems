@@ -154,6 +154,10 @@ import { compileInvoicePDFHtml } from "./invoicePdf.js";
 import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
 import { listPartyLedgers, getPartyLedgerDetail } from "./partyLedgerDb.js";
 import { fetchFinanceDashboard } from "./financeDashboardDb.js";
+import {
+  fetchProjectOperationsDashboard,
+  fetchProjectOperationsDetail,
+} from "./projectOperationsDb.js";
 import { getCompanyBranding, saveCompanyBranding } from "./brandingDb.js";
 import { mergeBranding } from "./src/lib/branding.js";
 import {
@@ -2064,6 +2068,32 @@ app.get("/api/admin/finance/dashboard", async (req, res) => {
     return res.json(data);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/operations/dashboard", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await fetchProjectOperationsDashboard(userId, username, role, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status((err as any).statusCode || 403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/operations/projects/:id", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await fetchProjectOperationsDetail(userId, username, role, req.params.id, db);
+    return res.json(data);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status((err as any).statusCode || 403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });

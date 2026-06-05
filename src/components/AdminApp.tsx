@@ -26,10 +26,12 @@ import ProjectFinanceStaff from "./ProjectFinanceStaff";
 import InvoiceStaff from "./InvoiceStaff";
 import PartyLedgerStaff from "./PartyLedgerStaff";
 import FinanceDashboardStaff from "./FinanceDashboardStaff";
+import ProjectOperationsDashboardStaff from "./ProjectOperationsDashboardStaff";
 import BrandingSettings from "./BrandingSettings";
 import { canViewProjectProfit } from "../lib/projectFinance";
 import { canCreateInvoice } from "../lib/invoices";
 import { canViewFinanceDashboard } from "../lib/financeDashboard";
+import { canViewProjectOperations } from "../lib/projectOperations";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, PieChart, Pie, Cell 
@@ -110,6 +112,7 @@ export default function AdminApp({
 
   const showFinanceAdmin = canViewProjectProfit(staffUser.role, staffUser.username);
   const showFinanceDashboard = canViewFinanceDashboard(staffUser.username, staffUser.role);
+  const showProjectOperations = canViewProjectOperations(staffUser.username, staffUser.role);
   const showInvoices = canCreateInvoice(staffUser.username, staffUser.role);
   const showUserManagement = isSuperAdmin(staffUser.username, staffUser.role);
   const showBranding = isSuperAdmin(staffUser.username, staffUser.role);
@@ -263,6 +266,7 @@ export default function AdminApp({
           onSelect={selectSegment}
           showFinanceAdmin={showFinanceAdmin}
           showFinanceDashboard={showFinanceDashboard}
+          showProjectOperations={showProjectOperations}
           showInvoices={showInvoices}
           showBranding={showBranding}
           showUserManagement={showUserManagement}
@@ -1630,6 +1634,9 @@ export default function AdminApp({
         {activeSegment === 'subscription-desk' && <SubscriptionDeskStaff staffUser={staffUser} />}
         {activeSegment === 'asset-maintenance' && <AssetMaintenanceLogStaff staffUser={staffUser} />}
         {activeSegment === 'energy-monitoring' && <EnergyMonitoringStaff staffUser={staffUser} />}
+        {activeSegment === "project-operations" && showProjectOperations && (
+          <ProjectOperationsDashboardStaff staffUser={staffUser} />
+        )}
         {activeSegment === 'project-delivery' && (
           <ProjectDeliveryStaff staffUser={staffUser} leads={leads} />
         )}

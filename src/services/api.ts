@@ -1990,6 +1990,24 @@ export async function fetchFinanceDashboard(staff: User) {
   return data;
 }
 
+export async function fetchProjectOperationsDashboard(staff: User) {
+  const res = await apiFetch("/api/admin/operations/dashboard", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load operations dashboard.");
+  return data;
+}
+
+export async function fetchProjectOperationsDetail(staff: User, deliveryId: string) {
+  const res = await apiFetch(`/api/admin/operations/projects/${encodeURIComponent(deliveryId)}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load project detail.");
+  return data;
+}
+
 export async function fetchAdminPartyLedger(staff: User, partyKey: string) {
   const res = await apiFetch(`/api/admin/parties/${encodeURIComponent(partyKey)}`, {
     headers: staffPortalHeaders(staff.id, staff.username, staff.role),
