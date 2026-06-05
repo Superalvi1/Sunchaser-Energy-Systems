@@ -8,7 +8,7 @@ export const portal = {
   shell: "min-h-screen flex flex-col bg-[#0a0e17] text-slate-100",
   header: "sticky top-0 z-40 bg-[#0a0e17]/90 backdrop-blur-xl border-b border-white/[0.06]",
   main: "flex-1 w-full max-w-lg md:max-w-2xl mx-auto px-5 md:px-8 pt-5",
-  mainWithNav: "pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]",
+  mainWithNav: "pb-[calc(3.75rem+env(safe-area-inset-bottom,0px)+1rem)]",
   card: "rounded-3xl bg-[#121a2b] border border-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.35)]",
   cardPad: "p-5",
   cardMuted: "rounded-2xl bg-white/[0.04] border border-white/[0.05]",
@@ -18,12 +18,12 @@ export const portal = {
   subtitle: "text-sm text-slate-400 leading-relaxed",
   heroMetric: "text-3xl font-bold text-white tabular-nums tracking-tight",
   value: "text-base font-semibold text-slate-100",
-  nav: "fixed bottom-0 left-0 right-0 z-50 bg-[#0d121c]/95 backdrop-blur-xl border-t border-white/[0.08]",
+  nav: "fixed bottom-0 left-0 right-0 z-50 bg-[#0a0e17]/95 backdrop-blur-xl border-t border-white/[0.06] h-14",
   navInner:
-    "max-w-lg md:max-w-2xl mx-auto flex items-stretch justify-around px-1 pt-2 pb-[max(0.65rem,env(safe-area-inset-bottom))]",
-  navBtn: "flex flex-1 flex-col items-center gap-1 py-1.5 min-w-0 transition-colors",
-  navBtnActive: "text-amber-400",
-  navBtnIdle: "text-slate-500",
+    "max-w-lg md:max-w-2xl mx-auto h-14 flex items-center justify-around px-1 pb-[env(safe-area-inset-bottom,0px)]",
+  navBtn: "flex flex-1 flex-col items-center justify-center gap-0.5 min-w-0 h-full transition-colors",
+  navBtnActive: "text-[#f5a623]",
+  navBtnIdle: "text-white/35",
   btnPrimary:
     "inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold text-sm px-5 py-3.5 shadow-lg shadow-amber-500/20 active:scale-[0.98] transition",
   btnSecondary:

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import {
-  FolderOpen,
+  CreditCard,
+  FileText,
   Headphones,
   Home,
   Loader2,
-  User,
-  Wallet,
+  Settings,
 } from "lucide-react";
 import { User as UserType } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
@@ -46,10 +46,10 @@ type MainTab = "home" | "documents" | "payments" | "support" | "account";
 
 const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "Home", icon: Home },
-  { id: "documents", label: "Documents", icon: FolderOpen },
-  { id: "payments", label: "Payments", icon: Wallet },
+  { id: "documents", label: "Quotes", icon: FileText },
+  { id: "payments", label: "Payments", icon: CreditCard },
   { id: "support", label: "Support", icon: Headphones },
-  { id: "account", label: "Account", icon: User },
+  { id: "account", label: "Account", icon: Settings },
 ];
 
 const SERVICE_TITLES: Record<PortalServiceId, { title: string; subtitle?: string }> = {
@@ -252,9 +252,8 @@ export default function ClientPortalApp({
                 aria-current={active ? "page" : undefined}
                 className={`${portal.navBtn} ${active ? portal.navBtnActive : portal.navBtnIdle}`}
               >
-                <Icon className={`h-6 w-6 ${active ? "stroke-[2.5px]" : ""}`} strokeWidth={active ? 2.5 : 2} />
-                <span className="text-[10px] font-semibold truncate max-w-full">{tab.label}</span>
-                {active && <span className="h-1 w-1 rounded-full bg-amber-400 mt-0.5" />}
+                <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.25 : 1.75} />
+                <span className="text-[10px] font-medium truncate max-w-full">{tab.label}</span>
               </button>
             );
           })}

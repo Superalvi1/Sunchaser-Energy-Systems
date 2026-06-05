@@ -89,6 +89,8 @@ export default function ClientPortalHeader({
             Call
           </a>
         </div>
+
+        <div className={portal.divider} aria-hidden />
       </div>
     </header>
   );
