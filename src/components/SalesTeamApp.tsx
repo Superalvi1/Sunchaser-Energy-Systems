@@ -16,7 +16,13 @@ import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
-import { DEFAULT_TARIFF_PKR_PER_KWH, resolveMonthlyUnits } from "../lib/energyUnits";
+import {
+  billToMonthlyUnits,
+  estimateMonthlyGenerationKw,
+  getSolarSizingSettings,
+  recommendSystemSizeKw,
+  resolveMonthlyUnits,
+} from "../lib/energyUnits";
 import { OFFICIAL_SUNCHASER_LOGO, resolveOfficialLogoUrl } from "../lib/brandingAssets";
 import {
   getLatestSavedQuote,
@@ -391,6 +397,7 @@ export default function SalesTeamApp({
 
   // Sizing inputs and options
   const [formMonthlyUnits, setFormMonthlyUnits] = useState<number>(985);
+  const [formMonthlyBill, setFormMonthlyBill] = useState<number>(0);
   const [formRoofWidth, setFormRoofWidth] = useState<number>(30);
   const [formRoofLength, setFormRoofLength] = useState<number>(25);
   const [formBackupReq, setFormBackupReq] = useState<string>("Essential Loads (Sunchaser Core 13.5kWh)");
@@ -1019,16 +1026,18 @@ export default function SalesTeamApp({
       setFormRoofWidth(30);
       setFormRoofLength(25);
       setFormBackupReq(activeLead.backupRequirement || "None");
-      setFormMonthlyUnits(
-        resolveMonthlyUnits(
-          Number(activeLead.monthlyBill) || 0,
-          Number(activeLead.monthlyUnits) || 0,
-          DEFAULT_TARIFF_PKR_PER_KWH
-        )
+      const sizingCfg = getSolarSizingSettings(settings);
+      const bill = Number(activeLead.monthlyBill) || 0;
+      const resolvedUnits = resolveMonthlyUnits(
+        bill,
+        Number(activeLead.monthlyUnits) || 0,
+        sizingCfg.blendedTariffPkrPerKwh
       );
-
+      setFormMonthlyBill(bill);
+      setFormMonthlyUnits(resolvedUnits);
+      const recommended = recommendSystemSizeKw(resolvedUnits, sizingCfg);
       // REMOVED: auto-quote on lead create (phantom data bug fix) — new quote starts empty until explicit edit/load
-      setSystemSizekW(10);
+      setSystemSizekW(recommended > 0 ? recommended : 10);
       setBoqRows([]);
       setManualBoqItems([]);
       setSizerEditingQuoteId(null);
@@ -2177,20 +2186,27 @@ export default function SalesTeamApp({
     }
   };
 
-  // Math Sizer calculations preview
-  const sunHours = 4.8;
-  const tariffRate = DEFAULT_TARIFF_PKR_PER_KWH;
+  // Math Sizer calculations preview (Pakistan bill → units → kW / 120)
+  const sizingConfig = getSolarSizingSettings(settings);
+  const tariffRate = sizingConfig.blendedTariffPkrPerKwh;
   const calculatedRoofArea = formRoofWidth * formRoofLength;
-  const dailyKwhNeeded = formMonthlyUnits / 30;
-  
+
   const minKw = systemSector === 'residential' ? 3.0 : 30.0;
   const maxKw = systemSector === 'residential' ? 30.0 : 500.0;
-  const calculatedSystemSizekW = Number(Math.max(minKw, Math.min(maxKw, Math.round((dailyKwhNeeded / sunHours) * 1.25 * 10) / 10)).toFixed(1));
+  const calculatedSystemSizekW = Number(
+    Math.max(
+      minKw,
+      Math.min(maxKw, recommendSystemSizeKw(formMonthlyUnits, sizingConfig))
+    ).toFixed(1)
+  );
 
   const maxPanelsByRoof = Math.floor(calculatedRoofArea / 20);
   const maxKwByRoof = Number(((maxPanelsByRoof * 400) / 1000).toFixed(1));
   const isRoofConstrained = calculatedSystemSizekW > maxKwByRoof;
-  const actualSystemSizekW = Math.max(minKw, Math.min(maxKw, isRoofConstrained ? maxKwByRoof : calculatedSystemSizekW));
+  const actualSystemSizekW = Math.max(
+    minKw,
+    Math.min(maxKw, isRoofConstrained ? maxKwByRoof : calculatedSystemSizekW)
+  );
 
   const isHighUnits = systemSector === 'residential'
     ? formMonthlyUnits > 3500
@@ -2199,7 +2215,7 @@ export default function SalesTeamApp({
   const sizerPreviewKw = activeModule === "sizer" ? systemSizekW : actualSystemSizekW;
   const actualPanelCount = Math.ceil((sizerPreviewKw * 1000) / (panelWattage || 580));
   const inverterRec = `${inverterBrand} ${inverterCapacity} Inverter`;
-  const monthlyGeneration = Math.round(sizerPreviewKw * sunHours * 30 * 0.82);
+  const monthlyGeneration = estimateMonthlyGenerationKw(sizerPreviewKw, sizingConfig);
   const monthlySavingsAmt = Math.round(monthlyGeneration * tariffRate);
   
   const calculatedTotalCost = Math.round((sizerPreviewKw * 1550) + (sizerPreviewKw * 450) + 1200 + installationCharges + netMeteringCharges);
@@ -2486,7 +2502,7 @@ export default function SalesTeamApp({
 
                                   const detectedSector = parsed.monthlyUnits > 3500 ? 'commercial' : 'residential';
                                   setSystemSector(detectedSector);
-                                  const rawSize = parsed.monthlyUnits / 30 / 4.8 * 1.25;
+                                  const rawSize = recommendSystemSizeKw(parsed.monthlyUnits, sizingConfig);
                                   const sectorMin = detectedSector === 'residential' ? 3.0 : 30.0;
                                   const sectorMax = detectedSector === 'residential' ? 30.0 : 500.0;
                                   const cappedSize = Number(Math.max(sectorMin, Math.min(sectorMax, rawSize)).toFixed(1));
@@ -2536,11 +2552,34 @@ export default function SalesTeamApp({
                             </select>
                           </div>
                           <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">
+                              Monthly Bill (PKR) · Tariff Rs {tariffRate}/kWh
+                            </label>
+                            <input
+                              type="number"
+                              value={formMonthlyBill || ""}
+                              onChange={(e) => {
+                                const bill = Number(e.target.value) || 0;
+                                setFormMonthlyBill(bill);
+                                const units = billToMonthlyUnits(bill, tariffRate);
+                                setFormMonthlyUnits(units);
+                                const kw = recommendSystemSizeKw(units, sizingConfig);
+                                if (kw > 0) setSystemSizekW(kw);
+                              }}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
                             <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Monthly Units (kWh)</label>
                             <input
                               type="number"
                               value={formMonthlyUnits}
-                              onChange={(e) => setFormMonthlyUnits(Number(e.target.value))}
+                              onChange={(e) => {
+                                const units = Number(e.target.value) || 0;
+                                setFormMonthlyUnits(units);
+                                const kw = recommendSystemSizeKw(units, sizingConfig);
+                                if (kw > 0) setSystemSizekW(kw);
+                              }}
                               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                             />
                           </div>

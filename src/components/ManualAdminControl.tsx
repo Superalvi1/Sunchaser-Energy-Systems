@@ -1959,6 +1959,71 @@ export default function ManualAdminControl({
                     className="w-full bg-neutral-950 border border-neutral-805 px-2.5 py-1.5 rounded-xl text-zinc-300"
                   />
                 </div>
+                <div className="border-t border-neutral-800 pt-4 mt-2 col-span-2">
+                  <span className="text-xs font-black text-amber-450 font-mono block uppercase tracking-widest border-b border-neutral-850 pb-2 mb-3">
+                    Solar Sizer (Pakistan / Lahore)
+                  </span>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-neutral-450 block mb-1">Blended tariff (PKR/kWh)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={sysSettings.solarSizing?.blendedTariffPkrPerKwh ?? sysSettings.blendedTariffPkrPerKwh ?? 42}
+                        onChange={(e) =>
+                          setSysSettings({
+                            ...sysSettings,
+                            solarSizing: {
+                              ...(sysSettings.solarSizing || {}),
+                              blendedTariffPkrPerKwh: Number(e.target.value) || 42,
+                            },
+                          })
+                        }
+                        className="w-full bg-neutral-950 border border-neutral-805 px-3 py-2 rounded-xl text-neutral-100 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-neutral-450 block mb-1">Generation per kW/month (kWh)</label>
+                      <input
+                        type="number"
+                        value={sysSettings.solarSizing?.generationPerKwMonth ?? sysSettings.solarGenerationPerKwMonth ?? 120}
+                        onChange={(e) =>
+                          setSysSettings({
+                            ...sysSettings,
+                            solarSizing: {
+                              ...(sysSettings.solarSizing || {}),
+                              generationPerKwMonth: Number(e.target.value) || 120,
+                            },
+                          })
+                        }
+                        className="w-full bg-neutral-950 border border-neutral-805 px-3 py-2 rounded-xl text-neutral-100 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-neutral-450 block mb-1">Derating factor (0–1)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.1"
+                        max="1"
+                        value={sysSettings.solarSizing?.deratingFactor ?? sysSettings.solarDeratingFactor ?? 1}
+                        onChange={(e) =>
+                          setSysSettings({
+                            ...sysSettings,
+                            solarSizing: {
+                              ...(sysSettings.solarSizing || {}),
+                              deratingFactor: Math.min(1, Math.max(0.1, Number(e.target.value) || 1)),
+                            },
+                          })
+                        }
+                        className="w-full bg-neutral-950 border border-neutral-805 px-3 py-2 rounded-xl text-neutral-100 font-mono"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-neutral-500 mt-2 font-mono">
+                    Units = bill ÷ tariff · Recommended kW = units ÷ generation/kW/month
+                  </p>
+                </div>
                 <div>
                   <label className="text-neutral-450 block mb-1">Direct taxes ratio</label>
                   <input 

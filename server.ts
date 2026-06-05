@@ -4,7 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { billToMonthlyUnits } from "./src/lib/energyUnits.ts";
+import { billToMonthlyUnits, resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import {
   isSupabaseActive,
@@ -2864,7 +2864,7 @@ app.post("/api/leads", async (req, res) => {
     monthlyUnits: (() => {
       const bill = (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill);
       const units = (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? 0 : Number(monthlyUnits);
-      return units > 0 ? units : billToMonthlyUnits(bill);
+      return resolveMonthlyUnits(bill, units);
     })(),
     sanctionedLoad: Number(sanctionedLoad) || 7,
     backupRequirement: backupRequirement || "None",
@@ -4544,7 +4544,10 @@ app.post("/api/db/update", async (req, res) => {
             address: data.address,
             status: data.status,
             monthly_bill: data.monthlyBill,
-            monthly_units: data.monthlyUnits,
+            monthly_units: resolveMonthlyUnits(
+              Number(data.monthlyBill) || 0,
+              Number(data.monthlyUnits) || 0
+            ),
             sanctioned_load: data.sanctionedLoad,
             backup_requirement: data.backupRequirement,
             location: data.location,
