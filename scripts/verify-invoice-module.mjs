@@ -68,7 +68,7 @@ async function main() {
       `${API}/api/export/pdf/invoice/${invId}?userId=${encodeURIComponent(u.id)}&username=${encodeURIComponent(u.username)}&role=${encodeURIComponent(u.role)}`
     );
     const html = await pdf.text();
-    if (pdf.ok && html.includes("TAX INVOICE") && html.includes("Grand Total")) ok("Invoice PDF HTML");
+    if (pdf.ok && html.includes("INVOICE") && !html.includes("TAX INVOICE") && html.includes("Authorized Signatory")) ok("Invoice PDF HTML");
     else bad("invoice PDF", pdf.status);
 
     const pay = await fetch(`${API}/api/admin/invoices/${invId}/payments`, {

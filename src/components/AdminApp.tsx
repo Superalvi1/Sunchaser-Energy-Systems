@@ -137,6 +137,7 @@ export default function AdminApp({
     iban: "",
     branchCode: "",
     isActive: true,
+    showOnInvoice: false,
     sortOrder: 0
   });
 
@@ -793,6 +794,7 @@ export default function AdminApp({
                           <th className="py-2.5 px-3">Bank Name</th>
                           <th className="py-2.5 px-3">Account Title</th>
                           <th className="py-2.5 px-3 text-center">Active</th>
+                          <th className="py-2.5 px-3 text-center">Invoice</th>
                           <th className="py-2.5 px-3 text-right">Delete</th>
                         </tr>
                       </thead>
@@ -817,6 +819,13 @@ export default function AdminApp({
                                   b.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-neutral-800 text-neutral-500'
                                 }`}>
                                   {b.isActive ? 'Y' : 'N'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                                  b.showOnInvoice ? 'bg-amber-500/20 text-amber-400' : 'bg-neutral-800 text-neutral-500'
+                                }`}>
+                                  {b.showOnInvoice ? 'Y' : 'N'}
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-right">
@@ -931,7 +940,17 @@ export default function AdminApp({
                             onChange={(e) => setBankDraft({ ...bankDraft, isActive: e.target.checked })}
                             className="rounded border-neutral-800 text-amber-500 focus:ring-0 w-4 h-4 cursor-pointer"
                           />
-                          <label htmlFor="bank-active-checkbox" className="text-neutral-300 font-semibold cursor-pointer">Account Active for Invoicing</label>
+                          <label htmlFor="bank-active-checkbox" className="text-neutral-300 font-semibold cursor-pointer">Active (quotations)</label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="bank-invoice-checkbox"
+                            checked={!!bankDraft.showOnInvoice}
+                            onChange={(e) => setBankDraft({ ...bankDraft, showOnInvoice: e.target.checked })}
+                            className="rounded border-neutral-800 text-amber-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                          />
+                          <label htmlFor="bank-invoice-checkbox" className="text-neutral-300 font-semibold cursor-pointer">Show on Invoice PDF</label>
                         </div>
 
                         <button
@@ -1019,6 +1038,17 @@ export default function AdminApp({
                           </div>
                         </div>
 
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="new-bank-invoice-checkbox"
+                            checked={!!newBank.showOnInvoice}
+                            onChange={(e) => setNewBank({ ...newBank, showOnInvoice: e.target.checked })}
+                            className="rounded border-neutral-800 text-amber-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                          />
+                          <label htmlFor="new-bank-invoice-checkbox" className="text-neutral-300 font-semibold cursor-pointer">Show on Invoice PDF</label>
+                        </div>
+
                         <button
                           type="button"
                           disabled={!newBank.bankName || !newBank.accountNumber}
@@ -1032,6 +1062,7 @@ export default function AdminApp({
                               iban: "",
                               branchCode: "",
                               isActive: true,
+                              showOnInvoice: false,
                               sortOrder: bankAccounts.length + 1
                             });
                           }}

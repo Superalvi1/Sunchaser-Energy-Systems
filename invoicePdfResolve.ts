@@ -3,7 +3,6 @@ import { getCompanyBranding } from "./brandingDb.js";
 import { mergeBranding } from "./src/lib/branding.ts";
 import { withOfficialBranding } from "./src/lib/brandingAssets.ts";
 import {
-  OFFICIAL_BANK_ACCOUNTS_IMAGE,
   OFFICIAL_CEO_SIGNATURE,
   LEGACY_CEO_SIGNATURE,
   OFFICIAL_INVOICE_LOGO,
@@ -14,7 +13,7 @@ import {
   type InvoicePdfMeta,
   type InvoiceProjectInfo,
 } from "./src/lib/invoicePdfMeta.ts";
-import { normalizeBankAccounts, type BrandingConfig } from "./invoicePdf.ts";
+import { normalizeInvoiceBankAccounts, type BrandingConfig } from "./invoicePdf.ts";
 import { isSupabaseActive, getSupabase } from "./dbManager.js";
 
 export type InvoicePdfOptions = {
@@ -87,14 +86,14 @@ export async function buildInvoicePdfPayload(
 ): Promise<{ invoice: InvoiceRecord; branding: BrandingConfig; options: InvoicePdfOptions }> {
   const rawBranding = mergeBranding(await getCompanyBranding(localDb));
   const official = withOfficialBranding(rawBranding);
-  const banks = normalizeBankAccounts((localDb as any)?.bankAccounts || []);
+  const banks = normalizeInvoiceBankAccounts((localDb as any)?.bankAccounts || []);
+  const signatureUrl = resolveCeoSignature(official, localDb);
 
   const branding: BrandingConfig = {
     ...official,
     logoUrl: official.invoiceLogoUrl || official.logoUrl || OFFICIAL_INVOICE_LOGO,
-    signatureUrl: resolveCeoSignature(official, localDb),
-    bankAccountsImageUrl:
-      official.bankAccountsImageUrl?.trim() || OFFICIAL_BANK_ACCOUNTS_IMAGE,
+    signatureUrl,
+    signatureConfigured: !!signatureUrl?.trim(),
     bankAccounts: banks,
   };
 

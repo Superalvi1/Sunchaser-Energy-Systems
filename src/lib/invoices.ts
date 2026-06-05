@@ -125,35 +125,23 @@ export function computeLineTotal(item: {
 }): number {
   const base = Number(item.qty || 0) * Number(item.rate || 0);
   const discount = Number(item.discountAmount || 0);
-  const afterDiscount = Math.max(0, base - discount);
-  const tax = afterDiscount * (Number(item.taxPercent || 0) / 100);
-  return Math.round((afterDiscount + tax) * 100) / 100;
+  return Math.round(Math.max(0, base - discount) * 100) / 100;
 }
 
-export function computeInvoiceTotals(
-  items: InvoiceLineItem[],
-  invoiceDiscount = 0,
-  invoiceTaxPercent = 0
-) {
+/** Total = sum(line qty × rate) − invoice discount. No tax. */
+export function computeInvoiceTotals(items: InvoiceLineItem[], invoiceDiscount = 0) {
   const lines = items.map((it) => ({
     ...it,
     lineTotal: computeLineTotal(it),
   }));
   const subtotal = lines.reduce((s, it) => s + Number(it.qty || 0) * Number(it.rate || 0), 0);
-  const lineTax = lines.reduce((s, it) => {
-    const base = Number(it.qty || 0) * Number(it.rate || 0) - Number(it.discountAmount || 0);
-    return s + Math.max(0, base) * (Number(it.taxPercent || 0) / 100);
-  }, 0);
   const discountAmount = Number(invoiceDiscount || 0);
-  const taxable = Math.max(0, subtotal - discountAmount);
-  const extraTax = taxable * (Number(invoiceTaxPercent || 0) / 100);
-  const taxAmount = Math.round((lineTax + extraTax) * 100) / 100;
-  const grandTotal = Math.round((subtotal - discountAmount + taxAmount) * 100) / 100;
+  const grandTotal = Math.round(Math.max(0, subtotal - discountAmount) * 100) / 100;
   return {
     items: lines,
     subtotal: Math.round(subtotal * 100) / 100,
     discountAmount: Math.round(discountAmount * 100) / 100,
-    taxAmount,
+    taxAmount: 0,
     grandTotal,
   };
 }

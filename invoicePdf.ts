@@ -25,8 +25,37 @@ export type BrandingConfig = {
     iban?: string;
     branchCode?: string;
     isActive?: boolean;
+    showOnInvoice?: boolean;
   }>;
+  signatureConfigured?: boolean;
 };
+
+function isValidIban(iban: string): boolean {
+  const v = String(iban || "").trim().toUpperCase();
+  return v.length >= 10 && v !== "N/A" && v !== "NA";
+}
+
+/** Invoice PDF: only active accounts explicitly marked show_on_invoice with verified fields. */
+export function normalizeInvoiceBankAccounts(accounts: any[] = []) {
+  return (accounts || [])
+    .filter((b) => b && b.isActive !== false && b.is_active !== false)
+    .filter((b) => !!(b.showOnInvoice ?? b.show_on_invoice))
+    .map((b) => ({
+      bankName: String(b.bankName || b.bank_name || "").trim(),
+      accountTitle: String(b.accountTitle || b.account_title || b.title || "").trim(),
+      accountNumber: String(b.accountNumber || b.account_number || b.accountNo || "").trim(),
+      iban: String(b.iban || "").trim(),
+      sortOrder: Number(b.sortOrder ?? b.sort_order ?? 0),
+    }))
+    .filter(
+      (b) =>
+        b.bankName &&
+        b.accountTitle &&
+        b.accountNumber &&
+        isValidIban(b.iban)
+    )
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
 
 const fmt = (n: number) => "Rs " + Math.round(n || 0).toLocaleString("en-PK");
 
@@ -44,6 +73,7 @@ function formatTime(t: string | null | undefined) {
   return t;
 }
 
+/** Quotation / legacy — active accounts without invoice visibility filter. */
 export function normalizeBankAccounts(accounts: any[] = []) {
   return (accounts || [])
     .filter((b) => b && b.isActive !== false && b.is_active !== false)
@@ -115,22 +145,38 @@ export function compileInvoicePDFHtml(
   const email = branding.billingEmail || "ceo.sunchaser@gmail.com";
   const website = branding.websiteUrl || "www.sunchaser-energy.com";
   const logo = branding.invoiceLogoUrl || branding.logoUrl || "/assets/sunchaser-logo.png";
-  const signature = branding.signatureUrl || "/assets/signature.png";
-  const bankImage = branding.bankAccountsImageUrl || "/sunchaser-bank-accounts.png";
+  const signature = branding.signatureUrl || "";
+  const hasSignature = !!(branding.signatureConfigured && signature);
   const terms =
     stripInvoiceMeta(invoice.terms || "") ||
     branding.terms ||
-    "Payment is due by the due date shown. Bank transfer details are on page 2. Thank you for choosing Sunchaser Energy Systems.";
+    "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for choosing Sunchaser Energy Systems.";
 
-  const banks = normalizeBankAccounts(branding.bankAccounts);
-  const bankFallbackHtml = banks.length
-    ? banks
-        .map(
-          (b) =>
-            `<p class="bank-fallback"><strong>${escapeHtml(b.bankName)}</strong> — ${escapeHtml(b.accountTitle)} · A/C ${escapeHtml(b.accountNumber)}${b.iban ? ` · IBAN ${escapeHtml(b.iban)}` : ""}</p>`
-        )
-        .join("")
-    : `<p class="bank-fallback">Contact accounts for payment details.</p>`;
+  const banks = normalizeInvoiceBankAccounts(branding.bankAccounts || []);
+  const bankTableHtml = banks.length
+    ? `<table class="bank-table">
+        <thead>
+          <tr>
+            <th>Company / Account Title</th>
+            <th>Bank Name</th>
+            <th>Account Number</th>
+            <th>IBAN</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${banks
+            .map(
+              (b) => `<tr>
+            <td>${escapeHtml(b.accountTitle)}</td>
+            <td>${escapeHtml(b.bankName)}</td>
+            <td class="mono">${escapeHtml(b.accountNumber)}</td>
+            <td class="mono">${escapeHtml(b.iban)}</td>
+          </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p class="bank-empty">No bank accounts are configured for invoice display. Contact accounts for payment details.</p>`;
 
   const itemRows = (invoice.items || [])
     .map((it, i) => {
@@ -179,7 +225,7 @@ export function compileInvoicePDFHtml(
     @media print { body { background: #fff; padding: 0; } .page { margin: 0; box-shadow: none; } .no-print { display: none; } }
     .v3-tag { position: absolute; top: 8mm; right: 12mm; font-size: 7px; font-weight: 800; letter-spacing: 0.12em; color: ${gold}; text-transform: uppercase; }
     .hero { display: flex; gap: 14px; align-items: flex-start; border-bottom: 3px solid ${gold}; padding-bottom: 12px; margin-bottom: 12px; }
-    .hero img.logo { height: 56px; width: auto; object-fit: contain; }
+    .hero img.logo { max-height: 56px; width: auto; object-fit: contain; }
     .hero-meta { flex: 1; }
     .hero-meta h1 { margin: 0; font-size: 18px; font-weight: 800; color: ${navy}; }
     .hero-meta .sub { font-size: 8.5px; color: #64748b; margin-top: 4px; line-height: 1.5; }
@@ -227,21 +273,23 @@ export function compileInvoicePDFHtml(
     @media (max-width: 520px) { .footer-1 { grid-template-columns: 1fr; } }
     .words { font-style: italic; font-size: 9px; margin: 8px 0; color: #334155; }
     .terms-box { font-size: 8px; color: #475569; line-height: 1.4; }
-    .sig-block { margin-top: 12px; }
-    .sig-block img { max-height: 52px; display: block; }
-    .sig-label { border-top: 1px solid #94a3b8; margin-top: 4px; padding-top: 4px; font-size: 8px; color: #64748b; }
+    .sig-block { margin-top: 14px; min-height: 72px; }
+    .sig-block img { max-height: 48px; display: block; margin-bottom: 4px; }
+    .sig-blank { height: 42px; border-bottom: 1px solid #94a3b8; margin-bottom: 4px; }
+    .sig-label { font-size: 8.5px; font-weight: 700; color: #334155; margin-top: 4px; }
+    .sig-for { font-size: 8px; color: #64748b; margin-top: 2px; }
     .totals-box { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
     .totals-box .row { display: flex; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-size: 9px; }
     .totals-box .row.grand { background: ${purple}; color: #fff; font-weight: 800; font-size: 11px; border: none; }
     .totals-box .row.balance { font-weight: 800; color: ${navy}; background: #f8fafc; }
-    .page-2-title { background: ${navy}; color: #fff; padding: 12px 16px; font-size: 14px; font-weight: 800; margin: -10mm -12mm 16px; }
-    .bank-img-wrap { text-align: center; }
-    .bank-img-wrap img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
-    .bank-fallback { font-size: 9px; margin: 8px 0; line-height: 1.5; }
-    .ack-page .ack-banner { background: ${navy}; color: #fff; padding: 14px 20px; font-size: 16px; font-weight: 800; margin: -10mm -12mm 20px; border-radius: 0 0 24px 0; }
-    .ack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 10px; min-height: 120px; }
-    .ack-sign { border-top: 2px solid ${navy}; margin-top: 48px; padding-top: 8px; font-size: 9px; color: #64748b; }
-    .scissors { text-align: center; color: #cbd5e1; font-size: 11px; margin: 16px 0 8px; letter-spacing: 2px; }
+    .bank-page-header { display: flex; align-items: center; gap: 12px; border-bottom: 2px solid ${gold}; padding-bottom: 10px; margin-bottom: 14px; }
+    .bank-page-header img { max-height: 90px; width: auto; object-fit: contain; }
+    .bank-page-title { font-size: 16px; font-weight: 800; color: ${navy}; margin: 0; }
+    table.bank-table { width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 8px; }
+    table.bank-table th { background: ${navy}; color: #fff; padding: 8px 6px; text-align: left; font-weight: 700; }
+    table.bank-table td { border-bottom: 1px solid #e2e8f0; padding: 8px 6px; vertical-align: top; }
+    table.bank-table td.mono { font-family: ui-monospace, monospace; font-size: 8.5px; word-break: break-all; }
+    .bank-empty { font-size: 9px; color: #64748b; padding: 12px; border: 1px dashed #cbd5e1; border-radius: 8px; }
     .print-hint { text-align: center; padding: 8px; font-size: 10px; color: #64748b; }
   </style>
 </head>
@@ -261,7 +309,7 @@ export function compileInvoicePDFHtml(
           📍 ${officeLine}
         </div>
       </div>
-      <div class="doc-badge">TAX INVOICE</div>
+      <div class="doc-badge">INVOICE</div>
     </div>
 
     <div class="grid-2">
@@ -314,7 +362,7 @@ export function compileInvoicePDFHtml(
       <div>
         <strong style="color:${navy};font-size:11px">Scan to Pay / Share Payment Details</strong>
         <p style="margin:4px 0 0;font-size:8.5px;color:#475569;line-height:1.45">
-          QR encodes invoice number, total, and balance. Use bank details on page 2 for transfer.
+          QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
           ${invoice.paymentMode ? `<br/><strong>Mode:</strong> ${escapeHtml(invoice.paymentMode)}` : ""}
         </p>
       </div>
@@ -347,15 +395,15 @@ export function compileInvoicePDFHtml(
         <div class="words"><strong>Amount in words:</strong> ${escapeHtml(words)}</div>
         <div class="terms-box"><strong>Terms &amp; Conditions</strong><br/>${escapeHtml(terms)}</div>
         <div class="sig-block">
-          <img src="${escapeAttr(signature)}" alt="CEO Signature" onerror="this.style.display='none'"/>
-          <div style="font-size:9px;margin-top:6px;font-weight:700">For: ${escapeHtml(company)}</div>
-          <div class="sig-label">Muhammad Allauddin — CEO · Authorized Signatory</div>
+          ${hasSignature ? `<img src="${escapeAttr(signature)}" alt="Authorized Signature" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"/>` : ""}
+          <div class="sig-blank" style="${hasSignature ? "display:none" : "display:block"}"></div>
+          <div class="sig-label">Authorized Signatory</div>
+          <div class="sig-for">For Sunchaser Energy Systems</div>
         </div>
       </div>
       <div class="totals-box">
         <div class="row"><span>Sub Total</span><span>${fmt(invoice.subtotal)}</span></div>
         ${invoice.discountAmount > 0 ? `<div class="row"><span>Discount</span><span>- ${fmt(invoice.discountAmount)}</span></div>` : ""}
-        ${invoice.taxAmount > 0 ? `<div class="row"><span>Tax</span><span>${fmt(invoice.taxAmount)}</span></div>` : ""}
         <div class="row grand"><span>Total</span><span>${fmt(invoice.grandTotal)}</span></div>
         <div class="row"><span>Received</span><span>${fmt(invoice.paidAmount)}</span></div>
         <div class="row balance"><span>Balance Due</span><span>${fmt(invoice.balanceDue)}</span></div>
@@ -366,52 +414,17 @@ export function compileInvoicePDFHtml(
     </div>
   </div>
 
-  <!-- PAGE 2 — Bank accounts -->
-  <div class="page page-2">
-    <div class="page-2-title">Company Bank Accounts — Sunchaser Energy Systems</div>
-    <p style="font-size:9px;color:#64748b;margin-bottom:12px">Transfer payment to any account below. Include invoice number <strong>${escapeHtml(invoice.invoiceNumber)}</strong> in the transfer reference.</p>
-    <div class="bank-img-wrap">
-      <img src="${escapeAttr(bankImage)}" alt="Sunchaser Bank Accounts" onerror="this.style.display='none'"/>
-    </div>
-    <div style="margin-top:16px">${bankFallbackHtml}</div>
-  </div>
-
-  <!-- PAGE 3 — Acknowledgement -->
-  <div class="page page-3 ack-page">
-    <div class="scissors">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>
-    <div class="ack-banner">CUSTOMER ACKNOWLEDGEMENT</div>
-    <p style="font-size:10px;color:#475569;margin-bottom:16px">
-      I acknowledge receipt of the above invoice and confirm the solar project details. Payment will be made as per agreed terms.
-    </p>
-    <div class="ack-grid">
+  <!-- LAST PAGE — Bank accounts (show_on_invoice only) -->
+  <div class="page page-bank">
+    <div class="bank-page-header">
+      <img src="${escapeAttr(logo)}" alt="${escapeAttr(company)}"/>
       <div>
-        <strong>Invoice To</strong><br/><br/>
-        ${escapeHtml(invoice.customerName)}<br/>
-        ${escapeHtml(invoice.customerAddress || "")}<br/>
-        ${invoice.customerPhone ? escapeHtml(invoice.customerPhone) : ""}
-      </div>
-      <div>
-        <strong>Invoice Summary</strong><br/><br/>
-        No: ${escapeHtml(invoice.invoiceNumber)}<br/>
-        Date: ${formatDate(invoice.invoiceDate)}<br/>
-        Total: ${fmt(invoice.grandTotal)} · Balance: ${fmt(invoice.balanceDue)}<br/>
-        Status: <span class="badge ${statusBadgeClass(status)}">${escapeHtml(status)}</span>
+        <h2 class="bank-page-title">Payment — Bank Accounts</h2>
+        <p style="font-size:8.5px;color:#64748b;margin:4px 0 0">Transfer to an account below. Reference: <strong>${escapeHtml(invoice.invoiceNumber)}</strong></p>
       </div>
     </div>
-    <div style="margin-top:24px;font-size:9px">
-      <strong>Project:</strong> ${escapeHtml(options.project?.projectNumber || "—")} ·
-      ${escapeHtml(options.project?.systemSize || "—")} ·
-      ${escapeHtml(options.project?.panelBrand || "—")}
-    </div>
-    <div class="ack-grid" style="margin-top:32px">
-      <div>
-        <div class="ack-sign">Customer Signature &amp; Date</div>
-      </div>
-      <div>
-        <div class="ack-sign">Official Stamp (if applicable)</div>
-      </div>
-    </div>
-    <p style="text-align:center;margin-top:24px;font-size:8px;color:#94a3b8">${escapeHtml(company)} · ${escapeHtml(phones)}</p>
+    ${bankTableHtml}
+    <p style="margin-top:20px;font-size:8px;color:#94a3b8;text-align:center">${escapeHtml(company)} · ${escapeHtml(phones)} · ${escapeHtml(email)}</p>
   </div>
 </body>
 </html>`;

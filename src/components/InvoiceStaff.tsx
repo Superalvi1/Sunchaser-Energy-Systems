@@ -83,7 +83,6 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
     leadId: "",
     quotationId: "",
     discountAmount: "0",
-    invoiceTaxPercent: "0",
     paidAmount: "0",
     previousBalance: "0",
     notes: "",
@@ -128,10 +127,9 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
           ...it,
           description: it.itemName || it.description,
         })),
-        Number(draft.discountAmount || 0),
-        Number(draft.invoiceTaxPercent || 0)
+        Number(draft.discountAmount || 0)
       ),
-    [draft.items, draft.discountAmount, draft.invoiceTaxPercent]
+    [draft.items, draft.discountAmount]
   );
 
   const balancePreview = Math.max(0, totals.grandTotal - Number(draft.paidAmount || 0));
@@ -190,7 +188,6 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
       leadId: inv.leadId || "",
       quotationId: inv.quotationId || "",
       discountAmount: String(inv.discountAmount ?? 0),
-      invoiceTaxPercent: "0",
       paidAmount: String(inv.paidAmount ?? 0),
       previousBalance: String(inv.previousBalance ?? 0),
       notes: stripInvoiceMeta(inv.notes) || "",
@@ -240,7 +237,6 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
       leadId: "",
       quotationId: "",
       discountAmount: "0",
-      invoiceTaxPercent: "0",
       paidAmount: "0",
       previousBalance: "0",
       notes: "",
@@ -337,7 +333,6 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
       ...draft,
       invoiceMeta: buildInvoiceMeta(),
       discountAmount: Number(draft.discountAmount),
-      invoiceTaxPercent: Number(draft.invoiceTaxPercent),
       paidAmount: Number(draft.paidAmount || 0),
       previousBalance: Number(draft.previousBalance || 0),
       items: totals.items.map((it, idx) => ({
@@ -785,15 +780,6 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
                 className="w-24 border border-slate-200 rounded px-2 py-1 text-right"
                 value={draft.discountAmount}
                 onChange={(e) => setDraft((d) => ({ ...d, discountAmount: e.target.value }))}
-              />
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Tax %</span>
-              <input
-                type="number"
-                className="w-16 border border-slate-200 rounded px-2 py-1 text-right"
-                value={draft.invoiceTaxPercent}
-                onChange={(e) => setDraft((d) => ({ ...d, invoiceTaxPercent: e.target.value }))}
               />
             </div>
             <div className="flex justify-between font-bold text-sm border-t border-slate-100 pt-2">

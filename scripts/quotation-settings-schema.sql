@@ -56,6 +56,9 @@ create table if not exists public.bank_accounts (
 create index if not exists bank_accounts_sort_order_idx
   on public.bank_accounts(sort_order);
 
+alter table if exists public.bank_accounts
+  add column if not exists show_on_invoice boolean not null default false;
+
 -- -----------------------------------------------------------------------------
 -- 4. Company terms / legal clauses (quotation PDF terms pages)
 -- -----------------------------------------------------------------------------

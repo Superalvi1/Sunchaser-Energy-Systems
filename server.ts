@@ -4644,6 +4644,7 @@ app.post("/api/db/update", async (req, res) => {
             iban: data.iban || "",
             branch_code: data.branchCode || data.branch_code || "",
             is_active: data.isActive !== undefined ? data.isActive : true,
+            show_on_invoice: !!(data.showOnInvoice ?? data.show_on_invoice),
             sort_order: Number(data.sortOrder || data.sort_order || 0)
           };
         } else if (table === "companyTerms") {

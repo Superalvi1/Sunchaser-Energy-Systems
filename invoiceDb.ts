@@ -260,8 +260,7 @@ export async function createAdminInvoice(
   const rawItems = (body.items as InvoiceLineItem[]) || [];
   const totals = computeInvoiceTotals(
     rawItems,
-    Number(body.discountAmount ?? body.discount_amount ?? 0),
-    Number(body.invoiceTaxPercent ?? body.invoice_tax_percent ?? 0)
+    Number(body.discountAmount ?? body.discount_amount ?? 0)
   );
   const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
   const grandTotal = totals.grandTotal;
@@ -369,8 +368,7 @@ export async function updateAdminInvoice(
   if (rawItems) {
     const totals = computeInvoiceTotals(
       rawItems,
-      Number(body.discountAmount ?? body.discount_amount ?? 0),
-      Number(body.invoiceTaxPercent ?? body.invoice_tax_percent ?? 0)
+      Number(body.discountAmount ?? body.discount_amount ?? 0)
     );
     const paidAmount =
       body.paidAmount !== undefined || body.paid_amount !== undefined
