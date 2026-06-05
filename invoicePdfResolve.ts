@@ -1,6 +1,5 @@
 import type { Database } from "./dbManager.js";
-import { getCompanyBranding } from "./brandingDb.js";
-import { mergeBranding } from "./src/lib/branding.ts";
+import { getCompanyBranding, loadInvoiceBankAccountsFromSupabase } from "./brandingDb.js";
 import { withOfficialBranding } from "./src/lib/brandingAssets.ts";
 import {
   OFFICIAL_CEO_SIGNATURE,
@@ -72,22 +71,39 @@ function projectFromLead(lead: any): InvoiceProjectInfo {
   };
 }
 
-function resolveCeoSignature(branding: BrandingConfig, localDb?: Database): string {
+async function resolveCeoSignature(branding: BrandingConfig, localDb?: Database): Promise<string> {
   if (branding.signatureUrl?.trim()) return branding.signatureUrl.trim();
+  if (isSupabaseActive()) {
+    const { data } = await getSupabase()!
+      .from("ceo_messages")
+      .select("signature_url")
+      .order("id", { ascending: true })
+      .limit(1);
+    const fromCeo = data?.[0]?.signature_url;
+    if (fromCeo && String(fromCeo).trim()) return String(fromCeo).trim();
+  }
   const ceo = (localDb as any)?.ceoMessages?.[0];
-  const fromCeo = ceo?.signature_url || ceo?.signatureUrl;
-  if (fromCeo && String(fromCeo).trim()) return String(fromCeo).trim();
+  const fromLocal = ceo?.signature_url || ceo?.signatureUrl;
+  if (fromLocal && String(fromLocal).trim()) return String(fromLocal).trim();
   return OFFICIAL_CEO_SIGNATURE || LEGACY_CEO_SIGNATURE;
+}
+
+async function loadInvoiceBankAccounts(localDb?: Database) {
+  if (isSupabaseActive()) {
+    const rows = await loadInvoiceBankAccountsFromSupabase();
+    if (rows.length) return rows;
+  }
+  return (localDb as any)?.bankAccounts || [];
 }
 
 export async function buildInvoicePdfPayload(
   invoice: InvoiceRecord,
   localDb?: Database
 ): Promise<{ invoice: InvoiceRecord; branding: BrandingConfig; options: InvoicePdfOptions }> {
-  const rawBranding = mergeBranding(await getCompanyBranding(localDb));
+  const rawBranding = await getCompanyBranding(localDb);
   const official = withOfficialBranding(rawBranding);
-  const banks = normalizeInvoiceBankAccounts((localDb as any)?.bankAccounts || []);
-  const signatureUrl = resolveCeoSignature(official, localDb);
+  const banks = normalizeInvoiceBankAccounts(await loadInvoiceBankAccounts(localDb));
+  const signatureUrl = await resolveCeoSignature(official, localDb);
 
   const branding: BrandingConfig = {
     ...official,
