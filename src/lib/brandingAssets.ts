@@ -24,10 +24,7 @@ export function withOfficialBranding(raw?: Partial<CompanyBranding> | null): Com
     invoiceLogoUrl: resolveOfficialLogoUrl(merged.invoiceLogoUrl || merged.logoUrl),
     appIconUrl: resolveOfficialLogoUrl(merged.appIconUrl),
     splashImageUrl: resolveOfficialLogoUrl(merged.splashImageUrl),
-    signatureUrl:
-      String(merged.signatureUrl || "").trim() ||
-      OFFICIAL_CEO_SIGNATURE ||
-      LEGACY_CEO_SIGNATURE,
+    signatureUrl: OFFICIAL_CEO_SIGNATURE,
     bankAccountsImageUrl:
       String(merged.bankAccountsImageUrl || "").trim() || OFFICIAL_BANK_ACCOUNTS_IMAGE,
   };
