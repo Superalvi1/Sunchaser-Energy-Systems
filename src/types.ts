@@ -137,6 +137,8 @@ export interface Lead {
   engagementLevel?: 'High' | 'Medium' | 'Low';
   conversionProbability?: number;
   conversionScore?: number;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
 }
 
 export interface TicketMessage {

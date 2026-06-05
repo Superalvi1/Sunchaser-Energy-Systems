@@ -4,16 +4,19 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { billToMonthlyUnits } from "./src/lib/energyUnits.ts";
+import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import {
   isSupabaseActive,
   getSupabase,
   fetchAppStateFromSupabase,
+  fetchLeadsFromSupabase,
   initialSeed,
   getDashboardStats,
   calculateLeadScore,
   Database,
   persistQuotationToSupabase,
-  AUTO_SIZER_QUOTE_CREATION_ENABLED,
+  REQUIRE_EXPLICIT_QUOTE_SAVE,
   resolveAppUserRole,
   fetchCustomerPortalData,
   CustomerPortalAuthError,
@@ -413,6 +416,85 @@ function saveDb() {
   } catch (err) {
     console.error("FS Write error inside saveDb:", err);
   }
+}
+
+function resolveDeletedBy(req: { headers: Record<string, string | string[] | undefined> }): string {
+  const userId = String(req.headers["x-sunchaser-user-id"] || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || "").trim();
+  const role = String(req.headers["x-sunchaser-role"] || "").trim();
+  if (username && userId) return `${username} (${userId})`;
+  if (username) return username;
+  if (role) return role;
+  return "system";
+}
+
+function findActiveLeadInDb(leadId: string): any | null {
+  const lead = (db.leads || []).find((l: any) => l.id === leadId);
+  if (!lead || !isActiveLead(lead)) return null;
+  return lead;
+}
+
+function softDeleteLeadInLocalStore(leadId: string, deletedBy: string): boolean {
+  loadDb();
+  const index = (db.leads || []).findIndex((l: any) => l.id === leadId);
+  if (index === -1) return false;
+  const deletedAt = new Date().toISOString();
+  db.leads[index] = {
+    ...db.leads[index],
+    deletedAt,
+    deletedBy,
+    deleted_at: deletedAt,
+    deleted_by: deletedBy,
+  };
+  saveDb();
+  return true;
+}
+
+async function softDeleteLeadInSupabase(leadId: string, deletedBy: string): Promise<void> {
+  const supabase = getSupabase()!;
+  const deletedAt = new Date().toISOString();
+  const { data: existing, error: fetchErr } = await supabase
+    .from("leads")
+    .select("id, deleted_at")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (fetchErr) throw fetchErr;
+  if (!existing) throw new Error(`Lead ${leadId} not found in Supabase.`);
+
+  const { error: updateErr } = await supabase
+    .from("leads")
+    .update({ deleted_at: deletedAt, deleted_by: deletedBy })
+    .eq("id", leadId);
+  if (updateErr) throw updateErr;
+
+  const { data: verify, error: verifyErr } = await supabase
+    .from("leads")
+    .select("id, deleted_at")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (verifyErr) throw verifyErr;
+  if (!verify?.deleted_at) {
+    throw new Error(`Lead ${leadId} soft delete did not persist (deleted_at still null).`);
+  }
+}
+
+async function restoreLeadInSupabase(leadId: string): Promise<void> {
+  const supabase = getSupabase()!;
+  const { error } = await supabase
+    .from("leads")
+    .update({ deleted_at: null, deleted_by: null })
+    .eq("id", leadId);
+  if (error) throw error;
+}
+
+function restoreLeadInLocalStore(leadId: string): boolean {
+  loadDb();
+  const index = (db.leads || []).findIndex((l: any) => l.id === leadId);
+  if (index === -1) return false;
+  const { deletedAt: _d, deletedBy: _b, deleted_at: _da, deleted_by: _db, ...rest } = db.leads[index];
+  db.leads[index] = rest;
+  saveDb();
+  return true;
 }
 
 loadDb();
@@ -2528,7 +2610,7 @@ app.get("/api/state", async (req, res) => {
   // Local fallback (runs only if Supabase is NOT active)
   loadDb();
   res.json({
-    leads: db.leads,
+    leads: filterActiveLeads(db.leads),
     tickets: db.tickets,
     netMeteringHistory: db.netMeteringHistory,
     inventory: db.inventory,
@@ -2597,14 +2679,33 @@ app.get("/api/diagnostics/db", async (req, res) => {
     }
   }
 
+  let quotationsUpdatedAtColumn: string | null = null;
+  if (active && supabase) {
+    const { error: updatedAtProbeError } = await supabase
+      .from("quotations")
+      .select("updated_at")
+      .limit(1);
+    quotationsUpdatedAtColumn = updatedAtProbeError ? updatedAtProbeError.message : "present";
+  }
+
   res.json({
     supabaseActive: active,
     supabaseUrl: supabaseUrlMasked,
     envKeysFound,
     supabaseUsersCount,
     supabaseError,
+    quotationsUpdatedAtColumn,
     localDbExists: fs.existsSync(DB_FILE),
     localUsersCount: db.users?.length || 0,
+    localLeadsCount: (() => {
+      try {
+        if (!fs.existsSync(DB_FILE)) return 0;
+        const local = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+        return (local.leads || []).length;
+      } catch {
+        return -1;
+      }
+    })(),
     nodeEnv: process.env.NODE_ENV,
   });
 });
@@ -2709,7 +2810,7 @@ app.post("/api/leads", async (req, res) => {
     engagementLevel
   } = req.body;
 
-  const leadId = `lead-${db.leads.length + 101}`;
+  const leadId = `lead-${filterActiveLeads(db.leads).length + 101}`;
   const newLead: any = {
     id: leadId,
     name: name || "Anonymous Lead",
@@ -2718,7 +2819,11 @@ app.post("/api/leads", async (req, res) => {
     address: address || "",
     status: "New",
     monthlyBill: (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill),
-    monthlyUnits: (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? 0 : Number(monthlyUnits),
+    monthlyUnits: (() => {
+      const bill = (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill);
+      const units = (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? 0 : Number(monthlyUnits);
+      return units > 0 ? units : billToMonthlyUnits(bill);
+    })(),
     sanctionedLoad: Number(sanctionedLoad) || 7,
     backupRequirement: backupRequirement || "None",
     location: location || "Springfield",
@@ -2797,7 +2902,7 @@ app.put("/api/leads/:id", async (req, res) => {
   loadDb();
   const { id } = req.params;
   const index = db.leads.findIndex((l: any) => l.id === id);
-  if (index === -1) {
+  if (index === -1 || !isActiveLead(db.leads[index])) {
     return res.status(404).json({ error: "Lead not found" });
   }
 
@@ -2842,64 +2947,108 @@ app.put("/api/leads/:id", async (req, res) => {
   res.json(db.leads[index]);
 });
 
-// Delete lead and cascade delete quote/project references
+// Soft-delete lead (sets deleted_at; row retained for recovery)
 app.delete("/api/leads/:id", async (req, res) => {
-  loadDb();
   const { id } = req.params;
-  const localLeadIndex = db.leads.findIndex((l: any) => l.id === id);
-  const localLeadExistsBefore = localLeadIndex !== -1;
-  console.log(`[DELETE TRACE] before delete lead=${id} localExists=${localLeadExistsBefore} localLeadsCount=${db.leads.length}`);
+  const deletedBy = resolveDeletedBy(req);
+  console.log(`[DELETE TRACE] before soft delete lead=${id} deletedBy=${deletedBy}`);
 
-  // Remove from Supabase first when active (source of truth)
+  if (isSupabaseActive()) {
+    try {
+      await softDeleteLeadInSupabase(id, deletedBy);
+      console.log(`[DELETE TRACE] after Supabase soft delete lead=${id}`);
+    } catch (err: any) {
+      console.error("[Supabase Lead Soft Delete Error]:", err.message);
+      return res.status(500).json({ error: `Failed to soft delete lead: ${err.message}` });
+    }
+  } else {
+    const lead = findActiveLeadInDb(id);
+    if (!lead) return res.status(404).json({ error: "Lead not found or already deleted." });
+  }
+
+  const localUpdated = softDeleteLeadInLocalStore(id, deletedBy);
+  console.log(`[DELETE TRACE] after saveDb lead=${id} localSoftDeleted=${localUpdated}`);
+
+  await appendActivityLog("admin", "Admin", "Super Admin", "Lead Soft Deleted", `Soft deleted lead ${id}`);
+  res.json({
+    success: true,
+    message: `Lead ${id} soft deleted successfully.`,
+    softDeleted: true,
+    deletedBy,
+  });
+});
+
+// Super Admin: list soft-deleted leads
+app.get("/api/leads/deleted", async (req, res) => {
+  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || "").trim();
+  if (role !== "Super Admin" && username.toLowerCase() !== "allauddin") {
+    return res.status(403).json({ error: "Super Admin access required." });
+  }
+
   if (isSupabaseActive()) {
     try {
       const supabase = getSupabase()!;
-      // Explicit child cleanup before lead delete to avoid FK blocking when cascade is not configured.
-      const childTables = [
-        "quotations",
-        "projects",
-        "site_surveys",
-        "installation_tasks",
-        "net_metering_trackers",
-        "payments"
-      ];
-      for (const table of childTables) {
-        const { error: childDeleteError } = await supabase.from(table).delete().eq("lead_id", id);
-        if (childDeleteError) {
-          console.error(`[DELETE TRACE] child delete failed table=${table} lead=${id} error=${childDeleteError.message}`);
-          throw childDeleteError;
-        }
-      }
-      const { error: leadDeleteError, count: leadDeleteCount } = await supabase
-        .from("leads")
-        .delete({ count: "exact" })
-        .eq("id", id);
-      if (leadDeleteError) throw leadDeleteError;
-      console.log(`[DELETE TRACE] after Supabase delete lead=${id} deletedRows=${leadDeleteCount ?? 0}`);
+      const rows = await fetchLeadsFromSupabase(supabase, { activeOnly: false, deletedOnly: true });
+      return res.json({
+        leads: rows.map((l: any) => ({
+          id: l.id,
+          name: l.name,
+          email: l.email,
+          phone: l.phone,
+          status: l.status,
+          deletedAt: l.deleted_at,
+          deletedBy: l.deleted_by,
+        })),
+      });
     } catch (err: any) {
-      console.error("[Supabase Lead Deletion Error]:", err.message);
-      return res.status(500).json({ error: "Failed to delete lead from Supabase." });
+      return res.status(500).json({ error: err.message });
     }
   }
 
-  // Remove from local in-memory DB
-  db.leads = db.leads.filter((l: any) => l.id !== id);
-  db.projects = db.projects.filter((p: any) => p.leadId !== id);
-  if (db.netMeteringTrackers[id]) delete db.netMeteringTrackers[id];
-  if (db.paymentTracks[id]) delete db.paymentTracks[id];
-  console.log(`[DELETE TRACE] after local delete lead=${id} localExists=${db.leads.some((l: any) => l.id === id)} localLeadsCount=${db.leads.length}`);
-  saveDb();
-  console.log(`[DELETE TRACE] after saveDb lead=${id}`);
+  loadDb();
+  res.json({
+    leads: (db.leads || [])
+      .filter((l: any) => !isActiveLead(l))
+      .map((l: any) => ({
+        id: l.id,
+        name: l.name,
+        email: l.email,
+        phone: l.phone,
+        status: l.status,
+        deletedAt: l.deletedAt || l.deleted_at,
+        deletedBy: l.deletedBy || l.deleted_by,
+      })),
+  });
+});
 
-  await appendActivityLog("admin", "Admin", "Super Admin", "Lead Deleted", `Deleted lead ${id}`);
-  res.json({ success: true, message: `Lead ${id} and all related quotes/projects deleted successfully.` });
+// Super Admin: restore soft-deleted lead
+app.post("/api/leads/:id/restore", async (req, res) => {
+  const { id } = req.params;
+  const role = String(req.headers["x-sunchaser-role"] || req.body?.role || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || "").trim();
+  if (role !== "Super Admin" && username.toLowerCase() !== "allauddin") {
+    return res.status(403).json({ error: "Super Admin access required." });
+  }
+
+  if (isSupabaseActive()) {
+    try {
+      await restoreLeadInSupabase(id);
+    } catch (err: any) {
+      return res.status(500).json({ error: `Failed to restore lead: ${err.message}` });
+    }
+  }
+
+  restoreLeadInLocalStore(id);
+  await appendActivityLog("admin", "Admin", "Super Admin", "Lead Restored", `Restored lead ${id}`);
+  res.json({ success: true, message: `Lead ${id} restored.` });
 });
 
 // Delete specific quote for a lead
 app.delete("/api/leads/:leadId/quotes/:quoteId", async (req, res) => {
   loadDb();
   const { leadId, quoteId } = req.params;
-  const lead = db.leads.find((l: any) => l.id === leadId);
+  const lead = findActiveLeadInDb(leadId);
   if (!lead) {
     return res.status(404).json({ error: "Lead not found" });
   }
@@ -2931,7 +3080,7 @@ app.put("/api/leads/:id/assign", async (req, res) => {
   loadDb();
   const { id } = req.params;
   const { salespersonName } = req.body;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   lead.assignedSalesperson = salespersonName;
@@ -2954,7 +3103,7 @@ app.put("/api/leads/:id/assign", async (req, res) => {
 app.post("/api/leads/:id/ai-score", async (req, res) => {
   loadDb();
   const { id } = req.params;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   try {
@@ -2995,7 +3144,7 @@ app.post("/api/leads/:id/schedule-survey", async (req, res) => {
   loadDb();
   const { id } = req.params;
   const { scheduledDate } = req.body;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   lead.status = "Survey Scheduled";
@@ -3036,7 +3185,7 @@ app.post("/api/leads/:id/schedule-survey", async (req, res) => {
 app.post("/api/leads/:id/whatsapp-reminder", async (req, res) => {
   loadDb();
   const { id } = req.params;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   const msgText = `☀️ Hi ${lead.name}! Sarah Connor here from Sunchaser Energy. Just checking in to see if you had any questions on your custom solar sizing layout. Let us know if you would like to proceed or schedule a site survey!`;
@@ -3122,7 +3271,7 @@ app.post("/api/leads/:id/survey-report", async (req, res) => {
     panelPlacements
   } = req.body;
 
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   lead.survey = {
@@ -3243,11 +3392,11 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     quote_type
   });
 
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   const resolvedQuoteType = quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq";
-  if (resolvedQuoteType === "auto_sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+  if (resolvedQuoteType === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote creation is temporarily disabled. Use Manual BOQ Builder." });
   }
 
@@ -3404,7 +3553,7 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
   loadDb();
   const { id } = req.params;
   const { quoteId } = req.body;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   const quoteToDup = lead.quotes?.find((q: any) => q.id === quoteId);
@@ -3430,10 +3579,10 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   const { id } = req.params;
   const { quoteId, quoteData, ...quotePayload } = req.body;
   const payload = quoteData && typeof quoteData === "object" ? quoteData : quotePayload;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-  if (payload.quote_type === "auto_sizer" && !AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+  if (payload.quote_type === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote updates are temporarily disabled." });
   }
 
@@ -3450,7 +3599,7 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   }
 
   const resolvedUpdateType =
-    payload.quote_type === "auto_sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED
+    payload.quote_type === "auto_sizer" && REQUIRE_EXPLICIT_QUOTE_SAVE
       ? "auto_sizer"
       : "manual_boq";
 
@@ -3536,7 +3685,7 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
   loadDb();
   const { id } = req.params;
   const { quoteId } = req.body;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   lead.status = "Contracted";
@@ -3674,7 +3823,7 @@ app.post("/api/leads/:id/update-installation", async (req, res) => {
   loadDb();
   const { id } = req.params;
   const { progress, tasks, status, completionPhotos, report } = req.body;
-  const lead = db.leads.find((l: any) => l.id === id);
+  const lead = findActiveLeadInDb(id);
   if (!lead) return res.status(404).json({ error: "Lead not found" });
 
   if (lead.installation) {
@@ -3804,7 +3953,7 @@ app.post("/api/tickets/:id/reply", async (req, res) => {
   }
 
   if (sender === "Agent") {
-    const lead = db.leads.find((l: any) => l.email.toLowerCase() === ticket.email.toLowerCase());
+    const lead = filterActiveLeads(db.leads).find((l: any) => l.email.toLowerCase() === ticket.email.toLowerCase());
     if (lead) {
       const msgText = `☀️ Support Update! Sunchaser engineering has answered your tickets dashboard concern titled (${ticket.subject}): "${text.slice(0, 60)}..." View: http://sunchaser.co/portal`;
       await triggerWhatsAppNotification(lead.name, lead.phone, "ticket_update", msgText);
@@ -4113,7 +4262,7 @@ app.post("/api/projects/:id/update-stage", async (req, res) => {
     }
   }
 
-  const lead = db.leads.find((l: any) => l.id === project.leadId);
+  const lead = findActiveLeadInDb(project.leadId);
   if (lead) {
     if (stage === "Completed") {
       lead.status = "Installed";
@@ -6249,7 +6398,7 @@ function compileSunchaserPDFHtml(
 // 18. PDF Export Endpoints
 app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
   try {
-    if (!AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+    if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
       return res.status(403).send("Auto Sizer PDF export is temporarily disabled. Use Manual BOQ PDF with quoteId.");
     }
     loadDb();
@@ -6549,7 +6698,7 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
       return res.status(404).send("Quote not found for this lead.");
     }
 
-    if (quote.quote_type === "auto_sizer" && AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+    if (quote.quote_type === "auto_sizer" && REQUIRE_EXPLICIT_QUOTE_SAVE) {
       res.redirect(`/api/export/pdf/auto-sizer/${req.params.leadId}?quoteId=${quoteId}`);
     } else {
       res.redirect(`/api/export/pdf/manual-quote/${req.params.leadId}?quoteId=${quoteId}`);

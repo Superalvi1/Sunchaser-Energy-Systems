@@ -485,7 +485,7 @@ export default function CRMApp({
                         {onDeleteLead && (
                           <button
                             onClick={() => {
-                              if (window.confirm(`Are you absolutely sure you want to delete lead "${lead.name}" and all associated quotes? This action cannot be undone.`)) {
+                              if (window.confirm("Delete this lead?")) {
                                 onDeleteLead(lead.id);
                               }
                             }}

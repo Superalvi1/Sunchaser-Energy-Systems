@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Plus, Trash2, Edit3, Save, X, Check, FileText, Download, 
   Upload, ShieldAlert, Users, CreditCard, TrendingUp, FolderPlus, 
@@ -6,7 +6,8 @@ import {
   UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye
 } from "lucide-react";
 import { Lead, Ticket, InventoryItem, Product, User } from "../types";
-import { currencySymbol, API_BASE_URL } from "../services/api";
+import { currencySymbol, API_BASE_URL, fetchDeletedLeads, restoreLead } from "../services/api";
+import { isSuperAdmin } from "../lib/roles";
 import WhatsAppModule from "./WhatsAppModule";
 
 interface ManualAdminControlProps {
@@ -23,6 +24,7 @@ interface ManualAdminControlProps {
   websiteContent: any;
   quotations: any[];
   onRefreshState: () => void;
+  onDeleteLead?: (id: string) => void;
 }
 
 export default function ManualAdminControl({
@@ -38,8 +40,22 @@ export default function ManualAdminControl({
   settings,
   websiteContent,
   quotations,
-  onRefreshState
+  onRefreshState,
+  onDeleteLead,
 }: ManualAdminControlProps) {
+  const showDeletedLeads = isSuperAdmin(staffUser.username, staffUser.role);
+  const [deletedLeads, setDeletedLeads] = useState<any[]>([]);
+  const [deletedLeadsLoading, setDeletedLeadsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showDeletedLeads) return;
+    setDeletedLeadsLoading(true);
+    fetchDeletedLeads(staffUser.id, staffUser.username, staffUser.role)
+      .then((res) => setDeletedLeads(res.leads || []))
+      .catch(() => setDeletedLeads([]))
+      .finally(() => setDeletedLeadsLoading(false));
+  }, [showDeletedLeads, staffUser.id, staffUser.username, staffUser.role, leads.length]);
+
   // Inner Sub-Tab selector
   const [innerSubTab, setInnerSubTab] = useState<string>("products");
 
@@ -1067,12 +1083,68 @@ export default function ManualAdminControl({
                               >
                                 <Edit3 className="h-3 w-3 text-neutral-300 inline" />
                               </button>
+                              {onDeleteLead && (
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm("Delete this lead?")) {
+                                      onDeleteLead(l.id);
+                                    }
+                                  }}
+                                  className="bg-red-950/40 hover:bg-red-900/60 border border-red-900/40 p-1.5 rounded cursor-pointer text-red-400"
+                                  title="Delete Lead"
+                                >
+                                  <Trash2 className="h-3 w-3 inline" />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
                     </tbody>
                   </table>
                 </div>
+
+                {showDeletedLeads && (
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 space-y-3">
+                    <h4 className="text-xs font-black text-rose-400 uppercase tracking-widest font-mono">Deleted Leads (Recovery)</h4>
+                    {deletedLeadsLoading ? (
+                      <p className="text-neutral-500 text-xs">Loading deleted leads…</p>
+                    ) : deletedLeads.length === 0 ? (
+                      <p className="text-neutral-500 text-xs">No soft-deleted leads.</p>
+                    ) : (
+                      <table className="w-full text-left text-[11px] font-mono">
+                        <thead>
+                          <tr className="border-b border-neutral-800 text-neutral-450">
+                            <th className="py-2 px-2">Name</th>
+                            <th className="py-2 px-2">Deleted At</th>
+                            <th className="py-2 px-2">By</th>
+                            <th className="py-2 px-2 text-right">Restore</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deletedLeads.map((dl) => (
+                            <tr key={dl.id} className="border-b border-neutral-850 text-neutral-300">
+                              <td className="py-2 px-2">{dl.name} <span className="text-neutral-500">({dl.id})</span></td>
+                              <td className="py-2 px-2">{dl.deletedAt ? new Date(dl.deletedAt).toLocaleString() : "—"}</td>
+                              <td className="py-2 px-2">{dl.deletedBy || "—"}</td>
+                              <td className="py-2 px-2 text-right">
+                                <button
+                                  type="button"
+                                  className="bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-1 rounded text-emerald-300 text-[10px] cursor-pointer"
+                                  onClick={async () => {
+                                    await restoreLead(dl.id, staffUser.id, staffUser.username, staffUser.role);
+                                    onRefreshState();
+                                  }}
+                                >
+                                  Restore
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
 
                 {/* Drilldown History logs */}
                 {drilldownCust && (

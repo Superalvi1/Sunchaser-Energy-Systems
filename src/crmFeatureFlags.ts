@@ -1,2 +1,2 @@
-/** Auto Sizer may save only via explicit Save Quote (no auto-create on lead). */
-export const AUTO_SIZER_QUOTE_CREATION_ENABLED = true;
+/** Quotes persist only on explicit Save Quote (no auto-create on lead open). */
+export const REQUIRE_EXPLICIT_QUOTE_SAVE = true;

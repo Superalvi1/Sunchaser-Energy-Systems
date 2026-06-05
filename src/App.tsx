@@ -228,6 +228,15 @@ export default function App() {
     await refreshOnboardingGate(user);
   };
 
+  const clearLeadClientCache = () => {
+    if (typeof localStorage === "undefined") return;
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("sunchaser_boq_")) {
+        localStorage.removeItem(key);
+      }
+    }
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
     setPortalData(null);
@@ -236,6 +245,7 @@ export default function App() {
     setAppState(null);
     setError(null);
     setLoading(false);
+    clearLeadClientCache();
     localStorage.removeItem("sunchaser_user");
     setActiveTab("Overview");
   };
@@ -263,6 +273,12 @@ export default function App() {
     try {
       setLoading(true);
       await deleteLead(id);
+      setAppState((prev) =>
+        prev ? { ...prev, leads: prev.leads.filter((l) => l.id !== id) } : prev
+      );
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem(`sunchaser_boq_${id}`);
+      }
       await loadDatabaseState();
     } catch (err: any) {
       setError(err.message);
@@ -685,6 +701,7 @@ export default function App() {
                 structureDescriptions={appState.structureDescriptions || []}
                 quotePdfSettings={appState.quotePdfSettings || []}
                 onDeleteQuote={handleDeleteQuote}
+                onDeleteLead={handleDeleteLead}
               />
             )}
 
@@ -770,6 +787,7 @@ export default function App() {
                   }
                 }}
                 onRefreshState={loadDatabaseState}
+                onDeleteLead={handleDeleteLead}
                 onQuickAction={(action) => {
                   if (action === "lead" || action === "customer") setActiveTab("CRM Database");
                   else if (action === "quotation") setActiveTab("Sales Advisor");

@@ -2,6 +2,11 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import fs from "fs";
 import path from "path";
 import WebSocket from "ws";
+import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
+import { resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
+import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
+
+export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
 import {
   mapDocumentRow,
@@ -143,9 +148,6 @@ export function isSupabaseActive(): boolean {
   if (isConfigured) return true;
   return getSupabase() !== null;
 }
-
-/** Auto Sizer persists only on explicit Save Quote (never on lead create). */
-export const AUTO_SIZER_QUOTE_CREATION_ENABLED = true;
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
 export interface Database {
@@ -699,13 +701,47 @@ export function calculateLeadScore(lead: any) {
   lead.conversionProbability = pb;
 }
 
+export async function fetchLeadsFromSupabase(
+  supabase: SupabaseClient,
+  options: { activeOnly?: boolean; deletedOnly?: boolean } = { activeOnly: true }
+): Promise<any[]> {
+  const { activeOnly = true, deletedOnly = false } = options;
+  try {
+    let query = supabase.from("leads").select("*");
+    if (deletedOnly) {
+      query = query.not("deleted_at", "is", null);
+    } else if (activeOnly) {
+      query = query.is("deleted_at", null);
+    }
+    const { data, error } = await query;
+    if (!error) return data || [];
+    if (String(error.message).includes("deleted_at")) {
+      const { data: all, error: allErr } = await supabase.from("leads").select("*");
+      if (allErr) {
+        console.warn("[Supabase Warning] Could not fetch leads:", allErr.message);
+        return [];
+      }
+      const rows = all || [];
+      if (deletedOnly) return rows.filter((l) => !isActiveLead(l));
+      if (activeOnly) return filterActiveLeads(rows);
+      return rows;
+    }
+    console.warn("[Supabase Warning] Could not fetch leads:", error.message);
+    return [];
+  } catch (err: any) {
+    console.warn("[Supabase Error] Exception fetching leads:", err.message);
+    return [];
+  }
+}
+
 export function getDashboardStats(activeDb: Database) {
-  const totalRevenue = activeDb.leads.reduce((sum: number, lead: any) => {
+  const activeLeads = filterActiveLeads(activeDb.leads || []);
+  const totalRevenue = activeLeads.reduce((sum: number, lead: any) => {
     const acceptedQuotes = (lead.quotes || []).filter((q: any) => q.status === "Accepted");
     return sum + acceptedQuotes.reduce((s: number, q: any) => s + q.totalCost, 0);
   }, 0);
 
-  const pendingRevenue = activeDb.leads.reduce((sum: number, lead: any) => {
+  const pendingRevenue = activeLeads.reduce((sum: number, lead: any) => {
     if (lead.status !== "Installed" && lead.status !== "Contracted") {
       const pendingQuotes = (lead.quotes || []).filter((q: any) => q.status !== "Accepted");
       return sum + (pendingQuotes.length > 0 ? pendingQuotes[0].totalCost : 0);
@@ -713,9 +749,9 @@ export function getDashboardStats(activeDb: Database) {
     return sum;
   }, 0);
 
-  const totalLeads = activeDb.leads.length;
-  const installedCount = activeDb.leads.filter((l: any) => l.status === "Installed").length;
-  const contractedCount = activeDb.leads.filter((l: any) => l.status === "Contracted").length;
+  const totalLeads = activeLeads.length;
+  const installedCount = activeLeads.filter((l: any) => l.status === "Installed").length;
+  const contractedCount = activeLeads.filter((l: any) => l.status === "Contracted").length;
   const pipelineCount = totalLeads - installedCount;
 
   const statusBins: Record<string, number> = {
@@ -730,7 +766,7 @@ export function getDashboardStats(activeDb: Database) {
     Lost: 0
   };
 
-  activeDb.leads.forEach((l: any) => {
+  activeLeads.forEach((l: any) => {
     if (statusBins[l.status] !== undefined) {
       statusBins[l.status]++;
     } else {
@@ -786,7 +822,7 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     templateId: quote.templateId,
     includedPages: quote.includedPages,
     includeSizerItems: quote.includeSizerItems === true,
-    quote_type: quote.quote_type || (AUTO_SIZER_QUOTE_CREATION_ENABLED ? "auto_sizer" : "manual_boq"),
+    quote_type: quote.quote_type || (REQUIRE_EXPLICIT_QUOTE_SAVE ? "manual_boq" : "auto_sizer"),
     source: quote.source || quote.quote_type || "manual",
     updatedAt: quote.updatedAt || quote.updated_at || quote.createdAt || quote.created_at,
     termsAndConditions: quote.termsAndConditions,
@@ -926,6 +962,8 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     }
   };
 
+  const supabaseClient = supabase;
+
   // Fetch all tables in parallel safely
   const [
     users,
@@ -959,7 +997,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     quotePdfSettingsData
   ] = await Promise.all([
     safeFetch("users"),
-    safeFetch("leads"),
+    fetchLeadsFromSupabase(supabaseClient, { activeOnly: true }),
     safeFetch("quotations"),
     safeFetch("site_surveys"),
     safeFetch("installation_tasks"),
@@ -989,8 +1027,8 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     safeFetch("quote_pdf_settings")
   ]);
 
-  // Assemble leads with nested attributes
-  const leadsMapped = (leadsData || []).map((lead: any) => {
+  // Assemble active leads with nested attributes
+  const leadsMapped = filterActiveLeads(leadsData || []).map((lead: any) => {
     const quotes = sortQuotesNewestFirst(
       (quotesData || [])
         .filter((q: any) => q.lead_id === lead.id)
@@ -1080,7 +1118,10 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
       address: lead.address,
       status: lead.status,
       monthlyBill: Number(lead.monthly_bill || 0),
-      monthlyUnits: Number(lead.monthly_units || 0),
+      monthlyUnits: resolveMonthlyUnits(
+        Number(lead.monthly_bill || 0),
+        Number(lead.monthly_units || 0)
+      ),
       sanctionedLoad: Number(lead.sanctioned_load || 0),
       backupRequirement: lead.backup_requirement,
       location: lead.location,
@@ -1095,6 +1136,8 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
       conversionProbability: Number(lead.conversion_probability || 50),
       conversionScore: Number(lead.conversion_score || 50),
       createdAt: lead.created_at,
+      deletedAt: lead.deleted_at || null,
+      deletedBy: lead.deleted_by || null,
       quotes,
       survey: surveyObj,
       installation: installationObj
@@ -2104,13 +2147,27 @@ export async function fetchCustomerPortalData(
       }
     }
 
-    let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false });
+    let leadsQuery = supabase
+      .from("leads")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
     if (customerId) {
       leadsQuery = leadsQuery.eq("customer_id", customerId);
     } else {
       leadsQuery = leadsQuery.eq("email", userRow.email).limit(1);
     }
-    const { data: leadsData } = await leadsQuery;
+    let { data: leadsData, error: portalLeadsErr } = await leadsQuery;
+    if (portalLeadsErr?.message?.includes("deleted_at")) {
+      const fallback = await supabase.from("leads").select("*").order("created_at", { ascending: false });
+      leadsData = filterActiveLeads(
+        customerId
+          ? (fallback.data || []).filter((l: any) => l.customer_id === customerId)
+          : (fallback.data || []).filter((l: any) => l.email === userRow.email).slice(0, 1)
+      );
+    } else {
+      leadsData = filterActiveLeads(leadsData || []);
+    }
     const primaryLeadRow = (leadsData || [])[0];
 
     let lead: any = null;
@@ -2276,7 +2333,7 @@ export async function fetchCustomerPortalData(
 
   const customerId = userRow.customerId || userRow.customer_id || null;
   const lead =
-    (localDb.leads || []).find(
+    filterActiveLeads(localDb.leads || []).find(
       (l: any) =>
         (customerId && l.customerId === customerId) ||
         (!customerId && l.email === userRow.email)
@@ -3759,6 +3816,7 @@ async function resolvePortalSystemSizeKw(
         .from("leads")
         .select("id")
         .eq("customer_id", customerId)
+        .is("deleted_at", null)
         .limit(1);
       const leadId = leads?.[0]?.id;
       if (leadId) {
@@ -5540,7 +5598,7 @@ async function loadCustomerBasics(customerId: string, localDb?: Database) {
       };
     }
   }
-  const lead = (localDb?.leads || []).find(
+  const lead = filterActiveLeads(localDb?.leads || []).find(
     (l: any) => l.customerId === customerId || l.customer_id === customerId
   );
   if (lead) {
@@ -5574,8 +5632,8 @@ async function buildTechnicalJobsForUser(
     const supabase = getSupabase()!;
 
     if (role === "Survey Engineer") {
-      const { data: leads } = await supabase.from("leads").select("*").limit(200);
-      for (const lead of leads || []) {
+      const leads = await fetchLeadsFromSupabase(supabase, { activeOnly: true });
+      for (const lead of leads.slice(0, 200)) {
         const surveyDone = !!(lead.survey && (lead.survey.completed || lead.survey_completed));
         if (surveyDone) continue;
         if (!["Quoted", "Contracted", "Survey Scheduled", "In Progress"].includes(String(lead.status || ""))) {
@@ -5602,8 +5660,8 @@ async function buildTechnicalJobsForUser(
     }
 
     if (role === "Installation Team") {
-      const { data: leads } = await supabase.from("leads").select("*").limit(200);
-      for (const lead of leads || []) {
+      const leads = await fetchLeadsFromSupabase(supabase, { activeOnly: true });
+      for (const lead of leads.slice(0, 200)) {
         const inst = lead.installation || {};
         const progress = Number(inst.progress ?? inst.installationProgress ?? 0);
         if (progress >= 100) continue;
@@ -5706,7 +5764,7 @@ async function buildTechnicalJobsForUser(
       });
     }
   } else if (localDb) {
-    for (const lead of localDb.leads || []) {
+    for (const lead of filterActiveLeads(localDb.leads || [])) {
       if (role === "Survey Engineer") {
         const surveyDone = !!(lead.survey?.completed);
         if (!surveyDone && lead.status !== "New" && lead.status !== "Lost") {

@@ -1399,6 +1399,33 @@ export async function deleteLead(id: string): Promise<any> {
   return res.json();
 }
 
+export async function fetchDeletedLeads(userId: string, username: string, role: string): Promise<{ leads: any[] }> {
+  const res = await apiFetch("/api/leads/deleted", {
+    headers: {
+      "X-Sunchaser-User-Id": userId,
+      "X-Sunchaser-Username": username,
+      "X-Sunchaser-Role": role,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch deleted leads.");
+  return res.json();
+}
+
+export async function restoreLead(id: string, userId: string, username: string, role: string): Promise<any> {
+  const res = await apiFetch(`/api/leads/${id}/restore`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Sunchaser-User-Id": userId,
+      "X-Sunchaser-Username": username,
+      "X-Sunchaser-Role": role,
+    },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error("Failed to restore lead.");
+  return res.json();
+}
+
 export async function deleteQuote(leadId: string, quoteId: string): Promise<any> {
   const res = await apiFetch(`/api/leads/${leadId}/quotes/${quoteId}`, {
     method: "DELETE",

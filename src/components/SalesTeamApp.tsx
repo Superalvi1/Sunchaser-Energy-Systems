@@ -15,7 +15,8 @@ import AfterSalesStaffTools from "./AfterSalesStaffTools";
 import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
-import { AUTO_SIZER_QUOTE_CREATION_ENABLED } from "../crmFeatureFlags";
+import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
+import { DEFAULT_TARIFF_PKR_PER_KWH, resolveMonthlyUnits } from "../lib/energyUnits";
 import { OFFICIAL_SUNCHASER_LOGO, resolveOfficialLogoUrl } from "../lib/brandingAssets";
 import {
   getLatestSavedQuote,
@@ -41,6 +42,7 @@ interface SalesTeamAppProps {
   structureDescriptions?: any[];
   quotePdfSettings?: any[];
   onDeleteQuote?: (leadId: string, quoteId: string) => Promise<void>;
+  onDeleteLead?: (id: string) => void;
 }
 
 export default function SalesTeamApp({
@@ -61,7 +63,8 @@ export default function SalesTeamApp({
   socialLinks = [],
   structureDescriptions = [],
   quotePdfSettings = [],
-  onDeleteQuote
+  onDeleteQuote,
+  onDeleteLead,
 }: SalesTeamAppProps) {
   
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
@@ -905,7 +908,7 @@ export default function SalesTeamApp({
   };
 
   const handleCopyAutoSizerToManualBoq = () => {
-    if (!AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+    if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
       alert("Auto Sizer is temporarily disabled. Add Manual BOQ rows directly.");
       return;
     }
@@ -1001,7 +1004,13 @@ export default function SalesTeamApp({
       setFormRoofWidth(30);
       setFormRoofLength(25);
       setFormBackupReq(activeLead.backupRequirement || "None");
-      setFormMonthlyUnits(Number(activeLead.monthlyUnits) > 0 ? Number(activeLead.monthlyUnits) : 0);
+      setFormMonthlyUnits(
+        resolveMonthlyUnits(
+          Number(activeLead.monthlyBill) || 0,
+          Number(activeLead.monthlyUnits) || 0,
+          DEFAULT_TARIFF_PKR_PER_KWH
+        )
+      );
 
       // REMOVED: auto-quote on lead create (phantom data bug fix) — new quote starts empty until explicit edit/load
       setSystemSizekW(10);
@@ -1190,7 +1199,7 @@ export default function SalesTeamApp({
 
   const handleSaveSizerQuote = async () => {
     if (!activeLead || savingQuote) return;
-    if (!AUTO_SIZER_QUOTE_CREATION_ENABLED) {
+    if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
       setSubmitError("Auto Sizer quote saving is disabled.");
       return;
     }
@@ -2155,7 +2164,7 @@ export default function SalesTeamApp({
 
   // Math Sizer calculations preview
   const sunHours = 4.8;
-  const tariffRate = 35.0;
+  const tariffRate = DEFAULT_TARIFF_PKR_PER_KWH;
   const calculatedRoofArea = formRoofWidth * formRoofLength;
   const dailyKwhNeeded = formMonthlyUnits / 30;
   
@@ -2256,11 +2265,29 @@ export default function SalesTeamApp({
                   >
                     <div className="flex justify-between items-start mb-1 font-sans">
                       <span className="font-bold text-neutral-100 block max-w-[130px] truncate">{lead.name}</span>
-                      <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
-                        isSelected ? "bg-amber-400 text-slate-950 font-bold" : "bg-slate-800 text-slate-400"
-                      }`}>
-                        {lead.status}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        {onDeleteLead && (
+                          <button
+                            type="button"
+                            title="Delete lead"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm("Delete this lead?")) {
+                                if (selectedLeadId === lead.id) setSelectedLeadId(null);
+                                onDeleteLead(lead.id);
+                              }
+                            }}
+                            className="p-1 rounded-lg text-red-400 hover:bg-red-950/50 border border-transparent hover:border-red-900/40 cursor-pointer"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                        <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
+                          isSelected ? "bg-amber-400 text-slate-950 font-bold" : "bg-slate-800 text-slate-400"
+                        }`}>
+                          {lead.status}
+                        </span>
+                      </div>
                     </div>
                     <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {lead.address || "Lahore, Pakistan"}</p>
                     
@@ -2318,7 +2345,7 @@ export default function SalesTeamApp({
                   compact
                 />
                 <div className="flex gap-2 flex-wrap">
-                  {AUTO_SIZER_QUOTE_CREATION_ENABLED && (
+                  {REQUIRE_EXPLICIT_QUOTE_SAVE && (
                   <button
                     type="button"
                     disabled={!latestAutoSizerSavedQuote}
@@ -2614,7 +2641,7 @@ export default function SalesTeamApp({
 
                       <button
                         type="button"
-                        disabled={savingQuote || !AUTO_SIZER_QUOTE_CREATION_ENABLED}
+                        disabled={savingQuote || !REQUIRE_EXPLICIT_QUOTE_SAVE}
                         onClick={() => handleSaveSizerQuote()}
                         className="w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 transition"
                       >
@@ -2828,7 +2855,7 @@ export default function SalesTeamApp({
                         <option value="100">100 kW Package</option>
                       </select>
 
-                      {AUTO_SIZER_QUOTE_CREATION_ENABLED && (
+                      {REQUIRE_EXPLICIT_QUOTE_SAVE && (
                       <button
                         type="button"
                         onClick={handleCopyAutoSizerToManualBoq}

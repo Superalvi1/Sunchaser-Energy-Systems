@@ -62,6 +62,7 @@ interface AdminAppProps {
   onResolveTicket: (id: string) => void;
   onProcureInventory: (vendor: string, itemId: string, quantity: number) => Promise<void>;
   onRefreshState: () => void;
+  onDeleteLead?: (id: string) => void;
   staffUser: User;
   onQuickAction?: (action: AdminQuickAction) => void;
 }
@@ -91,6 +92,7 @@ export default function AdminApp({
   onResolveTicket,
   onProcureInventory,
   onRefreshState,
+  onDeleteLead,
   staffUser,
   onQuickAction,
 }: AdminAppProps) {
@@ -1630,6 +1632,7 @@ export default function AdminApp({
             websiteContent={websiteContent}
             quotations={quotations}
             onRefreshState={onRefreshState}
+            onDeleteLead={onDeleteLead}
           />
         )}
         {activeSegment === "products" && <AdminProductsPanel products={products} />}
