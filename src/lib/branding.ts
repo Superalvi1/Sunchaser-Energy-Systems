@@ -27,13 +27,16 @@ export const DEFAULT_OFFICE_LOCATIONS = [
   "Faisalabad: Office address",
 ];
 
+const LEGACY_BILLING_EMAIL = "billing@sunchaser-energy.com";
+const LEGACY_WEBSITE_HOSTS = ["www.sunchaser-energy.com", "sunchaser-energy.com"];
+
 export const DEFAULT_BRANDING: CompanyBranding = {
   companyName: "Sunchaser Energy Systems",
   officeAddress: DEFAULT_OFFICE_LOCATIONS.join(" | "),
   officeLocations: DEFAULT_OFFICE_LOCATIONS,
   phoneNumbers: "0321-8486752, 0309-0236666",
   billingEmail: "ceo.sunchaser@gmail.com",
-  websiteUrl: "www.sunchaser-energy.com",
+  websiteUrl: "www.sunchaserenergy.co",
   logoUrl: "/assets/sunchaser-logo.png",
   appIconUrl: "/assets/sunchaser-logo.png",
   splashImageUrl: "/assets/sunchaser-logo.png",
@@ -48,6 +51,19 @@ export const DEFAULT_BRANDING: CompanyBranding = {
   signatureUrl: "/sunchaser-ceo-signature.png",
 };
 
+function normalizeLegacyContact(raw: Partial<CompanyBranding>): Partial<CompanyBranding> {
+  const next = { ...raw };
+  const email = String(next.billingEmail || "").trim().toLowerCase();
+  if (!email || email === LEGACY_BILLING_EMAIL) {
+    next.billingEmail = DEFAULT_BRANDING.billingEmail;
+  }
+  const site = String(next.websiteUrl || "").trim().toLowerCase();
+  if (!site || LEGACY_WEBSITE_HOSTS.some((h) => site.includes(h))) {
+    next.websiteUrl = DEFAULT_BRANDING.websiteUrl;
+  }
+  return next;
+}
+
 export function mergeBranding(raw?: Partial<CompanyBranding> | null): CompanyBranding {
-  return { ...DEFAULT_BRANDING, ...(raw || {}) };
+  return { ...DEFAULT_BRANDING, ...normalizeLegacyContact(raw || {}) };
 }

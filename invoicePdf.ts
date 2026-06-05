@@ -35,16 +35,47 @@ function isValidIban(iban: string): boolean {
   return v.length >= 10 && v !== "N/A" && v !== "NA";
 }
 
+function isInvoiceBankIban(iban: string): boolean {
+  const v = String(iban || "").trim().toUpperCase();
+  if (!v || v === "N/A" || v === "NA") return true;
+  return isValidIban(v);
+}
+
+/** Verified Sunchaser accounts for invoice PDF when DB has no visible rows. */
+export const DEFAULT_INVOICE_BANK_ACCOUNTS = [
+  {
+    bankName: "Allied Bank",
+    accountTitle: "SUNCHASER ENERGY",
+    accountNumber: "04190010112276940012",
+    iban: "PK81ABPA0010112276940012",
+    sortOrder: 1,
+  },
+  {
+    bankName: "Askari Bank",
+    accountTitle: "SUNCHASER ENERGY",
+    accountNumber: "03860200001296",
+    iban: "PK03ASCM0003860200001296",
+    sortOrder: 2,
+  },
+  {
+    bankName: "Bank Islamic",
+    accountTitle: "SUNCHASER ENERGY",
+    accountNumber: "201139501310001",
+    iban: "N/A",
+    sortOrder: 3,
+  },
+];
+
 /** Invoice PDF: only active accounts explicitly marked show_on_invoice with verified fields. */
 export function normalizeInvoiceBankAccounts(accounts: any[] = []) {
-  return (accounts || [])
+  const normalized = (accounts || [])
     .filter((b) => b && b.isActive !== false && b.is_active !== false)
     .filter((b) => !!(b.showOnInvoice ?? b.show_on_invoice))
     .map((b) => ({
       bankName: String(b.bankName || b.bank_name || "").trim(),
       accountTitle: String(b.accountTitle || b.account_title || b.title || "").trim(),
       accountNumber: String(b.accountNumber || b.account_number || b.accountNo || "").trim(),
-      iban: String(b.iban || "").trim(),
+      iban: String(b.iban || "N/A").trim() || "N/A",
       sortOrder: Number(b.sortOrder ?? b.sort_order ?? 0),
     }))
     .filter(
@@ -52,9 +83,11 @@ export function normalizeInvoiceBankAccounts(accounts: any[] = []) {
         b.bankName &&
         b.accountTitle &&
         b.accountNumber &&
-        isValidIban(b.iban)
+        isInvoiceBankIban(b.iban)
     )
     .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  return normalized.length ? normalized : DEFAULT_INVOICE_BANK_ACCOUNTS;
 }
 
 const fmt = (n: number) => "Rs " + Math.round(n || 0).toLocaleString("en-PK");
@@ -143,7 +176,7 @@ export function compileInvoicePDFHtml(
         .filter(Boolean);
   const phones = branding.phoneNumbers || "0321-8486752, 0309-0236666";
   const email = branding.billingEmail || "ceo.sunchaser@gmail.com";
-  const website = branding.websiteUrl || "www.sunchaser-energy.com";
+  const website = branding.websiteUrl || "www.sunchaserenergy.co";
   const logo = branding.invoiceLogoUrl || branding.logoUrl || "/assets/sunchaser-logo.png";
   const signature = branding.signatureUrl || "";
   const hasSignature = !!(branding.signatureConfigured && signature);

@@ -1519,8 +1519,8 @@ export default function AdminApp({
                     companyName: "SUNCHASER ENERGY SYSTEMS",
                     officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
                     hotlinePhones: "0309-0236666, 0330-7776444",
-                    billingEmail: "billing@sunchaser-energy.com",
-                    websiteUrl: "www.sunchaser-energy.com",
+                    billingEmail: "ceo.sunchaser@gmail.com",
+                    websiteUrl: "www.sunchaserenergy.co",
                     logoUrl: ""
                   };
                   
