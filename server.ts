@@ -16,6 +16,7 @@ import {
   calculateLeadScore,
   Database,
   persistQuotationToSupabase,
+  generateQuotationId,
   REQUIRE_EXPLICIT_QUOTE_SAVE,
   resolveAppUserRole,
   fetchCustomerPortalData,
@@ -3423,7 +3424,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     return res.status(429).json({ error: "Rate limit: Please wait 4 seconds between generating quotes." });
   }
 
-  const quoteId = `q-${(lead.quotes || []).length + 1}`;
+  const quoteId = generateQuotationId();
   const cost = Number(totalCost) || (Number(systemSizekW) * 19500 + (batteryCapacity ? 480000 : 0));
   const disc = Number(discount) || 0;
   const netCost = cost - disc;
@@ -3534,6 +3535,13 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
       if (!insertResult.ok) {
         console.error("[Supabase Create Quotation Database Error]:", insertResult.error);
       } else {
+        if (insertResult.quoteId && insertResult.quoteId !== quoteId) {
+          newQuote.id = insertResult.quoteId;
+          if (lead.quotes?.[0]?.id === quoteId) {
+            lead.quotes[0].id = insertResult.quoteId;
+          }
+          saveDb();
+        }
         console.log(`[Supabase Create Quotation] Quote ${newQuote.id} inserted successfully.`);
       }
     } catch (err: any) {
@@ -3559,7 +3567,7 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
   const quoteToDup = lead.quotes?.find((q: any) => q.id === quoteId);
   if (!quoteToDup) return res.status(404).json({ error: "Quote not found" });
 
-  const newQuoteId = `q-${(lead.quotes || []).length + 1}`;
+  const newQuoteId = generateQuotationId();
   const duplicated = {
     ...quoteToDup,
     id: newQuoteId,

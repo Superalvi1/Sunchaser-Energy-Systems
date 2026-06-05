@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import WebSocket from "ws";
@@ -854,6 +855,68 @@ export function parseQuotationExtendedData(row: any): Record<string, any> {
   return {};
 }
 
+/** Globally unique quotation id; legacy ids like q-1 remain valid when already stored. */
+export function generateQuotationId(): string {
+  return `q-${randomUUID()}`;
+}
+
+function isQuotationDuplicateKeyError(message?: string): boolean {
+  return (
+    !!message &&
+    (message.includes("duplicate key") ||
+      message.includes("quotations_pkey") ||
+      message.includes("unique constraint"))
+  );
+}
+
+async function quotationIdExistsInSupabase(
+  supabase: SupabaseClient,
+  id: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("quotations")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  return !error && !!data;
+}
+
+async function persistQuotationRow(
+  supabase: SupabaseClient,
+  leadId: string,
+  customerId: string,
+  quote: any,
+  mode: "insert" | "upsert"
+): Promise<{ ok: boolean; error?: string }> {
+  const withExt = buildQuotationSupabaseRow(leadId, customerId, quote, {
+    includeExtendedColumn: true,
+  });
+  const attempt =
+    mode === "upsert"
+      ? await supabase.from("quotations").upsert(withExt, { onConflict: "id" })
+      : await supabase.from("quotations").insert(withExt);
+
+  if (!attempt.error) return { ok: true };
+
+  const missingExt =
+    attempt.error.message?.includes("extended_data") ||
+    attempt.error.message?.includes("schema cache");
+  if (!missingExt) {
+    return { ok: false, error: attempt.error.message };
+  }
+
+  const fallback = buildQuotationSupabaseRow(leadId, customerId, quote, {
+    includeExtendedColumn: false,
+  });
+  const retry =
+    mode === "upsert"
+      ? await supabase.from("quotations").upsert(fallback, { onConflict: "id" })
+      : await supabase.from("quotations").insert(fallback);
+
+  if (retry.error) return { ok: false, error: retry.error.message };
+  return { ok: true };
+}
+
 export function buildQuotationSupabaseRow(
   leadId: string,
   customerId: string,
@@ -899,34 +962,19 @@ export async function persistQuotationToSupabase(
   customerId: string,
   quote: any,
   mode: "insert" | "upsert" = "insert"
-): Promise<{ ok: boolean; error?: string }> {
-  const withExt = buildQuotationSupabaseRow(leadId, customerId, quote, {
-    includeExtendedColumn: true,
-  });
-  const attempt =
-    mode === "upsert"
-      ? await supabase.from("quotations").upsert(withExt, { onConflict: "id" })
-      : await supabase.from("quotations").insert(withExt);
-
-  if (!attempt.error) return { ok: true };
-
-  const missingExt =
-    attempt.error.message?.includes("extended_data") ||
-    attempt.error.message?.includes("schema cache");
-  if (!missingExt) {
-    return { ok: false, error: attempt.error.message };
+): Promise<{ ok: boolean; error?: string; quoteId?: string }> {
+  if (mode === "insert" && (await quotationIdExistsInSupabase(supabase, quote.id))) {
+    quote.id = generateQuotationId();
   }
 
-  const fallback = buildQuotationSupabaseRow(leadId, customerId, quote, {
-    includeExtendedColumn: false,
-  });
-  const retry =
-    mode === "upsert"
-      ? await supabase.from("quotations").upsert(fallback, { onConflict: "id" })
-      : await supabase.from("quotations").insert(fallback);
+  let result = await persistQuotationRow(supabase, leadId, customerId, quote, mode);
 
-  if (retry.error) return { ok: false, error: retry.error.message };
-  return { ok: true };
+  if (mode === "insert" && !result.ok && isQuotationDuplicateKeyError(result.error)) {
+    quote.id = generateQuotationId();
+    result = await persistQuotationRow(supabase, leadId, customerId, quote, mode);
+  }
+
+  return { ...result, quoteId: quote.id };
 }
 
 /* --- SUPABASE GETTER / JOINER --- */
