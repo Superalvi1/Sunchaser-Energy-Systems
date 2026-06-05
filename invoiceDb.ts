@@ -23,6 +23,8 @@ import {
   encodeInvoiceNotes,
   type InvoicePdfMeta,
 } from "./src/lib/invoicePdfMeta.ts";
+import { resolveInvoiceCustomerId } from "./invoiceCustomerLink.js";
+import { coercePaymentMethod } from "./src/lib/invoicePayments.ts";
 
 export class InvoiceDbError extends Error {
   statusCode: number;
@@ -173,6 +175,50 @@ async function recalcPaidTotals(invoiceId: string, localDb?: Database) {
   return payments.reduce((s, p) => s + Number(p.amount || 0), 0);
 }
 
+async function insertPaymentRow(
+  payRow: Record<string, unknown>,
+  localDb?: Database
+) {
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("invoice_payments").insert(payRow);
+    if (error) throw error;
+  } else {
+    const db = localDb as any;
+    db.invoicePayments = db.invoicePayments || [];
+    db.invoicePayments.push(payRow);
+  }
+}
+
+/** Auto-insert audit row when invoice is saved with paidAmount > 0 and no payments yet. */
+async function ensureInitialPaymentRow(
+  invoiceId: string,
+  opts: {
+    paidAmount: number;
+    paymentMode?: string | null;
+    invoiceDate: string;
+    createdBy: string;
+  },
+  localDb?: Database
+) {
+  if (opts.paidAmount <= 0) return;
+  const existing = await loadPayments(invoiceId, localDb);
+  if (existing.length > 0) return;
+
+  const payRow = {
+    id: `pay-init-${Date.now()}`,
+    invoice_id: invoiceId,
+    amount: opts.paidAmount,
+    payment_method: coercePaymentMethod(opts.paymentMode),
+    payment_date: opts.invoiceDate,
+    receipt_url: null,
+    receipt_storage_path: null,
+    notes: "Initial payment recorded at invoice creation",
+    recorded_by: opts.createdBy,
+    created_at: new Date().toISOString(),
+  };
+  await insertPaymentRow(payRow, localDb);
+}
+
 export async function listAdminInvoices(
   userId: string,
   username: string,
@@ -276,10 +322,26 @@ export async function createAdminInvoice(
     String(body.amountInWords || body.amount_in_words || "") ||
     amountInWordsPkr(totals.grandTotal);
 
+  const invoiceDate =
+    String(body.invoiceDate || body.invoice_date || new Date().toISOString().slice(0, 10));
+
+  const resolvedCustomerId = await resolveInvoiceCustomerId(
+    {
+      customerId: (body.customerId || body.customer_id) as string | null | undefined,
+      customerName: String(body.customerName || body.customer_name || "Customer"),
+      customerPhone: (body.customerPhone || body.customer_phone) as string | null | undefined,
+      customerEmail: (body.customerEmail || body.customer_email) as string | null | undefined,
+      customerAddress: (body.customerAddress || body.customer_address) as string | null | undefined,
+      cnicNtn: (body.cnicNtn || body.cnic_ntn) as string | null | undefined,
+    },
+    localDb,
+    { username, invoiceNumber }
+  );
+
   const row = {
     id,
     invoice_number: invoiceNumber,
-    invoice_date: body.invoiceDate || body.invoice_date || new Date().toISOString().slice(0, 10),
+    invoice_date: invoiceDate,
     invoice_time: body.invoiceTime || body.invoice_time || null,
     due_date: body.dueDate || body.due_date || null,
     po_number: body.poNumber || body.po_number || null,
@@ -288,7 +350,7 @@ export async function createAdminInvoice(
     payment_mode: body.paymentMode || body.payment_mode || null,
     amount_in_words: amountWords,
     previous_balance: Number(body.previousBalance ?? body.previous_balance ?? 0),
-    customer_id: body.customerId || body.customer_id || null,
+    customer_id: resolvedCustomerId,
     customer_name: String(body.customerName || body.customer_name || "Customer"),
     customer_phone: body.customerPhone || body.customer_phone || null,
     customer_address: body.customerAddress || body.customer_address || null,
@@ -345,6 +407,17 @@ export async function createAdminInvoice(
     db.invoices.push(row);
     db.invoiceItems.push(...itemRows);
   }
+
+  await ensureInitialPaymentRow(
+    id,
+    {
+      paidAmount,
+      paymentMode: (body.paymentMode || body.payment_mode) as string | null | undefined,
+      invoiceDate,
+      createdBy: username,
+    },
+    localDb
+  );
 
   return getAdminInvoiceById(userId, username, role, id, localDb);
 }
@@ -437,6 +510,32 @@ export async function updateAdminInvoice(
     );
   }
 
+  if (!existing.customerId) {
+    const explicitCid = body.customerId ?? body.customer_id;
+    const linkedId = await resolveInvoiceCustomerId(
+      {
+        customerId: explicitCid as string | null | undefined,
+        customerName:
+          (body.customerName ?? body.customer_name ?? existing.customerName) as string,
+        customerPhone:
+          (body.customerPhone ?? body.customer_phone ?? existing.customerPhone) as
+            | string
+            | null
+            | undefined,
+        customerEmail: (body.customerEmail ?? body.customer_email) as string | null | undefined,
+        customerAddress:
+          (body.customerAddress ?? body.customer_address ?? existing.customerAddress) as
+            | string
+            | null
+            | undefined,
+        cnicNtn: (body.cnicNtn ?? body.cnic_ntn ?? existing.cnicNtn) as string | null | undefined,
+      },
+      localDb,
+      { username, invoiceNumber: existing.invoiceNumber }
+    );
+    if (linkedId) patch.customer_id = linkedId;
+  }
+
   const scalarFields: [string, string][] = [
     ["invoice_date", "invoiceDate"],
     ["invoice_time", "invoiceTime"],
@@ -447,7 +546,6 @@ export async function updateAdminInvoice(
     ["payment_mode", "paymentMode"],
     ["amount_in_words", "amountInWords"],
     ["previous_balance", "previousBalance"],
-    ["customer_id", "customerId"],
     ["customer_name", "customerName"],
     ["customer_phone", "customerPhone"],
     ["customer_address", "customerAddress"],
@@ -487,6 +585,26 @@ export async function updateAdminInvoice(
     if (idx >= 0) Object.assign(db.invoices[idx], patch);
   }
 
+  const paidForAudit =
+    patch.paid_amount !== undefined
+      ? Number(patch.paid_amount)
+      : existing.paidAmount;
+  const invoiceDateForAudit = String(
+    patch.invoice_date ?? existing.invoiceDate ?? new Date().toISOString().slice(0, 10)
+  );
+  const paymentModeForAudit =
+    (patch.payment_mode as string | undefined) ?? existing.paymentMode;
+  await ensureInitialPaymentRow(
+    invoiceId,
+    {
+      paidAmount: paidForAudit,
+      paymentMode: paymentModeForAudit,
+      invoiceDate: invoiceDateForAudit,
+      createdBy: username,
+    },
+    localDb
+  );
+
   return getAdminInvoiceById(userId, username, role, invoiceId, localDb);
 }
 
@@ -522,7 +640,9 @@ export async function recordInvoicePayment(
     id: payId,
     invoice_id: invoiceId,
     amount,
-    payment_method: body.paymentMethod || body.payment_method || "Cash",
+    payment_method: coercePaymentMethod(
+      (body.paymentMethod || body.payment_method) as string | undefined
+    ),
     payment_date: body.paymentDate || body.payment_date || new Date().toISOString().slice(0, 10),
     receipt_url: receiptUrl,
     receipt_storage_path: receiptStoragePath,
@@ -531,14 +651,7 @@ export async function recordInvoicePayment(
     created_at: new Date().toISOString(),
   };
 
-  if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("invoice_payments").insert(payRow);
-    if (error) throw error;
-  } else {
-    const db = localDb as any;
-    db.invoicePayments = db.invoicePayments || [];
-    db.invoicePayments.push(payRow);
-  }
+  await insertPaymentRow(payRow, localDb);
 
   const paidTotal = await recalcPaidTotals(invoiceId, localDb);
   const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);

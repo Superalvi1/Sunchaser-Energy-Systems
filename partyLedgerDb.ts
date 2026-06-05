@@ -6,6 +6,10 @@ import {
   StaffPortalAuthError,
 } from "./dbManager.js";
 import { canCreateInvoice, type PartyLedgerSummary, type PartyLedgerTransaction } from "./src/lib/invoices.ts";
+import {
+  resolveInvoiceBalanceDue,
+  resolveInvoiceReceivedAmount,
+} from "./src/lib/invoicePayments.ts";
 import { listAdminInvoices } from "./invoiceDb.js";
 
 function partyKeyFromInvoice(inv: {
@@ -37,8 +41,8 @@ export async function listPartyLedgers(
     const key = partyKeyFromInvoice(inv);
     const existing = map.get(key);
     const sales = Number(inv.grandTotal || 0);
-    const paid = Number(inv.paidAmount || 0);
-    const balance = Number(inv.balanceDue || 0);
+    const paid = resolveInvoiceReceivedAmount(inv);
+    const balance = resolveInvoiceBalanceDue(inv);
 
     if (existing) {
       existing.totalSales += sales;
@@ -90,8 +94,8 @@ export async function getPartyLedgerDetail(
       invoiceDate: inv.invoiceDate,
       dueDate: inv.dueDate,
       grandTotal: inv.grandTotal,
-      paidAmount: inv.paidAmount,
-      balanceDue: inv.balanceDue,
+      paidAmount: resolveInvoiceReceivedAmount(inv),
+      balanceDue: resolveInvoiceBalanceDue(inv),
       paymentStatus: inv.paymentStatus,
     }))
     .sort((a, b) => String(b.invoiceDate).localeCompare(String(a.invoiceDate)));
