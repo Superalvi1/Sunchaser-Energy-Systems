@@ -5,6 +5,7 @@ import { withOfficialBranding } from "./src/lib/brandingAssets.ts";
 import {
   OFFICIAL_BANK_ACCOUNTS_IMAGE,
   OFFICIAL_CEO_SIGNATURE,
+  LEGACY_CEO_SIGNATURE,
   OFFICIAL_INVOICE_LOGO,
 } from "./src/lib/brandingAssets.ts";
 import type { InvoiceRecord } from "./src/lib/invoices.ts";
@@ -77,7 +78,7 @@ function resolveCeoSignature(branding: BrandingConfig, localDb?: Database): stri
   const ceo = (localDb as any)?.ceoMessages?.[0];
   const fromCeo = ceo?.signature_url || ceo?.signatureUrl;
   if (fromCeo && String(fromCeo).trim()) return String(fromCeo).trim();
-  return OFFICIAL_CEO_SIGNATURE;
+  return OFFICIAL_CEO_SIGNATURE || LEGACY_CEO_SIGNATURE;
 }
 
 export async function buildInvoicePdfPayload(

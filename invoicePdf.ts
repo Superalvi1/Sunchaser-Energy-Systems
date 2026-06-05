@@ -115,7 +115,7 @@ export function compileInvoicePDFHtml(
   const email = branding.billingEmail || "ceo.sunchaser@gmail.com";
   const website = branding.websiteUrl || "www.sunchaser-energy.com";
   const logo = branding.invoiceLogoUrl || branding.logoUrl || "/assets/sunchaser-logo.png";
-  const signature = branding.signatureUrl || "/sunchaser-ceo-signature.png";
+  const signature = branding.signatureUrl || "/assets/signature.png";
   const bankImage = branding.bankAccountsImageUrl || "/sunchaser-bank-accounts.png";
   const terms =
     stripInvoiceMeta(invoice.terms || "") ||
