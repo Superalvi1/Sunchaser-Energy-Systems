@@ -67,6 +67,7 @@ function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] 
     paidAmount: Number(row.paid_amount ?? row.paidAmount ?? 0),
     balanceDue: Number(row.balance_due ?? row.balanceDue ?? 0),
     paymentStatus: row.payment_status || row.paymentStatus || "Unpaid",
+    invoiceStatus: row.invoice_status || row.invoiceStatus || "active",
     notes: row.notes || null,
     terms: row.terms || null,
     pdfUrl: row.pdf_url || row.pdfUrl || null,
@@ -367,6 +368,7 @@ export async function createAdminInvoice(
     paid_amount: paidAmount,
     balance_due: balanceDue,
     payment_status: paymentStatus,
+    invoice_status: "active",
     notes: encodeInvoiceNotes(
       String(body.notes || ""),
       (body.invoiceMeta as InvoicePdfMeta | undefined) || undefined

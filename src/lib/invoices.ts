@@ -3,6 +3,24 @@ import { roleHasPermission, isSuperAdmin, type PermissionKey } from "./roles";
 export const INVOICE_PAYMENT_STATUSES = ["Unpaid", "Partial", "Paid", "Overdue"] as const;
 export type InvoicePaymentStatus = (typeof INVOICE_PAYMENT_STATUSES)[number];
 
+export const INVOICE_STATUSES = [
+  "active",
+  "paid",
+  "partial",
+  "overdue",
+  "void",
+  "duplicate",
+  "test",
+] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export const LEDGER_EXCLUDED_INVOICE_STATUSES = ["duplicate", "test", "void"] as const;
+
+export function isExcludedFromLedgerTotals(invoiceStatus?: string | null): boolean {
+  const status = String(invoiceStatus || "active").toLowerCase();
+  return (LEDGER_EXCLUDED_INVOICE_STATUSES as readonly string[]).includes(status);
+}
+
 export const PAYMENT_METHODS = ["Cash", "Bank transfer", "Cheque", "Online"] as const;
 export type InvoicePaymentMethod = (typeof PAYMENT_METHODS)[number];
 
@@ -57,6 +75,7 @@ export type PartyLedgerTransaction = {
   paidAmount: number;
   balanceDue: number;
   paymentStatus: InvoicePaymentStatus;
+  invoiceStatus?: InvoiceStatus | string;
 };
 
 export type InvoiceRecord = {
@@ -86,6 +105,7 @@ export type InvoiceRecord = {
   paidAmount: number;
   balanceDue: number;
   paymentStatus: InvoicePaymentStatus;
+  invoiceStatus?: InvoiceStatus | string;
   notes: string | null;
   terms: string | null;
   pdfUrl: string | null;

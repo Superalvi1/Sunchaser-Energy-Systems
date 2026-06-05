@@ -7,6 +7,7 @@ import {
 } from "./dbManager.js";
 import {
   canCreateInvoice,
+  isExcludedFromLedgerTotals,
   type PartyLedgerPayment,
   type PartyLedgerSummary,
   type PartyLedgerTransaction,
@@ -44,38 +45,42 @@ export async function listPartyLedgers(
 
   for (const inv of invoices) {
     const key = partyKeyFromInvoice(inv);
-    const existing = map.get(key);
-    const sales = Number(inv.grandTotal || 0);
-    const paid = resolveInvoiceReceivedAmount(inv);
-    const balance = resolveInvoiceBalanceDue(inv);
-
-    const overdue = inv.paymentStatus === "Overdue";
-    if (existing) {
-      existing.totalSales += sales;
-      existing.receivedAmount += paid;
-      existing.balanceDue += balance;
-      existing.invoiceCount += 1;
-      existing.hasOverdue = existing.hasOverdue || overdue;
-      if (!existing.billingAddress && inv.customerAddress) {
-        existing.billingAddress = inv.customerAddress;
-      }
-      if (!existing.customerId && inv.customerId) {
-        existing.customerId = inv.customerId;
-      }
-    } else {
-      map.set(key, {
+    let existing = map.get(key);
+    if (!existing) {
+      existing = {
         partyKey: key,
         customerId: inv.customerId || null,
         name: inv.customerName,
         phone: inv.customerPhone || null,
         billingAddress: inv.customerAddress || null,
-        totalSales: sales,
-        receivedAmount: paid,
-        balanceDue: balance,
-        invoiceCount: 1,
-        hasOverdue: overdue,
-      });
+        totalSales: 0,
+        receivedAmount: 0,
+        balanceDue: 0,
+        invoiceCount: 0,
+        hasOverdue: false,
+      };
+      map.set(key, existing);
     }
+
+    if (!existing.billingAddress && inv.customerAddress) {
+      existing.billingAddress = inv.customerAddress;
+    }
+    if (!existing.customerId && inv.customerId) {
+      existing.customerId = inv.customerId;
+    }
+
+    if (isExcludedFromLedgerTotals(inv.invoiceStatus)) continue;
+
+    const sales = Number(inv.grandTotal || 0);
+    const paid = resolveInvoiceReceivedAmount(inv);
+    const balance = resolveInvoiceBalanceDue(inv);
+    const overdue = inv.paymentStatus === "Overdue";
+
+    existing.totalSales += sales;
+    existing.receivedAmount += paid;
+    existing.balanceDue += balance;
+    existing.invoiceCount += 1;
+    existing.hasOverdue = existing.hasOverdue || overdue;
   }
 
   return Array.from(map.values()).sort((a, b) => b.balanceDue - a.balanceDue || a.name.localeCompare(b.name));
@@ -113,6 +118,7 @@ export async function getPartyLedgerDetail(
       paidAmount: resolveInvoiceReceivedAmount(inv),
       balanceDue: resolveInvoiceBalanceDue(inv),
       paymentStatus: inv.paymentStatus,
+      invoiceStatus: inv.invoiceStatus || "active",
     }))
     .sort((a, b) => String(b.invoiceDate).localeCompare(String(a.invoiceDate)));
 

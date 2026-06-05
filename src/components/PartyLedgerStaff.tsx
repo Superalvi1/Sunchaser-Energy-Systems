@@ -460,6 +460,11 @@ export default function PartyLedgerStaff({
                             >
                               {tx.paymentStatus}
                             </span>
+                            {tx.invoiceStatus === "duplicate" && (
+                              <span className="ml-1 px-1.5 py-0.5 rounded text-[7px] font-bold bg-neutral-700 text-neutral-300 border border-neutral-600">
+                                DUPLICATE
+                              </span>
+                            )}
                           </td>
                           <td className="text-right px-2 whitespace-nowrap">
                             <a
