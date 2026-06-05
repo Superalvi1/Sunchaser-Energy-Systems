@@ -26,6 +26,9 @@ interface InvoiceStaffProps {
   staffUser: User;
   products?: Product[];
   leads?: Lead[];
+  /** Open a specific invoice (e.g. from Party Ledger → Edit). */
+  openInvoiceId?: string | null;
+  onOpenInvoiceConsumed?: () => void;
 }
 
 const PAYMENT_TERMS = ["Cash on delivery", "Net 7 days", "Net 15 days", "Net 30 days", "Advance"];
@@ -55,7 +58,13 @@ function nowTimeStr() {
   });
 }
 
-export default function InvoiceStaff({ staffUser, products = [], leads = [] }: InvoiceStaffProps) {
+export default function InvoiceStaff({
+  staffUser,
+  products = [],
+  leads = [],
+  openInvoiceId,
+  onOpenInvoiceConsumed,
+}: InvoiceStaffProps) {
   const allowed = canCreateInvoice(staffUser.username, staffUser.role);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -217,6 +226,15 @@ export default function InvoiceStaff({ staffUser, products = [], leads = [] }: I
     });
     setShowList(false);
   };
+
+  useEffect(() => {
+    if (!openInvoiceId || loading || invoices.length === 0) return;
+    const inv = invoices.find((i) => i.id === openInvoiceId);
+    if (inv) {
+      selectInvoice(inv);
+      onOpenInvoiceConsumed?.();
+    }
+  }, [openInvoiceId, loading, invoices, onOpenInvoiceConsumed]);
 
   const newInvoice = () => {
     setSelectedId(null);

@@ -5,7 +5,12 @@ import {
   verifyStaffPortalUser,
   StaffPortalAuthError,
 } from "./dbManager.js";
-import { canCreateInvoice, type PartyLedgerSummary, type PartyLedgerTransaction } from "./src/lib/invoices.ts";
+import {
+  canCreateInvoice,
+  type PartyLedgerPayment,
+  type PartyLedgerSummary,
+  type PartyLedgerTransaction,
+} from "./src/lib/invoices.ts";
 import {
   resolveInvoiceBalanceDue,
   resolveInvoiceReceivedAmount,
@@ -44,13 +49,18 @@ export async function listPartyLedgers(
     const paid = resolveInvoiceReceivedAmount(inv);
     const balance = resolveInvoiceBalanceDue(inv);
 
+    const overdue = inv.paymentStatus === "Overdue";
     if (existing) {
       existing.totalSales += sales;
       existing.receivedAmount += paid;
       existing.balanceDue += balance;
       existing.invoiceCount += 1;
+      existing.hasOverdue = existing.hasOverdue || overdue;
       if (!existing.billingAddress && inv.customerAddress) {
         existing.billingAddress = inv.customerAddress;
+      }
+      if (!existing.customerId && inv.customerId) {
+        existing.customerId = inv.customerId;
       }
     } else {
       map.set(key, {
@@ -63,6 +73,7 @@ export async function listPartyLedgers(
         receivedAmount: paid,
         balanceDue: balance,
         invoiceCount: 1,
+        hasOverdue: overdue,
       });
     }
   }
@@ -76,7 +87,11 @@ export async function getPartyLedgerDetail(
   role: string,
   partyKey: string,
   localDb?: Database
-): Promise<{ party: PartyLedgerSummary; transactions: PartyLedgerTransaction[] }> {
+): Promise<{
+  party: PartyLedgerSummary;
+  transactions: PartyLedgerTransaction[];
+  payments: PartyLedgerPayment[];
+}> {
   const parties = await listPartyLedgers(userId, username, role, localDb);
   const party = parties.find((p) => p.partyKey === partyKey);
   if (!party) {
@@ -86,8 +101,9 @@ export async function getPartyLedgerDetail(
   }
 
   const invoices = await listAdminInvoices(userId, username, role, localDb);
-  const transactions: PartyLedgerTransaction[] = invoices
-    .filter((inv) => partyKeyFromInvoice(inv) === partyKey)
+  const partyInvoices = invoices.filter((inv) => partyKeyFromInvoice(inv) === partyKey);
+
+  const transactions: PartyLedgerTransaction[] = partyInvoices
     .map((inv) => ({
       invoiceId: inv.id,
       invoiceNumber: inv.invoiceNumber,
@@ -100,7 +116,31 @@ export async function getPartyLedgerDetail(
     }))
     .sort((a, b) => String(b.invoiceDate).localeCompare(String(a.invoiceDate)));
 
-  return { party, transactions };
+  const payments: PartyLedgerPayment[] = [];
+  for (const inv of partyInvoices) {
+    for (const p of inv.payments || []) {
+      payments.push({
+        id: p.id,
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        paymentDate: p.paymentDate,
+        paymentMethod: p.paymentMethod,
+        referenceNumber: (p as any).referenceNumber ?? (p as any).reference_number ?? null,
+        amount: Number(p.amount || 0),
+        recordedBy: p.recordedBy || null,
+        receiptUrl: p.receiptUrl || null,
+        notes: p.notes || null,
+        createdAt: p.createdAt,
+      });
+    }
+  }
+  payments.sort((a, b) => {
+    const da = String(b.paymentDate || b.createdAt || "");
+    const db = String(a.paymentDate || a.createdAt || "");
+    return da.localeCompare(db);
+  });
+
+  return { party, transactions, payments };
 }
 
 export async function getPartyLedgerByCustomerId(

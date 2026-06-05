@@ -97,6 +97,7 @@ export default function AdminApp({
   onQuickAction,
 }: AdminAppProps) {
   const [activeSegment, setActiveSegment] = useState<AdminSegmentId>("overview");
+  const [invoiceEditId, setInvoiceEditId] = useState<string | null>(null);
 
   const selectSegment = (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => {
     setActiveSegment(id);
@@ -1631,10 +1632,22 @@ export default function AdminApp({
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />
         )}
         {activeSegment === 'parties' && showInvoices && (
-          <PartyLedgerStaff staffUser={staffUser} />
+          <PartyLedgerStaff
+            staffUser={staffUser}
+            onEditInvoice={(invoiceId) => {
+              setInvoiceEditId(invoiceId);
+              setActiveSegment("invoices");
+            }}
+          />
         )}
         {activeSegment === 'invoices' && showInvoices && (
-          <InvoiceStaff staffUser={staffUser} products={products} leads={leads} />
+          <InvoiceStaff
+            staffUser={staffUser}
+            products={products}
+            leads={leads}
+            openInvoiceId={invoiceEditId}
+            onOpenInvoiceConsumed={() => setInvoiceEditId(null)}
+          />
         )}
         {activeSegment === 'branding' && showBranding && (
           <BrandingSettings staffUser={staffUser} />

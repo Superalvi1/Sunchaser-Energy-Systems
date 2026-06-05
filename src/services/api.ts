@@ -1987,7 +1987,7 @@ export async function fetchAdminPartyLedger(staff: User, partyKey: string) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Failed to load party ledger.");
-  return data as { party: any; transactions: any[] };
+  return data as { party: any; transactions: any[]; payments?: any[] };
 }
 
 export async function fetchAdminInvoices(staff: User) {

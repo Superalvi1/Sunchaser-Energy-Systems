@@ -31,6 +31,21 @@ export type PartyLedgerSummary = {
   receivedAmount: number;
   balanceDue: number;
   invoiceCount: number;
+  hasOverdue?: boolean;
+};
+
+export type PartyLedgerPayment = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  paymentDate: string;
+  paymentMethod: string;
+  referenceNumber: string | null;
+  amount: number;
+  recordedBy: string | null;
+  receiptUrl: string | null;
+  notes: string | null;
+  createdAt?: string;
 };
 
 export type PartyLedgerTransaction = {
@@ -88,6 +103,7 @@ export type InvoicePaymentRow = {
   amount: number;
   paymentMethod: InvoicePaymentMethod;
   paymentDate: string;
+  referenceNumber?: string | null;
   receiptUrl: string | null;
   notes: string | null;
   recordedBy: string | null;

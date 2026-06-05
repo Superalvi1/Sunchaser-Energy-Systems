@@ -150,6 +150,7 @@ async function loadPayments(invoiceId: string, localDb?: Database) {
       amount: Number(row.amount),
       paymentMethod: row.payment_method,
       paymentDate: row.payment_date,
+      referenceNumber: row.reference_number || null,
       receiptUrl: row.receipt_url || null,
       notes: row.notes || null,
       recordedBy: row.recorded_by || null,
@@ -164,6 +165,7 @@ async function loadPayments(invoiceId: string, localDb?: Database) {
       amount: Number(row.amount),
       paymentMethod: row.payment_method || row.paymentMethod,
       paymentDate: row.payment_date || row.paymentDate,
+      referenceNumber: row.reference_number || row.referenceNumber || null,
       receiptUrl: row.receipt_url || row.receiptUrl || null,
       notes: row.notes || null,
       recordedBy: row.recorded_by || row.recordedBy || null,
@@ -644,6 +646,7 @@ export async function recordInvoicePayment(
       (body.paymentMethod || body.payment_method) as string | undefined
     ),
     payment_date: body.paymentDate || body.payment_date || new Date().toISOString().slice(0, 10),
+    reference_number: body.referenceNumber || body.reference_number || null,
     receipt_url: receiptUrl,
     receipt_storage_path: receiptStoragePath,
     notes: body.notes || null,
