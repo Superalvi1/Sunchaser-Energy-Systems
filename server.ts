@@ -9,6 +9,7 @@ import {
   CLEANUP_CONFIRM_TOKEN,
   fetchProductionCleanupCounts,
   runProductionBackup20260606,
+  runProductionBackupDryRun20260606,
   runProductionCleanup20260606,
 } from "./productionCleanupDb.ts";
 import { billToMonthlyUnits, resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
@@ -2777,7 +2778,10 @@ app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) =
     if (confirm !== CLEANUP_CONFIRM_TOKEN) {
       return res.status(400).json({ error: `confirm must be ${CLEANUP_CONFIRM_TOKEN}` });
     }
-    const result = await runProductionBackup20260606();
+    const dryRun = req.body?.dryRun === true;
+    const result = dryRun
+      ? await runProductionBackupDryRun20260606()
+      : await runProductionBackup20260606();
     return res.json({ success: true, ...result });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(err.statusCode).json({ error: err.message });

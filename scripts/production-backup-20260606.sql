@@ -32,15 +32,6 @@ DROP TABLE IF EXISTS public.support_tickets_backup_20260606;
 CREATE TABLE public.support_tickets_backup_20260606 AS SELECT * FROM public.support_tickets;
 
 DROP TABLE IF EXISTS public.users_backup_20260606;
-CREATE TABLE public.users_backup_20260606 AS
-  SELECT * FROM public.users
-  WHERE id IN (
-    'u-portal-client',
-    'u-1780602651894',
-    'u-1780605337258',
-    'u-1780605406946',
-    'u-1780602657937',
-    'u-1780605409851'
-  );
+CREATE TABLE public.users_backup_20260606 AS SELECT * FROM public.users;
 
 COMMIT;

@@ -68,19 +68,21 @@ export const SOFT_DELETE_LEAD_IDS = [
 
 export const TEST_DOCUMENT_IDS = ["doc-1780719697625"] as const;
 
-const BACKUP_TABLES = [
-  "leads_backup_20260606",
-  "customers_backup_20260606",
-  "invoices_backup_20260606",
-  "invoice_items_backup_20260606",
-  "invoice_payments_backup_20260606",
-  "customer_documents_backup_20260606",
-  "project_deliveries_backup_20260606",
-  "project_completion_media_backup_20260606",
-  "quotations_backup_20260606",
-  "support_tickets_backup_20260606",
-  "users_backup_20260606",
+export const BACKUP_SOURCE_PAIRS = [
+  { source: "leads", backup: "leads_backup_20260606" },
+  { source: "customers", backup: "customers_backup_20260606" },
+  { source: "invoices", backup: "invoices_backup_20260606" },
+  { source: "invoice_items", backup: "invoice_items_backup_20260606" },
+  { source: "invoice_payments", backup: "invoice_payments_backup_20260606" },
+  { source: "customer_documents", backup: "customer_documents_backup_20260606" },
+  { source: "project_deliveries", backup: "project_deliveries_backup_20260606" },
+  { source: "project_completion_media", backup: "project_completion_media_backup_20260606" },
+  { source: "quotations", backup: "quotations_backup_20260606" },
+  { source: "support_tickets", backup: "support_tickets_backup_20260606" },
+  { source: "users", backup: "users_backup_20260606" },
 ] as const;
+
+const BACKUP_TABLES = BACKUP_SOURCE_PAIRS.map((p) => p.backup);
 
 async function getPgClient() {
   const dbUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
@@ -113,14 +115,11 @@ async function getPgClient() {
   return null;
 }
 
-async function countTable(client: { query: (sql: string) => Promise<{ rows: { count: string }[] }> }, table: string) {
-  const { rows } = await client.query(`select count(*)::text as count from public.${table}`);
-  return Number(rows[0]?.count || 0);
-}
+type PgClient = {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+};
 
-export async function runProductionBackup20260606() {
-  const sqlPath = path.join(process.cwd(), "scripts", "production-backup-20260606.sql");
-  const sql = fs.readFileSync(sqlPath, "utf8");
+async function requirePgClient(): Promise<PgClient> {
   const client = await getPgClient();
   if (!client) {
     throw new Error(
@@ -128,13 +127,76 @@ export async function runProductionBackup20260606() {
     );
   }
   await client.connect();
+  return client;
+}
+
+async function countTable(client: PgClient, table: string) {
+  const { rows } = await client.query(`select count(*)::text as count from public.${table}`);
+  return Number(rows[0]?.count || 0);
+}
+
+async function countSourceTables(client: PgClient) {
+  const sourceCounts: Record<string, number> = {};
+  for (const { source } of BACKUP_SOURCE_PAIRS) {
+    sourceCounts[source] = await countTable(client, source);
+  }
+  return sourceCounts;
+}
+
+async function countBackupTables(client: PgClient) {
+  const counts: Record<string, number> = {};
+  for (const { backup } of BACKUP_SOURCE_PAIRS) {
+    counts[backup] = await countTable(client, backup);
+  }
+  return counts;
+}
+
+async function existingBackupTableCounts(client: PgClient) {
+  const existing: Record<string, number | null> = {};
+  for (const { backup } of BACKUP_SOURCE_PAIRS) {
+    const { rows } = await client.query(`select to_regclass($1) as reg`, [`public.${backup}`]);
+    existing[backup] = rows[0]?.reg ? await countTable(client, backup) : null;
+  }
+  return existing;
+}
+
+/** Read-only connectivity check — no DDL, no source mutations. */
+export async function runProductionBackupDryRun20260606() {
+  const client = await requirePgClient();
   try {
+    await client.query("SELECT 1");
+    const sourceCounts = await countSourceTables(client);
+    const existingBackupCounts = await existingBackupTableCounts(client);
+    return {
+      dryRun: true,
+      backupTables: [...BACKUP_TABLES],
+      sourceCounts,
+      existingBackupCounts,
+    };
+  } finally {
+    await client.end();
+  }
+}
+
+export async function runProductionBackup20260606() {
+  const sqlPath = path.join(process.cwd(), "scripts", "production-backup-20260606.sql");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  const client = await requirePgClient();
+  try {
+    const sourceCountsBefore = await countSourceTables(client);
+    const usersBackupBefore = await existingBackupTableCounts(client).then((m) => m.users_backup_20260606);
     await client.query(sql);
-    const counts: Record<string, number> = {};
-    for (const table of BACKUP_TABLES) {
-      counts[table] = await countTable(client, table);
-    }
-    return { backupTables: [...BACKUP_TABLES], counts };
+    const counts = await countBackupTables(client);
+    const sourceCountsAfter = await countSourceTables(client);
+    return {
+      dryRun: false,
+      backupTables: [...BACKUP_TABLES],
+      counts,
+      sourceCountsBefore,
+      sourceCountsAfter,
+      usersBackupBefore,
+      usersBackupAfter: counts.users_backup_20260606,
+    };
   } finally {
     await client.end();
   }
