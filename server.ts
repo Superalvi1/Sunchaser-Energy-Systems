@@ -19,7 +19,10 @@ import {
   getSupabase,
   fetchAppStateFromSupabase,
   fetchLeadsFromSupabase,
+  resolveActiveLead,
   fetchActiveLeadRowFromSupabase,
+  fetchLeadQuotesFromSupabase,
+  findActiveLeadInDb,
   mapSupabaseLeadRowToAppLead,
   buildSupabaseLeadUpdateRow,
   initialSeed,
@@ -446,10 +449,38 @@ function resolveDeletedBy(req: { headers: Record<string, string | string[] | und
   return "system";
 }
 
-function findActiveLeadInDb(leadId: string): any | null {
-  const lead = (db.leads || []).find((l: any) => l.id === leadId);
-  if (!lead || !isActiveLead(lead)) return null;
-  return lead;
+function toAppLead(leadId: string, resolved: any, supabase?: ReturnType<typeof getSupabase>): any {
+  const mapped =
+    resolved != null && typeof resolved.monthly_bill !== "undefined"
+      ? mapSupabaseLeadRowToAppLead(resolved)
+      : { ...resolved, quotes: resolved?.quotes || [] };
+  if (supabase) return { ...mapped, quotes: mapped.quotes || [] };
+  let lead = findActiveLeadInDb(leadId, db.leads);
+  if (lead) return lead;
+  db.leads.push({ ...mapped, quotes: mapped.quotes || [] });
+  return db.leads[db.leads.length - 1];
+}
+
+async function resolveLeadForMutation(
+  leadId: string,
+  options: { includeQuotes?: boolean } = {}
+): Promise<{ lead: any; resolved: any; supabase: ReturnType<typeof getSupabase> | undefined } | null> {
+  loadDb();
+  const supabase = isSupabaseActive() ? getSupabase()! : undefined;
+  const resolved = await resolveActiveLead(leadId, supabase, db.leads);
+  if (!resolved) return null;
+  const lead = toAppLead(leadId, resolved, supabase);
+  if (supabase && options.includeQuotes) {
+    lead.quotes = await fetchLeadQuotesFromSupabase(supabase, leadId);
+  }
+  return { lead, resolved, supabase };
+}
+
+function persistLeadLocally(leadId: string, lead: any, supabase?: ReturnType<typeof getSupabase>): void {
+  if (supabase) return;
+  const localIndex = db.leads.findIndex((l: any) => l.id === leadId);
+  if (localIndex >= 0) db.leads[localIndex] = lead;
+  saveDb();
 }
 
 function softDeleteLeadInLocalStore(leadId: string, deletedBy: string): boolean {
@@ -3086,52 +3117,57 @@ app.post("/api/leads", async (req, res) => {
 
 // 4. Update lead fields and re-compute score
 app.put("/api/leads/:id", async (req, res) => {
-  loadDb();
   const { id } = req.params;
-  const index = db.leads.findIndex((l: any) => l.id === id);
-  if (index === -1 || !isActiveLead(db.leads[index])) {
-    return res.status(404).json({ error: "Lead not found" });
-  }
-
-  // REMOVED: auto-quote on lead create (phantom data bug fix) — never merge quotes from PUT body
   const { quotes: _ignoredQuotes, ...leadPatch } = req.body || {};
-  db.leads[index] = {
-    ...db.leads[index],
-    ...leadPatch,
-    quotes: db.leads[index].quotes || [],
-  };
 
-  calculateLeadScore(db.leads[index]);
-  saveDb();
-
-  if (isSupabaseActive()) {
-    try {
-      const supabase = getSupabase()!;
-      const l = db.leads[index];
-      await supabase.from("leads").update({
-        status: l.status,
-        monthly_bill: l.monthlyBill,
-        monthly_units: l.monthlyUnits,
-        sanctioned_load: l.sanctionedLoad,
-        backup_requirement: l.backupRequirement,
-        location: l.location,
-        roof_type: l.roofType,
-        roof_space: l.roofSpace,
-        shading: l.shading,
-        rating: l.rating,
-        assigned_salesperson: l.assignedSalesperson,
-        notes: l.notes,
-        lead_source: l.leadSource,
-        engagement_level: l.engagementLevel,
-        conversion_probability: l.conversionProbability,
-        conversion_score: l.conversionScore
-      }).eq("id", id);
-    } catch (err: any) {
-      console.error("[Supabase Lead Update Error]:", err.message);
+  try {
+    const ctx = await resolveLeadForMutation(id);
+    if (!ctx) {
+      return res.status(404).json({ error: "Lead not found" });
     }
-  }
 
-  res.json(db.leads[index]);
+    const updatedLead = {
+      ...ctx.lead,
+      ...leadPatch,
+      quotes: ctx.lead.quotes || [],
+    };
+    calculateLeadScore(updatedLead);
+
+    persistLeadLocally(id, updatedLead, ctx.supabase);
+
+    if (ctx.supabase) {
+      const { error: updateErr } = await ctx.supabase
+        .from("leads")
+        .update(buildSupabaseLeadUpdateRow(updatedLead))
+        .eq("id", id);
+      if (updateErr) {
+        console.error("[Supabase Lead Update Error]:", updateErr.message);
+        return res.status(500).json({ error: updateErr.message });
+      }
+
+      const customerId = ctx.resolved.customer_id;
+      const contactPatch: Record<string, string> = {};
+      if (leadPatch.name !== undefined) contactPatch.name = updatedLead.name;
+      if (leadPatch.email !== undefined) contactPatch.email = updatedLead.email;
+      if (leadPatch.phone !== undefined) contactPatch.phone = updatedLead.phone;
+      if (leadPatch.address !== undefined) contactPatch.address = updatedLead.address;
+      if (customerId && Object.keys(contactPatch).length > 0) {
+        const { error: customerErr } = await ctx.supabase
+          .from("customers")
+          .update(contactPatch)
+          .eq("id", customerId);
+        if (customerErr) {
+          console.error("[Supabase Customer Update Error]:", customerErr.message);
+          return res.status(500).json({ error: customerErr.message });
+        }
+      }
+    }
+
+    res.json(updatedLead);
+  } catch (err: any) {
+    console.error("[Lead Update Error]:", err?.message || err);
+    return res.status(500).json({ error: err?.message || "Failed to update lead." });
+  }
 });
 
 // Soft-delete lead (sets deleted_at; row retained for recovery)
@@ -3146,15 +3182,19 @@ app.delete("/api/leads/:id", async (req, res) => {
       console.log(`[DELETE TRACE] after Supabase soft delete lead=${id}`);
     } catch (err: any) {
       console.error("[Supabase Lead Soft Delete Error]:", err.message);
-      return res.status(500).json({ error: `Failed to soft delete lead: ${err.message}` });
+      const status = String(err.message || "").includes("not found") ? 404 : 500;
+      return res.status(status).json({ error: `Failed to soft delete lead: ${err.message}` });
     }
   } else {
-    const lead = findActiveLeadInDb(id);
-    if (!lead) return res.status(404).json({ error: "Lead not found or already deleted." });
+    loadDb();
+    const resolved = await resolveActiveLead(id, undefined, db.leads);
+    if (!resolved) return res.status(404).json({ error: "Lead not found or already deleted." });
+    softDeleteLeadInLocalStore(id, deletedBy);
   }
 
-  const localUpdated = softDeleteLeadInLocalStore(id, deletedBy);
-  console.log(`[DELETE TRACE] after saveDb lead=${id} localSoftDeleted=${localUpdated}`);
+  if (!isSupabaseActive()) {
+    console.log(`[DELETE TRACE] after saveDb lead=${id}`);
+  }
 
   await appendActivityLog("admin", "Admin", "Super Admin", "Lead Soft Deleted", `Soft deleted lead ${id}`);
   res.json({
@@ -3224,34 +3264,41 @@ app.post("/api/leads/:id/restore", async (req, res) => {
     } catch (err: any) {
       return res.status(500).json({ error: `Failed to restore lead: ${err.message}` });
     }
+  } else {
+    const restored = restoreLeadInLocalStore(id);
+    if (!restored) return res.status(404).json({ error: "Lead not found or not deleted." });
   }
-
-  restoreLeadInLocalStore(id);
   await appendActivityLog("admin", "Admin", "Super Admin", "Lead Restored", `Restored lead ${id}`);
   res.json({ success: true, message: `Lead ${id} restored.` });
 });
 
 // Delete specific quote for a lead
 app.delete("/api/leads/:leadId/quotes/:quoteId", async (req, res) => {
-  loadDb();
   const { leadId, quoteId } = req.params;
-  const lead = findActiveLeadInDb(leadId);
-  if (!lead) {
+  const ctx = await resolveLeadForMutation(leadId, { includeQuotes: true });
+  if (!ctx) {
     return res.status(404).json({ error: "Lead not found" });
   }
+  const { lead, supabase } = ctx;
 
   if (!lead.quotes) lead.quotes = [];
   const quoteIndex = lead.quotes.findIndex((q: any) => q.id === quoteId);
   if (quoteIndex === -1) {
+    if (supabase) {
+      const { data: quoteRow } = await supabase.from("quotations").select("id").eq("id", quoteId).eq("lead_id", leadId).maybeSingle();
+      if (!quoteRow) return res.status(404).json({ error: "Quote not found" });
+      await supabase.from("quotations").delete().eq("id", quoteId).eq("lead_id", leadId);
+      await appendActivityLog("admin", "Admin", "Super Admin", "Quote Deleted", `Deleted quote ${quoteId} for lead ${leadId}`);
+      return res.json({ success: true, message: `Quote ${quoteId} deleted successfully.` });
+    }
     return res.status(404).json({ error: "Quote not found" });
   }
 
   lead.quotes.splice(quoteIndex, 1);
-  saveDb();
+  persistLeadLocally(leadId, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
       await supabase.from("quotations").delete().eq("id", quoteId).eq("lead_id", leadId);
     } catch (err: any) {
       console.error("[Supabase Quote Deletion Error]:", err.message);
@@ -3264,21 +3311,21 @@ app.delete("/api/leads/:leadId/quotes/:quoteId", async (req, res) => {
 
 // 5. Delegate salesperson assignment
 app.put("/api/leads/:id/assign", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const { salespersonName } = req.body;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, supabase } = ctx;
 
   lead.assignedSalesperson = salespersonName;
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
       await supabase.from("leads").update({ assigned_salesperson: salespersonName }).eq("id", id);
     } catch (err: any) {
       console.error("[Supabase Reassign Error]:", err.message);
+      return res.status(500).json({ error: err.message });
     }
   }
 
@@ -3288,10 +3335,10 @@ app.put("/api/leads/:id/assign", async (req, res) => {
 
 // 6. Gemini AI Lead Scoring manual assessment
 app.post("/api/leads/:id/ai-score", async (req, res) => {
-  loadDb();
   const { id } = req.params;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead } = ctx;
 
   try {
     const aiPrompt = `Perform a predictive marketing conversion scoring diagnostics for Sunchaser solar candidate:
@@ -3328,11 +3375,11 @@ Keep your answer under 100 words in concise professional clean markdown text.`;
 
 // 7. Schedule site structural survey
 app.post("/api/leads/:id/schedule-survey", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const { scheduledDate } = req.body;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, supabase } = ctx;
 
   lead.status = "Survey Scheduled";
   lead.survey = {
@@ -3344,11 +3391,10 @@ app.post("/api/leads/:id/schedule-survey", async (req, res) => {
     photos: []
   };
 
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
       await supabase.from("leads").update({ status: "Survey Scheduled" }).eq("id", id);
       await supabase.from("site_surveys").upsert({
         lead_id: id,
@@ -3370,10 +3416,10 @@ app.post("/api/leads/:id/schedule-survey", async (req, res) => {
 
 // 7b. Send WhatsApp Follow-up Reminder
 app.post("/api/leads/:id/whatsapp-reminder", async (req, res) => {
-  loadDb();
   const { id } = req.params;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead } = ctx;
 
   const msgText = `☀️ Hi ${lead.name}! Sarah Connor here from Sunchaser Energy. Just checking in to see if you had any questions on your custom solar sizing layout. Let us know if you would like to proceed or schedule a site survey!`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "followup_reminder", msgText);
@@ -3445,7 +3491,6 @@ app.post("/api/inventory/procure", async (req, res) => {
 
 // 8. Submit surveyor audit notes
 app.post("/api/leads/:id/survey-report", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const {
     shadingPercent,
@@ -3458,8 +3503,9 @@ app.post("/api/leads/:id/survey-report", async (req, res) => {
     panelPlacements
   } = req.body;
 
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, supabase } = ctx;
 
   lead.survey = {
     scheduledDate: lead.survey?.scheduledDate || new Date().toISOString(),
@@ -3480,11 +3526,10 @@ app.post("/api/leads/:id/survey-report", async (req, res) => {
   };
 
   lead.status = "Quoted";
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
       await supabase.from("leads").update({ status: "Quoted" }).eq("id", id);
       await supabase.from("site_surveys").upsert({
         lead_id: id,
@@ -3512,7 +3557,6 @@ app.post("/api/leads/:id/survey-report", async (req, res) => {
 
 // 9. Generate and write Quotation terms
 app.post("/api/leads/:id/create-quote", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const {
     systemSizekW,
@@ -3579,8 +3623,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     quote_type
   });
 
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, resolved, supabase } = ctx;
 
   const resolvedQuoteType = quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq";
   if (resolvedQuoteType === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
@@ -3685,12 +3730,11 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
 
   lead.quotes = [newQuote, ...(lead.quotes || [])];
   lead.status = "Quoted";
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
-      const customerId = `cust-${id.replace("lead-", "")}`;
+      const customerId = resolved.customer_id || `cust-${id.replace("lead-", "")}`;
       await supabase.from("leads").update({ 
         name: lead.name, 
         phone: lead.phone, 
@@ -3726,7 +3770,6 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
           if (lead.quotes?.[0]?.id === quoteId) {
             lead.quotes[0].id = insertResult.quoteId;
           }
-          saveDb();
         }
         console.log(`[Supabase Create Quotation] Quote ${newQuote.id} inserted successfully.`);
       }
@@ -3744,11 +3787,11 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
 
 // 9b. Duplicate Quote endpoint
 app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const { quoteId } = req.body;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, resolved, supabase } = ctx;
 
   const quoteToDup = lead.quotes?.find((q: any) => q.id === quoteId);
   if (!quoteToDup) return res.status(404).json({ error: "Quote not found" });
@@ -3763,18 +3806,28 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
   };
 
   lead.quotes = [duplicated, ...(lead.quotes || [])];
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
+
+  if (supabase) {
+    try {
+      const customerId = resolved.customer_id || `cust-${id.replace("lead-", "")}`;
+      await persistQuotationToSupabase(supabase, id, customerId, duplicated, "insert");
+    } catch (err: any) {
+      console.error("[Supabase Duplicate Quotation Error]:", err.message);
+    }
+  }
+
   res.json(lead);
 });
 
 // 9c. Update/Overwrite Quote endpoint
 app.post("/api/leads/:id/update-quote", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const { quoteId, quoteData, ...quotePayload } = req.body;
   const payload = quoteData && typeof quoteData === "object" ? quoteData : quotePayload;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, resolved, supabase } = ctx;
 
   if (payload.quote_type === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote updates are temporarily disabled." });
@@ -3807,12 +3860,11 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   };
 
   lead.quotes[quoteIndex] = updatedQuote;
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
-      const customerId = `cust-${id.replace("lead-", "")}`;
+      const customerId = resolved.customer_id || `cust-${id.replace("lead-", "")}`;
       
       const updateResult = await persistQuotationToSupabase(
         supabase,
@@ -3876,11 +3928,11 @@ app.post("/api/upload", async (req, res) => {
 
 // 10. Accept Quote & Auto-Provision trackers
 app.post("/api/leads/:id/accept-quote", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const { quoteId } = req.body;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, resolved, supabase } = ctx;
 
   lead.status = "Contracted";
   lead.quotes = lead.quotes.map((q: any) => {
@@ -3905,7 +3957,6 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  db.projects.unshift(newProject);
 
   // 2. Installation Setup
   lead.installation = {
@@ -3923,20 +3974,8 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
     report: ""
   };
 
-  // 3. Net Meter
-  db.netMeteringTrackers[lead.id] = {
-    leadId: lead.id,
-    documentsCollected: true,
-    applicationSubmitted: true,
-    discoInspection: false,
-    demandNotice: false,
-    meterInstallation: false,
-    greenMeterActive: false
-  };
-
-  // 4. Payments
   const advanceAmt = Number((costTotal * 0.3).toFixed(2));
-  db.paymentTracks[lead.id] = {
+  const paymentTrack = {
     leadId: lead.id,
     totalValue: costTotal,
     advanceReceived: advanceAmt,
@@ -3951,12 +3990,24 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
     ]
   };
 
-  saveDb();
+  if (!supabase) {
+    db.projects.unshift(newProject);
+    db.netMeteringTrackers[lead.id] = {
+      leadId: lead.id,
+      documentsCollected: true,
+      applicationSubmitted: true,
+      discoInspection: false,
+      demandNotice: false,
+      meterInstallation: false,
+      greenMeterActive: false
+    };
+    db.paymentTracks[lead.id] = paymentTrack;
+    persistLeadLocally(id, lead, supabase);
+  }
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
-      const customerId = `cust-${id.replace("lead-", "")}`;
+      const customerId = resolved.customer_id || `cust-${id.replace("lead-", "")}`;
 
       await supabase.from("leads").update({ status: "Contracted" }).eq("id", id);
       await supabase.from("quotations").update({ status: "Accepted" }).eq("id", quoteId);
@@ -3998,7 +4049,7 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
         advance_received: advanceAmt,
         pending_amount: costTotal - advanceAmt,
         invoice_status: "Pending",
-        milestones: JSON.stringify(db.paymentTracks[lead.id].milestones)
+        milestones: JSON.stringify(paymentTrack.milestones)
       });
     } catch (err: any) {
       console.error("[Supabase Quote Acceptance Error]:", err.message);
@@ -4014,11 +4065,11 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
 
 // 11. Update installer progress log tasks
 app.post("/api/leads/:id/update-installation", async (req, res) => {
-  loadDb();
   const { id } = req.params;
   const { progress, tasks, status, completionPhotos, report } = req.body;
-  const lead = findActiveLeadInDb(id);
-  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+  const { lead, supabase } = ctx;
 
   if (lead.installation) {
     if (progress !== undefined) lead.installation.progress = Number(progress);
@@ -4027,7 +4078,9 @@ app.post("/api/leads/:id/update-installation", async (req, res) => {
     if (completionPhotos !== undefined) lead.installation.completionPhotos = completionPhotos;
     if (report !== undefined) lead.installation.report = report;
 
-    const proj = db.projects.find((p: any) => p.leadId === lead.id);
+    const proj = supabase
+      ? null
+      : db.projects.find((p: any) => p.leadId === lead.id);
     if (proj) {
       if (lead.installation.progress === 100) {
         lead.installation.status = "Completed";
@@ -4045,20 +4098,25 @@ app.post("/api/leads/:id/update-installation", async (req, res) => {
     }
   }
 
-  saveDb();
+  persistLeadLocally(id, lead, supabase);
 
-  if (isSupabaseActive()) {
+  if (supabase) {
     try {
-      const supabase = getSupabase()!;
       if (lead.installation?.tasks) {
         for (const t of lead.installation.tasks) {
           await supabase.from("installation_tasks").update({ done: t.done }).eq("id", `${id}-${t.id}`);
         }
       }
 
-      const proj = db.projects.find((p: any) => p.leadId === id);
-      if (proj) {
-        await supabase.from("projects").update({ stage: proj.stage, updated_at: proj.updatedAt }).eq("id", proj.id);
+      const { data: projRow } = await supabase.from("projects").select("id, stage").eq("lead_id", id).maybeSingle();
+      if (projRow) {
+        let stage = projRow.stage;
+        if (lead.installation?.progress === 100) stage = "Completed";
+        else if (lead.installation && lead.installation.progress > 80) stage = "Testing & Commissioning";
+        else if (lead.installation && lead.installation.progress > 60) stage = "Inverter Installation";
+        else if (lead.installation && lead.installation.progress > 40) stage = "Panel Installation";
+        else if (lead.installation) stage = "Structure Installation";
+        await supabase.from("projects").update({ stage, updated_at: new Date().toISOString() }).eq("id", projRow.id);
       }
       if (lead.installation?.progress === 100) {
         await supabase.from("leads").update({ status: "Installed" }).eq("id", id);
@@ -4456,22 +4514,26 @@ app.post("/api/projects/:id/update-stage", async (req, res) => {
     }
   }
 
-  const lead = findActiveLeadInDb(project.leadId);
+  const leadCtx = await resolveLeadForMutation(project.leadId);
+  const lead = leadCtx?.lead ?? null;
   if (lead) {
     if (stage === "Completed") {
       lead.status = "Installed";
       if (lead.installation) lead.installation.progress = 100;
     }
+    persistLeadLocally(project.leadId, lead, leadCtx?.supabase);
   }
 
-  saveDb();
+  if (!leadCtx?.supabase) {
+    saveDb();
+  }
 
   if (isSupabaseActive()) {
     try {
-      const supabase = getSupabase()!;
-      await supabase.from("projects").update({ stage, updated_at: project.updatedAt }).eq("id", id);
+      const supabaseClient = getSupabase()!;
+      await supabaseClient.from("projects").update({ stage, updated_at: project.updatedAt }).eq("id", id);
       if (payment) {
-        await supabase.from("payments").update({
+        await supabaseClient.from("payments").update({
           advance_received: payment.advanceReceived,
           pending_amount: payment.pendingAmount,
           invoice_status: payment.invoiceStatus,
@@ -4479,7 +4541,7 @@ app.post("/api/projects/:id/update-stage", async (req, res) => {
         }).eq("lead_id", project.leadId);
       }
       if (lead && stage === "Completed") {
-        await supabase.from("leads").update({ status: "Installed" }).eq("id", lead.id);
+        await supabaseClient.from("leads").update({ status: "Installed" }).eq("id", lead.id);
       }
     } catch (err: any) {
       console.error("[Supabase Stage Sync Error]:", err.message);

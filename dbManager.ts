@@ -737,6 +737,111 @@ export async function fetchLeadsFromSupabase(
   }
 }
 
+export function mapSupabaseLeadRowToAppLead(row: any): Record<string, any> {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    address: row.address,
+    status: row.status,
+    monthlyBill: Number(row.monthly_bill || 0),
+    monthlyUnits: resolveMonthlyUnits(
+      Number(row.monthly_bill || 0),
+      Number(row.monthly_units || 0)
+    ),
+    sanctionedLoad: Number(row.sanctioned_load || 0),
+    backupRequirement: row.backup_requirement,
+    location: row.location,
+    roofType: row.roof_type,
+    roofSpace: Number(row.roof_space || 0),
+    shading: row.shading,
+    rating: row.rating,
+    assignedSalesperson: row.assigned_salesperson,
+    notes: row.notes,
+    leadSource: row.lead_source,
+    engagementLevel: row.engagement_level,
+    conversionProbability: Number(row.conversion_probability || 50),
+    conversionScore: Number(row.conversion_score || 50),
+    createdAt: row.created_at,
+    deletedAt: row.deleted_at || null,
+    deletedBy: row.deleted_by || null,
+    quotes: [],
+  };
+}
+
+export function buildSupabaseLeadUpdateRow(lead: any): Record<string, any> {
+  return {
+    name: lead.name,
+    email: lead.email,
+    phone: lead.phone,
+    address: lead.address,
+    status: lead.status,
+    monthly_bill: lead.monthlyBill,
+    monthly_units: lead.monthlyUnits,
+    sanctioned_load: lead.sanctionedLoad,
+    backup_requirement: lead.backupRequirement,
+    location: lead.location,
+    roof_type: lead.roofType,
+    roof_space: lead.roofSpace,
+    shading: lead.shading,
+    rating: lead.rating,
+    assigned_salesperson: lead.assignedSalesperson,
+    notes: lead.notes,
+    lead_source: lead.leadSource,
+    engagement_level: lead.engagementLevel,
+    conversion_probability: lead.conversionProbability,
+    conversion_score: lead.conversionScore,
+  };
+}
+
+export function findActiveLeadInDb(leadId: string, localLeads?: any[]): any | null {
+  let leads = localLeads;
+  if (leads === undefined) {
+    const dbFile = path.join(process.cwd(), "database.json");
+    if (fs.existsSync(dbFile)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(dbFile, "utf8"));
+        leads = parsed.leads || [];
+      } catch {
+        leads = [];
+      }
+    } else {
+      leads = [];
+    }
+  }
+  const lead = (leads || []).find((l: any) => l.id === leadId);
+  if (!lead || !isActiveLead(lead)) return null;
+  return lead;
+}
+
+export async function fetchActiveLeadRowFromSupabase(
+  supabase: SupabaseClient,
+  leadId: string
+): Promise<any | null> {
+  const { data, error } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data || !isActiveLead(data)) return null;
+  return data;
+}
+
+export async function resolveActiveLead(
+  leadId: string,
+  supabase?: SupabaseClient,
+  localLeads?: any[]
+): Promise<any | null> {
+  if (supabase) {
+    const row = await fetchActiveLeadRowFromSupabase(supabase, leadId);
+    if (row) return row;
+  }
+  return findActiveLeadInDb(leadId, localLeads);
+}
+
 export function getDashboardStats(activeDb: Database) {
   const activeLeads = filterActiveLeads(activeDb.leads || []);
   const totalRevenue = activeLeads.reduce((sum: number, lead: any) => {
@@ -855,6 +960,43 @@ export function parseQuotationExtendedData(row: any): Record<string, any> {
     }
   }
   return {};
+}
+
+export function mapSupabaseQuotationRowToAppQuote(q: any): any {
+  const ext = parseQuotationExtendedData(q);
+  return {
+    id: q.id,
+    systemSizekW: Number(q.system_size_kw),
+    panelCount: q.panel_count,
+    panelType: q.panel_type,
+    inverterType: q.inverter_type,
+    batteryCapacity: q.battery_capacity,
+    totalCost: Number(q.total_cost),
+    federalTaxCredit: Number(q.federal_tax_credit),
+    netCost: Number(q.net_cost),
+    estimatedAnnualSavings: Number(q.estimated_annual_savings),
+    paybackPeriodYears: Number(q.payback_period_years),
+    status: q.status,
+    createdAt: q.created_at,
+    structureType: q.structure_type,
+    accessories: q.accessories,
+    installationCharges: Number(q.installation_charges || 0),
+    netMeteringCharges: Number(q.net_metering_charges || 0),
+    paymentTerms: q.payment_terms,
+    warrantyTerms: q.warranty_terms,
+    termsAndConditions: q.terms_and_conditions,
+    ...ext,
+    updatedAt: ext.updatedAt || q.updated_at || q.created_at,
+  };
+}
+
+export async function fetchLeadQuotesFromSupabase(
+  supabase: SupabaseClient,
+  leadId: string
+): Promise<any[]> {
+  const { data, error } = await supabase.from("quotations").select("*").eq("lead_id", leadId);
+  if (error) throw error;
+  return sortQuotesNewestFirst((data || []).map(mapSupabaseQuotationRowToAppQuote));
 }
 
 /** Globally unique quotation id; legacy ids like q-1 remain valid when already stored. */
