@@ -367,6 +367,23 @@ export async function updateAdminSupportTicket(
   );
 }
 
+export async function deleteAdminSupportTicket(
+  staffUserId: string,
+  staffUsername: string,
+  ticketId: string
+) {
+  const path = `/api/admin/support-tickets/${encodeURIComponent(ticketId)}`;
+  return staffPortalJsonRequest<{ success: boolean; id: string; deleted: boolean }>(
+    "deleteAdminSupportTicket",
+    path,
+    {
+      method: "DELETE",
+      headers: portalAuthHeaders(staffUserId, staffUsername),
+    },
+    "Failed to delete support ticket"
+  );
+}
+
 export async function fetchCustomerServicePortal(userId: string, username: string) {
   const res = await apiFetch(
     `/api/customer-portal/service/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
@@ -963,6 +980,7 @@ export async function uploadAdminCustomerDocument(
     visibleToCustomer?: boolean;
     internalOnly?: boolean;
     notes?: string;
+    projectId?: string;
   }
 ) {
   return staffPortalJsonRequest(
@@ -975,6 +993,63 @@ export async function uploadAdminCustomerDocument(
     },
     "Failed to upload document"
   );
+}
+
+export function uploadAdminCustomerDocumentWithProgress(
+  staff: User,
+  body: {
+    customerId: string;
+    base64Data: string;
+    fileName: string;
+    mimeType?: string;
+    documentType: string;
+    title?: string;
+    visibleToCustomer?: boolean;
+    internalOnly?: boolean;
+    notes?: string;
+    projectId?: string;
+  },
+  onProgress?: (pct: number) => void
+): Promise<Record<string, unknown>> {
+  const path = "/api/admin/customer-documents/upload";
+  const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
+  const payload = JSON.stringify({ ...body, role: staff.role });
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("X-Sunchaser-User-Id", staff.id);
+    xhr.setRequestHeader("X-Sunchaser-Username", staff.username);
+    xhr.setRequestHeader("X-Sunchaser-Role", staff.role);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round(46 + (e.loaded / e.total) * 54));
+      }
+    };
+
+    xhr.onload = () => {
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        parsed = { raw: xhr.responseText?.slice(0, 500) };
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve(parsed);
+        return;
+      }
+      const backendError =
+        (typeof parsed.error === "string" && parsed.error) ||
+        `Failed to upload document (HTTP ${xhr.status})`;
+      reject(new Error(backendError));
+    };
+
+    xhr.onerror = () => reject(new Error("Failed to upload document: network error."));
+    xhr.send(payload);
+  });
 }
 
 export async function fetchCustomerPortalSystem(userId: string, username: string) {

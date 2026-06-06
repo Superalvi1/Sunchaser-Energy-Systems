@@ -2491,9 +2491,11 @@ export async function fetchCustomerPortalData(
 }
 
 export class StaffPortalAuthError extends Error {
-  constructor(message: string) {
+  statusCode: number;
+  constructor(message: string, statusCode = 403) {
     super(message);
     this.name = "StaffPortalAuthError";
+    this.statusCode = statusCode;
   }
 }
 
@@ -3519,6 +3521,32 @@ export async function updateAdminSupportTicket(
     },
     []
   );
+}
+
+export async function deleteAdminSupportTicket(
+  staffUserId: string,
+  staffUsername: string,
+  ticketId: string,
+  localDb?: Database
+) {
+  await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) throw new StaffPortalAuthError("Ticket id is required.");
+
+  const existingRow = await getTicketRow(normalizedId, localDb);
+  if (!existingRow) throw new StaffPortalAuthError("Ticket not found.");
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { error } = await supabase.from("support_tickets").delete().eq("id", normalizedId);
+    if (error) throw error;
+    return { id: normalizedId, deleted: true };
+  }
+
+  const index = (localDb!.tickets || []).findIndex((t: any) => t.id === normalizedId);
+  if (index < 0) throw new StaffPortalAuthError("Ticket not found.");
+  localDb!.tickets.splice(index, 1);
+  return { id: normalizedId, deleted: true };
 }
 
 async function getTicketRow(ticketId: string, localDb?: Database) {

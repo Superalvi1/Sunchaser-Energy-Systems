@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Headphones, Loader2, Filter } from "lucide-react";
+import { Headphones, Loader2, Filter, Trash2 } from "lucide-react";
 import { User } from "../types";
-import { listAdminSupportTickets, updateAdminSupportTicket } from "../services/api";
+import {
+  listAdminSupportTickets,
+  updateAdminSupportTicket,
+  deleteAdminSupportTicket,
+} from "../services/api";
 import {
   SUPPORT_CATEGORIES,
   SUPPORT_PRIORITIES,
@@ -31,6 +35,7 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
   const [internalNote, setInternalNote] = useState("");
   const [resolution, setResolution] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = async () => {
@@ -85,6 +90,24 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
       setMsg(err.message || "Update failed.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!selected) return;
+    const label = selected.ticketNumber || selected.id;
+    if (!window.confirm(`Delete ticket ${label}? This cannot be undone.`)) return;
+    setDeleting(true);
+    setMsg(null);
+    try {
+      await deleteAdminSupportTicket(staffUser.id, staffUser.username, selected.id);
+      setSelected(null);
+      setMsg("Ticket deleted.");
+      await load();
+    } catch (err: any) {
+      setMsg(err.message || "Delete failed.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -237,14 +260,26 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
                   technicianName: technician,
                 }}
               />
-              <button
-                type="button"
-                onClick={save}
-                disabled={saving}
-                className="w-full bg-amber-500 text-slate-950 font-bold py-2 rounded-xl text-sm disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save changes"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={save}
+                  disabled={saving || deleting}
+                  className="flex-1 bg-amber-500 text-slate-950 font-bold py-2 rounded-xl text-sm disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save changes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={remove}
+                  disabled={saving || deleting}
+                  className="px-3 bg-red-950/40 border border-red-800 text-red-400 font-bold py-2 rounded-xl text-sm disabled:opacity-50 flex items-center gap-1"
+                  title="Delete ticket"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {deleting ? "…" : "Delete"}
+                </button>
+              </div>
               {msg && <p className="text-xs text-amber-400 font-mono">{msg}</p>}
             </>
           )}

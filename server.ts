@@ -42,6 +42,7 @@ import {
   createCustomerSupportTicket,
   listAdminSupportTickets,
   updateAdminSupportTicket,
+  deleteAdminSupportTicket,
   fetchCustomerServicePortal,
   createCustomerServiceRequest,
   fetchCustomerServiceRequestById,
@@ -1583,6 +1584,23 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
     return res.json(ticket);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/support-tickets/:id", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  try {
+    loadDb();
+    const result = await deleteAdminSupportTicket(userId, username, req.params.id, db);
+    saveDb();
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) {
+      const status = err.message === "Ticket not found." ? 404 : err.statusCode;
+      return res.status(status).json({ error: err.message });
+    }
     return res.status(500).json({ error: err.message });
   }
 });
