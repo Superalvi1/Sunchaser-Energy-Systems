@@ -2,25 +2,30 @@ import React, { useEffect, useState } from "react";
 import { Loader2, Upload, Shield } from "lucide-react";
 import { User } from "../types";
 import {
-  createAdminCustomerDocument,
   listAdminWarrantyClaims,
   patchAdminWarrantyClaim,
   upsertAdminCustomerWarranty,
 } from "../services/api";
 import { DOCUMENT_WALLET_TYPES, WARRANTY_COMPONENT_TYPES } from "../lib/clientPortalPhase2";
+import CustomerDocumentUploader from "./CustomerDocumentUploader";
+import { useToast } from "../lib/toast";
 
 interface ClientPortalStaffToolsProps {
   staffUser: User;
+  section?: "documents" | "warranty" | "all";
 }
 
-export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffToolsProps) {
+export default function ClientPortalStaffTools({
+  staffUser,
+  section = "all",
+}: ClientPortalStaffToolsProps) {
+  const toast = useToast();
+  const showDocuments = section === "all" || section === "documents";
+  const showWarranty = section === "all" || section === "warranty";
   const [customerId, setCustomerId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [documentType, setDocumentType] = useState(DOCUMENT_WALLET_TYPES[0].type);
   const [title, setTitle] = useState("");
-  const [fileUrl, setFileUrl] = useState("");
-  const [docMsg, setDocMsg] = useState<string | null>(null);
-  const [docLoading, setDocLoading] = useState(false);
 
   const [warrantyComponent, setWarrantyComponent] = useState(WARRANTY_COMPONENT_TYPES[0].type);
   const [brand, setBrand] = useState("");
@@ -49,29 +54,6 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
     loadClaims();
   }, [staffUser.id, staffUser.username]);
 
-  const uploadDocument = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setDocLoading(true);
-    setDocMsg(null);
-    try {
-      await createAdminCustomerDocument(staffUser.id, staffUser.username, {
-        customerId,
-        projectId: projectId || undefined,
-        documentType,
-        title: title || documentType,
-        fileUrl,
-        uploadedBy: staffUser.name,
-      });
-      setDocMsg("Document linked successfully.");
-      setTitle("");
-      setFileUrl("");
-    } catch (err: any) {
-      setDocMsg(err.message || "Upload failed.");
-    } finally {
-      setDocLoading(false);
-    }
-  };
-
   const saveWarranty = async (e: React.FormEvent) => {
     e.preventDefault();
     setWarrantyMsg(null);
@@ -97,23 +79,25 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
       await patchAdminWarrantyClaim(staffUser.id, staffUser.username, id, status);
       await loadClaims();
     } catch (err: any) {
-      alert(err.message || "Update failed");
+      toast.error(err.message || "Update failed");
     }
   };
 
   return (
     <div className="space-y-8 text-slate-100">
+      {showDocuments && (
+      <>
       <div>
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Upload className="w-5 h-5 text-amber-500" />
           Client Portal — Document Upload
         </h3>
         <p className="text-xs text-slate-500 font-mono mt-1">
-          Link documents to a customer for the Document Wallet.
+          Upload files to Supabase Storage and link them to the customer Document Wallet.
         </p>
       </div>
 
-      <form onSubmit={uploadDocument} className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900 border border-slate-800 rounded-2xl p-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900 border border-slate-800 rounded-2xl p-4">
         <input
           required
           placeholder="Customer ID"
@@ -144,23 +128,19 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
           onChange={(e) => setTitle(e.target.value)}
           className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
         />
-        <input
-          required
-          placeholder="File URL"
-          value={fileUrl}
-          onChange={(e) => setFileUrl(e.target.value)}
-          className="md:col-span-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
+        <CustomerDocumentUploader
+          staffUser={staffUser}
+          customerId={customerId}
+          projectId={projectId}
+          documentType={documentType}
+          title={title}
+          onSuccess={() => setTitle("")}
         />
-        <button
-          type="submit"
-          disabled={docLoading}
-          className="md:col-span-2 bg-amber-500 text-slate-950 font-bold py-2 rounded-xl text-sm disabled:opacity-50"
-        >
-          {docLoading ? "Saving…" : "Save document link"}
-        </button>
-        {docMsg && <p className="md:col-span-2 text-xs text-amber-400 font-mono">{docMsg}</p>}
-      </form>
+      </div>
+      </>
+      )}
 
+      {showWarranty && (
       <div>
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Shield className="w-5 h-5 text-amber-500" />
@@ -217,7 +197,9 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
           {warrantyMsg && <p className="md:col-span-2 text-xs text-amber-400 font-mono">{warrantyMsg}</p>}
         </form>
       </div>
+      )}
 
+      {showWarranty && (
       <div>
         <h3 className="text-lg font-bold">Warranty claims</h3>
         {claimsLoading ? (
@@ -253,6 +235,7 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
           </ul>
         )}
       </div>
+      )}
     </div>
   );
 }

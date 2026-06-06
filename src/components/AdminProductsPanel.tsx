@@ -2,6 +2,8 @@ import React, { useMemo, useState } from "react";
 import { Edit3, LayoutGrid, Loader2, Trash2, X } from "lucide-react";
 import type { Product } from "../types";
 import { deleteCatalogProduct, updateCatalogProduct } from "../services/api";
+import AppModal from "./ui/AppModal";
+import { useToast } from "../lib/toast";
 
 const CATEGORY_OPTIONS = [
   "Solar Panels",
@@ -54,12 +56,11 @@ interface AdminProductsPanelProps {
 }
 
 export default function AdminProductsPanel({ products, onRefreshState }: AdminProductsPanelProps) {
+  const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [draft, setDraft] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const categories = useMemo(() => {
     const fromData = products.map((p) => p.category).filter(Boolean);
@@ -69,8 +70,6 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
   const openEdit = (product: Product) => {
     setEditing(product);
     setDraft(draftFromProduct(product));
-    setMsg(null);
-    setError(null);
   };
 
   const closeEdit = () => {
@@ -81,8 +80,6 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
   const saveEdit = async () => {
     if (!draft) return;
     setSaving(true);
-    setMsg(null);
-    setError(null);
     try {
       const payload: Product = {
         ...draft,
@@ -97,11 +94,11 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
         },
       };
       await updateCatalogProduct(payload);
-      setMsg("Product saved.");
+      toast.success("Product saved.");
       closeEdit();
       await onRefreshState();
     } catch (err: any) {
-      setError(err.message || "Save failed.");
+      toast.error(err.message || "Save failed.");
     } finally {
       setSaving(false);
     }
@@ -111,15 +108,13 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
     const label = product.sku || product.name;
     if (!window.confirm(`Delete product "${label}" from the catalog?`)) return;
     setDeletingId(product.id);
-    setMsg(null);
-    setError(null);
     try {
       await deleteCatalogProduct(product.id);
       if (editing?.id === product.id) closeEdit();
-      setMsg(`Deleted ${label}.`);
+      toast.success(`Deleted ${label}.`);
       await onRefreshState();
     } catch (err: any) {
-      setError(err.message || "Delete failed.");
+      toast.error(err.message || "Delete failed.");
     } finally {
       setDeletingId(null);
     }
@@ -134,10 +129,6 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
           <p className="text-[11px] text-neutral-500">Sales and invoice items · edit pricing and SKUs here</p>
         </div>
       </div>
-
-      {(msg || error) && (
-        <p className={`text-xs font-mono ${error ? "text-rose-400" : "text-emerald-400"}`}>{error || msg}</p>
-      )}
 
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -202,9 +193,8 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
         </div>
       </div>
 
-      {editing && draft && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-lg bg-neutral-900 border border-neutral-700 rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+      <AppModal open={!!editing && !!draft} onClose={closeEdit} panelClassName="max-w-lg">
+          <div className="w-full bg-neutral-900 border border-neutral-700 rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
               <div>
                 <p className="text-[10px] font-mono text-amber-500">{draft.sku || draft.id}</p>
@@ -317,7 +307,6 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100"
                 />
               </div>
-              {error && <p className="text-rose-400 text-[11px]">{error}</p>}
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
@@ -337,8 +326,7 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
               </div>
             </div>
           </div>
-        </div>
-      )}
+      </AppModal>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   Loader2, Inbox, RefreshCw, LogOut, ClipboardList, Send, FileSpreadsheet, Download
 } from "lucide-react";
 import AuthHub from "./components/AuthHub";
+import { useToast } from "./lib/toast";
 import { AppState, UserRole, User } from "./types";
 import {
   fetchAppState,
@@ -58,7 +59,7 @@ function needsCrmAppState(role: string) {
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
   const [sessionSyncError, setSessionSyncError] = useState<string | null>(null);
   
   // Auth state
@@ -243,7 +244,6 @@ export default function App() {
     setPortalError(null);
     setSessionSyncError(null);
     setAppState(null);
-    setError(null);
     setLoading(false);
     clearLeadClientCache();
     localStorage.removeItem("sunchaser_user");
@@ -263,7 +263,7 @@ export default function App() {
       await createLead(leadData);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
       throw err;
     } finally {
       setLoading(false);
@@ -282,7 +282,7 @@ export default function App() {
       }
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -294,7 +294,7 @@ export default function App() {
       await deleteQuote(leadId, quoteId);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -306,7 +306,7 @@ export default function App() {
       await updateLead(id, updatedData);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -318,7 +318,7 @@ export default function App() {
       await scheduleSurvey(id, scheduledDate);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -330,7 +330,7 @@ export default function App() {
       await submitSurveyReport(id, surveyData);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -342,7 +342,7 @@ export default function App() {
       await createQuote(id, quoteData);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -354,7 +354,7 @@ export default function App() {
       await acceptQuote(leadId, quoteId);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -366,7 +366,7 @@ export default function App() {
       await updateInstallation(leadId, installationData);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -378,7 +378,7 @@ export default function App() {
       await createTicket(ticketData);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -390,7 +390,7 @@ export default function App() {
       await replyToTicket(ticketId, text, senderRole);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -400,7 +400,7 @@ export default function App() {
       await resolveTicket(id);
       await loadDatabaseState();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -639,11 +639,6 @@ export default function App() {
         ) : appState ? (
           /* ---------------- AUTHORIZED DASHBOARD VIEWPORT ---------------- */
           <div className="fade-in-entry space-y-8">
-            {error && (
-              <div className="bg-rose-950/20 border border-rose-900 px-4 py-2 rounded-xl text-rose-300 text-xs">
-                {error}
-              </div>
-            )}
             
             {/* Super admin spreadsheet controls line */}
             {(currentUser.role === "Super Admin" || currentUser.role === "Technical CEO" || currentUser.role === "Sales Manager") && (
@@ -782,7 +777,7 @@ export default function App() {
                     await procureInventory(vendor, itemId, quantity);
                     await loadDatabaseState();
                   } catch (err: any) {
-                    setError(err.message);
+                    toast.error(err.message);
                   } finally {
                     setLoading(false);
                   }

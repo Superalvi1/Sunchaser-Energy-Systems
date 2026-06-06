@@ -25,6 +25,7 @@ import {
 import { canCreateInvoice, PAYMENT_METHODS, type PartyLedgerSummary } from "../lib/invoices";
 import WhatsAppActionButton from "./WhatsAppActionButton";
 import AppLogo from "./AppLogo";
+import AppModal from "./ui/AppModal";
 
 type PartyFilter = "all" | "outstanding" | "paid" | "overdue";
 
@@ -591,9 +592,8 @@ export default function PartyLedgerStaff({
       </div>
 
       {/* Record payment modal */}
-      {paymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md shadow-2xl">
+      <AppModal open={!!paymentModal} onClose={() => setPaymentModal(null)} panelClassName="max-w-md">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
               <h3 className="font-bold text-neutral-100">Record Payment</h3>
               <button type="button" onClick={() => setPaymentModal(null)} className="text-neutral-500 hover:text-white">
@@ -687,8 +687,7 @@ export default function PartyLedgerStaff({
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </AppModal>
     </div>
   );
 }

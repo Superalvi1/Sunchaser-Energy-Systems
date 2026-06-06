@@ -14,6 +14,7 @@ import {
 } from "../lib/clientPortalSupport";
 import { resolveLeadPhoneFromLeads } from "../lib/whatsapp";
 import WhatsAppModule from "./WhatsAppModule";
+import { useToast } from "../lib/toast";
 import { Lead } from "../types";
 
 interface SupportDeskStaffProps {
@@ -22,6 +23,7 @@ interface SupportDeskStaffProps {
 }
 
 export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskStaffProps) {
+  const toast = useToast();
   const [tickets, setTickets] = useState<SupportTicketRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<SupportTicketRecord | null>(null);
@@ -36,7 +38,6 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
   const [resolution, setResolution] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -66,13 +67,11 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
     setResolution(t.resolutionSummary || "");
     setCustomerNote("");
     setInternalNote("");
-    setMsg(null);
   };
 
   const save = async () => {
     if (!selected) return;
     setSaving(true);
-    setMsg(null);
     try {
       await updateAdminSupportTicket(staffUser.id, staffUser.username, selected.id, {
         status,
@@ -82,12 +81,12 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
         internalNote: internalNote || undefined,
         resolutionSummary: resolution || undefined,
       });
-      setMsg("Ticket updated.");
+      toast.success("Ticket updated.");
       await load();
       setCustomerNote("");
       setInternalNote("");
     } catch (err: any) {
-      setMsg(err.message || "Update failed.");
+      toast.error(err.message || "Update failed.");
     } finally {
       setSaving(false);
     }
@@ -98,14 +97,13 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
     const label = selected.ticketNumber || selected.id;
     if (!window.confirm(`Delete ticket ${label}? This cannot be undone.`)) return;
     setDeleting(true);
-    setMsg(null);
     try {
       await deleteAdminSupportTicket(staffUser.id, staffUser.username, selected.id);
       setSelected(null);
-      setMsg("Ticket deleted.");
+      toast.success("Ticket deleted.");
       await load();
     } catch (err: any) {
-      setMsg(err.message || "Delete failed.");
+      toast.error(err.message || "Delete failed.");
     } finally {
       setDeleting(false);
     }
@@ -280,7 +278,6 @@ export default function SupportDeskStaff({ staffUser, leads = [] }: SupportDeskS
                   {deleting ? "…" : "Delete"}
                 </button>
               </div>
-              {msg && <p className="text-xs text-amber-400 font-mono">{msg}</p>}
             </>
           )}
         </div>

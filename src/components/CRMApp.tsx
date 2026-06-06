@@ -6,6 +6,7 @@ import {
 import { Lead, User } from "../types";
 import { runAiLeadScoring, currencySymbol } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
+import AppModal from "./ui/AppModal";
 
 interface CRMAppProps {
   staffUser: User;
@@ -545,9 +546,8 @@ export default function CRMApp({
       </div>
 
       {/* ---------------- NEW LEAD CREATION BACKEND MODAL ---------------- */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-55 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 md:p-8 space-y-6 relative shadow-2xl">
+      <AppModal open={showAddModal} onClose={() => setShowAddModal(false)} panelClassName="max-w-xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-h-[90vh] overflow-y-auto p-6 md:p-8 space-y-6 relative shadow-2xl">
             <button
               onClick={() => setShowAddModal(false)}
               className="absolute top-5 right-5 text-slate-400 hover:text-white transition p-1.5 bg-slate-950 border border-slate-850 rounded-xl"
@@ -637,13 +637,18 @@ export default function CRMApp({
               </button>
             </form>
           </div>
-        </div>
-      )}
+      </AppModal>
 
       {/* ---------------- GEMINI AI SCORES DIAGNOSTIC MODAL ---------------- */}
-      {aiDiagnosticLeadId && (
-        <div className="fixed inset-0 z-55 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 md:p-8 space-y-5 relative shadow-2xl">
+      <AppModal
+        open={!!aiDiagnosticLeadId}
+        onClose={() => {
+          setAiDiagnosticLeadId(null);
+          setAiDiagnosticText(null);
+        }}
+        panelClassName="max-w-lg"
+      >
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full p-6 md:p-8 space-y-5 relative shadow-2xl">
             <button
               onClick={() => {
                 setAiDiagnosticLeadId(null);
@@ -697,8 +702,7 @@ export default function CRMApp({
                </button>
             </div>
           </div>
-        </div>
-      )}
+      </AppModal>
 
     </div>
   );

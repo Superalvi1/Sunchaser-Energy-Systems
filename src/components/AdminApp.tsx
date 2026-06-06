@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import UserManagementStaff from "./UserManagementStaff";
+import { useToast } from "../lib/toast";
 import { isSuperAdmin } from "../lib/roles";
 import { Lead, Ticket, InventoryItem, DashboardStats, Product, User } from "../types";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
@@ -100,6 +101,7 @@ export default function AdminApp({
   staffUser,
   onQuickAction,
 }: AdminAppProps) {
+  const toast = useToast();
   const [activeSegment, setActiveSegment] = useState<AdminSegmentId>("overview");
   const [invoiceEditId, setInvoiceEditId] = useState<string | null>(null);
   const [partyLedgerKey, setPartyLedgerKey] = useState<string | null>(null);
@@ -129,8 +131,6 @@ export default function AdminApp({
   
   // Database CRUD status states
   const [syncing, setSyncing] = useState<boolean>(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Edit draft tracking states
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
@@ -167,8 +167,6 @@ export default function AdminApp({
 
   const saveDbChange = async (action: "add" | "edit" | "delete", table: string, data: any, id?: string) => {
     setSyncing(true);
-    setSuccessMsg(null);
-    setErrorMsg(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
@@ -178,15 +176,13 @@ export default function AdminApp({
       if (!res.ok) throw new Error("Could not execute manual update on server memory.");
       const result = await res.json();
       if (result.success) {
-        setSuccessMsg(`Action [${action.toUpperCase()}] for '${table}' successfully stored and persisted.`);
-        setTimeout(() => setSuccessMsg(null), 4000);
+        toast.success(`Action [${action.toUpperCase()}] for '${table}' successfully stored and persisted.`);
         onRefreshState();
       } else {
         throw new Error("Server rejected state modifier request.");
       }
     } catch (err: any) {
-      setErrorMsg(err.message || "Network state syncing faulted.");
-      setTimeout(() => setErrorMsg(null), 4000);
+      toast.error(err.message || "Network state syncing faulted.");
     } finally {
       setSyncing(false);
     }
@@ -621,18 +617,6 @@ export default function AdminApp({
                 Live PDF Template Preview
               </button>
             </div>
-
-            {/* Notification system */}
-            {successMsg && (
-              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-2xl text-[11px] font-mono">
-                ✓ {successMsg}
-              </div>
-            )}
-            {errorMsg && (
-              <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-2xl text-[11px] font-mono">
-                ❌ {errorMsg}
-              </div>
-            )}
 
             {/* Inner Sub-Tab Selector Navigation */}
             <div className="flex gap-1.5 bg-neutral-950 p-1.5 rounded-2xl border border-neutral-850 flex-wrap">

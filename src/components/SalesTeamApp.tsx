@@ -6,13 +6,9 @@ import {
   Printer, Save
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
-import ClientPortalStaffTools from "./ClientPortalStaffTools";
-import SupportDeskStaff from "./SupportDeskStaff";
-import ServiceDeskStaff from "./ServiceDeskStaff";
-import CustomerSavingsStaff from "./CustomerSavingsStaff";
-import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
-import AfterSalesStaffTools from "./AfterSalesStaffTools";
-import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
+import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
+import AppModal from "./ui/AppModal";
+import { useToast } from "../lib/toast";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL, deleteCatalogProduct, updateCatalogProduct } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
@@ -78,6 +74,7 @@ export default function SalesTeamApp({
   );
 
   const activeLead = leads.find(l => l.id === selectedLeadId);
+  const toast = useToast();
 
   const getLeadManualQuotes = (lead: Lead | null | undefined) => getLeadManualQuotesSorted(lead);
 
@@ -2162,10 +2159,10 @@ export default function SalesTeamApp({
       
       setIsProductModalOpen(false);
       if (onRefreshState) onRefreshState();
-      alert("Product catalog updated successfully!");
+      toast.success("Product catalog updated successfully!");
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Failed to update product library.");
+      toast.error(err.message || "Failed to update product library.");
     }
   };
 
@@ -2174,10 +2171,10 @@ export default function SalesTeamApp({
     try {
       await deleteCatalogProduct(prodId);
       if (onRefreshState) onRefreshState();
-      alert("Product deleted.");
+      toast.success("Product deleted.");
     } catch (e: any) {
       console.error(e);
-      alert(e.message || "Error deleting product.");
+      toast.error(e.message || "Error deleting product.");
     }
   };
 
@@ -4479,9 +4476,12 @@ export default function SalesTeamApp({
                   )}
 
                   {/* Add/Edit Product Modal panel */}
-                  {isProductModalOpen && (
-                    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 overflow-y-auto">
-                      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 w-full max-w-md space-y-4">
+                  <AppModal
+                    open={isProductModalOpen}
+                    onClose={() => setIsProductModalOpen(false)}
+                    panelClassName="max-w-md"
+                  >
+                      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 w-full space-y-4">
                         <div className="flex justify-between items-center border-b border-slate-900 pb-2.5">
                           <h4 className="text-sm font-bold font-sans text-white">
                             {editingProduct ? 'Edit Catalog Product details' : 'Add New Pakistan solar Hardware'}
@@ -4575,8 +4575,7 @@ export default function SalesTeamApp({
                           </div>
                         </form>
                       </div>
-                    </div>
-                  )}
+                  </AppModal>
 
                 </div>
               )}
@@ -4592,9 +4591,8 @@ export default function SalesTeamApp({
         </div>
 
         {/* Preview Page Modal */}
-        {previewPage && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm overflow-y-auto p-4 md:p-6 text-slate-800">
-            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full max-w-4xl shadow-2xl flex flex-col my-8">
+        <AppModal open={!!previewPage} onClose={() => setPreviewPage(null)} panelClassName="max-w-4xl">
+            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full shadow-2xl flex flex-col">
               
               {/* Modal Header */}
               <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
@@ -4704,13 +4702,18 @@ export default function SalesTeamApp({
               </div>
               
             </div>
-          </div>
-        )}
+        </AppModal>
 
         {/* Proposal Deck Layout Preview Modal */}
-        {showProposalPreview && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 md:p-6 text-slate-800">
-            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full max-w-5xl shadow-2xl flex flex-col my-8 h-[90vh]">
+        <AppModal
+          open={showProposalPreview}
+          onClose={() => {
+            setShowProposalPreview(false);
+            setProposalPreviewHtml("");
+          }}
+          panelClassName="max-w-5xl"
+        >
+            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full shadow-2xl flex flex-col h-[90vh]">
               
               {/* Modal Header */}
               <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4 flex-shrink-0">
@@ -4769,8 +4772,7 @@ export default function SalesTeamApp({
               </div>
               
             </div>
-          </div>
-        )}
+        </AppModal>
 
         {/* Print Preview Container (only active when printing) */}
         {printPageData && (
@@ -4849,17 +4851,7 @@ export default function SalesTeamApp({
         )}
       </div>
 
-      {staffUser && (
-        <div className="mt-12 pt-8 border-t border-slate-800 space-y-12">
-          <SupportDeskStaff staffUser={staffUser} />
-          <ServiceDeskStaff staffUser={staffUser} />
-          <CustomerSavingsStaff staffUser={staffUser} />
-          <SubscriptionDeskStaff staffUser={staffUser} />
-          <AfterSalesStaffTools staffUser={staffUser} />
-          <AssetMaintenanceLogStaff staffUser={staffUser} />
-          <ClientPortalStaffTools staffUser={staffUser} />
-        </div>
-      )}
+      {staffUser && <AfterSalesAdminTabs staffUser={staffUser} leads={leads} />}
 
     </div>
   );

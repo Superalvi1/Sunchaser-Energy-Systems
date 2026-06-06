@@ -9,6 +9,7 @@ import { Lead, Ticket, InventoryItem, Product, User } from "../types";
 import { currencySymbol, API_BASE_URL, fetchDeletedLeads, restoreLead } from "../services/api";
 import { isSuperAdmin } from "../lib/roles";
 import WhatsAppModule from "./WhatsAppModule";
+import { useToast } from "../lib/toast";
 
 interface ManualAdminControlProps {
   staffUser: User;
@@ -43,6 +44,7 @@ export default function ManualAdminControl({
   onRefreshState,
   onDeleteLead,
 }: ManualAdminControlProps) {
+  const toast = useToast();
   const showDeletedLeads = isSuperAdmin(staffUser.username, staffUser.role);
   const [deletedLeads, setDeletedLeads] = useState<any[]>([]);
   const [deletedLeadsLoading, setDeletedLeadsLoading] = useState(false);
@@ -61,14 +63,10 @@ export default function ManualAdminControl({
 
   // Global loading states for admin persistence
   const [syncing, setSyncing] = useState<boolean>(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Core Generic API post wrapper for DB changes
   const saveDbChange = async (action: "add" | "edit" | "delete" | "update_raw", table: string, data: any, id?: string) => {
     setSyncing(true);
-    setSuccessMsg(null);
-    setErrorMsg(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
@@ -78,14 +76,13 @@ export default function ManualAdminControl({
       if (!res.ok) throw new Error("Could not execute manual update on server memory.");
       const result = await res.json();
       if (result.success) {
-        setSuccessMsg(`Manuel action [${action.toUpperCase()}] for '${table}' successfully stored and persisted.`);
-        setTimeout(() => setSuccessMsg(null), 4000);
+        toast.success(`Manuel action [${action.toUpperCase()}] for '${table}' successfully stored and persisted.`);
         onRefreshState();
       } else {
         throw new Error("Server rejected state modifier request.");
       }
     } catch (err: any) {
-      setErrorMsg(err.message || "Network state syncing faulted.");
+      toast.error(err.message || "Network state syncing faulted.");
     } finally {
       setSyncing(false);
     }
@@ -204,20 +201,6 @@ export default function ManualAdminControl({
         </button>
       </div>
 
-      {successMsg && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs py-3 px-4 rounded-xl flex items-center gap-2 font-mono">
-          <Check className="h-4 w-4 shrink-0 text-emerald-400" />
-          <span>{successMsg}</span>
-        </div>
-      )}
-
-      {errorMsg && (
-        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs py-3 px-4 rounded-xl flex items-center gap-2 font-mono">
-          <ShieldAlert className="h-4 w-4 shrink-0" />
-          <span>{errorMsg}</span>
-        </div>
-      )}
-
       {/* Grid of Section Selector Controls */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-11 gap-2">
         {tabs.map((tab) => {
@@ -228,8 +211,6 @@ export default function ManualAdminControl({
               key={tab.id}
               onClick={() => {
                 setInnerSubTab(tab.id);
-                setErrorMsg(null);
-                setSuccessMsg(null);
               }}
               className={`p-3 rounded-2xl flex flex-col items-center justify-center text-center transition cursor-pointer text-xs font-bold border ${
                 isActive 

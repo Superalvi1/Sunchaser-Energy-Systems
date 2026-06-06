@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import RoleManagementPanel from "./RoleManagementPanel";
 import CustomerProfileStaff from "./CustomerProfileStaff";
+import AppModal from "./ui/AppModal";
 import type { User } from "../types";
 import {
   fetchAdminUsers,
@@ -329,8 +330,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
         </div>
       )}
 
-      {createOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <AppModal open={createOpen} onClose={() => setCreateOpen(false)} panelClassName="max-w-md">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-3">
             <h3 className="font-bold text-white flex items-center gap-2">
               <Users className="h-5 w-5 text-amber-500" />
@@ -390,8 +390,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </AppModal>
     </div>
   );
 }
