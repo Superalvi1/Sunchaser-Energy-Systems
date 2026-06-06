@@ -4647,67 +4647,124 @@ function mapProductRowForSupabase(data: any, fallbackId?: string) {
   };
 }
 
-app.patch("/api/admin/products/:id", async (req, res) => {
+function mapSupabaseProductRowToApp(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    brand: row.brand,
+    model: row.model,
+    sku: row.sku,
+    price: Number(row.price || 0),
+    discount: Number(row.discount || 0),
+    stock: Number(row.stock || 0),
+    images: row.images || [],
+    warrantyPeriod: row.warranty_period,
+    specifications:
+      typeof row.specifications === "string"
+        ? JSON.parse(row.specifications)
+        : row.specifications || {},
+  };
+}
+
+async function resolveCatalogProduct(
+  id: string
+): Promise<{ product: any; localIndex: number } | null> {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    if (data) {
+      loadDb();
+      if (!db.products) db.products = [];
+      const localIndex = db.products.findIndex((item: any) => item.id === id);
+      return { product: mapSupabaseProductRowToApp(data), localIndex };
+    }
+  }
   loadDb();
+  if (!db.products) db.products = [];
+  const localIndex = db.products.findIndex((item: any) => item.id === id);
+  if (localIndex === -1) return null;
+  return { product: db.products[localIndex], localIndex };
+}
+
+function persistCatalogProductLocally(id: string, product: any, localIndex: number): void {
+  if (localIndex < 0) return;
+  if (!db.products) db.products = [];
+  db.products[localIndex] = product;
+  saveDb();
+}
+
+function removeCatalogProductLocally(id: string, localIndex: number): void {
+  if (localIndex < 0) return;
+  if (!db.products) db.products = [];
+  db.products = db.products.filter((item: any) => item.id !== id);
+  saveDb();
+}
+
+app.patch("/api/admin/products/:id", async (req, res) => {
   const id = String(req.params.id || "").trim();
   if (!id) return res.status(400).json({ error: "Product id is required." });
-  if (!db.products) db.products = [];
-  const idx = db.products.findIndex((item: any) => item.id === id);
-  if (idx === -1) return res.status(404).json({ error: "Product not found." });
-  const updated = { ...db.products[idx], ...req.body, id };
-  db.products[idx] = updated;
 
-  if (isSupabaseActive()) {
-    try {
+  try {
+    const ctx = await resolveCatalogProduct(id);
+    if (!ctx) return res.status(404).json({ error: "Product not found." });
+
+    const updated = { ...ctx.product, ...req.body, id };
+
+    if (isSupabaseActive()) {
       const supabase = getSupabase()!;
       const { error } = await supabase
         .from("products")
         .upsert(mapProductRowForSupabase(updated, id), { onConflict: "id" });
       if (error) return res.status(500).json({ error: error.message });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || "Product update failed." });
+      persistCatalogProductLocally(id, updated, ctx.localIndex);
+    } else {
+      persistCatalogProductLocally(id, updated, ctx.localIndex);
     }
-  }
 
-  saveDb();
-  await appendActivityLog(
-    "admin",
-    "Alex Admin",
-    "Super Admin",
-    "Product Updated",
-    `Updated catalog product ${id}`
-  );
-  return res.json({ success: true, product: updated });
+    await appendActivityLog(
+      "admin",
+      "Alex Admin",
+      "Super Admin",
+      "Product Updated",
+      `Updated catalog product ${id}`
+    );
+    return res.json({ success: true, product: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Product update failed." });
+  }
 });
 
 app.delete("/api/admin/products/:id", async (req, res) => {
-  loadDb();
   const id = String(req.params.id || "").trim();
   if (!id) return res.status(400).json({ error: "Product id is required." });
-  if (!db.products) db.products = [];
-  const existed = db.products.some((item: any) => item.id === id);
-  if (!existed) return res.status(404).json({ error: "Product not found." });
-  db.products = db.products.filter((item: any) => item.id !== id);
 
-  if (isSupabaseActive()) {
-    try {
+  try {
+    const ctx = await resolveCatalogProduct(id);
+    if (!ctx) return res.status(404).json({ error: "Product not found." });
+
+    if (isSupabaseActive()) {
       const supabase = getSupabase()!;
       const { error } = await supabase.from("products").delete().eq("id", id);
       if (error) return res.status(500).json({ error: error.message });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || "Product delete failed." });
+    } else {
+      removeCatalogProductLocally(id, ctx.localIndex);
     }
-  }
 
-  saveDb();
-  await appendActivityLog(
-    "admin",
-    "Alex Admin",
-    "Super Admin",
-    "Product Deleted",
-    `Deleted catalog product ${id}`
-  );
-  return res.json({ success: true, id, deleted: true });
+    removeCatalogProductLocally(id, ctx.localIndex);
+
+    await appendActivityLog(
+      "admin",
+      "Alex Admin",
+      "Super Admin",
+      "Product Deleted",
+      `Deleted catalog product ${id}`
+    );
+    return res.json({ success: true, id, deleted: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Product delete failed." });
+  }
 });
 
 // Generic Manual Admin CRUD Database manager endpoint
@@ -4748,7 +4805,9 @@ app.post("/api/db/update", async (req, res) => {
 
         if (table === "products") {
           pgTable = "products";
-          mappedData = mapProductRowForSupabase(data, id);
+          if (action !== "delete" && data) {
+            mappedData = mapProductRowForSupabase(data, id);
+          }
         } else if (table === "solarPackages") {
           pgTable = "solar_packages";
           mappedData = {

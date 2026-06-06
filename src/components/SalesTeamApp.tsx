@@ -13,7 +13,7 @@ import CustomerSavingsStaff from "./CustomerSavingsStaff";
 import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
 import AfterSalesStaffTools from "./AfterSalesStaffTools";
 import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
-import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL } from "../services/api";
+import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL, deleteCatalogProduct, updateCatalogProduct } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
 import {
@@ -2144,17 +2144,21 @@ export default function SalesTeamApp({
     };
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: editingProduct ? "edit" : "add",
-          table: "products",
-          id: payload.id,
-          data: payload
-        })
-      });
-      if (!response.ok) throw new Error("Catalog synchronization failed.");
+      if (editingProduct) {
+        await updateCatalogProduct(payload);
+      } else {
+        const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "add",
+            table: "products",
+            id: payload.id,
+            data: payload
+          })
+        });
+        if (!response.ok) throw new Error("Catalog synchronization failed.");
+      }
       
       setIsProductModalOpen(false);
       if (onRefreshState) onRefreshState();
@@ -2168,21 +2172,12 @@ export default function SalesTeamApp({
   const handleDeleteProduct = async (prodId: string) => {
     if (!window.confirm("Are you sure you want to delete this product from database?")) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "delete",
-          table: "products",
-          id: prodId
-        })
-      });
-      if (!response.ok) throw new Error("Failed to delete product from database.");
+      await deleteCatalogProduct(prodId);
       if (onRefreshState) onRefreshState();
       alert("Product deleted.");
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Error deleting product.");
+      alert(e.message || "Error deleting product.");
     }
   };
 
