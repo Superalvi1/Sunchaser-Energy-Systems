@@ -1,9 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import { getSupabase } from "./dbManager.ts";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const CLEANUP_CONFIRM_TOKEN = "cleanup-20260606";
 
@@ -122,7 +119,7 @@ async function countTable(client: { query: (sql: string) => Promise<{ rows: { co
 }
 
 export async function runProductionBackup20260606() {
-  const sqlPath = path.join(__dirname, "scripts", "production-backup-20260606.sql");
+  const sqlPath = path.join(process.cwd(), "scripts", "production-backup-20260606.sql");
   const sql = fs.readFileSync(sqlPath, "utf8");
   const client = await getPgClient();
   if (!client) {
