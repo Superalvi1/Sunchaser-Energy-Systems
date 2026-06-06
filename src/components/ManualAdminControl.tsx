@@ -386,7 +386,7 @@ export default function ManualAdminControl({
                     <input 
                       type="text"
                       placeholder="https://..."
-                      value={editingProd ? editingProd.images[0] : newProd.images[0]}
+                      value={editingProd ? (editingProd.images?.[0] ?? "") : newProd.images[0]}
                       onChange={(e) => editingProd 
                         ? setEditingProd({ ...editingProd, images: [e.target.value] })
                         : setNewProd({ ...newProd, images: [e.target.value] })
@@ -417,8 +417,9 @@ export default function ManualAdminControl({
                     {editingProd ? (
                       <>
                         <button
-                          onClick={() => {
-                            saveDbChange("edit", "products", editingProd, editingProd.id);
+                          onClick={async () => {
+                            if (!editingProd) return;
+                            await saveDbChange("edit", "products", editingProd, editingProd.id);
                             setEditingProd(null);
                           }}
                           className="flex-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black py-2 rounded-xl transition cursor-pointer"
@@ -511,9 +512,9 @@ export default function ManualAdminControl({
                             <Edit3 className="h-3 w-3 inline" />
                           </button>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               if (confirm(`Remove product "${p.name}" from active catalog?`)) {
-                                saveDbChange("delete", "products", {}, p.id);
+                                await saveDbChange("delete", "products", {}, p.id);
                               }
                             }}
                             className="bg-neutral-800 hover:bg-rose-950 p-1.5 rounded-lg text-rose-400 cursor-pointer"

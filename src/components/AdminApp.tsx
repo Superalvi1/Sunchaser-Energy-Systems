@@ -1706,7 +1706,9 @@ export default function AdminApp({
             onDeleteLead={onDeleteLead}
           />
         )}
-        {activeSegment === "products" && <AdminProductsPanel products={products} />}
+        {activeSegment === "products" && (
+          <AdminProductsPanel products={products} onRefreshState={onRefreshState} />
+        )}
         </div>
       </div>
     </div>

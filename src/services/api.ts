@@ -1,4 +1,4 @@
-import { Lead, Ticket, AppState, Quote, User } from "../types";
+import { Lead, Ticket, AppState, Quote, User, Product } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
   LOGIN_FETCH_TIMEOUT_MS,
@@ -107,6 +107,30 @@ export async function fetchAppState(): Promise<AppState> {
     logApiFailure("fetchAppState", url, null, {}, err);
     throw toConnectionError(err);
   }
+}
+
+export async function updateCatalogProduct(product: Product) {
+  const res = await apiFetch(`/api/admin/products/${encodeURIComponent(product.id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(product),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update product.");
+  }
+  return res.json();
+}
+
+export async function deleteCatalogProduct(productId: string) {
+  const res = await apiFetch(`/api/admin/products/${encodeURIComponent(productId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to delete product.");
+  }
+  return res.json();
 }
 
 export type ClientPortalResponse = {

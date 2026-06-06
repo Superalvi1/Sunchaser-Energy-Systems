@@ -19,6 +19,9 @@ import {
   getSupabase,
   fetchAppStateFromSupabase,
   fetchLeadsFromSupabase,
+  fetchActiveLeadRowFromSupabase,
+  mapSupabaseLeadRowToAppLead,
+  buildSupabaseLeadUpdateRow,
   initialSeed,
   getDashboardStats,
   calculateLeadScore,
@@ -4565,6 +4568,86 @@ app.post("/api/payments/:leadId/milestone", async (req, res) => {
   res.json(payTrack);
 });
 
+function mapProductRowForSupabase(data: any, fallbackId?: string) {
+  return {
+    id: data.id || fallbackId,
+    name: data.name,
+    category: data.category,
+    brand: data.brand || "",
+    model: data.model || "",
+    sku: data.sku || "",
+    price: Number(data.price || 0),
+    discount: Number(data.discount || 0),
+    stock: Number(data.stock || 0),
+    images: data.images || [],
+    warranty_period: data.warrantyPeriod || data.warranty_period || "2 Years",
+    specifications: data.specifications || {},
+  };
+}
+
+app.patch("/api/admin/products/:id", async (req, res) => {
+  loadDb();
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "Product id is required." });
+  if (!db.products) db.products = [];
+  const idx = db.products.findIndex((item: any) => item.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Product not found." });
+  const updated = { ...db.products[idx], ...req.body, id };
+  db.products[idx] = updated;
+
+  if (isSupabaseActive()) {
+    try {
+      const supabase = getSupabase()!;
+      const { error } = await supabase
+        .from("products")
+        .upsert(mapProductRowForSupabase(updated, id), { onConflict: "id" });
+      if (error) return res.status(500).json({ error: error.message });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Product update failed." });
+    }
+  }
+
+  saveDb();
+  await appendActivityLog(
+    "admin",
+    "Alex Admin",
+    "Super Admin",
+    "Product Updated",
+    `Updated catalog product ${id}`
+  );
+  return res.json({ success: true, product: updated });
+});
+
+app.delete("/api/admin/products/:id", async (req, res) => {
+  loadDb();
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "Product id is required." });
+  if (!db.products) db.products = [];
+  const existed = db.products.some((item: any) => item.id === id);
+  if (!existed) return res.status(404).json({ error: "Product not found." });
+  db.products = db.products.filter((item: any) => item.id !== id);
+
+  if (isSupabaseActive()) {
+    try {
+      const supabase = getSupabase()!;
+      const { error } = await supabase.from("products").delete().eq("id", id);
+      if (error) return res.status(500).json({ error: error.message });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Product delete failed." });
+    }
+  }
+
+  saveDb();
+  await appendActivityLog(
+    "admin",
+    "Alex Admin",
+    "Super Admin",
+    "Product Deleted",
+    `Deleted catalog product ${id}`
+  );
+  return res.json({ success: true, id, deleted: true });
+});
+
 // Generic Manual Admin CRUD Database manager endpoint
 app.post("/api/db/update", async (req, res) => {
   loadDb();
@@ -4603,20 +4686,7 @@ app.post("/api/db/update", async (req, res) => {
 
         if (table === "products") {
           pgTable = "products";
-          mappedData = {
-            id: data.id,
-            name: data.name,
-            category: data.category,
-            brand: data.brand || "",
-            model: data.model || "",
-            sku: data.sku || "",
-            price: Number(data.price || 0),
-            discount: Number(data.discount || 0),
-            stock: Number(data.stock || 0),
-            images: data.images || [],
-            warranty_period: data.warrantyPeriod || "2 Years",
-            specifications: data.specifications || {}
-          };
+          mappedData = mapProductRowForSupabase(data, id);
         } else if (table === "solarPackages") {
           pgTable = "solar_packages";
           mappedData = {
@@ -4851,10 +4921,20 @@ app.post("/api/db/update", async (req, res) => {
         if (pgTable) {
           if (action === "add" || action === "edit") {
             const { error } = await supabase.from(pgTable).upsert(mappedData, { onConflict: "id" });
-            if (error) console.error(`[Supabase manual CRUD Sync error]: table=${pgTable}`, error.message);
+            if (error) {
+              console.error(`[Supabase manual CRUD Sync error]: table=${pgTable}`, error.message);
+              if (table === "products") {
+                return res.status(500).json({ error: `Product save failed: ${error.message}` });
+              }
+            }
           } else if (action === "delete") {
             const { error } = await supabase.from(pgTable).delete().eq("id", id);
-            if (error) console.error(`[Supabase manual CRUD Delete error]: table=${pgTable}`, error.message);
+            if (error) {
+              console.error(`[Supabase manual CRUD Delete error]: table=${pgTable}`, error.message);
+              if (table === "products") {
+                return res.status(500).json({ error: `Product delete failed: ${error.message}` });
+              }
+            }
           }
         }
       }
