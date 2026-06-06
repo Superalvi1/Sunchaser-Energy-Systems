@@ -5,6 +5,12 @@ import { randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import {
+  CLEANUP_CONFIRM_TOKEN,
+  fetchProductionCleanupCounts,
+  runProductionBackup20260606,
+  runProductionCleanup20260606,
+} from "./productionCleanupDb.ts";
 import { billToMonthlyUnits, resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import {
@@ -2754,6 +2760,45 @@ app.get("/api/diagnostics/db", async (req, res) => {
     })(),
     nodeEnv: process.env.NODE_ENV,
   });
+});
+
+function assertSuperAdminCleanup(req: express.Request) {
+  const role = String(req.headers["x-sunchaser-role"] || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || "").trim();
+  if (role !== "Super Admin" && username.toLowerCase() !== "allauddin") {
+    throw new StaffPortalAuthError("Super Admin access required.", 403);
+  }
+}
+
+app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) => {
+  try {
+    assertSuperAdminCleanup(req);
+    const confirm = String(req.body?.confirm || "");
+    if (confirm !== CLEANUP_CONFIRM_TOKEN) {
+      return res.status(400).json({ error: `confirm must be ${CLEANUP_CONFIRM_TOKEN}` });
+    }
+    const result = await runProductionBackup20260606();
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Backup failed." });
+  }
+});
+
+app.post("/api/admin/maintenance/production-cleanup-20260606", async (req, res) => {
+  try {
+    assertSuperAdminCleanup(req);
+    const confirm = String(req.body?.confirm || "");
+    if (confirm !== CLEANUP_CONFIRM_TOKEN) {
+      return res.status(400).json({ error: `confirm must be ${CLEANUP_CONFIRM_TOKEN}` });
+    }
+    const deleted = await runProductionCleanup20260606();
+    const counts = await fetchProductionCleanupCounts();
+    return res.json({ success: true, deleted, counts });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Cleanup failed." });
+  }
 });
 
 app.get("/api/diagnostics/quotation-settings", async (req, res) => {
