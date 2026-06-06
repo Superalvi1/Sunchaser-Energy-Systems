@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -2875,75 +2876,93 @@ app.get("/api/diagnostics/api-config", (req, res) => {
   });
 });
 
+function leadInsertHttpStatus(err: { code?: string; message?: string }): number {
+  const code = String(err?.code || "");
+  const msg = String(err?.message || "").toLowerCase();
+  if (code === "23505" || msg.includes("duplicate key")) return 409;
+  if (
+    code === "23502" ||
+    code === "23514" ||
+    code === "22P02" ||
+    code === "23503" ||
+    msg.includes("violates") ||
+    msg.includes("invalid input")
+  ) {
+    return 422;
+  }
+  return 500;
+}
+
 // 3. Create lead route with rating, scores and auto WhatsApp confirmation
 app.post("/api/leads", async (req, res) => {
-  loadDb();
-  const {
-    name,
-    email,
-    phone,
-    address,
-    monthlyBill,
-    monthlyUnits,
-    sanctionedLoad,
-    backupRequirement,
-    location,
-    roofType,
-    roofSpace,
-    shading,
-    notes,
-    leadSource,
-    engagementLevel
-  } = req.body;
+  try {
+    loadDb();
+    const {
+      name,
+      email,
+      phone,
+      address,
+      monthlyBill,
+      monthlyUnits,
+      sanctionedLoad,
+      backupRequirement,
+      location,
+      roofType,
+      roofSpace,
+      shading,
+      notes,
+      leadSource,
+      engagementLevel
+    } = req.body;
 
-  const leadId = `lead-${filterActiveLeads(db.leads).length + 101}`;
-  const newLead: any = {
-    id: leadId,
-    name: name || "Anonymous Lead",
-    email: email || "no-email@example.com",
-    phone: phone || "",
-    address: address || "",
-    status: "New",
-    monthlyBill: (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill),
-    monthlyUnits: (() => {
-      const bill = (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill);
-      const units = (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? 0 : Number(monthlyUnits);
-      return resolveMonthlyUnits(bill, units);
-    })(),
-    sanctionedLoad: Number(sanctionedLoad) || 7,
-    backupRequirement: backupRequirement || "None",
-    location: location || "Springfield",
-    roofType: roofType || "Asphalt Shingle",
-    roofSpace: Number(roofSpace) || 800,
-    shading: shading || "Medium",
-    rating: 3,
-    assignedSalesperson: "Sarah Connor",
-    createdAt: new Date().toISOString(),
-    notes: notes || "Submitted via Sunchaser Sizing Calculator.",
-    leadSource: leadSource || "Self-registration Web Portal",
-    engagementLevel: engagementLevel || "Medium",
-    // REMOVED: auto-quote on lead create (phantom data bug fix)
-    quotes: [],
-  };
+    const leadId = `lead-${randomUUID()}`;
+    const newLead: any = {
+      id: leadId,
+      name: name || "Anonymous Lead",
+      email: email || "no-email@example.com",
+      phone: phone || "",
+      address: address || "",
+      status: "New",
+      monthlyBill: (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill),
+      monthlyUnits: (() => {
+        const bill = (monthlyBill === undefined || monthlyBill === null || monthlyBill === '') ? 0 : Number(monthlyBill);
+        const units = (monthlyUnits === undefined || monthlyUnits === null || monthlyUnits === '') ? 0 : Number(monthlyUnits);
+        return resolveMonthlyUnits(bill, units);
+      })(),
+      sanctionedLoad: Number(sanctionedLoad) || 7,
+      backupRequirement: backupRequirement || "None",
+      location: location || "Springfield",
+      roofType: roofType || "Asphalt Shingle",
+      roofSpace: Number(roofSpace) || 800,
+      shading: shading || "Medium",
+      rating: 3,
+      assignedSalesperson: "Sarah Connor",
+      createdAt: new Date().toISOString(),
+      notes: notes || "Submitted via Sunchaser Sizing Calculator.",
+      leadSource: leadSource || "Self-registration Web Portal",
+      engagementLevel: engagementLevel || "Medium",
+      quotes: [],
+    };
 
-  calculateLeadScore(newLead);
+    calculateLeadScore(newLead);
 
-  if (isSupabaseActive()) {
-    try {
+    if (isSupabaseActive()) {
       const supabase = getSupabase()!;
-      const customerId = `cust-${leadId.replace("lead-", "")}`;
+      const customerId = `cust-${randomUUID()}`;
 
-      // Insert Customer row
-      await supabase.from("customers").insert({
+      const { error: custErr } = await supabase.from("customers").insert({
         id: customerId,
         name: newLead.name,
         email: newLead.email,
         phone: newLead.phone,
-        address: newLead.address
+        address: newLead.address,
       });
+      if (custErr) {
+        console.error("[Supabase Customer Insert Error]:", custErr.message);
+        return res.status(leadInsertHttpStatus(custErr)).json({ error: custErr.message });
+      }
 
-      // Insert Lead row
-      await supabase.from("leads").insert({
+      const { error: leadErr } = await supabase.from("leads").insert({
         id: newLead.id,
         customer_id: customerId,
         name: newLead.name,
@@ -2966,21 +2985,33 @@ app.post("/api/leads", async (req, res) => {
         engagement_level: newLead.engagementLevel,
         conversion_probability: newLead.conversionProbability,
         conversion_score: newLead.conversionScore,
-        created_at: newLead.createdAt
+        created_at: newLead.createdAt,
       });
-    } catch (err: any) {
-      console.error("[Supabase Lead Insertion Error]:", err.message);
+      if (leadErr) {
+        console.error("[Supabase Lead Insert Error]:", leadErr.message);
+        const { error: cleanupErr } = await supabase.from("customers").delete().eq("id", customerId);
+        if (cleanupErr) {
+          console.warn(
+            `[Supabase Orphan Customer] Failed to delete ${customerId} after lead insert failed:`,
+            cleanupErr.message
+          );
+        }
+        return res.status(leadInsertHttpStatus(leadErr)).json({ error: leadErr.message });
+      }
+    } else {
+      db.leads.push(newLead);
+      saveDb();
     }
+
+    await appendActivityLog("guest", newLead.name, "Customer", "Lead Created", `Registered details profile for home assessment sizing.`);
+    const msgText = `☀️ Hi ${newLead.name}! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal`;
+    await triggerWhatsAppNotification(newLead.name, newLead.phone, "survey_confirmation", msgText);
+
+    return res.status(201).json(newLead);
+  } catch (err: any) {
+    console.error("[Lead Create Error]:", err?.message || err);
+    return res.status(500).json({ error: err?.message || "Failed to create lead." });
   }
-
-  db.leads.push(newLead);
-  saveDb();
-
-  await appendActivityLog("guest", newLead.name, "Customer", "Lead Created", `Registered details profile for home assessment sizing.`);
-  const msgText = `☀️ Hi ${newLead.name}! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal`;
-  await triggerWhatsAppNotification(newLead.name, newLead.phone, "survey_confirmation", msgText);
-
-  res.status(201).json(newLead);
 });
 
 // 4. Update lead fields and re-compute score

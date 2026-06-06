@@ -264,6 +264,7 @@ export default function App() {
       await loadDatabaseState();
     } catch (err: any) {
       setError(err.message);
+      throw err;
     } finally {
       setLoading(false);
     }

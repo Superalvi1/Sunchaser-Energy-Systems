@@ -11,7 +11,7 @@ interface CRMAppProps {
   staffUser: User;
   leads: Lead[];
   onUpdateLead: (id: string, updatedData: any) => void;
-  onAddLead: (data: any) => void;
+  onAddLead: (data: any) => void | Promise<void>;
   onDeleteLead?: (id: string) => void;
 }
 
@@ -55,6 +55,8 @@ export default function CRMApp({
   const [newShading, setNewShading] = useState<'None' | 'Low' | 'Medium' | 'High'>('Low');
   const [newSource, setNewSource] = useState("Web Search");
   const [newEngagement, setNewEngagement] = useState<'High' | 'Medium' | 'Low'>('Medium');
+  const [addLeadError, setAddLeadError] = useState<string | null>(null);
+  const [addLeadSubmitting, setAddLeadSubmitting] = useState(false);
 
   // AI Diagnostic report modal
   const [aiDiagnosticLeadId, setAiDiagnosticLeadId] = useState<string | null>(null);
@@ -100,32 +102,42 @@ export default function CRMApp({
   };
 
   // Submit new lead
-  const handleCreateLeadSubmit = (e: React.FormEvent) => {
+  const handleCreateLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName || !newEmail) return;
+    if (!newName.trim() || !newEmail.trim()) {
+      setAddLeadError("Name and email are required.");
+      return;
+    }
 
-    onAddLead({
-      name: newName,
-      email: newEmail,
-      phone: newPhone,
-      address: newAddress,
-      monthlyBill: Number(newBill),
-      roofSpace: Number(newRoof),
-      shading: newShading,
-      leadSource: newSource,
-      engagementLevel: newEngagement,
-      notes: "CRM Registered Candidate Profile"
-    });
+    setAddLeadError(null);
+    setAddLeadSubmitting(true);
+    try {
+      await onAddLead({
+        name: newName.trim(),
+        email: newEmail.trim(),
+        phone: newPhone,
+        address: newAddress,
+        monthlyBill: Number(newBill),
+        roofSpace: Number(newRoof),
+        shading: newShading,
+        leadSource: newSource,
+        engagementLevel: newEngagement,
+        notes: "CRM Registered Candidate Profile",
+      });
 
-    // Reset fields
-    setNewName("");
-    setNewEmail("");
-    setNewPhone("");
-    setNewAddress("");
-    setNewBill(200);
-    setNewRoof(900);
-    setNewShading("Low");
-    setShowAddModal(false);
+      setNewName("");
+      setNewEmail("");
+      setNewPhone("");
+      setNewAddress("");
+      setNewBill(200);
+      setNewRoof(900);
+      setNewShading("Low");
+      setShowAddModal(false);
+    } catch (err: any) {
+      setAddLeadError(err?.message || "Failed to create lead.");
+    } finally {
+      setAddLeadSubmitting(false);
+    }
   };
 
   // Trigger Gemini AI qualitative diagnostics score report representation
@@ -184,7 +196,10 @@ export default function CRMApp({
         </div>
 
         <button
-          onClick={() => setShowAddModal(true)}
+          onClick={() => {
+            setAddLeadError(null);
+            setShowAddModal(true);
+          }}
           className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold font-sans py-2.5 px-5 rounded-xl shadow cursor-pointer text-xs flex items-center gap-1.5 transition active:translate-y-px"
         >
           <Plus className="w-4 h-4" /> Add Solar Lead
@@ -610,11 +625,15 @@ export default function CRMApp({
                 </div>
               </div>
 
+              {addLeadError && (
+                <p className="text-xs text-rose-400 font-mono">{addLeadError}</p>
+              )}
               <button
                 type="submit"
-                className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm py-3 px-4 rounded-xl transition cursor-pointer font-sans shadow pt-3"
+                disabled={addLeadSubmitting}
+                className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-extrabold text-sm py-3 px-4 rounded-xl transition cursor-pointer font-sans shadow pt-3"
               >
-                Register Lead Profile & Run Scorer
+                {addLeadSubmitting ? "Saving…" : "Register Lead Profile & Run Scorer"}
               </button>
             </form>
           </div>
