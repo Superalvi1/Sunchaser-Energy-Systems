@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
@@ -24,6 +24,18 @@ import {
   getLatestSavedQuote,
   getLeadManualQuotesSorted,
 } from "../lib/quoteSelection";
+import {
+  getBoqQuickFillProducts,
+  getLiveCatalogProducts,
+  formatQuickFillOptionLabel,
+} from "../lib/boqCatalog";
+import {
+  applyBoqInsertAction,
+  createBoqRow,
+  findSectionHeadingName,
+  reindexBoqItemNumbers,
+  type BoqInsertAction,
+} from "../lib/boqRowInsert";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -1079,9 +1091,22 @@ export default function SalesTeamApp({
   // REMOVED: auto-quote on lead create (phantom data bug fix) — no localStorage draft restore
   const triggerAutosave = (_updatedRows: BoqRow[]) => {};
 
+  const liveCatalogProducts = useMemo(() => getLiveCatalogProducts(products), [products]);
+
+  const applyBoqRowList = (rows: BoqRow[]) => {
+    const reindexed = reindexBoqItemNumbers(rows);
+    const calculated = calculateRowTotalsAndSubtotals(reindexed);
+    setManualBoqItems(calculated);
+    setBoqRows(calculated);
+    triggerAutosave(calculated);
+  };
+
+  const getCurrentBoqRows = (): BoqRow[] =>
+    manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+
   // Excel Manual Builder Cell Handlers
   const handleCellChange = (index: number, field: keyof BoqRow, value: any) => {
-    const updated = [...manualBoqItems];
+    const updated = [...getCurrentBoqRows()];
     if (!updated[index]) return;
     
     updated[index] = {
@@ -1095,52 +1120,24 @@ export default function SalesTeamApp({
       updated[index].total = q * r;
     }
 
-    const calculated = calculateRowTotalsAndSubtotals(updated);
-    setManualBoqItems(calculated);
-    setBoqRows(calculated);
-    triggerAutosave(calculated);
+    applyBoqRowList(updated);
   };
 
   const addBoqRow = (type: 'heading' | 'item' | 'subtotal') => {
-    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
-    const newRow: BoqRow = {
-      id: `row-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      type,
-      srNo: type === 'item' ? String(currentItems.filter(r => r && r.type === 'item').length + 1) : undefined,
-      name: type === 'heading' ? 'New Section Heading' : type === 'subtotal' ? 'Section Subtotal' : 'New Item Name',
-      description: '',
-      brand: '',
-      unit: type === 'item' ? 'Pcs' : '',
-      qty: type === 'item' ? 1 : 0,
-      rate: 0,
-      total: 0
-    };
-    const updated = calculateRowTotalsAndSubtotals([...currentItems, newRow]);
-    setManualBoqItems(updated);
-    setBoqRows(updated);
-    triggerAutosave(updated);
+    applyBoqRowList([...getCurrentBoqRows(), createBoqRow(type)]);
+  };
+
+  const handleBoqInsertAction = (index: number, action: BoqInsertAction) => {
+    applyBoqRowList(applyBoqInsertAction(getCurrentBoqRows(), index, action));
   };
 
   const deleteBoqRow = (index: number) => {
-    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
-    const updatedRows = currentItems.filter((_, i) => i !== index);
-    
-    // Re-index Sr No for items
-    let itemCounter = 1;
-    const reindexed = updatedRows.map(row => {
-      if (row && row.type === 'item') {
-        return { ...row, srNo: String(itemCounter++) };
-      }
-      return row;
-    });
-    const updated = calculateRowTotalsAndSubtotals(reindexed);
-    setManualBoqItems(updated);
-    setBoqRows(updated);
-    triggerAutosave(updated);
+    const updatedRows = getCurrentBoqRows().filter((_, i) => i !== index);
+    applyBoqRowList(updatedRows);
   };
 
   const duplicateBoqRow = (index: number) => {
-    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = getCurrentBoqRows();
     const rowToDuplicate = currentItems[index];
     if (!rowToDuplicate) return;
     const duplicatedRow: BoqRow = {
@@ -1149,73 +1146,48 @@ export default function SalesTeamApp({
     };
     const list = [...currentItems];
     list.splice(index + 1, 0, duplicatedRow);
-    
-    // Re-index Sr No for items
-    let itemCounter = 1;
-    const reindexed = list.map(row => {
-      if (row && row.type === 'item') {
-        return { ...row, srNo: String(itemCounter++) };
-      }
-      return row;
-    });
-    
-    const updated = calculateRowTotalsAndSubtotals(reindexed);
-    setManualBoqItems(updated);
-    setBoqRows(updated);
-    triggerAutosave(updated);
+    applyBoqRowList(list);
   };
 
   const moveBoqRow = (index: number, direction: 'up' | 'down') => {
-    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+    const currentItems = getCurrentBoqRows();
     if (direction === 'up' && index === 0) return;
     if (direction === 'down' && index === currentItems.length - 1) return;
-    
+
     const list = [...currentItems];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     const temp = list[index];
     list[index] = list[targetIndex];
     list[targetIndex] = temp;
-    
-    // Re-index Sr No for items
-    let itemCounter = 1;
-    const reindexed = list.map(row => {
-      if (row && row.type === 'item') {
-        return { ...row, srNo: String(itemCounter++) };
-      }
-      return row;
-    });
-    
-    const updated = calculateRowTotalsAndSubtotals(reindexed);
-    setManualBoqItems(updated);
-    setBoqRows(updated);
-    triggerAutosave(updated);
+    applyBoqRowList(list);
   };
 
   const handleLoadFromLibrary = (index: number, libraryItemId: string) => {
-    const libItem = products.find((item: any) => item && item.id === libraryItemId);
+    const libItem = liveCatalogProducts.find((item) => item && String(item.id) === libraryItemId);
     if (!libItem) return;
-    
-    const currentItems = manualBoqItems.length > 0 ? manualBoqItems : boqRows;
+
+    const currentItems = getCurrentBoqRows();
     const updated = [...currentItems];
     if (!updated[index]) return;
-    
+
     const qtyVal = updated[index].qty || 1;
     const saleRate = Number(libItem.price) || 0;
-    
+
     updated[index] = {
       ...updated[index],
-      name: libItem.brand + " " + libItem.model,
-      brand: libItem.brand,
-      description: libItem.specifications?.description || libItem.name || "",
+      name: `${libItem.brand || ""} ${libItem.model || ""}`.trim() || String(libItem.name || ""),
+      brand: String(libItem.brand || ""),
+      description:
+        (typeof libItem.specifications === "object" && libItem.specifications
+          ? (libItem.specifications as { description?: string }).description
+          : "") ||
+        String(libItem.name || ""),
       unit: "Pcs",
       rate: saleRate,
-      total: qtyVal * saleRate
+      total: qtyVal * saleRate,
     };
-    
-    const calculated = calculateRowTotalsAndSubtotals(updated);
-    setManualBoqItems(calculated);
-    setBoqRows(calculated);
-    triggerAutosave(calculated);
+
+    applyBoqRowList(updated);
   };
 
   const handleSaveSizerQuote = async () => {
@@ -2226,14 +2198,20 @@ export default function SalesTeamApp({
     return "Rs. " + (num || 0).toLocaleString('en-PK');
   };
 
-  // Filter products by search and category
-  const filteredProducts = products.filter(p => {
+  // Filter products by search and category (live Supabase catalog only)
+  const filteredProducts = liveCatalogProducts.filter((p) => {
     const matchesCat = p.category === selectedProductCategory;
-    const matchesSearch = !productSearchQuery ? true : (
-      (p.brand || "").toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-      (p.model || "").toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-      (p.name || "").toLowerCase().includes(productSearchQuery.toLowerCase())
-    );
+    const matchesSearch = !productSearchQuery
+      ? true
+      : String(p.brand || "")
+          .toLowerCase()
+          .includes(productSearchQuery.toLowerCase()) ||
+        String(p.model || "")
+          .toLowerCase()
+          .includes(productSearchQuery.toLowerCase()) ||
+        String(p.name || "")
+          .toLowerCase()
+          .includes(productSearchQuery.toLowerCase());
     return matchesCat && matchesSearch;
   });
 
@@ -2966,13 +2944,15 @@ export default function SalesTeamApp({
                             <th className="py-2.5 px-1.5 w-12 text-center">Qty</th>
                             <th className="py-2.5 px-2 w-28 text-right">Rate</th>
                             <th className="py-2.5 px-2 w-28 text-right">Total</th>
-                            <th className="py-2.5 px-2 text-center w-28">Actions</th>
+                            <th className="py-2.5 px-2 text-center w-36">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 text-slate-300">
                           {boqRows.map((row, idx) => {
                             const isHeading = row.type === 'heading';
                             const isSubtotal = row.type === 'subtotal';
+                            const sectionHeading = findSectionHeadingName(boqRows, idx);
+                            const quickFillProducts = getBoqQuickFillProducts(liveCatalogProducts, sectionHeading);
                             return (
                               <tr key={row.id} className={`hover:bg-slate-900/25 ${isHeading ? 'bg-slate-900/40 font-bold' : isSubtotal ? 'bg-slate-900/10 font-bold' : ''}`}>
                                 {isHeading ? (
@@ -3020,8 +3000,10 @@ export default function SalesTeamApp({
                                         className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[9px] text-slate-400 font-sans cursor-pointer"
                                       >
                                         <option value="">-- Catalog Quick-fill --</option>
-                                        {products.map((lib: any) => (
-                                          <option key={lib.id} value={lib.id}>{lib.category} - {lib.brand} {lib.model}</option>
+                                        {quickFillProducts.map((lib) => (
+                                          <option key={String(lib.id)} value={String(lib.id)}>
+                                            {formatQuickFillOptionLabel(lib)}
+                                          </option>
                                         ))}
                                       </select>
                                       <input
@@ -3088,10 +3070,38 @@ export default function SalesTeamApp({
                                   </>
                                 )}
 
-                                <td className="py-2 px-2 text-center space-x-1 whitespace-nowrap">
+                                <td className="py-2 px-2 text-center space-x-1 whitespace-nowrap align-top">
+                                  <select
+                                    defaultValue=""
+                                    onChange={(e) => {
+                                      const action = e.target.value as BoqInsertAction;
+                                      e.target.value = "";
+                                      if (action) handleBoqInsertAction(idx, action);
+                                    }}
+                                    className="bg-slate-900 border border-slate-800 rounded px-1 py-0.5 text-[8px] text-slate-400 max-w-[4.5rem] cursor-pointer mb-1 block mx-auto"
+                                    title="Insert row or section at this position"
+                                  >
+                                    <option value="">Insert…</option>
+                                    {isHeading || isSubtotal ? (
+                                      <>
+                                        <option value="item-in-section">Add item to section</option>
+                                        <option value="section-above">Add section above</option>
+                                        <option value="section-below">Add section below</option>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <option value="row-above">Add row above</option>
+                                        <option value="row-below">Add row below</option>
+                                        <option value="section-above">Add section above</option>
+                                        <option value="section-below">Add section below</option>
+                                      </>
+                                    )}
+                                  </select>
                                   <button type="button" onClick={() => moveBoqRow(idx, 'up')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><ArrowUp className="h-3 w-3" /></button>
                                   <button type="button" onClick={() => moveBoqRow(idx, 'down')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><ArrowDown className="h-3 w-3" /></button>
-                                  <button type="button" onClick={() => duplicateBoqRow(idx)} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><Copy className="h-3 w-3" /></button>
+                                  {!isHeading && !isSubtotal && (
+                                    <button type="button" onClick={() => duplicateBoqRow(idx)} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-400 cursor-pointer inline-flex"><Copy className="h-3 w-3" /></button>
+                                  )}
                                   <button type="button" onClick={() => deleteBoqRow(idx)} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-rose-400 cursor-pointer inline-flex"><Trash2 className="h-3 w-3" /></button>
                                 </td>
                               </tr>

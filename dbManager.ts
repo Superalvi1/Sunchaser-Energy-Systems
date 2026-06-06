@@ -1235,7 +1235,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     activityLogsData,
     whatsappLogsData,
     categoriesData,
-    productsCatalogData,
+    productsCatalogResult,
     ordersData,
     warrantiesData,
     notificationsData,
@@ -1265,7 +1265,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     safeFetch("activity_logs"),
     safeFetch("whatsapp_logs"),
     safeFetch("categories"),
-    safeFetch("products"),
+    safeFetchEx("products"),
     safeFetch("orders"),
     safeFetch("warranties"),
     safeFetch("notifications"),
@@ -1527,6 +1527,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   const websiteContentObj = (websiteContentData || []).find((w: any) => w.key === "global")?.value || null;
 
   // Additional ERP metrics mapping
+  const productsCatalogData = productsCatalogResult.data || [];
   const productsCatalogMapped = (productsCatalogData || []).map((p: any) => ({
     id: p.id,
     name: p.name,
@@ -1719,7 +1720,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     activityLogs: activityLogsMapped,
     whatsAppLogs: whatsappLogsMapped,
     categories: categoriesMapped.length > 0 ? categoriesMapped : undefined,
-    products: productsCatalogMapped.length > 0 ? productsCatalogMapped : undefined,
+    products: productsCatalogResult.tableAvailable ? productsCatalogMapped : undefined,
     orders: ordersMapped.length > 0 ? ordersMapped : undefined,
     warranties: warrantiesMapped.length > 0 ? warrantiesMapped : undefined,
     notifications: notificationsMapped.length > 0 ? notificationsMapped : undefined,
