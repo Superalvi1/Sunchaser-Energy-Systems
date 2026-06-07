@@ -16,7 +16,7 @@ import {
   type InvoicePaymentMethod,
   type InvoiceRecord,
 } from "./src/lib/invoices.ts";
-import { uploadFileToCustomerStorage, assignCustomerDocument } from "./customerProfileDb.js";
+import { uploadFileToCustomerStorage } from "./customerProfileDb.js";
 import { amountInWordsPkr } from "./src/lib/amountInWords.ts";
 import {
   decodeInvoiceMeta,
@@ -25,6 +25,7 @@ import {
 } from "./src/lib/invoicePdfMeta.ts";
 import { resolveInvoiceCustomerId } from "./invoiceCustomerLink.js";
 import { coercePaymentMethod } from "./src/lib/invoicePayments.ts";
+import { syncInvoiceDocumentVault } from "./customerDocumentSync.js";
 
 export class InvoiceDbError extends Error {
   statusCode: number;
@@ -435,7 +436,13 @@ export async function createAdminInvoice(
     localDb
   );
 
-  return getAdminInvoiceById(userId, username, role, id, localDb);
+  const created = await getAdminInvoiceById(userId, username, role, id, localDb);
+  try {
+    await syncInvoiceDocumentVault(created, localDb);
+  } catch (err: any) {
+    console.warn("[InvoiceDocumentSync] create:", err?.message || err);
+  }
+  return created;
 }
 
 export async function updateAdminInvoice(
@@ -623,10 +630,14 @@ export async function updateAdminInvoice(
     localDb
   );
 
-  return getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const updated = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  try {
+    await syncInvoiceDocumentVault(updated, localDb);
+  } catch (err: any) {
+    console.warn("[InvoiceDocumentSync] update:", err?.message || err);
+  }
+  return updated;
 }
-
-export async function recordInvoicePayment(
   userId: string,
   username: string,
   role: string,
@@ -763,14 +774,6 @@ export async function syncInvoiceToCustomerDocuments(
   localDb?: Database
 ) {
   if (!invoice.customerId) return null;
-  return assignCustomerDocument(userId, username, role, {
-    customerId: invoice.customerId,
-    documentType: "invoice",
-    title: `Invoice ${invoice.invoiceNumber}`,
-    fileUrl: pdfUrl,
-    fileName: `${invoice.invoiceNumber}.pdf`,
-    visibleToCustomer: true,
-    internalOnly: false,
-    notes: `Grand total PKR ${invoice.grandTotal.toLocaleString()}`,
-  }, localDb);
+  const withUrl = pdfUrl ? { ...invoice, pdfUrl } : invoice;
+  return syncInvoiceDocumentVault(withUrl, localDb);
 }

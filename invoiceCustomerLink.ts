@@ -108,6 +108,24 @@ async function insertCustomer(
 }
 
 /**
+ * Find an existing customer by phone → email → CNIC (no create).
+ * Used by portal registration to link self-signup to CRM records.
+ */
+export async function findExistingCustomerIdForLinking(
+  input: { phone?: string | null; email?: string | null; cnicNtn?: string | null },
+  localDb?: Database
+): Promise<string | null> {
+  const phone = String(input.phone || "").trim();
+  const email = String(input.email || "").trim();
+  const cnic = String(input.cnicNtn || "").trim();
+  let matched: string | null = null;
+  if (phone) matched = await findCustomerByPhone(phone, localDb);
+  if (!matched && email) matched = await findCustomerByEmail(email, localDb);
+  if (!matched && cnic) matched = await findCustomerByCnicNtn(cnic, localDb);
+  return matched;
+}
+
+/**
  * Resolve customer_id for an invoice when not explicitly provided.
  * Does not modify existing customer records on match.
  */
@@ -124,12 +142,10 @@ export async function resolveInvoiceCustomerId(
   const cnic = String(input.cnicNtn || "").trim();
   const address = String(input.customerAddress || "").trim() || null;
 
-  let matched: string | null = null;
-
-  if (phone) matched = await findCustomerByPhone(phone, localDb);
-  if (!matched && email) matched = await findCustomerByEmail(email, localDb);
-  if (!matched && cnic) matched = await findCustomerByCnicNtn(cnic, localDb);
-
+  const matched = await findExistingCustomerIdForLinking(
+    { phone, email, cnicNtn: cnic },
+    localDb
+  );
   if (matched) return matched;
 
   if (!name || !phone) return null;

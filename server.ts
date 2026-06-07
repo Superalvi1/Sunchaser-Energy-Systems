@@ -168,6 +168,8 @@ import {
 import { compileInvoicePDFHtml } from "./invoicePdf.js";
 import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
 import { listPartyLedgers, getPartyLedgerDetail } from "./partyLedgerDb.js";
+import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
+import { syncQuotationDocumentVault } from "./customerDocumentSync.js";
 import { fetchFinanceDashboard } from "./financeDashboardDb.js";
 import {
   fetchProjectOperationsDashboard,
@@ -195,6 +197,34 @@ const ai = new GoogleGenAI({
     }
   }
 });
+
+async function syncQuotationVaultForLead(
+  lead: { name?: string; phone?: string; email?: string },
+  leadId: string,
+  quoteId: string,
+  customerIdHint: string | null | undefined,
+  localDb?: Database
+) {
+  if (!quoteId || !leadId) return;
+  const customerId =
+    (await findExistingCustomerIdForLinking({ phone: lead.phone, email: lead.email }, localDb)) ||
+    customerIdHint ||
+    null;
+  if (!customerId) return;
+  try {
+    await syncQuotationDocumentVault(
+      {
+        customerId,
+        leadId,
+        quoteId,
+        title: `Quotation for ${lead.name || "Customer"}`,
+      },
+      localDb
+    );
+  } catch (err: any) {
+    console.warn("[QuotationDocumentSync]", err?.message || err);
+  }
+}
 
 const app = express();
 const PORT = 3000;
@@ -3782,6 +3812,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
   const msgText = `☀️ Hi ${lead.name}! Sunchaser has unlocked your custom solar proposal: ${newQuote.systemSizekW} kW with ${newQuote.inverterType}. Total final cost is Rs. ${newQuote.netCost.toLocaleString()}. Open file: http://sunchaser.co/portal`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "quote_generation", msgText);
 
+  const leadCustomerId = resolved?.customer_id || `cust-${id.replace("lead-", "")}`;
+  await syncQuotationVaultForLead(lead, id, newQuote.id, leadCustomerId, db);
+
   res.json(lead);
 });
 
@@ -7103,6 +7136,13 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     }
 
     const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
+    await syncQuotationVaultForLead(
+      lead,
+      req.params.leadId,
+      quote.id,
+      lead.customerId || lead.customer_id || null,
+      db
+    );
     res.send(pdfHtml);
   } catch (err: any) {
     res.status(500).send("Error compiling manual quotation PDF: " + err.message);

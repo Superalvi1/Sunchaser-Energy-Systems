@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import { getSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
+import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
 import { hashPassword, verifyPassword } from "./src/lib/passwordHash";
 import {
   canSelfRegister,
@@ -137,6 +138,9 @@ export async function registerUser(
     name: string;
     email: string;
     role: string;
+    phone?: string;
+    cnic?: string;
+    cnicNtn?: string;
   },
   localDb?: Database
 ) {
@@ -181,9 +185,19 @@ export async function registerUser(
   };
 
   if (role === "Customer") {
-    const customerId = `cust-${id.replace(/^u-/, "")}`;
+    const phone = String(body.phone || "").trim();
+    const cnic = String(body.cnicNtn || body.cnic || "").trim();
+    const matchedCustomerId = await findExistingCustomerIdForLinking(
+      { phone: phone || null, email, cnicNtn: cnic || null },
+      localDb
+    );
+    const customerId = matchedCustomerId || `cust-${id.replace(/^u-/, "")}`;
     row.customer_id = customerId;
-    await ensureCustomerRecord(customerId, { name, email }, localDb);
+    if (matchedCustomerId) {
+      await linkExistingCustomerToPortalUser(customerId, id, { name, email, phone }, localDb);
+    } else {
+      await ensureCustomerRecord(customerId, { name, email, phone }, localDb);
+    }
   }
 
   if (isSupabaseActive()) {
@@ -448,6 +462,30 @@ export async function createUserByAdmin(
     localDb.users.push(row);
   }
   return mapUserRow(row);
+}
+
+async function linkExistingCustomerToPortalUser(
+  customerId: string,
+  userId: string,
+  opts: { name: string; email: string; phone?: string },
+  localDb?: Database
+) {
+  const patch: Record<string, unknown> = {
+    user_id: userId,
+    name: opts.name,
+    email: opts.email,
+  };
+  if (opts.phone) patch.phone = opts.phone;
+
+  if (isSupabaseActive()) {
+    await getSupabase()!.from("customers").update(patch).eq("id", customerId);
+    return;
+  }
+
+  const db = localDb as any;
+  if (!db?.customers) return;
+  const idx = db.customers.findIndex((c: any) => c.id === customerId);
+  if (idx >= 0) Object.assign(db.customers[idx], patch);
 }
 
 async function ensureCustomerRecord(

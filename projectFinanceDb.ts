@@ -16,6 +16,7 @@ import {
   type PaymentStatus,
 } from "./src/lib/projectFinance.ts";
 import { buildWhatsAppMessageBody, type WhatsAppMessageType } from "./src/lib/whatsapp.ts";
+import { fetchCustomerPortalInvoicesMe } from "./invoiceDb.js";
 
 export class ProjectFinanceDbError extends Error {
   constructor(message: string) {
@@ -408,6 +409,33 @@ export async function fetchCustomerPortalPaymentsMe(
   }
 
   const receipts = await loadCustomerReceiptDocs(customerId, localDb);
+
+  if (records.length === 0) {
+    const invoiceData = await fetchCustomerPortalInvoicesMe(userId, username, localDb);
+    const invoices = invoiceData.invoices || [];
+    const invoiceAmount = invoices.reduce((s, inv) => s + Number(inv.grandTotal || 0), 0);
+    const amountPaid = invoices.reduce((s, inv) => s + Number(inv.paidAmount || 0), 0);
+    const balanceRemaining = Number(invoiceData.payableBalance ?? 0);
+    return {
+      customerId,
+      totals: {
+        invoiceAmount: Math.round(invoiceAmount * 100) / 100,
+        amountPaid: Math.round(amountPaid * 100) / 100,
+        balanceRemaining: Math.round(balanceRemaining * 100) / 100,
+      },
+      projects: invoices.map((inv) => ({
+        id: inv.id,
+        label: inv.invoiceNumber,
+        invoiceAmount: Number(inv.grandTotal || 0),
+        amountPaid: Number(inv.paidAmount || 0),
+        balanceRemaining: Number(inv.balanceDue || 0),
+        paymentStatus: inv.paymentStatus,
+        milestones: [],
+      })),
+      receipts,
+    };
+  }
+
   const projects = records.map((r) => toCustomerPaymentView(r, receipts));
   const totals = projects.reduce(
     (acc, p) => {

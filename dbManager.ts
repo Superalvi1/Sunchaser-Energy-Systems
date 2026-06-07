@@ -6,6 +6,7 @@ import WebSocket from "ws";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
+import { phonesMatch } from "./src/lib/phoneNormalize.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -2316,6 +2317,84 @@ async function resolveCustomerIdForPortalUser(
   return byEmail?.id ?? null;
 }
 
+async function fetchPortalPrimaryLeadRow(
+  supabase: SupabaseClient,
+  opts: {
+    customerId: string | null;
+    userEmail: string;
+    customerPhone?: string | null;
+  }
+): Promise<any | null> {
+  const loadLeads = async (apply?: (rows: any[]) => any[]) => {
+    let { data, error } = await supabase
+      .from("leads")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    if (error?.message?.includes("deleted_at")) {
+      const fallback = await supabase.from("leads").select("*").order("created_at", { ascending: false });
+      data = fallback.data;
+    } else if (error) {
+      throw error;
+    }
+    const active = filterActiveLeads(data || []);
+    return apply ? apply(active) : active;
+  };
+
+  if (opts.customerId) {
+    const byCustomer = await loadLeads((rows) =>
+      rows.filter((l: any) => l.customer_id === opts.customerId)
+    );
+    if (byCustomer.length) return byCustomer[0];
+  }
+
+  const email = String(opts.userEmail || "").trim();
+  if (email) {
+    const byEmail = await loadLeads((rows) =>
+      rows.filter((l: any) => String(l.email || "").trim() === email)
+    );
+    if (byEmail.length) return byEmail[0];
+  }
+
+  const phone = String(opts.customerPhone || "").trim();
+  if (phone) {
+    const byPhone = await loadLeads((rows) =>
+      rows.filter((l: any) => l.phone && phonesMatch(String(l.phone), phone))
+    );
+    if (byPhone.length) return byPhone[0];
+  }
+
+  return null;
+}
+
+function findPortalPrimaryLeadLocal(
+  localDb: Database,
+  opts: {
+    customerId: string | null;
+    userEmail: string;
+    customerPhone?: string | null;
+  }
+): any | null {
+  const leads = filterActiveLeads(localDb.leads || []);
+  if (opts.customerId) {
+    const hit = leads.find(
+      (l: any) => (l.customerId || l.customer_id) === opts.customerId
+    );
+    if (hit) return hit;
+  }
+  const email = String(opts.userEmail || "").trim().toLowerCase();
+  if (email) {
+    const hit = leads.find((l: any) => String(l.email || "").trim().toLowerCase() === email);
+    if (hit) return hit;
+  }
+  const phone = String(opts.customerPhone || "").trim();
+  if (phone) {
+    const hit = leads.find((l: any) => l.phone && phonesMatch(String(l.phone), phone));
+    if (hit) return hit;
+  }
+  return null;
+}
+
 export async function fetchCustomerPortalData(
   userId: string,
   username: string,
@@ -2363,28 +2442,16 @@ export async function fetchCustomerPortalData(
       }
     }
 
-    let leadsQuery = supabase
-      .from("leads")
-      .select("*")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
-    if (customerId) {
-      leadsQuery = leadsQuery.eq("customer_id", customerId);
-    } else {
-      leadsQuery = leadsQuery.eq("email", userRow.email).limit(1);
+    let primaryLeadRow: any = null;
+    try {
+      primaryLeadRow = await fetchPortalPrimaryLeadRow(supabase, {
+        customerId,
+        userEmail: userRow.email,
+        customerPhone: customer?.phone,
+      });
+    } catch (portalLeadsErr) {
+      console.warn("[Portal] lead lookup failed:", portalLeadsErr);
     }
-    let { data: leadsData, error: portalLeadsErr } = await leadsQuery;
-    if (portalLeadsErr?.message?.includes("deleted_at")) {
-      const fallback = await supabase.from("leads").select("*").order("created_at", { ascending: false });
-      leadsData = filterActiveLeads(
-        customerId
-          ? (fallback.data || []).filter((l: any) => l.customer_id === customerId)
-          : (fallback.data || []).filter((l: any) => l.email === userRow.email).slice(0, 1)
-      );
-    } else {
-      leadsData = filterActiveLeads(leadsData || []);
-    }
-    const primaryLeadRow = (leadsData || [])[0];
 
     let lead: any = null;
     let project: any = null;
@@ -2548,12 +2615,11 @@ export async function fetchCustomerPortalData(
   }
 
   const customerId = userRow.customerId || userRow.customer_id || null;
-  const lead =
-    filterActiveLeads(localDb.leads || []).find(
-      (l: any) =>
-        (customerId && l.customerId === customerId) ||
-        (!customerId && l.email === userRow.email)
-    ) || null;
+  const lead = findPortalPrimaryLeadLocal(localDb, {
+    customerId,
+    userEmail: userRow.email,
+    customerPhone: null,
+  });
 
   const project =
     (localDb.projects || []).find(
