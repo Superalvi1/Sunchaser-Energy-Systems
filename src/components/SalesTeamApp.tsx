@@ -9,8 +9,9 @@ import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import AppModal from "./ui/AppModal";
 import { useToast } from "../lib/toast";
-import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL, deleteCatalogProduct, updateCatalogProduct } from "../services/api";
+import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL, deleteCatalogProduct, updateCatalogProduct, resolveCustomerForLead } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
+import CustomerInvitationPanel from "./CustomerInvitationPanel";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
 import {
   billToMonthlyUnits,
@@ -88,6 +89,17 @@ export default function SalesTeamApp({
 
   const activeLead = leads.find(l => l.id === selectedLeadId);
   const toast = useToast();
+  const [leadCustomerRecord, setLeadCustomerRecord] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (!staffUser || !activeLead) {
+      setLeadCustomerRecord(null);
+      return;
+    }
+    resolveCustomerForLead(staffUser, { email: activeLead.email, phone: activeLead.phone })
+      .then((res) => setLeadCustomerRecord(res.customer))
+      .catch(() => setLeadCustomerRecord(null));
+  }, [staffUser?.id, activeLead?.id, activeLead?.email, activeLead?.phone]);
 
   const getLeadManualQuotes = (lead: Lead | null | undefined) => getLeadManualQuotesSorted(lead);
 
@@ -2360,6 +2372,14 @@ export default function SalesTeamApp({
                     <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.location || "Lahore"}</span>
                     <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {activeLead.assignedSalesperson || "Unassigned"}</span>
                   </div>
+                  {staffUser && leadCustomerRecord && (
+                    <CustomerInvitationPanel
+                      customerName={activeLead.name}
+                      customerCode={leadCustomerRecord.customerCode}
+                      phone={activeLead.phone}
+                      compact
+                    />
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-3 self-start md:self-end w-full md:max-w-md">

@@ -6,9 +6,10 @@ import {
   fetchCustomerSystem,
   saveCustomerSystem,
   fetchAdminCustomerDocumentsList,
-  uploadAdminCustomerDocument,
 } from "../services/api";
 import { DOCUMENT_WALLET_TYPES } from "../lib/clientPortalPhase2";
+import CustomerDocumentUploader from "./CustomerDocumentUploader";
+import CustomerInvitationPanel from "./CustomerInvitationPanel";
 
 interface CustomerProfileStaffProps {
   staffUser: User;
@@ -120,33 +121,6 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
     }
   };
 
-  const onFilePick = async (file: File) => {
-    if (!selected?.customerId) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const base64Data = String(reader.result || "");
-        await uploadAdminCustomerDocument(staffUser, {
-          customerId: selected.customerId,
-          base64Data,
-          fileName: file.name,
-          mimeType: file.type,
-          documentType: docType,
-          title: docTitle || file.name,
-          visibleToCustomer: internalOnly ? false : visibleToCustomer,
-          internalOnly,
-          notes: docNotes,
-        });
-        setMsg("Document uploaded and linked.");
-        setDocNotes("");
-        await loadCustomer(selected);
-      } catch (err: any) {
-        setMsg(err.message);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   if (loading) return <Loader2 className="h-8 w-8 animate-spin text-amber-500" />;
 
   return (
@@ -181,6 +155,12 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
             <h3 className="text-lg font-bold text-white">
               {selected.name} — <span className="text-slate-500 font-mono text-sm">{selected.customerId}</span>
             </h3>
+
+            <CustomerInvitationPanel
+              customerName={selected.name}
+              customerCode={selected.customerCode}
+              phone={selected.phone}
+            />
 
             <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
               <h4 className="text-sm font-bold text-amber-400">Installed system</h4>
@@ -235,14 +215,19 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
                   Internal only
                 </label>
                 <input placeholder="Notes" value={docNotes} onChange={(e) => setDocNotes(e.target.value)} className="md:col-span-2 input-cell" />
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
-                  className="md:col-span-2 text-xs"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) onFilePick(f);
-                    e.target.value = "";
+                <CustomerDocumentUploader
+                  staffUser={staffUser}
+                  customerId={selected.customerId}
+                  documentType={docType}
+                  title={docTitle}
+                  visibleToCustomer={visibleToCustomer}
+                  internalOnly={internalOnly}
+                  notes={docNotes}
+                  onSuccess={async () => {
+                    setMsg("Document uploaded and linked.");
+                    setDocNotes("");
+                    setDocTitle("");
+                    await loadCustomer(selected);
                   }}
                 />
               </div>
@@ -258,7 +243,7 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
                       <p className="font-bold text-white truncate">{d.title}</p>
                       <p className="text-slate-500">{d.documentType} · {d.visibleToCustomer ? "Customer visible" : "Internal"}</p>
                     </div>
-                    <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-amber-400 font-bold">Open</a>
+                    <a href={d.fileUrl} download target="_blank" rel="noreferrer" className="text-amber-400 font-bold">Download</a>
                   </li>
                 ))}
               </ul>

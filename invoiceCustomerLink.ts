@@ -1,4 +1,5 @@
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
+import { generateCustomerCode } from "./customerCode.js";
 import { normalizePakistanPhone, phonesMatch } from "./src/lib/phoneNormalize.ts";
 
 export type InvoiceCustomerInput = {
@@ -86,15 +87,18 @@ async function insertCustomer(
     email: string;
     phone: string;
     address: string | null;
+    customerCode?: string;
   },
   localDb?: Database
 ) {
+  const customerCode = row.customerCode || (await generateCustomerCode(localDb));
   const payload = {
     id: row.id,
     name: row.name,
     email: row.email,
     phone: row.phone,
     address: row.address,
+    customer_code: customerCode,
     created_at: new Date().toISOString(),
   };
   if (isSupabaseActive()) {

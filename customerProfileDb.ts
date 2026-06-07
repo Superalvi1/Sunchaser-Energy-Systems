@@ -57,6 +57,7 @@ export async function listCustomerPortalAccounts(
         name: u.name,
         email: u.email,
         customerId: u.customer_id,
+        customerCode: c?.customer_code || null,
         accountStatus: u.account_status,
         phone: c?.phone || null,
       };
@@ -242,6 +243,26 @@ export async function assignCustomerDocument(
   return mapDocumentRow(doc);
 }
 
+const CUSTOMER_DOC_MAX_BYTES = 25 * 1024 * 1024;
+const CUSTOMER_DOC_ALLOWED_MIME = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+function assertCustomerDocumentUpload(fileName: string, buffer: Buffer, contentType: string) {
+  if (buffer.length > CUSTOMER_DOC_MAX_BYTES) {
+    throw new CustomerProfileError("File exceeds the 25 MB limit.", 422);
+  }
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  const extOk = ["pdf", "jpg", "jpeg", "png", "docx"].includes(ext);
+  const mimeOk = CUSTOMER_DOC_ALLOWED_MIME.has(contentType);
+  if (!extOk || !mimeOk) {
+    throw new CustomerProfileError("Only PDF, JPG, PNG, and DOCX files are allowed.", 422);
+  }
+}
+
 export async function uploadFileToCustomerStorage(
   customerId: string,
   base64Data: string,
@@ -257,6 +278,8 @@ export async function uploadFileToCustomerStorage(
   } else {
     buffer = Buffer.from(base64Data, "base64");
   }
+
+  assertCustomerDocumentUpload(fileName, buffer, contentType);
 
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${customerId}/${Date.now()}_${safeName}`;

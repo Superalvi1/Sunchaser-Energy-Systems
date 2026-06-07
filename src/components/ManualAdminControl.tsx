@@ -3,12 +3,15 @@ import {
   Plus, Trash2, Edit3, Save, X, Check, FileText, Download, 
   Upload, ShieldAlert, Users, CreditCard, TrendingUp, FolderPlus, 
   Wrench, Layers, Settings2, Globe, Activity, FileSpreadsheet, 
-  UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye
+  UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye, Link2
 } from "lucide-react";
 import { Lead, Ticket, InventoryItem, Product, User } from "../types";
 import { currencySymbol, API_BASE_URL, fetchDeletedLeads, restoreLead } from "../services/api";
 import { isSuperAdmin } from "../lib/roles";
 import WhatsAppModule from "./WhatsAppModule";
+import CustomerLinkingStaff from "./CustomerLinkingStaff";
+import CustomerInvitationPanel from "./CustomerInvitationPanel";
+import { resolveCustomerForLead } from "../services/api";
 import { useToast } from "../lib/toast";
 
 interface ManualAdminControlProps {
@@ -121,6 +124,7 @@ export default function ManualAdminControl({
     name: "", email: "", phone: "", address: "", notes: "", monthlyBill: 150, roofSpace: 120, shading: "Low" as const
   });
   const [drilldownCust, setDrilldownCust] = useState<Lead | null>(null);
+  const [drilldownCustomerRecord, setDrilldownCustomerRecord] = useState<any | null>(null);
 
   // 5. ORDERS Local States
   const [editingOrder, setEditingOrder] = useState<any | null>(null);
@@ -152,6 +156,16 @@ export default function ManualAdminControl({
   // 9. STAFF USER ROLES
   const [newStaff, setNewStaff] = useState({ username: "", name: "", email: "", password: "123", role: "Sales Executive" });
 
+  React.useEffect(() => {
+    if (!drilldownCust) {
+      setDrilldownCustomerRecord(null);
+      return;
+    }
+    resolveCustomerForLead(staffUser, { email: drilldownCust.email, phone: drilldownCust.phone })
+      .then((res) => setDrilldownCustomerRecord(res.customer))
+      .catch(() => setDrilldownCustomerRecord(null));
+  }, [drilldownCust?.id, drilldownCust?.email, drilldownCust?.phone, staffUser.id]);
+
   // 10. BANK SETTINGS
   const [sysSettings, setSysSettings] = useState<any>(settings || {});
   React.useEffect(() => {
@@ -172,6 +186,7 @@ export default function ManualAdminControl({
     { id: "solar-packages", label: "Solar Packages", icon: Layers },
     { id: "quotations", label: "Manual Quotations", icon: FileText },
     { id: "customers", label: "Customers Accounts", icon: Users },
+    { id: "customer-linking", label: "Account Linking", icon: Link2 },
     { id: "orders", label: "Client Orders", icon: CreditCard },
     { id: "tickets", label: "Complaints & Cases", icon: Wrench },
     { id: "inventory", label: "Stock & Margins", icon: TrendingUp },
@@ -890,9 +905,6 @@ export default function ManualAdminControl({
           </div>
         )}
 
-        {/* ----------------------------------------------------
-            4. CUSTOMERS ACCOUNT TAB
-            ---------------------------------------------------- */}
         {innerSubTab === "customers" && (
           <div className="space-y-6">
             <div className="flex justify-between items-center flex-wrap gap-4 border-b border-neutral-800 pb-3">
@@ -1140,6 +1152,15 @@ export default function ManualAdminControl({
                       </button>
                     </div>
 
+                    {drilldownCust && (
+                      <CustomerInvitationPanel
+                        customerName={drilldownCust.name}
+                        customerCode={drilldownCustomerRecord?.customerCode}
+                        phone={drilldownCust.phone}
+                        compact
+                      />
+                    )}
+
                     <WhatsAppModule
                       staffUser={staffUser}
                       preset="customer"
@@ -1210,6 +1231,13 @@ export default function ManualAdminControl({
               </div>
             </div>
           </div>
+        )}
+
+        {/* ----------------------------------------------------
+            5. ORDERS MANAGEMENT TAB
+            ---------------------------------------------------- */}
+        {innerSubTab === "customer-linking" && (
+          <CustomerLinkingStaff staffUser={staffUser} />
         )}
 
         {/* ----------------------------------------------------

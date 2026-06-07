@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { getSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
 import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
+import { findCustomerByCode, generateCustomerCode, normalizeCustomerCode } from "./customerCode.js";
 import { hashPassword, verifyPassword } from "./src/lib/passwordHash";
 import {
   canSelfRegister,
@@ -141,6 +142,8 @@ export async function registerUser(
     phone?: string;
     cnic?: string;
     cnicNtn?: string;
+    customerCode?: string;
+    invitationCode?: string;
   },
   localDb?: Database
 ) {
@@ -184,19 +187,39 @@ export async function registerUser(
     updated_at: new Date().toISOString(),
   };
 
+  let linkCustomerAfterInsert = false;
+
   if (role === "Customer") {
     const phone = String(body.phone || "").trim();
     const cnic = String(body.cnicNtn || body.cnic || "").trim();
-    const matchedCustomerId = await findExistingCustomerIdForLinking(
-      { phone: phone || null, email, cnicNtn: cnic || null },
-      localDb
-    );
-    const customerId = matchedCustomerId || `cust-${id.replace(/^u-/, "")}`;
-    row.customer_id = customerId;
-    if (matchedCustomerId) {
-      await linkExistingCustomerToPortalUser(customerId, id, { name, email, phone }, localDb);
+    const rawInvitation = String(body.customerCode || body.invitationCode || "").trim();
+
+    if (rawInvitation) {
+      const normalizedCode = normalizeCustomerCode(rawInvitation);
+      if (!normalizedCode) {
+        throw new UserAuthError("Invalid customer code. Please check and try again.");
+      }
+      const matchedCustomer = await findCustomerByCode(normalizedCode, localDb);
+      if (!matchedCustomer) {
+        throw new UserAuthError("Invalid customer code. Please check and try again.");
+      }
+      if (matchedCustomer.user_id && matchedCustomer.user_id !== id) {
+        throw new UserAuthError("This customer code is already linked to another portal account.");
+      }
+      row.customer_id = matchedCustomer.id;
+      linkCustomerAfterInsert = true;
     } else {
-      await ensureCustomerRecord(customerId, { name, email, phone }, localDb);
+      const matchedCustomerId = await findExistingCustomerIdForLinking(
+        { phone: phone || null, email, cnicNtn: cnic || null },
+        localDb
+      );
+      const customerId = matchedCustomerId || `cust-${id.replace(/^u-/, "")}`;
+      row.customer_id = customerId;
+      if (matchedCustomerId) {
+        linkCustomerAfterInsert = true;
+      } else {
+        await ensureCustomerRecord(customerId, { name, email, phone }, localDb);
+      }
     }
   }
 
@@ -205,14 +228,31 @@ export async function registerUser(
     const { error } = await supabase.from("users").insert(row);
     if (error) throw error;
     if (role === "Customer" && row.customer_id) {
-      await getSupabase()!
-        .from("customers")
-        .update({ user_id: id })
-        .eq("id", row.customer_id);
+      if (linkCustomerAfterInsert) {
+        await linkExistingCustomerToPortalUser(
+          row.customer_id,
+          id,
+          { name, email, phone: String(body.phone || "").trim() },
+          localDb
+        );
+      } else {
+        await getSupabase()!
+          .from("customers")
+          .update({ user_id: id })
+          .eq("id", row.customer_id);
+      }
     }
   } else if (localDb) {
     localDb.users = localDb.users || [];
     localDb.users.push(row);
+    if (role === "Customer" && row.customer_id && linkCustomerAfterInsert) {
+      await linkExistingCustomerToPortalUser(
+        row.customer_id,
+        id,
+        { name, email, phone: String(body.phone || "").trim() },
+        localDb
+      );
+    }
   }
 
   let verificationUrl: string | null = null;
@@ -470,12 +510,24 @@ async function linkExistingCustomerToPortalUser(
   opts: { name: string; email: string; phone?: string },
   localDb?: Database
 ) {
-  const patch: Record<string, unknown> = {
-    user_id: userId,
-    name: opts.name,
-    email: opts.email,
-  };
-  if (opts.phone) patch.phone = opts.phone;
+  let existing: any = null;
+  if (isSupabaseActive()) {
+    const { data } = await getSupabase()!
+      .from("customers")
+      .select("*")
+      .eq("id", customerId)
+      .maybeSingle();
+    existing = data;
+  } else {
+    existing = ((localDb as any)?.customers || []).find((c: any) => c.id === customerId);
+  }
+
+  const patch: Record<string, unknown> = { user_id: userId };
+  if (existing) {
+    if (!String(existing.name || "").trim() && opts.name) patch.name = opts.name;
+    if (!String(existing.email || "").trim() && opts.email) patch.email = opts.email;
+    if (!String(existing.phone || "").trim() && opts.phone) patch.phone = opts.phone;
+  }
 
   if (isSupabaseActive()) {
     await getSupabase()!.from("customers").update(patch).eq("id", customerId);
@@ -494,12 +546,14 @@ async function ensureCustomerRecord(
   localDb?: Database
 ) {
   const now = new Date().toISOString();
+  const customerCode = await generateCustomerCode(localDb);
   const customerRow = {
     id: customerId,
     name: opts.name,
     email: opts.email,
     phone: opts.phone || null,
     address: null,
+    customer_code: customerCode,
     created_at: now,
   };
 

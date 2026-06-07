@@ -834,6 +834,10 @@ export async function registerUser(body: {
   name: string;
   email: string;
   role: string;
+  phone?: string;
+  cnic?: string;
+  customerCode?: string;
+  invitationCode?: string;
 }) {
   const res = await apiFetch("/api/auth/register", {
     method: "POST",
@@ -957,6 +961,70 @@ export async function fetchCustomerAccounts(staff: User) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Failed to load customers.");
   return data as { accounts: any[] };
+}
+
+export async function fetchCustomerLinkSearchCustomers(staff: User, query: string) {
+  const q = new URLSearchParams({ role: staff.role, q: query });
+  const res = await apiFetch(`/api/admin/customer-linking/customers?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Customer search failed.");
+  return data as { customers: any[] };
+}
+
+export async function fetchCustomerLinkSearchUsers(staff: User, query: string) {
+  const q = new URLSearchParams({ role: staff.role, q: query });
+  const res = await apiFetch(`/api/admin/customer-linking/users?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "User search failed.");
+  return data as { users: any[] };
+}
+
+export async function fetchCustomerLinkDuplicates(staff: User) {
+  const q = new URLSearchParams({ role: staff.role });
+  const res = await apiFetch(`/api/admin/customer-linking/duplicates?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Duplicate report failed.");
+  return data as { duplicates: any[] };
+}
+
+export async function resolveCustomerForLead(staff: User, opts: { email?: string; phone?: string; customerId?: string }) {
+  const q = new URLSearchParams({ role: staff.role });
+  if (opts.email) q.set("email", opts.email);
+  if (opts.phone) q.set("phone", opts.phone);
+  if (opts.customerId) q.set("customerId", opts.customerId);
+  const res = await apiFetch(`/api/admin/customer-linking/resolve?${q}`, {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Customer lookup failed.");
+  return data as { customer: any | null };
+}
+
+export async function linkCustomerPortalAccounts(
+  staff: User,
+  body: { customerId: string; userId: string; confirmOverride?: boolean }
+) {
+  return staffPortalJsonRequest(
+    "linkCustomerPortalAccounts",
+    "/api/admin/customer-linking/link",
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify({ ...body, role: staff.role }),
+    },
+    "Failed to link accounts"
+  ) as Promise<{
+    ok: boolean;
+    needsConfirmation?: boolean;
+    warnings?: string[];
+    message?: string;
+  }>;
 }
 
 export async function fetchCustomerSystem(staff: User, customerId: string) {
@@ -1229,7 +1297,10 @@ export async function updateLead(id: string, data: Partial<Lead>): Promise<Lead>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to update customer record.");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update customer record.");
+  }
   return res.json();
 }
 

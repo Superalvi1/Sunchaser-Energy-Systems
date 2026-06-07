@@ -42,6 +42,8 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<string>(SELF_REGISTER_ROLES[0]);
+  const [phone, setPhone] = useState("");
+  const [customerCode, setCustomerCode] = useState("");
   const [token, setToken] = useState(urlHint?.token || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +103,18 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
     setError(null);
     setInfo(null);
     try {
-      const res = await registerUser({ username, password, name, email, role });
+      const payload: Parameters<typeof registerUser>[0] = {
+        username,
+        password,
+        name,
+        email,
+        role,
+      };
+      if (role === "Customer") {
+        if (phone.trim()) payload.phone = phone.trim();
+        if (customerCode.trim()) payload.customerCode = customerCode.trim();
+      }
+      const res = await registerUser(payload);
       setInfo(res.message);
       if (!res.needsApproval && role === "Customer") {
         setMode("login");
@@ -269,6 +282,25 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
                 onChange={(e) => setUsername(e.target.value.toLowerCase())}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
               />
+              {role === "Customer" && (
+                <>
+                  <input
+                    placeholder="Phone (optional — used if no invitation code)"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
+                  />
+                  <input
+                    placeholder="Customer Invitation Code (e.g. SES-123456)"
+                    value={customerCode}
+                    onChange={(e) => setCustomerCode(e.target.value.toUpperCase())}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-mono"
+                  />
+                  <p className="text-[10px] text-slate-500">
+                    Enter the code from Sunchaser staff to link your existing quotations and invoices. Leave blank if you do not have one.
+                  </p>
+                </>
+              )}
               <input
                 type="password"
                 placeholder="Password"

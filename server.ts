@@ -153,6 +153,14 @@ import {
   fetchCustomerPortalSystemMe,
   CustomerProfileError,
 } from "./customerProfileDb.js";
+import {
+  searchCustomersForLinking,
+  searchPortalUsersForLinking,
+  detectDuplicateCustomers,
+  linkCustomerPortalAccounts,
+  resolveCustomerForLeadContact,
+  CustomerLinkingError,
+} from "./customerLinkingDb.js";
 import { ALL_PERMISSION_KEYS, PERMISSION_LABELS } from "./src/lib/roles.js";
 import {
   listAdminInvoices,
@@ -169,6 +177,7 @@ import { compileInvoicePDFHtml } from "./invoicePdf.js";
 import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
 import { listPartyLedgers, getPartyLedgerDetail } from "./partyLedgerDb.js";
 import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
+import { generateCustomerCode } from "./customerCode.js";
 import { syncQuotationDocumentVault } from "./customerDocumentSync.js";
 import { fetchFinanceDashboard } from "./financeDashboardDb.js";
 import {
@@ -929,6 +938,97 @@ app.get("/api/admin/customer-accounts", async (req, res) => {
     return res.json({ accounts });
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-linking/customers", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  try {
+    loadDb();
+    const customers = await searchCustomersForLinking(
+      userId,
+      username,
+      role,
+      String(req.query.q || ""),
+      db
+    );
+    return res.json({ customers });
+  } catch (err: any) {
+    if (err instanceof CustomerLinkingError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-linking/users", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  try {
+    loadDb();
+    const users = await searchPortalUsersForLinking(
+      userId,
+      username,
+      role,
+      String(req.query.q || ""),
+      db
+    );
+    return res.json({ users });
+  } catch (err: any) {
+    if (err instanceof CustomerLinkingError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-linking/duplicates", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  try {
+    loadDb();
+    const duplicates = await detectDuplicateCustomers(userId, username, role, db);
+    return res.json({ duplicates });
+  } catch (err: any) {
+    if (err instanceof CustomerLinkingError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/customer-linking/resolve", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  try {
+    loadDb();
+    const customer = await resolveCustomerForLeadContact(
+      userId,
+      username,
+      role,
+      {
+        email: String(req.query.email || ""),
+        phone: String(req.query.phone || ""),
+        customerId: String(req.query.customerId || ""),
+      },
+      db
+    );
+    return res.json({ customer });
+  } catch (err: any) {
+    if (err instanceof CustomerLinkingError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/customer-linking/link", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  try {
+    loadDb();
+    const result = await linkCustomerPortalAccounts(
+      userId,
+      username,
+      role,
+      String(req.body?.customerId || ""),
+      String(req.body?.userId || ""),
+      !!req.body?.confirmOverride,
+      db
+    );
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof CustomerLinkingError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
@@ -3080,6 +3180,7 @@ app.post("/api/leads", async (req, res) => {
     if (isSupabaseActive()) {
       const supabase = getSupabase()!;
       const customerId = `cust-${randomUUID()}`;
+      const customerCode = await generateCustomerCode(db);
 
       const { error: custErr } = await supabase.from("customers").insert({
         id: customerId,
@@ -3087,6 +3188,7 @@ app.post("/api/leads", async (req, res) => {
         email: newLead.email,
         phone: newLead.phone,
         address: newLead.address,
+        customer_code: customerCode,
       });
       if (custErr) {
         console.error("[Supabase Customer Insert Error]:", custErr.message);
