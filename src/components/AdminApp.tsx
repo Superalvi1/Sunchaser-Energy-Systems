@@ -21,6 +21,7 @@ import CustomerSavingsStaff from "./CustomerSavingsStaff";
 import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
 import AfterSalesStaffTools from "./AfterSalesStaffTools";
 import AssetMaintenanceLogStaff from "./AssetMaintenanceLogStaff";
+import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import EnergyMonitoringStaff from "./EnergyMonitoringStaff";
 import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
 import ProjectFinanceStaff from "./ProjectFinanceStaff";
@@ -1664,10 +1665,7 @@ export default function AdminApp({
           <BrandingSettings staffUser={staffUser} />
         )}
         {activeSegment === 'client-portal' && (
-          <>
-            <ClientPortalStaffTools staffUser={staffUser} />
-            <AfterSalesStaffTools staffUser={staffUser} />
-          </>
+          <AfterSalesAdminTabs staffUser={staffUser} leads={leads} />
         )}
         {activeSegment === 'user-management' && showUserManagement && (
           <UserManagementStaff staffUser={staffUser} />

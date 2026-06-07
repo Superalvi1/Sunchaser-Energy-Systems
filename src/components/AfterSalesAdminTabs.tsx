@@ -17,7 +17,8 @@ type AfterSalesTabId =
   | "visits"
   | "documents"
   | "warranty"
-  | "tools";
+  | "tools"
+  | "maintenance";
 
 const TABS: { id: AfterSalesTabId; label: string }[] = [
   { id: "support", label: "Support Tickets" },
@@ -26,8 +27,9 @@ const TABS: { id: AfterSalesTabId; label: string }[] = [
   { id: "subscriptions", label: "Subscriptions" },
   { id: "visits", label: "Visit Reports" },
   { id: "documents", label: "Document Upload" },
-  { id: "warranty", label: "Warranty" },
+  { id: "warranty", label: "Warranty Records" },
   { id: "tools", label: "After-Sales Tools" },
+  { id: "maintenance", label: "Asset & Maintenance Log" },
 ];
 
 interface AfterSalesAdminTabsProps {
@@ -35,11 +37,40 @@ interface AfterSalesAdminTabsProps {
   leads?: Lead[];
 }
 
+function renderActiveTab(
+  activeTab: AfterSalesTabId,
+  staffUser: User,
+  leads: Lead[]
+): React.ReactNode {
+  switch (activeTab) {
+    case "support":
+      return <SupportDeskStaff staffUser={staffUser} leads={leads} />;
+    case "service":
+      return <ServiceDeskStaff staffUser={staffUser} leads={leads} />;
+    case "savings":
+      return <CustomerSavingsStaff staffUser={staffUser} />;
+    case "subscriptions":
+      return <SubscriptionDeskStaff staffUser={staffUser} section="full" />;
+    case "visits":
+      return <SubscriptionDeskStaff staffUser={staffUser} section="visit-report" />;
+    case "documents":
+      return <ClientPortalStaffTools staffUser={staffUser} section="documents" />;
+    case "warranty":
+      return <ClientPortalStaffTools staffUser={staffUser} section="warranty" />;
+    case "tools":
+      return <AfterSalesStaffTools staffUser={staffUser} />;
+    case "maintenance":
+      return <AssetMaintenanceLogStaff staffUser={staffUser} />;
+    default:
+      return null;
+  }
+}
+
 export default function AfterSalesAdminTabs({ staffUser, leads = [] }: AfterSalesAdminTabsProps) {
   const [activeTab, setActiveTab] = useState<AfterSalesTabId>("support");
 
   return (
-    <div className="mt-12 pt-8 border-t border-slate-800 space-y-6">
+    <div className="space-y-6">
       <div>
         <h2 className="text-sm font-bold text-slate-100 font-sans">After-Sales Administration</h2>
         <p className="text-[10px] text-slate-500 font-sans mt-0.5">
@@ -64,19 +95,8 @@ export default function AfterSalesAdminTabs({ staffUser, leads = [] }: AfterSale
         ))}
       </div>
 
-      <div className="min-h-[200px]">
-        {activeTab === "support" && <SupportDeskStaff staffUser={staffUser} leads={leads} />}
-        {activeTab === "service" && <ServiceDeskStaff staffUser={staffUser} leads={leads} />}
-        {activeTab === "savings" && <CustomerSavingsStaff staffUser={staffUser} />}
-        {activeTab === "subscriptions" && <SubscriptionDeskStaff staffUser={staffUser} />}
-        {activeTab === "visits" && <AssetMaintenanceLogStaff staffUser={staffUser} />}
-        {activeTab === "documents" && (
-          <ClientPortalStaffTools staffUser={staffUser} section="documents" />
-        )}
-        {activeTab === "warranty" && (
-          <ClientPortalStaffTools staffUser={staffUser} section="warranty" />
-        )}
-        {activeTab === "tools" && <AfterSalesStaffTools staffUser={staffUser} />}
+      <div key={activeTab} className="min-h-[200px]">
+        {renderActiveTab(activeTab, staffUser, leads)}
       </div>
     </div>
   );

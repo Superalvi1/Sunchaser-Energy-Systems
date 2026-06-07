@@ -3,7 +3,7 @@ import {
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
-  Printer, Save
+  Printer, Save, Headphones
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
@@ -94,7 +94,9 @@ export default function SalesTeamApp({
   const latestAutoSizerSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "auto_sizer") : null;
 
   // Modular routing tab selector
-  const [activeModule, setActiveModule] = useState<'sizer' | 'boq_builder' | 'templates' | 'quotes' | 'products'>('boq_builder');
+  const [activeModule, setActiveModule] = useState<
+    "sizer" | "boq_builder" | "templates" | "quotes" | "products" | "after_sales"
+  >("boq_builder");
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
   const [sizerEditingQuoteId, setSizerEditingQuoteId] = useState<string | null>(null);
 
@@ -2383,7 +2385,10 @@ export default function SalesTeamApp({
                   { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
                   { id: 'templates', label: 'Quote Templates', icon: Layers },
                   { id: 'quotes', label: 'Generated Quotes', icon: FileText },
-                  { id: 'products', label: 'Product Library', icon: Settings }
+                  { id: 'products', label: 'Product Library', icon: Settings },
+                  ...(staffUser
+                    ? [{ id: 'after_sales' as const, label: 'After Sales Admin', icon: Headphones }]
+                    : []),
                 ].map((mod) => {
                   const Icon = mod.icon;
                   const isCurrent = activeModule === mod.id;
@@ -4485,109 +4490,11 @@ export default function SalesTeamApp({
                     <div className="text-center py-12 text-slate-500 font-mono">No equipment items found in category tab.</div>
                   )}
 
-                  {/* Add/Edit Product Modal panel */}
-                  <AppModal
-                    open={isProductModalOpen}
-                    onClose={() => setIsProductModalOpen(false)}
-                    panelClassName="max-w-md"
-                  >
-                      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 w-full space-y-4">
-                        <div className="flex justify-between items-center border-b border-slate-900 pb-2.5">
-                          <h4 className="text-sm font-bold font-sans text-white">
-                            {editingProduct ? 'Edit Catalog Product details' : 'Add New Pakistan solar Hardware'}
-                          </h4>
-                          <button
-                            type="button"
-                            onClick={() => setIsProductModalOpen(false)}
-                            className="text-slate-500 hover:text-white font-bold font-mono text-xs border-0 bg-transparent cursor-pointer"
-                          >
-                            ×
-                          </button>
-                        </div>
-
-                        <form onSubmit={handleSaveProductForm} className="space-y-3.5 text-xs text-left">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-slate-400 font-bold block">Brand Name</label>
-                              <input type="text" value={productFormBrand} onChange={(e) => setProductFormBrand(e.target.value)} placeholder="e.g. Jinko" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" required />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-slate-400 font-bold block">Model Name</label>
-                              <input type="text" value={productFormModel} onChange={(e) => setProductFormModel(e.target.value)} placeholder="e.g. Tiger Neo 580" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" required />
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-slate-400 font-bold block">Category</label>
-                              <select
-                                value={productFormCategory}
-                                onChange={(e) => setProductFormCategory(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white cursor-pointer focus:outline-none"
-                              >
-                                {["Solar Panels", "Inverters", "Batteries", "Structure", "Cables", "Protection", "Accessories", "Net Metering", "Civil Works"].map((c) => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-slate-400 block">SKU Code</label>
-                              <input type="text" value={productFormSku} onChange={(e) => setProductFormSku(e.target.value)} placeholder="e.g. JK-PAN-580N" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-slate-400 font-bold block">Cost Price (Rs)</label>
-                              <input type="number" value={productFormCostPrice} onChange={(e) => setProductFormCostPrice(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" required />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-slate-400 font-bold block">Sale Price (Rs)</label>
-                              <input type="number" value={productFormPrice} onChange={(e) => setProductFormPrice(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" required />
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="space-y-1">
-                              <label className="text-slate-450 block font-bold">Stock Qty</label>
-                              <input type="number" value={productFormStock} onChange={(e) => setProductFormStock(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white text-center" required />
-                            </div>
-                            <div className="space-y-1 col-span-2">
-                              <label className="text-slate-450 block font-bold">Warranty Period</label>
-                              <input type="text" value={productFormWarranty} onChange={(e) => setProductFormWarranty(e.target.value)} placeholder="e.g. 25 Years" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
-                            </div>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-slate-400 block font-bold">Wattage / Power Capacity (W)</label>
-                            <input type="number" value={productFormWattage} onChange={(e) => setProductFormWattage(Number(e.target.value))} placeholder="e.g. 580" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-slate-400 block font-bold">Specifications description</label>
-                            <textarea rows={3} value={productFormDesc} onChange={(e) => setProductFormDesc(e.target.value)} placeholder="Enter details..." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300" />
-                          </div>
-
-                          <div className="flex gap-3 pt-3">
-                            <button
-                              type="button"
-                              onClick={() => setIsProductModalOpen(false)}
-                              className="flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 py-2.5 rounded-xl font-sans font-bold cursor-pointer transition"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 py-2.5 rounded-xl font-sans font-bold cursor-pointer transition"
-                            >
-                              Save Product
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                  </AppModal>
-
                 </div>
+              )}
+
+              {activeModule === "after_sales" && staffUser && (
+                <AfterSalesAdminTabs staffUser={staffUser} leads={leads} />
               )}
 
             </div>
@@ -4599,6 +4506,108 @@ export default function SalesTeamApp({
             </div>
           )}
         </div>
+
+        {/* Product catalog add/edit — portaled to document.body, viewport-centered */}
+        <AppModal
+          open={isProductModalOpen}
+          onClose={() => setIsProductModalOpen(false)}
+          panelClassName="max-w-md"
+        >
+          <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 w-full space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-900 pb-2.5">
+              <h4 className="text-sm font-bold font-sans text-white">
+                {editingProduct ? "Edit Catalog Product details" : "Add New Pakistan solar Hardware"}
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsProductModalOpen(false)}
+                className="text-slate-500 hover:text-white font-bold font-mono text-xs border-0 bg-transparent cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProductForm} className="space-y-3.5 text-xs text-left">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-slate-400 font-bold block">Brand Name</label>
+                  <input type="text" value={productFormBrand} onChange={(e) => setProductFormBrand(e.target.value)} placeholder="e.g. Jinko" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" required />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-400 font-bold block">Model Name</label>
+                  <input type="text" value={productFormModel} onChange={(e) => setProductFormModel(e.target.value)} placeholder="e.g. Tiger Neo 580" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" required />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-slate-400 font-bold block">Category</label>
+                  <select
+                    value={productFormCategory}
+                    onChange={(e) => setProductFormCategory(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white cursor-pointer focus:outline-none"
+                  >
+                    {["Solar Panels", "Inverters", "Batteries", "Structure", "Cables", "Protection", "Accessories", "Net Metering", "Civil Works"].map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-400 block">SKU Code</label>
+                  <input type="text" value={productFormSku} onChange={(e) => setProductFormSku(e.target.value)} placeholder="e.g. JK-PAN-580N" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-slate-400 font-bold block">Cost Price (Rs)</label>
+                  <input type="number" value={productFormCostPrice} onChange={(e) => setProductFormCostPrice(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" required />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-400 font-bold block">Sale Price (Rs)</label>
+                  <input type="number" value={productFormPrice} onChange={(e) => setProductFormPrice(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" required />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <label className="text-slate-450 block font-bold">Stock Qty</label>
+                  <input type="number" value={productFormStock} onChange={(e) => setProductFormStock(Number(e.target.value))} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white text-center" required />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-slate-450 block font-bold">Warranty Period</label>
+                  <input type="text" value={productFormWarranty} onChange={(e) => setProductFormWarranty(e.target.value)} placeholder="e.g. 25 Years" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white" />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 block font-bold">Wattage / Power Capacity (W)</label>
+                <input type="number" value={productFormWattage} onChange={(e) => setProductFormWattage(Number(e.target.value))} placeholder="e.g. 580" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono" />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 block font-bold">Specifications description</label>
+                <textarea rows={3} value={productFormDesc} onChange={(e) => setProductFormDesc(e.target.value)} placeholder="Enter details..." className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300" />
+              </div>
+
+              <div className="flex gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsProductModalOpen(false)}
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-350 py-2.5 rounded-xl font-sans font-bold cursor-pointer transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 py-2.5 rounded-xl font-sans font-bold cursor-pointer transition"
+                >
+                  Save Product
+                </button>
+              </div>
+            </form>
+          </div>
+        </AppModal>
 
         {/* Preview Page Modal */}
         <AppModal open={!!previewPage} onClose={() => setPreviewPage(null)} panelClassName="max-w-4xl">
@@ -4860,8 +4869,6 @@ export default function SalesTeamApp({
           </div>
         )}
       </div>
-
-      {staffUser && <AfterSalesAdminTabs staffUser={staffUser} leads={leads} />}
 
     </div>
   );

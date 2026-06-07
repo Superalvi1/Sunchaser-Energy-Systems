@@ -10,11 +10,18 @@ import { formatPkrCare, type CustomerSubscriptionRecord } from "../lib/clientPor
 
 interface SubscriptionDeskStaffProps {
   staffUser: User;
+  /** When "visit-report", only the before/after visit report form is shown. */
+  section?: "full" | "visit-report";
 }
 
 type Segment = "active" | "expired" | "renewals";
 
-export default function SubscriptionDeskStaff({ staffUser }: SubscriptionDeskStaffProps) {
+export default function SubscriptionDeskStaff({
+  staffUser,
+  section = "full",
+}: SubscriptionDeskStaffProps) {
+  const showDesk = section === "full";
+  const showVisitReport = section === "full" || section === "visit-report";
   const [segment, setSegment] = useState<Segment>("active");
   const [subscriptions, setSubscriptions] = useState<CustomerSubscriptionRecord[]>([]);
   const [revenue, setRevenue] = useState<{
@@ -86,6 +93,8 @@ export default function SubscriptionDeskStaff({ staffUser }: SubscriptionDeskSta
 
   return (
     <div className="space-y-6 text-slate-100">
+      {showDesk && (
+      <>
       <h3 className="text-lg font-bold flex items-center gap-2">
         <Heart className="w-5 h-5 text-rose-400" />
         Subscription Desk
@@ -160,8 +169,17 @@ export default function SubscriptionDeskStaff({ staffUser }: SubscriptionDeskSta
           </table>
         </div>
       )}
+      </>
+      )}
 
+      {showVisitReport && (
       <form onSubmit={saveReport} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+        {section === "visit-report" && (
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <CalendarClock className="w-5 h-5 text-amber-500" />
+            Visit Reports
+          </h3>
+        )}
         <h4 className="text-sm font-bold">Create before/after visit report</h4>
         <input
           required
@@ -212,6 +230,7 @@ export default function SubscriptionDeskStaff({ staffUser }: SubscriptionDeskSta
         </button>
         {msg && <p className="text-xs text-slate-400">{msg}</p>}
       </form>
+      )}
     </div>
   );
 }
