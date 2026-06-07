@@ -638,6 +638,8 @@ export async function updateAdminInvoice(
   }
   return updated;
 }
+
+export async function recordInvoicePayment(
   userId: string,
   username: string,
   role: string,
