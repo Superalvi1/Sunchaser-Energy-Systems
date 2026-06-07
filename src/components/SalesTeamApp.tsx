@@ -26,6 +26,7 @@ import {
 } from "../lib/quoteSelection";
 import {
   getBoqQuickFillProducts,
+  buildBoqQuickFillGroups,
   getLiveCatalogProducts,
   formatQuickFillOptionLabel,
 } from "../lib/boqCatalog";
@@ -175,6 +176,7 @@ export default function SalesTeamApp({
   // Excel-style BOQ grid rows
   const [boqRows, setBoqRows] = useState<BoqRow[]>([]);
   const [manualBoqItems, setManualBoqItems] = useState<any[]>([]);
+  const [boqCatalogQuickFillSearch, setBoqCatalogQuickFillSearch] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // State for Quote Templates Print Preview & Save enhancements
@@ -2962,6 +2964,22 @@ export default function SalesTeamApp({
                     </div>
                   </div>
 
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-1">
+                    <label className="text-[10px] font-mono text-slate-500 uppercase font-bold shrink-0">
+                      Catalog Quick-fill search
+                    </label>
+                    <input
+                      type="search"
+                      value={boqCatalogQuickFillSearch}
+                      onChange={(e) => setBoqCatalogQuickFillSearch(e.target.value)}
+                      placeholder="Search brand, model, SKU, category…"
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-sans"
+                    />
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {getBoqQuickFillProducts(liveCatalogProducts, null, boqCatalogQuickFillSearch).length} product(s)
+                    </span>
+                  </div>
+
                   {/* Excel Spreadsheet Table */}
                   <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950/60 max-h-[500px]">
                     {boqRows.length === 0 ? (
@@ -2988,7 +3006,12 @@ export default function SalesTeamApp({
                             const isHeading = row.type === 'heading';
                             const isSubtotal = row.type === 'subtotal';
                             const sectionHeading = findSectionHeadingName(boqRows, idx);
-                            const quickFillProducts = getBoqQuickFillProducts(liveCatalogProducts, sectionHeading);
+                            const quickFillGroups = buildBoqQuickFillGroups(
+                              liveCatalogProducts,
+                              sectionHeading,
+                              boqCatalogQuickFillSearch
+                            );
+                            const quickFillCount = quickFillGroups.reduce((n, g) => n + g.products.length, 0);
                             return (
                               <tr key={row.id} className={`hover:bg-slate-900/25 ${isHeading ? 'bg-slate-900/40 font-bold' : isSubtotal ? 'bg-slate-900/10 font-bold' : ''}`}>
                                 {isHeading ? (
@@ -3035,11 +3058,15 @@ export default function SalesTeamApp({
                                         }}
                                         className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[9px] text-slate-400 font-sans cursor-pointer"
                                       >
-                                        <option value="">-- Catalog Quick-fill --</option>
-                                        {quickFillProducts.map((lib) => (
-                                          <option key={String(lib.id)} value={String(lib.id)}>
-                                            {formatQuickFillOptionLabel(lib)}
-                                          </option>
+                                        <option value="">-- Catalog Quick-fill ({quickFillCount}) --</option>
+                                        {quickFillGroups.map((group) => (
+                                          <optgroup key={group.category} label={group.category}>
+                                            {group.products.map((lib) => (
+                                              <option key={String(lib.id)} value={String(lib.id)}>
+                                                {formatQuickFillOptionLabel(lib)}
+                                              </option>
+                                            ))}
+                                          </optgroup>
                                         ))}
                                       </select>
                                       <input
