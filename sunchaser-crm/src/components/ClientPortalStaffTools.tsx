@@ -11,9 +11,15 @@ import { DOCUMENT_WALLET_TYPES, WARRANTY_COMPONENT_TYPES } from "../lib/clientPo
 
 interface ClientPortalStaffToolsProps {
   staffUser: User;
+  section?: "documents" | "warranty" | "all";
 }
 
-export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffToolsProps) {
+export default function ClientPortalStaffTools({
+  staffUser,
+  section = "all",
+}: ClientPortalStaffToolsProps) {
+  const showDocuments = section === "all" || section === "documents";
+  const showWarranty = section === "all" || section === "warranty";
   const [customerId, setCustomerId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [documentType, setDocumentType] = useState(DOCUMENT_WALLET_TYPES[0].type);
@@ -103,6 +109,8 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
 
   return (
     <div className="space-y-8 text-slate-100">
+      {showDocuments && (
+      <>
       <div>
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Upload className="w-5 h-5 text-amber-500" />
@@ -160,7 +168,11 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
         </button>
         {docMsg && <p className="md:col-span-2 text-xs text-amber-400 font-mono">{docMsg}</p>}
       </form>
+      </>
+      )}
 
+      {showWarranty && (
+      <>
       <div>
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Shield className="w-5 h-5 text-amber-500" />
@@ -253,6 +265,8 @@ export default function ClientPortalStaffTools({ staffUser }: ClientPortalStaffT
           </ul>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
