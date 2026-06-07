@@ -34,6 +34,15 @@ export class InvoiceDbError extends Error {
   }
 }
 
+function sanitizeDate(val: unknown): string | null {
+  if (val === undefined || val === null) return null;
+  const s = String(val).trim();
+  if (!s || s === "undefined" || s === "null") return null;
+  return s;
+}
+
+const INVOICE_DATE_DB_FIELDS = new Set(["invoice_date", "due_date", "po_date"]);
+
 function isInvoiceTableMissing(err: any) {
   const msg = String(err?.message || "").toLowerCase();
   return err?.code === "42P01" || msg.includes("invoices") || msg.includes("invoice_items");
@@ -212,7 +221,7 @@ async function ensureInitialPaymentRow(
     invoice_id: invoiceId,
     amount: opts.paidAmount,
     payment_method: coercePaymentMethod(opts.paymentMode),
-    payment_date: opts.invoiceDate,
+    payment_date: sanitizeDate(opts.invoiceDate) ?? new Date().toISOString().slice(0, 10),
     receipt_url: null,
     receipt_storage_path: null,
     notes: "Initial payment recorded at invoice creation",
@@ -314,10 +323,12 @@ export async function createAdminInvoice(
   const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
   const grandTotal = totals.grandTotal;
   const balanceDue = Math.max(0, Math.round((grandTotal - paidAmount) * 100) / 100);
+  const dueDate = sanitizeDate(body.dueDate ?? body.due_date);
+  const poDate = sanitizeDate(body.poDate ?? body.po_date);
   const paymentStatus = derivePaymentStatus(
     grandTotal,
     paidAmount,
-    String(body.dueDate || body.due_date || "") || null,
+    dueDate,
     body.paymentStatus as any
   );
 
@@ -326,7 +337,8 @@ export async function createAdminInvoice(
     amountInWordsPkr(totals.grandTotal);
 
   const invoiceDate =
-    String(body.invoiceDate || body.invoice_date || new Date().toISOString().slice(0, 10));
+    sanitizeDate(body.invoiceDate ?? body.invoice_date) ??
+    new Date().toISOString().slice(0, 10);
 
   const resolvedCustomerId = await resolveInvoiceCustomerId(
     {
@@ -346,9 +358,9 @@ export async function createAdminInvoice(
     invoice_number: invoiceNumber,
     invoice_date: invoiceDate,
     invoice_time: body.invoiceTime || body.invoice_time || null,
-    due_date: body.dueDate || body.due_date || null,
+    due_date: dueDate,
     po_number: body.poNumber || body.po_number || null,
-    po_date: body.poDate || body.po_date || null,
+    po_date: poDate,
     payment_terms: body.paymentTerms || body.payment_terms || null,
     payment_mode: body.paymentMode || body.payment_mode || null,
     amount_in_words: amountWords,
@@ -463,7 +475,7 @@ export async function updateAdminInvoice(
       payment_status: derivePaymentStatus(
         totals.grandTotal,
         paidAmount,
-        String(body.dueDate || body.due_date || "") || null,
+        sanitizeDate(body.dueDate ?? body.due_date),
         body.paymentStatus as any
       ),
     };
@@ -509,7 +521,7 @@ export async function updateAdminInvoice(
     patch.payment_status = derivePaymentStatus(
       existing.grandTotal,
       paidAmount,
-      String(body.dueDate || body.due_date || existing.dueDate || "") || null,
+      sanitizeDate(body.dueDate ?? body.due_date ?? existing.dueDate),
       body.paymentStatus as any
     );
   }
@@ -563,7 +575,8 @@ export async function updateAdminInvoice(
   ];
   for (const [dbKey, bodyKey] of scalarFields) {
     if (body[bodyKey] !== undefined || body[dbKey] !== undefined) {
-      patch[dbKey] = body[bodyKey] ?? body[dbKey];
+      const raw = body[bodyKey] ?? body[dbKey];
+      patch[dbKey] = INVOICE_DATE_DB_FIELDS.has(dbKey) ? sanitizeDate(raw) : raw;
     }
   }
 
@@ -593,9 +606,10 @@ export async function updateAdminInvoice(
     patch.paid_amount !== undefined
       ? Number(patch.paid_amount)
       : existing.paidAmount;
-  const invoiceDateForAudit = String(
-    patch.invoice_date ?? existing.invoiceDate ?? new Date().toISOString().slice(0, 10)
-  );
+  const invoiceDateForAudit =
+    sanitizeDate(patch.invoice_date) ??
+    sanitizeDate(existing.invoiceDate) ??
+    new Date().toISOString().slice(0, 10);
   const paymentModeForAudit =
     (patch.payment_mode as string | undefined) ?? existing.paymentMode;
   await ensureInitialPaymentRow(
@@ -647,7 +661,9 @@ export async function recordInvoicePayment(
     payment_method: coercePaymentMethod(
       (body.paymentMethod || body.payment_method) as string | undefined
     ),
-    payment_date: body.paymentDate || body.payment_date || new Date().toISOString().slice(0, 10),
+    payment_date:
+      sanitizeDate(body.paymentDate ?? body.payment_date) ??
+      new Date().toISOString().slice(0, 10),
     reference_number: body.referenceNumber || body.reference_number || null,
     receipt_url: receiptUrl,
     receipt_storage_path: receiptStoragePath,

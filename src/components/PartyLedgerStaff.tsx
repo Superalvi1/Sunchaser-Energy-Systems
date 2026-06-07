@@ -108,12 +108,18 @@ export default function PartyLedgerStaff({
   });
   const [paySaving, setPaySaving] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
+  const [partiesError, setPartiesError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   const loadParties = useCallback(async () => {
     setLoading(true);
+    setPartiesError(null);
     try {
       const res = await fetchAdminParties(staffUser);
       setParties(res.parties || []);
+    } catch (e: any) {
+      setPartiesError(e.message || "Failed to load parties.");
+      setParties([]);
     } finally {
       setLoading(false);
     }
@@ -122,6 +128,7 @@ export default function PartyLedgerStaff({
   const loadDetail = useCallback(
     async (key: string) => {
       setDetailLoading(true);
+      setDetailError(null);
       try {
         const data = await fetchAdminPartyLedger(staffUser, key);
         setDetail({
@@ -129,6 +136,9 @@ export default function PartyLedgerStaff({
           transactions: data.transactions || [],
           payments: data.payments || [],
         });
+      } catch (e: any) {
+        setDetailError(e.message || "Failed to load ledger.");
+        setDetail(null);
       } finally {
         setDetailLoading(false);
       }
@@ -299,6 +309,10 @@ export default function PartyLedgerStaff({
           <div className="overflow-y-auto flex-1 p-2">
             {loading ? (
               <Loader2 className="animate-spin h-6 w-6 text-violet-400 mx-auto my-12" />
+            ) : partiesError ? (
+              <p className="text-xs text-red-400 text-center py-12 px-3">{partiesError}</p>
+            ) : parties.length === 0 ? (
+              <p className="text-xs text-neutral-500 text-center py-12">No parties yet</p>
             ) : filteredParties.length === 0 ? (
               <p className="text-xs text-neutral-500 text-center py-12">No parties match</p>
             ) : (
@@ -349,6 +363,10 @@ export default function PartyLedgerStaff({
             </div>
           ) : detailLoading ? (
             <Loader2 className="animate-spin h-8 w-8 text-violet-400 mx-auto my-20" />
+          ) : detailError ? (
+            <div className="flex flex-col items-center justify-center py-20 text-red-400">
+              <p className="text-sm">{detailError}</p>
+            </div>
           ) : party && detail ? (
             <div className="space-y-5">
               {/* Customer header */}
@@ -592,7 +610,8 @@ export default function PartyLedgerStaff({
       </div>
 
       {/* Record payment modal */}
-      <AppModal open={!!paymentModal} onClose={() => setPaymentModal(null)} panelClassName="max-w-md">
+      {paymentModal && (
+        <AppModal open onClose={() => setPaymentModal(null)} panelClassName="max-w-md">
           <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
               <h3 className="font-bold text-neutral-100">Record Payment</h3>
@@ -603,7 +622,7 @@ export default function PartyLedgerStaff({
             <div className="p-4 space-y-3 text-xs">
               <p className="text-neutral-500">
                 Invoice <strong className="text-neutral-200">{paymentModal.invoiceNumber}</strong> · Balance PKR{" "}
-                {paymentModal.balanceDue.toLocaleString()}
+                {Number(paymentModal.balanceDue || 0).toLocaleString()}
               </p>
               <div>
                 <label className="text-neutral-500 text-[10px] uppercase font-bold">Amount (PKR)</label>
@@ -687,7 +706,8 @@ export default function PartyLedgerStaff({
               </button>
             </div>
           </div>
-      </AppModal>
+        </AppModal>
+      )}
     </div>
   );
 }
