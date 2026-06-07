@@ -33,6 +33,22 @@ export function requiredMediaTypes(batteryApplicable: boolean): CompletionMediaT
   );
 }
 
+export function getMissingCompletionSerials(
+  media: { mediaType?: string; media_type?: string; serialNumber?: string | null; serial_number?: string | null }[],
+  batteryApplicable: boolean
+): CompletionMediaType[] {
+  const serialTypes: CompletionMediaType[] = ["panel_serial_photo", "inverter_serial_photo"];
+  if (batteryApplicable) serialTypes.push("battery_serial_photo");
+  const byType = new Map<string, (typeof media)[0]>();
+  for (const m of media) {
+    byType.set(String(m.mediaType || m.media_type || ""), m);
+  }
+  return serialTypes.filter((t) => {
+    const row = byType.get(t);
+    return !row || !String(row.serialNumber || row.serial_number || "").trim();
+  });
+}
+
 export function getMissingCompletionMedia(
   uploaded: string[],
   batteryApplicable: boolean
@@ -44,9 +60,11 @@ export function getMissingCompletionMedia(
 
 export function canMarkProjectCompleted(
   uploaded: string[],
-  batteryApplicable: boolean
+  batteryApplicable: boolean,
+  media: { mediaType?: string; media_type?: string; serialNumber?: string | null; serial_number?: string | null }[] = []
 ): boolean {
-  return getMissingCompletionMedia(uploaded, batteryApplicable).length === 0;
+  if (getMissingCompletionMedia(uploaded, batteryApplicable).length > 0) return false;
+  return getMissingCompletionSerials(media, batteryApplicable).length === 0;
 }
 
 export function mediaLabel(key: string): string {
@@ -61,7 +79,8 @@ export function stageIndex(stage: string): number {
 export function canAdvanceToStage(
   target: string,
   uploaded: string[],
-  batteryApplicable: boolean
+  batteryApplicable: boolean,
+  media: { mediaType?: string; media_type?: string; serialNumber?: string | null; serial_number?: string | null }[] = []
 ): { ok: boolean; reason?: string } {
   if (target !== "Completed") return { ok: true };
   const missing = getMissingCompletionMedia(uploaded, batteryApplicable);
@@ -69,6 +88,13 @@ export function canAdvanceToStage(
     return {
       ok: false,
       reason: `Upload required proof first: ${missing.map(mediaLabel).join(", ")}`,
+    };
+  }
+  const missingSerials = getMissingCompletionSerials(media, batteryApplicable);
+  if (missingSerials.length) {
+    return {
+      ok: false,
+      reason: `Enter serial numbers for: ${missingSerials.map(mediaLabel).join(", ")}`,
     };
   }
   return { ok: true };

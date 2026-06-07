@@ -18,6 +18,7 @@ import {
   type ProjectDeliveryRecord,
 } from "./src/lib/projectDelivery.ts";
 import { assertCompletionProofForHandover } from "./projectCompletionDb.js";
+import { provisionWarrantiesOnProjectCompletion } from "./warrantyProvisionDb.js";
 
 export class ProjectDeliveryDbError extends Error {
   constructor(message: string) {
@@ -624,6 +625,9 @@ export async function patchTechnicalProjectDeliveryStatus(
       notes: body.notes || null,
       created_at: now,
     });
+    if (status === "Handover Completed") {
+      await provisionWarrantiesOnProjectCompletion(deliveryId, localDb);
+    }
     return mapDeliveryRow(data);
   }
 
@@ -641,6 +645,9 @@ export async function patchTechnicalProjectDeliveryStatus(
     updated_by_user_id: user.id,
     created_at: now,
   });
+  if (status === "Handover Completed") {
+    await provisionWarrantiesOnProjectCompletion(deliveryId, localDb);
+  }
   return mapDeliveryRow(row);
 }
 

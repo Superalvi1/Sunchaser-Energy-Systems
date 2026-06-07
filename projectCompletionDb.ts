@@ -14,13 +14,18 @@ import {
   canAdvanceToStage,
   canMarkProjectCompleted,
   getMissingCompletionMedia,
+  getMissingCompletionSerials,
   mediaLabel,
   requiredMediaTypes,
   type CompletionMediaType,
 } from "./src/lib/projectCompletion.ts";
-import { mapCustomerSystemRow } from "./src/lib/clientPortalPhase2.ts";
+import { mapCustomerSystemRow, mapWarrantyRow } from "./src/lib/clientPortalPhase2.ts";
 import { getCompanyBranding } from "./brandingDb.js";
 import { compileWarrantyHandoverPDFHtml } from "./warrantyHandoverPdf.js";
+import {
+  provisionWarrantiesOnProjectCompletion,
+  syncWarrantySerialFromCompletionMedia,
+} from "./warrantyProvisionDb.js";
 
 export class ProjectCompletionDbError extends Error {
   statusCode: number;
@@ -137,6 +142,7 @@ export async function getCompletionStatusBundle(deliveryId: string, localDb?: Da
   const batteryApplicable = delivery.battery_applicable !== false && delivery.batteryApplicable !== false;
   const uploadedTypes = media.map((m) => m.mediaType);
   const missing = getMissingCompletionMedia(uploadedTypes, batteryApplicable);
+  const missingSerials = getMissingCompletionSerials(media, batteryApplicable);
   const completionStage = delivery.completion_stage || delivery.completionStage || "Survey";
   return {
     deliveryId,
@@ -149,8 +155,10 @@ export async function getCompletionStatusBundle(deliveryId: string, localDb?: Da
     media,
     uploadedTypes,
     missing,
+    missingSerials,
+    missingSerialLabels: missingSerials.map(mediaLabel),
     missingLabels: missing.map(mediaLabel),
-    canComplete: canMarkProjectCompleted(uploadedTypes, batteryApplicable),
+    canComplete: canMarkProjectCompleted(uploadedTypes, batteryApplicable, media),
     required: requiredMediaTypes(batteryApplicable).map((key) => ({
       key,
       label: mediaLabel(key),
@@ -225,7 +233,12 @@ export async function postTechnicalCompletionMedia(
       .select("*")
       .single();
     if (error) throw error;
-    return mapMediaRow(data);
+    const mapped = mapMediaRow(data);
+    const serial = String(body.serialNumber || body.serial_number || "").trim();
+    if (serial && mediaType.includes("serial")) {
+      await syncWarrantySerialFromCompletionMedia(deliveryId, mediaType, serial, localDb);
+    }
+    return mapped;
   }
 
   const db = localDb as any;
@@ -235,7 +248,12 @@ export async function postTechnicalCompletionMedia(
   );
   if (idx >= 0) db.projectCompletionMedia[idx] = row;
   else db.projectCompletionMedia.push(row);
-  return mapMediaRow(row);
+  const mapped = mapMediaRow(row);
+  const serial = String(body.serialNumber || body.serial_number || "").trim();
+  if (serial && mediaType.includes("serial")) {
+    await syncWarrantySerialFromCompletionMedia(deliveryId, mediaType, serial, localDb);
+  }
+  return mapped;
 }
 
 export async function patchTechnicalCompletionStage(
@@ -252,7 +270,7 @@ export async function patchTechnicalCompletionStage(
   }
 
   const bundle = await getCompletionStatusBundle(deliveryId, localDb);
-  const gate = canAdvanceToStage(target, bundle.uploadedTypes, bundle.batteryApplicable);
+  const gate = canAdvanceToStage(target, bundle.uploadedTypes, bundle.batteryApplicable, bundle.media);
   if (!gate.ok) throw new ProjectCompletionDbError(gate.reason || "Missing installation proof.");
 
   const now = new Date().toISOString();
@@ -288,11 +306,17 @@ export async function patchTechnicalCompletionStage(
       .select("*")
       .single();
     if (error) throw error;
+    if (target === "Completed") {
+      await provisionWarrantiesOnProjectCompletion(deliveryId, localDb);
+    }
     return { delivery: data, status: await getCompletionStatusBundle(deliveryId, localDb) };
   }
 
   const row = await loadDeliveryRow(deliveryId, localDb);
   Object.assign(row, patch);
+  if (target === "Completed") {
+    await provisionWarrantiesOnProjectCompletion(deliveryId, localDb);
+  }
   return { delivery: row, status: await getCompletionStatusBundle(deliveryId, localDb) };
 }
 
@@ -307,7 +331,9 @@ export async function assertCompletionProofForHandover(
   const bundle = await getCompletionStatusBundle(deliveryId, localDb);
   if (!bundle.canComplete) {
     throw new TechnicalStaffAuthError(
-      `Cannot mark ${targetStatus} until required installation photos are uploaded. Missing: ${bundle.missingLabels.join(", ")}`
+      `Cannot mark ${targetStatus} until required installation photos and serial numbers are complete. Missing photos: ${bundle.missingLabels.join(", ")}${
+        bundle.missingSerialLabels?.length ? `. Missing serials: ${bundle.missingSerialLabels.join(", ")}` : ""
+      }`
     );
   }
 }
@@ -442,7 +468,23 @@ export async function fetchCustomerWarrantyHandoverMe(
       .from("customer_warranties")
       .select("*")
       .eq("customer_id", customerId);
-    warranties = data || [];
+    warranties = (data || []).map(mapWarrantyRow);
+  } else {
+    warranties = ((localDb as any)?.customerWarranties || [])
+      .filter((w: any) => (w.customer_id || w.customerId) === customerId)
+      .map((w: any) =>
+        mapWarrantyRow({
+          id: w.id,
+          customer_id: w.customer_id || w.customerId,
+          project_id: w.project_id || w.projectId,
+          component_type: w.component_type || w.componentType,
+          brand: w.brand,
+          model: w.model,
+          serial_number: w.serial_number || w.serialNumber,
+          start_date: w.start_date || w.startDate,
+          end_date: w.end_date || w.endDate,
+        })
+      );
   }
 
   return {

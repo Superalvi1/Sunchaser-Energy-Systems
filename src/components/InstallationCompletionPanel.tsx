@@ -59,6 +59,10 @@ export default function InstallationCompletionPanel({ user }: { user: User }) {
 
   const upload = async (mediaType: string, file: File) => {
     if (!selectedId) return;
+    if (mediaType.includes("serial") && !String(serialDraft[mediaType] || "").trim()) {
+      setMsg("Enter the equipment serial number before uploading the serial photo.");
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
@@ -129,11 +133,38 @@ export default function InstallationCompletionPanel({ user }: { user: User }) {
           <div className="bg-amber-950/30 border border-amber-800 rounded-xl p-3 text-xs text-amber-200 flex gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <span>
-              Cannot mark <strong>Completed</strong> until all required photos are uploaded.
-              Missing: {status.missingLabels?.join(", ")}
+              Cannot mark <strong>Completed</strong> until all required photos are uploaded
+              {status.missingSerialLabels?.length
+                ? ` and serial numbers are entered (${status.missingSerialLabels.join(", ")})`
+                : ""}
+              .
+              {status.missingLabels?.length ? ` Missing photos: ${status.missingLabels.join(", ")}.` : ""}
             </span>
           </div>
         )}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">Equipment serial numbers</p>
+          <p className="text-[10px] text-slate-500">
+            Enter serial numbers here — brand and model are taken from the quotation automatically when the project is marked Completed.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {[
+              { key: "panel_serial_photo", label: "Panel serial" },
+              { key: "inverter_serial_photo", label: "Inverter serial" },
+              ...(batteryApplicable ? [{ key: "battery_serial_photo", label: "Battery serial" }] : []),
+            ].map((field) => (
+              <div key={field.key}>
+                <label className="text-[10px] text-slate-500 font-mono uppercase">{field.label}</label>
+                <input
+                  className="w-full mt-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs font-mono"
+                  placeholder="Required for completion"
+                  value={serialDraft[field.key] || status.media?.find((m: any) => m.mediaType === field.key)?.serialNumber || ""}
+                  onChange={(e) => setSerialDraft((d) => ({ ...d, [field.key]: e.target.value }))}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           {COMPLETION_STAGES.map((stage) => (
             <button
@@ -166,9 +197,13 @@ export default function InstallationCompletionPanel({ user }: { user: User }) {
                 </div>
                 {m.key.includes("serial") && (
                   <input
-                    className="w-full mb-2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs"
-                    placeholder="Serial number (optional)"
-                    value={serialDraft[m.key] || ""}
+                    className="w-full mb-2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono"
+                    placeholder="Serial number (required)"
+                    value={
+                      serialDraft[m.key] ||
+                      status.media?.find((r: any) => r.mediaType === m.key)?.serialNumber ||
+                      ""
+                    }
                     onChange={(e) => setSerialDraft((d) => ({ ...d, [m.key]: e.target.value }))}
                   />
                 )}
