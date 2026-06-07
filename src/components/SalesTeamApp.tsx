@@ -1778,7 +1778,38 @@ export default function SalesTeamApp({
     setActiveModule('boq_builder');
   };
 
+  const resolvePageLayoutMode = (page: any) =>
+    page?.layoutMode ?? page?.layout_mode ?? "standard";
+
+  const isFullPageImageLayout = (page: any) => {
+    const mode = resolvePageLayoutMode(page);
+    return mode === "full_page_image" || mode === "image_only";
+  };
+
   const getPageState = (page: any) => {
+    if (!page) {
+      return {
+        title: "",
+        body_text: "",
+        image_url: "",
+        bg_image_url: "",
+        is_enabled: true,
+        layoutMode: "standard",
+        headerMode: "inherit",
+        headerText: "",
+        headerLogoUrl: "",
+        headerLogoSize: "25px",
+        headerLineColor: "#cbd5e1",
+        headerAlignment: "left",
+        footerMode: "inherit",
+        footerText: "",
+        footerLineColor: "#cbd5e1",
+        footerAlignment: "left",
+        bodyImages: [] as any[],
+        saveStatus: "Saved" as const,
+      };
+    }
+
     const local = localPageStates[page.id];
     
     // Parse JSON settings from DB record if present
@@ -1786,7 +1817,7 @@ export default function SalesTeamApp({
     let parsed: any = {};
     if (typeof rawBody === 'string' && rawBody.trim().startsWith('{')) {
       try {
-        parsed = JSON.parse(rawBody);
+        parsed = JSON.parse(rawBody) || {};
       } catch (e) {
         parsed = { bodyText: rawBody };
       }
@@ -1802,7 +1833,7 @@ export default function SalesTeamApp({
       is_enabled: local?.is_enabled !== undefined ? local.is_enabled : (page.is_enabled !== false),
       
       // Extended fields
-      layoutMode: local?.layoutMode !== undefined ? local.layoutMode : (parsed.layoutMode || "standard"),
+      layoutMode: local?.layoutMode !== undefined ? local.layoutMode : (parsed?.layoutMode || "standard"),
       headerMode: local?.headerMode !== undefined ? local.headerMode : (parsed.header?.mode || "inherit"),
       headerText: local?.headerText !== undefined ? local.headerText : (parsed.header?.text || ""),
       headerLogoUrl: local?.headerLogoUrl !== undefined ? local.headerLogoUrl : (parsed.header?.logoUrl || ""),
@@ -1831,17 +1862,17 @@ export default function SalesTeamApp({
         const rawBody = page.body_text || page.bodyText || "";
         let parsed: any = {};
         if (typeof rawBody === 'string' && rawBody.trim().startsWith('{')) {
-          try { parsed = JSON.parse(rawBody); } catch (e) { parsed = { bodyText: rawBody }; }
+          try { parsed = JSON.parse(rawBody) || {}; } catch (e) { parsed = { bodyText: rawBody }; }
         } else {
           parsed = { bodyText: rawBody };
         }
 
         if (field === 'title') originalVal = page.title || "";
-        else if (field === 'body_text') originalVal = parsed.bodyText || "";
+        else if (field === 'body_text') originalVal = parsed?.bodyText || "";
         else if (field === 'is_enabled') originalVal = page.is_enabled !== false;
         else if (field === 'image_url') originalVal = page.image_url || page.imageUrl || "";
         else if (field === 'bg_image_url') originalVal = page.bg_image_url || page.bgImageUrl || "";
-        else if (field === 'layoutMode') originalVal = parsed.layoutMode || "standard";
+        else if (field === 'layoutMode') originalVal = parsed?.layoutMode || "standard";
         else if (field === 'headerMode') originalVal = parsed.header?.mode || "inherit";
         else if (field === 'headerText') originalVal = parsed.header?.text || "";
         else if (field === 'headerLogoUrl') originalVal = parsed.header?.logoUrl || "";
@@ -3593,6 +3624,7 @@ export default function SalesTeamApp({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {quoteTemplatePages
+                      .filter(Boolean)
                       .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
                       .map((page, idx) => {
                         const pageState = getPageState(page);
@@ -4609,8 +4641,9 @@ export default function SalesTeamApp({
           </div>
         </AppModal>
 
-        {/* Preview Page Modal */}
-        <AppModal open={!!previewPage} onClose={() => setPreviewPage(null)} panelClassName="max-w-4xl">
+        {/* Preview Page Modal — mount only when previewPage is set (children must not read previewPage when null) */}
+        {previewPage && (
+        <AppModal open onClose={() => setPreviewPage(null)} panelClassName="max-w-4xl">
             <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 w-full shadow-2xl flex flex-col">
               
               {/* Modal Header */}
@@ -4643,7 +4676,7 @@ export default function SalesTeamApp({
                     height: '297mm',
                     minWidth: '210mm',
                     minHeight: '297mm',
-                    padding: (previewPage.layoutMode === 'full_page_image' || previewPage.layoutMode === 'image_only' || previewPage.layout_mode === 'full_page_image' || previewPage.layout_mode === 'image_only') ? '0mm' : '20mm',
+                    padding: isFullPageImageLayout(previewPage) ? '0mm' : '20mm',
                     boxSizing: 'border-box',
                     backgroundImage: previewPage.bg_image_url ? `url(${previewPage.bg_image_url})` : 'none',
                     backgroundSize: 'cover',
@@ -4652,18 +4685,11 @@ export default function SalesTeamApp({
                   }}
                 >
                   {/* Background Dimmer Overlay */}
-                  {previewPage.bg_image_url && 
-                   previewPage.layoutMode !== 'full_page_image' && 
-                   previewPage.layoutMode !== 'image_only' && 
-                   previewPage.layout_mode !== 'full_page_image' && 
-                   previewPage.layout_mode !== 'image_only' && (
+                  {previewPage.bg_image_url && !isFullPageImageLayout(previewPage) && (
                     <div className="absolute inset-0 bg-white/70 pointer-events-none z-0" />
                   )}
 
-                  {previewPage.layoutMode !== 'full_page_image' && 
-                   previewPage.layoutMode !== 'image_only' && 
-                   previewPage.layout_mode !== 'full_page_image' && 
-                   previewPage.layout_mode !== 'image_only' ? (
+                  {!isFullPageImageLayout(previewPage) ? (
                     <div className="relative z-10 flex flex-col justify-between h-full">
                       {/* Header */}
                       <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
@@ -4722,6 +4748,7 @@ export default function SalesTeamApp({
               
             </div>
         </AppModal>
+        )}
 
         {/* Proposal Deck Layout Preview Modal */}
         <AppModal
@@ -4798,25 +4825,18 @@ export default function SalesTeamApp({
           <div 
             id="print-preview-container"
             style={{
-              padding: (printPageData.layoutMode === 'full_page_image' || printPageData.layoutMode === 'image_only' || printPageData.layout_mode === 'full_page_image' || printPageData.layout_mode === 'image_only') ? '0mm' : undefined,
+              padding: isFullPageImageLayout(printPageData) ? '0mm' : undefined,
               backgroundImage: printPageData.bg_image_url ? `url(${printPageData.bg_image_url})` : 'none',
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               backgroundRepeat: 'no-repeat'
             }}
           >
-            {printPageData.bg_image_url && 
-             printPageData.layoutMode !== 'full_page_image' && 
-             printPageData.layoutMode !== 'image_only' && 
-             printPageData.layout_mode !== 'full_page_image' && 
-             printPageData.layout_mode !== 'image_only' && (
+            {printPageData.bg_image_url && !isFullPageImageLayout(printPageData) && (
               <div className="absolute inset-0 bg-white/70 pointer-events-none z-0" />
             )}
             
-            {printPageData.layoutMode !== 'full_page_image' && 
-             printPageData.layoutMode !== 'image_only' && 
-             printPageData.layout_mode !== 'full_page_image' && 
-             printPageData.layout_mode !== 'image_only' ? (
+            {!isFullPageImageLayout(printPageData) ? (
               <div className="relative z-10 flex flex-col justify-between h-full">
                 {/* Header */}
                 <div className="flex justify-between items-center border-b-2 border-amber-500 pb-4 mb-6">
