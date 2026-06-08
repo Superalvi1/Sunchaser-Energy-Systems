@@ -84,7 +84,6 @@ export function buildQuotePdfSettingsSupabasePayload(data: Record<string, unknow
     website_url: data.websiteUrl || data.website_url,
     logo_url: data.logoUrl || data.logo_url || "",
     use_default_company_content: !!(data.useDefaultCompanyContent ?? data.use_default_company_content),
-    updated_at: new Date().toISOString(),
   };
 
   const jsonbRow = {
@@ -92,7 +91,6 @@ export function buildQuotePdfSettingsSupabasePayload(data: Record<string, unknow
     global_pdf_header: headerWithWatermark,
     global_pdf_footer: data.globalPdfFooter || data.global_pdf_footer || null,
     global_watermark: watermarkPayload,
-    updated_at: new Date().toISOString(),
   };
 
   return { scalarRow, jsonbRow, watermarkPayload };
