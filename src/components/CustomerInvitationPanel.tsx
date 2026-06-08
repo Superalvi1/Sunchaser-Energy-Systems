@@ -57,6 +57,9 @@ export default function CustomerInvitationPanel({
         compact ? "p-3 space-y-2" : "p-4 space-y-3"
       }`}
     >
+      <h4 className={`font-bold text-amber-400 uppercase tracking-wide ${compact ? "text-[10px]" : "text-xs"}`}>
+        Customer Invitation
+      </h4>
       <div className="flex flex-wrap items-center gap-2">
         <span className={`font-mono font-bold text-amber-300 ${compact ? "text-xs" : "text-sm"}`}>
           Customer Code: {code}

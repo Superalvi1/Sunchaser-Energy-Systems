@@ -93,7 +93,7 @@ export default function CustomerLinkingStaff({ staffUser }: CustomerLinkingStaff
     <div className="space-y-6 text-xs font-sans">
       <div className="border-b border-neutral-800 pb-3">
         <h3 className="text-sm font-black font-mono uppercase tracking-wider text-amber-400 flex items-center gap-2">
-          <Link2 className="h-4 w-4" /> Customer Linking Center
+          <Link2 className="h-4 w-4" /> Customer Linking
         </h3>
         <p className="text-neutral-450 mt-1">
           Search CRM customers and portal users, then link accounts without SQL access. Duplicate detection is read-only.

@@ -13,22 +13,20 @@ export function getCustomerPortalUrl(): string {
 
 export function buildPortalInvitationMessage(customerName: string, customerCode: string): string {
   const portalUrl = getCustomerPortalUrl();
-  return `Dear ${customerName},
+  return `Hello ${customerName}
 
 Welcome to Sunchaser Energy Systems.
 
-Your Customer Code is:
+Your Customer Portal Code:
 
 ${customerCode}
 
-Please create your customer portal account using this code:
-
+Register here:
 ${portalUrl}
 
-Using this code will automatically link your quotations, invoices, warranties and documents to your account.
+Enter this code during registration to connect your portal account with your quotation, invoices, warranties, and project updates.
 
-Regards,
-Sunchaser Energy Systems`;
+Thank you.`;
 }
 
 export function buildWhatsAppInvitationUrl(phone: string, message: string): string {

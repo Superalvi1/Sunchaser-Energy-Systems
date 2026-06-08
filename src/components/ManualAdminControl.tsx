@@ -186,7 +186,7 @@ export default function ManualAdminControl({
     { id: "solar-packages", label: "Solar Packages", icon: Layers },
     { id: "quotations", label: "Manual Quotations", icon: FileText },
     { id: "customers", label: "Customers Accounts", icon: Users },
-    { id: "customer-linking", label: "Account Linking", icon: Link2 },
+    { id: "customer-linking", label: "Customer Linking", icon: Link2 },
     { id: "orders", label: "Client Orders", icon: CreditCard },
     { id: "tickets", label: "Complaints & Cases", icon: Wrench },
     { id: "inventory", label: "Stock & Margins", icon: TrendingUp },

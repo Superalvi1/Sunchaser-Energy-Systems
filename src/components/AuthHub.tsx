@@ -43,6 +43,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<string>(SELF_REGISTER_ROLES[0]);
   const [phone, setPhone] = useState("");
+  const [cnicNtn, setCnicNtn] = useState("");
   const [customerCode, setCustomerCode] = useState("");
   const [token, setToken] = useState(urlHint?.token || "");
   const [busy, setBusy] = useState(false);
@@ -112,6 +113,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
       };
       if (role === "Customer") {
         if (phone.trim()) payload.phone = phone.trim();
+        if (cnicNtn.trim()) payload.cnicNtn = cnicNtn.trim();
         if (customerCode.trim()) payload.customerCode = customerCode.trim();
       }
       const res = await registerUser(payload);
@@ -289,6 +291,12 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
+                  />
+                  <input
+                    placeholder="CNIC / NTN (optional — used if no invitation code)"
+                    value={cnicNtn}
+                    onChange={(e) => setCnicNtn(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-mono"
                   />
                   <input
                     placeholder="Customer Invitation Code (e.g. SES-123456)"
