@@ -11,6 +11,7 @@ import {
   ADMIN_ONLY_CREATE_ROLES,
   APP_ROLES,
 } from "./src/lib/roles";
+import { canDeleteUser, isHighValueProtectedUser } from "./src/lib/userDeleteGuards.ts";
 
 export class UserAuthError extends Error {
   statusCode: number;
@@ -461,6 +462,10 @@ export async function createUserByAdmin(
   const name = String(body.name || "").trim();
   const password = String(body.password || "ChangeMe123!");
 
+  if (!username || !email || !name) {
+    throw new UserAuthError("Username, name, and email are required.");
+  }
+
   if (await findUserByUsername(username, localDb)) throw new UserAuthError("Username taken.");
   if (await findUserByEmail(email, localDb)) throw new UserAuthError("Email taken.");
 
@@ -498,9 +503,8 @@ export async function createUserByAdmin(
         .update({ user_id: id })
         .eq("id", row.customer_id);
     }
-  } else if (localDb) {
-    localDb.users.push(row);
   }
+  mirrorUserToLocalDb(row, localDb);
   return mapUserRow(row);
 }
 
@@ -616,15 +620,92 @@ async function updateUserRow(id: string, patch: Record<string, unknown>, localDb
   Object.assign(row, patch);
 }
 
+function mirrorUserToLocalDb(row: any, localDb?: Database) {
+  if (!localDb) return;
+  localDb.users = localDb.users || [];
+  const idx = localDb.users.findIndex((u: any) => u.id === row.id);
+  if (idx >= 0) localDb.users[idx] = { ...localDb.users[idx], ...row };
+  else localDb.users.push(row);
+}
+
+function removeUserFromLocalDb(userId: string, localDb?: Database) {
+  if (!localDb?.users) return;
+  localDb.users = localDb.users.filter((u: any) => u.id !== userId);
+}
+
 async function getUserById(id: string, localDb?: Database) {
   if (isSupabaseActive()) {
-    const { data, error } = await getSupabase()!.from("users").select("*").eq("id", id).single();
+    const { data, error } = await getSupabase()!.from("users").select("*").eq("id", id).maybeSingle();
     if (error) throw error;
+    if (!data) throw new UserAuthError("User not found.", 404);
     return data;
   }
   const row = (localDb?.users || []).find((u: any) => u.id === id);
   if (!row) throw new UserAuthError("User not found.", 404);
   return row;
+}
+
+export async function deleteUserByAdmin(
+  actorId: string,
+  actorUsername: string,
+  targetUserId: string,
+  opts: { confirmText?: string; unlinkCustomer?: boolean },
+  localDb?: Database
+) {
+  await assertSuperAdminActor(actorId, actorUsername, localDb);
+  const confirmText = String(opts.confirmText || "").trim().toUpperCase();
+  if (confirmText !== "DELETE") {
+    throw new UserAuthError('Type DELETE to confirm permanent deletion.', 400);
+  }
+
+  const target = await getUserById(targetUserId, localDb);
+  const mapped = mapUserRow(target);
+  const gate = canDeleteUser(mapped, actorId);
+  if (!gate.allowed) {
+    throw new UserAuthError(gate.reason || "Delete not allowed.", 403);
+  }
+
+  const linkedCustomerId = target.customer_id || target.customerId || null;
+  let linkedCustomerName: string | null = null;
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    if (linkedCustomerId) {
+      const { data: cust } = await supabase
+        .from("customers")
+        .select("id, name")
+        .eq("id", linkedCustomerId)
+        .maybeSingle();
+      linkedCustomerName = cust?.name || null;
+    }
+    if (opts.unlinkCustomer !== false) {
+      await supabase.from("customers").update({ user_id: null }).eq("user_id", targetUserId);
+    }
+    const { error } = await supabase.from("users").delete().eq("id", targetUserId);
+    if (error) throw error;
+  } else {
+    const db = localDb as any;
+    if (db?.customers && opts.unlinkCustomer !== false) {
+      for (const c of db.customers) {
+        if (c.user_id === targetUserId || c.userId === targetUserId) {
+          c.user_id = null;
+          c.userId = null;
+          linkedCustomerName = linkedCustomerName || c.name || null;
+        }
+      }
+    }
+    removeUserFromLocalDb(targetUserId, localDb);
+  }
+
+  return {
+    ok: true,
+    message: isHighValueProtectedUser(mapped)
+      ? "Protected staff account permanently deleted."
+      : "User permanently deleted.",
+    deletedUserId: targetUserId,
+    unlinkedCustomerId: linkedCustomerId,
+    linkedCustomerName,
+  };
 }
 
 export { ADMIN_ONLY_CREATE_ROLES };

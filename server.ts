@@ -36,6 +36,7 @@ import {
   typographyStyleAttr,
 } from "./src/lib/quotePdfLayout.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
+import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
 import {
   renderPageBodyHtml,
   quoteAuthoringPrintCss,
@@ -161,6 +162,7 @@ import {
   rejectUser,
   createUserByAdmin,
   updateUserByAdmin,
+  deleteUserByAdmin,
   UserAuthError,
 } from "./userAuthDb.js";
 import {
@@ -204,7 +206,13 @@ import {
 } from "./invoiceDb.js";
 import { compileInvoicePDFHtml } from "./invoicePdf.js";
 import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
-import { listPartyLedgers, getPartyLedgerDetail } from "./partyLedgerDb.js";
+import {
+  listPartyLedgers,
+  getPartyLedgerDetail,
+  archivePartyLedger,
+  restorePartyLedger,
+  hardDeletePartyLedger,
+} from "./partyLedgerDb.js";
 import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
 import { generateCustomerCode } from "./customerCode.js";
 import { syncQuotationDocumentVault } from "./customerDocumentSync.js";
@@ -780,10 +788,11 @@ app.post("/api/auth/reset-password", async (req, res) => {
 });
 
 function readStaffAuth(req: express.Request) {
+  const q = req.query as Record<string, string | undefined>;
   return {
-    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
-    role: String(req.headers["x-sunchaser-role"] || req.query?.role || req.body?.role || "").trim(),
+    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || q.userId || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || req.body?.username || q.username || "").trim(),
+    role: String(req.headers["x-sunchaser-role"] || q.role || req.body?.role || "").trim(),
   };
 }
 
@@ -831,6 +840,28 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     const user = await updateUserByAdmin(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.json({ user });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/users/:id", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const result = await deleteUserByAdmin(
+      userId,
+      username,
+      req.params.id,
+      {
+        confirmText: String(req.body?.confirmText || req.query?.confirmText || ""),
+        unlinkCustomer: req.body?.unlinkCustomer !== false,
+      },
+      db
+    );
+    saveDb();
+    return res.json(result);
   } catch (err: any) {
     if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -2251,10 +2282,79 @@ app.get("/api/admin/parties", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
-    const parties = await listPartyLedgers(userId, username, role, db);
+    const visibilityRaw = String(req.query.visibility || "active").toLowerCase();
+    const visibility =
+      visibilityRaw === "archived" || visibilityRaw === "all" ? visibilityRaw : "active";
+    const parties = await listPartyLedgers(userId, username, role, db, { visibility });
     return res.json({ parties });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/parties/:partyKey/archive", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const archived = await archivePartyLedger(
+      userId,
+      username,
+      role,
+      decodeURIComponent(req.params.partyKey),
+      db
+    );
+    if (!isSupabaseActive()) saveDb();
+    return res.json({ archived });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) {
+      return res.status(err.statusCode || 403).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/parties/:partyKey/restore", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const result = await restorePartyLedger(
+      userId,
+      username,
+      role,
+      decodeURIComponent(req.params.partyKey),
+      db
+    );
+    if (!isSupabaseActive()) saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) {
+      return res.status(err.statusCode || 403).json({ error: err.message });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/parties/:partyKey", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const result = await hardDeletePartyLedger(
+      userId,
+      username,
+      role,
+      decodeURIComponent(req.params.partyKey),
+      db
+    );
+    if (!isSupabaseActive()) saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) {
+      return res.status(err.statusCode || 403).json({ error: err.message });
+    }
     return res.status(500).json({ error: err.message });
   }
 });
@@ -3172,7 +3272,8 @@ app.post("/api/leads", async (req, res) => {
       shading,
       notes,
       leadSource,
-      engagementLevel
+      engagementLevel,
+      assignedSalesperson,
     } = req.body;
 
     const leadId = `lead-${randomUUID()}`;
@@ -3191,12 +3292,12 @@ app.post("/api/leads", async (req, res) => {
       })(),
       sanctionedLoad: Number(sanctionedLoad) || 7,
       backupRequirement: backupRequirement || "None",
-      location: location || "Springfield",
+      location: String(location || "").trim(),
       roofType: roofType || "Asphalt Shingle",
       roofSpace: Number(roofSpace) || 800,
       shading: shading || "Medium",
       rating: 3,
-      assignedSalesperson: "Sarah Connor",
+      assignedSalesperson: String(assignedSalesperson || "").trim(),
       createdAt: new Date().toISOString(),
       notes: notes || "Submitted via Sunchaser Sizing Calculator.",
       leadSource: leadSource || "Self-registration Web Portal",
@@ -3266,7 +3367,7 @@ app.post("/api/leads", async (req, res) => {
     }
 
     await appendActivityLog("guest", newLead.name, "Customer", "Lead Created", `Registered details profile for home assessment sizing.`);
-    const msgText = `☀️ Hi ${newLead.name}! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal`;
+    const msgText = `☀️ Hi ${newLead.name}! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal`;
     await triggerWhatsAppNotification(newLead.name, newLead.phone, "survey_confirmation", msgText);
 
     return res.status(201).json(newLead);
@@ -3870,7 +3971,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     clientAddress: clientAddress || lead.address,
     cnic: cnic || "",
     cityArea: cityArea || lead.location || "Lahore",
-    bdmName: bdmName || lead.assignedSalesperson || "Sarah Connor",
+    bdmName: bdmName || sanitizeLeadAdvisorInput(lead.assignedSalesperson) || "",
     quoteDate: quoteDate || new Date().toISOString().split('T')[0],
     systemType: systemType || "Hybrid",
     panelBrand: panelBrand || "Jinko",

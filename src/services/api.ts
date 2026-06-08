@@ -1240,6 +1240,24 @@ export async function updateAdminUser(
   );
 }
 
+export async function deleteAdminUser(
+  actorId: string,
+  actorUsername: string,
+  targetId: string,
+  confirmText: string
+) {
+  return staffPortalJsonRequest<{ ok: boolean; message: string }>(
+    "deleteAdminUser",
+    `/api/admin/users/${targetId}`,
+    {
+      method: "DELETE",
+      headers: portalAuthHeaders(actorId, actorUsername),
+      body: JSON.stringify({ userId: actorId, username: actorUsername, confirmText }),
+    },
+    "Failed to delete user"
+  );
+}
+
 export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
   const url = `${API_BASE_URL}/api/auth/login`;
   const payload = { username: body.username, password: body.password };
@@ -2142,13 +2160,53 @@ export async function updateAdminBranding(staff: User, body: Record<string, unkn
   );
 }
 
-export async function fetchAdminParties(staff: User) {
-  const res = await apiFetch("/api/admin/parties", {
+export async function fetchAdminParties(
+  staff: User,
+  opts?: { visibility?: "active" | "archived" | "all" }
+) {
+  const visibility = opts?.visibility || "active";
+  const res = await apiFetch(`/api/admin/parties?visibility=${encodeURIComponent(visibility)}`, {
     headers: staffPortalHeaders(staff.id, staff.username, staff.role),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Failed to load parties.");
   return data as { parties: any[] };
+}
+
+export async function archiveAdminParty(staff: User, partyKey: string) {
+  return staffPortalJsonRequest(
+    "archiveAdminParty",
+    `/api/admin/parties/${encodeURIComponent(partyKey)}/archive`,
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+    },
+    "Failed to archive party"
+  );
+}
+
+export async function restoreAdminParty(staff: User, partyKey: string) {
+  return staffPortalJsonRequest(
+    "restoreAdminParty",
+    `/api/admin/parties/${encodeURIComponent(partyKey)}/restore`,
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+    },
+    "Failed to restore party"
+  );
+}
+
+export async function hardDeleteAdminParty(staff: User, partyKey: string) {
+  return staffPortalJsonRequest(
+    "hardDeleteAdminParty",
+    `/api/admin/parties/${encodeURIComponent(partyKey)}`,
+    {
+      method: "DELETE",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+    },
+    "Failed to delete party"
+  );
 }
 
 export async function fetchFinanceDashboard(staff: User) {

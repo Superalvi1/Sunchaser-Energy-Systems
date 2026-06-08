@@ -7,8 +7,7 @@ import {
   Shield,
   UserPlus,
   Table,
-  Settings2,
-  UserCircle,
+  Trash2,
 } from "lucide-react";
 import RoleManagementPanel from "./RoleManagementPanel";
 import CustomerProfileStaff from "./CustomerProfileStaff";
@@ -21,10 +20,13 @@ import {
   rejectAdminUser,
   createAdminUser,
   updateAdminUser,
+  deleteAdminUser,
   fetchRolesMatrix,
 } from "../services/api";
 import { isSuperAdmin, canManageCustomers, APP_ROLES, ADMIN_ONLY_CREATE_ROLES } from "../lib/roles";
+import { canDeleteUser, isHighValueProtectedUser, isPermanentlyProtectedUser } from "../lib/userDeleteGuards";
 import type { PermissionKey } from "../lib/roles";
+import { useToast } from "../lib/toast";
 
 interface UserManagementStaffProps {
   staffUser: User;
@@ -33,6 +35,7 @@ interface UserManagementStaffProps {
 type Tab = "pending" | "users" | "roles" | "customers" | "matrix";
 
 export default function UserManagementStaff({ staffUser }: UserManagementStaffProps) {
+  const toast = useToast();
   const allowed = isSuperAdmin(staffUser.username, staffUser.role);
   const showCustomers = canManageCustomers(staffUser.username, staffUser.role);
   const [tab, setTab] = useState<Tab>("pending");
@@ -44,6 +47,10 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleteSaving, setDeleteSaving] = useState(false);
   const [createForm, setCreateForm] = useState({
     username: "",
     name: "",
@@ -63,8 +70,8 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
         fetchPendingUsers(staffUser.id, staffUser.username),
         fetchRolesMatrix(staffUser.id, staffUser.username),
       ]);
-      setUsers(all.users);
-      setPending(pend.users);
+      setUsers(all.users || []);
+      setPending(pend.users || []);
       setMatrix(mx);
     } catch (err: any) {
       setMsg(err.message);
@@ -88,10 +95,10 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
   const handleApprove = async (id: string) => {
     try {
       await approveAdminUser(staffUser.id, staffUser.username, id);
-      setMsg("User approved.");
+      toast.success("User approved.");
       await load();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -100,21 +107,45 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       await rejectAdminUser(staffUser.id, staffUser.username, id, rejectReason);
       setRejectId(null);
       setRejectReason("");
-      setMsg("User rejected.");
+      toast.success("User rejected.");
       await load();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleCreate = async () => {
+    if (!createForm.username.trim() || !createForm.name.trim() || !createForm.email.trim()) {
+      toast.error("Username, name, and email are required.");
+      return;
+    }
+    setCreateSaving(true);
     try {
-      await createAdminUser(staffUser.id, staffUser.username, createForm);
+      const res = await createAdminUser(staffUser.id, staffUser.username, createForm);
+      const created = res.user;
       setCreateOpen(false);
-      setMsg("User created.");
+      setCreateForm({
+        username: "",
+        name: "",
+        email: "",
+        password: "ChangeMe123!",
+        role: "Admin",
+        accountStatus: "Approved",
+      });
+      if (created) {
+        setUsers((prev) => {
+          const exists = prev.some((u) => u.id === created.id);
+          if (exists) return prev.map((u) => (u.id === created.id ? created : u));
+          return [created, ...prev];
+        });
+      }
+      setTab("users");
+      toast.success("User created.");
       await load();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err.message || "Failed to create user.");
+    } finally {
+      setCreateSaving(false);
     }
   };
 
@@ -123,9 +154,32 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       await updateAdminUser(staffUser.id, staffUser.username, u.id, {
         accountStatus: u.accountStatus === "Suspended" ? "Approved" : "Suspended",
       });
+      toast.success(u.accountStatus === "Suspended" ? "User reinstated." : "User suspended.");
       await load();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err.message);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteSaving(true);
+    try {
+      const res = await deleteAdminUser(
+        staffUser.id,
+        staffUser.username,
+        deleteTarget.id,
+        deleteConfirm
+      );
+      toast.success(res.message || "User deleted.");
+      setDeleteTarget(null);
+      setDeleteConfirm("");
+      setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
+      await load();
+    } catch (err: any) {
+      toast.error(err.message || "Delete failed.");
+    } finally {
+      setDeleteSaving(false);
     }
   };
 
@@ -167,7 +221,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
             {t === "pending"
               ? `Approval queue (${pending.length})`
               : t === "users"
-                ? "All users"
+                ? `All users (${users.length})`
                 : t === "roles"
                   ? "Roles"
                   : t === "customers"
@@ -251,40 +305,71 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-slate-900">
-                  <td className="py-2 pr-4">
-                    <span className="text-white font-sans font-semibold">{u.name}</span>
-                    <br />
-                    <span className="text-slate-500">@{u.username}</span>
-                  </td>
-                  <td className="py-2 pr-4 text-slate-300">{u.role}</td>
-                  <td className="py-2 pr-4">
-                    <span
-                      className={
-                        u.accountStatus === "Approved"
-                          ? "text-emerald-400"
-                          : u.accountStatus === "Pending"
-                            ? "text-amber-400"
-                            : "text-rose-400"
-                      }
-                    >
-                      {u.accountStatus || "Approved"}
-                    </span>
-                  </td>
-                  <td className="py-2">
-                    {u.username !== staffUser.username && (
-                      <button
-                        type="button"
-                        onClick={() => handleSuspend(u)}
-                        className="text-amber-400 hover:underline"
-                      >
-                        {u.accountStatus === "Suspended" ? "Reinstate" : "Suspend"}
-                      </button>
-                    )}
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-slate-500">
+                    No users found.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                users.map((u) => {
+                  const deleteGate = canDeleteUser(u, staffUser.id);
+                  const protectedUser = isPermanentlyProtectedUser(u);
+                  return (
+                    <tr key={u.id} className="border-b border-slate-900">
+                      <td className="py-2 pr-4">
+                        <span className="text-white font-sans font-semibold">{u.name}</span>
+                        <br />
+                        <span className="text-slate-500">@{u.username}</span>
+                        {u.customerId && (
+                          <span className="block text-[10px] text-slate-600">customer: {u.customerId}</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-4 text-slate-300">{u.role}</td>
+                      <td className="py-2 pr-4">
+                        <span
+                          className={
+                            u.accountStatus === "Approved"
+                              ? "text-emerald-400"
+                              : u.accountStatus === "Pending"
+                                ? "text-amber-400"
+                                : "text-rose-400"
+                          }
+                        >
+                          {u.accountStatus || "Approved"}
+                        </span>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex flex-wrap gap-3 items-center">
+                          {u.id !== staffUser.id && !protectedUser && (
+                            <button
+                              type="button"
+                              onClick={() => handleSuspend(u)}
+                              className="text-amber-400 hover:underline"
+                            >
+                              {u.accountStatus === "Suspended" ? "Reinstate" : "Suspend"}
+                            </button>
+                          )}
+                          {deleteGate.allowed ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteConfirm("");
+                                setDeleteTarget(u);
+                              }}
+                              className="text-rose-400 hover:underline inline-flex items-center gap-1"
+                            >
+                              <Trash2 className="h-3 w-3" /> Delete
+                            </button>
+                          ) : protectedUser ? (
+                            <span className="text-slate-600 text-[10px]">Protected</span>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -331,66 +416,128 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       )}
 
       <AppModal open={createOpen} onClose={() => setCreateOpen(false)} panelClassName="max-w-md">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-3">
-            <h3 className="font-bold text-white flex items-center gap-2">
-              <Users className="h-5 w-5 text-amber-500" />
-              Create staff user
-            </h3>
-            <select
-              value={createForm.role}
-              onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-3">
+          <h3 className="font-bold text-white flex items-center gap-2">
+            <Users className="h-5 w-5 text-amber-500" />
+            Create staff user
+          </h3>
+          <select
+            value={createForm.role}
+            onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+          >
+            {APP_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="Name"
+            value={createForm.name}
+            onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+          />
+          <input
+            placeholder="Email"
+            type="email"
+            value={createForm.email}
+            onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+          />
+          <input
+            placeholder="Username"
+            value={createForm.username}
+            onChange={(e) =>
+              setCreateForm({ ...createForm, username: e.target.value.toLowerCase() })
+            }
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+          />
+          <input
+            type="password"
+            value={createForm.password}
+            onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+          />
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => setCreateOpen(false)}
+              className="text-xs text-slate-400 px-4 py-2"
             >
-              {APP_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={createSaving}
+              onClick={handleCreate}
+              className="bg-amber-500 text-slate-950 text-xs font-bold px-4 py-2 rounded-lg disabled:opacity-50"
+            >
+              {createSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </AppModal>
+
+      {deleteTarget && (
+        <AppModal
+          open
+          onClose={() => {
+            setDeleteTarget(null);
+            setDeleteConfirm("");
+          }}
+          panelClassName="max-w-md"
+        >
+          <div className="bg-slate-900 border border-rose-900/50 rounded-2xl p-6 w-full space-y-3">
+            <h3 className="font-bold text-rose-300 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" /> Permanently delete user
+            </h3>
+            <p className="text-sm text-slate-300">
+              Delete <strong className="text-white">{deleteTarget.name}</strong> (@{deleteTarget.username})?
+              This cannot be undone.
+            </p>
+            {deleteTarget.customerId && (
+              <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2">
+                This portal user is linked to customer record {deleteTarget.customerId}. The customer
+                record, invoices, and documents will remain; only the login account will be removed
+                and the link cleared.
+              </p>
+            )}
+            {isHighValueProtectedUser(deleteTarget) && (
+              <p className="text-xs text-rose-300/90">
+                Warning: this is a senior staff account. Confirm carefully.
+              </p>
+            )}
+            <p className="text-xs text-slate-500">Type DELETE to permanently delete this user.</p>
             <input
-              placeholder="Name"
-              value={createForm.name}
-              onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
-            />
-            <input
-              placeholder="Email"
-              value={createForm.email}
-              onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
-            />
-            <input
-              placeholder="Username"
-              value={createForm.username}
-              onChange={(e) =>
-                setCreateForm({ ...createForm, username: e.target.value.toLowerCase() })
-              }
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
-            />
-            <input
-              type="password"
-              value={createForm.password}
-              onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+              placeholder="Type DELETE"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono"
             />
             <div className="flex gap-2 justify-end">
               <button
                 type="button"
-                onClick={() => setCreateOpen(false)}
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteConfirm("");
+                }}
                 className="text-xs text-slate-400 px-4 py-2"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleCreate}
-                className="bg-amber-500 text-slate-950 text-xs font-bold px-4 py-2 rounded-lg"
+                disabled={deleteSaving || deleteConfirm.trim().toUpperCase() !== "DELETE"}
+                onClick={handleDelete}
+                className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-lg disabled:opacity-40"
               >
-                Save
+                {deleteSaving ? "Deleting…" : "Delete permanently"}
               </button>
             </div>
           </div>
-      </AppModal>
+        </AppModal>
+      )}
     </div>
   );
 }
