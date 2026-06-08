@@ -46,6 +46,14 @@ import {
   resolveQuoteDiscountAmount,
   type QuoteDiscountType,
 } from "../lib/quoteDiscount";
+import QuotePageAuthoringFields from "./quoteAuthoring/QuotePageAuthoringFields";
+import {
+  mergeContentLibrary,
+  type ContentLibraryBlock,
+  type PdfQualityMode,
+  getAuthoringTemplateMeta,
+  resolveAuthoringPageType,
+} from "../lib/quoteAuthoring";
 import {
   getWatermarkLayerInlineStyle,
   normalizeWatermarkPlacement,
@@ -240,6 +248,13 @@ export default function SalesTeamApp({
   const [globalWatermarkPosition, setGlobalWatermarkPosition] = useState<WatermarkPlacement>("center");
   const [globalWatermarkUploading, setGlobalWatermarkUploading] = useState<boolean>(false);
   const [useDefaultCompanyContent, setUseDefaultCompanyContent] = useState<boolean>(false);
+  const [globalFontFamily, setGlobalFontFamily] = useState<string>("Inter, 'Segoe UI', sans-serif");
+  const [globalFontSize, setGlobalFontSize] = useState<string>("11px");
+  const [globalHeadingColor, setGlobalHeadingColor] = useState<string>("#d97706");
+  const [globalBodyColor, setGlobalBodyColor] = useState<string>("#475569");
+  const [globalLineHeight, setGlobalLineHeight] = useState<string>("1.6");
+  const [pdfQuality, setPdfQuality] = useState<PdfQualityMode>("print");
+  const [contentLibrary, setContentLibrary] = useState<ContentLibraryBlock[]>(mergeContentLibrary([]));
 
   const globalWatermarkPreviewStyle = useMemo(() => {
     if (!globalWatermarkPreviewUrl) return null;
@@ -330,6 +345,17 @@ export default function SalesTeamApp({
       setGlobalWatermarkScale(60);
       setGlobalWatermarkPosition("center");
     }
+    const typo = pdfCfg?.globalTypography || pdfCfg?.globalAuthoring?.typography || settings?.globalTypography;
+    if (typo) {
+      setGlobalFontFamily(typo.fontFamily || "Inter, 'Segoe UI', sans-serif");
+      setGlobalFontSize(typo.fontSize || "11px");
+      setGlobalHeadingColor(typo.headingColor || "#d97706");
+      setGlobalBodyColor(typo.bodyColor || "#475569");
+      setGlobalLineHeight(typo.lineHeight || "1.6");
+    }
+    const quality = pdfCfg?.pdfQuality || pdfCfg?.globalAuthoring?.pdfQuality;
+    if (quality === "screen" || quality === "print") setPdfQuality(quality);
+    setContentLibrary(mergeContentLibrary(pdfCfg?.contentLibrary || pdfCfg?.globalAuthoring?.contentLibrary));
   }, [settings, quotePdfSettings]);
 
   const handleSaveGlobalPdfSettings = async () => {
@@ -373,6 +399,26 @@ export default function SalesTeamApp({
           alignment: globalFooterAlignment,
         },
         globalWatermark: globalWatermarkFile || globalWatermarkUrl.trim() ? watermark : {},
+        globalTypography: {
+          fontFamily: globalFontFamily,
+          fontSize: globalFontSize,
+          headingColor: globalHeadingColor,
+          bodyColor: globalBodyColor,
+          lineHeight: globalLineHeight,
+        },
+        pdfQuality,
+        contentLibrary,
+        globalAuthoring: {
+          typography: {
+            fontFamily: globalFontFamily,
+            fontSize: globalFontSize,
+            headingColor: globalHeadingColor,
+            bodyColor: globalBodyColor,
+            lineHeight: globalLineHeight,
+          },
+          pdfQuality,
+          contentLibrary,
+        },
       };
 
       const response = await fetch(`${API_BASE_URL}/api/db/update`, {
@@ -2037,6 +2083,24 @@ export default function SalesTeamApp({
         sigRightName: DEFAULT_CEO_SIGNATURE_BLOCK.rightName || "",
         sigRightTitle: DEFAULT_CEO_SIGNATURE_BLOCK.rightTitle || "",
         sigRightSignatureUrl: "",
+        body_html: "",
+        authoringPageType: "custom" as const,
+        imageSections: [] as any[],
+        fontFamily: "",
+        headingColor: "",
+        bodyColor: "",
+        sigCeoEnabled: true,
+        sigCeoName: "Muhammad Allauddin",
+        sigCeoTitle: "CEO",
+        sigCeoUrl: "",
+        sigTechEnabled: false,
+        sigTechName: "Chief Technical Officer",
+        sigTechTitle: "Technical Director",
+        sigTechUrl: "",
+        sigSalesEnabled: true,
+        sigSalesName: "Barrister Raza Khan Niazi",
+        sigSalesTitle: "CEO Strategy & Innovation",
+        sigSalesUrl: "",
         saveStatus: "Saved" as const,
       };
     }
@@ -2059,6 +2123,24 @@ export default function SalesTeamApp({
     return {
       title: local?.title !== undefined ? local.title : (page.title || ""),
       body_text: local?.body_text !== undefined ? local.body_text : (parsed.bodyText || ""),
+      body_html: local?.body_html !== undefined ? local.body_html : (parsed.bodyHtml || ""),
+      authoringPageType: local?.authoringPageType !== undefined ? local.authoringPageType : resolveAuthoringPageType(parsed.authoringPageType || page.page_type || page.pageType),
+      imageSections: local?.imageSections !== undefined ? local.imageSections : (parsed.imageSections || []),
+      fontFamily: local?.fontFamily !== undefined ? local.fontFamily : (parsed.typography?.fontFamily || ""),
+      headingColor: local?.headingColor !== undefined ? local.headingColor : (parsed.typography?.headingColor || ""),
+      bodyColor: local?.bodyColor !== undefined ? local.bodyColor : (parsed.typography?.bodyColor || ""),
+      sigCeoEnabled: local?.sigCeoEnabled !== undefined ? local.sigCeoEnabled : (parsed.signatureBlock?.ceo?.enabled !== false),
+      sigCeoName: local?.sigCeoName !== undefined ? local.sigCeoName : (parsed.signatureBlock?.ceo?.name || parsed.signatureBlock?.leftName || DEFAULT_CEO_SIGNATURE_BLOCK.leftName || ""),
+      sigCeoTitle: local?.sigCeoTitle !== undefined ? local.sigCeoTitle : (parsed.signatureBlock?.ceo?.title || parsed.signatureBlock?.leftTitle || DEFAULT_CEO_SIGNATURE_BLOCK.leftTitle || ""),
+      sigCeoUrl: local?.sigCeoUrl !== undefined ? local.sigCeoUrl : (parsed.signatureBlock?.ceo?.signatureUrl || parsed.signatureBlock?.leftSignatureUrl || ""),
+      sigTechEnabled: local?.sigTechEnabled !== undefined ? local.sigTechEnabled : (parsed.signatureBlock?.technicalDirector?.enabled === true),
+      sigTechName: local?.sigTechName !== undefined ? local.sigTechName : (parsed.signatureBlock?.technicalDirector?.name || "Chief Technical Officer"),
+      sigTechTitle: local?.sigTechTitle !== undefined ? local.sigTechTitle : (parsed.signatureBlock?.technicalDirector?.title || "Technical Director"),
+      sigTechUrl: local?.sigTechUrl !== undefined ? local.sigTechUrl : (parsed.signatureBlock?.technicalDirector?.signatureUrl || ""),
+      sigSalesEnabled: local?.sigSalesEnabled !== undefined ? local.sigSalesEnabled : (parsed.signatureBlock?.salesAdvisor?.enabled !== false),
+      sigSalesName: local?.sigSalesName !== undefined ? local.sigSalesName : (parsed.signatureBlock?.salesAdvisor?.name || parsed.signatureBlock?.rightName || DEFAULT_CEO_SIGNATURE_BLOCK.rightName || ""),
+      sigSalesTitle: local?.sigSalesTitle !== undefined ? local.sigSalesTitle : (parsed.signatureBlock?.salesAdvisor?.title || parsed.signatureBlock?.rightTitle || DEFAULT_CEO_SIGNATURE_BLOCK.rightTitle || ""),
+      sigSalesUrl: local?.sigSalesUrl !== undefined ? local.sigSalesUrl : (parsed.signatureBlock?.salesAdvisor?.signatureUrl || parsed.signatureBlock?.rightSignatureUrl || ""),
       image_url: local?.image_url !== undefined ? local.image_url : (page.image_url || page.imageUrl || ""),
       bg_image_url: local?.bg_image_url !== undefined ? local.bg_image_url : (page.bg_image_url || page.bgImageUrl || ""),
       is_enabled: local?.is_enabled !== undefined ? local.is_enabled : (page.is_enabled !== false),
@@ -2168,6 +2250,8 @@ export default function SalesTeamApp({
       }
     }));
 
+    const templateMeta = getAuthoringTemplateMeta(resolveAuthoringPageType(state.authoringPageType));
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
@@ -2178,9 +2262,13 @@ export default function SalesTeamApp({
           id: pageId,
           data: {
             ...page,
+            page_type: templateMeta.pageType,
+            pageType: templateMeta.pageType,
             title: state.title,
             body_text: serializeQuotePageBody({
               bodyText: state.body_text,
+              bodyHtml: state.body_html,
+              authoringPageType: state.authoringPageType,
               layoutMode: state.layoutMode,
               coverLayoutMode: state.coverLayoutMode,
               header: {
@@ -2198,15 +2286,19 @@ export default function SalesTeamApp({
                 alignment: state.footerAlignment
               },
               bodyImages: state.bodyImages,
+              imageSections: state.imageSections,
               typography: {
                 densityMode: state.densityMode,
-                fontSize: state.fontSize || undefined,
-                lineHeight: state.lineHeight || undefined,
+                fontSize: state.fontSize || globalFontSize || undefined,
+                lineHeight: state.lineHeight || globalLineHeight || undefined,
                 paragraphSpacing: state.paragraphSpacing || undefined,
                 paddingTop: state.paddingTop || undefined,
                 paddingBottom: state.paddingBottom || undefined,
                 contentWidth: state.contentWidth || undefined,
                 textAlign: state.textAlign || undefined,
+                fontFamily: state.fontFamily || globalFontFamily || undefined,
+                headingColor: state.headingColor || globalHeadingColor || undefined,
+                bodyColor: state.bodyColor || globalBodyColor || undefined,
               },
               watermark: {
                 imageUrl: state.watermarkUrl || undefined,
@@ -2215,12 +2307,30 @@ export default function SalesTeamApp({
                 repeat: "no-repeat",
               },
               signatureBlock: {
-                leftName: state.sigLeftName,
-                leftTitle: state.sigLeftTitle,
-                leftSignatureUrl: state.sigLeftSignatureUrl,
-                rightName: state.sigRightName,
-                rightTitle: state.sigRightTitle,
-                rightSignatureUrl: state.sigRightSignatureUrl,
+                leftName: state.sigCeoName,
+                leftTitle: state.sigCeoTitle,
+                leftSignatureUrl: state.sigCeoUrl,
+                rightName: state.sigSalesName,
+                rightTitle: state.sigSalesTitle,
+                rightSignatureUrl: state.sigSalesUrl,
+                ceo: {
+                  enabled: state.sigCeoEnabled,
+                  name: state.sigCeoName,
+                  title: state.sigCeoTitle,
+                  signatureUrl: state.sigCeoUrl,
+                },
+                technicalDirector: {
+                  enabled: state.sigTechEnabled,
+                  name: state.sigTechName,
+                  title: state.sigTechTitle,
+                  signatureUrl: state.sigTechUrl,
+                },
+                salesAdvisor: {
+                  enabled: state.sigSalesEnabled,
+                  name: state.sigSalesName,
+                  title: state.sigSalesTitle,
+                  signatureUrl: state.sigSalesUrl,
+                },
               },
             }),
             image_url: state.image_url,
@@ -4157,54 +4267,13 @@ export default function SalesTeamApp({
                                 />
                               </div>
 
-                              <div className="space-y-2">
-                                <label className="text-[9px] uppercase font-mono text-slate-500 font-bold">Body Text Content</label>
-                                <textarea
-                                  rows={4}
-                                  value={pageState.body_text}
-                                  onChange={(e) => handleFieldChange(page.id, 'body_text', e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300"
-                                />
-                              </div>
-
-                              {/* Layout Mode Selector (BUG 4) */}
-                              <div className="space-y-2">
-                                <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Page Layout Mode</label>
-                                <select
-                                  value={pageState.layoutMode}
-                                  onChange={(e) => handleFieldChange(page.id, 'layoutMode', e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-sans focus:outline-none focus:border-amber-500"
-                                >
-                                  <option value="standard">Standard (Header, Title, Text, Footer)</option>
-                                  <option value="ceo_signature_block">CEO Signature Block</option>
-                                  <option value="image_only">IMAGE ONLY PAGE (Render background image only)</option>
-                                  <option value="full_page_image">Full Page Image Only (Hides text & headers)</option>
-                                </select>
-                              </div>
-
-                              {pageState.layoutMode === "ceo_signature_block" && (
-                                <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
-                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold block">CEO Signature Block</label>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="space-y-1">
-                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Left Name</span>
-                                      <input type="text" value={pageState.sigLeftName} onChange={(e) => handleFieldChange(page.id, 'sigLeftName', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
-                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Title</span>
-                                      <input type="text" value={pageState.sigLeftTitle} onChange={(e) => handleFieldChange(page.id, 'sigLeftTitle', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
-                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Signature Image URL</span>
-                                      <input type="text" value={pageState.sigLeftSignatureUrl} onChange={(e) => handleFieldChange(page.id, 'sigLeftSignatureUrl', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Right Name</span>
-                                      <input type="text" value={pageState.sigRightName} onChange={(e) => handleFieldChange(page.id, 'sigRightName', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
-                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Title</span>
-                                      <input type="text" value={pageState.sigRightTitle} onChange={(e) => handleFieldChange(page.id, 'sigRightTitle', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
-                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Signature Image URL</span>
-                                      <input type="text" value={pageState.sigRightSignatureUrl} onChange={(e) => handleFieldChange(page.id, 'sigRightSignatureUrl', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
+                              <QuotePageAuthoringFields
+                                pageId={page.id}
+                                pageState={pageState as any}
+                                contentLibrary={contentLibrary}
+                                ceoMessages={ceoMessages}
+                                onFieldChange={handleFieldChange}
+                              />
 
                               {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
                                 <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
@@ -4241,6 +4310,18 @@ export default function SalesTeamApp({
                                     <div>
                                       <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Height</label>
                                       <input type="text" placeholder="1.6" value={pageState.lineHeight} onChange={(e) => handleFieldChange(page.id, 'lineHeight', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Font Family Override</label>
+                                      <input type="text" placeholder={globalFontFamily} value={pageState.fontFamily} onChange={(e) => handleFieldChange(page.id, 'fontFamily', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Heading Color</label>
+                                      <input type="color" value={pageState.headingColor || globalHeadingColor} onChange={(e) => handleFieldChange(page.id, 'headingColor', e.target.value)} className="w-full h-8 bg-slate-950 border border-slate-850 rounded" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Body Color</label>
+                                      <input type="color" value={pageState.bodyColor || globalBodyColor} onChange={(e) => handleFieldChange(page.id, 'bodyColor', e.target.value)} className="w-full h-8 bg-slate-950 border border-slate-850 rounded" />
                                     </div>
                                   </div>
                                   {(page.page_type === 'cover' || page.pageType === 'cover') && (
@@ -4902,6 +4983,39 @@ export default function SalesTeamApp({
                         >
                           Close Preview
                         </button>
+                      </div>
+
+                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
+                        <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Premium Typography & PDF Quality</label>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Font Family</label>
+                            <input type="text" value={globalFontFamily} onChange={(e) => setGlobalFontFamily(e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Font Size</label>
+                            <input type="text" value={globalFontSize} onChange={(e) => setGlobalFontSize(e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Height</label>
+                            <input type="text" value={globalLineHeight} onChange={(e) => setGlobalLineHeight(e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Heading Color</label>
+                            <input type="color" value={globalHeadingColor} onChange={(e) => setGlobalHeadingColor(e.target.value)} className="w-full h-8 bg-slate-950 border border-slate-850 rounded" />
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Body Color</label>
+                            <input type="color" value={globalBodyColor} onChange={(e) => setGlobalBodyColor(e.target.value)} className="w-full h-8 bg-slate-950 border border-slate-850 rounded" />
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-slate-500 uppercase font-mono block">PDF Export Quality</label>
+                            <select value={pdfQuality} onChange={(e) => setPdfQuality(e.target.value as PdfQualityMode)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white">
+                              <option value="print">Print Quality</option>
+                              <option value="screen">Screen Quality</option>
+                            </select>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -36,6 +36,12 @@ import {
   typographyStyleAttr,
 } from "./src/lib/quotePdfLayout.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
+import {
+  renderPageBodyHtml,
+  quoteAuthoringPrintCss,
+  renderEnhancedSignatureBlockHtml,
+  type PdfQualityMode,
+} from "./src/lib/quoteAuthoring.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import {
   isSupabaseActive,
@@ -5452,7 +5458,9 @@ function resolveQuotePdfBranding(activeState: Database) {
     globalPdfHeader: savedHeader,
     globalPdfFooter: savedFooter,
     globalWatermark: savedWatermark || {},
-    globalTypography: pdf.globalTypography || pdf.global_typography || {},
+    globalTypography: pdf.globalTypography || pdf.global_typography || pdf.globalAuthoring?.typography || {},
+    pdfQuality: pdf.pdfQuality || pdf.globalAuthoring?.pdfQuality || "print",
+    globalAuthoring: pdf.globalAuthoring || pdf.global_authoring || {},
   };
 }
 
@@ -5462,7 +5470,12 @@ function compileSunchaserPDFHtml(
   quoteObj: any,
   leadObj: any,
   activeState: Database,
-  options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean } = {}
+  options: {
+    includedPages?: string[];
+    templateId?: string;
+    includeSizerItems?: boolean;
+    pdfQuality?: PdfQualityMode;
+  } = {}
 ): string {
   const settings = resolveQuotePdfBranding(activeState);
   const proposal = mergeQuoteWithLead(quoteObj, leadObj);
@@ -5717,7 +5730,12 @@ function compileSunchaserPDFHtml(
   };
 
   const globalWatermark = settings.globalWatermark || {};
-  const globalTypography = settings.globalTypography || {};
+  const globalTypography = settings.globalTypography || settings.globalAuthoring?.typography || {};
+  const pdfQuality: PdfQualityMode =
+    options.pdfQuality ||
+    settings.pdfQuality ||
+    settings.globalAuthoring?.pdfQuality ||
+    "print";
 
   // Resolve template pages from database if available
   const templateId = options.templateId || "tmpl-1";
@@ -6026,7 +6044,21 @@ function compileSunchaserPDFHtml(
         ? ext.watermark
         : { ...(globalWatermark || {}), ...(ext.watermark || {}) };
     const watermarkHtml = buildWatermarkLayer(wmSource, wmSettings);
-    const rich = (text: string) => renderRichTextBlock(text, { align: typo.textAlign });
+    const mergedTypography = { ...globalTypography, ...ext.typography };
+    const pageBody = (contentExt: typeof ext) =>
+      renderPageBodyHtml(contentExt, {
+        align: typo.textAlign,
+        typography: mergedTypography,
+      });
+    const renderBody = (text?: string) => {
+      const payload = { ...ext, bodyText: text ?? ext.bodyText ?? "" };
+      const html = pageBody(payload);
+      if (html) return html;
+      const plain = payload.bodyText;
+      if (plain) return renderRichTextBlock(plain, { align: typo.textAlign });
+      return "";
+    };
+    const rich = renderBody;
 
     // Resolve header settings
     let hEnabled = globalHeader.enabled !== false;
@@ -6187,10 +6219,10 @@ function compileSunchaserPDFHtml(
             ${imageContent}
           </div>
         `;
-      } else if (ext.layoutMode === "ceo_signature_block") {
-        const signatureHtml = buildCeoSignatureBlockHtml(ext.signatureBlock, ceoList);
+      } else if (ext.layoutMode === "ceo_signature_block" || ext.layoutMode === "signature_block") {
+        const signatureHtml = renderEnhancedSignatureBlockHtml(ext.signatureBlock, ceoList);
         pagesHtml += `
-          <div class="page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+          <div class="page authoring-page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
             ${watermarkHtml}
             ${absoluteImagesHtml}
             ${pageShellOpen}
@@ -6242,10 +6274,10 @@ function compileSunchaserPDFHtml(
           ${imageContent}
         </div>
       `;
-    } else if (ext.layoutMode === "ceo_signature_block") {
-      const signatureHtml = buildCeoSignatureBlockHtml(ext.signatureBlock, ceoList);
+    } else if (ext.layoutMode === "ceo_signature_block" || ext.layoutMode === "signature_block") {
+      const signatureHtml = renderEnhancedSignatureBlockHtml(ext.signatureBlock, ceoList);
       pagesHtml += `
-        <div class="page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+        <div class="page authoring-page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
           ${watermarkHtml}
           ${absoluteImagesHtml}
           ${pageShellOpen}
@@ -7027,6 +7059,7 @@ function compileSunchaserPDFHtml(
           letter-spacing: 0.02em;
         }
         ${quotePdfPrintCss()}
+        ${quoteAuthoringPrintCss(pdfQuality)}
         .page-footer {
           border-top: 1px solid #cbd5e1;
           padding-top: 6px;

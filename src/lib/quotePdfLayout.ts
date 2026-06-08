@@ -41,16 +41,57 @@ export const DEFAULT_CEO_SIGNATURE_BLOCK: CeoSignatureBlock = {
   rightSignatureUrl: "",
 };
 
+export type SignatureRoleSettings = {
+  enabled?: boolean;
+  name?: string;
+  title?: string;
+  signatureUrl?: string;
+  signatureFile?: string;
+};
+
+export type EnhancedSignatureBlock = CeoSignatureBlock & {
+  ceo?: SignatureRoleSettings;
+  technicalDirector?: SignatureRoleSettings;
+  salesAdvisor?: SignatureRoleSettings;
+};
+
+export type QuoteImageSection = {
+  id: string;
+  layout: "full_width" | "left_image" | "right_image" | "center";
+  imageUrl: string;
+  widthPercent?: number;
+  textHtml?: string;
+};
+
+export type QuoteGlobalTypography = {
+  fontFamily?: string;
+  fontSize?: string;
+  headingColor?: string;
+  bodyColor?: string;
+  lineHeight?: string;
+  densityMode?: QuoteTypography["densityMode"];
+  paragraphSpacing?: string;
+  paddingTop?: string;
+  paddingBottom?: string;
+  contentWidth?: string;
+  textAlign?: string;
+};
+
 export type QuotePageExtendedSettings = {
   bodyText: string;
+  bodyHtml?: string;
+  authoringPageType?: string;
   layoutMode: string;
   coverLayoutMode: "classic" | "modern";
   header: Record<string, unknown>;
   footer: Record<string, unknown>;
   bodyImages: any[];
-  typography: Partial<QuoteTypography> & { densityMode?: QuoteTypography["densityMode"] };
+  imageSections?: QuoteImageSection[];
+  typography: Partial<QuoteTypography & QuoteGlobalTypography> & {
+    densityMode?: QuoteTypography["densityMode"];
+  };
   watermark: QuoteWatermark;
-  signatureBlock?: CeoSignatureBlock;
+  signatureBlock?: EnhancedSignatureBlock;
 };
 
 const DENSITY_PRESETS: Record<QuoteTypography["densityMode"], Omit<QuoteTypography, "densityMode">> = {
@@ -235,6 +276,8 @@ export function renderRichTextBlock(
 
 export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePageExtendedSettings {
   let bodyText = bodyTextContent || "";
+  let bodyHtml = "";
+  let authoringPageType = "custom";
   let layoutMode = "standard";
   let coverLayoutMode: "classic" | "modern" = "classic";
   let header: Record<string, unknown> = {
@@ -257,19 +300,23 @@ export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePa
     showPageNumber: false,
   };
   let bodyImages: any[] = [];
+  let imageSections: QuoteImageSection[] = [];
   let typography: QuotePageExtendedSettings["typography"] = {};
   let watermark: QuoteWatermark = {};
-  let signatureBlock: CeoSignatureBlock = { ...DEFAULT_CEO_SIGNATURE_BLOCK };
+  let signatureBlock: EnhancedSignatureBlock = { ...DEFAULT_CEO_SIGNATURE_BLOCK };
 
   if (typeof bodyText === "string" && bodyText.trim().startsWith("{")) {
     try {
       const parsed = JSON.parse(bodyText);
       bodyText = parsed.bodyText !== undefined ? parsed.bodyText : "";
+      bodyHtml = parsed.bodyHtml || "";
+      authoringPageType = parsed.authoringPageType || "custom";
       layoutMode = parsed.layoutMode || "standard";
       coverLayoutMode = parsed.coverLayoutMode === "modern" ? "modern" : "classic";
       if (parsed.header) header = { ...header, ...parsed.header };
       if (parsed.footer) footer = { ...footer, ...parsed.footer };
       if (Array.isArray(parsed.bodyImages)) bodyImages = parsed.bodyImages;
+      if (Array.isArray(parsed.imageSections)) imageSections = parsed.imageSections;
       if (parsed.typography) typography = parsed.typography;
       if (parsed.watermark) watermark = parsed.watermark;
       if (parsed.signatureBlock) {
@@ -282,11 +329,14 @@ export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePa
 
   return {
     bodyText,
+    bodyHtml,
+    authoringPageType,
     layoutMode,
     coverLayoutMode,
     header,
     footer,
     bodyImages,
+    imageSections,
     typography,
     watermark,
     signatureBlock,
@@ -312,10 +362,13 @@ export function resolveTypography(
     contentWidth: ext.typography?.contentWidth || globalTypography?.contentWidth || base.contentWidth,
     textAlign: ext.typography?.textAlign || globalTypography?.textAlign || base.textAlign,
     densityMode: density,
-  };
+    fontFamily: ext.typography?.fontFamily || (globalTypography as any)?.fontFamily,
+    headingColor: ext.typography?.headingColor || (globalTypography as any)?.headingColor,
+    bodyColor: ext.typography?.bodyColor || (globalTypography as any)?.bodyColor,
+  } as QuoteTypography & { fontFamily?: string; headingColor?: string; bodyColor?: string };
 }
 
-export function typographyStyleAttr(typo: QuoteTypography): string {
+export function typographyStyleAttr(typo: QuoteTypography & { fontFamily?: string; bodyColor?: string; headingColor?: string }): string {
   return [
     `--quote-font-size:${typo.fontSize}`,
     `--quote-line-height:${typo.lineHeight}`,
@@ -324,7 +377,10 @@ export function typographyStyleAttr(typo: QuoteTypography): string {
     `padding-bottom:${typo.paddingBottom}`,
     `max-width:${typo.contentWidth}`,
     `text-align:${typo.textAlign}`,
-  ].join(";");
+    typo.fontFamily ? `font-family:${typo.fontFamily}` : "",
+    typo.bodyColor ? `color:${typo.bodyColor}` : "",
+    typo.headingColor ? `--quote-heading-color:${typo.headingColor}` : "",
+  ].filter(Boolean).join(";");
 }
 
 export function buildWatermarkLayer(
@@ -440,27 +496,34 @@ export function quotePdfPrintCss(): string {
     .page-title {
       color: #d97706 !important;
     }
+    ${"" /* authoring CSS injected via quoteAuthoringPrintCss in server */}
   `;
 }
 
 export function serializeQuotePageBody(state: {
   bodyText: string;
+  bodyHtml?: string;
+  authoringPageType?: string;
   layoutMode?: string;
   coverLayoutMode?: string;
   header?: Record<string, unknown>;
   footer?: Record<string, unknown>;
   bodyImages?: any[];
+  imageSections?: QuoteImageSection[];
   typography?: Record<string, unknown>;
   watermark?: QuoteWatermark;
-  signatureBlock?: CeoSignatureBlock;
+  signatureBlock?: EnhancedSignatureBlock;
 }): string {
   return JSON.stringify({
     bodyText: state.bodyText || "",
+    bodyHtml: state.bodyHtml || "",
+    authoringPageType: state.authoringPageType || "custom",
     layoutMode: state.layoutMode || "standard",
     coverLayoutMode: state.coverLayoutMode || "classic",
     header: state.header || { mode: "inherit" },
     footer: state.footer || { mode: "inherit" },
     bodyImages: state.bodyImages || [],
+    imageSections: state.imageSections || [],
     typography: state.typography || {},
     watermark: state.watermark || {},
     signatureBlock: state.signatureBlock || DEFAULT_CEO_SIGNATURE_BLOCK,
