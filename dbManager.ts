@@ -9,6 +9,7 @@ import {
   applyGlobalWatermarkToPdfSettingsRow,
   resolveStoredGlobalWatermark,
 } from "./src/lib/quotePdfSettingsStore.ts";
+import { getSupabaseProjectUrlFromEnv } from "./src/lib/quotePdfSettingsStore.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import { phonesMatch } from "./src/lib/phoneNormalize.ts";
 
@@ -1686,7 +1687,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   }));
 
   const quotePdfSettingsMapped = (quotePdfSettingsData || []).map((qps: any) => {
-    const watermark = resolveStoredGlobalWatermark(qps, settingsData);
+    const watermark = resolveStoredGlobalWatermark(qps, settingsData, getSupabaseProjectUrlFromEnv());
     const row = {
       id: qps.id,
       companyName: qps.company_name || qps.companyName,
@@ -1698,9 +1699,12 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
       globalPdfHeader: qps.global_pdf_header || qps.globalPdfHeader || null,
       globalPdfFooter: qps.global_pdf_footer || qps.globalPdfFooter || null,
       globalWatermark: watermark,
+      globalWatermarkFile: watermark?.globalWatermarkFile || null,
       useDefaultCompanyContent: !!(qps.use_default_company_content ?? qps.useDefaultCompanyContent),
     };
-    return watermark ? applyGlobalWatermarkToPdfSettingsRow(row, watermark) : row;
+    return watermark
+      ? applyGlobalWatermarkToPdfSettingsRow(row, watermark, getSupabaseProjectUrlFromEnv())
+      : row;
   });
 
   const usersMapped = (users || []).map((u: any) => ({

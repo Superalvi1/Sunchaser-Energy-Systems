@@ -17,7 +17,13 @@ import {
   buildQuotePdfSettingsSupabasePayload,
   applyGlobalWatermarkToPdfSettingsRow,
   QUOTE_PDF_GLOBAL_WATERMARK_KEY,
+  withResolvedGlobalWatermark,
 } from "./src/lib/quotePdfSettingsStore.ts";
+import {
+  deleteQuoteWatermarkAsset,
+  parseQuoteAssetBase64Upload,
+  uploadQuoteWatermarkAsset,
+} from "./src/lib/quoteAssetsStorage.ts";
 import {
   buildWatermarkLayer,
   formatSiteLocation,
@@ -4076,6 +4082,36 @@ app.post("/api/upload", async (req, res) => {
   }
 });
 
+app.post("/api/quote-assets/watermark", async (req, res) => {
+  try {
+    const base64Input = req.body.base64Data || req.body.base64;
+    const settingsId = req.body.settingsId || req.body.id || "settings-1";
+    const parsed = parseQuoteAssetBase64Upload(base64Input);
+    const uploaded = await uploadQuoteWatermarkAsset(
+      parsed.buffer,
+      parsed.contentType,
+      parsed.extension,
+      settingsId
+    );
+    res.json(uploaded);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Watermark upload failed." });
+  }
+});
+
+app.delete("/api/quote-assets/watermark", async (req, res) => {
+  try {
+    const storagePath = req.body.globalWatermarkFile || req.body.storagePath;
+    if (!storagePath) {
+      return res.status(400).json({ error: "globalWatermarkFile is required." });
+    }
+    await deleteQuoteWatermarkAsset(String(storagePath));
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Watermark delete failed." });
+  }
+});
+
 // 10. Accept Quote & Auto-Provision trackers
 app.post("/api/leads/:id/accept-quote", async (req, res) => {
   const { id } = req.params;
@@ -5372,11 +5408,12 @@ function resolveQuotePdfBranding(activeState: Database) {
   const logoUrl = resolveQuotePdfLogoUrl(pdf.logoUrl || pdf.logo_url);
   const savedHeader = pdf.globalPdfHeader || pdf.global_pdf_header || null;
   const savedFooter = pdf.globalPdfFooter || pdf.global_pdf_footer || null;
-  const savedWatermark =
-    pdf.globalWatermark ||
-    pdf.global_watermark ||
-    savedHeader?.watermark ||
-    null;
+  const savedWatermark = withResolvedGlobalWatermark(
+    (pdf.globalWatermark ||
+      pdf.global_watermark ||
+      savedHeader?.watermark ||
+      null) as any
+  );
   return {
     companyName,
     officeAddress:

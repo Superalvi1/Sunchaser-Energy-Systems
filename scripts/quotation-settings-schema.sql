@@ -133,6 +133,12 @@ alter table if exists public.quote_pdf_settings
   add column if not exists global_watermark jsonb,
   add column if not exists use_default_company_content boolean not null default false;
 
+-- Phase 15C: Supabase Storage bucket for quotation watermark uploads
+-- Create via Dashboard → Storage → New bucket: quote-assets (public)
+-- Or run once in SQL editor:
+-- insert into storage.buckets (id, name, public) values ('quote-assets', 'quote-assets', true)
+-- on conflict (id) do update set public = true;
+
 -- -----------------------------------------------------------------------------
 -- 8. Social / portal links (QR page — synced but not yet consumed by PDF renderer)
 -- -----------------------------------------------------------------------------

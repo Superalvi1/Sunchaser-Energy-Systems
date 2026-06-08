@@ -39,7 +39,8 @@ import {
   type BoqInsertAction,
 } from "../lib/boqRowInsert";
 import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
-import { normalizeGlobalWatermark } from "../lib/quotePdfSettingsStore";
+import { normalizeGlobalWatermark, resolveGlobalWatermarkImageUrl } from "../lib/quotePdfSettingsStore";
+import { QUOTE_WATERMARK_MAX_BYTES } from "../lib/quoteAssetsConstants";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -220,7 +221,10 @@ export default function SalesTeamApp({
   const [globalFooterLineColor, setGlobalFooterLineColor] = useState<string>("#cbd5e1");
   const [globalFooterAlignment, setGlobalFooterAlignment] = useState<string>("left");
   const [globalWatermarkUrl, setGlobalWatermarkUrl] = useState<string>("");
+  const [globalWatermarkFile, setGlobalWatermarkFile] = useState<string>("");
+  const [globalWatermarkPreviewUrl, setGlobalWatermarkPreviewUrl] = useState<string>("");
   const [globalWatermarkOpacity, setGlobalWatermarkOpacity] = useState<number>(0.08);
+  const [globalWatermarkUploading, setGlobalWatermarkUploading] = useState<boolean>(false);
   const [useDefaultCompanyContent, setUseDefaultCompanyContent] = useState<boolean>(false);
 
   const isDefaultAutoSizerRow = (row: any) => {
@@ -283,10 +287,14 @@ export default function SalesTeamApp({
       normalizeGlobalWatermark(pdfCfg?.globalWatermark || pdfCfg?.global_watermark) ||
       normalizeGlobalWatermark(pdfCfg?.globalPdfHeader?.watermark);
     if (wm) {
-      setGlobalWatermarkUrl(wm.imageUrl || "");
+      setGlobalWatermarkFile(wm.globalWatermarkFile || "");
+      setGlobalWatermarkUrl(wm.globalWatermarkFile ? "" : wm.imageUrl || "");
+      setGlobalWatermarkPreviewUrl(resolveGlobalWatermarkImageUrl(wm));
       setGlobalWatermarkOpacity(wm.opacity ?? 0.08);
     } else {
+      setGlobalWatermarkFile("");
       setGlobalWatermarkUrl("");
+      setGlobalWatermarkPreviewUrl("");
       setGlobalWatermarkOpacity(0.08);
     }
   }, [settings, quotePdfSettings]);
@@ -303,7 +311,11 @@ export default function SalesTeamApp({
         logoUrl: "",
       };
       const watermark = {
-        imageUrl: globalWatermarkUrl.trim(),
+        ...(globalWatermarkFile
+          ? { globalWatermarkFile, imageUrl: "" }
+          : globalWatermarkUrl.trim()
+            ? { imageUrl: globalWatermarkUrl.trim() }
+            : {}),
         opacity: globalWatermarkOpacity,
         position: "center" as const,
         repeat: "no-repeat" as const,
@@ -318,7 +330,7 @@ export default function SalesTeamApp({
           logoSize: globalHeaderLogoSize,
           lineColor: globalHeaderLineColor,
           alignment: globalHeaderAlignment,
-          ...(globalWatermarkUrl.trim() ? { watermark } : {}),
+          ...(globalWatermarkFile || globalWatermarkUrl.trim() ? { watermark } : {}),
         },
         globalPdfFooter: {
           enabled: globalFooterEnabled,
@@ -326,7 +338,7 @@ export default function SalesTeamApp({
           lineColor: globalFooterLineColor,
           alignment: globalFooterAlignment,
         },
-        globalWatermark: globalWatermarkUrl.trim() ? watermark : {},
+        globalWatermark: globalWatermarkFile || globalWatermarkUrl.trim() ? watermark : {},
       };
 
       const response = await fetch(`${API_BASE_URL}/api/db/update`, {
@@ -350,6 +362,90 @@ export default function SalesTeamApp({
       console.error("Save global settings error:", err);
       alert("Failed to save global PDF settings: " + (err.message || err.toString()));
     }
+  };
+
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Failed to read file."));
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.readAsDataURL(file);
+    });
+
+  const handleGlobalWatermarkUpload = async (file: File) => {
+    const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      alert("Only PNG, JPG, and WEBP images are allowed.");
+      return;
+    }
+    if (file.size > QUOTE_WATERMARK_MAX_BYTES) {
+      alert("Watermark image must be 5MB or smaller.");
+      return;
+    }
+    setGlobalWatermarkUploading(true);
+    try {
+      const base64Data = await readFileAsDataUrl(file);
+      const settingsId = quotePdfSettings?.[0]?.id || "settings-1";
+      const response = await fetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64Data, settingsId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Upload failed.");
+      }
+      setGlobalWatermarkFile(payload.globalWatermarkFile || "");
+      setGlobalWatermarkPreviewUrl(payload.publicUrl || "");
+      setGlobalWatermarkUrl("");
+
+      const base = quotePdfSettings?.[0] || { id: settingsId };
+      const watermark = {
+        globalWatermarkFile: payload.globalWatermarkFile,
+        opacity: globalWatermarkOpacity,
+        position: "center" as const,
+        repeat: "no-repeat" as const,
+      };
+      await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          table: "quotePdfSettings",
+          id: base.id,
+          data: {
+            ...base,
+            globalPdfHeader: {
+              ...(base.globalPdfHeader || {}),
+              watermark,
+            },
+            globalWatermark: watermark,
+          },
+        }),
+      });
+      if (onRefreshState) onRefreshState();
+    } catch (err: any) {
+      alert("Watermark upload failed: " + (err.message || err.toString()));
+    } finally {
+      setGlobalWatermarkUploading(false);
+    }
+  };
+
+  const handleRemoveGlobalWatermark = async () => {
+    if (globalWatermarkFile) {
+      try {
+        await fetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ globalWatermarkFile }),
+        });
+      } catch {
+        /* best effort storage cleanup */
+      }
+    }
+    setGlobalWatermarkFile("");
+    setGlobalWatermarkUrl("");
+    setGlobalWatermarkPreviewUrl("");
   };
 
   const handleCleanAction = (pageId: string, actionType: 'content' | 'bg' | 'logo' | 'reset') => {
@@ -3737,13 +3833,69 @@ export default function SalesTeamApp({
 
                       <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
                         <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Watermark (All Pages)</label>
-                        <input
-                          type="text"
-                          placeholder="Solar panel watermark URL"
-                          value={globalWatermarkUrl}
-                          onChange={(e) => setGlobalWatermarkUrl(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
-                        />
+
+                        {globalWatermarkPreviewUrl ? (
+                          <div className="relative group rounded-lg border border-slate-850 bg-slate-950 p-2 flex items-center gap-3">
+                            <img
+                              src={globalWatermarkPreviewUrl}
+                              alt="Global watermark preview"
+                              className="h-16 w-16 object-contain rounded border border-slate-800 bg-white/90"
+                            />
+                            <div className="flex-1 min-w-0 text-[10px] text-slate-400">
+                              {globalWatermarkFile ? (
+                                <span className="font-mono break-all">{globalWatermarkFile}</span>
+                              ) : (
+                                <span className="break-all">{globalWatermarkUrl}</span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleRemoveGlobalWatermark}
+                              className="text-rose-400 hover:text-rose-300 text-[10px] font-bold uppercase px-2 py-1 border border-rose-500/30 rounded"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="border border-dashed border-slate-850 hover:border-slate-700 rounded-lg h-20 bg-slate-950 flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 cursor-pointer transition text-[10px]">
+                            {globalWatermarkUploading ? (
+                              <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Uploading...</span>
+                            ) : (
+                              <>
+                                <Upload className="h-4 w-4 mb-1" />
+                                <span>Upload Watermark Image</span>
+                                <span className="text-[9px] text-slate-600 mt-0.5">PNG, JPG, WEBP · Max 5MB</span>
+                              </>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp"
+                              className="hidden"
+                              disabled={globalWatermarkUploading}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleGlobalWatermarkUpload(file);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        )}
+
+                        <details className="text-[10px] text-slate-500">
+                          <summary className="cursor-pointer text-slate-400 hover:text-slate-300">Or use external URL (legacy)</summary>
+                          <input
+                            type="text"
+                            placeholder="https://example.com/watermark.png"
+                            value={globalWatermarkUrl}
+                            onChange={(e) => {
+                              setGlobalWatermarkUrl(e.target.value);
+                              setGlobalWatermarkFile("");
+                              setGlobalWatermarkPreviewUrl(e.target.value.trim());
+                            }}
+                            className="mt-2 w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
+                          />
+                        </details>
+
                         <div>
                           <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Opacity ({globalWatermarkOpacity})</label>
                           <input type="range" min="0.02" max="0.25" step="0.01" value={globalWatermarkOpacity} onChange={(e) => setGlobalWatermarkOpacity(parseFloat(e.target.value))} className="w-full accent-amber-500" />
