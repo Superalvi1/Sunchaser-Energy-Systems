@@ -879,11 +879,7 @@ export async function resetPasswordWithToken(token: string, password: string) {
 }
 
 export async function fetchRolesMatrix(staffUserId?: string, staffUsername?: string) {
-  const q = new URLSearchParams();
-  if (staffUserId) q.set("userId", staffUserId);
-  if (staffUsername) q.set("username", staffUsername);
-  const suffix = q.toString() ? `?${q}` : "";
-  const res = await apiFetch(`/api/auth/roles-matrix${suffix}`, {
+  const res = await apiFetch("/api/auth/roles-matrix", {
     headers:
       staffUserId && staffUsername
         ? portalAuthHeaders(staffUserId, staffUsername)
@@ -1155,8 +1151,7 @@ export async function fetchCustomerPortalSystem(userId: string, username: string
 }
 
 export async function fetchAdminUsers(userId: string, username: string) {
-  const q = new URLSearchParams({ userId, username });
-  const res = await apiFetch(`/api/admin/users?${q}`, {
+  const res = await apiFetch("/api/admin/users", {
     headers: portalAuthHeaders(userId, username),
   });
   const data = await res.json().catch(() => ({}));
@@ -1165,8 +1160,7 @@ export async function fetchAdminUsers(userId: string, username: string) {
 }
 
 export async function fetchPendingUsers(userId: string, username: string) {
-  const q = new URLSearchParams({ userId, username });
-  const res = await apiFetch(`/api/admin/users/pending?${q}`, {
+  const res = await apiFetch("/api/admin/users/pending", {
     headers: portalAuthHeaders(userId, username),
   });
   const data = await res.json().catch(() => ({}));
@@ -1255,6 +1249,32 @@ export async function deleteAdminUser(
       body: JSON.stringify({ userId: actorId, username: actorUsername, confirmText }),
     },
     "Failed to delete user"
+  );
+}
+
+export async function fetchDemoSeedUsers(actorId: string, actorUsername: string) {
+  const res = await apiFetch("/api/admin/users/demo-seeds", {
+    headers: portalAuthHeaders(actorId, actorUsername),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load demo users.");
+  return data as { users: User[] };
+}
+
+export async function deleteDemoSeedUsers(
+  actorId: string,
+  actorUsername: string,
+  body: { confirmText: string; userIds?: string[] }
+) {
+  return staffPortalJsonRequest<{ ok: boolean; deleted: string[]; message: string; errors?: any[] }>(
+    "deleteDemoSeedUsers",
+    "/api/admin/users/demo-seeds/delete",
+    {
+      method: "POST",
+      headers: portalAuthHeaders(actorId, actorUsername),
+      body: JSON.stringify({ ...body, userId: actorId, username: actorUsername }),
+    },
+    "Failed to delete demo users"
   );
 }
 

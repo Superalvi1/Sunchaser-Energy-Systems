@@ -12,6 +12,7 @@ import {
   APP_ROLES,
 } from "./src/lib/roles";
 import { canDeleteUser, isHighValueProtectedUser } from "./src/lib/userDeleteGuards.ts";
+import { isDemoSeedUser } from "./src/lib/demoUserCleanup.ts";
 
 export class UserAuthError extends Error {
   statusCode: number;
@@ -503,6 +504,9 @@ export async function createUserByAdmin(
         .update({ user_id: id })
         .eq("id", row.customer_id);
     }
+    const persisted = await getUserById(id, localDb);
+    mirrorUserToLocalDb(persisted, localDb);
+    return mapUserRow(persisted);
   }
   mirrorUserToLocalDb(row, localDb);
   return mapUserRow(row);
@@ -633,6 +637,35 @@ function removeUserFromLocalDb(userId: string, localDb?: Database) {
   localDb.users = localDb.users.filter((u: any) => u.id !== userId);
 }
 
+/** Clear assignee FKs; historical text fields (audit logs, invoice creator names) are preserved. */
+async function clearUserForeignReferences(userId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    await supabase
+      .from("project_deliveries")
+      .update({ assigned_technician_user_id: null })
+      .eq("assigned_technician_user_id", userId);
+    await supabase
+      .from("technical_job_updates")
+      .update({ assigned_user_id: null })
+      .eq("assigned_user_id", userId);
+    return;
+  }
+  const db = localDb as any;
+  for (const d of db?.projectDeliveries || []) {
+    if (d.assigned_technician_user_id === userId || d.assignedTechnicianUserId === userId) {
+      d.assigned_technician_user_id = null;
+      d.assignedTechnicianUserId = null;
+    }
+  }
+  for (const u of db?.technicalJobUpdates || []) {
+    if (u.assigned_user_id === userId || u.assignedUserId === userId) {
+      u.assigned_user_id = null;
+      u.assignedUserId = null;
+    }
+  }
+}
+
 async function getUserById(id: string, localDb?: Database) {
   if (isSupabaseActive()) {
     const { data, error } = await getSupabase()!.from("users").select("*").eq("id", id).maybeSingle();
@@ -655,7 +688,7 @@ export async function deleteUserByAdmin(
   await assertSuperAdminActor(actorId, actorUsername, localDb);
   const confirmText = String(opts.confirmText || "").trim().toUpperCase();
   if (confirmText !== "DELETE") {
-    throw new UserAuthError('Type DELETE to confirm permanent deletion.', 400);
+    throw new UserAuthError('Type DELETE to permanently remove this user.', 400);
   }
 
   const target = await getUserById(targetUserId, localDb);
@@ -681,8 +714,10 @@ export async function deleteUserByAdmin(
     if (opts.unlinkCustomer !== false) {
       await supabase.from("customers").update({ user_id: null }).eq("user_id", targetUserId);
     }
+    await clearUserForeignReferences(targetUserId, localDb);
     const { error } = await supabase.from("users").delete().eq("id", targetUserId);
     if (error) throw error;
+    removeUserFromLocalDb(targetUserId, localDb);
   } else {
     const db = localDb as any;
     if (db?.customers && opts.unlinkCustomer !== false) {
@@ -694,6 +729,7 @@ export async function deleteUserByAdmin(
         }
       }
     }
+    await clearUserForeignReferences(targetUserId, localDb);
     removeUserFromLocalDb(targetUserId, localDb);
   }
 
@@ -705,6 +741,63 @@ export async function deleteUserByAdmin(
     deletedUserId: targetUserId,
     unlinkedCustomerId: linkedCustomerId,
     linkedCustomerName,
+  };
+}
+
+export async function listDemoSeedUsersForCleanup(
+  actorId: string,
+  actorUsername: string,
+  localDb?: Database
+) {
+  const all = await listUsersForAdmin(actorId, actorUsername, localDb);
+  return all
+    .filter((u) => isDemoSeedUser(u))
+    .map((u) => ({
+      ...u,
+      demoLabel: isDemoSeedUser(u) ? u.name : u.username,
+    }));
+}
+
+export async function deleteDemoSeedUsersByAdmin(
+  actorId: string,
+  actorUsername: string,
+  body: { confirmText?: string; userIds?: string[] },
+  localDb?: Database
+) {
+  await assertSuperAdminActor(actorId, actorUsername, localDb);
+  const confirmText = String(body.confirmText || "").trim().toUpperCase();
+  if (confirmText !== "DELETE") {
+    throw new UserAuthError('Type DELETE to permanently remove this user.', 400);
+  }
+
+  const demos = await listDemoSeedUsersForCleanup(actorId, actorUsername, localDb);
+  const allowedIds = new Set(demos.map((u) => u.id));
+  const requested = (body.userIds || []).map((id) => String(id).trim()).filter(Boolean);
+  const toDelete = requested.length ? requested.filter((id) => allowedIds.has(id)) : [...allowedIds];
+
+  if (!toDelete.length) {
+    return { ok: true, deleted: [], message: "No demo users matched for cleanup." };
+  }
+
+  const deleted: string[] = [];
+  const errors: { id: string; error: string }[] = [];
+  for (const id of toDelete) {
+    try {
+      await deleteUserByAdmin(actorId, actorUsername, id, { confirmText: "DELETE" }, localDb);
+      deleted.push(id);
+    } catch (err: any) {
+      errors.push({ id, error: err?.message || "Delete failed." });
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    deleted,
+    errors,
+    message:
+      deleted.length > 0
+        ? `Removed ${deleted.length} demo user(s). Invoices, quotations, and audit logs were preserved.`
+        : "No demo users were deleted.",
   };
 }
 

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
+  Archive,
+  ArchiveRestore,
   ChevronLeft,
   Download,
   Edit3,
@@ -12,15 +14,19 @@ import {
   Plus,
   Receipt,
   Search,
+  Trash2,
   User,
   X,
 } from "lucide-react";
 import { User as StaffUser } from "../types";
 import {
+  archiveAdminParty,
   fetchAdminParties,
   fetchAdminPartyLedger,
+  hardDeleteAdminParty,
   invoicePdfUrl,
   recordAdminInvoicePayment,
+  restoreAdminParty,
 } from "../services/api";
 import { canCreateInvoice, PAYMENT_METHODS, type PartyLedgerSummary } from "../lib/invoices";
 import WhatsAppActionButton from "./WhatsAppActionButton";
@@ -28,6 +34,7 @@ import AppLogo from "./AppLogo";
 import AppModal from "./ui/AppModal";
 
 type PartyFilter = "all" | "outstanding" | "paid" | "overdue";
+type LedgerView = "active" | "archived";
 
 const statusClass: Record<string, string> = {
   Paid: "bg-emerald-500/25 text-emerald-300 border-emerald-500/40",
@@ -96,8 +103,15 @@ export default function PartyLedgerStaff({
   const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<PartyFilter>("all");
+  const [ledgerView, setLedgerView] = useState<LedgerView>("active");
   const [mobileShowList, setMobileShowList] = useState(true);
   const [paymentModal, setPaymentModal] = useState<PaymentModalState | null>(null);
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
+  const [hardDeleteModalOpen, setHardDeleteModalOpen] = useState(false);
+  const [hardDeleteConfirm, setHardDeleteConfirm] = useState("");
+  const [archiveSaving, setArchiveSaving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const [payForm, setPayForm] = useState({
     amount: "",
     paymentDate: new Date().toISOString().slice(0, 10),
@@ -115,7 +129,7 @@ export default function PartyLedgerStaff({
     setLoading(true);
     setPartiesError(null);
     try {
-      const res = await fetchAdminParties(staffUser);
+      const res = await fetchAdminParties(staffUser, { visibility: ledgerView });
       setParties(res.parties || []);
     } catch (e: any) {
       setPartiesError(e.message || "Failed to load parties.");
@@ -123,7 +137,7 @@ export default function PartyLedgerStaff({
     } finally {
       setLoading(false);
     }
-  }, [staffUser]);
+  }, [staffUser, ledgerView]);
 
   const loadDetail = useCallback(
     async (key: string) => {
@@ -155,6 +169,12 @@ export default function PartyLedgerStaff({
     if (allowed) loadParties();
   }, [allowed, loadParties]);
 
+  useEffect(() => {
+    setSelectedKey(null);
+    setDetail(null);
+    setMobileShowList(true);
+  }, [ledgerView]);
+
   const selectParty = async (key: string) => {
     setSelectedKey(key);
     setMobileShowList(false);
@@ -170,14 +190,14 @@ export default function PartyLedgerStaff({
   const filteredParties = useMemo(() => {
     const q = search.trim().toLowerCase();
     return parties
-      .filter((p) => matchesFilter(p, filter))
+      .filter((p) => (ledgerView === "archived" ? true : matchesFilter(p, filter)))
       .filter((p) => {
         if (!q) return true;
         const name = String(p.name || "").toLowerCase();
         const phone = String(p.phone || "").replace(/\s/g, "");
         return name.includes(q) || phone.includes(q.replace(/\s/g, ""));
       });
-  }, [parties, search, filter]);
+  }, [parties, search, filter, ledgerView]);
 
   const openPaymentModal = (tx: { invoiceId: string; invoiceNumber: string; balanceDue: number }) => {
     setPaymentModal({
@@ -237,6 +257,67 @@ export default function PartyLedgerStaff({
     }
   };
 
+  const confirmArchive = async () => {
+    if (!selectedKey) return;
+    setArchiveSaving(true);
+    setArchiveError(null);
+    try {
+      await archiveAdminParty(staffUser, selectedKey);
+      setArchiveModalOpen(false);
+      setSelectedKey(null);
+      setDetail(null);
+      setMobileShowList(true);
+      await loadParties();
+    } catch (e: any) {
+      setArchiveError(e.message || "Failed to archive party.");
+    } finally {
+      setArchiveSaving(false);
+    }
+  };
+
+  const confirmRestore = async () => {
+    if (!selectedKey) return;
+    setArchiveSaving(true);
+    setArchiveError(null);
+    try {
+      await restoreAdminParty(staffUser, selectedKey);
+      setRestoreModalOpen(false);
+      setSelectedKey(null);
+      setDetail(null);
+      setMobileShowList(true);
+      await loadParties();
+    } catch (e: any) {
+      setArchiveError(e.message || "Failed to restore party.");
+    } finally {
+      setArchiveSaving(false);
+    }
+  };
+
+  const confirmHardDelete = async () => {
+    if (!selectedKey || hardDeleteConfirm.trim().toUpperCase() !== "DELETE") return;
+    setArchiveSaving(true);
+    setArchiveError(null);
+    try {
+      await hardDeleteAdminParty(staffUser, selectedKey);
+      setHardDeleteModalOpen(false);
+      setHardDeleteConfirm("");
+      setSelectedKey(null);
+      setDetail(null);
+      setMobileShowList(true);
+      await loadParties();
+    } catch (e: any) {
+      setArchiveError(e.message || "Failed to delete party.");
+    } finally {
+      setArchiveSaving(false);
+    }
+  };
+
+  const canHardDelete =
+    ledgerView === "archived" &&
+    detail &&
+    detail.transactions.length === 0 &&
+    detail.payments.length === 0;
+
   if (!allowed) {
     return <p className="text-sm text-neutral-400 p-6">No permission to view party ledgers.</p>;
   }
@@ -286,6 +367,23 @@ export default function PartyLedgerStaff({
               />
             </div>
             <div className="flex flex-wrap gap-1">
+              {(["active", "archived"] as LedgerView[]).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setLedgerView(v)}
+                  className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wide border transition ${
+                    ledgerView === v
+                      ? "bg-slate-600/40 border-slate-500 text-slate-200"
+                      : "border-neutral-700 text-neutral-500 hover:border-neutral-600"
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            {ledgerView === "active" && (
+            <div className="flex flex-wrap gap-1">
               {(["all", "outstanding", "paid", "overdue"] as PartyFilter[]).map((f) => (
                 <button
                   key={f}
@@ -301,6 +399,7 @@ export default function PartyLedgerStaff({
                 </button>
               ))}
             </div>
+            )}
             <div className="text-[9px] text-neutral-600 uppercase tracking-widest">
               {filteredParties.length} client{filteredParties.length !== 1 ? "s" : ""}
             </div>
@@ -312,7 +411,9 @@ export default function PartyLedgerStaff({
             ) : partiesError ? (
               <p className="text-xs text-red-400 text-center py-12 px-3">{partiesError}</p>
             ) : parties.length === 0 ? (
-              <p className="text-xs text-neutral-500 text-center py-12">No parties yet</p>
+              <p className="text-xs text-neutral-500 text-center py-12">
+                {ledgerView === "archived" ? "No archived parties" : "No parties yet"}
+              </p>
             ) : filteredParties.length === 0 ? (
               <p className="text-xs text-neutral-500 text-center py-12">No parties match</p>
             ) : (
@@ -329,7 +430,13 @@ export default function PartyLedgerStaff({
                     <div className="flex justify-between items-start gap-2">
                       <div className="font-semibold text-sm text-neutral-100 leading-tight">{p.name}</div>
                       <span className={`text-[10px] font-black shrink-0 ${toneBalanceText(tone)}`}>
-                        {Number(p.balanceDue) <= 0 ? "PAID" : p.hasOverdue ? "OVERDUE" : "DUE"}
+                        {ledgerView === "archived"
+                          ? "ARCHIVED"
+                          : Number(p.balanceDue) <= 0
+                            ? "PAID"
+                            : p.hasOverdue
+                              ? "OVERDUE"
+                              : "DUE"}
                       </span>
                     </div>
                     {p.phone && (
@@ -371,7 +478,58 @@ export default function PartyLedgerStaff({
             <div className="space-y-5">
               {/* Customer header */}
               <div className="border-b border-neutral-800 pb-4">
-                <h3 className="text-lg font-bold text-neutral-50">{party.name}</h3>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-neutral-50">{party.name}</h3>
+                    {party.isArchived && (
+                      <span className="inline-block mt-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-slate-700 text-slate-300 border border-slate-600">
+                        Archived
+                        {party.archivedAt
+                          ? ` · ${String(party.archivedAt).slice(0, 10)}`
+                          : ""}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {ledgerView === "active" && !party.isArchived && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setArchiveError(null);
+                          setArchiveModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-600 text-slate-300 hover:bg-slate-800"
+                      >
+                        <Archive className="h-3.5 w-3.5" /> Archive Party
+                      </button>
+                    )}
+                    {ledgerView === "archived" && party.isArchived && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setArchiveError(null);
+                          setRestoreModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-900/40 border border-emerald-700 text-emerald-300 hover:bg-emerald-900/60"
+                      >
+                        <ArchiveRestore className="h-3.5 w-3.5" /> Restore Party
+                      </button>
+                    )}
+                    {canHardDelete && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setArchiveError(null);
+                          setHardDeleteConfirm("");
+                          setHardDeleteModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-red-800 text-red-400 hover:bg-red-950/40"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete Permanently
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-neutral-400">
                   {party.phone && (
                     <span className="flex items-center gap-1">
@@ -608,6 +766,139 @@ export default function PartyLedgerStaff({
           ) : null}
         </div>
       </div>
+
+      {/* Archive confirmation modal */}
+      {archiveModalOpen && party && (
+        <AppModal open onClose={() => setArchiveModalOpen(false)} panelClassName="max-w-md">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+              <h3 className="font-bold text-neutral-100">Archive Party</h3>
+              <button
+                type="button"
+                onClick={() => setArchiveModalOpen(false)}
+                className="text-neutral-500 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 text-sm text-neutral-300">
+              <p>
+                This will hide <strong className="text-neutral-100">{party.name}</strong> from the active
+                ledger. Invoices and payments will remain in the database.
+              </p>
+              {archiveError && <p className="text-red-400 text-xs">{archiveError}</p>}
+            </div>
+            <div className="flex gap-2 px-4 py-3 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setArchiveModalOpen(false)}
+                className="flex-1 py-2 rounded-lg border border-neutral-700 text-neutral-400 text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={archiveSaving}
+                onClick={confirmArchive}
+                className="flex-1 py-2 rounded-lg bg-slate-700 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {archiveSaving ? "Archiving…" : "Archive Party"}
+              </button>
+            </div>
+          </div>
+        </AppModal>
+      )}
+
+      {/* Restore confirmation modal */}
+      {restoreModalOpen && party && (
+        <AppModal open onClose={() => setRestoreModalOpen(false)} panelClassName="max-w-md">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+              <h3 className="font-bold text-neutral-100">Restore Party</h3>
+              <button
+                type="button"
+                onClick={() => setRestoreModalOpen(false)}
+                className="text-neutral-500 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 text-sm text-neutral-300">
+              <p>
+                Restore <strong className="text-neutral-100">{party.name}</strong> to the active party
+                ledger?
+              </p>
+              {archiveError && <p className="text-red-400 text-xs">{archiveError}</p>}
+            </div>
+            <div className="flex gap-2 px-4 py-3 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setRestoreModalOpen(false)}
+                className="flex-1 py-2 rounded-lg border border-neutral-700 text-neutral-400 text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={archiveSaving}
+                onClick={confirmRestore}
+                className="flex-1 py-2 rounded-lg bg-emerald-700 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {archiveSaving ? "Restoring…" : "Restore Party"}
+              </button>
+            </div>
+          </div>
+        </AppModal>
+      )}
+
+      {/* Hard delete modal (no invoices/payments only) */}
+      {hardDeleteModalOpen && party && (
+        <AppModal open onClose={() => setHardDeleteModalOpen(false)} panelClassName="max-w-md">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+              <h3 className="font-bold text-red-300">Delete Permanently</h3>
+              <button
+                type="button"
+                onClick={() => setHardDeleteModalOpen(false)}
+                className="text-neutral-500 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 text-sm text-neutral-300">
+              <p>
+                This party has no invoices or payments. Type <strong className="text-red-300">DELETE</strong>{" "}
+                to remove the archived record permanently.
+              </p>
+              <input
+                type="text"
+                value={hardDeleteConfirm}
+                onChange={(e) => setHardDeleteConfirm(e.target.value)}
+                placeholder="Type DELETE"
+                className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-neutral-100 text-xs"
+              />
+              {archiveError && <p className="text-red-400 text-xs">{archiveError}</p>}
+            </div>
+            <div className="flex gap-2 px-4 py-3 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setHardDeleteModalOpen(false)}
+                className="flex-1 py-2 rounded-lg border border-neutral-700 text-neutral-400 text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={archiveSaving || hardDeleteConfirm.trim().toUpperCase() !== "DELETE"}
+                onClick={confirmHardDelete}
+                className="flex-1 py-2 rounded-lg bg-red-900 text-red-100 text-xs font-bold disabled:opacity-50"
+              >
+                {archiveSaving ? "Deleting…" : "Delete Permanently"}
+              </button>
+            </div>
+          </div>
+        </AppModal>
+      )}
 
       {/* Record payment modal */}
       {paymentModal && (

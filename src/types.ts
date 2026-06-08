@@ -356,6 +356,7 @@ export interface AppState {
   netMeteringHistory: NetMeteringLog[];
   inventory: InventoryItem[];
   stats: DashboardStats;
+  users?: User[];
   
   // Real enterprise models
   currentUser: User | null;

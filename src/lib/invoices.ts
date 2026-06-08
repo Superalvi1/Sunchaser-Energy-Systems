@@ -50,6 +50,9 @@ export type PartyLedgerSummary = {
   balanceDue: number;
   invoiceCount: number;
   hasOverdue?: boolean;
+  isArchived?: boolean;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
 };
 
 export type PartyLedgerPayment = {

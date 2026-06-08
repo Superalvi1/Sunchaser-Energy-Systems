@@ -46,6 +46,12 @@ import {
   resolveQuoteDiscountAmount,
   type QuoteDiscountType,
 } from "../lib/quoteDiscount";
+import {
+  formatLeadAdvisor,
+  formatLeadLocation,
+  sanitizeLeadAdvisorInput,
+  sanitizeLeadLocationInput,
+} from "../lib/leadDisplay";
 import QuotePageAuthoringFields from "./quoteAuthoring/QuotePageAuthoringFields";
 import {
   mergeContentLibrary,
@@ -157,8 +163,8 @@ export default function SalesTeamApp({
   const [clientEmail, setClientEmail] = useState("");
   const [clientAddress, setClientAddress] = useState("");
   const [cnic, setCnic] = useState("");
-  const [cityArea, setCityArea] = useState("Lahore");
-  const [bdmName, setBdmName] = useState("Sarah Connor");
+  const [cityArea, setCityArea] = useState("");
+  const [bdmName, setBdmName] = useState("");
   const [quoteDate, setQuoteDate] = useState(new Date().toISOString().split('T')[0]);
   const [systemType, setSystemType] = useState<'On-grid' | 'Hybrid' | 'Off-grid'>('Hybrid');
   const [panelBrand, setPanelBrand] = useState("Jinko");
@@ -1203,8 +1209,8 @@ export default function SalesTeamApp({
       setClientPhone(activeLead.phone || "");
       setClientEmail(activeLead.email || "");
       setClientAddress(activeLead.address || "");
-      setCityArea(activeLead.location || "Lahore");
-      setBdmName(activeLead.assignedSalesperson || "Sarah Connor");
+      setCityArea(sanitizeLeadLocationInput(activeLead.location) || sanitizeLeadLocationInput(activeLead.address) || "");
+      setBdmName(sanitizeLeadAdvisorInput(activeLead.assignedSalesperson) || staffUser?.name || "");
       setQuoteDate(new Date().toISOString().split('T')[0]);
       
       // 1. Reset all quote editor states to standard defaults to prevent state leakage
@@ -1975,8 +1981,8 @@ export default function SalesTeamApp({
     setClientEmail(quote.clientEmail || activeLead?.email || "");
     setClientAddress(quote.clientAddress || activeLead?.address || "");
     setCnic(quote.cnic || "");
-    setCityArea(quote.cityArea || activeLead?.location || "Lahore");
-    setBdmName(quote.bdmName || activeLead?.assignedSalesperson || "Sarah Connor");
+    setCityArea(sanitizeLeadLocationInput(quote.cityArea) || sanitizeLeadLocationInput(activeLead?.location) || sanitizeLeadLocationInput(activeLead?.address) || "");
+    setBdmName(sanitizeLeadAdvisorInput(quote.bdmName) || sanitizeLeadAdvisorInput(activeLead?.assignedSalesperson) || staffUser?.name || "");
     setQuoteDate(quote.quoteDate || new Date().toISOString().split('T')[0]);
     setSystemSizekW(quote.systemSizekW || 10);
     setSystemType(quote.systemType || 'Hybrid');
@@ -2719,7 +2725,7 @@ export default function SalesTeamApp({
                         </span>
                       </div>
                     </div>
-                    <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {lead.address || "Lahore, Pakistan"}</p>
+                    <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {formatLeadLocation(lead)}</p>
                     
                     <div className="flex justify-between text-[9px] font-mono text-slate-500 pt-1.5 border-t border-slate-800/50">
                       <span>Units: {lead.monthlyUnits ? `${lead.monthlyUnits} kWh` : "0 kWh"}</span>
@@ -2751,8 +2757,8 @@ export default function SalesTeamApp({
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">
                     <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>
                     <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>
-                    <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.location || "Lahore"}</span>
-                    <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {activeLead.assignedSalesperson || "Unassigned"}</span>
+                    <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(activeLead)}</span>
+                    <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {formatLeadAdvisor(activeLead.assignedSalesperson)}</span>
                   </div>
                   {staffUser && leadCustomerRecord && (
                     <CustomerInvitationPanel

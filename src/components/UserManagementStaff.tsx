@@ -21,10 +21,13 @@ import {
   createAdminUser,
   updateAdminUser,
   deleteAdminUser,
+  fetchDemoSeedUsers,
+  deleteDemoSeedUsers,
   fetchRolesMatrix,
 } from "../services/api";
 import { isSuperAdmin, canManageCustomers, APP_ROLES, ADMIN_ONLY_CREATE_ROLES } from "../lib/roles";
 import { canDeleteUser, isHighValueProtectedUser, isPermanentlyProtectedUser } from "../lib/userDeleteGuards";
+import { DEMO_SEED_USER_MATCHERS } from "../lib/demoUserCleanup";
 import type { PermissionKey } from "../lib/roles";
 import { useToast } from "../lib/toast";
 
@@ -32,7 +35,17 @@ interface UserManagementStaffProps {
   staffUser: User;
 }
 
-type Tab = "pending" | "users" | "roles" | "customers" | "matrix";
+type Tab = "pending" | "users" | "roles" | "customers" | "matrix" | "cleanup";
+
+function mergeUserLists(local: User[], server: User[]): User[] {
+  const serverIds = new Set(server.map((u) => u.id));
+  const extras = local.filter((u) => !serverIds.has(u.id));
+  return [...extras, ...server].sort((a, b) =>
+    String((b as User & { createdAt?: string }).createdAt || b.name || "").localeCompare(
+      String((a as User & { createdAt?: string }).createdAt || a.name || "")
+    )
+  );
+}
 
 export default function UserManagementStaff({ staffUser }: UserManagementStaffProps) {
   const toast = useToast();
@@ -51,6 +64,12 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [demoUsers, setDemoUsers] = useState<User[]>([]);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupConfirm, setCleanupConfirm] = useState("");
+  const [cleanupSaving, setCleanupSaving] = useState(false);
+  const [selectedDemoIds, setSelectedDemoIds] = useState<string[]>([]);
   const [createForm, setCreateForm] = useState({
     username: "",
     name: "",
@@ -79,6 +98,23 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       setLoading(false);
     }
   };
+
+  const loadDemoUsers = async () => {
+    setDemoLoading(true);
+    try {
+      const res = await fetchDemoSeedUsers(staffUser.id, staffUser.username);
+      setDemoUsers(res.users || []);
+      setSelectedDemoIds((res.users || []).map((u) => u.id));
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load demo users.");
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "cleanup") loadDemoUsers();
+  }, [tab, staffUser.id]);
 
   useEffect(() => {
     load();
@@ -133,15 +169,18 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
         accountStatus: "Approved",
       });
       if (created) {
-        setUsers((prev) => {
-          const exists = prev.some((u) => u.id === created.id);
-          if (exists) return prev.map((u) => (u.id === created.id ? created : u));
-          return [created, ...prev];
-        });
+        setUsers((prev) => [created, ...prev.filter((u) => u.id !== created.id)]);
       }
       setTab("users");
       toast.success("User created.");
-      await load();
+      try {
+        const all = await fetchAdminUsers(staffUser.id, staffUser.username);
+        setUsers((prev) => mergeUserLists(prev, all.users || []));
+        const pend = await fetchPendingUsers(staffUser.id, staffUser.username);
+        setPending(pend.users || []);
+      } catch {
+        /* keep optimistic list visible */
+      }
     } catch (err: any) {
       toast.error(err.message || "Failed to create user.");
     } finally {
@@ -183,6 +222,26 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
     }
   };
 
+  const handleCleanup = async () => {
+    setCleanupSaving(true);
+    try {
+      const res = await deleteDemoSeedUsers(staffUser.id, staffUser.username, {
+        confirmText: cleanupConfirm,
+        userIds: selectedDemoIds,
+      });
+      toast.success(res.message || "Demo users removed.");
+      setCleanupOpen(false);
+      setCleanupConfirm("");
+      setUsers((prev) => prev.filter((u) => !res.deleted.includes(u.id)));
+      await loadDemoUsers();
+      await load();
+    } catch (err: any) {
+      toast.error(err.message || "Cleanup failed.");
+    } finally {
+      setCleanupSaving(false);
+    }
+  };
+
   const allPermKeys: PermissionKey[] = matrix?.permissionLabels
     ? (Object.keys(matrix.permissionLabels) as PermissionKey[])
     : [];
@@ -207,7 +266,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       {msg && <p className="text-xs text-amber-400 font-mono">{msg}</p>}
 
       <div className="flex flex-wrap gap-2 text-xs font-bold">
-        {(["pending", "users", "roles", ...(showCustomers ? (["customers"] as Tab[]) : []), "matrix"] as Tab[]).map((t) => (
+        {(["pending", "users", "roles", ...(showCustomers ? (["customers"] as Tab[]) : []), "matrix", "cleanup"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -226,7 +285,9 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
                   ? "Roles"
                   : t === "customers"
                     ? "Customer profiles"
-                    : "Permissions matrix"}
+                    : t === "cleanup"
+                      ? "Cleanup"
+                      : "Permissions matrix"}
           </button>
         ))}
       </div>
@@ -293,6 +354,61 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
         <RoleManagementPanel staffUser={staffUser} />
       ) : tab === "customers" && showCustomers ? (
         <CustomerProfileStaff staffUser={staffUser} />
+      ) : tab === "cleanup" ? (
+        <div className="space-y-4">
+          <p className="text-sm text-slate-400">
+            Remove seeded demo staff accounts from production. Invoices, quotations, payment history,
+            and audit logs are preserved — only login accounts are deleted.
+          </p>
+          <div className="grid sm:grid-cols-2 gap-2 text-[10px] text-slate-500 font-mono">
+            {DEMO_SEED_USER_MATCHERS.map((d) => (
+              <span key={d.label} className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                {d.label}
+              </span>
+            ))}
+          </div>
+          {demoLoading ? (
+            <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
+          ) : demoUsers.length === 0 ? (
+            <p className="text-sm text-emerald-400 font-mono">No demo seed users found in database.</p>
+          ) : (
+            <ul className="space-y-2">
+              {demoUsers.map((u) => (
+                <li
+                  key={u.id}
+                  className="flex items-center gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedDemoIds.includes(u.id)}
+                    onChange={(e) => {
+                      setSelectedDemoIds((prev) =>
+                        e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id)
+                      );
+                    }}
+                  />
+                  <div>
+                    <p className="text-sm font-bold text-white">{u.name}</p>
+                    <p className="text-xs text-slate-500 font-mono">
+                      @{u.username} · {u.role} · {u.id}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            disabled={!demoUsers.length}
+            onClick={() => {
+              setCleanupConfirm("");
+              setCleanupOpen(true);
+            }}
+            className="inline-flex items-center gap-2 bg-rose-700/80 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-xl disabled:opacity-40"
+          >
+            <Trash2 className="h-4 w-4" /> Delete selected demo users
+          </button>
+        </div>
       ) : tab === "users" ? (
         <div className="overflow-x-auto">
           <table className="w-full text-xs font-mono border-collapse">
@@ -508,7 +624,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
                 Warning: this is a senior staff account. Confirm carefully.
               </p>
             )}
-            <p className="text-xs text-slate-500">Type DELETE to permanently delete this user.</p>
+            <p className="text-xs text-slate-500">Type DELETE to permanently remove this user.</p>
             <input
               value={deleteConfirm}
               onChange={(e) => setDeleteConfirm(e.target.value)}
@@ -533,6 +649,54 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
                 className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-lg disabled:opacity-40"
               >
                 {deleteSaving ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </AppModal>
+      )}
+
+      {cleanupOpen && (
+        <AppModal
+          open
+          onClose={() => {
+            setCleanupOpen(false);
+            setCleanupConfirm("");
+          }}
+          panelClassName="max-w-md"
+        >
+          <div className="bg-slate-900 border border-rose-900/50 rounded-2xl p-6 w-full space-y-3">
+            <h3 className="font-bold text-rose-300 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" /> Delete demo users
+            </h3>
+            <p className="text-sm text-slate-300">
+              Permanently remove {selectedDemoIds.length} demo account(s)? Historical invoices and
+              audit logs will keep creator names.
+            </p>
+            <p className="text-xs text-slate-500">Type DELETE to permanently remove this user.</p>
+            <input
+              value={cleanupConfirm}
+              onChange={(e) => setCleanupConfirm(e.target.value)}
+              placeholder="Type DELETE"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setCleanupOpen(false);
+                  setCleanupConfirm("");
+                }}
+                className="text-xs text-slate-400 px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={cleanupSaving || cleanupConfirm.trim().toUpperCase() !== "DELETE"}
+                onClick={handleCleanup}
+                className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-lg disabled:opacity-40"
+              >
+                {cleanupSaving ? "Deleting…" : "Delete demo users"}
               </button>
             </div>
           </div>

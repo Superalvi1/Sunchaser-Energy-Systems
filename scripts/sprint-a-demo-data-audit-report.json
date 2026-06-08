@@ -1,0 +1,3097 @@
+{
+  "generatedAt": "2026-06-08T14:57:13.771Z",
+  "base": "https://sunchaser-energy-systems.onrender.com",
+  "readOnly": true,
+  "totalFindings": 379,
+  "byPattern": {
+    "verify.local": 8,
+    "invite-*@verify.local": 7,
+    "Field Technician": 18,
+    "Dave Installer": 14,
+    "Sarah Connor": 302,
+    "Bob Surveyor": 13,
+    "Springfield": 13,
+    "N/A": 1,
+    "asdsa": 2,
+    "Phase13 Verify": 1
+  },
+  "findings": [
+    {
+      "table": "activityLogs",
+      "recordId": "log-4",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586433817",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780587187067",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780589605440",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780591857927",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593823332",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594155036",
+      "field": "userName",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586435161",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780587193267",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780589611322",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780591862945",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593828369",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594160202",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780690935950",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780743561507",
+      "field": "userName",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586436403",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780587199417",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780589585888",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780589617377",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780591828915",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780591868548",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593772707",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593786464",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593833934",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594117258",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594129252",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594165842",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594412272",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780690908890",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780690942705",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780743556280",
+      "field": "userName",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-2",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780095018932",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780095001673",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780090652495",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780127186698",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780090646429",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780141287976",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780141180759",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780140903145",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780162295813",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780209085206",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780162263068",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780162442841",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780162656511",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780162644692",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780162423121",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780209480164",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780209726099",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780209613575",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780209173747",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780407077975",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780406310102",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780406553253",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780214095869",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780406590454",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780406617364",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780406683737",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780407093307",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780407119985",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780407151470",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780407303668",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780407339300",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780408303496",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780408406577",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780408465826",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780409165939",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780409214896",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780411581479",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780411781708",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780411964258",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780413398859",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780416585978",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780483080004",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780483277887",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780483856397",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780484231059",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780484233283",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780486143205",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780486147955",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780488958672",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780496801498",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780496827185",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780497125661",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780497135590",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780497268319",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780497269774",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780497280054",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780498391539",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780498400907",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780498410887",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780499351151",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780499359983",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780499371147",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500184682",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500198963",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500213307",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500223635",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500608925",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500616465",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500627402",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500635448",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500643384",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500644907",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500654555",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500656910",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500664602",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500868151",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500879438",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500890046",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500911116",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500924576",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780500934873",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780501216504",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780501228705",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780501239392",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780502787319",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780502800203",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780502819326",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780502838168",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780502849498",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780502860055",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780513765666",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552341255",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552359689",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552371316",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552390175",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552407856",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552419234",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552429321",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552440938",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552459797",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552488531",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552472234",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552507177",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552519676",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780552529725",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586334812",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586356292",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586372293",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586391436",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586411128",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586424876",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586436980",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586437280",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586457298",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586471038",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586489146",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586507984",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586520843",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780586533160",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780587201187",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780589619088",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780591870681",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593769811",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780593835585",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594115586",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594167566",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780594409462",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780647699188",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780647706132",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780647713462",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780647720617",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780647727195",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780648444557",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780648451101",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780648457536",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780648463964",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780648470408",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780690944399",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780836090972",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780849778345",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780905786726",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "activityLogs",
+      "recordId": "log-1780922307164",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "api",
+      "recordId": "demo-seeds",
+      "field": "endpoint",
+      "value": "Not deployed",
+      "pattern": "N/A",
+      "recommendedAction": "Deploy Sprint A user cleanup endpoints"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "server.ts",
+      "field": "line 482",
+      "value": "{ id: \"bg1\", title: \"How 400W Micro-Inverters Maximize Generation Shaded Overhangs\", author: \"Bob Surveyor\", date: \"June 2026\" }",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/ManualAdminControl.tsx",
+      "field": "line 1462",
+      "value": "<option value=\"Bob Surveyor\">Bob Surveyor (Civil Structural)</option>",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 31",
+      "value": "\"name\": \"Bob Surveyor\",",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 2839",
+      "value": "\"author\": \"Bob Surveyor\",",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/ManualAdminControl.tsx",
+      "field": "line 1461",
+      "value": "<option value=\"Dave Installer\">Dave Installer (Senior Elec)</option>",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 39",
+      "value": "\"name\": \"Dave Installer\",",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 71",
+      "value": "\"name\": \"Dave Installer\",",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/ManualAdminControl.tsx",
+      "field": "line 1454",
+      "value": "<label className=\"text-neutral-400 block mb-1 font-sans\">Delegate Field Technician</label>",
+      "pattern": "Field Technician",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "server.ts",
+      "field": "line 488",
+      "value": "{ id: \"t1\", name: \"Sarah Connor\", quote: \"Saving $200 a month on bills with zero net metering issues!\" }",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/ManualAdminControl.tsx",
+      "field": "line 1803",
+      "value": "placeholder=\"Sarah Connor\"",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 23",
+      "value": "\"name\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 93",
+      "value": "\"assignedSalesperson\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 127",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 197",
+      "value": "\"assignedSalesperson\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 231",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 341",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 411",
+      "value": "\"assignedSalesperson\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 445",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 555",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 625",
+      "value": "\"assignedSalesperson\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 650",
+      "value": "\"assignedSalesperson\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 684",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 794",
+      "value": "\"bdmName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 864",
+      "value": "\"assignedSalesperson\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1097",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1115",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1124",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1133",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1151",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1169",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1178",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1187",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1205",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1214",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1223",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1232",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1250",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1259",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1367",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1376",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1448",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1592",
+      "value": "\"userName\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1605",
+      "value": "\"messageText\": \"☀️ Hi LeadVerify-1780732896724-5! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1614",
+      "value": "\"messageText\": \"☀️ Hi LeadVerify-1780732896724-4! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1623",
+      "value": "\"messageText\": \"☀️ Hi LeadVerify-1780732896724-3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1632",
+      "value": "\"messageText\": \"☀️ Hi LeadVerify-1780732896724-2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1641",
+      "value": "\"messageText\": \"☀️ Hi LeadVerify-1780732896724-1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1650",
+      "value": "\"messageText\": \"☀️ Hi PhantomEmpty-1780644792233! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1677",
+      "value": "\"messageText\": \"☀️ Hi PhantomTest1-1780644771165! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1686",
+      "value": "\"messageText\": \"☀️ Hi PhantomEmpty-1780640398798! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1713",
+      "value": "\"messageText\": \"☀️ Hi PhantomTest1-1780640379799! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1740",
+      "value": "\"messageText\": \"☀️ Hi PhantomTest1-1780640342769! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1758",
+      "value": "\"messageText\": \"☀️ Hi PhantomTest1-1780640290709! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: ",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1785",
+      "value": "\"messageText\": \"☀️ Hi Quote Validation Lead! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http:",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1794",
+      "value": "\"messageText\": \"☀️ Hi Validation Lead 1780406111955! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review option",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 1812",
+      "value": "\"messageText\": \"☀️ Hi PDF Test Lead! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://suncha",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 2853",
+      "value": "\"name\": \"Sarah Connor\",",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Replace seed content when editing marketing copy"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "server.ts",
+      "field": "line 490",
+      "value": "serviceAreas: [\"Springfield\", \"Capital District\", \"Shelbyville\", \"Westwood\"]",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/CustomerPortal.tsx",
+      "field": "line 60",
+      "value": "const [checkoutAddress, setCheckoutAddress] = useState<string>(\"742 Evergreen Terrace, Springfield\");",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/CustomerPortal.tsx",
+      "field": "line 98",
+      "value": "const [onboardAddress, setOnboardAddress] = useState(\"742 Evergreen Terrace, Springfield\");",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "src/components/AIAssistant.tsx",
+      "field": "line 25",
+      "value": "const [customerAddress, setCustomerAddress] = useState(\"742 Evergreen Terrace, Springfield\");",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 620",
+      "value": "\"location\": \"Springfield\",",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 859",
+      "value": "\"location\": \"Springfield\",",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "code/seed",
+      "recordId": "database.json",
+      "field": "line 2858",
+      "value": "\"Springfield\",",
+      "pattern": "Springfield",
+      "recommendedAction": "Update seed/fallback in code — do not auto-delete from repo without review"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "u-4",
+      "field": "name",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "u-5",
+      "field": "name",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "u-10",
+      "field": "name",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "u-3",
+      "field": "name",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-101",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-102",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-103",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-104",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-105",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-106",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780644798618",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780644790238",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780644779915",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780644774297",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640406098",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640397683",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640387540",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640382106",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640369212",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640361171",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640350646",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640345099",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640295226",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780640294248",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780406135988",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780406129073",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-1780405849210",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "log-2",
+      "field": "userName",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780732913000",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780732896724-5! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780732911886",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780732896724-4! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780732910395",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780732896724-3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780732908126",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780732896724-2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780732906475",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780732896724-1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780644792938",
+      "field": "messageText",
+      "value": "☀️ Hi PhantomEmpty-1780644792233! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780644773279",
+      "field": "messageText",
+      "value": "☀️ Hi PhantomTest1-1780644771165! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780640399435",
+      "field": "messageText",
+      "value": "☀️ Hi PhantomEmpty-1780640398798! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780640380666",
+      "field": "messageText",
+      "value": "☀️ Hi PhantomTest1-1780640379799! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780640344139",
+      "field": "messageText",
+      "value": "☀️ Hi PhantomTest1-1780640342769! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780640293305",
+      "field": "messageText",
+      "value": "☀️ Hi PhantomTest1-1780640290709! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780406123513",
+      "field": "messageText",
+      "value": "☀️ Hi Quote Validation Lead! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/p",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780406112625",
+      "field": "messageText",
+      "value": "☀️ Hi Validation Lead 1780406111955! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://suncha",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "wa-1780405843342",
+      "field": "messageText",
+      "value": "☀️ Hi PDF Test Lead! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-104",
+      "field": "location",
+      "value": "Springfield",
+      "pattern": "Springfield",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/local",
+      "recordId": "lead-106",
+      "field": "location",
+      "value": "Springfield",
+      "pattern": "Springfield",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "database.json/websiteContent",
+      "recordId": "website",
+      "field": "serviceAreas",
+      "value": "Springfield",
+      "pattern": "Springfield",
+      "recommendedAction": "Review manually",
+      "source": "database.json"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-ad95a5b4-a12a-4bfb-8cd1-1eebac1f5531",
+      "field": "email",
+      "value": "invite-a-1780927321591@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-256f2444-716a-415e-ba9f-0ae56fa6f325",
+      "field": "email",
+      "value": "invite-b-1780927321591@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-62e06030-276d-4f2f-a6d6-5a064637721f",
+      "field": "email",
+      "value": "invite-a-1780927399222@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-0bab26db-97f9-4d8e-ae8b-e36593b56c19",
+      "field": "email",
+      "value": "invite-b-1780927399222@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-daae923a-a996-4d38-9678-346b582da906",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-79791bdf-6407-44ed-a151-290278f9087c",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-ad95a5b4-a12a-4bfb-8cd1-1eebac1f5531",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-256f2444-716a-415e-ba9f-0ae56fa6f325",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-62e06030-276d-4f2f-a6d6-5a064637721f",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-0bab26db-97f9-4d8e-ae8b-e36593b56c19",
+      "field": "assignedSalesperson",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Reassign to real advisor or leave empty (UI shows Unassigned)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-daae923a-a996-4d38-9678-346b582da906",
+      "field": "location",
+      "value": "Springfield",
+      "pattern": "Springfield",
+      "recommendedAction": "Update lead location to real city or empty (UI shows Location not specified)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-79791bdf-6407-44ed-a151-290278f9087c",
+      "field": "location",
+      "value": "Springfield",
+      "pattern": "Springfield",
+      "recommendedAction": "Update lead location to real city or empty (UI shows Location not specified)"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-ad95a5b4-a12a-4bfb-8cd1-1eebac1f5531",
+      "field": "email",
+      "value": "invite-a-1780927321591@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-256f2444-716a-415e-ba9f-0ae56fa6f325",
+      "field": "email",
+      "value": "invite-b-1780927321591@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-62e06030-276d-4f2f-a6d6-5a064637721f",
+      "field": "email",
+      "value": "invite-a-1780927399222@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "leads",
+      "recordId": "lead-0bab26db-97f9-4d8e-ae8b-e36593b56c19",
+      "field": "email",
+      "value": "invite-b-1780927399222@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Soft-delete or archive test lead/customer"
+    },
+    {
+      "table": "party_ledger",
+      "recordId": "name:asdsa|",
+      "field": "partyKey",
+      "value": "name:asdsa|",
+      "pattern": "asdsa",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "party_ledger",
+      "recordId": "name:asdsa|",
+      "field": "name",
+      "value": "asdsa",
+      "pattern": "asdsa",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "party_ledger",
+      "recordId": "cid:cust-inv-1780852601317",
+      "field": "name",
+      "value": "Phase13 Verify 1780852599800",
+      "pattern": "Phase13 Verify",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "users",
+      "recordId": "u-4",
+      "field": "name",
+      "value": "Bob Surveyor",
+      "pattern": "Bob Surveyor",
+      "recommendedAction": "Delete via Admin → User Management → Cleanup"
+    },
+    {
+      "table": "users",
+      "recordId": "u-5",
+      "field": "name",
+      "value": "Dave Installer",
+      "pattern": "Dave Installer",
+      "recommendedAction": "Delete via Admin → User Management → Cleanup"
+    },
+    {
+      "table": "users",
+      "recordId": "u-10",
+      "field": "name",
+      "value": "Field Technician",
+      "pattern": "Field Technician",
+      "recommendedAction": "Delete via Admin → User Management → Cleanup"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780927418877",
+      "field": "email",
+      "value": "invite-b-1780927399222@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780927370650",
+      "field": "email",
+      "value": "invite-b-1780927321591@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780927407116",
+      "field": "email",
+      "value": "invite-a-1780927399222@verify.local",
+      "pattern": "invite-*@verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-3",
+      "field": "name",
+      "value": "Sarah Connor",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Delete via Admin → User Management → Cleanup (demo seed user)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780927418877",
+      "field": "email",
+      "value": "invite-b-1780927399222@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780928276890",
+      "field": "email",
+      "value": "umverify-1780928271220@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780927370650",
+      "field": "email",
+      "value": "invite-b-1780927321591@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "users",
+      "recordId": "u-1780927407116",
+      "field": "email",
+      "value": "invite-a-1780927399222@verify.local",
+      "pattern": "verify.local",
+      "recommendedAction": "Delete test portal user via User Management (after deploy)"
+    },
+    {
+      "table": "websiteContent",
+      "recordId": "site",
+      "field": "serviceAreas",
+      "value": "Springfield",
+      "pattern": "Springfield",
+      "recommendedAction": "Review manually"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780067480060",
+      "field": "messageText",
+      "value": "☀️ Hi alvidon! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1",
+      "field": "messageText",
+      "value": "☀️ Hi John Miller! Welcome to Sunchaser. Your home solar assessment is under engineering review. Sunchaser sales team advisor Sarah Connor will follow up soon.",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-2",
+      "field": "messageText",
+      "value": "☀️ Hi John! Sunchaser advisor Sarah Connor has unlocked your premium Solar Design Proposal: 8.5 kW Sunchaser Ultra array paired with 13.5kWh Sunchaser Core. Estimated payback is 5.2 years!",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780162487163",
+      "field": "messageText",
+      "value": "☀️ Hi allai! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780249427390",
+      "field": "messageText",
+      "value": "☀️ Hi new1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780251636642",
+      "field": "messageText",
+      "value": "☀️ Hi test lead boq! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780249476890",
+      "field": "messageText",
+      "value": "☀️ Hi asdasldkasldn! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780406631353",
+      "field": "messageText",
+      "value": "☀️ Hi test ! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780406848364",
+      "field": "messageText",
+      "value": "☀️ Hi test 2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780406984544",
+      "field": "messageText",
+      "value": "☀️ Hi test 2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780407252200",
+      "field": "messageText",
+      "value": "☀️ Hi test 3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780408366712",
+      "field": "messageText",
+      "value": "☀️ Hi test 1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780409193082",
+      "field": "messageText",
+      "value": "☀️ Hi test1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780646557778",
+      "field": "messageText",
+      "value": "☀️ Hi DeleteTest1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780646570931",
+      "field": "messageText",
+      "value": "☀️ Hi DeleteTest1-Resubmit! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/po",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780646610333",
+      "field": "messageText",
+      "value": "☀️ Hi DupProbeA! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780646616021",
+      "field": "messageText",
+      "value": "☀️ Hi DupProbeB! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780647696839",
+      "field": "messageText",
+      "value": "☀️ Hi QuoteVerifyLead 1780647693826! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://suncha",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780648442764",
+      "field": "messageText",
+      "value": "☀️ Hi QuoteVerifyLead 1780648439437! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://suncha",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780718107645",
+      "field": "messageText",
+      "value": "☀️ Hi Major Tahir! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780718820283",
+      "field": "messageText",
+      "value": "☀️ Hi major tahir! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780719068663",
+      "field": "messageText",
+      "value": "☀️ Hi major tahir! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780729887914",
+      "field": "messageText",
+      "value": "☀️ Hi Investigate Test! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743139294",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743113696-1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743141260",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743113696-2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743143708",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743113696-3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743145057",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743113696-4! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743146371",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743113696-5! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743187848",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe-1780743186! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743198921",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743204204",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743202210-1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743205558",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743202210-2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743207433",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743202210-3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743208778",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743202210-4! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743210186",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780743202210-5! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743219973",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe-1780743218! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743251690",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe-1780743250! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743283332",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe-1780743282! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743315488",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe-1780743313! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780743347645",
+      "field": "messageText",
+      "value": "☀️ Hi DeployProbe-1780743345! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780749223073",
+      "field": "messageText",
+      "value": "☀️ Hi PostCleanupVerify-1780749222063! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunc",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780749239108",
+      "field": "messageText",
+      "value": "☀️ Hi PostCleanup-1780749237962! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780749286869",
+      "field": "messageText",
+      "value": "☀️ Hi PostCleanup-1780749285870! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780749419736",
+      "field": "messageText",
+      "value": "☀️ Hi PostCleanup-1780749418754! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780755120028",
+      "field": "messageText",
+      "value": "☀️ Hi Dr abdullah parkview! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/po",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756340457",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780756338214-1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756342368",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780756338214-2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756344673",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780756338214-3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756345999",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780756338214-4! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756347357",
+      "field": "messageText",
+      "value": "☀️ Hi LeadVerify-1780756338214-5! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756357929",
+      "field": "messageText",
+      "value": "☀️ Hi LeadUpdateVerify-1780756355852! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunch",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780756743291",
+      "field": "messageText",
+      "value": "☀️ Hi CRUD-Audit-Status! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/porta",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780758259091",
+      "field": "messageText",
+      "value": "☀️ Hi SplitBrainTest! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780759675868",
+      "field": "messageText",
+      "value": "☀️ Hi LeadUpdateVerify-1780759648676! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunch",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780759710837",
+      "field": "messageText",
+      "value": "☀️ Hi LeadUpdateVerify-1780759708384! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunch",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780759746995",
+      "field": "messageText",
+      "value": "☀️ Hi LeadUpdateVerify-1780759744855! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunch",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780759783339",
+      "field": "messageText",
+      "value": "☀️ Hi LeadUpdateVerify-1780759780552! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunch",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780759798915",
+      "field": "messageText",
+      "value": "☀️ Hi ProdCRUD-1780759796455! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780761615257",
+      "field": "messageText",
+      "value": "☀️ Hi Dr Abdullah! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780904753067",
+      "field": "messageText",
+      "value": "☀️ Hi Arsalan! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780927358621",
+      "field": "messageText",
+      "value": "☀️ Hi InviteVerifyA 1780927321591! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchase",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780927365121",
+      "field": "messageText",
+      "value": "☀️ Hi InviteVerifyB 1780927321591! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchase",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780927403949",
+      "field": "messageText",
+      "value": "☀️ Hi InviteVerifyA 1780927399222! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchase",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    },
+    {
+      "table": "whatsAppLogs",
+      "recordId": "wa-1780927415714",
+      "field": "messageText",
+      "value": "☀️ Hi InviteVerifyB 1780927399222! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchase",
+      "pattern": "Sarah Connor",
+      "recommendedAction": "Preserve — historical audit text"
+    }
+  ]
+}

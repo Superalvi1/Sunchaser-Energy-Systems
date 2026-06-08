@@ -705,6 +705,7 @@ export default function App() {
               <CRMApp
                 staffUser={currentUser}
                 leads={appState.leads}
+                staffUsers={appState.users || []}
                 onUpdateLead={handleUpdateLead}
                 onAddLead={handleAddLead}
                 onDeleteLead={handleDeleteLead}

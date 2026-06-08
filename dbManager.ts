@@ -211,6 +211,7 @@ export interface Database {
   projectDeliveryUpdates?: any[];
   projectFinanceRecords?: any[];
   whatsappMessageLogs?: any[];
+  partyLedgerArchives?: any[];
 }
 
 export const initialSeed: Database = {
@@ -1816,7 +1817,7 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
           monthly_units: l.monthlyUnits || 0,
           sanctioned_load: l.sanctionedLoad || 0,
           backup_requirement: l.backupRequirement || "None",
-          location: l.location || "Springfield",
+          location: l.location || "",
           roof_type: l.roofType || "Asphalt Shingle",
           roof_space: l.roofSpace || 0,
           shading: l.shading || "None",

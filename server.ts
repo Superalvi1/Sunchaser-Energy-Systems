@@ -163,6 +163,8 @@ import {
   createUserByAdmin,
   updateUserByAdmin,
   deleteUserByAdmin,
+  listDemoSeedUsersForCleanup,
+  deleteDemoSeedUsersByAdmin,
   UserAuthError,
 } from "./userAuthDb.js";
 import {
@@ -790,10 +792,19 @@ app.post("/api/auth/reset-password", async (req, res) => {
 function readStaffAuth(req: express.Request) {
   const q = req.query as Record<string, string | undefined>;
   return {
-    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || q.userId || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || req.body?.username || q.username || "").trim(),
+    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
     role: String(req.headers["x-sunchaser-role"] || q.role || req.body?.role || "").trim(),
   };
+}
+
+function activityActorFromStaff(req: express.Request, fallback = "Staff") {
+  const { username } = readStaffAuth(req);
+  return username || fallback;
+}
+
+function leadAdvisorLabel(advisor?: string | null) {
+  return sanitizeLeadAdvisorInput(advisor) || "Sales Team";
 }
 
 app.get("/api/admin/users", async (req, res) => {
@@ -868,6 +879,31 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   }
 });
 
+app.get("/api/admin/users/demo-seeds", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const users = await listDemoSeedUsersForCleanup(userId, username, db);
+    return res.json({ users });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users/demo-seeds/delete", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  try {
+    loadDb();
+    const result = await deleteDemoSeedUsersByAdmin(userId, username, req.body || {}, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/admin/users/:id/approve", async (req, res) => {
   const { userId, username } = readStaffAuth(req);
   try {
@@ -901,8 +937,8 @@ app.post("/api/admin/users/:id/reject", async (req, res) => {
 });
 
 app.get("/api/auth/roles-matrix", async (req, res) => {
-  const userId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
+  const userId = String(req.headers["x-sunchaser-user-id"] || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || "").trim();
   try {
     loadDb();
     const payload = await getRolesMatrixFromDb(userId || null, username || null, db);
@@ -3683,10 +3719,11 @@ app.post("/api/leads/:id/whatsapp-reminder", async (req, res) => {
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
   const { lead } = ctx;
 
-  const msgText = `☀️ Hi ${lead.name}! Sarah Connor here from Sunchaser Energy. Just checking in to see if you had any questions on your custom solar sizing layout. Let us know if you would like to proceed or schedule a site survey!`;
+  const advisor = leadAdvisorLabel(lead.assignedSalesperson);
+  const msgText = `☀️ Hi ${lead.name}! ${advisor} from Sunchaser Energy checking in — any questions on your custom solar sizing layout? Let us know if you would like to proceed or schedule a site survey!`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "followup_reminder", msgText);
 
-  await appendActivityLog("sales", "Sarah Connor", "Sales Executive", "Follow-up Reminded", `Dispatched WhatsApp follow-up reminder to ${lead.name}`);
+  await appendActivityLog("sales", advisor, "Sales Executive", "Follow-up Reminded", `Dispatched WhatsApp follow-up reminder to ${lead.name}`);
   res.json({ success: true, lead });
 });
 
@@ -3813,7 +3850,8 @@ app.post("/api/leads/:id/survey-report", async (req, res) => {
     }
   }
 
-  await appendActivityLog("surveyor", "Bob Surveyor", "Survey Engineer", "Survey Audited", `Submitted structural measurements & CAD panel positions for ${lead.name}`);
+  const surveyActor = activityActorFromStaff(req, "Survey Engineer");
+  await appendActivityLog("surveyor", surveyActor, "Survey Engineer", "Survey Audited", `Submitted structural measurements & CAD panel positions for ${lead.name}`);
   res.json(lead);
 });
 
@@ -4053,7 +4091,8 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     }
   }
 
-  await appendActivityLog("sales", bdmName || "Sarah Connor", "Sales Executive", "Quotation Written", `Formulated quote ${newQuote.id} for ${lead.name}`);
+  const quoteActor = bdmName || leadAdvisorLabel(lead.assignedSalesperson);
+  await appendActivityLog("sales", quoteActor, "Sales Executive", "Quotation Written", `Formulated quote ${newQuote.id} for ${lead.name}`);
   const msgText = `☀️ Hi ${lead.name}! Sunchaser has unlocked your custom solar proposal: ${newQuote.systemSizekW} kW with ${newQuote.inverterType}. Total final cost is Rs. ${newQuote.netCost.toLocaleString()}. Open file: http://sunchaser.co/portal`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "quote_generation", msgText);
 
@@ -4160,7 +4199,13 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
     }
   }
 
-  await appendActivityLog("sales", updatedQuote.bdmName || "Sarah Connor", "Sales Executive", "Quotation Updated", `Updated quote ${quoteId} for ${lead.name}`);
+  await appendActivityLog(
+    "sales",
+    updatedQuote.bdmName || leadAdvisorLabel(lead.assignedSalesperson),
+    "Sales Executive",
+    "Quotation Updated",
+    `Updated quote ${quoteId} for ${lead.name}`
+  );
   res.json(lead);
 });
 
@@ -4394,7 +4439,7 @@ app.post("/api/leads/:id/update-installation", async (req, res) => {
         lead.installation.status = "Completed";
         lead.status = "Installed";
         proj.stage = "Completed";
-        await appendActivityLog("installer", "Dave Installer", "Installation Team", "Project Commissioned", `Completed all panel mount tests at John Miller's home site.`);
+        await appendActivityLog("installer", activityActorFromStaff(req, "Installation Team"), "Installation Team", "Project Commissioned", `Completed all panel mount tests at ${lead.name}'s site.`);
       } else {
         lead.installation.status = "In Progress";
         if (lead.installation.progress > 80) proj.stage = "Testing & Commissioning";
@@ -4434,7 +4479,7 @@ app.post("/api/leads/:id/update-installation", async (req, res) => {
     }
   }
 
-  await appendActivityLog("installer", "Dave Installer", "Installation Team", "Installation Status Adjusted", `Adjusted progress to ${progress}%`);
+  await appendActivityLog("installer", activityActorFromStaff(req, "Installation Team"), "Installation Team", "Installation Status Adjusted", `Adjusted progress to ${progress}%`);
   res.json(lead);
 });
 
@@ -4725,7 +4770,7 @@ app.post("/api/tickets/:id/tech-resolve", async (req, res) => {
   });
 
   saveDb();
-  await appendActivityLog("technician", ticket.assignedTechnician || "Dave Installer", "Technician", "Complaint Resolved by Tech", `Dispatched final resolution of concern ${id}`);
+  await appendActivityLog("technician", ticket.assignedTechnician || activityActorFromStaff(req, "Technician"), "Technician", "Complaint Resolved by Tech", `Dispatched final resolution of concern ${id}`);
   res.json(ticket);
 });
 
@@ -7672,7 +7717,7 @@ Based on your parameters, Sunchaser recommends:
 app.post("/api/gemini/generate-proposal", async (req, res) => {
   const { customerName, address, systemSizekW, batteryUpgrade, totalCost, notes } = req.body;
 
-  const prompt = `Draft a formalized, highly elegant, professional Sunchaser Energy Systems Proposal contract blueprint for Client: **${customerName}** located at **${address || "Springfield"}**.
+  const prompt = `Draft a formalized, highly elegant, professional Sunchaser Energy Systems Proposal contract blueprint for Client: **${customerName}** located at **${address || "Location not specified"}**.
 System profile:
 - Sunchaser Tier: Premium Residential Solar Power Grid
 - System capacity size: ${systemSizekW || "8.5"} kW Prime
@@ -7701,7 +7746,7 @@ Use a professional, trustworthy energy partner voice. Formulate inside premium s
     console.error("Gemini proposal error:", error);
     res.json({
       proposalMarkdown: `# SUNCHASER CUSTOM SOLARENERGY PROPOSAL
-**PREPARED FOR**: ${customerName} | **ADDRESS**: ${address || "Springfield"}
+**PREPARED FOR**: ${customerName} | **ADDRESS**: ${address || "Location not specified"}
 
 ### Technical Sizing Specs
 - **Solar Modules**: Sunchaser Ultra 400W premium cells (22 counts)

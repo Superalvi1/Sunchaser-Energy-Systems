@@ -7,10 +7,17 @@ import { Lead, User } from "../types";
 import { runAiLeadScoring, currencySymbol } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import AppModal from "./ui/AppModal";
+import {
+  formatLeadAdvisor,
+  formatLeadLocation,
+  sanitizeLeadAdvisorInput,
+  sanitizeLeadLocationInput,
+} from "../lib/leadDisplay";
 
 interface CRMAppProps {
   staffUser: User;
   leads: Lead[];
+  staffUsers?: User[];
   onUpdateLead: (id: string, updatedData: any) => void;
   onAddLead: (data: any) => void | Promise<void>;
   onDeleteLead?: (id: string) => void;
@@ -19,6 +26,7 @@ interface CRMAppProps {
 export default function CRMApp({
   staffUser,
   leads,
+  staffUsers = [],
   onUpdateLead,
   onAddLead,
   onDeleteLead
@@ -36,6 +44,7 @@ export default function CRMApp({
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editAddress, setEditAddress] = useState("");
+  const [editLocation, setEditLocation] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editSalesperson, setEditSalesperson] = useState("");
   
@@ -51,6 +60,7 @@ export default function CRMApp({
   const [newEmail, setNewEmail] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newAddress, setNewAddress] = useState("");
+  const [newLocation, setNewLocation] = useState("");
   const [newBill, setNewBill] = useState<number>(200);
   const [newRoof, setNewRoof] = useState<number>(900);
   const [newShading, setNewShading] = useState<'None' | 'Low' | 'Medium' | 'High'>('Low');
@@ -70,8 +80,9 @@ export default function CRMApp({
     setEditEmail(lead.email);
     setEditPhone(lead.phone);
     setEditAddress(lead.address);
+    setEditLocation(sanitizeLeadLocationInput(lead.location) || "");
     setEditNotes(lead.notes || "");
-    setEditSalesperson(lead.assignedSalesperson || "Sarah Connor");
+    setEditSalesperson(sanitizeLeadAdvisorInput(lead.assignedSalesperson) || "");
     setEditLeadSource(lead.leadSource || "Direct/Referral");
     setEditEngagement(lead.engagementLevel || "Medium");
     setEditSanctionedLoad(lead.sanctionedLoad || 7);
@@ -84,8 +95,9 @@ export default function CRMApp({
       email: editEmail,
       phone: editPhone,
       address: editAddress,
+      location: sanitizeLeadLocationInput(editLocation),
       notes: editNotes,
-      assignedSalesperson: editSalesperson,
+      assignedSalesperson: sanitizeLeadAdvisorInput(editSalesperson),
       leadSource: editLeadSource,
       engagementLevel: editEngagement,
       sanctionedLoad: Number(editSanctionedLoad) || 7,
@@ -118,6 +130,7 @@ export default function CRMApp({
         email: newEmail.trim(),
         phone: newPhone,
         address: newAddress,
+        location: sanitizeLeadLocationInput(newLocation),
         monthlyBill: Number(newBill),
         roofSpace: Number(newRoof),
         shading: newShading,
@@ -130,6 +143,7 @@ export default function CRMApp({
       setNewEmail("");
       setNewPhone("");
       setNewAddress("");
+      setNewLocation("");
       setNewBill(200);
       setNewRoof(900);
       setNewShading("Low");
@@ -168,6 +182,18 @@ export default function CRMApp({
   });
 
   // Dynamic sorter lists
+  const advisorOptions = Array.from(
+    new Set(
+      [
+        ...staffUsers
+          .filter((u) => /sales|admin|ceo/i.test(String(u.role || "")))
+          .map((u) => u.name)
+          .filter(Boolean),
+        ...leads.map((l) => sanitizeLeadAdvisorInput(l.assignedSalesperson)).filter(Boolean),
+      ]
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
   const sortedLeads = [...filteredLeads].sort((a, b) => {
     if (sortBy === 'ai_score') {
       return (b.conversionScore || 0) - (a.conversionScore || 0);
@@ -288,7 +314,9 @@ export default function CRMApp({
                   <div>
                     <span className="text-[10px] uppercase font-mono font-bold tracking-tight text-slate-500">ID: {lead.id}</span>
                     <h3 className="text-sm font-bold text-slate-100 font-sans mt-0.5">{lead.name}</h3>
-                    <p className="text-[10px] text-slate-400 font-mono"><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {lead.address}</p>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      <MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(lead)}
+                    </p>
                   </div>
 
                   {/* AI Scoring Indicator Ring/Pill */}
@@ -321,18 +349,24 @@ export default function CRMApp({
                         <input type="text" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white" />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-slate-500 font-bold uppercase">Address</label>
-                        <input type="text" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white" />
+                        <label className="text-slate-500 font-bold uppercase">City / Area</label>
+                        <input type="text" value={editLocation} onChange={(e) => setEditLocation(e.target.value)} placeholder="e.g. Lahore, DHA Phase 6" className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white" />
                       </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-slate-500 font-bold uppercase">Full Address</label>
+                      <input type="text" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-slate-500 font-bold uppercase">Salesperson Advisor</label>
+                        <label className="text-slate-500 font-bold uppercase">Sales Advisor</label>
                         <select value={editSalesperson} onChange={(e) => setEditSalesperson(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
-                          <option value="Sarah Connor">Sarah Connor</option>
-                          <option value="Michael Scott">Michael Scott</option>
-                          <option value="Alex Admin">Alex Admin</option>
+                          <option value="">Unassigned</option>
+                          {advisorOptions.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -426,7 +460,7 @@ export default function CRMApp({
                       </div>
                       <div className="text-left bg-slate-950 p-1.5 pl-2.5 rounded-lg border border-slate-850">
                         <span className="text-slate-500 block">Staff Sales Advisor</span>
-                        <strong className="text-slate-300 truncate block">{lead.assignedSalesperson || "Sarah Connor"}</strong>
+                        <strong className="text-slate-300 truncate block">{formatLeadAdvisor(lead.assignedSalesperson)}</strong>
                       </div>
                     </div>
 
@@ -577,12 +611,17 @@ export default function CRMApp({
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-slate-400 font-bold block">Contact Phone Code</label>
-                  <input type="text" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="+1 (555) 349-2091" />
+                  <input type="text" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="+92 300 1234567" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-slate-400 font-bold block">Physical Property Address</label>
-                  <input type="text" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="742 Evergreen Terrace, Springfield" />
+                  <label className="text-slate-400 font-bold block">City / Area</label>
+                  <input type="text" value={newLocation} onChange={(e) => setNewLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="Lahore, DHA Phase 6" />
                 </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-400 font-bold block">Physical Property Address</label>
+                <input type="text" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="House / plot number and street" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

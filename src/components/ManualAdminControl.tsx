@@ -1011,7 +1011,7 @@ export default function ManualAdminControl({
                             roofSpace: newCust.roofSpace,
                             shading: newCust.shading,
                             rating: 3,
-                            assignedSalesperson: "Sarah Connor",
+                            assignedSalesperson: "",
                             quotes: [],
                             createdAt: new Date().toISOString(),
                             notes: newCust.notes
