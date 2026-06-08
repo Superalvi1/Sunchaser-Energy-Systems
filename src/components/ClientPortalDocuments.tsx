@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Download, Eye, FileText, Loader2 } from "lucide-react";
 import { User } from "../types";
-import { fetchCustomerPortalDocuments, customerInvoicePdfUrl } from "../services/api";
+import { fetchCustomerPortalDocuments, customerInvoicePdfUrl, customerWarrantyCertificateUrl } from "../services/api";
 import { portal } from "../lib/clientPortalUi";
 import { DOCUMENT_WALLET_TYPES } from "../lib/clientPortalPhase2";
 
@@ -9,7 +9,7 @@ const VAULT_SLOTS: { type: string; label: string }[] = [
   { type: "quotation_pdf", label: "Quotation" },
   { type: "agreement", label: "Agreement" },
   { type: "invoice", label: "Invoice" },
-  { type: "warranty_certificate", label: "Warranty" },
+  { type: "warranty_certificate", label: "Warranty Certificate" },
   { type: "net_metering_documents", label: "Net Metering" },
   { type: "completion_certificate", label: "Completion Report" },
 ];
@@ -25,6 +25,12 @@ function resolveVaultDocumentUrl(url: string | undefined, user: User): string | 
   const invoiceMatch = url.match(/\/api\/export\/pdf\/invoice\/([^/?]+)/);
   if (invoiceMatch) {
     return customerInvoicePdfUrl(decodeURIComponent(invoiceMatch[1]), user.id, user.username);
+  }
+  if (
+    url.includes("/api/customer-portal/warranty-certificate/me") ||
+    url.match(/\/api\/admin\/customers\/[^/]+\/warranty-certificate/)
+  ) {
+    return customerWarrantyCertificateUrl(user.id, user.username);
   }
   return url;
 }

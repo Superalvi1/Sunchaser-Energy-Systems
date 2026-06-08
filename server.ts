@@ -139,6 +139,12 @@ import {
   ProjectCompletionDbError,
 } from "./projectCompletionDb.js";
 import {
+  fetchAdminWarrantyCertificateHtml,
+  fetchPortalWarrantyCertificateHtml,
+  maybeSyncWarrantyCertificateDocument,
+  WarrantyCertificateDbError,
+} from "./warrantyCertificateDb.js";
+import {
   fetchAdminFinanceSummary,
   listAdminFinanceProjects,
   getAdminFinanceProjectById,
@@ -2206,6 +2212,47 @@ app.get("/api/customer-portal/warranty-handover/me", async (req, res) => {
   }
 });
 
+function readCustomerPortalAuthForDownload(req: any) {
+  const fromHeaders = readCustomerPortalAuth(req);
+  if (fromHeaders.userId && fromHeaders.username) return fromHeaders;
+  return {
+    userId: String(req.query.portalUserId || "").trim(),
+    username: String(req.query.portalUsername || "").trim(),
+  };
+}
+
+app.get("/api/admin/customers/:customerId/warranty-certificate", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  try {
+    loadDb();
+    const html = await fetchAdminWarrantyCertificateHtml(userId, username, req.params.customerId, db);
+    if (!isSupabaseActive()) saveDb();
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof WarrantyCertificateDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/customer-portal/warranty-certificate/me", async (req, res) => {
+  const { userId, username } = readCustomerPortalAuthForDownload(req);
+  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  try {
+    loadDb();
+    const html = await fetchPortalWarrantyCertificateHtml(userId, username, db);
+    if (!isSupabaseActive()) saveDb();
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof WarrantyCertificateDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/finance/summary", async (req, res) => {
   const { userId, username } = readPortalAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
@@ -2955,6 +3002,7 @@ app.post("/api/admin/customer-warranties", async (req, res) => {
   try {
     loadDb();
     const row = await upsertAdminCustomerWarranty(userId, username, req.body || {}, db);
+    await maybeSyncWarrantyCertificateDocument(row.customerId, db);
     saveDb();
     return res.status(201).json(row);
   } catch (err: any) {

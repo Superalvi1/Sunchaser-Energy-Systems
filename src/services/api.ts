@@ -2022,6 +2022,16 @@ export function warrantyHandoverPdfUrl(
   return `${API_BASE_URL}/api/export/pdf/warranty-handover/${encodeURIComponent(deliveryId)}${suffix}`;
 }
 
+export function customerWarrantyCertificateUrl(userId: string, username: string) {
+  const q = new URLSearchParams({ portalUserId: userId, portalUsername: username });
+  return `${API_BASE_URL}/api/customer-portal/warranty-certificate/me?${q}`;
+}
+
+export function adminWarrantyCertificateUrl(customerId: string, staff: User) {
+  const q = new URLSearchParams({ userId: staff.id, username: staff.username });
+  return `${API_BASE_URL}/api/admin/customers/${encodeURIComponent(customerId)}/warranty-certificate?${q}`;
+}
+
 export async function fetchCustomerWarrantyHandoverMe(userId: string, username: string) {
   const res = await apiFetch("/api/customer-portal/warranty-handover/me", {
     headers: portalAuthHeaders(userId, username),

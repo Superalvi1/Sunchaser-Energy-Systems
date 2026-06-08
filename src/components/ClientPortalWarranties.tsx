@@ -9,6 +9,7 @@ import {
   fetchCustomerProjectDeliveryMe,
   fetchCustomerWarrantyHandoverMe,
   warrantyHandoverPdfUrl,
+  customerWarrantyCertificateUrl,
 } from "../services/api";
 import { WARRANTY_COMPONENT_TYPES } from "../lib/clientPortalPhase2";
 import { EQUIPMENT_TYPES } from "../lib/clientPortalPakistan";
@@ -110,12 +111,30 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
     return <p className="text-sm text-rose-400 text-center">{error}</p>;
   }
 
+  const hasWarrantyCertificate = cards.some((card) => card.warranty);
+
   return (
     <section className="space-y-6">
       <div>
         <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 px-1 mb-3">
           My Warranty
         </h3>
+        {hasWarrantyCertificate && (
+          <div className="mb-4 bg-slate-900 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
+            <p className="text-sm font-bold text-emerald-400">Warranty certificate</p>
+            <p className="text-xs text-slate-400">
+              Official certificate covering your registered panel, inverter, battery, and workmanship warranties.
+            </p>
+            <a
+              href={customerWarrantyCertificateUrl(user.id, user.username)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block mt-2 px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold"
+            >
+              Download Certificate
+            </a>
+          </div>
+        )}
         {handover?.handover && (
           <div className="mb-4 bg-slate-900 border border-amber-900/40 rounded-2xl p-4 space-y-2">
             <p className="text-sm font-bold text-amber-400">Warranty handover</p>

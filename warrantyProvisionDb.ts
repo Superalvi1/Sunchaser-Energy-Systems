@@ -1,4 +1,5 @@
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
+import { maybeSyncWarrantyCertificateDocument } from "./warrantyCertificateDb.js";
 import {
   mapWarrantyRow,
   type WarrantyComponentType,
@@ -469,6 +470,8 @@ export async function provisionWarrantiesOnProjectCompletion(
     JSON.stringify({ deliveryId, customerId, components: warranties.map((w) => w.componentType) })
   );
 
+  await maybeSyncWarrantyCertificateDocument(customerId, localDb);
+
   return { customerId, deliveryId, warranties };
 }
 
@@ -520,6 +523,7 @@ export async function syncWarrantySerialFromCompletionMedia(
         .select("*")
         .single();
       if (error) throw error;
+      await maybeSyncWarrantyCertificateDocument(customerId, localDb);
       return mapWarrantyRow(data);
     }
   } else {
@@ -532,6 +536,7 @@ export async function syncWarrantySerialFromCompletionMedia(
     if (idx >= 0) {
       db.customerWarranties[idx].serialNumber = serial;
       db.customerWarranties[idx].serial_number = serial;
+      await maybeSyncWarrantyCertificateDocument(customerId, localDb);
       return mapWarrantyRow(db.customerWarranties[idx]);
     }
   }
@@ -548,5 +553,8 @@ export async function syncWarrantySerialFromCompletionMedia(
       endDate: defaultWarrantyEndDate(component, startDate),
     },
     localDb
-  );
+  ).then(async (row) => {
+    await maybeSyncWarrantyCertificateDocument(customerId, localDb);
+    return row;
+  });
 }

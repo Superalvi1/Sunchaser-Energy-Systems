@@ -23,6 +23,12 @@ export function vaultQuotationDocumentUrl(leadId: string, quoteId: string): stri
   return base ? `${base}${path}` : path;
 }
 
+export function vaultWarrantyCertificateDocumentUrl(customerId: string): string {
+  const path = `/api/admin/customers/${encodeURIComponent(customerId)}/warranty-certificate`;
+  const base = apiPublicBase();
+  return base ? `${base}${path}` : path;
+}
+
 async function upsertVaultCustomerDocument(
   body: {
     customerId: string;
@@ -149,6 +155,26 @@ export async function syncQuotationDocumentVault(
       fileUrl: vaultQuotationDocumentUrl(opts.leadId, opts.quoteId),
       fileName: `quotation-${opts.quoteId}.html`,
       notes: opts.notes,
+    },
+    localDb
+  );
+}
+
+export async function syncWarrantyCertificateDocumentVault(
+  opts: { customerId: string; documentId: string },
+  localDb?: Database
+) {
+  const customerId = String(opts.customerId || "").trim();
+  if (!customerId) return null;
+  return upsertVaultCustomerDocument(
+    {
+      customerId,
+      documentType: "warranty_certificate",
+      title: "Warranty Certificate",
+      fileUrl: vaultWarrantyCertificateDocumentUrl(customerId),
+      fileName: `warranty-certificate-${customerId}.html`,
+      notes: `Document ID: ${opts.documentId}`,
+      uploadedBy: "warranty-sync",
     },
     localDb
   );
