@@ -211,6 +211,9 @@ export interface Database {
   projectDeliveryUpdates?: any[];
   projectFinanceRecords?: any[];
   whatsappMessageLogs?: any[];
+  inventoryFoundationItems?: any[];
+  inventoryFoundationMovements?: any[];
+  projectInventoryReservations?: any[];
   partyLedgerArchives?: any[];
 }
 

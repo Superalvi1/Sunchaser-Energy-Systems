@@ -145,6 +145,19 @@ import {
   WarrantyCertificateDbError,
 } from "./warrantyCertificateDb.js";
 import {
+  listAdminInventoryFoundationItems,
+  listAdminLowStockItems,
+  createAdminInventoryFoundationItem,
+  stockInAdminInventoryItem,
+  stockOutAdminInventoryItem,
+  adjustAdminInventoryItem,
+  reserveAdminInventoryForProject,
+  releaseAdminInventoryReservation,
+  listAdminInventoryMovements,
+  listAdminInventoryReservations,
+  InventoryFoundationDbError,
+} from "./inventoryFoundationDb.js";
+import {
   fetchAdminFinanceSummary,
   listAdminFinanceProjects,
   getAdminFinanceProjectById,
@@ -2357,6 +2370,144 @@ app.patch("/api/admin/branding", async (req, res) => {
   } catch (err: any) {
     if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
+  }
+});
+
+function handleInventoryDbError(err: any, res: express.Response) {
+  if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+  if (err instanceof InventoryFoundationDbError) return res.status(err.statusCode).json({ error: err.message });
+  return res.status(500).json({ error: err.message });
+}
+
+app.get("/api/admin/inventory/items", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await listAdminInventoryFoundationItems(userId, username, role, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.get("/api/admin/inventory/low-stock", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await listAdminLowStockItems(userId, username, role, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.post("/api/admin/inventory/items", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const item = await createAdminInventoryFoundationItem(userId, username, req.body || {}, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.status(201).json(item);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.post("/api/admin/inventory/items/:id/stock-in", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await stockInAdminInventoryItem(userId, username, req.params.id, req.body || {}, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.post("/api/admin/inventory/items/:id/stock-out", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await stockOutAdminInventoryItem(userId, username, req.params.id, req.body || {}, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.post("/api/admin/inventory/items/:id/adjust", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await adjustAdminInventoryItem(userId, username, req.params.id, req.body || {}, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.post("/api/admin/inventory/reservations", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await reserveAdminInventoryForProject(userId, username, req.body || {}, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.status(201).json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.post("/api/admin/inventory/reservations/:id/release", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await releaseAdminInventoryReservation(userId, username, req.params.id, req.body || {}, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.get("/api/admin/inventory/movements", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await listAdminInventoryMovements(userId, username, {
+      inventoryItemId: String(req.query.inventoryItemId || "").trim() || undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    }, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
+  }
+});
+
+app.get("/api/admin/inventory/reservations", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await listAdminInventoryReservations(userId, username, {
+      status: String(req.query.status || "").trim() || undefined,
+      inventoryItemId: String(req.query.inventoryItemId || "").trim() || undefined,
+    }, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleInventoryDbError(err, res);
   }
 });
 

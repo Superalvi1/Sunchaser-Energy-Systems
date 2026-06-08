@@ -3,10 +3,11 @@ import {
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
-  Printer, Save, Headphones
+  Printer, Save, Headphones, Package
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
+import InventoryStaff from "./InventoryStaff";
 import AppModal from "./ui/AppModal";
 import { useToast } from "../lib/toast";
 import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL, deleteCatalogProduct, updateCatalogProduct, resolveCustomerForLead } from "../services/api";
@@ -136,7 +137,7 @@ export default function SalesTeamApp({
 
   // Modular routing tab selector
   const [activeModule, setActiveModule] = useState<
-    "sizer" | "boq_builder" | "templates" | "quotes" | "products" | "after_sales"
+    "sizer" | "boq_builder" | "templates" | "quotes" | "products" | "inventory" | "after_sales"
   >("boq_builder");
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
   const [sizerEditingQuoteId, setSizerEditingQuoteId] = useState<string | null>(null);
@@ -2828,6 +2829,9 @@ export default function SalesTeamApp({
                   { id: 'quotes', label: 'Generated Quotes', icon: FileText },
                   { id: 'products', label: 'Product Library', icon: Settings },
                   ...(staffUser
+                    ? [{ id: 'inventory' as const, label: 'Inventory', icon: Package }]
+                    : []),
+                  ...(staffUser
                     ? [{ id: 'after_sales' as const, label: 'After Sales Admin', icon: Headphones }]
                     : []),
                 ].map((mod) => {
@@ -5219,6 +5223,10 @@ export default function SalesTeamApp({
                   )}
 
                 </div>
+              )}
+
+              {activeModule === "inventory" && staffUser && (
+                <InventoryStaff staffUser={staffUser} products={products} onRefreshState={onRefreshState} />
               )}
 
               {activeModule === "after_sales" && staffUser && (

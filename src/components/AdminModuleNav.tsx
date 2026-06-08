@@ -290,7 +290,7 @@ export function buildAdminNavGroups(opts: {
         {
           id: "inventory",
           title: "Hardware Inventory",
-          description: "Stock levels and procurement",
+          description: "Stock movements, reservations, and low-stock alerts",
           icon: Package,
         },
         {

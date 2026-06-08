@@ -2364,6 +2364,173 @@ export function customerInvoicePdfUrl(invoiceId: string, userId: string, usernam
   return `${API_BASE_URL}/api/export/pdf/invoice/${encodeURIComponent(invoiceId)}?${q}`;
 }
 
+function inventoryStaffHeaders(userId: string, username: string, role: string) {
+  return staffPortalHeaders(userId, username, role);
+}
+
+export async function fetchAdminInventoryFoundationItems(userId: string, username: string, role: string) {
+  const res = await apiFetch("/api/admin/inventory/items", {
+    headers: inventoryStaffHeaders(userId, username, role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load inventory items.");
+  return data as { items: any[] };
+}
+
+export async function fetchAdminLowStockItems(userId: string, username: string, role: string) {
+  const res = await apiFetch("/api/admin/inventory/low-stock", {
+    headers: inventoryStaffHeaders(userId, username, role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load low stock items.");
+  return data as { items: any[] };
+}
+
+export async function createAdminInventoryFoundationItem(
+  userId: string,
+  username: string,
+  body: Record<string, unknown>,
+  role = ""
+) {
+  const res = await staffPortalJsonRequest("/api/admin/inventory/items", {
+    method: "POST",
+    headers: inventoryStaffHeaders(userId, username, role),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to create inventory item.");
+  return data;
+}
+
+export async function stockInAdminInventoryItem(
+  userId: string,
+  username: string,
+  itemId: string,
+  body: { qty: number; notes?: string },
+  role = ""
+) {
+  const res = await staffPortalJsonRequest(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/stock-in`, {
+    method: "POST",
+    headers: inventoryStaffHeaders(userId, username, role),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Stock in failed.");
+  return data;
+}
+
+export async function stockOutAdminInventoryItem(
+  userId: string,
+  username: string,
+  itemId: string,
+  body: { qty: number; notes?: string },
+  role = ""
+) {
+  const res = await staffPortalJsonRequest(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/stock-out`, {
+    method: "POST",
+    headers: inventoryStaffHeaders(userId, username, role),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Stock out failed.");
+  return data;
+}
+
+export async function adjustAdminInventoryItem(
+  userId: string,
+  username: string,
+  itemId: string,
+  body: { qtyDelta: number; notes?: string },
+  role = ""
+) {
+  const res = await staffPortalJsonRequest(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/adjust`, {
+    method: "POST",
+    headers: inventoryStaffHeaders(userId, username, role),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Stock adjustment failed.");
+  return data;
+}
+
+export async function reserveAdminInventoryForProject(
+  userId: string,
+  username: string,
+  body: {
+    inventoryItemId: string;
+    projectId: string;
+    deliveryId?: string | null;
+    qty: number;
+    notes?: string;
+  },
+  role = ""
+) {
+  const res = await staffPortalJsonRequest("/api/admin/inventory/reservations", {
+    method: "POST",
+    headers: inventoryStaffHeaders(userId, username, role),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Reservation failed.");
+  return data;
+}
+
+export async function releaseAdminInventoryReservation(
+  userId: string,
+  username: string,
+  reservationId: string,
+  body?: { notes?: string },
+  role = ""
+) {
+  const res = await staffPortalJsonRequest(
+    `/api/admin/inventory/reservations/${encodeURIComponent(reservationId)}/release`,
+    {
+      method: "POST",
+      headers: inventoryStaffHeaders(userId, username, role),
+      body: JSON.stringify(body || {}),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Release failed.");
+  return data;
+}
+
+export async function fetchAdminInventoryMovements(
+  userId: string,
+  username: string,
+  opts?: { inventoryItemId?: string; limit?: number },
+  role = ""
+) {
+  const q = new URLSearchParams();
+  if (opts?.inventoryItemId) q.set("inventoryItemId", opts.inventoryItemId);
+  if (opts?.limit) q.set("limit", String(opts.limit));
+  const suffix = q.toString() ? `?${q}` : "";
+  const res = await apiFetch(`/api/admin/inventory/movements${suffix}`, {
+    headers: inventoryStaffHeaders(userId, username, role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load movements.");
+  return data as { movements: any[] };
+}
+
+export async function fetchAdminInventoryReservations(
+  userId: string,
+  username: string,
+  opts?: { status?: string; inventoryItemId?: string },
+  role = ""
+) {
+  const q = new URLSearchParams();
+  if (opts?.status) q.set("status", opts.status);
+  if (opts?.inventoryItemId) q.set("inventoryItemId", opts.inventoryItemId);
+  const suffix = q.toString() ? `?${q}` : "";
+  const res = await apiFetch(`/api/admin/inventory/reservations${suffix}`, {
+    headers: inventoryStaffHeaders(userId, username, role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load reservations.");
+  return data as { reservations: any[] };
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {
