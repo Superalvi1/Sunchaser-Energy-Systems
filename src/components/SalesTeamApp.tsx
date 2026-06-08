@@ -38,9 +38,20 @@ import {
   reindexBoqItemNumbers,
   type BoqInsertAction,
 } from "../lib/boqRowInsert";
-import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
+import { parseQuotePageExtendedSettings, serializeQuotePageBody, renderRichTextBlock, buildCeoSignatureBlockHtml, DEFAULT_CEO_SIGNATURE_BLOCK, quotePdfPrintCss } from "../lib/quotePdfLayout";
 import { normalizeGlobalWatermark, resolveGlobalWatermarkImageUrl } from "../lib/quotePdfSettingsStore";
 import { QUOTE_WATERMARK_MAX_BYTES } from "../lib/quoteAssetsConstants";
+import {
+  computeNetProposalValue,
+  resolveQuoteDiscountAmount,
+  type QuoteDiscountType,
+} from "../lib/quoteDiscount";
+import {
+  getWatermarkLayerInlineStyle,
+  normalizeWatermarkPlacement,
+  WATERMARK_PLACEMENT_OPTIONS,
+  type WatermarkPlacement,
+} from "../lib/watermarkStyles";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -148,7 +159,8 @@ export default function SalesTeamApp({
   const [inverterCapacity, setInverterCapacity] = useState("10kW");
   const [batteryOption, setBatteryOption] = useState("None");
   const [netMeteringRequired, setNetMeteringRequired] = useState<'Yes' | 'No'>('Yes');
-  const [discount, setDiscount] = useState<number>(0);
+  const [discountType, setDiscountType] = useState<QuoteDiscountType>("fixed");
+  const [discountValue, setDiscountValue] = useState<number>(0);
   const [paymentSchedule, setPaymentSchedule] = useState("50% Advance, 40% Delivery, 10% Commissioning");
   const [selectedTemplate, setSelectedTemplate] = useState("custom");
   const [includedPages, setIncludedPages] = useState<Record<string, boolean>>({
@@ -224,8 +236,25 @@ export default function SalesTeamApp({
   const [globalWatermarkFile, setGlobalWatermarkFile] = useState<string>("");
   const [globalWatermarkPreviewUrl, setGlobalWatermarkPreviewUrl] = useState<string>("");
   const [globalWatermarkOpacity, setGlobalWatermarkOpacity] = useState<number>(0.08);
+  const [globalWatermarkScale, setGlobalWatermarkScale] = useState<number>(60);
+  const [globalWatermarkPosition, setGlobalWatermarkPosition] = useState<WatermarkPlacement>("center");
   const [globalWatermarkUploading, setGlobalWatermarkUploading] = useState<boolean>(false);
   const [useDefaultCompanyContent, setUseDefaultCompanyContent] = useState<boolean>(false);
+
+  const globalWatermarkPreviewStyle = useMemo(() => {
+    if (!globalWatermarkPreviewUrl) return null;
+    return getWatermarkLayerInlineStyle(globalWatermarkPreviewUrl, {
+      opacity: globalWatermarkOpacity,
+      scale: globalWatermarkScale,
+      position: globalWatermarkPosition,
+      repeat: "no-repeat",
+    });
+  }, [
+    globalWatermarkPreviewUrl,
+    globalWatermarkOpacity,
+    globalWatermarkScale,
+    globalWatermarkPosition,
+  ]);
 
   const isDefaultAutoSizerRow = (row: any) => {
     const defaultIds = [
@@ -291,11 +320,15 @@ export default function SalesTeamApp({
       setGlobalWatermarkUrl(wm.globalWatermarkFile ? "" : wm.imageUrl || "");
       setGlobalWatermarkPreviewUrl(resolveGlobalWatermarkImageUrl(wm));
       setGlobalWatermarkOpacity(wm.opacity ?? 0.08);
+      setGlobalWatermarkScale(wm.scale ?? 60);
+      setGlobalWatermarkPosition(normalizeWatermarkPlacement(wm.position));
     } else {
       setGlobalWatermarkFile("");
       setGlobalWatermarkUrl("");
       setGlobalWatermarkPreviewUrl("");
       setGlobalWatermarkOpacity(0.08);
+      setGlobalWatermarkScale(60);
+      setGlobalWatermarkPosition("center");
     }
   }, [settings, quotePdfSettings]);
 
@@ -317,7 +350,8 @@ export default function SalesTeamApp({
             ? { imageUrl: globalWatermarkUrl.trim() }
             : {}),
         opacity: globalWatermarkOpacity,
-        position: "center" as const,
+        scale: globalWatermarkScale,
+        position: globalWatermarkPosition,
         repeat: "no-repeat" as const,
       };
       const updatedPdfSettings = {
@@ -403,7 +437,8 @@ export default function SalesTeamApp({
       const watermark = {
         globalWatermarkFile: payload.globalWatermarkFile,
         opacity: globalWatermarkOpacity,
-        position: "center" as const,
+        scale: globalWatermarkScale,
+        position: globalWatermarkPosition,
         repeat: "no-repeat" as const,
       };
       await fetch(`${API_BASE_URL}/api/db/update`, {
@@ -1138,7 +1173,8 @@ export default function SalesTeamApp({
       setBatteryOption("None");
       setSelectedStructure('standard');
       setNetMeteringRequired('Yes');
-      setDiscount(0);
+      setDiscountType("fixed");
+      setDiscountValue(0);
       setPaymentSchedule("50% Advance, 40% Delivery, 10% Commissioning");
       setLescoMeterNo("");
       setLescoConsumerNo("");
@@ -1471,7 +1507,18 @@ export default function SalesTeamApp({
         .reduce((sum, r) => sum + (r.total || 0), 0);
 
       const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
-      const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+      const resolvedDiscount = resolveQuoteDiscountAmount(calculatedGrandTotal, {
+        discountType,
+        discountValue,
+      });
+      const calculatedNetTotal = computeNetProposalValue(
+        calculatedGrandTotal,
+        resolvedDiscount.discountAmount,
+        {
+          taxAmount: calculatedTaxAmount,
+          societyCharges: Number(societyCharges) || 0,
+        }
+      );
 
       // Generate client-side idempotencyKey
       const idempotencyKey = `ik-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -1508,7 +1555,9 @@ export default function SalesTeamApp({
         inverterCapacity,
         batteryOption,
         netMeteringRequired,
-        discount: Number(discount) || 0,
+        discount: resolvedDiscount.discountAmount,
+        discountType: resolvedDiscount.discountType,
+        discountValue: resolvedDiscount.discountValue,
         paymentSchedule,
         boqItems: manualOnlyRows,
 
@@ -1616,7 +1665,18 @@ export default function SalesTeamApp({
       .reduce((sum, r) => sum + (r.total || 0), 0);
 
     const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
-    const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+    const resolvedDiscount = resolveQuoteDiscountAmount(calculatedGrandTotal, {
+      discountType,
+      discountValue,
+    });
+    const calculatedNetTotal = computeNetProposalValue(
+      calculatedGrandTotal,
+      resolvedDiscount.discountAmount,
+      {
+        taxAmount: calculatedTaxAmount,
+        societyCharges: Number(societyCharges) || 0,
+      }
+    );
 
     const quoteData = {
       systemSizekW,
@@ -1647,7 +1707,9 @@ export default function SalesTeamApp({
       inverterCapacity,
       batteryOption,
       netMeteringRequired,
-      discount: Number(discount) || 0,
+      discount: resolvedDiscount.discountAmount,
+      discountType: resolvedDiscount.discountType,
+      discountValue: resolvedDiscount.discountValue,
       paymentSchedule,
       boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
       lescoSettings: {
@@ -1746,7 +1808,18 @@ export default function SalesTeamApp({
       .reduce((sum, r) => sum + (r.total || 0), 0);
 
     const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
-    const calculatedNetTotal = calculatedGrandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+    const resolvedDiscount = resolveQuoteDiscountAmount(calculatedGrandTotal, {
+      discountType,
+      discountValue,
+    });
+    const calculatedNetTotal = computeNetProposalValue(
+      calculatedGrandTotal,
+      resolvedDiscount.discountAmount,
+      {
+        taxAmount: calculatedTaxAmount,
+        societyCharges: Number(societyCharges) || 0,
+      }
+    );
 
     const quoteData = {
       systemSizekW,
@@ -1777,7 +1850,9 @@ export default function SalesTeamApp({
       inverterCapacity,
       batteryOption,
       netMeteringRequired,
-      discount: Number(discount) || 0,
+      discount: resolvedDiscount.discountAmount,
+      discountType: resolvedDiscount.discountType,
+      discountValue: resolvedDiscount.discountValue,
       paymentSchedule,
       boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
       lescoSettings: {
@@ -1866,7 +1941,13 @@ export default function SalesTeamApp({
     setBatteryOption(quote.batteryOption || "None");
     setStructureType(quote.structureType || "Standard");
     setNetMeteringRequired(quote.netMeteringRequired || "Yes");
-    setDiscount(quote.discount || 0);
+    if (quote.discountType) {
+      setDiscountType(quote.discountType === "percentage" ? "percentage" : "fixed");
+      setDiscountValue(Number(quote.discountValue) || 0);
+    } else {
+      setDiscountType("fixed");
+      setDiscountValue(Number(quote.discount) || 0);
+    }
     setPaymentSchedule(quote.paymentSchedule || "50% Advance, 40% Delivery, 10% Commissioning");
     
     setLescoMeterNo(quote.lescoSettings?.meterNo || "");
@@ -1950,6 +2031,12 @@ export default function SalesTeamApp({
         watermarkOpacity: 0.08,
         watermarkPosition: "center",
         coverLayoutMode: "classic" as const,
+        sigLeftName: DEFAULT_CEO_SIGNATURE_BLOCK.leftName || "",
+        sigLeftTitle: DEFAULT_CEO_SIGNATURE_BLOCK.leftTitle || "",
+        sigLeftSignatureUrl: "",
+        sigRightName: DEFAULT_CEO_SIGNATURE_BLOCK.rightName || "",
+        sigRightTitle: DEFAULT_CEO_SIGNATURE_BLOCK.rightTitle || "",
+        sigRightSignatureUrl: "",
         saveStatus: "Saved" as const,
       };
     }
@@ -2004,6 +2091,12 @@ export default function SalesTeamApp({
       watermarkOpacity: local?.watermarkOpacity !== undefined ? local.watermarkOpacity : (parsed.watermark?.opacity ?? 0.08),
       watermarkPosition: local?.watermarkPosition !== undefined ? local.watermarkPosition : (parsed.watermark?.position || "center"),
       coverLayoutMode: local?.coverLayoutMode !== undefined ? local.coverLayoutMode : (parsed.coverLayoutMode || "classic"),
+      sigLeftName: local?.sigLeftName !== undefined ? local.sigLeftName : (parsed.signatureBlock?.leftName || DEFAULT_CEO_SIGNATURE_BLOCK.leftName || ""),
+      sigLeftTitle: local?.sigLeftTitle !== undefined ? local.sigLeftTitle : (parsed.signatureBlock?.leftTitle || DEFAULT_CEO_SIGNATURE_BLOCK.leftTitle || ""),
+      sigLeftSignatureUrl: local?.sigLeftSignatureUrl !== undefined ? local.sigLeftSignatureUrl : (parsed.signatureBlock?.leftSignatureUrl || ""),
+      sigRightName: local?.sigRightName !== undefined ? local.sigRightName : (parsed.signatureBlock?.rightName || DEFAULT_CEO_SIGNATURE_BLOCK.rightName || ""),
+      sigRightTitle: local?.sigRightTitle !== undefined ? local.sigRightTitle : (parsed.signatureBlock?.rightTitle || DEFAULT_CEO_SIGNATURE_BLOCK.rightTitle || ""),
+      sigRightSignatureUrl: local?.sigRightSignatureUrl !== undefined ? local.sigRightSignatureUrl : (parsed.signatureBlock?.rightSignatureUrl || ""),
 
       saveStatus: local?.saveStatus || 'Saved'
     };
@@ -2120,6 +2213,14 @@ export default function SalesTeamApp({
                 opacity: state.watermarkOpacity,
                 position: state.watermarkPosition,
                 repeat: "no-repeat",
+              },
+              signatureBlock: {
+                leftName: state.sigLeftName,
+                leftTitle: state.sigLeftTitle,
+                leftSignatureUrl: state.sigLeftSignatureUrl,
+                rightName: state.sigRightName,
+                rightTitle: state.sigRightTitle,
+                rightSignatureUrl: state.sigRightSignatureUrl,
               },
             }),
             image_url: state.image_url,
@@ -2402,7 +2503,14 @@ export default function SalesTeamApp({
     .filter(r => r && r.type === 'item')
     .reduce((sum, r) => sum + (r.total || 0), 0);
   const calculatedTaxAmount = taxEnabled ? Math.round(grandTotal * (taxRate / 100)) : 0;
-  const netTotal = grandTotal + calculatedTaxAmount + (Number(societyCharges) || 0) - (Number(discount) || 0);
+  const resolvedManualDiscount = useMemo(
+    () => resolveQuoteDiscountAmount(grandTotal, { discountType, discountValue }),
+    [grandTotal, discountType, discountValue]
+  );
+  const netTotal = computeNetProposalValue(grandTotal, resolvedManualDiscount.discountAmount, {
+    taxAmount: calculatedTaxAmount,
+    societyCharges: Number(societyCharges) || 0,
+  });
 
   // Format helper for PKR currency representation
   const formatPKR = (num: number) => {
@@ -3469,7 +3577,7 @@ export default function SalesTeamApp({
                         
                         <div className="space-y-2 border-b border-slate-900 pb-3">
                           <div className="flex justify-between text-slate-450">
-                            <span>Gross BOQ Subtotal:</span>
+                            <span>Subtotal:</span>
                             <span className="text-slate-200">{formatPKR(grandTotal)}</span>
                           </div>
                           
@@ -3514,19 +3622,42 @@ export default function SalesTeamApp({
                             />
                           </div>
 
-                          <div className="flex justify-between items-center text-slate-450">
-                            <span>Promo Discount (Rs):</span>
-                            <input
-                              type="number"
-                              value={discount}
-                              onChange={(e) => setDiscount(Number(e.target.value))}
-                              className="w-28 bg-slate-900 border border-slate-800 rounded text-right px-1.5 py-0.5 text-xs text-emerald-400 font-bold"
-                            />
+                          <div className="space-y-1.5 pt-1 border-t border-slate-900/60">
+                            <div className="flex justify-between items-center text-slate-450 gap-2">
+                              <span>Discount:</span>
+                              <select
+                                value={discountType}
+                                onChange={(e) => setDiscountType(e.target.value as QuoteDiscountType)}
+                                className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] text-white"
+                              >
+                                <option value="percentage">Percentage</option>
+                                <option value="fixed">Fixed Amount</option>
+                              </select>
+                            </div>
+                            <div className="flex justify-between items-center text-slate-450">
+                              <span className="text-[10px] text-slate-500">
+                                {discountType === "percentage" ? "Discount (%)" : "Discount (Rs)"}
+                              </span>
+                              <input
+                                type="number"
+                                min="0"
+                                max={discountType === "percentage" ? 100 : undefined}
+                                value={discountValue}
+                                onChange={(e) => setDiscountValue(Number(e.target.value))}
+                                className="w-28 bg-slate-900 border border-slate-800 rounded text-right px-1.5 py-0.5 text-xs text-emerald-400 font-bold"
+                              />
+                            </div>
+                            {resolvedManualDiscount.discountAmount > 0 && (
+                              <div className="flex justify-between text-emerald-400">
+                                <span className="text-[10px]">{resolvedManualDiscount.discountLabel}:</span>
+                                <span>-{formatPKR(resolvedManualDiscount.discountAmount)}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
                         <div className="flex justify-between text-sm font-extrabold border-t border-slate-900 pt-2.5">
-                          <span className="text-white font-sans">NET INVESTMENT:</span>
+                          <span className="text-white font-sans">Net Proposal Value:</span>
                           <span className="text-amber-500 text-[15px]">{formatPKR(netTotal)}</span>
                         </div>
                       </div>
@@ -3896,9 +4027,75 @@ export default function SalesTeamApp({
                           />
                         </details>
 
-                        <div>
-                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Opacity ({globalWatermarkOpacity})</label>
-                          <input type="range" min="0.02" max="0.25" step="0.01" value={globalWatermarkOpacity} onChange={(e) => setGlobalWatermarkOpacity(parseFloat(e.target.value))} className="w-full accent-amber-500" />
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">
+                              Scale ({globalWatermarkScale}%)
+                            </label>
+                            <input
+                              type="range"
+                              min="10"
+                              max="100"
+                              step="1"
+                              value={globalWatermarkScale}
+                              onChange={(e) => setGlobalWatermarkScale(parseInt(e.target.value, 10))}
+                              className="w-full accent-amber-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">
+                              Opacity ({Math.round(globalWatermarkOpacity * 100)}%)
+                            </label>
+                            <input
+                              type="range"
+                              min="0"
+                              max="0.2"
+                              step="0.01"
+                              value={globalWatermarkOpacity}
+                              onChange={(e) => setGlobalWatermarkOpacity(parseFloat(e.target.value))}
+                              className="w-full accent-amber-500"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Position</label>
+                            <select
+                              value={globalWatermarkPosition}
+                              onChange={(e) => setGlobalWatermarkPosition(e.target.value as WatermarkPlacement)}
+                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                            >
+                              {WATERMARK_PLACEMENT_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Live Preview</label>
+                          <div
+                            className="relative mx-auto w-full max-w-[240px] rounded-lg border border-slate-800 bg-white shadow-inner overflow-hidden"
+                            style={{ aspectRatio: "210 / 297" }}
+                          >
+                            <div className="absolute inset-0 p-3 pointer-events-none">
+                              <div className="h-2 w-20 bg-slate-200 rounded mb-2" />
+                              <div className="space-y-1.5">
+                                <div className="h-1 w-full bg-slate-100 rounded" />
+                                <div className="h-1 bg-slate-100 rounded" style={{ width: "92%" }} />
+                                <div className="h-1 bg-slate-100 rounded" style={{ width: "84%" }} />
+                                <div className="h-1 w-full bg-slate-100 rounded" />
+                                <div className="h-1 bg-slate-100 rounded" style={{ width: "76%" }} />
+                              </div>
+                            </div>
+                            {globalWatermarkPreviewStyle ? (
+                              <div aria-hidden="true" style={globalWatermarkPreviewStyle as React.CSSProperties} />
+                            ) : (
+                              <div className="absolute inset-0 flex items-center justify-center text-[9px] text-slate-400 px-4 text-center">
+                                Upload or enter a watermark URL to preview placement
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -3979,10 +4176,35 @@ export default function SalesTeamApp({
                                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-sans focus:outline-none focus:border-amber-500"
                                 >
                                   <option value="standard">Standard (Header, Title, Text, Footer)</option>
+                                  <option value="ceo_signature_block">CEO Signature Block</option>
                                   <option value="image_only">IMAGE ONLY PAGE (Render background image only)</option>
                                   <option value="full_page_image">Full Page Image Only (Hides text & headers)</option>
                                 </select>
                               </div>
+
+                              {pageState.layoutMode === "ceo_signature_block" && (
+                                <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
+                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold block">CEO Signature Block</label>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Left Name</span>
+                                      <input type="text" value={pageState.sigLeftName} onChange={(e) => handleFieldChange(page.id, 'sigLeftName', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Title</span>
+                                      <input type="text" value={pageState.sigLeftTitle} onChange={(e) => handleFieldChange(page.id, 'sigLeftTitle', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Signature Image URL</span>
+                                      <input type="text" value={pageState.sigLeftSignatureUrl} onChange={(e) => handleFieldChange(page.id, 'sigLeftSignatureUrl', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Right Name</span>
+                                      <input type="text" value={pageState.sigRightName} onChange={(e) => handleFieldChange(page.id, 'sigRightName', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Title</span>
+                                      <input type="text" value={pageState.sigRightTitle} onChange={(e) => handleFieldChange(page.id, 'sigRightTitle', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                                      <span className="text-[8px] text-slate-500 uppercase font-mono">Signature Image URL</span>
+                                      <input type="text" value={pageState.sigRightSignatureUrl} onChange={(e) => handleFieldChange(page.id, 'sigRightSignatureUrl', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
 
                               {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
                                 <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
@@ -4699,12 +4921,14 @@ export default function SalesTeamApp({
 
                         <div className="space-y-2 text-xs font-sans text-slate-400 text-left bg-slate-950 p-4 rounded-xl border border-slate-900">
                           <span className="text-[10px] font-bold text-amber-550 uppercase tracking-wider block border-b border-slate-900 pb-1.5">Financial Summary</span>
-                          <p><strong>Gross BOQ Subtotal:</strong> {formatPKR(selectedQuoteDetail.grandTotal || selectedQuoteDetail.totalCost)}</p>
+                          <p><strong>Subtotal:</strong> {formatPKR(selectedQuoteDetail.grandTotal || selectedQuoteDetail.totalCost)}</p>
                           <p><strong>Lahore Sales Tax:</strong> {selectedQuoteDetail.taxEnabled ? `${selectedQuoteDetail.taxRate}% (${formatPKR(selectedQuoteDetail.taxAmount || 0)})` : "Disabled"}</p>
                           <p><strong>Society connection Dues:</strong> {formatPKR(selectedQuoteDetail.societyCharges || 0)}</p>
-                          <p><strong>Promo Executive discount:</strong> -{formatPKR(selectedQuoteDetail.discount || 0)}</p>
+                          {(selectedQuoteDetail.discount || 0) > 0 && (
+                            <p><strong>Discount:</strong> -{formatPKR(selectedQuoteDetail.discount || 0)}</p>
+                          )}
                           <p className="text-white text-sm font-extrabold border-t border-slate-900 pt-2 mt-2">
-                            <strong>Net Turnkey value:</strong> {formatPKR(selectedQuoteDetail.netTotal || selectedQuoteDetail.netCost || selectedQuoteDetail.totalCost)}
+                            <strong>Final Price:</strong> {formatPKR(selectedQuoteDetail.netTotal || selectedQuoteDetail.netCost || selectedQuoteDetail.totalCost)}
                           </p>
                         </div>
                       </div>
@@ -5060,7 +5284,7 @@ export default function SalesTeamApp({
                       </div>
 
                       {/* Main Content Body */}
-                      <div className="flex-1 flex flex-col justify-start">
+                      <div className={`flex-1 flex flex-col ${previewPage.layoutMode === "ceo_signature_block" ? "justify-between" : "justify-start"}`}>
                         {/* Logo / Foreground Photo Preview if present */}
                         {previewPage.image_url && (
                           <div className="mb-6 flex justify-center">
@@ -5077,10 +5301,41 @@ export default function SalesTeamApp({
                           {previewPage.title}
                         </h1>
 
-                        {/* Body Text */}
-                        <p className="text-xs md:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                          {previewPage.body_text}
-                        </p>
+                        <style>{quotePdfPrintCss()}</style>
+                        {(() => {
+                          const ext = parseQuotePageExtendedSettings(previewPage.body_text || "");
+                          const richHtml = renderRichTextBlock(ext.bodyText || previewPage.body_text || "");
+                          const signatureHtml =
+                            previewPage.layoutMode === "ceo_signature_block"
+                              ? buildCeoSignatureBlockHtml(
+                                  {
+                                    leftName: previewPage.sigLeftName || ext.signatureBlock?.leftName,
+                                    leftTitle: previewPage.sigLeftTitle || ext.signatureBlock?.leftTitle,
+                                    leftSignatureUrl: previewPage.sigLeftSignatureUrl || ext.signatureBlock?.leftSignatureUrl,
+                                    rightName: previewPage.sigRightName || ext.signatureBlock?.rightName,
+                                    rightTitle: previewPage.sigRightTitle || ext.signatureBlock?.rightTitle,
+                                    rightSignatureUrl: previewPage.sigRightSignatureUrl || ext.signatureBlock?.rightSignatureUrl,
+                                  },
+                                  ceoMessages
+                                )
+                              : "";
+                          return (
+                            <>
+                              {richHtml ? (
+                                <div dangerouslySetInnerHTML={{ __html: richHtml }} />
+                              ) : (
+                                !signatureHtml && (
+                                  <p className="text-xs md:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                    {ext.bodyText || previewPage.body_text}
+                                  </p>
+                                )
+                              )}
+                              {signatureHtml ? (
+                                <div className="mt-auto pt-8" dangerouslySetInnerHTML={{ __html: signatureHtml }} />
+                              ) : null}
+                            </>
+                          );
+                        })()}
                       </div>
 
                       {/* Footer */}

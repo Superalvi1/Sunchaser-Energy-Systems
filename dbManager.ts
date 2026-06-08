@@ -919,6 +919,8 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     batteryOption: quote.batteryOption,
     netMeteringRequired: quote.netMeteringRequired,
     discount: quote.discount,
+    discountType: quote.discountType,
+    discountValue: quote.discountValue,
     paymentSchedule: quote.paymentSchedule,
     boqItems: quote.boqItems,
     lescoSettings: quote.lescoSettings,

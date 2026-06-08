@@ -1,5 +1,11 @@
 /** Quotation PDF layout, rich text, typography, and proposal data helpers. */
 
+import {
+  type WatermarkPlacement,
+  type WatermarkStyleInput,
+  watermarkLayerStyleAttr,
+} from "./watermarkStyles";
+
 export type QuoteTypography = {
   fontSize: string;
   lineHeight: string;
@@ -11,11 +17,28 @@ export type QuoteTypography = {
   densityMode: "compact" | "normal" | "spacious";
 };
 
-export type QuoteWatermark = {
+export type QuoteWatermark = WatermarkStyleInput & {
   imageUrl?: string;
-  opacity?: number;
-  position?: "center" | "cover" | "contain";
+  position?: WatermarkPlacement;
   repeat?: "no-repeat" | "repeat";
+};
+
+export type CeoSignatureBlock = {
+  leftName?: string;
+  leftTitle?: string;
+  leftSignatureUrl?: string;
+  rightName?: string;
+  rightTitle?: string;
+  rightSignatureUrl?: string;
+};
+
+export const DEFAULT_CEO_SIGNATURE_BLOCK: CeoSignatureBlock = {
+  leftName: "Muhammad Allauddin",
+  leftTitle: "CEO",
+  leftSignatureUrl: "",
+  rightName: "Barrister Raza Khan Niazi",
+  rightTitle: "CEO Strategy & Innovation",
+  rightSignatureUrl: "",
 };
 
 export type QuotePageExtendedSettings = {
@@ -27,6 +50,7 @@ export type QuotePageExtendedSettings = {
   bodyImages: any[];
   typography: Partial<QuoteTypography> & { densityMode?: QuoteTypography["densityMode"] };
   watermark: QuoteWatermark;
+  signatureBlock?: CeoSignatureBlock;
 };
 
 const DENSITY_PRESETS: Record<QuoteTypography["densityMode"], Omit<QuoteTypography, "densityMode">> = {
@@ -80,12 +104,60 @@ function isHeadingLine(line: string): boolean {
   return t === t.toUpperCase() && !t.includes(".");
 }
 
+function parseMarkdownHeadingLine(line: string): { level: 2 | 3; text: string } | null {
+  const t = line.trim();
+  if (t.startsWith("### ")) return { level: 3, text: t.slice(4).trim() };
+  if (t.startsWith("## ")) return { level: 2, text: t.slice(3).trim() };
+  return null;
+}
+
+function renderSignatureColumn(name: string, title: string, signatureUrl: string): string {
+  const sigImage = signatureUrl
+    ? `<img src="${escapeHtml(signatureUrl)}" alt="" style="max-height:18mm;max-width:100%;object-fit:contain;margin:0 auto 6px;display:block;" />`
+    : `<div style="height:14mm;border-bottom:1.5px solid #cbd5e1;margin-bottom:8px;"></div>`;
+  return `
+    <div style="text-align:center;padding:0 8mm;">
+      ${sigImage}
+      <div style="font-weight:800;font-size:12px;color:#0f172a;margin-bottom:2px;">${escapeHtml(name)}</div>
+      <div style="font-size:9px;text-transform:uppercase;color:#d97706;font-weight:700;letter-spacing:0.06em;">${escapeHtml(title)}</div>
+    </div>
+  `;
+}
+
+export function buildCeoSignatureBlockHtml(
+  block?: CeoSignatureBlock | null,
+  ceoFallback?: Array<{ name?: string; designation?: string; signature_url?: string; signatureUrl?: string }>
+): string {
+  const fb = ceoFallback || [];
+  const merged = {
+    leftName: block?.leftName || fb[0]?.name || DEFAULT_CEO_SIGNATURE_BLOCK.leftName || "",
+    leftTitle: block?.leftTitle || fb[0]?.designation || DEFAULT_CEO_SIGNATURE_BLOCK.leftTitle || "",
+    leftSignatureUrl:
+      block?.leftSignatureUrl || fb[0]?.signature_url || fb[0]?.signatureUrl || "",
+    rightName: block?.rightName || fb[1]?.name || DEFAULT_CEO_SIGNATURE_BLOCK.rightName || "",
+    rightTitle: block?.rightTitle || fb[1]?.designation || DEFAULT_CEO_SIGNATURE_BLOCK.rightTitle || "",
+    rightSignatureUrl:
+      block?.rightSignatureUrl || fb[1]?.signature_url || fb[1]?.signatureUrl || "",
+  };
+
+  return `
+    <div class="ceo-signature-block" style="margin-top:18mm;padding-top:12mm;border-top:1.5px solid #e2e8f0;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16mm;align-items:end;">
+        ${renderSignatureColumn(merged.leftName, merged.leftTitle, merged.leftSignatureUrl)}
+        ${renderSignatureColumn(merged.rightName, merged.rightTitle, merged.rightSignatureUrl)}
+      </div>
+    </div>
+  `;
+}
+
 /**
  * Convert plain textarea content into structured HTML blocks.
+ * - ## Heading → H2 (gold, bold)
+ * - ### Subheading → H3 (dark blue, bold)
  * - Single newline → line break within paragraph
  * - Blank line → new paragraph
  * - Bullet lines → ul/li
- * - ALL CAPS or trailing ":" → section heading
+ * - ALL CAPS or trailing ":" → legacy section heading
  */
 export function renderRichTextBlock(
   text: string,
@@ -100,12 +172,6 @@ export function renderRichTextBlock(
     const lines = block.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
     if (!lines.length) continue;
 
-    if (lines.length === 1 && isHeadingLine(lines[0])) {
-      const heading = lines[0].replace(/:$/, "").trim();
-      parts.push(`<h3 class="quote-section-heading">${escapeHtml(heading)}</h3>`);
-      continue;
-    }
-
     const bulletLines = lines.filter((l) => BULLET_LINE.test(l.trim()) || /^[•✅🌞☀️🏗️🌐]/.test(l.trim()));
     if (bulletLines.length === lines.length) {
       parts.push(
@@ -119,9 +185,47 @@ export function renderRichTextBlock(
       continue;
     }
 
-    parts.push(
-      `<p class="quote-paragraph">${lines.map((l) => escapeHtml(l.trim())).join("<br/>")}</p>`
-    );
+    if (lines.length === 1) {
+      const md = parseMarkdownHeadingLine(lines[0]);
+      if (md?.level === 2) {
+        parts.push(`<h2 class="quote-heading-h2">${escapeHtml(md.text)}</h2>`);
+        continue;
+      }
+      if (md?.level === 3) {
+        parts.push(`<h3 class="quote-heading-h3">${escapeHtml(md.text)}</h3>`);
+        continue;
+      }
+      if (isHeadingLine(lines[0])) {
+        const heading = lines[0].replace(/:$/, "").trim();
+        parts.push(`<h3 class="quote-section-heading">${escapeHtml(heading)}</h3>`);
+        continue;
+      }
+    }
+
+    let paraLines: string[] = [];
+    const flushPara = () => {
+      if (!paraLines.length) return;
+      parts.push(
+        `<p class="quote-paragraph">${paraLines.map((l) => escapeHtml(l.trim())).join("<br/>")}</p>`
+      );
+      paraLines = [];
+    };
+
+    for (const line of lines) {
+      const md = parseMarkdownHeadingLine(line);
+      if (md?.level === 2) {
+        flushPara();
+        parts.push(`<h2 class="quote-heading-h2">${escapeHtml(md.text)}</h2>`);
+        continue;
+      }
+      if (md?.level === 3) {
+        flushPara();
+        parts.push(`<h3 class="quote-heading-h3">${escapeHtml(md.text)}</h3>`);
+        continue;
+      }
+      paraLines.push(line);
+    }
+    flushPara();
   }
 
   const align = opts?.align || "left";
@@ -155,6 +259,7 @@ export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePa
   let bodyImages: any[] = [];
   let typography: QuotePageExtendedSettings["typography"] = {};
   let watermark: QuoteWatermark = {};
+  let signatureBlock: CeoSignatureBlock = { ...DEFAULT_CEO_SIGNATURE_BLOCK };
 
   if (typeof bodyText === "string" && bodyText.trim().startsWith("{")) {
     try {
@@ -167,6 +272,9 @@ export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePa
       if (Array.isArray(parsed.bodyImages)) bodyImages = parsed.bodyImages;
       if (parsed.typography) typography = parsed.typography;
       if (parsed.watermark) watermark = parsed.watermark;
+      if (parsed.signatureBlock) {
+        signatureBlock = { ...signatureBlock, ...parsed.signatureBlock };
+      }
     } catch {
       /* plain text */
     }
@@ -181,6 +289,7 @@ export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePa
     bodyImages,
     typography,
     watermark,
+    signatureBlock,
   };
 }
 
@@ -225,12 +334,11 @@ export function buildWatermarkLayer(
 ): string {
   const url = String(imageUrl || "").trim();
   if (!url) return "";
-  const opacity = wm?.opacity ?? fallbackOpacity;
-  const position = wm?.position || "center";
-  const repeat = wm?.repeat || "no-repeat";
-  const size = position === "cover" ? "cover" : position === "contain" ? "contain" : "cover";
-  const pos = position === "center" ? "center center" : "center";
-  return `<div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('${url}');background-repeat:${repeat};background-position:${pos};background-size:${size};opacity:${opacity};pointer-events:none;z-index:0;"></div>`;
+  const styleAttr = watermarkLayerStyleAttr(url, {
+    ...wm,
+    opacity: wm?.opacity ?? fallbackOpacity,
+  });
+  return `<div class="page-watermark" aria-hidden="true" style="${styleAttr}"></div>`;
 }
 
 export function mergeQuoteWithLead(quote: any, lead: any): Record<string, any> {
@@ -282,11 +390,27 @@ export function quotePdfPrintCss(): string {
       color: #d97706;
       font-weight: 800;
       font-size: calc(var(--quote-font-size, 11px) + 2px);
-      margin: 0 0 var(--quote-para-gap, 12px);
+      margin: calc(var(--quote-para-gap, 12px) * 1.1) 0 var(--quote-para-gap, 12px);
       letter-spacing: 0.04em;
       text-transform: uppercase;
       border-left: 3px solid #f59e0b;
       padding-left: 8px;
+    }
+    .quote-heading-h2 {
+      color: #d97706;
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 5px);
+      line-height: 1.25;
+      margin: calc(var(--quote-para-gap, 12px) * 1.35) 0 var(--quote-para-gap, 12px);
+      letter-spacing: 0.02em;
+    }
+    .quote-heading-h3 {
+      color: #1e3a8a;
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 2px);
+      line-height: 1.35;
+      margin: calc(var(--quote-para-gap, 12px) * 1.05) 0 calc(var(--quote-para-gap, 12px) * 0.75);
+      letter-spacing: 0.01em;
     }
     .quote-paragraph {
       margin: 0 0 var(--quote-para-gap, 12px);
@@ -328,6 +452,7 @@ export function serializeQuotePageBody(state: {
   bodyImages?: any[];
   typography?: Record<string, unknown>;
   watermark?: QuoteWatermark;
+  signatureBlock?: CeoSignatureBlock;
 }): string {
   return JSON.stringify({
     bodyText: state.bodyText || "",
@@ -338,5 +463,6 @@ export function serializeQuotePageBody(state: {
     bodyImages: state.bodyImages || [],
     typography: state.typography || {},
     watermark: state.watermark || {},
+    signatureBlock: state.signatureBlock || DEFAULT_CEO_SIGNATURE_BLOCK,
   });
 }

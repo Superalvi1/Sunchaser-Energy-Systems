@@ -26,6 +26,7 @@ import {
 } from "./src/lib/quoteAssetsStorage.ts";
 import {
   buildWatermarkLayer,
+  buildCeoSignatureBlockHtml,
   formatSiteLocation,
   mergeQuoteWithLead,
   parseQuotePageExtendedSettings,
@@ -34,6 +35,7 @@ import {
   resolveTypography,
   typographyStyleAttr,
 } from "./src/lib/quotePdfLayout.ts";
+import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import {
   isSupabaseActive,
@@ -3743,6 +3745,8 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     batteryOption,
     netMeteringRequired,
     discount,
+    discountType,
+    discountValue,
     paymentSchedule,
     boqItems,
 
@@ -3810,8 +3814,17 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
 
   const quoteId = generateQuotationId();
   const cost = Number(totalCost) || (Number(systemSizekW) * 19500 + (batteryCapacity ? 480000 : 0));
-  const disc = Number(discount) || 0;
-  const netCost = cost - disc;
+  const subtotalForDiscount = Number(grandTotal) || cost;
+  const resolvedDiscount = resolveQuoteDiscountAmount(subtotalForDiscount, {
+    discountType,
+    discountValue,
+    discount,
+  });
+  const disc = resolvedDiscount.discountAmount;
+  const netCost = computeNetProposalValue(subtotalForDiscount, disc, {
+    taxAmount: taxEnabled ? Math.round(subtotalForDiscount * (Number(taxRate) || 0) / 100) : 0,
+    societyCharges: Number(societyCharges) || 0,
+  });
 
   // Update lead demographics if they are modified
   if (clientName) lead.name = clientName;
@@ -3861,6 +3874,8 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     batteryOption: batteryOption || "None",
     netMeteringRequired: netMeteringRequired || "Yes",
     discount: disc,
+    discountType: resolvedDiscount.discountType,
+    discountValue: resolvedDiscount.discountValue,
     paymentSchedule: paymentSchedule || paymentTerms || "50% Advance, 40% Delivery, 10% Commissioning",
     boqItems: boqItems || [],
 
@@ -6172,6 +6187,24 @@ function compileSunchaserPDFHtml(
             ${imageContent}
           </div>
         `;
+      } else if (ext.layoutMode === "ceo_signature_block") {
+        const signatureHtml = buildCeoSignatureBlockHtml(ext.signatureBlock, ceoList);
+        pagesHtml += `
+          <div class="page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+            ${watermarkHtml}
+            ${absoluteImagesHtml}
+            ${pageShellOpen}
+              ${headerHtml}
+              <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+                ${p.title ? `<div class="page-title">${p.title}</div>` : ""}
+                ${p.bodyText ? rich(p.bodyText) : ""}
+                ${bodyImagesHtml}
+                <div style="margin-top: auto;">${signatureHtml}</div>
+              </div>
+            ${pageShellClose}
+            ${footerHtml}
+          </div>
+        `;
       } else {
         const coverLogoHtml = (pageType === 'cover' && p.imageUrl)
           ? `<img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="Logo" />`
@@ -6207,6 +6240,24 @@ function compileSunchaserPDFHtml(
       pagesHtml += `
         <div class="page full-page-image-only" style="border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always; overflow: hidden;">
           ${imageContent}
+        </div>
+      `;
+    } else if (ext.layoutMode === "ceo_signature_block") {
+      const signatureHtml = buildCeoSignatureBlockHtml(ext.signatureBlock, ceoList);
+      pagesHtml += `
+        <div class="page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+          ${watermarkHtml}
+          ${absoluteImagesHtml}
+          ${pageShellOpen}
+            ${headerHtml}
+            <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+              ${p.title ? `<div class="page-title">${p.title}</div>` : ""}
+              ${p.bodyText ? rich(p.bodyText) : ""}
+              ${bodyImagesHtml}
+              <div style="margin-top: auto;">${signatureHtml}</div>
+            </div>
+          ${pageShellClose}
+          ${footerHtml}
         </div>
       `;
     } else {
@@ -6610,14 +6661,20 @@ function compileSunchaserPDFHtml(
         } else {
           grossTotal = quoteObj.grandTotal || calculatedGross;
         }
-        discountAmount = Number(quoteObj.discount) || 0;
+        const resolvedDiscount = resolveQuoteDiscountAmount(grossTotal, {
+          discountType: quoteObj.discountType,
+          discountValue: quoteObj.discountValue,
+          discount: quoteObj.discount,
+        });
+        discountAmount = resolvedDiscount.discountAmount;
         
         const societyCharges = Number(quoteObj.societyCharges) || 0;
         const taxEnabled = !!quoteObj.taxEnabled;
         const taxRate = Number(quoteObj.taxRate) || 0;
         const taxAmount = taxEnabled ? Math.round(grossTotal * (taxRate / 100)) : 0;
         
-        netTotal = grossTotal - discountAmount + societyCharges + taxAmount;
+        netTotal = computeNetProposalValue(grossTotal, discountAmount, { taxAmount, societyCharges });
+        const discountLabel = resolvedDiscount.discountLabel;
 
         pagesHtml += `
           <div class="page boq-page" style="padding: 12mm 15mm; position: relative; ${typoStyle}">
@@ -6660,12 +6717,12 @@ function compileSunchaserPDFHtml(
                 
                 <div style="width: 46%;">
                   <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                    <span style="color: #64748b; font-weight: 500;">BOQ Gross Sum:</span>
+                    <span style="color: #64748b; font-weight: 500;">Subtotal:</span>
                     <span style="font-weight: 600; color: #0f172a;">${formatPKR(grossTotal)}</span>
                   </div>
                   ${discountAmount > 0 ? `
                     <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
-                      <span style="color: #64748b; font-weight: 500;">Special Discount:</span>
+                      <span style="color: #64748b; font-weight: 500;">${discountLabel}:</span>
                       <span style="font-weight: 600; color: #dc2626;">-${formatPKR(discountAmount)}</span>
                     </div>
                   ` : ''}
@@ -6682,7 +6739,7 @@ function compileSunchaserPDFHtml(
                     </div>
                   ` : ''}
                   <div style="display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 850; border-top: 1.5px solid #0f172a; padding-top: 4px; margin-top: 4px;">
-                    <span style="color: #0f172a;">Turnkey Investment:</span>
+                    <span style="color: #0f172a;">Final Price:</span>
                     <span style="color: #d97706; font-size: 13.5px;">${formatPKR(netTotal)}</span>
                   </div>
                   <div style="font-size: 8px; color: #94a3b8; text-align: right; margin-top: 4px; font-weight: bold;">

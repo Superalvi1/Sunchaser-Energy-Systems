@@ -1,5 +1,12 @@
 /** Global quotation PDF settings persistence helpers (save/load only). */
 
+import {
+  normalizeWatermarkOpacity,
+  normalizeWatermarkPlacement,
+  normalizeWatermarkScale,
+  type WatermarkPlacement,
+} from "./watermarkStyles";
+
 export const QUOTE_PDF_GLOBAL_WATERMARK_KEY = "quote_pdf_global_watermark";
 export const QUOTE_ASSETS_BUCKET = "quote-assets";
 
@@ -7,7 +14,8 @@ export type GlobalWatermarkValue = {
   imageUrl?: string;
   globalWatermarkFile?: string;
   opacity?: number;
-  position?: "center" | "cover" | "contain";
+  scale?: number;
+  position?: WatermarkPlacement;
   repeat?: "no-repeat" | "repeat";
 };
 
@@ -54,8 +62,9 @@ export function normalizeGlobalWatermark(
   return {
     imageUrl: imageUrl || undefined,
     globalWatermarkFile: globalWatermarkFile || undefined,
-    opacity: wm.opacity ?? 0.08,
-    position: wm.position || "center",
+    opacity: normalizeWatermarkOpacity(wm.opacity),
+    scale: normalizeWatermarkScale(wm.scale),
+    position: normalizeWatermarkPlacement(wm.position),
     repeat: wm.repeat || "no-repeat",
   };
 }

@@ -44,6 +44,8 @@ export interface Quote {
   batteryOption?: string;
   netMeteringRequired?: 'Yes' | 'No';
   discount?: number;
+  discountType?: 'percentage' | 'fixed';
+  discountValue?: number;
   paymentSchedule?: string;
   boqItems?: any[];
 
