@@ -38,6 +38,7 @@ import {
   reindexBoqItemNumbers,
   type BoqInsertAction,
 } from "../lib/boqRowInsert";
+import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -217,6 +218,8 @@ export default function SalesTeamApp({
   const [globalFooterText, setGlobalFooterText] = useState<string>("Sunchaser Energy Systems Proposal");
   const [globalFooterLineColor, setGlobalFooterLineColor] = useState<string>("#cbd5e1");
   const [globalFooterAlignment, setGlobalFooterAlignment] = useState<string>("left");
+  const [globalWatermarkUrl, setGlobalWatermarkUrl] = useState<string>("");
+  const [globalWatermarkOpacity, setGlobalWatermarkOpacity] = useState<number>(0.08);
   const [useDefaultCompanyContent, setUseDefaultCompanyContent] = useState<boolean>(false);
 
   const isDefaultAutoSizerRow = (row: any) => {
@@ -275,6 +278,11 @@ export default function SalesTeamApp({
         pdfCfg?.useDefaultCompanyContent === true || settings?.useDefaultCompanyContent === true
       );
     }
+    const wm = pdfCfg?.globalWatermark || pdfCfg?.global_watermark;
+    if (wm) {
+      setGlobalWatermarkUrl(wm.imageUrl || "");
+      setGlobalWatermarkOpacity(wm.opacity ?? 0.08);
+    }
   }, [settings, quotePdfSettings]);
 
   const handleSaveGlobalPdfSettings = async () => {
@@ -304,6 +312,12 @@ export default function SalesTeamApp({
           text: globalFooterText,
           lineColor: globalFooterLineColor,
           alignment: globalFooterAlignment,
+        },
+        globalWatermark: {
+          imageUrl: globalWatermarkUrl,
+          opacity: globalWatermarkOpacity,
+          position: "center",
+          repeat: "no-repeat",
         },
       };
 
@@ -1820,6 +1834,18 @@ export default function SalesTeamApp({
         footerLineColor: "#cbd5e1",
         footerAlignment: "left",
         bodyImages: [] as any[],
+        densityMode: "normal" as const,
+        fontSize: "",
+        lineHeight: "",
+        paragraphSpacing: "",
+        paddingTop: "",
+        paddingBottom: "",
+        contentWidth: "",
+        textAlign: "left",
+        watermarkUrl: "",
+        watermarkOpacity: 0.08,
+        watermarkPosition: "center",
+        coverLayoutMode: "classic" as const,
         saveStatus: "Saved" as const,
       };
     }
@@ -1861,7 +1887,20 @@ export default function SalesTeamApp({
       footerAlignment: local?.footerAlignment !== undefined ? local.footerAlignment : (parsed.footer?.alignment || "left"),
       
       bodyImages: local?.bodyImages !== undefined ? local.bodyImages : (parsed.bodyImages || []),
-      
+
+      densityMode: local?.densityMode !== undefined ? local.densityMode : (parsed.typography?.densityMode || "normal"),
+      fontSize: local?.fontSize !== undefined ? local.fontSize : (parsed.typography?.fontSize || ""),
+      lineHeight: local?.lineHeight !== undefined ? local.lineHeight : (parsed.typography?.lineHeight || ""),
+      paragraphSpacing: local?.paragraphSpacing !== undefined ? local.paragraphSpacing : (parsed.typography?.paragraphSpacing || ""),
+      paddingTop: local?.paddingTop !== undefined ? local.paddingTop : (parsed.typography?.paddingTop || ""),
+      paddingBottom: local?.paddingBottom !== undefined ? local.paddingBottom : (parsed.typography?.paddingBottom || ""),
+      contentWidth: local?.contentWidth !== undefined ? local.contentWidth : (parsed.typography?.contentWidth || ""),
+      textAlign: local?.textAlign !== undefined ? local.textAlign : (parsed.typography?.textAlign || "left"),
+      watermarkUrl: local?.watermarkUrl !== undefined ? local.watermarkUrl : (parsed.watermark?.imageUrl || ""),
+      watermarkOpacity: local?.watermarkOpacity !== undefined ? local.watermarkOpacity : (parsed.watermark?.opacity ?? 0.08),
+      watermarkPosition: local?.watermarkPosition !== undefined ? local.watermarkPosition : (parsed.watermark?.position || "center"),
+      coverLayoutMode: local?.coverLayoutMode !== undefined ? local.coverLayoutMode : (parsed.coverLayoutMode || "classic"),
+
       saveStatus: local?.saveStatus || 'Saved'
     };
   };
@@ -1898,6 +1937,10 @@ export default function SalesTeamApp({
         else if (field === 'footerLineColor') originalVal = parsed.footer?.lineColor || "#cbd5e1";
         else if (field === 'footerAlignment') originalVal = parsed.footer?.alignment || "left";
         else if (field === 'bodyImages') originalVal = parsed.bodyImages || [];
+        else if (field === 'densityMode') originalVal = parsed.typography?.densityMode || "normal";
+        else if (field === 'fontSize') originalVal = parsed.typography?.fontSize || "";
+        else if (field === 'watermarkUrl') originalVal = parsed.watermark?.imageUrl || "";
+        else if (field === 'coverLayoutMode') originalVal = parsed.coverLayoutMode || "classic";
       }
       
       const isDifferent = originalVal !== value;
@@ -1939,9 +1982,10 @@ export default function SalesTeamApp({
           data: {
             ...page,
             title: state.title,
-            body_text: JSON.stringify({
+            body_text: serializeQuotePageBody({
               bodyText: state.body_text,
               layoutMode: state.layoutMode,
+              coverLayoutMode: state.coverLayoutMode,
               header: {
                 mode: state.headerMode,
                 text: state.headerText,
@@ -1956,7 +2000,23 @@ export default function SalesTeamApp({
                 lineColor: state.footerLineColor,
                 alignment: state.footerAlignment
               },
-              bodyImages: state.bodyImages
+              bodyImages: state.bodyImages,
+              typography: {
+                densityMode: state.densityMode,
+                fontSize: state.fontSize || undefined,
+                lineHeight: state.lineHeight || undefined,
+                paragraphSpacing: state.paragraphSpacing || undefined,
+                paddingTop: state.paddingTop || undefined,
+                paddingBottom: state.paddingBottom || undefined,
+                contentWidth: state.contentWidth || undefined,
+                textAlign: state.textAlign || undefined,
+              },
+              watermark: {
+                imageUrl: state.watermarkUrl || undefined,
+                opacity: state.watermarkOpacity,
+                position: state.watermarkPosition,
+                repeat: "no-repeat",
+              },
             }),
             image_url: state.image_url,
             bg_image_url: state.bg_image_url,
@@ -3666,6 +3726,21 @@ export default function SalesTeamApp({
                           </div>
                         </div>
                       </div>
+
+                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
+                        <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Watermark (All Pages)</label>
+                        <input
+                          type="text"
+                          placeholder="Solar panel watermark URL"
+                          value={globalWatermarkUrl}
+                          onChange={(e) => setGlobalWatermarkUrl(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
+                        />
+                        <div>
+                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Opacity ({globalWatermarkOpacity})</label>
+                          <input type="range" min="0.02" max="0.25" step="0.01" value={globalWatermarkOpacity} onChange={(e) => setGlobalWatermarkOpacity(parseFloat(e.target.value))} className="w-full accent-amber-500" />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -3748,6 +3823,76 @@ export default function SalesTeamApp({
                                   <option value="full_page_image">Full Page Image Only (Hides text & headers)</option>
                                 </select>
                               </div>
+
+                              {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
+                                <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
+                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold block">Typography & Page Density</label>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Density</label>
+                                      <select
+                                        value={pageState.densityMode}
+                                        onChange={(e) => handleFieldChange(page.id, 'densityMode', e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
+                                      >
+                                        <option value="compact">Compact</option>
+                                        <option value="normal">Normal</option>
+                                        <option value="spacious">Spacious</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Text Align</label>
+                                      <select
+                                        value={pageState.textAlign}
+                                        onChange={(e) => handleFieldChange(page.id, 'textAlign', e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
+                                      >
+                                        <option value="left">Left</option>
+                                        <option value="center">Center</option>
+                                        <option value="right">Right</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Font Size</label>
+                                      <input type="text" placeholder="11px" value={pageState.fontSize} onChange={(e) => handleFieldChange(page.id, 'fontSize', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Height</label>
+                                      <input type="text" placeholder="1.6" value={pageState.lineHeight} onChange={(e) => handleFieldChange(page.id, 'lineHeight', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
+                                    </div>
+                                  </div>
+                                  {(page.page_type === 'cover' || page.pageType === 'cover') && (
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Cover Layout</label>
+                                      <select value={pageState.coverLayoutMode} onChange={(e) => handleFieldChange(page.id, 'coverLayoutMode', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white">
+                                        <option value="classic">Classic Word Style</option>
+                                        <option value="modern">Modern CRM Style</option>
+                                      </select>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
+                                <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
+                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold block">Page Watermark / Background</label>
+                                  <input type="text" placeholder="Watermark image URL (optional)" value={pageState.watermarkUrl} onChange={(e) => handleFieldChange(page.id, 'watermarkUrl', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Opacity ({pageState.watermarkOpacity})</label>
+                                      <input type="range" min="0.02" max="0.3" step="0.01" value={pageState.watermarkOpacity} onChange={(e) => handleFieldChange(page.id, 'watermarkOpacity', parseFloat(e.target.value))} className="w-full accent-amber-500" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Position</label>
+                                      <select value={pageState.watermarkPosition} onChange={(e) => handleFieldChange(page.id, 'watermarkPosition', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white">
+                                        <option value="center">Center</option>
+                                        <option value="cover">Cover</option>
+                                        <option value="contain">Contain</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
 
                               {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
                                 <>

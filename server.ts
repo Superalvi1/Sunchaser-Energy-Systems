@@ -13,6 +13,16 @@ import {
   runProductionCleanup20260606,
 } from "./productionCleanupDb.ts";
 import { billToMonthlyUnits, resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
+import {
+  buildWatermarkLayer,
+  formatSiteLocation,
+  mergeQuoteWithLead,
+  parseQuotePageExtendedSettings,
+  quotePdfPrintCss,
+  renderRichTextBlock,
+  resolveTypography,
+  typographyStyleAttr,
+} from "./src/lib/quotePdfLayout.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import {
   isSupabaseActive,
@@ -5289,48 +5299,8 @@ app.get("/api/backup/export", async (req, res) => {
 
 // Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
 
-// Helper function to parse extended template settings from body text
-function parseExtendedSettings(bodyTextContent: string, pageType: string) {
-  let bodyText = bodyTextContent || "";
-  let layoutMode = "standard";
-  let header = {
-    mode: "inherit",
-    enabled: true,
-    text: "",
-    logoUrl: "",
-    logoSize: "25px",
-    lineColor: "#f59e0b",
-    alignment: "left"
-  };
-  let footer = {
-    mode: "inherit",
-    enabled: true,
-    text: "Sunchaser Energy Systems Proposal",
-    lineColor: "#cbd5e1",
-    alignment: "left"
-  };
-  let bodyImages: any[] = [];
-
-  if (typeof bodyText === 'string' && bodyText.trim().startsWith("{")) {
-    try {
-      const parsed = JSON.parse(bodyText);
-      bodyText = parsed.bodyText !== undefined ? parsed.bodyText : "";
-      layoutMode = parsed.layoutMode || "standard";
-      if (parsed.header) header = { ...header, ...parsed.header };
-      if (parsed.footer) footer = { ...footer, ...parsed.footer };
-      if (Array.isArray(parsed.bodyImages)) bodyImages = parsed.bodyImages;
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  return {
-    bodyText,
-    layoutMode,
-    header,
-    footer,
-    bodyImages
-  };
+function parseExtendedSettings(bodyTextContent: string, _pageType?: string) {
+  return parseQuotePageExtendedSettings(bodyTextContent);
 }
 
 function buildIncludedPagesFromTemplate(activeState: Database, templateId: string): string[] {
@@ -5385,6 +5355,8 @@ function resolveQuotePdfBranding(activeState: Database) {
     useDefaultCompanyContent: !!(pdf.useDefaultCompanyContent ?? pdf.use_default_company_content),
     globalPdfHeader: savedHeader,
     globalPdfFooter: savedFooter,
+    globalWatermark: pdf.globalWatermark || pdf.global_watermark || {},
+    globalTypography: pdf.globalTypography || pdf.global_typography || {},
   };
 }
 
@@ -5397,6 +5369,8 @@ function compileSunchaserPDFHtml(
   options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean } = {}
 ): string {
   const settings = resolveQuotePdfBranding(activeState);
+  const proposal = mergeQuoteWithLead(quoteObj, leadObj);
+  const siteLocationLabel = formatSiteLocation(proposal);
 
   // PKR Formatting helper
   const formatPKR = (val: number) => {
@@ -5639,10 +5613,15 @@ function compileSunchaserPDFHtml(
 
   const globalFooter = {
     enabled: savedFooter?.enabled !== false,
-    text: savedFooter?.text || `${settings.companyName} Proposal`,
+    text: savedFooter?.text || `${settings.companyName} | ${settings.officeAddress}`,
     lineColor: savedFooter?.lineColor || "#cbd5e1",
     alignment: savedFooter?.alignment || "left",
+    fontSize: savedFooter?.fontSize || "8.5px",
+    showPageNumber: savedFooter?.showPageNumber === true,
   };
+
+  const globalWatermark = settings.globalWatermark || {};
+  const globalTypography = settings.globalTypography || {};
 
   // Resolve template pages from database if available
   const templateId = options.templateId || "tmpl-1";
@@ -5941,6 +5920,18 @@ function compileSunchaserPDFHtml(
       bgImageUrl: (dbPage && (dbPage.bgImageUrl || dbPage.bg_image_url)) || ""
     };
 
+    const typo = resolveTypography(ext, globalTypography);
+    const typoStyle = typographyStyleAttr(typo);
+    const wmSource = String(
+      ext.watermark?.imageUrl || p.bgImageUrl || globalWatermark?.imageUrl || ""
+    ).trim();
+    const wmSettings =
+      ext.watermark?.imageUrl
+        ? ext.watermark
+        : { ...(globalWatermark || {}), ...(ext.watermark || {}) };
+    const watermarkHtml = buildWatermarkLayer(wmSource, wmSettings);
+    const rich = (text: string) => renderRichTextBlock(text, { align: typo.textAlign });
+
     // Resolve header settings
     let hEnabled = globalHeader.enabled !== false;
     let hText = globalHeader.text || "☀️ SUNCHASER ENERGY";
@@ -5948,6 +5939,7 @@ function compileSunchaserPDFHtml(
     let hLogoSize = globalHeader.logoSize || "25px";
     let hLineColor = globalHeader.lineColor || "#f59e0b";
     let hAlignment = globalHeader.alignment || "left";
+    let hShowPageNumber = ext.header.showPageNumber !== false;
 
     if (ext.header.mode === 'custom') {
       hEnabled = ext.header.enabled !== false;
@@ -5956,24 +5948,36 @@ function compileSunchaserPDFHtml(
       hLogoSize = ext.header.logoSize || "25px";
       hLineColor = ext.header.lineColor || "#cbd5e1";
       hAlignment = ext.header.alignment || "left";
+      if (ext.header.showPageNumber !== undefined) {
+        hShowPageNumber = ext.header.showPageNumber !== false;
+      }
     } else if (ext.header.mode === 'disabled') {
       hEnabled = false;
     }
 
     // Resolve footer settings
     let fEnabled = globalFooter.enabled !== false;
-    let fText = globalFooter.text || "Sunchaser Energy Systems Proposal";
+    let fText = globalFooter.text || `${settings.companyName} | ${settings.officeAddress}`;
     let fLineColor = globalFooter.lineColor || "#cbd5e1";
     let fAlignment = globalFooter.alignment || "left";
+    let fFontSize = globalFooter.fontSize || "8.5px";
+    let fShowPageNumber = globalFooter.showPageNumber === true;
 
     if (ext.footer.mode === 'custom') {
       fEnabled = ext.footer.enabled !== false;
       fText = ext.footer.text || "";
       fLineColor = ext.footer.lineColor || "#cbd5e1";
       fAlignment = ext.footer.alignment || "left";
+      if (ext.footer.fontSize) fFontSize = String(ext.footer.fontSize);
+      if (ext.footer.showPageNumber !== undefined) {
+        fShowPageNumber = ext.footer.showPageNumber === true;
+      }
     } else if (ext.footer.mode === 'disabled') {
       fEnabled = false;
     }
+
+    const defaultFooterText = `${settings.companyName} | ${settings.officeAddress} | Hotlines: ${settings.phoneNumbers}`;
+    const resolvedFooterText = fText && fText.trim() ? fText : defaultFooterText;
 
     let headerHtml = "";
     if (hEnabled) {
@@ -5995,7 +5999,7 @@ function compileSunchaserPDFHtml(
             ${hLogoUrl ? `<img src="${hLogoUrl}" style="max-height: ${hLogoSize}; object-fit: contain;" alt="Logo" />` : ''}
             ${hText ? `<span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">${hText}</span>` : ''}
           </span>
-          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page ${pageIndex + 1}</span>
+          ${hShowPageNumber ? `<span style="font-size: 9px; font-weight: 600; color: #64748b;">Page ${pageIndex + 1}</span>` : ''}
         </div>
       `;
     }
@@ -6007,14 +6011,20 @@ function compileSunchaserPDFHtml(
       else if (fAlignment === 'right') justifyValue = "flex-end";
 
       footerHtml = `
-        <div class="page-footer" style="display: flex; justify-content: ${justifyValue}; align-items: center; border-top: 1px solid ${fLineColor}; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%;">
-          <span>${fText}</span>
-          ${fAlignment !== 'center' ? `<span style="font-size: 8px; font-family: monospace;">Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}</span>` : ''}
+        <div class="page-footer" style="display: flex; justify-content: ${justifyValue}; align-items: center; border-top: 1px solid ${fLineColor}; padding-top: 6px; font-size: ${fFontSize}; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+          <span style="flex: 1;">${resolvedFooterText}</span>
+          ${fAlignment !== 'center' ? `<span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-${String(leadObj.id || "DRAFT").substring(0, 8).toUpperCase()}${fShowPageNumber ? ` | Pg ${pageIndex + 1}` : ""}</span>` : (fShowPageNumber ? `<span style="font-size: 7.5px;">Page ${pageIndex + 1}</span>` : "")}
         </div>
       `;
     }
 
-    const pageStyleAttr = p.bgImageUrl ? `style="background: url('${p.bgImageUrl}') no-repeat center center / cover;"` : ``;
+    const pageStyleAttr =
+      p.bgImageUrl && !wmSource
+        ? `style="background: url('${p.bgImageUrl}') no-repeat center center / cover;"`
+        : `style="${typoStyle}"`;
+
+    const pageShellOpen = `<div class="quote-page-shell" style="${typoStyle}">`;
+    const pageShellClose = `</div>`;
 
     // Compile dynamic body images
     let bodyImagesHtml = "";
@@ -6045,6 +6055,7 @@ function compileSunchaserPDFHtml(
             <div style="width: 100%;">
               <!-- bodyImages -->
               <img class="bodyImages" src="${img.url}" style="${widthStyle} ${opacityStyle} ${alignStyle} object-fit: contain;" alt="Body Image" />
+              ${img.title ? `<div style="font-size: 9px; color: #64748b; text-align: center; margin-top: 4px;">${img.title}</div>` : ""}
             </div>
           `;
         }
@@ -6085,15 +6096,16 @@ function compileSunchaserPDFHtml(
           ? `<img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="Logo" />`
           : '';
         pagesHtml += `
-          <div class="page${pageType === 'cover' ? ' cover' : ''}" ${pageStyleAttr} style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box;">
+          <div class="page${pageType === 'cover' ? ' cover' : ''}" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div style="flex: 1; display: flex; flex-direction: column;">
+            ${pageShellOpen}
               ${headerHtml}
               ${coverLogoHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
-              ${p.bodyText ? `<div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 12px 0;">${p.bodyText.replace(/\\n/g, '<br/>')}</div>` : ''}
+              ${p.bodyText ? rich(p.bodyText) : ''}
               ${bodyImagesHtml}
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6118,9 +6130,19 @@ function compileSunchaserPDFHtml(
       `;
     } else {
       if (pageType === 'cover') {
+        const coverClassic = ext.coverLayoutMode !== 'modern';
+        const coverLogoCenter = coverClassic
+          ? `<div style="text-align: center; margin-bottom: 24px;">
+              ${p.imageUrl || settings.logoUrl ? `<img src="${p.imageUrl || settings.logoUrl}" style="max-height: 72px; max-width: 180px; object-fit: contain; margin: 0 auto 12px auto; display: block;" alt="Logo" />` : (useDefaultCompanyContent ? `<div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 12px auto;">☀️</div>` : '')}
+              ${useDefaultCompanyContent ? `<div style="font-weight: 850; font-size: 18px; letter-spacing: -0.02em; color: #0f172a;">${settings.companyName.toUpperCase()}</div>
+              <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; color: #d97706; font-weight: bold; margin-top: 4px;">Generational Infrastructure</div>` : ''}
+            </div>`
+          : '';
         pagesHtml += `
-          <div class="page cover" style="background: ${p.bgImageUrl ? `url('${p.bgImageUrl}') no-repeat center center / cover` : '#ffffff'}; color: #0f172a; padding: 25mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-direction: column; justify-content: space-between; position: relative;">
+          <div class="page cover${coverClassic ? ' classic-layout' : ''}" style="background: #ffffff; color: #0f172a; padding: 22mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-direction: column; justify-content: space-between; position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
+            ${coverClassic ? coverLogoCenter : `
             <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
               <div style="display: flex; align-items: center; gap: 12px;">
                 ${p.imageUrl || settings.logoUrl ? `
@@ -6133,30 +6155,27 @@ function compileSunchaserPDFHtml(
                   </div>
                 ` : '')}
               </div>
-            </div>
+            </div>`}
 
-            <div style="margin-top: 40px;">
-              <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a;">
-                ${quoteObj.systemSizekW || 15}kW ${quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
+            <div style="margin-top: ${coverClassic ? '10px' : '40px'}; position: relative; z-index: 1;">
+              <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a; ${coverClassic ? 'text-align: center;' : ''}">
+                ${proposal.systemSizekW || quoteObj.systemSizekW || "Not specified"}kW ${proposal.systemType || quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
               </div>
               ${p.title ? `
-              <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px;">
+              <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px; ${coverClassic ? 'text-align: center;' : ''}">
                 ${p.title}
               </div>
               ` : ''}
-              ${p.bodyText ? `
-              <p style="font-size: 12px; color: #475569; margin-top: 10px; line-height: 1.6; max-width: 500px;">
-                ${p.bodyText.replace(/\\n/g, '<br/>')}
-              </p>
-              ` : ''}
+              ${p.bodyText ? `<div style="margin-top: 10px; ${coverClassic ? 'max-width: 520px; margin-left: auto; margin-right: auto;' : 'max-width: 500px;'}">${rich(p.bodyText)}</div>` : ''}
               
               ${bodyImagesHtml}
               
-              <div style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 35px;">
+              <div class="cover-meta-grid" style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 35px;">
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
                   <div>
                     <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
-                    <div style="font-weight: 700; color: #0f172a; margin-top: 4px; font-size: 13px;">${quoteObj.clientName || leadObj.name}</div>
+                    <div style="font-weight: 700; color: #0f172a; margin-top: 4px; font-size: 13px;">${proposal.clientName}</div>
+                    ${proposal.clientPhone !== "Not specified" ? `<div style="font-size: 10px; color: #475569; margin-top: 2px;">${proposal.clientPhone}</div>` : ""}
                   </div>
                   <div>
                     <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Proposal Validity</div>
@@ -6164,24 +6183,25 @@ function compileSunchaserPDFHtml(
                   </div>
                   <div>
                     <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Site Location</div>
-                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.cityArea || leadObj.location || 'Lahore'}</div>
+                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${siteLocationLabel}</div>
                   </div>
                   <div>
                     <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Technical Advisor / BDM</div>
-                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${quoteObj.bdmName || leadObj.assignedSalesperson || 'Sarah Connor'}</div>
+                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">${proposal.bdmName}</div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto;">
+            <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto; position: relative; z-index: 1;">
               <div>
                 <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">${settings.companyName}</div>
                 <div>${settings.officeAddress}</div>
                 <div style="color: #d97706;">Hotlines: ${settings.phoneNumbers}</div>
+                ${settings.websiteUrl ? `<div>${settings.websiteUrl}</div>` : ""}
               </div>
               <div style="text-align: right;">
-                <div style="font-weight: 700; color: #0f172a;">Doc ID: SC-${leadObj.id.substring(0, 8).toUpperCase()}-${(quoteObj.id || 'DRAFT').toUpperCase()}</div>
+                <div style="font-weight: 700; color: #0f172a;">Doc ID: SC-${String(leadObj.id || "DRAFT").substring(0, 8).toUpperCase()}-${String(proposal.id || quoteObj.id || 'DRAFT').toUpperCase()}</div>
                 <div>Date: ${quoteDateString}</div>
               </div>
             </div>
@@ -6191,17 +6211,14 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'profile') {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
               
-              ${p.bodyText ? `
-              <div style="font-size: 12px; line-height: 1.6; color: #475569; margin: 20px 0; font-weight: 500;">
-                ${p.bodyText.replace(/\\n/g, '<br/>')}
-              </div>
-              ` : ''}
+              ${p.bodyText ? rich(p.bodyText) : ''}
 
               ${bodyImagesHtml}
 
@@ -6240,7 +6257,7 @@ function compileSunchaserPDFHtml(
                 </div>
               </div>
               ` : ''}
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6248,17 +6265,14 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'qr') {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
 
-              ${p.bodyText ? `
-              <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
-                ${p.bodyText.replace(/\\n/g, '<br/>')}
-              </div>
-              ` : ''}
+              ${p.bodyText ? rich(p.bodyText) : ''}
 
               ${bodyImagesHtml}
 
@@ -6298,7 +6312,7 @@ function compileSunchaserPDFHtml(
                 <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 12px; text-align: center; text-transform: uppercase;">Official Digital Channels & Portals</div>
                 <div style="display: flex; justify-content: space-around; align-items: center;">
                   <div style="text-align: center;">
-                    <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
+                    <svg width="90" height="90" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
                       <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
                       <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
                       <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
@@ -6315,7 +6329,7 @@ function compileSunchaserPDFHtml(
                     <div style="font-size: 9px; font-weight: 800; color: #475569; margin-top: 6px;">Customer Portal</div>
                   </div>
                   <div style="text-align: center;">
-                    <svg width="70" height="70" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
+                    <svg width="90" height="90" viewBox="0 0 100 100" style="background: #ffffff; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin: 0 auto;">
                       <rect x="0" y="0" width="30" height="30" fill="#0f172a" />
                       <rect x="5" y="5" width="20" height="20" fill="#ffffff" />
                       <rect x="10" y="10" width="10" height="10" fill="#0f172a" />
@@ -6334,7 +6348,7 @@ function compileSunchaserPDFHtml(
                 </div>
               </div>
               ` : ''}
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6344,12 +6358,13 @@ function compileSunchaserPDFHtml(
         const hasBodyImage = ext.bodyImages && ext.bodyImages.length > 0;
         const cardHeight = hasBodyImage ? "130mm" : "155mm";
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
-              ${p.bodyText ? `<div style="font-size: 11px; margin-bottom: 12px; color: #475569;">${p.bodyText}</div>` : ''}
+              ${p.bodyText ? rich(p.bodyText) : ''}
 
               ${bodyImagesHtml}
 
@@ -6386,7 +6401,7 @@ function compileSunchaserPDFHtml(
                 </div>
               </div>
               ` : ''}
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6394,9 +6409,10 @@ function compileSunchaserPDFHtml(
 
       else if (pageType.startsWith('structure_')) {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
 
@@ -6408,7 +6424,7 @@ function compileSunchaserPDFHtml(
                 </div>
                 <div style="font-size: 11px; line-height: 1.5; color: #475569;">
                   <strong>English Specification:</strong><br/>
-                  ${p.bodyText || structDetails.descriptionEn}
+                  ${p.bodyText ? rich(p.bodyText) : renderRichTextBlock(structDetails.descriptionEn)}
                 </div>
               </div>
               ` : ''}
@@ -6447,7 +6463,7 @@ function compileSunchaserPDFHtml(
                 ${structureSvg}
               </div>
               ` : ''}
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6523,9 +6539,10 @@ function compileSunchaserPDFHtml(
         netTotal = grossTotal - discountAmount + societyCharges + taxAmount;
 
         pagesHtml += `
-          <div class="page boq-page" style="padding: 12mm 15mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
+          <div class="page boq-page" style="padding: 12mm 15mm; position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               <div class="page-title">${p.title || (mode === 'sizer' ? 'Sizing Specifications Estimate' : 'Technical Bill of Quantities (BOQ)')}</div>
               
@@ -6592,7 +6609,7 @@ function compileSunchaserPDFHtml(
                   </div>
                 </div>
               </div>
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6600,22 +6617,23 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'terms1') {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               <div class="page-title">${p.title}</div>
               
-              <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              ${p.bodyText ? rich(p.bodyText) : `<div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
                 All engineering activities, supply dispatch, and LESCO utility agreements are governed strictly by the Sunchaser covenants below:
-              </div>
+              </div>`}
 
               ${bodyImagesHtml}
 
               <div style="margin-top: 10px;">
                 ${tcPage1Html}
               </div>
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6623,22 +6641,23 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'terms2') {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               <div class="page-title">${p.title}</div>
               
-              <div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              ${p.bodyText ? rich(p.bodyText) : `<div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
                 Consortium hardware replacement and force majeure exclusions continue below:
-              </div>
+              </div>`}
 
               ${bodyImagesHtml}
 
               <div style="margin-top: 10px;">
                 ${tcPage2Html}
               </div>
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6646,9 +6665,10 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'signoff') {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               <div class="page-title">${p.title}</div>
 
@@ -6659,11 +6679,11 @@ function compileSunchaserPDFHtml(
                   1. Customer Billing Profile
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
-                  <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.clientName || leadObj.name}</span></div>
-                  <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.cnic || 'Pending Verification'}</span></div>
-                  <div><strong>Active Line:</strong> <span style="color: #0f172a;">${quoteObj.clientPhone || leadObj.phone}</span></div>
-                  <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">${quoteObj.clientEmail || leadObj.email}</span></div>
-                  <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">${quoteObj.clientAddress || leadObj.address}</span></div>
+                  <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">${proposal.clientName}</span></div>
+                  <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">${quoteObj.cnic || 'Not specified'}</span></div>
+                  <div><strong>Active Line:</strong> <span style="color: #0f172a;">${proposal.clientPhone}</span></div>
+                  <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">${proposal.clientEmail}</span></div>
+                  <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">${siteLocationLabel}</span></div>
                 </div>
               </div>
 
@@ -6700,7 +6720,7 @@ function compileSunchaserPDFHtml(
                   <div style="font-size: 8px; color: #94a3b8;">Design Release Validation Authorization</div>
                 </div>
               </div>
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6708,11 +6728,14 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'bank') {
         pagesHtml += `
-          <div class="page" ${pageStyleAttr}>
+          <div class="page" style="position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${headerHtml}
               <div class="page-title">${p.title}</div>
+
+              ${p.bodyText ? rich(p.bodyText) : ""}
 
               <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
                 <span style="font-size: 18px;">⚠️</span>
@@ -6730,7 +6753,7 @@ function compileSunchaserPDFHtml(
               <div class="card" style="margin-top: 25px; font-size: 10px; color: #475569; line-height: 1.5; background-color: #fafaf9;">
                 <strong>Verification SLA:</strong> Once a bank transfer, direct deposit, or pay order is dispatched, snap the transfer slip and email to <strong>${settings.billingEmail}</strong> or share with your advisor for warehouse component staging release.
               </div>
-            </div>
+            ${pageShellClose}
             ${footerHtml}
           </div>
         `;
@@ -6738,20 +6761,17 @@ function compileSunchaserPDFHtml(
 
       else if (pageType === 'final') {
         pagesHtml += `
-          <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm; ${p.bgImageUrl ? `background: url('${p.bgImageUrl}') no-repeat center center / cover;` : ''} position: relative;">
+          <div class="page" style="justify-content: center; text-align: center; padding: 30mm 20mm; position: relative; ${typoStyle}">
+            ${watermarkHtml}
             ${absoluteImagesHtml}
-            <div>
+            ${pageShellOpen}
               ${useDefaultCompanyContent ? `
-              <div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>
+              ${settings.logoUrl ? `<img src="${settings.logoUrl}" style="max-height: 72px; max-width: 180px; object-fit: contain; margin: 0 auto 20px auto; display: block;" alt="Logo" />` : `<div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 20px auto; box-shadow: 0 4px 10px rgba(15,23,42,0.25);">☀️</div>`}
               <h2 style="font-size: 24px; font-weight: 850; letter-spacing: -0.02em; color: #0f172a; margin-bottom: 2px;">${settings.companyName.toUpperCase()}</h2>
               <div style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.15em; color: #d97706; font-weight: 700; margin-bottom: 25px;">Generational Infrastructure</div>
               ` : ''}
               
-              ${p.bodyText ? `
-              <div style="max-width: 440px; margin: 0 auto 40px auto; font-size: 12px; line-height: 1.6; color: #475569; font-weight: 500; font-style: italic;">
-                "${p.bodyText}"
-              </div>
-              ` : ''}
+              ${p.bodyText ? `<div style="max-width: 440px; margin: 0 auto 40px auto;">${rich(p.bodyText)}</div>` : ''}
 
               ${bodyImagesHtml}
 
@@ -6763,7 +6783,7 @@ function compileSunchaserPDFHtml(
                 Email: ${settings.billingEmail} | Web: ${settings.websiteUrl}
               </div>
               ` : ''}
-            </div>
+            ${pageShellClose}
           </div>
         `;
       }
@@ -6862,12 +6882,13 @@ function compileSunchaserPDFHtml(
         .page-title {
           font-size: 16px;
           font-weight: 850;
-          color: #0f172a;
+          color: #d97706;
           border-left: 4px solid #f59e0b;
           padding-left: 8px;
           text-transform: uppercase;
           letter-spacing: 0.02em;
         }
+        ${quotePdfPrintCss()}
         .page-footer {
           border-top: 1px solid #cbd5e1;
           padding-top: 6px;
@@ -7134,7 +7155,7 @@ app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
       roofSpace: 1200,
       shading: "None",
       rating: 5,
-      assignedSalesperson: "Sarah Connor",
+      assignedSalesperson: "Technical Advisor (Preview)",
       createdAt: new Date().toISOString(),
       notes: "Preview of corporate proposal styling."
     };
@@ -7158,7 +7179,8 @@ app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
       clientEmail: "allai1432009@gmail.com",
       clientAddress: "DHA Phase 6, Lahore",
       cityArea: "Lahore",
-      systemType: "Hybrid"
+      systemType: "Hybrid",
+      bdmName: "Technical Advisor (Preview)"
     };
 
     const includedFromTemplate = buildIncludedPagesFromTemplate(activeState, templateId);

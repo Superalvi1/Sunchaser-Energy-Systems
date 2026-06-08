@@ -42,6 +42,7 @@ import ManualAdminControl from "./ManualAdminControl";
 import AdminModuleNav, { type AdminSegmentId, type AdminQuickAction } from "./AdminModuleNav";
 import AdminProductsPanel from "./AdminProductsPanel";
 import { currencySymbol, API_BASE_URL } from "../services/api";
+import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
 
 interface AdminAppProps {
   leads: Lead[];
@@ -675,7 +676,13 @@ export default function AdminApp({
                               key={p.id}
                               onClick={() => {
                                 setEditingPageId(p.id);
-                                setPageDraft({ ...p });
+                                const ext = parseQuotePageExtendedSettings(p.bodyText || p.body_text || "");
+                                setPageDraft({
+                                  ...p,
+                                  bodyTextPlain: ext.bodyText,
+                                  densityMode: ext.typography?.densityMode || "normal",
+                                  watermarkUrl: ext.watermark?.imageUrl || "",
+                                });
                               }}
                               className={`cursor-pointer hover:bg-neutral-950 transition ${
                                 editingPageId === p.id ? 'bg-neutral-950 border-l-2 border-amber-500' : ''
@@ -728,10 +735,36 @@ export default function AdminApp({
                         <label className="text-neutral-300 block font-semibold">Text Content / Descriptions</label>
                         <textarea
                           rows={6}
-                          value={pageDraft.bodyText || ""}
-                          onChange={(e) => setPageDraft({ ...pageDraft, bodyText: e.target.value })}
+                          value={pageDraft.bodyTextPlain ?? pageDraft.bodyText ?? ""}
+                          onChange={(e) => setPageDraft({ ...pageDraft, bodyTextPlain: e.target.value })}
                           className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-200 focus:outline-none focus:border-amber-500 font-sans leading-relaxed text-xs"
                         />
+                        <p className="text-[10px] text-neutral-500">Blank lines create paragraphs. Lines starting with - or • become bullets.</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold text-xs">Page Density</label>
+                          <select
+                            value={pageDraft.densityMode || "normal"}
+                            onChange={(e) => setPageDraft({ ...pageDraft, densityMode: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 text-xs"
+                          >
+                            <option value="compact">Compact</option>
+                            <option value="normal">Normal</option>
+                            <option value="spacious">Spacious</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-neutral-300 block font-semibold text-xs">Watermark URL</label>
+                          <input
+                            type="text"
+                            value={pageDraft.watermarkUrl || ""}
+                            onChange={(e) => setPageDraft({ ...pageDraft, watermarkUrl: e.target.value })}
+                            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-neutral-100 text-xs"
+                            placeholder="Optional background watermark"
+                          />
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
@@ -759,7 +792,30 @@ export default function AdminApp({
 
                       <button
                         onClick={async () => {
-                          await saveDbChange("edit", "quoteTemplatePages", pageDraft, pageDraft.id);
+                          const existingExt = parseQuotePageExtendedSettings(pageDraft.bodyText || pageDraft.body_text || "");
+                          const payload = {
+                            ...pageDraft,
+                            bodyText: serializeQuotePageBody({
+                              bodyText: pageDraft.bodyTextPlain ?? existingExt.bodyText ?? "",
+                              layoutMode: existingExt.layoutMode,
+                              coverLayoutMode: existingExt.coverLayoutMode,
+                              header: existingExt.header,
+                              footer: existingExt.footer,
+                              bodyImages: existingExt.bodyImages,
+                              typography: {
+                                ...existingExt.typography,
+                                densityMode: pageDraft.densityMode || existingExt.typography?.densityMode || "normal",
+                              },
+                              watermark: {
+                                ...existingExt.watermark,
+                                imageUrl: pageDraft.watermarkUrl || existingExt.watermark?.imageUrl || "",
+                              },
+                            }),
+                          };
+                          delete payload.bodyTextPlain;
+                          delete payload.densityMode;
+                          delete payload.watermarkUrl;
+                          await saveDbChange("edit", "quoteTemplatePages", payload, pageDraft.id);
                           setEditingPageId(null);
                           setPageDraft(null);
                         }}
