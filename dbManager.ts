@@ -1691,6 +1691,12 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     logoUrl: qps.logo_url || qps.logoUrl,
     globalPdfHeader: qps.global_pdf_header || qps.globalPdfHeader || null,
     globalPdfFooter: qps.global_pdf_footer || qps.globalPdfFooter || null,
+    globalWatermark:
+      qps.global_watermark ||
+      qps.globalWatermark ||
+      qps.global_pdf_header?.watermark ||
+      qps.globalPdfHeader?.watermark ||
+      null,
     useDefaultCompanyContent: !!(qps.use_default_company_content ?? qps.useDefaultCompanyContent),
   }));
 

@@ -5169,6 +5169,18 @@ app.post("/api/db/update", async (req, res) => {
           };
         } else if (table === "quotePdfSettings") {
           pgTable = "quote_pdf_settings";
+          const headerPayload = data.globalPdfHeader || data.global_pdf_header || null;
+          const watermarkPayload =
+            data.globalWatermark ||
+            data.global_watermark ||
+            headerPayload?.watermark ||
+            null;
+          const headerWithWatermark =
+            watermarkPayload && headerPayload
+              ? { ...headerPayload, watermark: watermarkPayload }
+              : watermarkPayload && !headerPayload
+                ? { watermark: watermarkPayload }
+                : headerPayload;
           mappedData = {
             id: data.id,
             company_name: data.companyName || data.company_name,
@@ -5177,7 +5189,7 @@ app.post("/api/db/update", async (req, res) => {
             billing_email: data.billingEmail || data.billing_email,
             website_url: data.websiteUrl || data.website_url,
             logo_url: data.logoUrl || data.logo_url || "",
-            global_pdf_header: data.globalPdfHeader || data.global_pdf_header || null,
+            global_pdf_header: headerWithWatermark,
             global_pdf_footer: data.globalPdfFooter || data.global_pdf_footer || null,
             use_default_company_content: !!(data.useDefaultCompanyContent ?? data.use_default_company_content),
             updated_at: new Date().toISOString(),
@@ -5333,6 +5345,11 @@ function resolveQuotePdfBranding(activeState: Database) {
   const logoUrl = resolveQuotePdfLogoUrl(pdf.logoUrl || pdf.logo_url);
   const savedHeader = pdf.globalPdfHeader || pdf.global_pdf_header || null;
   const savedFooter = pdf.globalPdfFooter || pdf.global_pdf_footer || null;
+  const savedWatermark =
+    pdf.globalWatermark ||
+    pdf.global_watermark ||
+    savedHeader?.watermark ||
+    null;
   return {
     companyName,
     officeAddress:
@@ -5355,7 +5372,7 @@ function resolveQuotePdfBranding(activeState: Database) {
     useDefaultCompanyContent: !!(pdf.useDefaultCompanyContent ?? pdf.use_default_company_content),
     globalPdfHeader: savedHeader,
     globalPdfFooter: savedFooter,
-    globalWatermark: pdf.globalWatermark || pdf.global_watermark || {},
+    globalWatermark: savedWatermark || {},
     globalTypography: pdf.globalTypography || pdf.global_typography || {},
   };
 }

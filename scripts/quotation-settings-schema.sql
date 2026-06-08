@@ -130,6 +130,7 @@ create table if not exists public.quote_pdf_settings (
 alter table if exists public.quote_pdf_settings
   add column if not exists global_pdf_header jsonb,
   add column if not exists global_pdf_footer jsonb,
+  add column if not exists global_watermark jsonb,
   add column if not exists use_default_company_content boolean not null default false;
 
 -- -----------------------------------------------------------------------------
