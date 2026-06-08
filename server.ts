@@ -5184,6 +5184,23 @@ app.post("/api/db/update", async (req, res) => {
           const { scalarRow, jsonbRow, watermarkPayload } =
             buildQuotePdfSettingsSupabasePayload(data);
 
+          const { error: wmSettingsError } = await supabase.from("settings").upsert(
+            {
+              key: QUOTE_PDF_GLOBAL_WATERMARK_KEY,
+              value: watermarkPayload || {},
+            },
+            { onConflict: "key" }
+          );
+          if (wmSettingsError) {
+            console.error(
+              `[Supabase quotePdfSettings watermark settings sync error]:`,
+              wmSettingsError.message
+            );
+            return res.status(500).json({
+              error: `Global watermark save failed: ${wmSettingsError.message}`,
+            });
+          }
+
           const { error: scalarError } = await supabase
             .from(pgTable)
             .upsert(scalarRow, { onConflict: "id" });
@@ -5201,23 +5218,6 @@ app.post("/api/db/update", async (req, res) => {
             console.warn(
               `[Supabase quotePdfSettings jsonb sync warning]: ${jsonbError.message} — using settings fallback`
             );
-          }
-
-          const { error: wmSettingsError } = await supabase.from("settings").upsert(
-            {
-              key: QUOTE_PDF_GLOBAL_WATERMARK_KEY,
-              value: watermarkPayload || {},
-            },
-            { onConflict: "key" }
-          );
-          if (wmSettingsError) {
-            console.error(
-              `[Supabase quotePdfSettings watermark settings sync error]:`,
-              wmSettingsError.message
-            );
-            return res.status(500).json({
-              error: `Global watermark save failed: ${wmSettingsError.message}`,
-            });
           }
 
           mappedData = null;
