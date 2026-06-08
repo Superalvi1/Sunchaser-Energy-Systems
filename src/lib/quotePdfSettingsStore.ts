@@ -83,7 +83,6 @@ export function buildQuotePdfSettingsSupabasePayload(data: Record<string, unknow
     billing_email: data.billingEmail || data.billing_email,
     website_url: data.websiteUrl || data.website_url,
     logo_url: data.logoUrl || data.logo_url || "",
-    use_default_company_content: !!(data.useDefaultCompanyContent ?? data.use_default_company_content),
   };
 
   const jsonbRow = {
