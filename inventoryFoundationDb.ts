@@ -114,6 +114,114 @@ function itemDbRow(item: InventoryFoundationItem) {
   };
 }
 
+function normalizeSku(sku: string) {
+  return String(sku || "").trim();
+}
+
+function assertQuantityInvariants(stockQty: number, reservedQty: number) {
+  if (Number(stockQty) < 0 || Number(reservedQty) < 0) {
+    throw new InventoryFoundationDbError("Quantities cannot be negative.");
+  }
+  if (Number(reservedQty) > Number(stockQty)) {
+    throw new InventoryFoundationDbError("reserved_qty cannot exceed stock_qty.");
+  }
+}
+
+async function assertSkuUnique(sku: string, excludeId: string | null, localDb?: Database) {
+  const key = normalizeSku(sku).toLowerCase();
+  if (!key) return;
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!.from(ITEMS_TABLE).select("id, sku");
+    if (error) {
+      if (isInventoryTableMissing(error)) throw inventoryTableMissingError();
+      throw error;
+    }
+    const dup = (data || []).find(
+      (r) => normalizeSku(r.sku).toLowerCase() === key && r.id !== excludeId
+    );
+    if (dup) throw new InventoryFoundationDbError(`SKU "${sku}" already exists (${dup.id}).`, 409);
+  } else {
+    const dup = ((localDb as any)?.inventoryFoundationItems || []).find(
+      (r: any) => normalizeSku(r.sku).toLowerCase() === key && r.id !== excludeId
+    );
+    if (dup) throw new InventoryFoundationDbError(`SKU "${sku}" already exists (${dup.id}).`, 409);
+  }
+}
+
+function snapshotLocalInventory(localDb?: Database) {
+  if (!localDb) return null;
+  const db = localDb as any;
+  return {
+    items: JSON.parse(JSON.stringify(db.inventoryFoundationItems || [])),
+    movements: JSON.parse(JSON.stringify(db.inventoryFoundationMovements || [])),
+    reservations: JSON.parse(JSON.stringify(db.projectInventoryReservations || [])),
+  };
+}
+
+function restoreLocalInventory(localDb: Database | undefined, snap: ReturnType<typeof snapshotLocalInventory>) {
+  if (!localDb || !snap) return;
+  const db = localDb as any;
+  db.inventoryFoundationItems = snap.items;
+  db.inventoryFoundationMovements = snap.movements;
+  db.projectInventoryReservations = snap.reservations;
+}
+
+function isRpcMissing(err: any) {
+  const msg = String(err?.message || err?.details || "").toLowerCase();
+  return msg.includes("could not find the function") || msg.includes("schema cache");
+}
+
+function mapRpcInventoryError(err: any): never {
+  if (err?.code === "23505") throw new InventoryFoundationDbError("SKU already exists.", 409);
+  const msg = String(err?.message || err);
+  if (/not found/i.test(msg)) throw new InventoryFoundationDbError(msg, 404);
+  if (/cannot|only \d|negative|already/i.test(msg)) throw new InventoryFoundationDbError(msg);
+  throw err;
+}
+
+async function callInventoryRpc(fn: string, params: Record<string, unknown>) {
+  if (!isSupabaseActive()) return null;
+  const { data, error } = await getSupabase()!.rpc(fn, params);
+  if (error) {
+    if (isRpcMissing(error)) return null;
+    mapRpcInventoryError(error);
+  }
+  return data as { item: any; movement: any; reservation?: any };
+}
+
+async function applyItemAndMovement(
+  localDb: Database | undefined,
+  previous: InventoryFoundationItem,
+  next: InventoryFoundationItem,
+  movementBody: {
+    inventoryItemId: string;
+    movementType: InventoryMovementType;
+    qty: number;
+    referenceType?: string | null;
+    referenceId?: string | null;
+    notes?: string | null;
+    createdBy?: string | null;
+  },
+  afterMovement?: () => Promise<void>
+) {
+  assertQuantityInvariants(next.stockQty, next.reservedQty);
+  const snap = snapshotLocalInventory(localDb);
+  try {
+    const saved = await persistItem(next, localDb);
+    try {
+      const movement = await insertMovement(movementBody, localDb);
+      if (afterMovement) await afterMovement();
+      return { item: saved, movement };
+    } catch (movementErr) {
+      await persistItem(previous, localDb);
+      throw movementErr;
+    }
+  } catch (err) {
+    restoreLocalInventory(localDb, snap);
+    throw err;
+  }
+}
+
 async function loadAllItems(localDb?: Database): Promise<InventoryFoundationItem[]> {
   if (isSupabaseActive()) {
     const { data, error } = await getSupabase()!.from(ITEMS_TABLE).select("*").order("updated_at", { ascending: false });
@@ -294,13 +402,15 @@ export async function createAdminInventoryFoundationItem(
   await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
   const now = new Date().toISOString();
   const initialStock = Math.max(0, Number(body.initialStock || 0));
+  const sku = normalizeSku(body.sku || "") || `SKU-${Date.now()}`;
+  await assertSkuUnique(sku, null, localDb);
   const item: InventoryFoundationItem = {
     id: `inv-${Date.now()}`,
     productId: body.productId || null,
     category: String(body.category || "").trim(),
     brand: String(body.brand || "").trim(),
     model: String(body.model || "").trim(),
-    sku: String(body.sku || "").trim() || `SKU-${Date.now()}`,
+    sku,
     stockQty: initialStock,
     reservedQty: 0,
     availableQty: initialStock,
@@ -315,17 +425,27 @@ export async function createAdminInventoryFoundationItem(
   };
   const saved = await persistItem(item, localDb);
   if (initialStock > 0) {
-    await insertMovement(
-      {
-        inventoryItemId: saved.id,
-        movementType: "stock_in",
-        qty: initialStock,
-        referenceType: "initial",
-        notes: "Initial stock on item creation",
-        createdBy: staffUserId,
-      },
-      localDb
-    );
+    try {
+      await insertMovement(
+        {
+          inventoryItemId: saved.id,
+          movementType: "stock_in",
+          qty: initialStock,
+          referenceType: "initial",
+          notes: "Initial stock on item creation",
+          createdBy: staffUserId,
+        },
+        localDb
+      );
+    } catch (err) {
+      if (isSupabaseActive()) {
+        await getSupabase()!.from(ITEMS_TABLE).delete().eq("id", saved.id);
+      } else {
+        const db = localDb as any;
+        db.inventoryFoundationItems = (db.inventoryFoundationItems || []).filter((r: any) => r.id !== saved.id);
+      }
+      throw err;
+    }
   }
   return saved;
 }
@@ -341,25 +461,31 @@ export async function stockInAdminInventoryItem(
   const qty = Number(body.qty);
   if (!qty || qty <= 0) throw new InventoryFoundationDbError("qty must be greater than 0.");
 
+  const rpc = await callInventoryRpc("inv_foundation_stock_in", {
+    p_item_id: itemId,
+    p_qty: qty,
+    p_reference_type: body.referenceType || "manual",
+    p_reference_id: body.referenceId || null,
+    p_notes: body.notes || null,
+    p_created_by: staffUserId,
+  });
+  if (rpc) {
+    return { item: mapItemRow(rpc.item), movement: mapMovementRow(rpc.movement) };
+  }
+
   const item = await loadItemById(itemId, localDb);
   if (!item) throw new InventoryFoundationDbError("Inventory item not found.", 404);
-
-  item.stockQty += qty;
-  item.updatedAt = new Date().toISOString();
-  const saved = await persistItem(item, localDb);
-  const movement = await insertMovement(
-    {
-      inventoryItemId: itemId,
-      movementType: "stock_in",
-      qty,
-      referenceType: body.referenceType || "manual",
-      referenceId: body.referenceId || null,
-      notes: body.notes || null,
-      createdBy: staffUserId,
-    },
-    localDb
-  );
-  return { item: saved, movement };
+  const previous = { ...item };
+  const next = { ...item, stockQty: item.stockQty + qty, updatedAt: new Date().toISOString() };
+  return applyItemAndMovement(localDb, previous, next, {
+    inventoryItemId: itemId,
+    movementType: "stock_in",
+    qty,
+    referenceType: body.referenceType || "manual",
+    referenceId: body.referenceId || null,
+    notes: body.notes || null,
+    createdBy: staffUserId,
+  });
 }
 
 export async function stockOutAdminInventoryItem(
@@ -373,6 +499,18 @@ export async function stockOutAdminInventoryItem(
   const qty = Number(body.qty);
   if (!qty || qty <= 0) throw new InventoryFoundationDbError("qty must be greater than 0.");
 
+  const rpc = await callInventoryRpc("inv_foundation_stock_out", {
+    p_item_id: itemId,
+    p_qty: qty,
+    p_reference_type: body.referenceType || "manual",
+    p_reference_id: body.referenceId || null,
+    p_notes: body.notes || null,
+    p_created_by: staffUserId,
+  });
+  if (rpc) {
+    return { item: mapItemRow(rpc.item), movement: mapMovementRow(rpc.movement) };
+  }
+
   const item = await loadItemById(itemId, localDb);
   if (!item) throw new InventoryFoundationDbError("Inventory item not found.", 404);
   if (item.availableQty < qty) {
@@ -380,23 +518,17 @@ export async function stockOutAdminInventoryItem(
       `Cannot stock out ${qty} units. Only ${item.availableQty} available (${item.reservedQty} reserved).`
     );
   }
-
-  item.stockQty -= qty;
-  item.updatedAt = new Date().toISOString();
-  const saved = await persistItem(item, localDb);
-  const movement = await insertMovement(
-    {
-      inventoryItemId: itemId,
-      movementType: "stock_out",
-      qty,
-      referenceType: body.referenceType || "manual",
-      referenceId: body.referenceId || null,
-      notes: body.notes || null,
-      createdBy: staffUserId,
-    },
-    localDb
-  );
-  return { item: saved, movement };
+  const previous = { ...item };
+  const next = { ...item, stockQty: item.stockQty - qty, updatedAt: new Date().toISOString() };
+  return applyItemAndMovement(localDb, previous, next, {
+    inventoryItemId: itemId,
+    movementType: "stock_out",
+    qty,
+    referenceType: body.referenceType || "manual",
+    referenceId: body.referenceId || null,
+    notes: body.notes || null,
+    createdBy: staffUserId,
+  });
 }
 
 export async function adjustAdminInventoryItem(
@@ -410,6 +542,16 @@ export async function adjustAdminInventoryItem(
   const qtyDelta = Number(body.qtyDelta);
   if (!qtyDelta || qtyDelta === 0) throw new InventoryFoundationDbError("qtyDelta cannot be 0.");
 
+  const rpc = await callInventoryRpc("inv_foundation_adjust", {
+    p_item_id: itemId,
+    p_qty_delta: qtyDelta,
+    p_notes: body.notes || null,
+    p_created_by: staffUserId,
+  });
+  if (rpc) {
+    return { item: mapItemRow(rpc.item), movement: mapMovementRow(rpc.movement) };
+  }
+
   const item = await loadItemById(itemId, localDb);
   if (!item) throw new InventoryFoundationDbError("Inventory item not found.", 404);
 
@@ -421,21 +563,16 @@ export async function adjustAdminInventoryItem(
   }
   if (nextStock < 0) throw new InventoryFoundationDbError("Adjustment would make stock negative.");
 
-  item.stockQty = nextStock;
-  item.updatedAt = new Date().toISOString();
-  const saved = await persistItem(item, localDb);
-  const movement = await insertMovement(
-    {
-      inventoryItemId: itemId,
-      movementType: "adjustment",
-      qty: Math.abs(qtyDelta),
-      referenceType: "adjustment",
-      notes: body.notes || (qtyDelta > 0 ? `+${qtyDelta}` : `${qtyDelta}`),
-      createdBy: staffUserId,
-    },
-    localDb
-  );
-  return { item: saved, movement };
+  const previous = { ...item };
+  const next = { ...item, stockQty: nextStock, updatedAt: new Date().toISOString() };
+  return applyItemAndMovement(localDb, previous, next, {
+    inventoryItemId: itemId,
+    movementType: "adjustment",
+    qty: Math.abs(qtyDelta),
+    referenceType: "adjustment",
+    notes: body.notes || (qtyDelta > 0 ? `+${qtyDelta}` : `${qtyDelta}`),
+    createdBy: staffUserId,
+  });
 }
 
 export async function reserveAdminInventoryForProject(
@@ -455,6 +592,22 @@ export async function reserveAdminInventoryForProject(
   if (!qty || qty <= 0) throw new InventoryFoundationDbError("qty must be greater than 0.");
   if (!body.projectId?.trim()) throw new InventoryFoundationDbError("projectId is required.");
 
+  const rpc = await callInventoryRpc("inv_foundation_reserve", {
+    p_item_id: body.inventoryItemId,
+    p_project_id: body.projectId.trim(),
+    p_qty: qty,
+    p_delivery_id: body.deliveryId || null,
+    p_notes: body.notes || null,
+    p_created_by: staffUserId,
+  });
+  if (rpc) {
+    return {
+      item: mapItemRow(rpc.item),
+      movement: mapMovementRow(rpc.movement),
+      reservation: mapReservationRow(rpc.reservation),
+    };
+  }
+
   const item = await loadItemById(body.inventoryItemId, localDb);
   if (!item) throw new InventoryFoundationDbError("Inventory item not found.", 404);
   if (item.availableQty < qty) {
@@ -463,32 +616,45 @@ export async function reserveAdminInventoryForProject(
     );
   }
 
-  item.reservedQty += qty;
-  item.updatedAt = new Date().toISOString();
-  const saved = await persistItem(item, localDb);
-  const movement = await insertMovement(
-    {
-      inventoryItemId: body.inventoryItemId,
-      movementType: "reserve",
-      qty,
-      referenceType: "project",
-      referenceId: body.projectId,
-      notes: body.notes || null,
-      createdBy: staffUserId,
-    },
-    localDb
-  );
-  const reservation = await insertReservation(
-    {
-      projectId: body.projectId.trim(),
-      deliveryId: body.deliveryId || null,
-      inventoryItemId: body.inventoryItemId,
-      qtyReserved: qty,
-      createdBy: staffUserId,
-    },
-    localDb
-  );
-  return { item: saved, movement, reservation };
+  const previous = { ...item };
+  const next = { ...item, reservedQty: item.reservedQty + qty, updatedAt: new Date().toISOString() };
+  assertQuantityInvariants(next.stockQty, next.reservedQty);
+  const snap = snapshotLocalInventory(localDb);
+  try {
+    const saved = await persistItem(next, localDb);
+    const reservation = await insertReservation(
+      {
+        projectId: body.projectId.trim(),
+        deliveryId: body.deliveryId || null,
+        inventoryItemId: body.inventoryItemId,
+        qtyReserved: qty,
+        createdBy: staffUserId,
+      },
+      localDb
+    );
+    try {
+      const movement = await insertMovement(
+        {
+          inventoryItemId: body.inventoryItemId,
+          movementType: "reserve",
+          qty,
+          referenceType: "project",
+          referenceId: body.projectId,
+          notes: body.notes || null,
+          createdBy: staffUserId,
+        },
+        localDb
+      );
+      return { item: saved, movement, reservation };
+    } catch (movementErr) {
+      await updateReservationStatus(reservation.id, "released", localDb).catch(() => {});
+      await persistItem(previous, localDb);
+      throw movementErr;
+    }
+  } catch (err) {
+    restoreLocalInventory(localDb, snap);
+    throw err;
+  }
 }
 
 export async function releaseAdminInventoryReservation(
@@ -499,6 +665,19 @@ export async function releaseAdminInventoryReservation(
   localDb?: Database
 ) {
   await verifyStaffPortalUser(staffUserId, staffUsername, localDb);
+
+  const rpc = await callInventoryRpc("inv_foundation_release", {
+    p_reservation_id: reservationId,
+    p_notes: body.notes || null,
+    p_created_by: staffUserId,
+  });
+  if (rpc) {
+    return {
+      item: mapItemRow(rpc.item),
+      movement: mapMovementRow(rpc.movement),
+      reservation: mapReservationRow(rpc.reservation),
+    };
+  }
 
   let reservation: ProjectInventoryReservation | null = null;
   if (isSupabaseActive()) {
@@ -525,10 +704,17 @@ export async function releaseAdminInventoryReservation(
   const item = await loadItemById(reservation.inventoryItemId, localDb);
   if (!item) throw new InventoryFoundationDbError("Inventory item not found.", 404);
 
-  item.reservedQty = Math.max(0, item.reservedQty - reservation.qtyReserved);
-  item.updatedAt = new Date().toISOString();
-  const saved = await persistItem(item, localDb);
-  const movement = await insertMovement(
+  const previous = { ...item };
+  const next = {
+    ...item,
+    reservedQty: Math.max(0, item.reservedQty - reservation.qtyReserved),
+    updatedAt: new Date().toISOString(),
+  };
+  let updatedReservation!: ProjectInventoryReservation;
+  const result = await applyItemAndMovement(
+    localDb,
+    previous,
+    next,
     {
       inventoryItemId: reservation.inventoryItemId,
       movementType: "release",
@@ -538,10 +724,11 @@ export async function releaseAdminInventoryReservation(
       notes: body.notes || `Release reservation ${reservationId}`,
       createdBy: staffUserId,
     },
-    localDb
+    async () => {
+      updatedReservation = await updateReservationStatus(reservationId, "released", localDb);
+    }
   );
-  const updatedReservation = await updateReservationStatus(reservationId, "released", localDb);
-  return { item: saved, movement, reservation: updatedReservation };
+  return { ...result, reservation: updatedReservation };
 }
 
 export async function listAdminInventoryMovements(
