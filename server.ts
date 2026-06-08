@@ -14,6 +14,11 @@ import {
 } from "./productionCleanupDb.ts";
 import { billToMonthlyUnits, resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
 import {
+  buildQuotePdfSettingsSupabasePayload,
+  applyGlobalWatermarkToPdfSettingsRow,
+  QUOTE_PDF_GLOBAL_WATERMARK_KEY,
+} from "./src/lib/quotePdfSettingsStore.ts";
+import {
   buildWatermarkLayer,
   formatSiteLocation,
   mergeQuoteWithLead,
@@ -4929,6 +4934,13 @@ app.post("/api/db/update", async (req, res) => {
       const idx = db[table].findIndex((item: any) => item.id === editId);
       if (idx !== -1) {
         db[table][idx] = { ...db[table][idx], ...data };
+        if (table === "quotePdfSettings") {
+          const { watermarkPayload } = buildQuotePdfSettingsSupabasePayload(data);
+          db[table][idx] = applyGlobalWatermarkToPdfSettingsRow(
+            db[table][idx],
+            watermarkPayload
+          );
+        }
       } else if (editId) {
         db[table].push({ ...data, id: editId });
       }
@@ -5169,34 +5181,49 @@ app.post("/api/db/update", async (req, res) => {
           };
         } else if (table === "quotePdfSettings") {
           pgTable = "quote_pdf_settings";
-          const headerPayload = data.globalPdfHeader || data.global_pdf_header || null;
-          const watermarkPayload =
-            data.globalWatermark ||
-            data.global_watermark ||
-            headerPayload?.watermark ||
-            null;
-          const headerWithWatermark =
-            watermarkPayload && headerPayload
-              ? { ...headerPayload, watermark: watermarkPayload }
-              : watermarkPayload && !headerPayload
-                ? { watermark: watermarkPayload }
-                : headerPayload;
-          mappedData = {
-            id: data.id,
-            company_name: data.companyName || data.company_name,
-            office_address: data.officeAddress || data.office_address,
-            hotline_phones: data.hotlinePhones || data.hotline_phones,
-            billing_email: data.billingEmail || data.billing_email,
-            website_url: data.websiteUrl || data.website_url,
-            logo_url: data.logoUrl || data.logo_url || "",
-            global_pdf_header: headerWithWatermark,
-            global_pdf_footer: data.globalPdfFooter || data.global_pdf_footer || null,
-            use_default_company_content: !!(data.useDefaultCompanyContent ?? data.use_default_company_content),
-            updated_at: new Date().toISOString(),
-          };
+          const { scalarRow, jsonbRow, watermarkPayload } =
+            buildQuotePdfSettingsSupabasePayload(data);
+
+          const { error: scalarError } = await supabase
+            .from(pgTable)
+            .upsert(scalarRow, { onConflict: "id" });
+          if (scalarError) {
+            console.error(`[Supabase quotePdfSettings scalar sync error]:`, scalarError.message);
+            return res.status(500).json({
+              error: `Quote PDF settings save failed: ${scalarError.message}`,
+            });
+          }
+
+          const { error: jsonbError } = await supabase
+            .from(pgTable)
+            .upsert(jsonbRow, { onConflict: "id" });
+          if (jsonbError) {
+            console.warn(
+              `[Supabase quotePdfSettings jsonb sync warning]: ${jsonbError.message} — using settings fallback`
+            );
+          }
+
+          const { error: wmSettingsError } = await supabase.from("settings").upsert(
+            {
+              key: QUOTE_PDF_GLOBAL_WATERMARK_KEY,
+              value: watermarkPayload || {},
+            },
+            { onConflict: "key" }
+          );
+          if (wmSettingsError) {
+            console.error(
+              `[Supabase quotePdfSettings watermark settings sync error]:`,
+              wmSettingsError.message
+            );
+            return res.status(500).json({
+              error: `Global watermark save failed: ${wmSettingsError.message}`,
+            });
+          }
+
+          mappedData = null;
         }
 
-        if (pgTable) {
+        if (pgTable && mappedData) {
           if (action === "add" || action === "edit") {
             const { error } = await supabase.from(pgTable).upsert(mappedData, { onConflict: "id" });
             if (error) {

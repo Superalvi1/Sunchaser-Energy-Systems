@@ -39,6 +39,7 @@ import {
   type BoqInsertAction,
 } from "../lib/boqRowInsert";
 import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
+import { normalizeGlobalWatermark } from "../lib/quotePdfSettingsStore";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -278,10 +279,15 @@ export default function SalesTeamApp({
         pdfCfg?.useDefaultCompanyContent === true || settings?.useDefaultCompanyContent === true
       );
     }
-    const wm = pdfCfg?.globalWatermark || pdfCfg?.global_watermark;
+    const wm =
+      normalizeGlobalWatermark(pdfCfg?.globalWatermark || pdfCfg?.global_watermark) ||
+      normalizeGlobalWatermark(pdfCfg?.globalPdfHeader?.watermark);
     if (wm) {
       setGlobalWatermarkUrl(wm.imageUrl || "");
       setGlobalWatermarkOpacity(wm.opacity ?? 0.08);
+    } else {
+      setGlobalWatermarkUrl("");
+      setGlobalWatermarkOpacity(0.08);
     }
   }, [settings, quotePdfSettings]);
 
@@ -296,6 +302,12 @@ export default function SalesTeamApp({
         websiteUrl: "",
         logoUrl: "",
       };
+      const watermark = {
+        imageUrl: globalWatermarkUrl.trim(),
+        opacity: globalWatermarkOpacity,
+        position: "center" as const,
+        repeat: "no-repeat" as const,
+      };
       const updatedPdfSettings = {
         ...base,
         useDefaultCompanyContent,
@@ -306,6 +318,7 @@ export default function SalesTeamApp({
           logoSize: globalHeaderLogoSize,
           lineColor: globalHeaderLineColor,
           alignment: globalHeaderAlignment,
+          ...(globalWatermarkUrl.trim() ? { watermark } : {}),
         },
         globalPdfFooter: {
           enabled: globalFooterEnabled,
@@ -313,12 +326,7 @@ export default function SalesTeamApp({
           lineColor: globalFooterLineColor,
           alignment: globalFooterAlignment,
         },
-        globalWatermark: {
-          imageUrl: globalWatermarkUrl,
-          opacity: globalWatermarkOpacity,
-          position: "center",
-          repeat: "no-repeat",
-        },
+        globalWatermark: globalWatermarkUrl.trim() ? watermark : {},
       };
 
       const response = await fetch(`${API_BASE_URL}/api/db/update`, {

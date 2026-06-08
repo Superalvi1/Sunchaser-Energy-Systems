@@ -5,6 +5,10 @@ import path from "path";
 import WebSocket from "ws";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
+import {
+  applyGlobalWatermarkToPdfSettingsRow,
+  resolveStoredGlobalWatermark,
+} from "./src/lib/quotePdfSettingsStore.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import { phonesMatch } from "./src/lib/phoneNormalize.ts";
 
@@ -1681,24 +1685,23 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     imageUrl: sd.image_url || sd.imageUrl
   }));
 
-  const quotePdfSettingsMapped = (quotePdfSettingsData || []).map((qps: any) => ({
-    id: qps.id,
-    companyName: qps.company_name || qps.companyName,
-    officeAddress: qps.office_address || qps.officeAddress,
-    hotlinePhones: qps.hotline_phones || qps.hotlinePhones,
-    billingEmail: qps.billing_email || qps.billingEmail,
-    websiteUrl: qps.website_url || qps.websiteUrl,
-    logoUrl: qps.logo_url || qps.logoUrl,
-    globalPdfHeader: qps.global_pdf_header || qps.globalPdfHeader || null,
-    globalPdfFooter: qps.global_pdf_footer || qps.globalPdfFooter || null,
-    globalWatermark:
-      qps.global_watermark ||
-      qps.globalWatermark ||
-      qps.global_pdf_header?.watermark ||
-      qps.globalPdfHeader?.watermark ||
-      null,
-    useDefaultCompanyContent: !!(qps.use_default_company_content ?? qps.useDefaultCompanyContent),
-  }));
+  const quotePdfSettingsMapped = (quotePdfSettingsData || []).map((qps: any) => {
+    const watermark = resolveStoredGlobalWatermark(qps, settingsData);
+    const row = {
+      id: qps.id,
+      companyName: qps.company_name || qps.companyName,
+      officeAddress: qps.office_address || qps.officeAddress,
+      hotlinePhones: qps.hotline_phones || qps.hotlinePhones,
+      billingEmail: qps.billing_email || qps.billingEmail,
+      websiteUrl: qps.website_url || qps.websiteUrl,
+      logoUrl: qps.logo_url || qps.logoUrl,
+      globalPdfHeader: qps.global_pdf_header || qps.globalPdfHeader || null,
+      globalPdfFooter: qps.global_pdf_footer || qps.globalPdfFooter || null,
+      globalWatermark: watermark,
+      useDefaultCompanyContent: !!(qps.use_default_company_content ?? qps.useDefaultCompanyContent),
+    };
+    return watermark ? applyGlobalWatermarkToPdfSettingsRow(row, watermark) : row;
+  });
 
   const usersMapped = (users || []).map((u: any) => ({
     id: u.id,
@@ -2203,6 +2206,7 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
           logo_url: qps.logoUrl || qps.logo_url || "",
           global_pdf_header: qps.globalPdfHeader || qps.global_pdf_header || null,
           global_pdf_footer: qps.globalPdfFooter || qps.global_pdf_footer || null,
+          global_watermark: qps.globalWatermark || qps.global_watermark || null,
           use_default_company_content: !!(qps.useDefaultCompanyContent ?? qps.use_default_company_content),
         }, { onConflict: "id" });
       }
