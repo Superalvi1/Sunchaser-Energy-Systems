@@ -12,6 +12,7 @@ import {
 import { Lead, Product, User } from "../types";
 import {
   archiveAdminInvoice,
+  bulkDeleteAdminInvoices,
   createAdminInvoice,
   createInvoiceFromLead,
   deleteAdminInvoice,
@@ -85,6 +86,8 @@ export default function InvoiceStaff({
   const [searchQuery, setSearchQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState("");
+  const [bulkSelected, setBulkSelected] = useState<Record<string, boolean>>({});
   const [creatingLeadId, setCreatingLeadId] = useState<string | null>(null);
   const [paymentDraft, setPaymentDraft] = useState({ amount: "", method: "Cash", notes: "" });
 
@@ -428,8 +431,26 @@ export default function InvoiceStaff({
     }
   };
 
+  const handleBulkDelete = async () => {
+    const ids = Object.entries(bulkSelected)
+      .filter(([, on]) => on)
+      .map(([id]) => id);
+    if (!ids.length || !superAdmin) return;
+    try {
+      const res = await bulkDeleteAdminInvoices(staffUser, ids, bulkDeleteConfirm);
+      setMsg(`Bulk delete: ${res.deleted.length} removed${res.failed.length ? `, ${res.failed.length} failed` : ""}.`);
+      setBulkSelected({});
+      setBulkDeleteConfirm("");
+      setSelectedId(null);
+      newInvoice();
+      await load();
+    } catch (e: any) {
+      setMsg(e.message);
+    }
+  };
+
   const handleArchive = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !superAdmin) return;
     if (!window.confirm("Archive this invoice? It will be hidden from active lists and the customer portal.")) return;
     try {
       await archiveAdminInvoice(staffUser, selectedId);
@@ -607,6 +628,27 @@ export default function InvoiceStaff({
               />
               Show archived
             </label>
+            {superAdmin && (
+              <div className="flex items-center gap-1 text-[10px]">
+                <input
+                  className="w-20 border border-red-200 rounded px-1 py-0.5"
+                  placeholder="DELETE"
+                  value={bulkDeleteConfirm}
+                  onChange={(e) => setBulkDeleteConfirm(e.target.value)}
+                />
+                <button
+                  type="button"
+                  disabled={
+                    bulkDeleteConfirm !== "DELETE" ||
+                    !Object.values(bulkSelected).some(Boolean)
+                  }
+                  onClick={handleBulkDelete}
+                  className="px-2 py-1 rounded border border-red-300 bg-red-50 text-red-800 font-bold disabled:opacity-40"
+                >
+                  Bulk delete
+                </button>
+              </div>
+            )}
           </div>
           <div className="max-h-40 overflow-y-auto grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
           {loading ? (
@@ -623,6 +665,17 @@ export default function InvoiceStaff({
                   selectedId === inv.id ? "border-violet-500 bg-violet-50" : "border-slate-200 bg-white"
                 } ${inv.archivedAt ? "opacity-60" : ""}`}
               >
+                {superAdmin && !inv.archivedAt && (
+                  <input
+                    type="checkbox"
+                    className="mr-1"
+                    checked={!!bulkSelected[inv.id]}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      setBulkSelected((prev) => ({ ...prev, [inv.id]: e.target.checked }))
+                    }
+                  />
+                )}
                 <div className="font-bold">{inv.invoiceNumber}</div>
                 <div className="text-slate-500 truncate">{inv.customerName}</div>
                 <div className="text-violet-700 font-semibold">
@@ -1078,7 +1131,7 @@ export default function InvoiceStaff({
         {/* Actions */}
         <div className="flex flex-wrap justify-between gap-2 pt-2 border-t border-slate-200">
           <div className="flex flex-wrap gap-2">
-            {selectedId && (
+            {selectedId && superAdmin && (
               <>
                 <button
                   type="button"
@@ -1087,24 +1140,22 @@ export default function InvoiceStaff({
                 >
                   <Archive className="h-3.5 w-3.5" /> Archive
                 </button>
-                {superAdmin && (
-                  <div className="flex items-center gap-1">
-                    <input
-                      className="w-24 border border-red-200 rounded px-2 py-1 text-xs"
-                      placeholder="DELETE"
-                      value={deleteConfirm}
-                      onChange={(e) => setDeleteConfirm(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleDelete}
-                      disabled={deleteConfirm !== "DELETE"}
-                      className="flex items-center gap-1 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-xs font-bold text-red-800 disabled:opacity-40"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Delete
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-1">
+                  <input
+                    className="w-24 border border-red-200 rounded px-2 py-1 text-xs"
+                    placeholder="DELETE"
+                    value={deleteConfirm}
+                    onChange={(e) => setDeleteConfirm(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={deleteConfirm !== "DELETE"}
+                    className="flex items-center gap-1 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-xs font-bold text-red-800 disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </button>
+                </div>
               </>
             )}
           </div>

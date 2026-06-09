@@ -782,7 +782,7 @@ export function mapSupabaseLeadRowToAppLead(row: any): Record<string, any> {
 }
 
 export function buildSupabaseLeadUpdateRow(lead: any): Record<string, any> {
-  return {
+  const row: Record<string, any> = {
     name: lead.name,
     email: lead.email,
     phone: lead.phone,
@@ -804,6 +804,9 @@ export function buildSupabaseLeadUpdateRow(lead: any): Record<string, any> {
     conversion_probability: lead.conversionProbability,
     conversion_score: lead.conversionScore,
   };
+  const customerId = lead.customerId || lead.customer_id;
+  if (customerId) row.customer_id = customerId;
+  return row;
 }
 
 export function findActiveLeadInDb(leadId: string, localLeads?: any[]): any | null {

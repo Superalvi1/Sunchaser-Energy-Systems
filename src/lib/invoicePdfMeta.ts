@@ -8,6 +8,7 @@ export type InvoiceProjectInfo = {
   batteryBrand?: string;
   structureType?: string;
   netMeteringStatus?: string;
+  salesAdvisor?: string;
 };
 
 export type InvoicePdfMeta = {

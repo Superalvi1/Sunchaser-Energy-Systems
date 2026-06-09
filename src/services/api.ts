@@ -2391,6 +2391,23 @@ export async function deleteAdminInvoice(
   );
 }
 
+export async function bulkDeleteAdminInvoices(
+  staff: User,
+  ids: string[],
+  confirmText: string
+) {
+  return staffPortalJsonRequest<{ deleted: string[]; failed: Array<{ id: string; error: string }> }>(
+    "bulkDeleteAdminInvoices",
+    "/api/admin/invoices/bulk-delete",
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify({ ids, confirmText }),
+    },
+    "Failed to bulk delete invoices"
+  );
+}
+
 export function invoicePdfUrl(
   invoiceId: string,
   staff?: { id: string; username: string; role: string }

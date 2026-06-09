@@ -888,6 +888,7 @@ function draftToCreateBody(draft: InvoiceDraftFromLead) {
     customerAddress: draft.customerAddress,
     leadId: draft.leadId,
     quotationId: draft.quotationId,
+    projectId: draft.projectId || null,
     paidAmount: 0,
     discountAmount: draft.discountAmount,
     items: draft.items,
@@ -901,6 +902,7 @@ function draftToCreateBody(draft: InvoiceDraftFromLead) {
         batteryBrand: draft.batteryBrand || undefined,
         structureType: draft.structureType || undefined,
         netMeteringStatus: draft.netMeteringStatus || undefined,
+        salesAdvisor: draft.salesAdvisor || undefined,
       },
     },
     terms: "System booked in COD basis.",
@@ -911,7 +913,7 @@ export async function createInvoiceFromContractedLead(
   userId: string,
   username: string,
   role: string,
-  body: { leadId: string; quotationId?: string },
+  body: { leadId: string; quotationId?: string; projectId?: string },
   leads: any[],
   localDb?: Database
 ): Promise<{ invoice: InvoiceRecord; existing: boolean }> {
@@ -931,9 +933,38 @@ export async function createInvoiceFromContractedLead(
     return { invoice: existing, existing: true };
   }
 
-  const draft = buildInvoiceDraftFromLead(lead, quote);
+  const draft = buildInvoiceDraftFromLead(lead, quote, { projectId: body.projectId });
   const invoice = await createAdminInvoice(userId, username, role, draftToCreateBody(draft), localDb);
   return { invoice, existing: false };
+}
+
+export async function bulkDeleteAdminInvoices(
+  userId: string,
+  username: string,
+  role: string,
+  body: { ids?: string[]; confirmText?: string },
+  localDb?: Database
+): Promise<{ deleted: string[]; failed: Array<{ id: string; error: string }> }> {
+  if (!isSuperAdmin(username, role)) {
+    throw new StaffPortalAuthError("Only Super Admin can bulk delete invoices.", 403);
+  }
+  if (String(body.confirmText || "").trim() !== "DELETE") {
+    throw new InvoiceDbError('Type DELETE to confirm bulk deletion.', 400);
+  }
+  const ids = Array.isArray(body.ids) ? body.ids.filter(Boolean) : [];
+  if (!ids.length) throw new InvoiceDbError("No invoice ids provided.", 400);
+
+  const deleted: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  for (const id of ids) {
+    try {
+      await deleteAdminInvoice(userId, username, role, id, { confirmText: "DELETE" }, localDb);
+      deleted.push(id);
+    } catch (err: any) {
+      failed.push({ id, error: err?.message || "Delete failed." });
+    }
+  }
+  return { deleted, failed };
 }
 
 export async function archiveAdminInvoice(
@@ -943,6 +974,9 @@ export async function archiveAdminInvoice(
   invoiceId: string,
   localDb?: Database
 ): Promise<InvoiceRecord> {
+  if (!isSuperAdmin(username, role)) {
+    throw new StaffPortalAuthError("Only Super Admin can archive invoices.", 403);
+  }
   await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
   const patch = {
     archived_at: new Date().toISOString(),

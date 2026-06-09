@@ -70,6 +70,7 @@ export type InvoiceDraftFromLead = {
   customerAddress: string;
   leadId: string;
   quotationId: string;
+  projectId: string;
   projectNumber: string;
   systemSize: string;
   systemType: string;
@@ -78,6 +79,7 @@ export type InvoiceDraftFromLead = {
   batteryBrand: string;
   structureType: string;
   netMeteringStatus: string;
+  salesAdvisor: string;
   discountAmount: number;
   paidAmount: number;
   items: InvoiceLineItem[];
@@ -85,10 +87,15 @@ export type InvoiceDraftFromLead = {
   quoteStatus: string;
 };
 
-export function buildInvoiceDraftFromLead(lead: Lead, quoteOverride?: Quote | null): InvoiceDraftFromLead {
+export function buildInvoiceDraftFromLead(
+  lead: Lead,
+  quoteOverride?: Quote | null,
+  opts?: { projectId?: string }
+): InvoiceDraftFromLead {
   const q = quoteOverride ?? pickQuoteForInvoice(lead);
   const items = quoteBoqToInvoiceItems(q);
-  const quoteAmount = Number(q?.totalCost ?? q?.netCost ?? 0);
+  const quoteAmount = Number(q?.grandTotal ?? q?.netCost ?? q?.totalCost ?? 0);
+  const projectId = opts?.projectId || "";
 
   return {
     customerId: resolveLeadCustomerId(lead),
@@ -97,14 +104,16 @@ export function buildInvoiceDraftFromLead(lead: Lead, quoteOverride?: Quote | nu
     customerAddress: lead.address || q?.clientAddress || lead.location || "",
     leadId: lead.id,
     quotationId: q?.id || "",
-    projectNumber: lead.id,
+    projectId,
+    projectNumber: projectId || lead.id,
     systemSize: q?.systemSizekW ? `${q.systemSizekW} kW` : "",
     systemType: q?.systemType || "",
     panelBrand: q?.panelBrand || q?.panelType || "",
     inverterBrand: q?.inverterBrand || q?.inverterType || "",
-    batteryBrand: q?.batteryCapacity || q?.batteryOption || "",
+    batteryBrand: q?.batteryBrand || q?.batteryCapacity || q?.batteryOption || "",
     structureType: q?.structureType || "",
     netMeteringStatus: q?.netMeteringRequired || "",
+    salesAdvisor: String(lead.assignedSalesperson || q?.bdmName || "").trim(),
     discountAmount: Number(q?.discount ?? q?.discountValue ?? 0),
     paidAmount: 0,
     items: items.length ? items : [{ itemName: "", description: "", qty: 1, unit: "NONE", rate: 0, taxPercent: 0, discountAmount: 0, lineTotal: 0 }],

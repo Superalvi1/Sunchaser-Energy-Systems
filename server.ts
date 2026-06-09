@@ -233,9 +233,11 @@ import {
   listContractedLeadsReadyForInvoice,
   createInvoiceFromContractedLead,
   archiveAdminInvoice,
+  bulkDeleteAdminInvoices,
   deleteAdminInvoice,
   InvoiceDbError,
 } from "./invoiceDb.js";
+import { provisionContractToInvoiceWorkflow } from "./contractToInvoiceDb.js";
 import { compileInvoicePDFHtml } from "./invoicePdf.js";
 import { buildInvoicePdfPayload } from "./invoicePdfResolve.js";
 import {
@@ -2827,6 +2829,21 @@ app.delete("/api/admin/invoices/:id", async (req, res) => {
   }
 });
 
+app.post("/api/admin/invoices/bulk-delete", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const result = await bulkDeleteAdminInvoices(userId, username, role, req.body || {}, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/export/pdf/invoice/:id", async (req, res) => {
   const staffId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
   const staffUsername = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
@@ -3719,19 +3736,43 @@ app.post("/api/leads", async (req, res) => {
 app.put("/api/leads/:id", async (req, res) => {
   const { id } = req.params;
   const { quotes: _ignoredQuotes, ...leadPatch } = req.body || {};
+  const becomingContracted = leadPatch.status === "Contracted";
 
   try {
-    const ctx = await resolveLeadForMutation(id);
+    const ctx = await resolveLeadForMutation(id, { includeQuotes: becomingContracted });
     if (!ctx) {
       return res.status(404).json({ error: "Lead not found" });
     }
 
+    const priorStatus = ctx.lead.status;
     const updatedLead = {
       ...ctx.lead,
       ...leadPatch,
       quotes: ctx.lead.quotes || [],
     };
     calculateLeadScore(updatedLead);
+
+    let contractProvision: Awaited<ReturnType<typeof provisionContractToInvoiceWorkflow>> | null = null;
+    if (becomingContracted && priorStatus !== "Contracted") {
+      const staff = readStaffAuth(req);
+      contractProvision = await provisionContractToInvoiceWorkflow(updatedLead, db, {
+        supabase: ctx.supabase,
+        actor: staff.userId && staff.username
+          ? { userId: staff.userId, username: staff.username, role: staff.role || "Super Admin" }
+          : undefined,
+      });
+      if (contractProvision.customerId) {
+        updatedLead.customerId = contractProvision.customerId;
+        updatedLead.customer_id = contractProvision.customerId;
+      }
+      await appendActivityLog(
+        "system",
+        "Contract Automation",
+        "Finance",
+        "Contract-to-Invoice",
+        `Lead ${id} contracted — invoice ${contractProvision.invoiceId || "pending"}${contractProvision.invoiceExisting ? " (existing)" : ""}`
+      );
+    }
 
     persistLeadLocally(id, updatedLead, ctx.supabase);
 
@@ -3745,7 +3786,7 @@ app.put("/api/leads/:id", async (req, res) => {
         return res.status(500).json({ error: updateErr.message });
       }
 
-      const customerId = ctx.resolved.customer_id;
+      const customerId = updatedLead.customerId || updatedLead.customer_id || ctx.resolved.customer_id;
       const contactPatch: Record<string, string> = {};
       if (leadPatch.name !== undefined) contactPatch.name = updatedLead.name;
       if (leadPatch.email !== undefined) contactPatch.email = updatedLead.email;
@@ -3761,9 +3802,14 @@ app.put("/api/leads/:id", async (req, res) => {
           return res.status(500).json({ error: customerErr.message });
         }
       }
+    } else if (becomingContracted && priorStatus !== "Contracted") {
+      saveDb();
     }
 
-    res.json(updatedLead);
+    res.json({
+      ...updatedLead,
+      contractProvision: contractProvision || undefined,
+    });
   } catch (err: any) {
     console.error("[Lead Update Error]:", err?.message || err);
     return res.status(500).json({ error: err?.message || "Failed to update lead." });
@@ -4711,11 +4757,21 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
     }
   }
 
+  const staff = readStaffAuth(req);
+  const contractProvision = await provisionContractToInvoiceWorkflow(lead, db, {
+    quotationId: quoteId,
+    supabase,
+    actor: staff.userId && staff.username
+      ? { userId: staff.userId, username: staff.username, role: staff.role || "Super Admin" }
+      : undefined,
+  });
+  if (!supabase) saveDb();
+
   await appendActivityLog(lead.id, lead.name, "Customer", "Contract Signed", `Signed blueprint quotation, paid 30% advance retainer of $${advanceAmt}`);
   const sText = `☀️ Contract signed! We have received your solar retainer advance core of $${advanceAmt}. Sunchaser structural designers are preparing engineering submittals for city review. Track: http://sunchaser.co/portal`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "contract_signed", sText);
 
-  res.json(lead);
+  res.json({ ...lead, contractProvision });
 });
 
 // 11. Update installer progress log tasks

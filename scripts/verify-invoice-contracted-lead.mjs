@@ -2,7 +2,7 @@
  * Phase 18A — contracted lead invoice + archive/delete verification.
  * Usage: node scripts/verify-invoice-contracted-lead.mjs
  */
-const BASE = (process.env.API_BASE || "http://127.0.0.1:3456").replace(/\/$/, "");
+const BASE = (process.env.API_BASE || "http://127.0.0.1:3000").replace(/\/$/, "");
 const TS = Date.now();
 
 async function loginStaff() {
