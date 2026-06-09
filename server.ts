@@ -43,6 +43,12 @@ import {
   renderBoqTableBodyHtml,
 } from "./src/lib/quoteBoqPdf.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
+import {
+  buildQuotationPdfFilename,
+  quotePdfDeckActionBarCss,
+  quotePdfDeckPreviewScripts,
+  renderQuotationHtmlToPdf,
+} from "./src/lib/quotePdfRender.ts";
 import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
 import {
   renderPageBodyHtml,
@@ -7550,6 +7556,7 @@ function compileSunchaserPDFHtml(
           border-bottom: 1px solid #e2e8f0;
         }
         ${boqPdfSectionCss()}
+        ${quotePdfDeckActionBarCss()}
         @media print {
           body {
             background-color: #ffffff !important;
@@ -7563,12 +7570,16 @@ function compileSunchaserPDFHtml(
     <body>
       <div class="action-bar">
         <div><strong>Sunchaser Proposal Deck</strong> - Client: ${quoteObj.clientName || leadObj.name}</div>
-        <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
+        <div class="action-bar-actions">
+          <button type="button" class="btn-print" onclick="sunchaserPrintDeck()">Print</button>
+          <button type="button" class="btn-download" onclick="sunchaserDownloadPdf()">Download PDF</button>
+        </div>
       </div>
 
       <div class="pages-container">
         ${pagesHtml}
       </div>
+      ${quotePdfDeckPreviewScripts()}
     </body>
     </html>
   `;
@@ -7784,6 +7795,65 @@ app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
     res.send(pdfHtml);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF preview: " + err.message);
+  }
+});
+
+app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq");
+    } else {
+      quote = getLatestSavedQuote(lead, "manual_boq");
+    }
+
+    if (!quote) {
+      return res.status(404).send("Save a quote first.");
+    }
+
+    const options = {
+      includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
+      templateId: quote.templateId || "tmpl-1",
+      includeSizerItems: quote.includeSizerItems === true
+    };
+
+    const defaultAutoSizerIds = [
+      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+      'h-3', 'db_box_row', 's-3',
+      'h-4', 'supplies_row', 's-4',
+      'h-5', 'earthing_bore_row', 's-5',
+      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+    ];
+    const allRows = quote.boqRows || quote.boqItems || [];
+    const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
+
+    if (manualBoqCount === 0) {
+      return res.status(400).send("No BOQ items added yet. Please add BOQ rows and compile quote first.");
+    }
+
+    const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
+    const pdfBuffer = await renderQuotationHtmlToPdf(pdfHtml);
+    const filename = buildQuotationPdfFilename(lead, quote);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    console.error("[PDF DOWNLOAD]", err);
+    res.status(500).send("Error generating quotation PDF: " + err.message);
   }
 });
 

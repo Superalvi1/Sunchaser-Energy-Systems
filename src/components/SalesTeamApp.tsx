@@ -67,6 +67,11 @@ import {
   WATERMARK_PLACEMENT_OPTIONS,
   type WatermarkPlacement,
 } from "../lib/watermarkStyles";
+import {
+  downloadManualQuotePdf,
+  openManualQuotePrintPreview,
+  printProposalPreviewIframe,
+} from "../lib/quotePdfExport";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -237,6 +242,7 @@ export default function SalesTeamApp({
   const [showProposalPreview, setShowProposalPreview] = useState<boolean>(false);
   const [proposalPreviewHtml, setProposalPreviewHtml] = useState<string>("");
   const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
+  const [downloadingQuotePdf, setDownloadingQuotePdf] = useState(false);
   const [globalHeaderEnabled, setGlobalHeaderEnabled] = useState<boolean>(true);
   const [globalHeaderText, setGlobalHeaderText] = useState<string>("☀️ SUNCHASER ENERGY");
   const [globalHeaderLogoUrl, setGlobalHeaderLogoUrl] = useState<string>("");
@@ -1683,17 +1689,31 @@ export default function SalesTeamApp({
     }
   };
 
-  const handleDownloadManualQuotePDF = () => {
-    if (!activeLead) return;
-
-    const targetManualQuote = editingQuoteId
+  const resolveTargetManualQuote = () => {
+    if (!activeLead) return null;
+    return editingQuoteId
       ? activeLead.quotes?.find((q: any) => q.id === editingQuoteId && q.quote_type === "manual_boq")
       : getLatestSavedQuote(activeLead, "manual_boq");
+  };
+
+  const handleDownloadManualQuotePDF = async (quoteId?: string) => {
+    if (!activeLead) return;
+
+    const targetManualQuote = quoteId
+      ? activeLead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq")
+      : resolveTargetManualQuote();
     if (!targetManualQuote) {
       alert("Save a quote first.");
       return;
     }
-    window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${targetManualQuote.id}`, "_blank");
+    try {
+      setDownloadingQuotePdf(true);
+      await downloadManualQuotePdf(activeLead.id, targetManualQuote.id);
+    } catch (err: any) {
+      alert(err?.message || "PDF download failed.");
+    } finally {
+      setDownloadingQuotePdf(false);
+    }
     return;
 
     const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
@@ -1801,6 +1821,23 @@ export default function SalesTeamApp({
     document.body.appendChild(form);
     form.submit();
     document.body.removeChild(form);
+  };
+
+  const handlePrintManualQuotePDF = async (quoteId?: string) => {
+    if (!activeLead) return;
+
+    const targetManualQuote = quoteId
+      ? activeLead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq")
+      : resolveTargetManualQuote();
+    if (!targetManualQuote) {
+      alert("Save a quote first.");
+      return;
+    }
+    try {
+      await openManualQuotePrintPreview(activeLead.id, targetManualQuote.id);
+    } catch (err: any) {
+      alert(err?.message || "Print preview failed.");
+    }
   };
 
   const handlePreviewProposalDeck = async () => {
@@ -2810,11 +2847,21 @@ export default function SalesTeamApp({
                   <button
                     type="button"
                     disabled={!latestManualSavedQuote}
+                    title={!latestManualSavedQuote ? "Save a quote first" : "Print latest saved manual quote"}
+                    onClick={() => handlePrintManualQuotePDF()}
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer className="h-3.5 w-3.5 text-amber-500" /> Print Quote
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!latestManualSavedQuote || downloadingQuotePdf}
                     title={!latestManualSavedQuote ? "Save a quote first" : "Download latest saved manual quote PDF"}
-                    onClick={handleDownloadManualQuotePDF}
+                    onClick={() => handleDownloadManualQuotePDF()}
                     className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                   >
-                    <Download className="h-3.5 w-3.5" /> Download Saved Quote PDF
+                    <Download className="h-3.5 w-3.5" />
+                    {downloadingQuotePdf ? "Downloading…" : "Download PDF"}
                   </button>
                 </div>
                 </div>
@@ -3899,14 +3946,25 @@ export default function SalesTeamApp({
                           )}
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadManualQuotePDF()}
-                          className="w-full bg-slate-800 hover:bg-slate-700 text-amber-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-700 mt-3"
-                        >
-                          <Download className="h-4 w-4" />
-                          <span>Download Manual BOQ Quote PDF</span>
-                        </button>
+                        <div className="grid grid-cols-2 gap-2 mt-3">
+                          <button
+                            type="button"
+                            onClick={() => handlePrintManualQuotePDF()}
+                            className="w-full bg-slate-950 hover:bg-slate-800 text-slate-200 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-850"
+                          >
+                            <Printer className="h-4 w-4 text-amber-500" />
+                            <span>Print</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={downloadingQuotePdf}
+                            onClick={() => handleDownloadManualQuotePDF()}
+                            className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-amber-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-700"
+                          >
+                            <Download className="h-4 w-4" />
+                            <span>{downloadingQuotePdf ? "Downloading…" : "Download PDF"}</span>
+                          </button>
+                        </div>
                       </div>
 
                     </div>
@@ -4947,9 +5005,15 @@ export default function SalesTeamApp({
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        window.open(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${q.id}`, "_blank");
-                                      }}
+                                      onClick={() => handlePrintManualQuotePDF(q.id)}
+                                      className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 p-1.5 rounded-lg cursor-pointer transition"
+                                      title="Print Version"
+                                    >
+                                      <Printer className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadManualQuotePDF(q.id)}
                                       className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
                                       title="Download Version PDF"
                                     >
@@ -5512,15 +5576,22 @@ export default function SalesTeamApp({
                     type="button"
                     onClick={() => {
                       const iframe = document.getElementById('proposal-preview-iframe') as HTMLIFrameElement;
-                      if (iframe && iframe.contentWindow) {
-                        iframe.contentWindow.print();
-                      }
+                      printProposalPreviewIframe(iframe);
                     }}
                     disabled={loadingPreview || !proposalPreviewHtml}
                     className="text-amber-500 hover:text-amber-400 disabled:text-slate-650 transition cursor-pointer text-xs font-bold bg-slate-850 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-1"
                   >
                     <Printer className="h-3.5 w-3.5" />
-                    Print Deck
+                    Print
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loadingPreview || !proposalPreviewHtml || downloadingQuotePdf}
+                    onClick={() => handleDownloadManualQuotePDF()}
+                    className="text-amber-500 hover:text-amber-400 disabled:text-slate-650 transition cursor-pointer text-xs font-bold bg-slate-850 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-1"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {downloadingQuotePdf ? "Downloading…" : "Download PDF"}
                   </button>
                   <button
                     type="button"
