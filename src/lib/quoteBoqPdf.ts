@@ -61,15 +61,75 @@ export function filterBoqRowsForPdf(
   });
 }
 
+/** Insert or refresh section subtotals so each heading group ends with a subtotal row. */
+export function ensureBoqSectionSubtotals(rows: BoqPdfRow[]): BoqPdfRow[] {
+  const out: BoqPdfRow[] = [];
+  let idx = 0;
+
+  while (idx < rows.length) {
+    const row = rows[idx];
+    if (row.type !== "heading") {
+      out.push(row);
+      idx++;
+      continue;
+    }
+
+    out.push(row);
+    const sectionName = String(row.name || "Section").trim();
+    idx++;
+
+    const sectionRows: BoqPdfRow[] = [];
+    let sectionSum = 0;
+    let hasSubtotal = false;
+
+    while (idx < rows.length && rows[idx].type !== "heading") {
+      const cur = rows[idx];
+      if (cur.type === "subtotal") {
+        hasSubtotal = true;
+      } else if (cur.type === "item") {
+        sectionSum +=
+          Number(cur.total) ||
+          Math.round(Number(cur.qty || 0) * Number(cur.rate || 0) * 100) / 100;
+      }
+      sectionRows.push(cur);
+      idx++;
+    }
+
+    for (const sr of sectionRows) {
+      if (sr.type === "subtotal") {
+        const rawLabel = String(sr.name || `${sectionName} Subtotal`).trim();
+        const label = rawLabel.endsWith(":") ? rawLabel.slice(0, -1).trim() : rawLabel;
+        const amount = Number(sr.total) > 0 ? Number(sr.total) : sectionSum;
+        out.push({ ...sr, name: label, total: amount });
+      } else {
+        out.push(sr);
+      }
+    }
+
+    const itemCount = sectionRows.filter((r) => r.type === "item").length;
+    if (!hasSubtotal && itemCount > 0) {
+      out.push({
+        id: `pdf-sub-${out.length}`,
+        type: "subtotal",
+        name: `${sectionName} Subtotal`,
+        total: sectionSum,
+      });
+    }
+  }
+
+  return out;
+}
+
 export function renderBoqTableBodyHtml(
   rows: BoqPdfRow[],
   formatPKR: (val: number) => string
 ): { html: string; calculatedGross: number } {
+  const normalized = ensureBoqSectionSubtotals(rows);
   let boqHtml = "";
   let calculatedGross = 0;
   let itemSr = 0;
 
-  for (const r of rows) {
+  for (const r of normalized) {
     if (r.type === "heading") {
       const label = String(r.name || r.description || "Section").trim().toUpperCase();
       if (!label) continue;
@@ -82,9 +142,10 @@ export function renderBoqTableBodyHtml(
     }
 
     if (r.type === "subtotal") {
+      const label = String(r.name || "Subtotal").trim();
       boqHtml += `
               <tr class="boq-section-subtotal">
-                <td colspan="6">${escapeHtml(r.name || "SUBTOTAL")}:</td>
+                <td colspan="6">${escapeHtml(label)}:</td>
                 <td>${formatPKR(Number(r.total || 0))}</td>
               </tr>
             `;
@@ -127,20 +188,22 @@ export function boqPdfSectionCss(): string {
           text-align: center;
         }
         .boq-section-subtotal td {
-          border-bottom: 1.5px solid #cbd5e1;
+          border-top: 1px solid #cbd5e1;
+          border-bottom: 2px solid #94a3b8;
           font-weight: 700;
-          background-color: #f8fafc;
-          font-size: 9.5px;
-          padding: 5px 8px;
+          background-color: #f1f5f9;
+          font-size: 10px;
+          padding: 7px 8px;
         }
         .boq-section-subtotal td:first-child {
           text-align: right;
-          color: #475569;
-          text-transform: uppercase;
+          color: #0f172a;
+          font-style: normal;
         }
         .boq-section-subtotal td:last-child {
           text-align: right;
           color: #0f172a;
+          font-weight: 800;
         }
         .boq-item-row td {
           border-bottom: 1px solid #cbd5e1;

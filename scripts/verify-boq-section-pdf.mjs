@@ -5,6 +5,7 @@
 import {
   filterBoqRowsForPdf,
   renderBoqTableBodyHtml,
+  ensureBoqSectionSubtotals,
 } from "../src/lib/quoteBoqPdf.ts";
 
 const formatPKR = (n) => `Rs. ${Math.round(Number(n) || 0).toLocaleString("en-US")}`;
@@ -48,6 +49,18 @@ const legacyFiltered = filterBoqRowsForPdf(legacyItems, { includeSizerItems: fal
 const legacy = renderBoqTableBodyHtml(legacyFiltered, formatPKR);
 ok &= pass("9 legacy items-only renders", legacy.html.includes("Legacy panel"), "2 rows");
 ok &= pass("10 legacy no section header required", !legacy.html.includes("boq-section-header"), "no headers");
+
+const noSubtotalRows = [
+  { id: "h-1", type: "heading", name: "Imported Equipment" },
+  { id: "i-1", type: "item", name: "Longi X10", qty: 10, rate: 25000, total: 250000, unit: "Pcs" },
+  { id: "i-2", type: "item", name: "ITEL Inverter", qty: 1, rate: 501050, total: 501050, unit: "Pcs" },
+];
+const ensured = ensureBoqSectionSubtotals(noSubtotalRows);
+ok &= pass("11 auto subtotal inserted", ensured.some((r) => r.type === "subtotal"), "subtotal row");
+ok &= pass("12 auto subtotal amount", ensured.find((r) => r.type === "subtotal")?.total === 751050, "751050");
+const autoHtml = renderBoqTableBodyHtml(noSubtotalRows, formatPKR);
+ok &= pass("13 subtotal label in pdf", autoHtml.html.includes("Imported Equipment Subtotal:"), "label");
+ok &= pass("14 subtotal amount in pdf", autoHtml.html.includes("751,050"), "amount");
 
 console.log(`\n${ok ? "ALL PASS" : "SOME FAILURES"}\n`);
 process.exit(ok ? 0 : 1);
