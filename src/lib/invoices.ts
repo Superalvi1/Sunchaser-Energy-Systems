@@ -197,6 +197,18 @@ export function computeInvoiceTotals(items: InvoiceLineItem[], invoiceDiscount =
   };
 }
 
+export function isInvoiceBulkDeletable(invoice: {
+  paidAmount?: number | string | null;
+  paymentStatus?: string | null;
+  archivedAt?: string | null;
+}): boolean {
+  if (invoice.archivedAt) return false;
+  if (Number(invoice.paidAmount || 0) > 0) return false;
+  const status = String(invoice.paymentStatus || "").toLowerCase();
+  if (status === "paid" || status === "partial") return false;
+  return true;
+}
+
 export function derivePaymentStatus(
   grandTotal: number,
   paidAmount: number,

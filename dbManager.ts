@@ -1768,6 +1768,48 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   };
 }
 
+export async function upsertSolarPackageCatalogToSupabase(packages: any[]): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase || !packages?.length) return;
+
+  const { data: existing } = await supabase.from("solar_packages").select("id");
+  const legacyIds = (existing || [])
+    .map((row: any) => row.id)
+    .filter((id: string) => /^sp-/i.test(String(id || "")));
+  if (legacyIds.length) {
+    await supabase.from("solar_packages").delete().in("id", legacyIds);
+  }
+
+  for (const sp of packages) {
+    await supabase.from("solar_packages").upsert(
+      {
+        id: sp.id,
+        name: sp.name,
+        panel_brand: sp.panelBrand,
+        inverter_brand: sp.inverterBrand,
+        battery_option: sp.batteryOption,
+        price: Number(sp.price || 0),
+        structure_type: sp.structureType,
+        profit_margin: Number(sp.profitMargin || 0),
+        enabled: sp.enabled !== false,
+        system_size_kw: Number(sp.systemSizeKw || 0),
+        equipment_tier: sp.equipmentTier || "budgeted",
+        boq_rows: sp.boqRows || [],
+        archived: !!sp.archived,
+        discount_type: sp.discountType || "fixed",
+        discount_value: Number(sp.discountValue || 0),
+      },
+      { onConflict: "id" }
+    );
+  }
+}
+
+export async function upsertAppSettingsToSupabase(settings: Record<string, any>): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase || !settings) return;
+  await supabase.from("settings").upsert({ key: "global", value: settings }, { onConflict: "key" });
+}
+
 /* --- AUTOMATIC RELATION STATE MIGRATOR --- */
 export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
   const supabase = getSupabase();

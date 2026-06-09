@@ -88,11 +88,55 @@ export function getPackageShortLabel(pkg: BoqPackageRecord): string {
 
 export function isLegacySolarPackage(pkg: any): boolean {
   if (!pkg || typeof pkg !== "object") return true;
-  return !Array.isArray(pkg.boqRows) || pkg.systemSizeKw == null || !pkg.equipmentTier;
+  const id = String(pkg.id || "");
+  if (/^sp-/i.test(id)) return true;
+  const name = String(pkg.name || "");
+  if (/Hybrid Solar System|On-grid Solar System/i.test(name)) return true;
+  const rows = pkg.boqRows ?? pkg.boq_rows;
+  if (!Array.isArray(rows) || rows.length === 0) return true;
+  if (pkg.systemSizeKw == null && pkg.system_size_kw == null) return true;
+  if (!pkg.equipmentTier && !pkg.equipment_tier) return true;
+  return false;
+}
+
+export function isLoadableCatalogPackage(pkg: BoqPackageRecord): boolean {
+  if (pkg.archived || !pkg.enabled) return false;
+  if (!pkg.boqRows?.length) return false;
+  if (!PACKAGE_SYSTEM_SIZES_KW.includes(pkg.systemSizeKw as PackageSystemSizeKw)) return false;
+  if (pkg.structureType !== "standard" && pkg.structureType !== "elevated") return false;
+  if (pkg.equipmentTier !== "budgeted" && pkg.equipmentTier !== "premium") return false;
+  if (/^sp-/i.test(pkg.id)) return false;
+  if (/Hybrid Solar System|On-grid Solar System/i.test(pkg.name)) return false;
+  return true;
+}
+
+export function needsPackageLibraryMigration(packages: any[] | undefined, packageLibraryVersion?: number): boolean {
+  if (!packages?.length) return true;
+  if (Number(packageLibraryVersion || 0) < 2) return true;
+  return packages.some(isLegacySolarPackage);
+}
+
+export function ensurePackageLibraryCatalog(
+  packages: any[] | undefined,
+  settings: Record<string, any> | undefined
+): { packages: BoqPackageRecord[]; settings: Record<string, any>; migrated: boolean } {
+  const nextSettings = { ...(settings || {}) };
+  if (needsPackageLibraryMigration(packages, nextSettings.packageLibraryVersion)) {
+    return {
+      packages: buildDefaultPackageCatalog(),
+      settings: { ...nextSettings, packageLibraryVersion: 2 },
+      migrated: true,
+    };
+  }
+  const normalized = (packages || [])
+    .map((pkg) => normalizeSolarPackage(pkg))
+    .filter((pkg): pkg is BoqPackageRecord => !!pkg);
+  return { packages: normalized, settings: nextSettings, migrated: false };
 }
 
 export function normalizeSolarPackage(raw: any): BoqPackageRecord | null {
   if (!raw?.id) return null;
+  if (isLegacySolarPackage(raw)) return null;
   const systemSizeKw = Number(raw.systemSizeKw ?? raw.system_size_kw ?? 0);
   const structureType = (raw.structureType || raw.structure_type || "standard").toString().toLowerCase();
   const equipmentTier = (raw.equipmentTier || raw.equipment_tier || "budgeted").toString().toLowerCase();

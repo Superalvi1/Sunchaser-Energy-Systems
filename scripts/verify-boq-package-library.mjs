@@ -71,4 +71,11 @@ withDiscountField.length === packages.length
   ? pass("6", "All packages expose discountType for quote load")
   : fail("6", `${withDiscountField.length}/${packages.length} packages have discountType`);
 
+const legacy = packages.filter((p) =>
+  /^sp-/i.test(String(p.id || "")) || /Hybrid Solar System|On-grid Solar System/i.test(String(p.name || ""))
+);
+legacy.length === 0
+  ? pass("7", "No legacy hybrid/on-grid packages in catalog")
+  : fail("7", `${legacy.length} legacy package(s) still in state: ${legacy.map((p) => p.name).join(", ")}`);
+
 console.log("\nPackage library verification complete.");

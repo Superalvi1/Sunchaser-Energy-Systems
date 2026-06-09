@@ -23,7 +23,7 @@ import {
   recordAdminInvoicePayment,
   updateAdminInvoice,
 } from "../services/api";
-import { canCreateInvoice, computeInvoiceTotals, type InvoiceLineItem } from "../lib/invoices";
+import { canCreateInvoice, computeInvoiceTotals, isInvoiceBulkDeletable, type InvoiceLineItem } from "../lib/invoices";
 import { buildInvoiceDraftFromLead } from "../lib/invoiceFromLead";
 import { isSuperAdmin } from "../lib/roles";
 import { decodeInvoiceMeta, stripInvoiceMeta, type InvoiceProjectInfo } from "../lib/invoicePdfMeta";
@@ -194,6 +194,14 @@ export default function InvoiceStaff({
   }, [readyLeads, searchQuery]);
 
   const superAdmin = isSuperAdmin(staffUser.username, staffUser.role);
+
+  const selectedBulkIds = useMemo(
+    () => Object.entries(bulkSelected).filter(([, on]) => on).map(([id]) => id),
+    [bulkSelected]
+  );
+  const selectedBulkCount = selectedBulkIds.length;
+  const bulkDeleteReady =
+    selectedBulkCount > 0 && bulkDeleteConfirm.trim() === "DELETE";
 
   const totals = useMemo(
     () =>
@@ -432,13 +440,37 @@ export default function InvoiceStaff({
   };
 
   const handleBulkDelete = async () => {
-    const ids = Object.entries(bulkSelected)
-      .filter(([, on]) => on)
-      .map(([id]) => id);
-    if (!ids.length || !superAdmin) return;
+    if (!selectedBulkIds.length || !superAdmin) return;
+    if (bulkDeleteConfirm.trim() !== "DELETE") {
+      setMsg('Type DELETE in the confirmation field to confirm bulk deletion.');
+      return;
+    }
+
+    const selectedInvoices = invoices.filter((inv) => selectedBulkIds.includes(inv.id));
+    const blocked = selectedInvoices.filter((inv) => !isInvoiceBulkDeletable(inv));
+    const deletableIds = selectedInvoices.filter((inv) => isInvoiceBulkDeletable(inv)).map((inv) => inv.id);
+
+    if (!deletableIds.length) {
+      setMsg(
+        blocked.length === 1
+          ? "Cannot delete: the selected invoice has recorded payments."
+          : `Cannot delete: all ${blocked.length} selected invoices have recorded payments.`
+      );
+      return;
+    }
+
+    if (blocked.length) {
+      const proceed = window.confirm(
+        `${blocked.length} paid invoice(s) cannot be deleted and will be skipped. Delete ${deletableIds.length} unpaid invoice(s)?`
+      );
+      if (!proceed) return;
+    }
+
     try {
-      const res = await bulkDeleteAdminInvoices(staffUser, ids, bulkDeleteConfirm);
-      setMsg(`Bulk delete: ${res.deleted.length} removed${res.failed.length ? `, ${res.failed.length} failed` : ""}.`);
+      const res = await bulkDeleteAdminInvoices(staffUser, deletableIds, bulkDeleteConfirm.trim());
+      const blockedNote = blocked.length ? ` ${blocked.length} paid invoice(s) skipped.` : "";
+      const failedNote = res.failed.length ? ` ${res.failed.length} failed.` : "";
+      setMsg(`Bulk delete: ${res.deleted.length} removed.${blockedNote}${failedNote}`);
       setBulkSelected({});
       setBulkDeleteConfirm("");
       setSelectedId(null);
@@ -631,21 +663,21 @@ export default function InvoiceStaff({
             {superAdmin && (
               <div className="flex items-center gap-1 text-[10px]">
                 <input
-                  className="w-20 border border-red-200 rounded px-1 py-0.5"
-                  placeholder="DELETE"
+                  className="w-24 border border-red-200 rounded px-1 py-0.5"
+                  placeholder="Type DELETE"
                   value={bulkDeleteConfirm}
                   onChange={(e) => setBulkDeleteConfirm(e.target.value)}
+                  aria-label="Type DELETE to confirm bulk deletion"
                 />
                 <button
                   type="button"
-                  disabled={
-                    bulkDeleteConfirm !== "DELETE" ||
-                    !Object.values(bulkSelected).some(Boolean)
-                  }
+                  disabled={!bulkDeleteReady}
                   onClick={handleBulkDelete}
-                  className="px-2 py-1 rounded border border-red-300 bg-red-50 text-red-800 font-bold disabled:opacity-40"
+                  className="px-2 py-1 rounded border border-red-300 bg-red-50 text-red-800 font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Bulk delete
+                  {selectedBulkCount > 0
+                    ? `Bulk delete (${selectedBulkCount} selected)`
+                    : "Bulk delete"}
                 </button>
               </div>
             )}
@@ -670,6 +702,12 @@ export default function InvoiceStaff({
                     type="checkbox"
                     className="mr-1"
                     checked={!!bulkSelected[inv.id]}
+                    disabled={!isInvoiceBulkDeletable(inv)}
+                    title={
+                      !isInvoiceBulkDeletable(inv)
+                        ? "Paid invoices cannot be bulk deleted"
+                        : "Select for bulk delete"
+                    }
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
                       setBulkSelected((prev) => ({ ...prev, [inv.id]: e.target.checked }))

@@ -50,8 +50,7 @@ import {
   renderQuotationHtmlToPdf,
 } from "./src/lib/quotePdfRender.ts";
 import {
-  buildDefaultPackageCatalog,
-  isLegacySolarPackage,
+  ensurePackageLibraryCatalog,
 } from "./src/lib/boqPackageLibrary.ts";
 import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
 import {
@@ -132,6 +131,8 @@ import {
   fetchOnboardingMe,
   completeOnboarding,
   resetOnboarding,
+  upsertSolarPackageCatalogToSupabase,
+  upsertAppSettingsToSupabase,
 } from "./dbManager.js";
 import {
   listAdminProjectDeliveries,
@@ -397,16 +398,11 @@ function loadDb() {
         if (!db.quotePdfSettings) db.quotePdfSettings = initialSeed.quotePdfSettings;
         
         // BOQ package library (structure × tier matrix per system size)
-        const packageLibraryVersion = Number(db.settings?.packageLibraryVersion || 0);
-        let migratedPackageLibrary = false;
-        if (
-          !db.solarPackages?.length ||
-          packageLibraryVersion < 2 ||
-          db.solarPackages.some(isLegacySolarPackage)
-        ) {
-          db.solarPackages = buildDefaultPackageCatalog();
-          db.settings = { ...(db.settings || {}), packageLibraryVersion: 2 };
-          migratedPackageLibrary = true;
+        const packageResolved = ensurePackageLibraryCatalog(db.solarPackages, db.settings);
+        let migratedPackageLibrary = packageResolved.migrated;
+        if (migratedPackageLibrary) {
+          db.solarPackages = packageResolved.packages;
+          db.settings = packageResolved.settings;
         }
         if (!db.settings) {
           db.settings = {
@@ -3332,6 +3328,17 @@ app.get("/api/state", async (req, res) => {
   if (isSupabaseActive()) {
     try {
       const stateObj = await fetchAppStateFromSupabase();
+      const packageResolved = ensurePackageLibraryCatalog(stateObj.solarPackages, stateObj.settings);
+      if (packageResolved.migrated) {
+        stateObj.solarPackages = packageResolved.packages;
+        stateObj.settings = packageResolved.settings;
+        await upsertSolarPackageCatalogToSupabase(packageResolved.packages);
+        await upsertAppSettingsToSupabase(packageResolved.settings);
+        loadDb();
+        db.solarPackages = packageResolved.packages;
+        db.settings = packageResolved.settings;
+        saveDb();
+      }
       return res.json({
         ...stateObj,
         stats: getDashboardStats(stateObj),

@@ -73,9 +73,12 @@ import {
   printProposalPreviewIframe,
 } from "../lib/quotePdfExport";
 import {
+  buildDefaultPackageCatalog,
   buildPackageId,
   cloneBoqRowsForLoad,
+  getPackageShortLabel,
   groupActivePackagesBySize,
+  isLoadableCatalogPackage,
   normalizeSolarPackage,
   PACKAGE_SYSTEM_SIZES_KW,
   type BoqPackageRecord,
@@ -156,9 +159,14 @@ export default function SalesTeamApp({
         .filter((pkg): pkg is BoqPackageRecord => !!pkg),
     [solarPackages]
   );
+  const loadablePackages = useMemo(() => {
+    const fromState = boqPackageLibrary.filter(isLoadableCatalogPackage);
+    if (fromState.length > 0) return fromState;
+    return buildDefaultPackageCatalog().filter(isLoadableCatalogPackage);
+  }, [boqPackageLibrary]);
   const packagesBySize = useMemo(
-    () => groupActivePackagesBySize(boqPackageLibrary),
-    [boqPackageLibrary]
+    () => groupActivePackagesBySize(loadablePackages),
+    [loadablePackages]
   );
   const latestAutoSizerSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "auto_sizer") : null;
 
@@ -1029,8 +1037,8 @@ export default function SalesTeamApp({
 
   const applyBoqPackage = (packageId: string) => {
     const pkg =
-      boqPackageLibrary.find((p) => p.id === packageId && !p.archived && p.enabled) ||
-      boqPackageLibrary.find((p) => p.id === packageId);
+      loadablePackages.find((p) => p.id === packageId) ||
+      boqPackageLibrary.find((p) => p.id === packageId && !p.archived && p.enabled);
     if (!pkg) {
       alert("Package not found in library.");
       return;
@@ -1067,7 +1075,7 @@ export default function SalesTeamApp({
   // Quick package loader — defaults to Standard Budgeted variant for a system size
   const applyPackage = (kwSize: number) => {
     const defaultPackageId = buildPackageId(kwSize, "standard", "budgeted");
-    if (boqPackageLibrary.some((p) => p.id === defaultPackageId)) {
+    if (loadablePackages.some((p) => p.id === defaultPackageId)) {
       applyBoqPackage(defaultPackageId);
       return;
     }
@@ -3420,8 +3428,8 @@ export default function SalesTeamApp({
                         onChange={(e) => {
                           const packageId = e.target.value;
                           if (packageId) {
-                            const pkg = boqPackageLibrary.find((p) => p.id === packageId);
-                            const label = pkg?.name || "selected package";
+                            const pkg = loadablePackages.find((p) => p.id === packageId);
+                            const label = pkg ? `${pkg.systemSizeKw}kW ${getPackageShortLabel(pkg)}` : "selected package";
                             if (window.confirm(`Load "${label}" and replace current BOQ rows?`)) {
                               applyBoqPackage(packageId);
                             }
@@ -3438,7 +3446,7 @@ export default function SalesTeamApp({
                             <optgroup key={kw} label={`${kw}kW`}>
                               {group.map((pkg) => (
                                 <option key={pkg.id} value={pkg.id}>
-                                  {pkg.name.replace(/^\d+kW\s+/i, "")}
+                                  {getPackageShortLabel(pkg)}
                                 </option>
                               ))}
                             </optgroup>
