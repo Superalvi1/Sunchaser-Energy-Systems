@@ -31,6 +31,7 @@ import {
   mergeQuoteWithLead,
   parseQuotePageExtendedSettings,
   quotePdfPrintCss,
+  quotePdfShellCss,
   renderRichTextBlock,
   resolveTypography,
   typographyStyleAttr,
@@ -827,11 +828,10 @@ app.post("/api/auth/reset-password", async (req, res) => {
 });
 
 function readStaffAuth(req: express.Request) {
-  const q = req.query as Record<string, string | undefined>;
   return {
     userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
     username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
-    role: String(req.headers["x-sunchaser-role"] || q.role || req.body?.role || "").trim(),
+    role: String(req.headers["x-sunchaser-role"] || req.body?.role || "").trim(),
   };
 }
 
@@ -1180,8 +1180,7 @@ app.post("/api/admin/customer-linking/link", async (req, res) => {
 });
 
 app.get("/api/admin/customer-systems/:customerId", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  const role = String(req.query.role || "");
+  const { userId, username, role } = readStaffAuth(req);
   try {
     loadDb();
     const system = await getCustomerSystemProfile(userId, username, role, req.params.customerId, db);
@@ -1193,8 +1192,7 @@ app.get("/api/admin/customer-systems/:customerId", async (req, res) => {
 });
 
 app.put("/api/admin/customer-systems", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  const role = String(req.body?.role || "");
+  const { userId, username, role } = readStaffAuth(req);
   try {
     loadDb();
     const system = await upsertCustomerSystemProfile(userId, username, role, req.body || {}, db);
@@ -1207,8 +1205,7 @@ app.put("/api/admin/customer-systems", async (req, res) => {
 });
 
 app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  const role = String(req.query.role || "");
+  const { userId, username, role } = readStaffAuth(req);
   try {
     loadDb();
     const documents = await listAdminCustomerDocuments(
@@ -1226,8 +1223,7 @@ app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
 });
 
 app.post("/api/admin/customer-documents/assign", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  const role = String(req.body?.role || "");
+  const { userId, username, role } = readStaffAuth(req);
   try {
     loadDb();
     const doc = await assignCustomerDocument(userId, username, role, req.body || {}, db);
@@ -6591,7 +6587,7 @@ function compileSunchaserPDFHtml(
       else if (fAlignment === 'right') justifyValue = "flex-end";
 
       footerHtml = `
-        <div class="page-footer" style="display: flex; justify-content: ${justifyValue}; align-items: center; border-top: 1px solid ${fLineColor}; padding-top: 6px; font-size: ${fFontSize}; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+        <div class="page-footer" style="justify-content: ${justifyValue}; border-top-color: ${fLineColor}; font-size: ${fFontSize};">
           <span style="flex: 1;">${resolvedFooterText}</span>
           ${fAlignment !== 'center' ? `<span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-${String(leadObj.id || "DRAFT").substring(0, 8).toUpperCase()}${fShowPageNumber ? ` | Pg ${pageIndex + 1}` : ""}</span>` : (fShowPageNumber ? `<span style="font-size: 7.5px;">Page ${pageIndex + 1}</span>` : "")}
         </div>
@@ -6667,14 +6663,14 @@ function compileSunchaserPDFHtml(
           imageContent = bodyImagesHtml;
         }
         pagesHtml += `
-          <div class="page full-page-image-only" style="border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always; overflow: hidden;">
+          <div class="page full-page-image-only">
             ${imageContent}
           </div>
         `;
       } else if (ext.layoutMode === "ceo_signature_block" || ext.layoutMode === "signature_block") {
         const signatureHtml = renderEnhancedSignatureBlockHtml(ext.signatureBlock, ceoList);
         pagesHtml += `
-          <div class="page authoring-page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+          <div class="page authoring-page" style="${typoStyle}">
             ${watermarkHtml}
             ${absoluteImagesHtml}
             ${pageShellOpen}
@@ -6694,7 +6690,7 @@ function compileSunchaserPDFHtml(
           ? `<img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="Logo" />`
           : '';
         pagesHtml += `
-          <div class="page${pageType === 'cover' ? ' cover' : ''}" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+          <div class="page${pageType === 'cover' ? ' cover' : ''}" style="${typoStyle}">
             ${watermarkHtml}
             ${absoluteImagesHtml}
             ${pageShellOpen}
@@ -6722,14 +6718,14 @@ function compileSunchaserPDFHtml(
         imageContent = bodyImagesHtml;
       }
       pagesHtml += `
-        <div class="page full-page-image-only" style="border: none; padding: 0; margin: 0; display: block; position: relative; width: 210mm; height: 297mm; page-break-after: always; overflow: hidden;">
+        <div class="page full-page-image-only">
           ${imageContent}
         </div>
       `;
     } else if (ext.layoutMode === "ceo_signature_block" || ext.layoutMode === "signature_block") {
       const signatureHtml = renderEnhancedSignatureBlockHtml(ext.signatureBlock, ceoList);
       pagesHtml += `
-        <div class="page authoring-page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; ${typoStyle}">
+        <div class="page authoring-page" style="${typoStyle}">
           ${watermarkHtml}
           ${absoluteImagesHtml}
           ${pageShellOpen}
@@ -6755,7 +6751,7 @@ function compileSunchaserPDFHtml(
             </div>`
           : '';
         pagesHtml += `
-          <div class="page cover${coverClassic ? ' classic-layout' : ''}" style="background: #ffffff; color: #0f172a; padding: 22mm 20mm; border: 2mm solid #f59e0b; display: flex; flex-direction: column; justify-content: space-between; position: relative; ${typoStyle}">
+          <div class="page cover${coverClassic ? ' classic-layout' : ''}" style="background: #ffffff; color: #0f172a; ${typoStyle}">
             ${watermarkHtml}
             ${absoluteImagesHtml}
             ${coverClassic ? coverLogoCenter : `
@@ -6773,7 +6769,7 @@ function compileSunchaserPDFHtml(
               </div>
             </div>`}
 
-            <div style="margin-top: ${coverClassic ? '10px' : '40px'}; position: relative; z-index: 1;">
+            <div class="cover-main section" style="margin-top: ${coverClassic ? '10px' : '16px'}; position: relative; z-index: 1;">
               <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a; ${coverClassic ? 'text-align: center;' : ''}">
                 ${proposal.systemSizekW || quoteObj.systemSizekW || "Not specified"}kW ${proposal.systemType || quoteObj.systemType || 'Hybrid'}<br/>Solar Power Solution
               </div>
@@ -6786,7 +6782,7 @@ function compileSunchaserPDFHtml(
               
               ${bodyImagesHtml}
               
-              <div class="cover-meta-grid" style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 35px;">
+              <div class="cover-meta-grid section" style="border-top: 1px solid #cbd5e1; padding-top: 16px; margin-top: 20px;">
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
                   <div>
                     <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
@@ -6809,7 +6805,7 @@ function compileSunchaserPDFHtml(
               </div>
             </div>
 
-            <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto; position: relative; z-index: 1;">
+            <div class="cover-footer-block section" style="border-top: 1px solid #cbd5e1; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; position: relative; z-index: 1;">
               <div>
                 <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">${settings.companyName}</div>
                 <div>${settings.officeAddress}</div>
@@ -7131,7 +7127,7 @@ function compileSunchaserPDFHtml(
         const discountLabel = resolvedDiscount.discountLabel;
 
         pagesHtml += `
-          <div class="page boq-page" style="padding: 12mm 15mm; position: relative; ${typoStyle}">
+          <div class="page boq-page section" style="${typoStyle}">
             ${watermarkHtml}
             ${absoluteImagesHtml}
             ${pageShellOpen}
@@ -7424,39 +7420,7 @@ function compileSunchaserPDFHtml(
         .btn-print:hover {
           background-color: #d97706;
         }
-        .pages-container {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 20px;
-          padding: 30px 0;
-        }
-        .page {
-          width: 210mm;
-          height: 297mm;
-          background: #ffffff;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-          box-sizing: border-box;
-          padding: 15mm 15mm;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          position: relative;
-          overflow: hidden;
-          page-break-after: always;
-        }
-        .page.boq-page {
-          height: auto !important;
-          min-height: 297mm;
-          overflow: visible !important;
-        }
-        .page.cover {
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .page.full-page-image-only {
-          padding: 0 !important;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
+        ${quotePdfShellCss()}
         .page-header-logo {
           display: flex;
           justify-content: space-between;
@@ -7482,16 +7446,6 @@ function compileSunchaserPDFHtml(
         }
         ${quotePdfPrintCss()}
         ${quoteAuthoringPrintCss(pdfQuality)}
-        .page-footer {
-          border-top: 1px solid #cbd5e1;
-          padding-top: 6px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          font-size: 8.5px;
-          color: #64748b;
-          font-weight: 600;
-        }
         .grid-2 {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -7540,25 +7494,12 @@ function compileSunchaserPDFHtml(
           border-bottom: 1px solid #e2e8f0;
         }
         ${boqPdfSectionCss()}
-        @page {
-          size: A4 portrait;
-          margin: 0;
-        }
         @media print {
           body {
             background-color: #ffffff !important;
           }
           .action-bar {
             display: none !important;
-          }
-          .pages-container {
-            padding: 0 !important;
-            gap: 0 !important;
-          }
-          .page {
-            box-shadow: none !important;
-            border: none !important;
-            margin: 0 !important;
           }
         }
       </style>

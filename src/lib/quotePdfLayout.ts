@@ -435,6 +435,135 @@ export function formatSiteLocation(proposal: Record<string, any>): string {
   return "Not specified";
 }
 
+/** A4 deck shell: page sizing, margins, footer slot, and print pagination. */
+export function quotePdfShellCss(): string {
+  return `
+    @page {
+      size: A4;
+      margin: 20mm;
+    }
+    .pages-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      padding: 30px 0;
+    }
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      background: #ffffff;
+      box-sizing: border-box;
+      padding: 20mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      position: relative;
+      overflow: visible;
+      break-after: page;
+      page-break-after: always;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    .page:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .page.cover {
+      border: 2mm solid #f59e0b;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      min-height: auto;
+    }
+    .page.cover .cover-main {
+      flex: 0 0 auto;
+    }
+    .page.cover .cover-footer-block {
+      flex: 0 0 auto;
+      margin-top: 20px;
+      padding-top: 12px;
+    }
+    .page.boq-page {
+      min-height: 297mm;
+      height: auto;
+      padding: 12mm 20mm 20mm;
+      overflow: visible;
+    }
+    .page.full-page-image-only {
+      width: 210mm;
+      height: 297mm;
+      min-height: 297mm;
+      padding: 0 !important;
+      margin: 0;
+      display: block;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    .page-watermark {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .page-footer {
+      flex: 0 0 auto;
+      margin-top: auto;
+      border-top: 1px solid #cbd5e1;
+      padding-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8.5px;
+      color: #64748b;
+      font-weight: 600;
+      width: 100%;
+      gap: 8px;
+      position: static;
+    }
+    .section,
+    .card,
+    .grid-2,
+    .cover-meta-grid,
+    .ceo-signature-block,
+    .quote-signature-block,
+    .page-title,
+    .page-header-logo {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    @media print {
+      .pages-container {
+        padding: 0 !important;
+        gap: 0 !important;
+        align-items: stretch;
+      }
+      .page {
+        width: 100%;
+        min-height: 257mm;
+        height: auto;
+        padding: 0;
+        margin: 0 !important;
+        box-shadow: none !important;
+        overflow: visible !important;
+      }
+      .page.cover {
+        border: none;
+        min-height: 257mm;
+      }
+      .page.cover .cover-footer-block {
+        margin-top: auto;
+      }
+      .page.boq-page {
+        min-height: 257mm;
+        padding: 0;
+      }
+      .page.full-page-image-only {
+        width: 100%;
+        height: 257mm;
+        min-height: 257mm;
+      }
+    }
+  `;
+}
+
 export function quotePdfPrintCss(): string {
   return `
     .quote-rich-text {
@@ -482,7 +611,15 @@ export function quotePdfPrintCss(): string {
     .quote-page-shell {
       position: relative;
       z-index: 1;
-      flex: 1;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .page-flow {
+      position: relative;
+      z-index: 1;
+      flex: 1 1 auto;
       display: flex;
       flex-direction: column;
       min-height: 0;

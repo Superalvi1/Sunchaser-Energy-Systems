@@ -309,7 +309,6 @@ export function quoteAuthoringPrintCss(pdfQuality: PdfQualityMode = "print"): st
     .page.authoring-page {
       display: flex;
       flex-direction: column;
-      min-height: 257mm;
       box-sizing: border-box;
     }
     .page.authoring-page .page-footer-slot {
@@ -329,6 +328,7 @@ export function quoteAuthoringPrintCss(pdfQuality: PdfQualityMode = "print"): st
         page-break-inside: avoid;
       }
       .page.authoring-page {
+        break-after: page;
         page-break-after: always;
       }
     }
