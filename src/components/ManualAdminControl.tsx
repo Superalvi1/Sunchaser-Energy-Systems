@@ -3,13 +3,14 @@ import {
   Plus, Trash2, Edit3, Save, X, Check, FileText, Download, Copy,
   Upload, ShieldAlert, Users, CreditCard, TrendingUp, FolderPlus, 
   Wrench, Layers, Settings2, Globe, Activity, FileSpreadsheet, 
-  UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye, Link2, Archive
+  UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye, Link2, Archive, Search
 } from "lucide-react";
 import {
   buildBoqPackageRecord,
   buildPackageDisplayName,
   computePackageGrandTotal,
   duplicateBoqPackage,
+  filterBoqPackages,
   generatePackageBoqRows,
   getPackageShortLabel,
   normalizeSolarPackage,
@@ -123,6 +124,10 @@ export default function ManualAdminControl({
   const [editingPkg, setEditingPkg] = useState<BoqPackageRecord | null>(null);
   const [creatingPkg, setCreatingPkg] = useState(false);
   const [showArchivedPackages, setShowArchivedPackages] = useState(false);
+  const [packageSearchQuery, setPackageSearchQuery] = useState("");
+  const [filterSizeKw, setFilterSizeKw] = useState<number | "all">("all");
+  const [filterStructureType, setFilterStructureType] = useState<BoqPackageStructureType | "all">("all");
+  const [filterEquipmentTier, setFilterEquipmentTier] = useState<BoqPackageEquipmentTier | "all">("all");
   const [newPkgDraft, setNewPkgDraft] = useState({
     systemSizeKw: 10 as number,
     structureType: "standard" as BoqPackageStructureType,
@@ -139,8 +144,22 @@ export default function ManualAdminControl({
   );
   const visiblePackages = React.useMemo(
     () =>
-      normalizedPackages.filter((pkg) => (showArchivedPackages ? pkg.archived : !pkg.archived)),
-    [normalizedPackages, showArchivedPackages]
+      filterBoqPackages(normalizedPackages, {
+        search: packageSearchQuery,
+        systemSizeKw: filterSizeKw,
+        structureType: filterStructureType,
+        equipmentTier: filterEquipmentTier,
+        includeArchived: showArchivedPackages,
+        includeDisabled: true,
+      }),
+    [
+      normalizedPackages,
+      showArchivedPackages,
+      packageSearchQuery,
+      filterSizeKw,
+      filterStructureType,
+      filterEquipmentTier,
+    ]
   );
   const packagesBySize = React.useMemo(() => {
     const map = new Map<number, BoqPackageRecord[]>();
@@ -611,6 +630,66 @@ export default function ManualAdminControl({
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center gap-2 bg-neutral-900 border border-neutral-800 rounded-2xl p-3">
+              <div className="relative flex-1 min-w-[180px]">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-500" />
+                <input
+                  type="text"
+                  placeholder="Search packages..."
+                  value={packageSearchQuery}
+                  onChange={(e) => setPackageSearchQuery(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 pl-8 pr-3 py-2 rounded-xl text-xs text-neutral-200 font-mono"
+                />
+              </div>
+              <select
+                value={filterSizeKw}
+                onChange={(e) => setFilterSizeKw(e.target.value === "all" ? "all" : Number(e.target.value))}
+                className="bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-xs text-neutral-200 font-mono"
+              >
+                <option value="all">All sizes</option>
+                {PACKAGE_SYSTEM_SIZES_KW.map((kw) => (
+                  <option key={kw} value={kw}>{kw} kW</option>
+                ))}
+              </select>
+              <select
+                value={filterStructureType}
+                onChange={(e) => setFilterStructureType(e.target.value as BoqPackageStructureType | "all")}
+                className="bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-xs text-neutral-200 font-mono"
+              >
+                <option value="all">All structures</option>
+                {PACKAGE_STRUCTURE_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+              <select
+                value={filterEquipmentTier}
+                onChange={(e) => setFilterEquipmentTier(e.target.value as BoqPackageEquipmentTier | "all")}
+                className="bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-xs text-neutral-200 font-mono"
+              >
+                <option value="all">All tiers</option>
+                {PACKAGE_TIER_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+              {(packageSearchQuery || filterSizeKw !== "all" || filterStructureType !== "all" || filterEquipmentTier !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPackageSearchQuery("");
+                    setFilterSizeKw("all");
+                    setFilterStructureType("all");
+                    setFilterEquipmentTier("all");
+                  }}
+                  className="text-[10px] text-neutral-400 hover:text-neutral-200 px-2 py-1"
+                >
+                  Clear filters
+                </button>
+              )}
+              <span className="text-[10px] text-neutral-500 font-mono ml-auto">
+                {visiblePackages.length} package{visiblePackages.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
             {creatingPkg && (
               <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 space-y-4">
                 <h4 className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">New Package</h4>
@@ -687,6 +766,9 @@ export default function ManualAdminControl({
             )}
 
             <div className="space-y-6">
+              {visiblePackages.length === 0 && (
+                <p className="text-xs text-neutral-500 font-mono text-center py-8">No packages match your filters.</p>
+              )}
               {PACKAGE_SYSTEM_SIZES_KW.map((kw) => {
                 const group = packagesBySize.get(kw) || [];
                 if (!group.length) return null;
@@ -735,6 +817,16 @@ export default function ManualAdminControl({
                               className="bg-neutral-800 hover:bg-neutral-700 text-[10px] text-neutral-200 px-2 py-1 rounded-lg cursor-pointer flex items-center gap-1"
                             >
                               <Copy className="h-3 w-3" /> Duplicate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = { ...pkg, enabled: !pkg.enabled, updatedAt: new Date().toISOString() };
+                                saveDbChange("edit", "solarPackages", updated, pkg.id);
+                              }}
+                              className="bg-neutral-800 hover:bg-neutral-700 text-[10px] text-neutral-200 px-2 py-1 rounded-lg cursor-pointer"
+                            >
+                              {pkg.enabled ? "Disable" : "Enable"}
                             </button>
                             <button
                               type="button"
@@ -815,6 +907,35 @@ export default function ManualAdminControl({
                       step="0.01"
                       value={editingPkg.profitMargin}
                       onChange={(e) => setEditingPkg({ ...editingPkg, profitMargin: Number(e.target.value) })}
+                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-neutral-400 block mb-1">Default Discount Type</label>
+                    <select
+                      value={editingPkg.discountType}
+                      onChange={(e) =>
+                        setEditingPkg({
+                          ...editingPkg,
+                          discountType: e.target.value === "percentage" ? "percentage" : "fixed",
+                        })
+                      }
+                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200 font-mono text-xs"
+                    >
+                      <option value="fixed">Fixed (Rs)</option>
+                      <option value="percentage">Percentage (%)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-neutral-400 block mb-1">
+                      Default Discount {editingPkg.discountType === "percentage" ? "(%)" : "(Rs)"}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={editingPkg.discountType === "percentage" ? 100 : undefined}
+                      value={editingPkg.discountValue}
+                      onChange={(e) => setEditingPkg({ ...editingPkg, discountValue: Number(e.target.value) })}
                       className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200 font-mono text-xs"
                     />
                   </div>

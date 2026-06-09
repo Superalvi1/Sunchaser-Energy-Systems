@@ -5559,6 +5559,8 @@ app.post("/api/db/update", async (req, res) => {
             equipment_tier: data.equipmentTier || "budgeted",
             boq_rows: data.boqRows || [],
             archived: !!data.archived,
+            discount_type: data.discountType || "fixed",
+            discount_value: Number(data.discountValue || 0),
           };
         } else if (table === "categories") {
           pgTable = "categories";

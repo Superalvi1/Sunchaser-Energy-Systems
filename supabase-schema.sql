@@ -279,6 +279,12 @@ create table if not exists public.solar_packages (
   structure_type text,
   profit_margin numeric default 0,
   enabled boolean default true not null,
+  system_size_kw numeric,
+  equipment_tier text default 'budgeted',
+  boq_rows jsonb default '[]'::jsonb,
+  archived boolean default false not null,
+  discount_type text default 'fixed',
+  discount_value numeric default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 

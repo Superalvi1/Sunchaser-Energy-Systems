@@ -1057,6 +1057,11 @@ export default function SalesTeamApp({
       setBoqRows(packageRows);
       setManualBoqItems(packageRows);
     }
+
+    if (pkg.discountType) {
+      setDiscountType(pkg.discountType === "percentage" ? "percentage" : "fixed");
+      setDiscountValue(Number(pkg.discountValue) || 0);
+    }
   };
 
   // Quick package loader — defaults to Standard Budgeted variant for a system size

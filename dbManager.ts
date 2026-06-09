@@ -1600,6 +1600,8 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     equipmentTier: sp.equipment_tier || "budgeted",
     boqRows: typeof sp.boq_rows === "string" ? JSON.parse(sp.boq_rows) : (sp.boq_rows || []),
     archived: !!sp.archived,
+    discountType: sp.discount_type === "percentage" ? "percentage" : "fixed",
+    discountValue: Number(sp.discount_value || 0),
   }));
 
   const categoriesMapped = (categoriesData || []).map((cat: any) => ({
@@ -2028,6 +2030,8 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
           equipment_tier: sp.equipmentTier || "budgeted",
           boq_rows: sp.boqRows || [],
           archived: !!sp.archived,
+          discount_type: sp.discountType || "fixed",
+          discount_value: Number(sp.discountValue || 0),
         }, { onConflict: "id" });
       }
     }

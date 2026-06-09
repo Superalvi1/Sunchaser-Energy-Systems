@@ -1,4 +1,5 @@
 import type { BoqRow } from "../types";
+import type { QuoteDiscountType } from "./quoteDiscount";
 
 export const PACKAGE_SYSTEM_SIZES_KW = [3, 4, 6, 8, 10, 12, 15, 20, 25] as const;
 export type PackageSystemSizeKw = (typeof PACKAGE_SYSTEM_SIZES_KW)[number];
@@ -49,6 +50,8 @@ export interface BoqPackageRecord {
   boqRows: BoqRow[];
   price: number;
   profitMargin: number;
+  discountType: QuoteDiscountType;
+  discountValue: number;
   enabled: boolean;
   archived: boolean;
   createdAt?: string;
@@ -130,6 +133,11 @@ export function normalizeSolarPackage(raw: any): BoqPackageRecord | null {
     boqRows: calculateBoqRowTotals(boqRows),
     price: Number(raw.price || computePackageGrandTotal(boqRows)),
     profitMargin: Number(raw.profitMargin ?? raw.profit_margin ?? 0.25),
+    discountType:
+      String(raw.discountType || raw.discount_type || "fixed").toLowerCase() === "percentage"
+        ? "percentage"
+        : "fixed",
+    discountValue: Number(raw.discountValue ?? raw.discount_value ?? 0),
     enabled: raw.enabled !== false,
     archived: !!raw.archived,
     createdAt: raw.createdAt || raw.created_at,
@@ -555,6 +563,8 @@ export function buildBoqPackageRecord(
     boqRows,
     price: overrides?.price ?? computePackageGrandTotal(boqRows),
     profitMargin: overrides?.profitMargin ?? (equipmentTier === "premium" ? 0.3 : 0.25),
+    discountType: overrides?.discountType ?? "fixed",
+    discountValue: overrides?.discountValue ?? 0,
     enabled: overrides?.enabled !== false,
     archived: !!overrides?.archived,
     createdAt: overrides?.createdAt || now,
@@ -612,6 +622,49 @@ export function groupActivePackagesBySize(
     map.set(kw, list);
   }
   return map;
+}
+
+export type BoqPackageFilterOptions = {
+  search?: string;
+  systemSizeKw?: number | "all";
+  structureType?: BoqPackageStructureType | "all";
+  equipmentTier?: BoqPackageEquipmentTier | "all";
+  includeArchived?: boolean;
+  includeDisabled?: boolean;
+};
+
+export function filterBoqPackages(
+  packages: BoqPackageRecord[],
+  options: BoqPackageFilterOptions = {}
+): BoqPackageRecord[] {
+  const query = (options.search || "").trim().toLowerCase();
+  return packages.filter((pkg) => {
+    if (!options.includeArchived && pkg.archived) return false;
+    if (!options.includeDisabled && !pkg.enabled) return false;
+    if (options.systemSizeKw && options.systemSizeKw !== "all" && pkg.systemSizeKw !== options.systemSizeKw) {
+      return false;
+    }
+    if (options.structureType && options.structureType !== "all" && pkg.structureType !== options.structureType) {
+      return false;
+    }
+    if (options.equipmentTier && options.equipmentTier !== "all" && pkg.equipmentTier !== options.equipmentTier) {
+      return false;
+    }
+    if (query) {
+      const haystack = [
+        pkg.name,
+        pkg.panelBrand,
+        pkg.inverterBrand,
+        pkg.batteryOption,
+        getPackageShortLabel(pkg),
+        `${pkg.systemSizeKw}kw`,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+    return true;
+  });
 }
 
 export function duplicateBoqPackage(pkg: BoqPackageRecord): BoqPackageRecord {

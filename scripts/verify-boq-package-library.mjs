@@ -66,4 +66,9 @@ elevatedStructRow?.name?.includes("Elevated")
   ? pass("5", "Elevated packages use elevated structure BOQ row")
   : fail("5", "Elevated structure row missing or mislabeled");
 
+const withDiscountField = packages.filter((p) => p.discountType != null);
+withDiscountField.length === packages.length
+  ? pass("6", "All packages expose discountType for quote load")
+  : fail("6", `${withDiscountField.length}/${packages.length} packages have discountType`);
+
 console.log("\nPackage library verification complete.");
