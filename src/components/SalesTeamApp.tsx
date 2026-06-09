@@ -74,14 +74,22 @@ import {
 } from "../lib/quotePdfExport";
 import {
   buildDefaultPackageCatalog,
+  buildNewPackageFromBoqState,
+  buildPackageDisplayName,
   buildPackageId,
+  buildPackageRecordFromBoqState,
   cloneBoqRowsForLoad,
   getPackageShortLabel,
   groupActivePackagesBySize,
   isLoadableCatalogPackage,
   normalizeSolarPackage,
+  PACKAGE_STRUCTURE_OPTIONS,
   PACKAGE_SYSTEM_SIZES_KW,
+  PACKAGE_TIER_OPTIONS,
+  serializePackageBoqSnapshot,
+  type BoqPackageEquipmentTier,
   type BoqPackageRecord,
+  type BoqPackageStructureType,
 } from "../lib/boqPackageLibrary";
 
 interface SalesTeamAppProps {
@@ -253,8 +261,144 @@ export default function SalesTeamApp({
   // Excel-style BOQ grid rows
   const [boqRows, setBoqRows] = useState<BoqRow[]>([]);
   const [manualBoqItems, setManualBoqItems] = useState<any[]>([]);
+  const [loadedPackageId, setLoadedPackageId] = useState<string | null>(null);
+  const [loadedPackageName, setLoadedPackageName] = useState<string | null>(null);
+  const [loadedPackageSize, setLoadedPackageSize] = useState<number | null>(null);
+  const [loadedPackageSnapshot, setLoadedPackageSnapshot] = useState<string | null>(null);
+  const [showSaveNewPackageModal, setShowSaveNewPackageModal] = useState(false);
+  const [savingPackage, setSavingPackage] = useState(false);
+  const [newPackageDraft, setNewPackageDraft] = useState({
+    name: "",
+    systemSizeKw: 10 as number,
+    structureType: "standard" as BoqPackageStructureType,
+    equipmentTier: "budgeted" as BoqPackageEquipmentTier,
+    discountType: "fixed" as QuoteDiscountType,
+    discountValue: 0,
+  });
   const [boqCatalogQuickFillSearch, setBoqCatalogQuickFillSearch] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const clearLoadedPackage = () => {
+    setLoadedPackageId(null);
+    setLoadedPackageName(null);
+    setLoadedPackageSize(null);
+    setLoadedPackageSnapshot(null);
+  };
+
+  const hasUnsavedPackageChanges = useMemo(() => {
+    if (!loadedPackageId || !loadedPackageSnapshot) return false;
+    return serializePackageBoqSnapshot(boqRows, discountType, discountValue) !== loadedPackageSnapshot;
+  }, [loadedPackageId, loadedPackageSnapshot, boqRows, discountType, discountValue]);
+
+  const currentBoqBuilderMeta = () => ({
+    panelBrand,
+    panelWattage,
+    inverterBrand,
+    inverterCapacity,
+    batteryOption,
+    netMeteringRequired,
+    installationCharges,
+    netMeteringCharges,
+    systemType,
+  });
+
+  const persistPackageToLibrary = async (action: "add" | "edit", data: BoqPackageRecord, id?: string) => {
+    const res = await fetch(`${API_BASE_URL}/api/db/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, table: "solarPackages", data, id: id || data.id }),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || "Could not save package to library.");
+    }
+    const result = await res.json();
+    if (!result.success) throw new Error("Server rejected package save.");
+    if (onRefreshState) await onRefreshState();
+  };
+
+  const handleUpdateLoadedPackage = async () => {
+    if (!loadedPackageId) return;
+    const base =
+      boqPackageLibrary.find((p) => p.id === loadedPackageId) ||
+      loadablePackages.find((p) => p.id === loadedPackageId);
+    if (!base) {
+      toast.error("Loaded package no longer exists in library.");
+      return;
+    }
+    const label = loadedPackageName || base.name;
+    if (
+      !window.confirm(
+        `Update ${label} for all future quotes?\n\nThis changes the reusable company package, not the customer quote.`
+      )
+    ) {
+      return;
+    }
+
+    setSavingPackage(true);
+    try {
+      const payload = buildPackageRecordFromBoqState(base, boqRows, {
+        discountType,
+        discountValue,
+        ...currentBoqBuilderMeta(),
+      });
+      await persistPackageToLibrary("edit", payload, loadedPackageId);
+      setLoadedPackageSnapshot(serializePackageBoqSnapshot(boqRows, discountType, discountValue));
+      setLoadedPackageName(payload.name);
+      toast.success("Package updated successfully");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update package.");
+    } finally {
+      setSavingPackage(false);
+    }
+  };
+
+  const openSaveNewPackageModal = () => {
+    const structureType: BoqPackageStructureType =
+      selectedStructure === "elevated" || selectedStructure === "girder" ? "elevated" : "standard";
+    setNewPackageDraft({
+      name: buildPackageDisplayName(systemSizekW, structureType, "budgeted"),
+      systemSizeKw: systemSizekW,
+      structureType,
+      equipmentTier: "budgeted",
+      discountType,
+      discountValue,
+    });
+    setShowSaveNewPackageModal(true);
+  };
+
+  const handleSaveNewPackage = async () => {
+    if (!boqRows.filter((r) => r.type === "item").length) {
+      toast.error("Add BOQ items before saving a package.");
+      return;
+    }
+    setSavingPackage(true);
+    try {
+      const meta = {
+        name: newPackageDraft.name.trim(),
+        systemSizeKw: newPackageDraft.systemSizeKw,
+        structureType: newPackageDraft.structureType,
+        equipmentTier: newPackageDraft.equipmentTier,
+        discountType: newPackageDraft.discountType,
+        discountValue: newPackageDraft.discountValue,
+        ...currentBoqBuilderMeta(),
+      };
+      const payload = buildNewPackageFromBoqState(boqRows, meta);
+      await persistPackageToLibrary("add", payload);
+      setLoadedPackageId(payload.id);
+      setLoadedPackageName(payload.name);
+      setLoadedPackageSize(payload.systemSizeKw);
+      setDiscountType(meta.discountType);
+      setDiscountValue(meta.discountValue);
+      setLoadedPackageSnapshot(serializePackageBoqSnapshot(boqRows, meta.discountType, meta.discountValue));
+      setShowSaveNewPackageModal(false);
+      toast.success("New package saved");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save new package.");
+    } finally {
+      setSavingPackage(false);
+    }
+  };
 
   // State for Quote Templates Print Preview & Save enhancements
   const [localPageStates, setLocalPageStates] = useState<Record<string, {
@@ -1070,6 +1214,17 @@ export default function SalesTeamApp({
       setDiscountType(pkg.discountType === "percentage" ? "percentage" : "fixed");
       setDiscountValue(Number(pkg.discountValue) || 0);
     }
+
+    setLoadedPackageId(pkg.id);
+    setLoadedPackageName(pkg.name);
+    setLoadedPackageSize(pkg.systemSizeKw);
+    setLoadedPackageSnapshot(
+      serializePackageBoqSnapshot(
+        packageRows,
+        pkg.discountType === "percentage" ? "percentage" : "fixed",
+        Number(pkg.discountValue) || 0
+      )
+    );
   };
 
   // Quick package loader — defaults to Standard Budgeted variant for a system size
@@ -1079,6 +1234,8 @@ export default function SalesTeamApp({
       applyBoqPackage(defaultPackageId);
       return;
     }
+
+    clearLoadedPackage();
 
     let type: 'On-grid' | 'Hybrid' | 'Off-grid' = 'Hybrid';
     let brand = "Jinko";
@@ -2086,6 +2243,7 @@ export default function SalesTeamApp({
 
   const handleLoadQuoteForEditing = (quote: any) => {
     if (quote.quote_type !== "manual_boq") return;
+    clearLoadedPackage();
     setEditingQuoteId(quote.id);
     setClientName(quote.clientName || activeLead?.name || "");
     setClientPhone(quote.clientPhone || activeLead?.phone || "");
@@ -3384,6 +3542,25 @@ export default function SalesTeamApp({
               {/* MODULE 2: MANUAL BOQ BUILDER */}
               {activeModule === 'boq_builder' && (
                 <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
+
+                  {(loadedPackageId || loadedPackageName) && (
+                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-sans">
+                        <Package className="h-4 w-4 text-amber-400 shrink-0" />
+                        <span className="text-amber-200 font-bold">
+                          Loaded package: {loadedPackageName || `${loadedPackageSize}kW package`}
+                        </span>
+                        {hasUnsavedPackageChanges && (
+                          <span className="text-amber-300/90 text-[10px] font-mono uppercase tracking-wide">
+                            Unsaved package changes
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-sans pl-6">
+                        Reusable company package — use Update Loaded Package to save BOQ edits for future quotes.
+                      </p>
+                    </div>
+                  )}
                   
                   {/* Action Bar */}
                   <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-800 pb-4">
@@ -3416,6 +3593,7 @@ export default function SalesTeamApp({
                         type="button"
                         onClick={() => {
                           setEditingQuoteId(null);
+                          clearLoadedPackage();
                           setBoqRows([]);
                           setManualBoqItems([]);
                           if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
@@ -3425,6 +3603,7 @@ export default function SalesTeamApp({
                         New Quote
                       </button>
                       <select
+                        title="Reusable company package"
                         onChange={(e) => {
                           const packageId = e.target.value;
                           if (packageId) {
@@ -3454,6 +3633,28 @@ export default function SalesTeamApp({
                         })}
                       </select>
 
+                      {loadedPackageId && (
+                        <button
+                          type="button"
+                          disabled={savingPackage || !boqRows.length}
+                          onClick={handleUpdateLoadedPackage}
+                          className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans font-bold disabled:opacity-40"
+                          title="Save BOQ edits back to the loaded package library record"
+                        >
+                          {savingPackage ? "Updating…" : "Update Loaded Package"}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={savingPackage || !boqRows.filter((r) => r.type === "item").length}
+                        onClick={openSaveNewPackageModal}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                        title="Save current BOQ as a new reusable package"
+                      >
+                        Save as New Package
+                      </button>
+
                       {REQUIRE_EXPLICIT_QUOTE_SAVE && (
                       <button
                         type="button"
@@ -3466,6 +3667,7 @@ export default function SalesTeamApp({
                       )}
 
                       <select
+                        title="Saved quote for this selected customer"
                         onChange={(e) => {
                           if (e.target.value) {
                             const q = activeLead?.quotes?.find((quote: any) => quote.id === e.target.value);
@@ -3479,7 +3681,7 @@ export default function SalesTeamApp({
                         }}
                         className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
                       >
-                        <option value="">📂 Load Saved Quote...</option>
+                        <option value="">📂 Load Saved Quote (customer)...</option>
                         {getLeadManualQuotes(activeLead).map((q: any) => (
                           <option key={q.id} value={q.id}>
                             Quote {q.id} (Manual BOQ - {q.systemSizekW}kW)
@@ -3982,9 +4184,13 @@ export default function SalesTeamApp({
                         {quoteCreatedConfirm && (
                           <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 text-xs font-bold rounded-xl text-left flex items-center gap-1">
                             <CheckCircle2 className="h-4 w-4 text-emerald-400 animate-bounce" />
-                            <span>Quote saved</span>
+                            <span>Customer quote saved</span>
                           </div>
                         )}
+
+                        <p className="text-[10px] text-slate-500 font-sans leading-relaxed">
+                          Customer quote saves only for this client. Use Update Loaded Package to change future package defaults.
+                        </p>
 
                         <button
                           type="button"
@@ -3995,12 +4201,12 @@ export default function SalesTeamApp({
                           {savingQuote ? (
                             <>
                               <Loader2 className="h-4 w-4 animate-spin text-slate-650" />
-                              <span>Saving BOQ Quote Version...</span>
+                              <span>Saving Customer Quote...</span>
                             </>
                           ) : (
                             <>
                               <CheckCircle2 className="h-4 w-4" />
-                              <span>{editingQuoteId ? "Update Manual Quote" : "Save Manual Quote"}</span>
+                              <span>{editingQuoteId ? "Update Customer Quote" : "Save Customer Quote"}</span>
                             </>
                           )}
                         </button>
@@ -5384,6 +5590,132 @@ export default function SalesTeamApp({
             </div>
           )}
         </div>
+
+        {/* Save current BOQ as new package library record */}
+        <AppModal
+          open={showSaveNewPackageModal}
+          onClose={() => setShowSaveNewPackageModal(false)}
+          panelClassName="max-w-lg"
+        >
+          <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 w-full space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-900 pb-2.5">
+              <h4 className="text-sm font-bold font-sans text-white">Save Current BOQ as New Package</h4>
+              <button
+                type="button"
+                onClick={() => setShowSaveNewPackageModal(false)}
+                className="text-slate-500 hover:text-white font-bold font-mono text-xs border-0 bg-transparent cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-400 font-sans">
+              Creates a reusable company package. This does not save a customer quote.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="sm:col-span-2 space-y-1">
+                <label className="text-slate-400 font-bold block">Package Name</label>
+                <input
+                  type="text"
+                  value={newPackageDraft.name}
+                  onChange={(e) => setNewPackageDraft({ ...newPackageDraft, name: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-slate-400 font-bold block">System Size (kW)</label>
+                <select
+                  value={newPackageDraft.systemSizeKw}
+                  onChange={(e) => setNewPackageDraft({ ...newPackageDraft, systemSizeKw: Number(e.target.value) })}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                >
+                  {PACKAGE_SYSTEM_SIZES_KW.map((kw) => (
+                    <option key={kw} value={kw}>{kw} kW</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-slate-400 font-bold block">Structure Type</label>
+                <select
+                  value={newPackageDraft.structureType}
+                  onChange={(e) =>
+                    setNewPackageDraft({
+                      ...newPackageDraft,
+                      structureType: e.target.value as BoqPackageStructureType,
+                    })
+                  }
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                >
+                  {PACKAGE_STRUCTURE_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-slate-400 font-bold block">Equipment Tier</label>
+                <select
+                  value={newPackageDraft.equipmentTier}
+                  onChange={(e) =>
+                    setNewPackageDraft({
+                      ...newPackageDraft,
+                      equipmentTier: e.target.value as BoqPackageEquipmentTier,
+                    })
+                  }
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                >
+                  {PACKAGE_TIER_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-slate-400 font-bold block">Discount Type</label>
+                <select
+                  value={newPackageDraft.discountType}
+                  onChange={(e) =>
+                    setNewPackageDraft({
+                      ...newPackageDraft,
+                      discountType: e.target.value === "percentage" ? "percentage" : "fixed",
+                    })
+                  }
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                >
+                  <option value="fixed">Fixed (Rs)</option>
+                  <option value="percentage">Percentage (%)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-slate-400 font-bold block">Discount Value</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={newPackageDraft.discountType === "percentage" ? 100 : undefined}
+                  value={newPackageDraft.discountValue}
+                  onChange={(e) =>
+                    setNewPackageDraft({ ...newPackageDraft, discountValue: Number(e.target.value) })
+                  }
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={savingPackage}
+                onClick={handleSaveNewPackage}
+                className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-2.5 rounded-xl text-xs disabled:opacity-50"
+              >
+                {savingPackage ? "Saving…" : "Save Package"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSaveNewPackageModal(false)}
+                className="px-4 bg-slate-900 border border-slate-800 text-slate-300 py-2.5 rounded-xl text-xs"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </AppModal>
 
         {/* Product catalog add/edit — portaled to document.body, viewport-centered */}
         <AppModal

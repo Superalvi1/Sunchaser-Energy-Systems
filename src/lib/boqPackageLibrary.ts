@@ -724,3 +724,109 @@ export function duplicateBoqPackage(pkg: BoqPackageRecord): BoqPackageRecord {
     updatedAt: new Date().toISOString(),
   };
 }
+
+export function serializePackageBoqSnapshot(
+  rows: BoqRow[],
+  discountType: QuoteDiscountType,
+  discountValue: number
+): string {
+  const normalized = (rows || []).map((row) => ({
+    type: row.type,
+    name: row.name,
+    description: row.description,
+    brand: row.brand,
+    unit: row.unit,
+    qty: Number(row.qty) || 0,
+    rate: Number(row.rate) || 0,
+  }));
+  return JSON.stringify({ rows: normalized, discountType, discountValue: Number(discountValue) || 0 });
+}
+
+export function buildPackageBoqRowsForSave(rows: BoqRow[]): BoqRow[] {
+  const stamped = (rows || []).map((row, index) => ({
+    ...row,
+    id: row.id || `pkg-row-${index}`,
+  }));
+  return calculateBoqRowTotals(stamped);
+}
+
+export function buildPackageRecordFromBoqState(
+  base: BoqPackageRecord,
+  rows: BoqRow[],
+  options: {
+    discountType: QuoteDiscountType;
+    discountValue: number;
+    panelBrand?: string;
+    panelWattage?: number;
+    inverterBrand?: string;
+    inverterCapacity?: string;
+    batteryOption?: string;
+    netMeteringRequired?: "Yes" | "No";
+    installationCharges?: number;
+    netMeteringCharges?: number;
+    systemType?: BoqPackageRecord["systemType"];
+  }
+): BoqPackageRecord {
+  const boqRows = buildPackageBoqRowsForSave(rows);
+  return {
+    ...base,
+    systemType: options.systemType ?? base.systemType,
+    panelBrand: options.panelBrand ?? base.panelBrand,
+    panelWattage: Number(options.panelWattage ?? base.panelWattage),
+    inverterBrand: options.inverterBrand ?? base.inverterBrand,
+    inverterCapacity: options.inverterCapacity ?? base.inverterCapacity,
+    batteryOption: options.batteryOption ?? base.batteryOption,
+    netMeteringRequired: options.netMeteringRequired ?? base.netMeteringRequired,
+    installationCharges: Number(options.installationCharges ?? base.installationCharges),
+    netMeteringCharges: Number(options.netMeteringCharges ?? base.netMeteringCharges),
+    boqRows,
+    price: computePackageGrandTotal(boqRows),
+    discountType: options.discountType,
+    discountValue: Number(options.discountValue) || 0,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildNewPackageFromBoqState(
+  rows: BoqRow[],
+  meta: {
+    name: string;
+    systemSizeKw: number;
+    structureType: BoqPackageStructureType;
+    equipmentTier: BoqPackageEquipmentTier;
+    discountType: QuoteDiscountType;
+    discountValue: number;
+    panelBrand: string;
+    panelWattage: number;
+    inverterBrand: string;
+    inverterCapacity: string;
+    batteryOption: string;
+    netMeteringRequired: "Yes" | "No";
+    installationCharges: number;
+    netMeteringCharges: number;
+    systemType: BoqPackageRecord["systemType"];
+  },
+  id?: string
+): BoqPackageRecord {
+  const boqRows = buildPackageBoqRowsForSave(rows);
+  const packageId = id || `pkg-custom-${Date.now()}`;
+  return buildBoqPackageRecord(meta.systemSizeKw, meta.structureType, meta.equipmentTier, {
+    id: packageId,
+    name: meta.name.trim() || buildPackageDisplayName(meta.systemSizeKw, meta.structureType, meta.equipmentTier),
+    systemType: meta.systemType,
+    panelBrand: meta.panelBrand,
+    panelWattage: meta.panelWattage,
+    inverterBrand: meta.inverterBrand,
+    inverterCapacity: meta.inverterCapacity,
+    batteryOption: meta.batteryOption,
+    netMeteringRequired: meta.netMeteringRequired,
+    installationCharges: meta.installationCharges,
+    netMeteringCharges: meta.netMeteringCharges,
+    boqRows,
+    price: computePackageGrandTotal(boqRows),
+    discountType: meta.discountType,
+    discountValue: meta.discountValue,
+    enabled: true,
+    archived: false,
+  });
+}
