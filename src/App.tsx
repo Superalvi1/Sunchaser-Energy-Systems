@@ -696,6 +696,7 @@ export default function App() {
                 socialLinks={appState.socialLinks || []}
                 structureDescriptions={appState.structureDescriptions || []}
                 quotePdfSettings={appState.quotePdfSettings || []}
+                solarPackages={appState.solarPackages || []}
                 onDeleteQuote={handleDeleteQuote}
                 onDeleteLead={handleDeleteLead}
               />

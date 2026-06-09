@@ -49,6 +49,10 @@ import {
   quotePdfDeckPreviewScripts,
   renderQuotationHtmlToPdf,
 } from "./src/lib/quotePdfRender.ts";
+import {
+  buildDefaultPackageCatalog,
+  isLegacySolarPackage,
+} from "./src/lib/boqPackageLibrary.ts";
 import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
 import {
   renderPageBodyHtml,
@@ -392,13 +396,17 @@ function loadDb() {
         if (!db.structureDescriptions) db.structureDescriptions = initialSeed.structureDescriptions;
         if (!db.quotePdfSettings) db.quotePdfSettings = initialSeed.quotePdfSettings;
         
-        // Manual control panel supplementary schemas
-        if (!db.solarPackages) {
-          db.solarPackages = [
-            { id: "sp-5kw", name: "Sunchaser 5kW Premium Suite", panelBrand: "Canadian Solar 400W", inverterBrand: "Enphase IQ8", batteryOption: "Tesla Powerwall 2", price: 12000, structureType: "Roofs", profitMargin: 0.25, enabled: true },
-            { id: "sp-10kw", name: "Sunchaser 10kW Premium Suite", panelBrand: "Canadian Solar 400W", inverterBrand: "Enphase IQ8", batteryOption: "Tesla Powerwall Plus", price: 21000, structureType: "Roofs", profitMargin: 0.30, enabled: true },
-            { id: "sp-15kw", name: "Sunchaser 15kW Premium Suite", panelBrand: "Canadian Solar 400W", inverterBrand: "Enphase IQ8", batteryOption: "Tesla Powerwall 3", price: 30000, structureType: "Ground Mount", profitMargin: 0.32, enabled: true }
-          ];
+        // BOQ package library (structure × tier matrix per system size)
+        const packageLibraryVersion = Number(db.settings?.packageLibraryVersion || 0);
+        let migratedPackageLibrary = false;
+        if (
+          !db.solarPackages?.length ||
+          packageLibraryVersion < 2 ||
+          db.solarPackages.some(isLegacySolarPackage)
+        ) {
+          db.solarPackages = buildDefaultPackageCatalog();
+          db.settings = { ...(db.settings || {}), packageLibraryVersion: 2 };
+          migratedPackageLibrary = true;
         }
         if (!db.settings) {
           db.settings = {
@@ -530,6 +538,9 @@ function loadDb() {
         }
         if (!db.quotations) {
           db.quotations = [];
+        }
+        if (migratedPackageLibrary) {
+          saveDb();
         }
       } catch (parseErr) {
         console.error("Failed to parse database.json. Overwriting with seed.", parseErr);
@@ -5541,9 +5552,13 @@ app.post("/api/db/update", async (req, res) => {
             inverter_brand: data.inverterBrand || "",
             battery_option: data.batteryOption || "None",
             price: Number(data.price || 0),
-            structure_type: data.structureType || "Roof-mount",
+            structure_type: data.structureType || "standard",
             profit_margin: Number(data.profitMargin || 0),
-            enabled: data.enabled !== false
+            enabled: data.enabled !== false,
+            system_size_kw: Number(data.systemSizeKw || 0),
+            equipment_tier: data.equipmentTier || "budgeted",
+            boq_rows: data.boqRows || [],
+            archived: !!data.archived,
           };
         } else if (table === "categories") {
           pgTable = "categories";

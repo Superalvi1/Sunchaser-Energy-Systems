@@ -72,6 +72,14 @@ import {
   openManualQuotePrintPreview,
   printProposalPreviewIframe,
 } from "../lib/quotePdfExport";
+import {
+  buildPackageId,
+  cloneBoqRowsForLoad,
+  groupActivePackagesBySize,
+  normalizeSolarPackage,
+  PACKAGE_SYSTEM_SIZES_KW,
+  type BoqPackageRecord,
+} from "../lib/boqPackageLibrary";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -91,6 +99,7 @@ interface SalesTeamAppProps {
   socialLinks?: any[];
   structureDescriptions?: any[];
   quotePdfSettings?: any[];
+  solarPackages?: BoqPackageRecord[];
   onDeleteQuote?: (leadId: string, quoteId: string) => Promise<void>;
   onDeleteLead?: (id: string) => void;
 }
@@ -113,6 +122,7 @@ export default function SalesTeamApp({
   socialLinks = [],
   structureDescriptions = [],
   quotePdfSettings = [],
+  solarPackages = [],
   onDeleteQuote,
   onDeleteLead,
 }: SalesTeamAppProps) {
@@ -138,6 +148,18 @@ export default function SalesTeamApp({
   const getLeadManualQuotes = (lead: Lead | null | undefined) => getLeadManualQuotesSorted(lead);
 
   const latestManualSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "manual_boq") : null;
+
+  const boqPackageLibrary = useMemo(
+    () =>
+      (solarPackages || [])
+        .map((pkg) => normalizeSolarPackage(pkg))
+        .filter((pkg): pkg is BoqPackageRecord => !!pkg),
+    [solarPackages]
+  );
+  const packagesBySize = useMemo(
+    () => groupActivePackagesBySize(boqPackageLibrary),
+    [boqPackageLibrary]
+  );
   const latestAutoSizerSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "auto_sizer") : null;
 
   // Modular routing tab selector
@@ -1005,8 +1027,46 @@ export default function SalesTeamApp({
     return calculateRowTotalsAndSubtotals(rows);
   };
 
-  // Quick package loader mapping
+  const applyBoqPackage = (packageId: string) => {
+    const pkg =
+      boqPackageLibrary.find((p) => p.id === packageId && !p.archived && p.enabled) ||
+      boqPackageLibrary.find((p) => p.id === packageId);
+    if (!pkg) {
+      alert("Package not found in library.");
+      return;
+    }
+
+    const struct = pkg.structureType === "elevated" ? "Elevated" : "Standard";
+    const sector = pkg.systemSizeKw >= 15 ? "commercial" : "residential";
+    setSystemSector(sector);
+    setSystemSizekW(pkg.systemSizeKw);
+    setSystemType(pkg.systemType);
+    setPanelBrand(pkg.panelBrand);
+    setPanelWattage(pkg.panelWattage);
+    setInverterBrand(pkg.inverterBrand);
+    setInverterCapacity(pkg.inverterCapacity);
+    setBatteryOption(pkg.batteryOption);
+    setStructureType(struct);
+    setSelectedStructure(pkg.structureType === "elevated" ? "elevated" : "standard");
+    setNetMeteringRequired(pkg.netMeteringRequired);
+    setInstallationCharges(pkg.installationCharges);
+    setNetMeteringCharges(pkg.netMeteringCharges);
+
+    const packageRows = cloneBoqRowsForLoad(pkg.boqRows);
+    if (activeModule === "boq_builder") {
+      setBoqRows(packageRows);
+      setManualBoqItems(packageRows);
+    }
+  };
+
+  // Quick package loader — defaults to Standard Budgeted variant for a system size
   const applyPackage = (kwSize: number) => {
+    const defaultPackageId = buildPackageId(kwSize, "standard", "budgeted");
+    if (boqPackageLibrary.some((p) => p.id === defaultPackageId)) {
+      applyBoqPackage(defaultPackageId);
+      return;
+    }
+
     let type: 'On-grid' | 'Hybrid' | 'Off-grid' = 'Hybrid';
     let brand = "Jinko";
     let wattage = 580;
@@ -3094,8 +3154,8 @@ export default function SalesTeamApp({
                         <Tag className="h-4 w-4 text-amber-500" />
                         <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">2. Quick Solar Packages (Pakistan Standards)</h4>
                       </div>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                        {[3, 5, 7, 10, 12, 15, 20, 25, 30, 50, 100].map((kw) => (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                        {PACKAGE_SYSTEM_SIZES_KW.map((kw) => (
                           <button
                             key={kw}
                             type="button"
@@ -3353,27 +3413,32 @@ export default function SalesTeamApp({
                       </button>
                       <select
                         onChange={(e) => {
-                          if (e.target.value) {
-                            if (window.confirm(`Overwrite BOQ rows with calculated ${e.target.value}kW package layout?`)) {
-                              applyPackage(Number(e.target.value));
+                          const packageId = e.target.value;
+                          if (packageId) {
+                            const pkg = boqPackageLibrary.find((p) => p.id === packageId);
+                            const label = pkg?.name || "selected package";
+                            if (window.confirm(`Load "${label}" and replace current BOQ rows?`)) {
+                              applyBoqPackage(packageId);
                             }
                             e.target.value = "";
                           }
                         }}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans min-w-[180px]"
                       >
                         <option value="">🎁 Load Package...</option>
-                        <option value="3">3 kW Package</option>
-                        <option value="5">5 kW Package</option>
-                        <option value="7">7 kW Package</option>
-                        <option value="10">10 kW Package</option>
-                        <option value="12">12 kW Package</option>
-                        <option value="15">15 kW Package</option>
-                        <option value="20">20 kW Package</option>
-                        <option value="25">25 kW Package</option>
-                        <option value="30">30 kW Package</option>
-                        <option value="50">50 kW Package</option>
-                        <option value="100">100 kW Package</option>
+                        {PACKAGE_SYSTEM_SIZES_KW.map((kw) => {
+                          const group = packagesBySize.get(kw) || [];
+                          if (!group.length) return null;
+                          return (
+                            <optgroup key={kw} label={`${kw}kW`}>
+                              {group.map((pkg) => (
+                                <option key={pkg.id} value={pkg.id}>
+                                  {pkg.name.replace(/^\d+kW\s+/i, "")}
+                                </option>
+                              ))}
+                            </optgroup>
+                          );
+                        })}
                       </select>
 
                       {REQUIRE_EXPLICIT_QUOTE_SAVE && (

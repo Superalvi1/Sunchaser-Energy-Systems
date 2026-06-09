@@ -1,10 +1,26 @@
 import React, { useState, useEffect } from "react";
 import { 
-  Plus, Trash2, Edit3, Save, X, Check, FileText, Download, 
+  Plus, Trash2, Edit3, Save, X, Check, FileText, Download, Copy,
   Upload, ShieldAlert, Users, CreditCard, TrendingUp, FolderPlus, 
   Wrench, Layers, Settings2, Globe, Activity, FileSpreadsheet, 
-  UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye, Link2
+  UserCheck, Briefcase, Tag, RefreshCw, Sparkles, Send, Eye, Link2, Archive
 } from "lucide-react";
+import {
+  buildBoqPackageRecord,
+  buildPackageDisplayName,
+  computePackageGrandTotal,
+  duplicateBoqPackage,
+  generatePackageBoqRows,
+  getPackageShortLabel,
+  normalizeSolarPackage,
+  PACKAGE_STRUCTURE_OPTIONS,
+  PACKAGE_SYSTEM_SIZES_KW,
+  PACKAGE_TIER_OPTIONS,
+  resolvePackageEquipmentSpec,
+  type BoqPackageRecord,
+  type BoqPackageEquipmentTier,
+  type BoqPackageStructureType,
+} from "../lib/boqPackageLibrary";
 import { Lead, Ticket, InventoryItem, Product, User } from "../types";
 import { currencySymbol, API_BASE_URL, fetchDeletedLeads, restoreLead } from "../services/api";
 import { isSuperAdmin } from "../lib/roles";
@@ -104,11 +120,46 @@ export default function ManualAdminControl({
   const [editingProd, setEditingProd] = useState<Product | null>(null);
 
   // 2. SOLAR PACKAGES Local States
-  const [editingPkg, setEditingPkg] = useState<any | null>(null);
-  const [newPkg, setNewPkg] = useState({
-    id: "", name: "", panelBrand: "Canadian Solar 400W", inverterBrand: "Enphase IQ8",
-    batteryOption: "Tesla Powerwall 2", price: 15000, structureType: "Roofs", profitMargin: 0.25, enabled: true
+  const [editingPkg, setEditingPkg] = useState<BoqPackageRecord | null>(null);
+  const [creatingPkg, setCreatingPkg] = useState(false);
+  const [showArchivedPackages, setShowArchivedPackages] = useState(false);
+  const [newPkgDraft, setNewPkgDraft] = useState({
+    systemSizeKw: 10 as number,
+    structureType: "standard" as BoqPackageStructureType,
+    equipmentTier: "budgeted" as BoqPackageEquipmentTier,
+    profitMargin: 0.25,
   });
+
+  const normalizedPackages = React.useMemo(
+    () =>
+      (solarPackages || [])
+        .map((pkg) => normalizeSolarPackage(pkg))
+        .filter((pkg): pkg is BoqPackageRecord => !!pkg),
+    [solarPackages]
+  );
+  const visiblePackages = React.useMemo(
+    () =>
+      normalizedPackages.filter((pkg) => (showArchivedPackages ? pkg.archived : !pkg.archived)),
+    [normalizedPackages, showArchivedPackages]
+  );
+  const packagesBySize = React.useMemo(() => {
+    const map = new Map<number, BoqPackageRecord[]>();
+    for (const kw of PACKAGE_SYSTEM_SIZES_KW) map.set(kw, []);
+    for (const pkg of visiblePackages) {
+      const list = map.get(pkg.systemSizeKw) || [];
+      list.push(pkg);
+      map.set(pkg.systemSizeKw, list);
+    }
+    for (const [kw, list] of map) {
+      list.sort((a, b) => {
+        const structOrder = a.structureType === b.structureType ? 0 : a.structureType === "standard" ? -1 : 1;
+        if (structOrder !== 0) return structOrder;
+        return a.equipmentTier === "budgeted" ? -1 : 1;
+      });
+      map.set(kw, list);
+    }
+    return map;
+  }, [visiblePackages]);
 
   // 3. QUOTATIONS Local States
   const [selectedLeadId, setSelectedLeadId] = useState<string>(leads[0]?.id || "");
@@ -183,7 +234,7 @@ export default function ManualAdminControl({
   // ----------------------------------------------------
   const tabs = [
     { id: "products", label: "Catalog Products", icon: Tag },
-    { id: "solar-packages", label: "Solar Packages", icon: Layers },
+    { id: "solar-packages", label: "Package Library", icon: Layers },
     { id: "quotations", label: "Manual Quotations", icon: FileText },
     { id: "customers", label: "Customers Accounts", icon: Users },
     { id: "customer-linking", label: "Customer Linking", icon: Link2 },
@@ -534,63 +585,196 @@ export default function ManualAdminControl({
         {innerSubTab === "solar-packages" && (
           <div className="space-y-6">
             <div className="flex justify-between items-center flex-wrap gap-4 border-b border-neutral-800 pb-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300 font-mono">Manually Configured Solar Packages</h3>
-              <span className="text-[10px] text-neutral-450 font-mono">Physical Pre-configured systems</span>
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300 font-mono">BOQ Package Library</h3>
+                <p className="text-[10px] text-neutral-500 font-mono mt-1">
+                  Structure Type × Equipment Tier matrix — each package stores a complete BOQ.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 font-mono cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showArchivedPackages}
+                    onChange={(e) => setShowArchivedPackages(e.target.checked)}
+                    className="rounded border-neutral-700"
+                  />
+                  Show archived
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setCreatingPkg(true)}
+                  className="bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Create Package
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {(solarPackages || []).map((pkg: any) => (
-                <div key={pkg.id} className={`bg-neutral-900 border ${pkg.enabled ? 'border-neutral-800' : 'border-rose-950/40 opacity-75'} rounded-2xl p-5 space-y-4`}>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-sans font-black text-amber-300 text-xs">{pkg.name}</h4>
-                      <span className="text-[10px] font-mono bg-neutral-800 px-2 py-0.5 rounded text-neutral-400">{pkg.id}</span>
+            {creatingPkg && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 space-y-4">
+                <h4 className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">New Package</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <label className="text-neutral-400 block mb-1">System Size (kW)</label>
+                    <select
+                      value={newPkgDraft.systemSizeKw}
+                      onChange={(e) => setNewPkgDraft({ ...newPkgDraft, systemSizeKw: Number(e.target.value) })}
+                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200"
+                    >
+                      {PACKAGE_SYSTEM_SIZES_KW.map((kw) => (
+                        <option key={kw} value={kw}>{kw} kW</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-neutral-400 block mb-1">Structure Type</label>
+                    <select
+                      value={newPkgDraft.structureType}
+                      onChange={(e) => setNewPkgDraft({ ...newPkgDraft, structureType: e.target.value as BoqPackageStructureType })}
+                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200"
+                    >
+                      {PACKAGE_STRUCTURE_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-neutral-400 block mb-1">Equipment Tier</label>
+                    <select
+                      value={newPkgDraft.equipmentTier}
+                      onChange={(e) => setNewPkgDraft({ ...newPkgDraft, equipmentTier: e.target.value as BoqPackageEquipmentTier })}
+                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200"
+                    >
+                      {PACKAGE_TIER_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-neutral-400 block mb-1">Preview Name</label>
+                    <div className="bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-amber-300 font-mono">
+                      {buildPackageDisplayName(newPkgDraft.systemSizeKw, newPkgDraft.structureType, newPkgDraft.equipmentTier)}
                     </div>
-                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold font-mono ${pkg.enabled ? 'bg-emerald-500/20 text-emerald-305 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                      {pkg.enabled ? "Active" : "Disabled"}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 text-xs font-mono text-neutral-400 border-t border-b border-neutral-850 py-3">
-                    <p>⚡ Panels: <strong className="text-neutral-200">{pkg.panelBrand}</strong></p>
-                    <p>🔋 Inverter: <strong className="text-neutral-200">{pkg.inverterBrand}</strong></p>
-                    <p>📦 Batteries: <strong className="text-neutral-200">{pkg.batteryOption}</strong></p>
-                    <p>🏠 Structure: <strong className="text-neutral-200">{pkg.structureType}</strong></p>
-                    <p>💸 profitMargin: <strong className="text-indigo-400">{pkg.profitMargin * 100}%</strong></p>
-                    <p className="text-sm font-bold text-neutral-100 pt-1">
-                      💸 Man-Price: <span className="text-amber-400">{currencySymbol}{pkg.price.toLocaleString()}</span>
-                    </p>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-2">
-                    <button
-                      onClick={() => setEditingPkg(pkg)}
-                      className="bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-200 px-3 py-1.5 rounded-xl cursor-pointer font-sans"
-                    >
-                      Change Configuration
-                    </button>
-                    <button
-                      onClick={() => {
-                        const updated = { ...pkg, enabled: !pkg.enabled };
-                        saveDbChange("edit", "solarPackages", updated, pkg.id);
-                      }}
-                      className={`text-[10px] font-bold py-1 px-3.5 rounded-xl cursor-pointer ${pkg.enabled ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}
-                    >
-                      {pkg.enabled ? "Disable" : "Enable"}
-                    </button>
                   </div>
                 </div>
-              ))}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pkg = buildBoqPackageRecord(
+                        newPkgDraft.systemSizeKw,
+                        newPkgDraft.structureType,
+                        newPkgDraft.equipmentTier,
+                        { profitMargin: newPkgDraft.profitMargin, id: `pkg-custom-${Date.now()}` }
+                      );
+                      saveDbChange("add", "solarPackages", pkg);
+                      setCreatingPkg(false);
+                    }}
+                    className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+                  >
+                    Save Package
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreatingPkg(false)}
+                    className="bg-neutral-800 text-neutral-300 px-4 py-2 rounded-xl text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-6">
+              {PACKAGE_SYSTEM_SIZES_KW.map((kw) => {
+                const group = packagesBySize.get(kw) || [];
+                if (!group.length) return null;
+                return (
+                  <div key={kw} className="space-y-3">
+                    <h4 className="text-sm font-black text-amber-400 font-mono border-b border-neutral-850 pb-1">{kw}kW</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                      {group.map((pkg) => (
+                        <div
+                          key={pkg.id}
+                          className={`bg-neutral-900 border rounded-2xl p-4 space-y-3 ${
+                            pkg.archived ? "border-rose-950/50 opacity-80" : pkg.enabled ? "border-neutral-800" : "border-rose-950/40 opacity-75"
+                          }`}
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div>
+                              <h5 className="font-sans font-bold text-neutral-100 text-xs">{getPackageShortLabel(pkg)}</h5>
+                              <span className="text-[9px] font-mono text-neutral-500">{pkg.name}</span>
+                            </div>
+                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold font-mono shrink-0 ${
+                              pkg.archived
+                                ? "bg-rose-500/10 text-rose-400"
+                                : pkg.enabled
+                                  ? "bg-emerald-500/20 text-emerald-400"
+                                  : "bg-rose-500/10 text-rose-400"
+                            }`}>
+                              {pkg.archived ? "Archived" : pkg.enabled ? "Active" : "Disabled"}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-mono text-neutral-400 space-y-1 border-t border-neutral-850 pt-2">
+                            <p>BOQ rows: <strong className="text-neutral-200">{pkg.boqRows.length}</strong></p>
+                            <p>Total: <strong className="text-amber-400">{currencySymbol}{pkg.price.toLocaleString()}</strong></p>
+                            <p>{pkg.panelBrand} · {pkg.inverterBrand}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingPkg(pkg)}
+                              className="bg-neutral-800 hover:bg-neutral-700 text-[10px] text-neutral-200 px-2 py-1 rounded-lg cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => saveDbChange("add", "solarPackages", duplicateBoqPackage(pkg))}
+                              className="bg-neutral-800 hover:bg-neutral-700 text-[10px] text-neutral-200 px-2 py-1 rounded-lg cursor-pointer flex items-center gap-1"
+                            >
+                              <Copy className="h-3 w-3" /> Duplicate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = { ...pkg, archived: !pkg.archived, updatedAt: new Date().toISOString() };
+                                saveDbChange("edit", "solarPackages", updated, pkg.id);
+                              }}
+                              className="bg-neutral-800 hover:bg-neutral-700 text-[10px] text-neutral-200 px-2 py-1 rounded-lg cursor-pointer flex items-center gap-1"
+                            >
+                              <Archive className="h-3 w-3" /> {pkg.archived ? "Restore" : "Archive"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (confirm(`Delete package "${pkg.name}" permanently?`)) {
+                                  await saveDbChange("delete", "solarPackages", {}, pkg.id);
+                                }
+                              }}
+                              className="bg-rose-950/40 hover:bg-rose-900/50 text-[10px] text-rose-400 px-2 py-1 rounded-lg cursor-pointer"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Quick Edit Config Panel */}
             {editingPkg && (
               <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 space-y-4">
-                <h4 className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">Editing Configuration: {editingPkg.name}</h4>
+                <h4 className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">
+                  Edit Package: {editingPkg.name}
+                </h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs font-sans">
                   <div>
-                    <label className="text-neutral-400 block mb-1">Package Display Title</label>
-                    <input 
+                    <label className="text-neutral-400 block mb-1">Package Name</label>
+                    <input
                       type="text"
                       value={editingPkg.name}
                       onChange={(e) => setEditingPkg({ ...editingPkg, name: e.target.value })}
@@ -599,7 +783,7 @@ export default function ManualAdminControl({
                   </div>
                   <div>
                     <label className="text-neutral-400 block mb-1">Panel Brand</label>
-                    <input 
+                    <input
                       type="text"
                       value={editingPkg.panelBrand}
                       onChange={(e) => setEditingPkg({ ...editingPkg, panelBrand: e.target.value })}
@@ -608,7 +792,7 @@ export default function ManualAdminControl({
                   </div>
                   <div>
                     <label className="text-neutral-400 block mb-1">Inverter Brand</label>
-                    <input 
+                    <input
                       type="text"
                       value={editingPkg.inverterBrand}
                       onChange={(e) => setEditingPkg({ ...editingPkg, inverterBrand: e.target.value })}
@@ -616,8 +800,8 @@ export default function ManualAdminControl({
                     />
                   </div>
                   <div>
-                    <label className="text-neutral-400 block mb-1">Battery Storage</label>
-                    <input 
+                    <label className="text-neutral-400 block mb-1">Battery</label>
+                    <input
                       type="text"
                       value={editingPkg.batteryOption}
                       onChange={(e) => setEditingPkg({ ...editingPkg, batteryOption: e.target.value })}
@@ -625,26 +809,8 @@ export default function ManualAdminControl({
                     />
                   </div>
                   <div>
-                    <label className="text-neutral-400 block mb-1">Price Override ({currencySymbol.trim()})</label>
-                    <input 
-                      type="number"
-                      value={editingPkg.price}
-                      onChange={(e) => setEditingPkg({ ...editingPkg, price: Number(e.target.value) })}
-                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200 font-mono text-xs text-amber-350 font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-neutral-400 block mb-1">Structure Installation type</label>
-                    <input 
-                      type="text"
-                      value={editingPkg.structureType}
-                      onChange={(e) => setEditingPkg({ ...editingPkg, structureType: e.target.value })}
-                      className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-205 text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-neutral-400 block mb-1">Target Margin ratio</label>
-                    <input 
+                    <label className="text-neutral-400 block mb-1">Profit Margin</label>
+                    <input
                       type="number"
                       step="0.01"
                       value={editingPkg.profitMargin}
@@ -652,23 +818,61 @@ export default function ManualAdminControl({
                       className="w-full bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl text-neutral-200 font-mono text-xs"
                     />
                   </div>
-                  <div className="flex items-end text-xs gap-2 shrink-0">
+                  <div className="md:col-span-3 flex items-end gap-2">
                     <button
+                      type="button"
                       onClick={() => {
-                        saveDbChange("edit", "solarPackages", editingPkg, editingPkg.id);
-                        setEditingPkg(null);
+                        const spec = resolvePackageEquipmentSpec(
+                          editingPkg.systemSizeKw,
+                          editingPkg.structureType,
+                          editingPkg.equipmentTier
+                        );
+                        const boqRows = generatePackageBoqRows({
+                          ...spec,
+                          panelBrand: editingPkg.panelBrand,
+                          panelWattage: editingPkg.panelWattage,
+                          inverterBrand: editingPkg.inverterBrand,
+                          inverterCapacity: editingPkg.inverterCapacity,
+                          batteryOption: editingPkg.batteryOption,
+                        });
+                        setEditingPkg({
+                          ...editingPkg,
+                          boqRows,
+                          price: computePackageGrandTotal(boqRows),
+                        });
                       }}
-                      className="flex-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2 rounded-xl transition cursor-pointer"
+                      className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-2 rounded-xl text-xs cursor-pointer"
                     >
-                      Save Configuration
+                      Regenerate BOQ from spec
                     </button>
-                    <button
-                      onClick={() => setEditingPkg(null)}
-                      className="bg-neutral-800 text-neutral-300 hover:bg-neutral-700 px-3.5 py-2 rounded-xl"
-                    >
-                      Cancel
-                    </button>
+                    <span className="text-[10px] text-neutral-500 font-mono">
+                      {editingPkg.boqRows.length} BOQ rows · {currencySymbol}{computePackageGrandTotal(editingPkg.boqRows).toLocaleString()}
+                    </span>
                   </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const payload = {
+                        ...editingPkg,
+                        price: computePackageGrandTotal(editingPkg.boqRows),
+                        updatedAt: new Date().toISOString(),
+                      };
+                      saveDbChange("edit", "solarPackages", payload, editingPkg.id);
+                      setEditingPkg(null);
+                    }}
+                    className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+                  >
+                    Save Package
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingPkg(null)}
+                    className="bg-neutral-800 text-neutral-300 px-4 py-2 rounded-xl text-xs"
+                  >
+                    Cancel
+                  </button>
                 </div>
               </div>
             )}

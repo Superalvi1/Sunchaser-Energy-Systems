@@ -1595,7 +1595,11 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     price: Number(sp.price || 0),
     structureType: sp.structure_type,
     profitMargin: Number(sp.profit_margin || 0),
-    enabled: !!sp.enabled
+    enabled: !!sp.enabled,
+    systemSizeKw: Number(sp.system_size_kw || 0),
+    equipmentTier: sp.equipment_tier || "budgeted",
+    boqRows: typeof sp.boq_rows === "string" ? JSON.parse(sp.boq_rows) : (sp.boq_rows || []),
+    archived: !!sp.archived,
   }));
 
   const categoriesMapped = (categoriesData || []).map((cat: any) => ({
@@ -2019,7 +2023,11 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
           price: Number(sp.price || 0),
           structure_type: sp.structureType,
           profit_margin: Number(sp.profitMargin || 0),
-          enabled: !!sp.enabled
+          enabled: !!sp.enabled,
+          system_size_kw: Number(sp.systemSizeKw || 0),
+          equipment_tier: sp.equipmentTier || "budgeted",
+          boq_rows: sp.boqRows || [],
+          archived: !!sp.archived,
         }, { onConflict: "id" });
       }
     }
