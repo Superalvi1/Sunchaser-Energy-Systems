@@ -1193,7 +1193,7 @@ export async function rejectAdminUser(
     {
       method: "POST",
       headers: portalAuthHeaders(userId, username),
-      body: JSON.stringify({ userId, username, reason }),
+      body: JSON.stringify({ reason }),
     },
     "Failed to reject user"
   );
@@ -1210,7 +1210,7 @@ export async function createAdminUser(
     {
       method: "POST",
       headers: portalAuthHeaders(actorId, actorUsername),
-      body: JSON.stringify({ ...body, userId: actorId, username: actorUsername }),
+      body: JSON.stringify(body),
     },
     "Failed to create user"
   );
@@ -1228,7 +1228,7 @@ export async function updateAdminUser(
     {
       method: "PATCH",
       headers: portalAuthHeaders(actorId, actorUsername),
-      body: JSON.stringify({ ...body, userId: actorId, username: actorUsername }),
+      body: JSON.stringify(body),
     },
     "Failed to update user"
   );
@@ -1246,7 +1246,7 @@ export async function deleteAdminUser(
     {
       method: "DELETE",
       headers: portalAuthHeaders(actorId, actorUsername),
-      body: JSON.stringify({ userId: actorId, username: actorUsername, confirmText }),
+      body: JSON.stringify({ confirmText }),
     },
     "Failed to delete user"
   );
@@ -1272,7 +1272,7 @@ export async function deleteDemoSeedUsers(
     {
       method: "POST",
       headers: portalAuthHeaders(actorId, actorUsername),
-      body: JSON.stringify({ ...body, userId: actorId, username: actorUsername }),
+      body: JSON.stringify(body),
     },
     "Failed to delete demo users"
   );
@@ -2275,8 +2275,9 @@ export async function fetchAdminPartyLedger(staff: User, partyKey: string) {
   return data as { party: any; transactions: any[]; payments?: any[] };
 }
 
-export async function fetchAdminInvoices(staff: User) {
-  const res = await apiFetch("/api/admin/invoices", {
+export async function fetchAdminInvoices(staff: User, options?: { includeArchived?: boolean }) {
+  const q = options?.includeArchived ? "?includeArchived=true" : "";
+  const res = await apiFetch(`/api/admin/invoices${q}`, {
     headers: staffPortalHeaders(staff.id, staff.username, staff.role),
   });
   const data = await res.json().catch(() => ({}));
@@ -2333,6 +2334,60 @@ export async function recordAdminInvoicePayment(
       body: JSON.stringify(body),
     },
     "Failed to record payment"
+  );
+}
+
+export async function fetchContractedLeadsReadyForInvoice(staff: User) {
+  const res = await apiFetch("/api/admin/invoices/contracted-ready", {
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load contracted leads.");
+  return data as { leads: any[] };
+}
+
+export async function createInvoiceFromLead(
+  staff: User,
+  body: { leadId: string; quotationId?: string }
+) {
+  return staffPortalJsonRequest<{ invoice: any; existing: boolean }>(
+    "createInvoiceFromLead",
+    "/api/admin/invoices/from-lead",
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify(body),
+    },
+    "Failed to create invoice from lead"
+  );
+}
+
+export async function archiveAdminInvoice(staff: User, invoiceId: string) {
+  return staffPortalJsonRequest<{ invoice: any; ok: boolean; message: string }>(
+    "archiveAdminInvoice",
+    `/api/admin/invoices/${encodeURIComponent(invoiceId)}/archive`,
+    {
+      method: "POST",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+    },
+    "Failed to archive invoice"
+  );
+}
+
+export async function deleteAdminInvoice(
+  staff: User,
+  invoiceId: string,
+  confirmText: string
+) {
+  return staffPortalJsonRequest<{ ok: boolean; message: string }>(
+    "deleteAdminInvoice",
+    `/api/admin/invoices/${encodeURIComponent(invoiceId)}`,
+    {
+      method: "DELETE",
+      headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+      body: JSON.stringify({ confirmText }),
+    },
+    "Failed to delete invoice"
   );
 }
 

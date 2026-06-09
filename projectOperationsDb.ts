@@ -271,7 +271,7 @@ export async function fetchProjectOperationsDashboard(
     const invoices = await listAdminInvoices(userId, username, role, localDb);
     const activeCustomerIds = new Set(inProgress.map((p) => p.customerId));
     for (const inv of invoices) {
-      if (isExcludedFromLedgerTotals(inv.invoiceStatus)) continue;
+      if (isExcludedFromLedgerTotals(inv.invoiceStatus, inv.archivedAt)) continue;
       if (inv.customerId && activeCustomerIds.has(inv.customerId)) {
         estimatedRevenue += Number(inv.grandTotal || 0);
       }

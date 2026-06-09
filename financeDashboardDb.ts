@@ -65,7 +65,7 @@ function computeMonthPerformance(
   let amountCollected = 0;
 
   for (const inv of invoices) {
-    if (isExcludedFromLedgerTotals(inv.invoiceStatus)) continue;
+    if (isExcludedFromLedgerTotals(inv.invoiceStatus, inv.archivedAt)) continue;
     const invDate = String(inv.invoiceDate || "").slice(0, 10);
     if (invDate >= range.start && invDate <= range.end) {
       invoicesIssued += 1;
@@ -118,7 +118,9 @@ export async function fetchFinanceDashboard(
 
   const parties = await listPartyLedgers(userId, username, role, localDb);
   const invoices = await listAdminInvoices(userId, username, role, localDb);
-  const activeInvoices = invoices.filter((inv) => !isExcludedFromLedgerTotals(inv.invoiceStatus));
+  const activeInvoices = invoices.filter(
+    (inv) => !isExcludedFromLedgerTotals(inv.invoiceStatus, inv.archivedAt)
+  );
   const today = new Date().toISOString().slice(0, 10);
 
   const outstandingReceivables = Math.round(

@@ -11,12 +11,22 @@ export const INVOICE_STATUSES = [
   "void",
   "duplicate",
   "test",
+  "archived",
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
-export const LEDGER_EXCLUDED_INVOICE_STATUSES = ["duplicate", "test", "void"] as const;
+export const LEDGER_EXCLUDED_INVOICE_STATUSES = ["duplicate", "test", "void", "archived"] as const;
 
-export function isExcludedFromLedgerTotals(invoiceStatus?: string | null): boolean {
+export function isInvoiceArchived(inv: {
+  invoiceStatus?: string | null;
+  archivedAt?: string | null;
+}): boolean {
+  if (inv.archivedAt) return true;
+  return String(inv.invoiceStatus || "").toLowerCase() === "archived";
+}
+
+export function isExcludedFromLedgerTotals(invoiceStatus?: string | null, archivedAt?: string | null): boolean {
+  if (archivedAt) return true;
   const status = String(invoiceStatus || "active").toLowerCase();
   return (LEDGER_EXCLUDED_INVOICE_STATUSES as readonly string[]).includes(status);
 }
@@ -109,6 +119,8 @@ export type InvoiceRecord = {
   balanceDue: number;
   paymentStatus: InvoicePaymentStatus;
   invoiceStatus?: InvoiceStatus | string;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
   notes: string | null;
   terms: string | null;
   pdfUrl: string | null;

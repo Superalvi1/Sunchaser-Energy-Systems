@@ -2,22 +2,29 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   Download,
-  FileText,
   Loader2,
   Plus,
   Save,
   Trash2,
+  Archive,
+  Search,
 } from "lucide-react";
 import { Lead, Product, User } from "../types";
 import {
+  archiveAdminInvoice,
   createAdminInvoice,
+  createInvoiceFromLead,
+  deleteAdminInvoice,
   fetchAdminInvoices,
+  fetchContractedLeadsReadyForInvoice,
   fetchCustomerAccounts,
   invoicePdfUrl,
   recordAdminInvoicePayment,
   updateAdminInvoice,
 } from "../services/api";
 import { canCreateInvoice, computeInvoiceTotals, type InvoiceLineItem } from "../lib/invoices";
+import { buildInvoiceDraftFromLead } from "../lib/invoiceFromLead";
+import { isSuperAdmin } from "../lib/roles";
 import { decodeInvoiceMeta, stripInvoiceMeta, type InvoiceProjectInfo } from "../lib/invoicePdfMeta";
 import WhatsAppActionButton from "./WhatsAppActionButton";
 import AppLogo from "./AppLogo";
@@ -73,6 +80,12 @@ export default function InvoiceStaff({
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showList, setShowList] = useState(false);
+  const [panelTab, setPanelTab] = useState<"invoices" | "ready">("invoices");
+  const [readyLeads, setReadyLeads] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [creatingLeadId, setCreatingLeadId] = useState<string | null>(null);
   const [paymentDraft, setPaymentDraft] = useState({ amount: "", method: "Cash", notes: "" });
 
   const [draft, setDraft] = useState({
@@ -112,12 +125,14 @@ export default function InvoiceStaff({
     if (!allowed) return;
     setLoading(true);
     try {
-      const [invRes, accRes] = await Promise.all([
-        fetchAdminInvoices(staffUser),
+      const [invRes, accRes, readyRes] = await Promise.all([
+        fetchAdminInvoices(staffUser, { includeArchived: showArchived }),
         fetchCustomerAccounts(staffUser),
+        fetchContractedLeadsReadyForInvoice(staffUser),
       ]);
       setInvoices(invRes.invoices || []);
       setAccounts(accRes.accounts || []);
+      setReadyLeads(readyRes.leads || []);
     } catch (e: any) {
       setMsg(e.message);
     } finally {
@@ -127,7 +142,55 @@ export default function InvoiceStaff({
 
   useEffect(() => {
     load();
-  }, [staffUser.id, allowed]);
+  }, [staffUser.id, allowed, showArchived]);
+
+  const contractedLeads = useMemo(
+    () => leads.filter((l) => ["Contracted", "Installed"].includes(l.status) && !l.deletedAt),
+    [leads]
+  );
+
+  const customerOptions = useMemo(() => {
+    const map = new Map<string, { customerId: string; name: string; phone?: string }>();
+    for (const a of accounts) {
+      if (a.customerId) map.set(a.customerId, { customerId: a.customerId, name: a.name, phone: a.phone });
+    }
+    for (const row of readyLeads) {
+      const cid = `cust-${row.leadId.replace(/^lead-/, "")}`;
+      if (!map.has(cid)) {
+        map.set(cid, { customerId: cid, name: row.customerName, phone: row.phone });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [accounts, readyLeads]);
+
+  const filteredInvoices = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return invoices;
+    return invoices.filter((inv) => {
+      const lead = leads.find((l) => l.id === inv.leadId);
+      return (
+        String(inv.customerName || "").toLowerCase().includes(q) ||
+        String(inv.customerPhone || "").includes(q) ||
+        String(inv.invoiceNumber || "").toLowerCase().includes(q) ||
+        String(inv.quotationId || "").toLowerCase().includes(q) ||
+        String(lead?.name || "").toLowerCase().includes(q)
+      );
+    });
+  }, [invoices, searchQuery, leads]);
+
+  const filteredReadyLeads = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return readyLeads;
+    return readyLeads.filter(
+      (row) =>
+        String(row.customerName || "").toLowerCase().includes(q) ||
+        String(row.phone || "").includes(q) ||
+        String(row.quotationId || "").toLowerCase().includes(q) ||
+        String(row.leadId || "").toLowerCase().includes(q)
+    );
+  }, [readyLeads, searchQuery]);
+
+  const superAdmin = isSuperAdmin(staffUser.username, staffUser.role);
 
   const totals = useMemo(
     () =>
@@ -299,40 +362,111 @@ export default function InvoiceStaff({
   const fillFromLead = (leadId: string) => {
     const lead = leads.find((l) => l.id === leadId);
     if (!lead) return;
-    const q = lead.quotes?.[lead.quotes.length - 1] || lead.quotes?.[0];
+    const draftFromLead = buildInvoiceDraftFromLead(lead);
     setDraft((d) => ({
       ...d,
-      customerName: lead.name,
-      customerPhone: lead.phone || "",
-      customerAddress: lead.address || "",
-      leadId: lead.id,
-      quotationId: q?.id || "",
-      projectNumber: lead.id,
-      systemSize: q?.systemSizekW ? `${q.systemSizekW} kW` : "",
-      panelBrand: q?.panelBrand || q?.panelType || "",
-      inverterBrand: q?.inverterBrand || q?.inverterType || "",
-      batteryBrand: q?.batteryCapacity || "",
-      items: q?.boqRows?.length
-        ? q.boqRows
-            .filter((r) => r.type === "item")
-            .map((r) => ({
-              itemName: r.name || r.description || "Item",
-              description: r.description || "",
-              qty: Number(r.qty || 1),
-              unit: r.unit || "NONE",
-              rate: Number(r.rate || 0),
-              taxPercent: 0,
-              discountAmount: 0,
-              lineTotal: Number(r.total || r.qty * r.rate),
-            }))
-        : d.items,
+      customerName: draftFromLead.customerName,
+      customerPhone: draftFromLead.customerPhone,
+      customerAddress: draftFromLead.customerAddress,
+      customerId: draftFromLead.customerId,
+      leadId: draftFromLead.leadId,
+      quotationId: draftFromLead.quotationId,
+      projectNumber: draftFromLead.projectNumber,
+      systemSize: draftFromLead.systemSize,
+      systemType: draftFromLead.systemType,
+      panelBrand: draftFromLead.panelBrand,
+      inverterBrand: draftFromLead.inverterBrand,
+      batteryBrand: draftFromLead.batteryBrand,
+      structureType: draftFromLead.structureType,
+      netMeteringStatus: draftFromLead.netMeteringStatus,
+      discountAmount: String(draftFromLead.discountAmount),
+      paidAmount: "0",
+      items: draftFromLead.items,
     }));
   };
 
+  const applyDraftFromReadyRow = (row: any) => {
+    const lead = leads.find((l) => l.id === row.leadId);
+    if (lead) fillFromLead(lead.id);
+    else {
+      setDraft((d) => ({
+        ...d,
+        customerName: row.customerName,
+        customerPhone: row.phone,
+        customerAddress: row.siteAddress,
+        customerId: `cust-${row.leadId.replace(/^lead-/, "")}`,
+        leadId: row.leadId,
+        quotationId: row.quotationId,
+        systemSize: row.systemSize,
+        paidAmount: "0",
+      }));
+    }
+    setPanelTab("invoices");
+  };
+
+  const handleCreateFromLead = async (row: any) => {
+    setMsg(null);
+    setCreatingLeadId(row.leadId);
+    try {
+      const res = await createInvoiceFromLead(staffUser, {
+        leadId: row.leadId,
+        quotationId: row.quotationId,
+      });
+      await load();
+      if (res.existing) {
+        setMsg("Invoice already exists for this quote.");
+      } else {
+        setMsg("Invoice created from contracted lead.");
+      }
+      const inv = res.invoice;
+      if (inv) selectInvoice(inv);
+      setPanelTab("invoices");
+    } catch (e: any) {
+      setMsg(e.message);
+    } finally {
+      setCreatingLeadId(null);
+    }
+  };
+
+  const handleArchive = async () => {
+    if (!selectedId) return;
+    if (!window.confirm("Archive this invoice? It will be hidden from active lists and the customer portal.")) return;
+    try {
+      await archiveAdminInvoice(staffUser, selectedId);
+      setMsg("Invoice archived.");
+      setSelectedId(null);
+      newInvoice();
+      await load();
+    } catch (e: any) {
+      setMsg(e.message);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedId || !superAdmin) return;
+    try {
+      await deleteAdminInvoice(staffUser, selectedId, deleteConfirm);
+      setMsg("Invoice deleted.");
+      setDeleteConfirm("");
+      setSelectedId(null);
+      newInvoice();
+      await load();
+    } catch (e: any) {
+      setMsg(e.message);
+    }
+  };
+
   const selectCustomer = (customerId: string) => {
-    const acc = accounts.find((a) => a.customerId === customerId);
+    const acc = customerOptions.find((a) => a.customerId === customerId);
     if (!acc) {
       setDraft((d) => ({ ...d, customerId: "" }));
+      return;
+    }
+    const matchingLead = contractedLeads.find(
+      (l) => `cust-${l.id.replace(/^lead-/, "")}` === customerId
+    );
+    if (matchingLead) {
+      fillFromLead(matchingLead.id);
       return;
     }
     setDraft((d) => ({
@@ -340,7 +474,6 @@ export default function InvoiceStaff({
       customerId,
       customerName: acc.name || d.customerName,
       customerPhone: acc.phone || d.customerPhone,
-      customerAddress: acc.address || d.customerAddress,
     }));
   };
 
@@ -418,10 +551,27 @@ export default function InvoiceStaff({
           </span>
           <button
             type="button"
-            onClick={() => setShowList(!showList)}
-            className="text-xs text-violet-600 font-semibold flex items-center gap-1"
+            onClick={() => {
+              setPanelTab("invoices");
+              setShowList(!showList);
+            }}
+            className={`text-xs font-semibold flex items-center gap-1 px-2 py-1 rounded ${
+              panelTab === "invoices" ? "bg-violet-100 text-violet-800" : "text-violet-600"
+            }`}
           >
-            Invoices ({invoices.length}) <ChevronDown className="h-3 w-3" />
+            Invoices ({filteredInvoices.length}) <ChevronDown className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPanelTab("ready");
+              setShowList(true);
+            }}
+            className={`text-xs font-semibold px-2 py-1 rounded ${
+              panelTab === "ready" ? "bg-emerald-100 text-emerald-900" : "text-emerald-700"
+            }`}
+          >
+            Ready to Invoice ({readyLeads.filter((r) => !r.hasInvoice).length})
           </button>
         </div>
         <div className="flex items-center gap-2">
@@ -437,28 +587,113 @@ export default function InvoiceStaff({
         </button>
       </div>
 
-      {showList && (
-        <div className="bg-slate-50 border-b border-slate-200 max-h-40 overflow-y-auto p-2 grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+      {showList && panelTab === "invoices" && (
+        <div className="bg-slate-50 border-b border-slate-200 p-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[180px]">
+              <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                className="w-full pl-8 pr-2 py-1.5 text-xs border border-slate-200 rounded-lg"
+                placeholder="Search customer, phone, quote id…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <label className="text-[10px] text-slate-600 flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+              />
+              Show archived
+            </label>
+          </div>
+          <div className="max-h-40 overflow-y-auto grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
           {loading ? (
             <Loader2 className="animate-spin h-5 w-5 text-violet-500" />
+          ) : filteredInvoices.length === 0 ? (
+            <p className="text-xs text-slate-500 col-span-full px-1">No invoices match.</p>
           ) : (
-            invoices.map((inv) => (
+            filteredInvoices.map((inv) => (
               <button
                 key={inv.id}
                 type="button"
                 onClick={() => selectInvoice(inv)}
                 className={`text-left p-2 rounded-lg border text-xs ${
                   selectedId === inv.id ? "border-violet-500 bg-violet-50" : "border-slate-200 bg-white"
-                }`}
+                } ${inv.archivedAt ? "opacity-60" : ""}`}
               >
                 <div className="font-bold">{inv.invoiceNumber}</div>
                 <div className="text-slate-500 truncate">{inv.customerName}</div>
                 <div className="text-violet-700 font-semibold">
                   PKR {Number(inv.grandTotal).toLocaleString()} · {inv.paymentStatus}
+                  {inv.archivedAt ? " · Archived" : ""}
                 </div>
               </button>
             ))
           )}
+          </div>
+        </div>
+      )}
+
+      {showList && panelTab === "ready" && (
+        <div className="bg-emerald-50/80 border-b border-emerald-200 p-3 space-y-2">
+          <p className="text-xs font-bold text-emerald-900">Contracted leads ready for invoice</p>
+          <div className="relative max-w-md">
+            <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              className="w-full pl-8 pr-2 py-1.5 text-xs border border-emerald-200 rounded-lg bg-white"
+              placeholder="Search name, phone, quotation id…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto space-y-2">
+            {loading ? (
+              <Loader2 className="animate-spin h-5 w-5 text-emerald-600" />
+            ) : filteredReadyLeads.length === 0 ? (
+              <p className="text-xs text-emerald-800">No contracted leads with quotes found.</p>
+            ) : (
+              filteredReadyLeads.map((row) => (
+                <div
+                  key={`${row.leadId}-${row.quotationId}`}
+                  className="bg-white border border-emerald-200 rounded-lg p-3 text-xs flex flex-wrap items-center justify-between gap-2"
+                >
+                  <div>
+                    <div className="font-bold text-slate-800">{row.customerName}</div>
+                    <div className="text-slate-500">{row.phone} · {row.siteAddress}</div>
+                    <div className="text-slate-600 mt-1">
+                      {row.systemSize} · PKR {Number(row.quoteAmount || 0).toLocaleString()} · Quote {row.quotationId} ({row.quoteStatus})
+                    </div>
+                    <div className="text-[10px] text-slate-500">{row.leadStatus}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyDraftFromReadyRow(row)}
+                      className="px-2 py-1 rounded border border-slate-300 text-slate-700 font-semibold"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      disabled={creatingLeadId === row.leadId}
+                      onClick={() => handleCreateFromLead(row)}
+                      className="px-3 py-1 rounded bg-emerald-600 text-white font-bold disabled:opacity-60"
+                    >
+                      {creatingLeadId === row.leadId ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin inline" />
+                      ) : row.hasInvoice ? (
+                        "Open Invoice"
+                      ) : (
+                        "Create Invoice"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 
@@ -473,7 +708,7 @@ export default function InvoiceStaff({
             <label className={labelClass}>Customer</label>
             <select className={fieldClass} value={draft.customerId} onChange={(e) => selectCustomer(e.target.value)}>
               <option value="">— Select / manual —</option>
-              {accounts.map((a) => (
+              {customerOptions.map((a) => (
                 <option key={a.customerId} value={a.customerId}>
                   {a.name}
                 </option>
@@ -505,12 +740,15 @@ export default function InvoiceStaff({
             <label className={labelClass}>Lead / quote</label>
             <select className={fieldClass} value={draft.leadId} onChange={(e) => fillFromLead(e.target.value)}>
               <option value="">—</option>
-              {leads.map((l) => (
+              {contractedLeads.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.name}
+                  {l.name} ({l.status})
                 </option>
               ))}
             </select>
+            {draft.quotationId && (
+              <p className="text-[10px] text-slate-500 mt-1">Quote: {draft.quotationId}</p>
+            )}
           </div>
           <div className="col-span-12">
             <label className={labelClass}>Billing address</label>
@@ -838,7 +1076,39 @@ export default function InvoiceStaff({
         </div>
 
         {/* Actions */}
-        <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-slate-200">
+        <div className="flex flex-wrap justify-between gap-2 pt-2 border-t border-slate-200">
+          <div className="flex flex-wrap gap-2">
+            {selectedId && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleArchive}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-xs font-bold text-amber-900"
+                >
+                  <Archive className="h-3.5 w-3.5" /> Archive
+                </button>
+                {superAdmin && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      className="w-24 border border-red-200 rounded px-2 py-1 text-xs"
+                      placeholder="DELETE"
+                      value={deleteConfirm}
+                      onChange={(e) => setDeleteConfirm(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      disabled={deleteConfirm !== "DELETE"}
+                      className="flex items-center gap-1 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-xs font-bold text-red-800 disabled:opacity-40"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
           {selectedId && (
             <>
               <WhatsAppActionButton
@@ -872,6 +1142,7 @@ export default function InvoiceStaff({
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Save
           </button>
+          </div>
         </div>
 
         {selectedId && (

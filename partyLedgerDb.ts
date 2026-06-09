@@ -186,7 +186,7 @@ async function buildPartySummaries(
       existing.customerId = inv.customerId;
     }
 
-    if (isExcludedFromLedgerTotals(inv.invoiceStatus)) continue;
+    if (isExcludedFromLedgerTotals(inv.invoiceStatus, inv.archivedAt)) continue;
 
     const sales = Number(inv.grandTotal || 0);
     const paid = resolveInvoiceReceivedAmount(inv);

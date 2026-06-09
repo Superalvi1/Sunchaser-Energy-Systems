@@ -223,6 +223,10 @@ import {
   fetchCustomerPortalInvoicesMe,
   setInvoicePdfUrl,
   syncInvoiceToCustomerDocuments,
+  listContractedLeadsReadyForInvoice,
+  createInvoiceFromContractedLead,
+  archiveAdminInvoice,
+  deleteAdminInvoice,
   InvoiceDbError,
 } from "./invoiceDb.js";
 import { compileInvoicePDFHtml } from "./invoicePdf.js";
@@ -536,6 +540,14 @@ function saveDb() {
   }
 }
 
+async function getLeadsForInvoiceOps() {
+  if (isSupabaseActive()) {
+    const state = await fetchAppStateFromSupabase();
+    return filterActiveLeads(state?.leads || []);
+  }
+  return filterActiveLeads(db.leads || []);
+}
+
 function resolveDeletedBy(req: { headers: Record<string, string | string[] | undefined> }): string {
   const userId = String(req.headers["x-sunchaser-user-id"] || "").trim();
   const username = String(req.headers["x-sunchaser-username"] || "").trim();
@@ -817,6 +829,15 @@ function readStaffAuth(req: express.Request) {
   };
 }
 
+/** Staff auth for user-management writes: never treat new-user fields in body as actor identity. */
+function readStaffAuthHeadersOnly(req: express.Request) {
+  return {
+    userId: String(req.headers["x-sunchaser-user-id"] || "").trim(),
+    username: String(req.headers["x-sunchaser-username"] || "").trim(),
+    role: String(req.headers["x-sunchaser-role"] || "").trim(),
+  };
+}
+
 function activityActorFromStaff(req: express.Request, fallback = "Staff") {
   const { username } = readStaffAuth(req);
   return username || fallback;
@@ -851,7 +872,8 @@ app.get("/api/admin/users/pending", async (req, res) => {
 });
 
 app.post("/api/admin/users", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const { userId, username } = readStaffAuthHeadersOnly(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
     const user = await createUserByAdmin(userId, username, req.body || {}, db);
@@ -864,7 +886,8 @@ app.post("/api/admin/users", async (req, res) => {
 });
 
 app.patch("/api/admin/users/:id", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const { userId, username } = readStaffAuthHeadersOnly(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
     const user = await updateUserByAdmin(userId, username, req.params.id, req.body || {}, db);
@@ -877,7 +900,8 @@ app.patch("/api/admin/users/:id", async (req, res) => {
 });
 
 app.delete("/api/admin/users/:id", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const { userId, username } = readStaffAuthHeadersOnly(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
     const result = await deleteUserByAdmin(
@@ -911,7 +935,8 @@ app.get("/api/admin/users/demo-seeds", async (req, res) => {
 });
 
 app.post("/api/admin/users/demo-seeds/delete", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const { userId, username } = readStaffAuthHeadersOnly(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
     const result = await deleteDemoSeedUsersByAdmin(userId, username, req.body || {}, db);
@@ -2656,8 +2681,47 @@ app.get("/api/admin/invoices", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
-    const invoices = await listAdminInvoices(userId, username, role, db);
+    const includeArchived = String(req.query.includeArchived || "") === "true";
+    const invoices = await listAdminInvoices(userId, username, role, db, { includeArchived });
     return res.json({ invoices });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/invoices/contracted-ready", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const leads = await getLeadsForInvoiceOps();
+    const rows = await listContractedLeadsReadyForInvoice(userId, username, role, leads, db);
+    return res.json({ leads: rows });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/invoices/from-lead", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const leads = await getLeadsForInvoiceOps();
+    const result = await createInvoiceFromContractedLead(
+      userId,
+      username,
+      role,
+      req.body || {},
+      leads,
+      db
+    );
+    saveDb();
+    return res.status(result.existing ? 200 : 201).json(result);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
@@ -2717,6 +2781,43 @@ app.post("/api/admin/invoices/:id/payments", async (req, res) => {
     const result = await recordInvoicePayment(userId, username, role, req.params.id, req.body || {}, db);
     saveDb();
     return res.status(201).json(result);
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/invoices/:id/archive", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const invoice = await archiveAdminInvoice(userId, username, role, req.params.id, db);
+    saveDb();
+    return res.json({ invoice, ok: true, message: "Invoice archived." });
+  } catch (err: any) {
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/invoices/:id", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const result = await deleteAdminInvoice(
+      userId,
+      username,
+      role,
+      req.params.id,
+      req.body || {},
+      db
+    );
+    saveDb();
+    return res.json(result);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });

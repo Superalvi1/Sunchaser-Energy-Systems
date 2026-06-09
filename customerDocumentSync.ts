@@ -121,6 +121,9 @@ async function upsertVaultCustomerDocument(
 
 export async function syncInvoiceDocumentVault(invoice: InvoiceRecord, localDb?: Database) {
   if (!invoice.customerId || !invoice.id) return null;
+  if (invoice.archivedAt || String(invoice.invoiceStatus || "").toLowerCase() === "archived") {
+    return hideInvoiceDocumentVault(invoice, localDb);
+  }
   const fileUrl = invoice.pdfUrl || vaultInvoiceDocumentUrl(invoice.id);
   return upsertVaultCustomerDocument(
     {
@@ -133,6 +136,74 @@ export async function syncInvoiceDocumentVault(invoice: InvoiceRecord, localDb?:
     },
     localDb
   );
+}
+
+export async function hideInvoiceDocumentVault(invoice: InvoiceRecord, localDb?: Database) {
+  if (!invoice.customerId || !invoice.id) return null;
+  const needle = invoice.id;
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: rows } = await supabase
+      .from("customer_documents")
+      .select("id, file_url")
+      .eq("customer_id", invoice.customerId)
+      .eq("document_type", "invoice");
+    const matches = (rows || []).filter((r: any) => String(r.file_url || "").includes(needle));
+    for (const row of matches) {
+      await supabase
+        .from("customer_documents")
+        .update({ visible_to_customer: false, internal_only: true })
+        .eq("id", row.id);
+    }
+    return matches[0] || null;
+  }
+  const db = localDb as any;
+  const docs = db.customerDocuments || [];
+  let hit = null;
+  for (const d of docs) {
+    const url = d.file_url || d.fileUrl || "";
+    if (
+      (d.customer_id || d.customerId) === invoice.customerId &&
+      (d.document_type || d.documentType) === "invoice" &&
+      (url.includes(invoice.id) || url === needle)
+    ) {
+      d.visible_to_customer = false;
+      d.visibleToCustomer = false;
+      d.internal_only = true;
+      d.internalOnly = true;
+      hit = d;
+    }
+  }
+  return hit;
+}
+
+export async function unlinkInvoiceDocumentVault(invoice: InvoiceRecord, localDb?: Database) {
+  if (!invoice.customerId || !invoice.id) return null;
+  const needle = invoice.id;
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: rows } = await supabase
+      .from("customer_documents")
+      .select("id, file_url")
+      .eq("customer_id", invoice.customerId)
+      .eq("document_type", "invoice");
+    const matches = (rows || []).filter((r: any) => String(r.file_url || "").includes(needle));
+    for (const row of matches) {
+      await supabase.from("customer_documents").delete().eq("id", row.id);
+    }
+    return matches.length;
+  }
+  const db = localDb as any;
+  const before = (db.customerDocuments || []).length;
+  db.customerDocuments = (db.customerDocuments || []).filter((d: any) => {
+    const url = d.file_url || d.fileUrl || "";
+    const isMatch =
+      (d.customer_id || d.customerId) === invoice.customerId &&
+      (d.document_type || d.documentType) === "invoice" &&
+      url.includes(needle);
+    return !isMatch;
+  });
+  return before - (db.customerDocuments || []).length;
 }
 
 export async function syncQuotationDocumentVault(

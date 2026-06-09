@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { 
   Users, Search, Filter, Mail, Phone, Calendar, ArrowRightLeft, 
-  Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox
+  Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox, FileText
 } from "lucide-react";
 import { Lead, User } from "../types";
-import { runAiLeadScoring, currencySymbol } from "../services/api";
+import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../services/api";
+import { pickQuoteForInvoice } from "../lib/invoiceFromLead";
 import WhatsAppModule from "./WhatsAppModule";
 import AppModal from "./ui/AppModal";
 import {
@@ -74,6 +75,30 @@ export default function CRMApp({
   const [aiDiagnosticText, setAiDiagnosticText] = useState<string | null>(null);
   const [aiDiagnosticLoading, setAiDiagnosticLoading] = useState(false);
 
+  const [invoiceLeadBusy, setInvoiceLeadBusy] = useState<string | null>(null);
+  const [invoiceLeadMsg, setInvoiceLeadMsg] = useState<string | null>(null);
+
+  const handleCreateInvoiceForLead = async (lead: Lead) => {
+    const quote = pickQuoteForInvoice(lead);
+    if (!quote?.id) {
+      setInvoiceLeadMsg("No quotation on this lead.");
+      return;
+    }
+    setInvoiceLeadBusy(lead.id);
+    setInvoiceLeadMsg(null);
+    try {
+      const res = await createInvoiceFromLead(staffUser, { leadId: lead.id, quotationId: quote.id });
+      setInvoiceLeadMsg(
+        res.existing
+          ? `Invoice already exists for ${lead.name} (${res.invoice?.invoiceNumber || "saved"}).`
+          : `Invoice created for ${lead.name}: ${res.invoice?.invoiceNumber || "saved"}. Open Admin → Invoices to record payment.`
+      );
+    } catch (err: any) {
+      setInvoiceLeadMsg(err.message || "Failed to create invoice.");
+    } finally {
+      setInvoiceLeadBusy(null);
+    }
+  };
   const handleEditClick = (lead: Lead) => {
     setEditLeadId(lead.id);
     setEditName(lead.name);
@@ -207,6 +232,11 @@ export default function CRMApp({
 
   return (
     <div id="crm-view-portal" className="space-y-6 text-xs">
+      {invoiceLeadMsg && (
+        <p className="text-xs bg-emerald-950/60 border border-emerald-800 text-emerald-200 px-4 py-2 rounded-xl">
+          {invoiceLeadMsg}
+        </p>
+      )}
       
       {/* Information Header Banner card */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:align-middle md:items-center gap-4 shadow-sm">
@@ -531,6 +561,23 @@ export default function CRMApp({
                         >
                           Edit Profile
                         </button>
+
+                        {(lead.status === "Contracted" || lead.status === "Installed") &&
+                          (lead.quotes?.length || 0) > 0 && (
+                            <button
+                              type="button"
+                              disabled={invoiceLeadBusy === lead.id}
+                              onClick={() => handleCreateInvoiceForLead(lead)}
+                              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white px-3.5 py-1.5 rounded-xl font-sans font-bold transition cursor-pointer flex items-center gap-1.5"
+                            >
+                              {invoiceLeadBusy === lead.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <FileText className="h-3.5 w-3.5" />
+                              )}
+                              Create Invoice
+                            </button>
+                          )}
 
                         {onDeleteLead && (
                           <button

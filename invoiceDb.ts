@@ -25,7 +25,15 @@ import {
 } from "./src/lib/invoicePdfMeta.ts";
 import { resolveInvoiceCustomerId } from "./invoiceCustomerLink.js";
 import { coercePaymentMethod } from "./src/lib/invoicePayments.ts";
-import { syncInvoiceDocumentVault } from "./customerDocumentSync.js";
+import { syncInvoiceDocumentVault, hideInvoiceDocumentVault, unlinkInvoiceDocumentVault } from "./customerDocumentSync.js";
+import {
+  buildInvoiceDraftFromLead,
+  isContractedLeadReady,
+  pickQuoteForInvoice,
+  type InvoiceDraftFromLead,
+} from "./src/lib/invoiceFromLead.ts";
+import { isInvoiceArchived } from "./src/lib/invoices.ts";
+import { isSuperAdmin } from "./src/lib/roles.ts";
 
 export class InvoiceDbError extends Error {
   statusCode: number;
@@ -78,6 +86,8 @@ function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] 
     balanceDue: Number(row.balance_due ?? row.balanceDue ?? 0),
     paymentStatus: row.payment_status || row.paymentStatus || "Unpaid",
     invoiceStatus: row.invoice_status || row.invoiceStatus || "active",
+    archivedAt: row.archived_at || row.archivedAt || null,
+    archivedBy: row.archived_by || row.archivedBy || null,
     notes: row.notes || null,
     terms: row.terms || null,
     pdfUrl: row.pdf_url || row.pdfUrl || null,
@@ -236,10 +246,15 @@ export async function listAdminInvoices(
   userId: string,
   username: string,
   role: string,
-  localDb?: Database
+  localDb?: Database,
+  options?: { includeArchived?: boolean }
 ): Promise<InvoiceRecord[]> {
   await assertInvoiceStaff(userId, username, localDb);
   const viewAll = canViewAllInvoices(username, role);
+  const includeArchived = options?.includeArchived === true;
+
+  const filterArchived = (inv: InvoiceRecord) =>
+    includeArchived || !isInvoiceArchived(inv);
 
   if (isSupabaseActive()) {
     try {
@@ -254,9 +269,9 @@ export async function listAdminInvoices(
         out.push(mapInvoiceRow(row, items, payments));
       }
       if (!viewAll) {
-        return out.filter((inv) => inv.createdBy === username);
+        return out.filter((inv) => inv.createdBy === username).filter(filterArchived);
       }
-      return out;
+      return out.filter(filterArchived);
     } catch (err: any) {
       if (isInvoiceTableMissing(err)) return [];
       throw err;
@@ -271,7 +286,7 @@ export async function listAdminInvoices(
     const inv = mapInvoiceRow(row, items, payments);
     if (viewAll || inv.createdBy === username) out.push(inv);
   }
-  return out;
+  return out.filter(filterArchived);
 }
 
 export async function getAdminInvoiceById(
@@ -729,6 +744,7 @@ export async function fetchCustomerPortalInvoicesMe(
       if (error) throw error;
       const out: InvoiceRecord[] = [];
       for (const row of data || []) {
+        if (row.archived_at || String(row.invoice_status || "").toLowerCase() === "archived") continue;
         out.push(
           mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb))
         );
@@ -742,7 +758,11 @@ export async function fetchCustomerPortalInvoicesMe(
   }
 
   const rows = ((localDb as any)?.invoices || []).filter(
-    (r: any) => (r.customer_id || r.customerId) === customerId
+    (r: any) =>
+      (r.customer_id || r.customerId) === customerId &&
+      !r.archived_at &&
+      !r.archivedAt &&
+      String(r.invoice_status || r.invoiceStatus || "").toLowerCase() !== "archived"
   );
   const out: InvoiceRecord[] = [];
   for (const row of rows) {
@@ -778,4 +798,223 @@ export async function syncInvoiceToCustomerDocuments(
   if (!invoice.customerId) return null;
   const withUrl = pdfUrl ? { ...invoice, pdfUrl } : invoice;
   return syncInvoiceDocumentVault(withUrl, localDb);
+}
+
+export type ContractedLeadReadyRow = {
+  leadId: string;
+  customerName: string;
+  phone: string;
+  siteAddress: string;
+  systemSize: string;
+  quoteAmount: number;
+  quotationId: string;
+  quoteStatus: string;
+  leadStatus: string;
+  hasInvoice: boolean;
+  invoiceId: string | null;
+};
+
+export async function findInvoiceByLeadAndQuote(
+  leadId: string,
+  quotationId: string,
+  localDb?: Database
+): Promise<InvoiceRecord | null> {
+  if (!leadId || !quotationId) return null;
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("invoices")
+      .select("*")
+      .eq("lead_id", leadId)
+      .eq("quotation_id", quotationId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const row = (data || []).find((r) => !isInvoiceArchived(mapInvoiceRow(r)));
+    if (!row) return null;
+    return mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb));
+  }
+  const row = ((localDb as any)?.invoices || []).find(
+    (r: any) =>
+      (r.lead_id || r.leadId) === leadId &&
+      (r.quotation_id || r.quotationId) === quotationId &&
+      !r.archived_at &&
+      !r.archivedAt &&
+      String(r.invoice_status || r.invoiceStatus || "").toLowerCase() !== "archived"
+  );
+  if (!row) return null;
+  return mapInvoiceRow(row, await loadItems(row.id, localDb), await loadPayments(row.id, localDb));
+}
+
+export async function listContractedLeadsReadyForInvoice(
+  userId: string,
+  username: string,
+  role: string,
+  leads: any[],
+  localDb?: Database
+): Promise<ContractedLeadReadyRow[]> {
+  await assertInvoiceStaff(userId, username, localDb);
+  const allInvoices = await listAdminInvoices(userId, username, role, localDb, { includeArchived: false });
+
+  const rows: ContractedLeadReadyRow[] = [];
+  for (const lead of leads || []) {
+    if (!isContractedLeadReady(lead)) continue;
+    const quote = pickQuoteForInvoice(lead);
+    if (!quote?.id) continue;
+    const draft = buildInvoiceDraftFromLead(lead, quote);
+    const existing = allInvoices.find(
+      (inv) => inv.leadId === lead.id && inv.quotationId === quote.id && !isInvoiceArchived(inv)
+    );
+    rows.push({
+      leadId: lead.id,
+      customerName: lead.name,
+      phone: lead.phone || "",
+      siteAddress: draft.customerAddress,
+      systemSize: draft.systemSize,
+      quoteAmount: draft.quoteAmount,
+      quotationId: quote.id,
+      quoteStatus: quote.status || "Pending",
+      leadStatus: lead.status,
+      hasInvoice: !!existing,
+      invoiceId: existing?.id || null,
+    });
+  }
+  return rows.sort((a, b) => a.customerName.localeCompare(b.customerName));
+}
+
+function draftToCreateBody(draft: InvoiceDraftFromLead) {
+  return {
+    customerId: draft.customerId,
+    customerName: draft.customerName,
+    customerPhone: draft.customerPhone,
+    customerAddress: draft.customerAddress,
+    leadId: draft.leadId,
+    quotationId: draft.quotationId,
+    paidAmount: 0,
+    discountAmount: draft.discountAmount,
+    items: draft.items,
+    invoiceMeta: {
+      project: {
+        projectNumber: draft.projectNumber,
+        systemSize: draft.systemSize,
+        systemType: draft.systemType || undefined,
+        panelBrand: draft.panelBrand || undefined,
+        inverterBrand: draft.inverterBrand || undefined,
+        batteryBrand: draft.batteryBrand || undefined,
+        structureType: draft.structureType || undefined,
+        netMeteringStatus: draft.netMeteringStatus || undefined,
+      },
+    },
+    terms: "System booked in COD basis.",
+  };
+}
+
+export async function createInvoiceFromContractedLead(
+  userId: string,
+  username: string,
+  role: string,
+  body: { leadId: string; quotationId?: string },
+  leads: any[],
+  localDb?: Database
+): Promise<{ invoice: InvoiceRecord; existing: boolean }> {
+  const lead = (leads || []).find((l: any) => l.id === body.leadId);
+  if (!lead) throw new InvoiceDbError("Lead not found.", 404);
+  if (!["Contracted", "Installed"].includes(String(lead.status || ""))) {
+    throw new InvoiceDbError("Lead must be Contracted or Installed to create an invoice.", 400);
+  }
+
+  const quote = body.quotationId
+    ? (lead.quotes || []).find((q: any) => q.id === body.quotationId) || pickQuoteForInvoice(lead)
+    : pickQuoteForInvoice(lead);
+  if (!quote?.id) throw new InvoiceDbError("No quotation found for this lead.", 400);
+
+  const existing = await findInvoiceByLeadAndQuote(lead.id, quote.id, localDb);
+  if (existing) {
+    return { invoice: existing, existing: true };
+  }
+
+  const draft = buildInvoiceDraftFromLead(lead, quote);
+  const invoice = await createAdminInvoice(userId, username, role, draftToCreateBody(draft), localDb);
+  return { invoice, existing: false };
+}
+
+export async function archiveAdminInvoice(
+  userId: string,
+  username: string,
+  role: string,
+  invoiceId: string,
+  localDb?: Database
+): Promise<InvoiceRecord> {
+  await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const patch = {
+    archived_at: new Date().toISOString(),
+    archived_by: username,
+    invoice_status: "archived",
+    updated_at: new Date().toISOString(),
+    updated_by: username,
+  };
+
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+    if (error) throw error;
+  } else {
+    const db = localDb as any;
+    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
+    if (idx >= 0) Object.assign(db.invoices[idx], patch);
+  }
+
+  const archived = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  try {
+    await hideInvoiceDocumentVault(archived, localDb);
+  } catch (err: any) {
+    console.warn("[InvoiceArchive] document hide:", err?.message || err);
+  }
+  return archived;
+}
+
+export async function deleteAdminInvoice(
+  userId: string,
+  username: string,
+  role: string,
+  invoiceId: string,
+  body: { confirmText?: string },
+  localDb?: Database
+): Promise<{ ok: boolean; message: string }> {
+  if (!isSuperAdmin(username, role)) {
+    throw new StaffPortalAuthError("Only Super Admin can permanently delete invoices.", 403);
+  }
+  if (String(body.confirmText || "").trim() !== "DELETE") {
+    throw new InvoiceDbError('Type DELETE to confirm permanent deletion.', 400);
+  }
+
+  const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const payments = await loadPayments(invoiceId, localDb);
+  if (payments.length > 0) {
+    throw new InvoiceDbError("Cannot delete an invoice that has payment records.", 409);
+  }
+  if (Number(inv.paidAmount || 0) > 0) {
+    throw new InvoiceDbError("Cannot delete an invoice with recorded payments.", 409);
+  }
+
+  try {
+    await unlinkInvoiceDocumentVault(inv, localDb);
+  } catch (err: any) {
+    console.warn("[InvoiceDelete] document unlink:", err?.message || err);
+  }
+
+  if (isSupabaseActive()) {
+    await getSupabase()!.from("invoice_items").delete().eq("invoice_id", invoiceId);
+    await getSupabase()!.from("invoice_payments").delete().eq("invoice_id", invoiceId);
+    const { error } = await getSupabase()!.from("invoices").delete().eq("id", invoiceId);
+    if (error) throw error;
+  } else {
+    const db = localDb as any;
+    db.invoices = (db.invoices || []).filter((r: any) => r.id !== invoiceId);
+    db.invoiceItems = (db.invoiceItems || []).filter(
+      (r: any) => (r.invoice_id || r.invoiceId) !== invoiceId
+    );
+    db.invoicePayments = (db.invoicePayments || []).filter(
+      (r: any) => (r.invoice_id || r.invoiceId) !== invoiceId
+    );
+  }
+
+  return { ok: true, message: "Invoice permanently deleted." };
 }
