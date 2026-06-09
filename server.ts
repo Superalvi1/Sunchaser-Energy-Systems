@@ -35,6 +35,12 @@ import {
   resolveTypography,
   typographyStyleAttr,
 } from "./src/lib/quotePdfLayout.ts";
+import {
+  DEFAULT_AUTO_SIZER_BOQ_IDS,
+  boqPdfSectionCss,
+  filterBoqRowsForPdf,
+  renderBoqTableBodyHtml,
+} from "./src/lib/quoteBoqPdf.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
 import {
@@ -7080,7 +7086,6 @@ function compileSunchaserPDFHtml(
       }
 
       else if (pageType === 'boq') {
-        let boqHtml = "";
         let grossTotal = 0;
         let discountAmount = 0;
         let netTotal = 0;
@@ -7090,48 +7095,19 @@ function compileSunchaserPDFHtml(
         
         // Count manual rows and auto sizer rows
         const autoSizerRows = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id));
-        const manualBoqRows = allRows.filter((r: any) => r && r.type === 'item' && !defaultAutoSizerIds.includes(r.id));
-        
-        const isPackageRow = (r: any) => r.id && (r.id.startsWith('row-heading') || r.id.startsWith('row-item') || r.id.startsWith('row-subtotal'));
-        const sourceUsed = manualBoqRows.some(isPackageRow) ? 'package_loaded' : (includeSizerItems ? 'auto_sizer' : 'manual_only');
-        const rows = includeSizerItems ? allRows.filter((r: any) => r && r.type === 'item') : manualBoqRows;
+        const manualBoqRows = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id));
+
+        const isPackageRow = (r: any) => r.id && (r.id.startsWith("row-heading") || r.id.startsWith("row-item") || r.id.startsWith("row-subtotal"));
+        const sourceUsed = manualBoqRows.some(isPackageRow) ? "package_loaded" : includeSizerItems ? "auto_sizer" : "manual_only";
+        const rows = filterBoqRowsForPdf(allRows, { includeSizerItems, defaultAutoSizerIds });
 
         console.log(`[PDF Compilation Debug Log]
           - manualBoqRows count: ${manualBoqRows.length}
           - autoSizerRows count: ${autoSizerRows.length}
-          - finalPdfBoqRows count: ${rows.length}
+          - finalPdfBoqRows count: ${rows.length} (${rows.filter((r) => r.type === "heading").length} headings)
           - source used: ${sourceUsed}`);
 
-        let calculatedGross = 0;
-        rows.forEach((r: any) => {
-          if (r.type === 'heading') {
-            boqHtml += `
-              <tr style="background-color: #f1f5f9; font-weight: 700; color: #0f172a; border-bottom: 1.5px solid #cbd5e1;">
-                <td colspan="7" style="padding: 5px 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; font-family: monospace;">${r.name}</td>
-              </tr>
-            `;
-          } else if (r.type === 'subtotal') {
-            boqHtml += `
-              <tr style="border-bottom: 1.5px solid #cbd5e1; font-weight: 700; background-color: #f8fafc; font-size: 9.5px;">
-                <td colspan="6" style="padding: 5px 8px; text-align: right; color: #475569; text-transform: uppercase;">${r.name || 'SUBTOTAL'}:</td>
-                <td style="padding: 5px 8px; text-align: right; color: #0f172a;">${formatPKR(r.total)}</td>
-              </tr>
-            `;
-          } else {
-            calculatedGross += Number(r.total) || 0;
-            boqHtml += `
-              <tr style="border-bottom: 1px solid #cbd5e1; font-size: 9.5px;">
-                <td style="padding: 5px 8px; text-align: center; color: #64748b;">${r.srNo || ''}</td>
-                <td style="padding: 5px 8px; font-weight: 600; color: #0f172a;">${r.name}</td>
-                <td style="padding: 5px 8px; color: #475569; font-size: 9px; line-height: 1.3;">${r.description || ''}</td>
-                <td style="padding: 5px 8px; text-align: center; color: #475569;">${r.unit || 'Nos'}</td>
-                <td style="padding: 5px 8px; text-align: center; font-weight: 500;">${r.qty}</td>
-                <td style="padding: 5px 8px; text-align: right; color: #475569;">${formatPKR(r.rate)}</td>
-                <td style="padding: 5px 8px; text-align: right; font-weight: 600; color: #0f172a;">${formatPKR(r.total)}</td>
-              </tr>
-            `;
-          }
-        });
+        const { html: boqHtml, calculatedGross } = renderBoqTableBodyHtml(rows, formatPKR);
 
         // Recalculate totals if not including auto sizer items
         if (!includeSizerItems) {
@@ -7563,6 +7539,7 @@ function compileSunchaserPDFHtml(
           padding: 5px 8px;
           border-bottom: 1px solid #e2e8f0;
         }
+        ${boqPdfSectionCss()}
         @page {
           size: A4 portrait;
           margin: 0;
