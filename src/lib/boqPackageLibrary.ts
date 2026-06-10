@@ -153,11 +153,14 @@ export function normalizeSolarPackage(raw: any): BoqPackageRecord | null {
   if (!kw) return null;
 
   const spec = resolvePackageEquipmentSpec(kw, normalizedStructure, normalizedTier);
-  const boqRows = Array.isArray(raw.boqRows)
+  // Stored boq_rows always win; regeneration only happens for records that
+  // never persisted rows (legacy records are already rejected above).
+  const storedRows = Array.isArray(raw.boqRows)
     ? raw.boqRows
     : Array.isArray(raw.boq_rows)
       ? raw.boq_rows
-      : generatePackageBoqRows(spec);
+      : null;
+  const boqRows = storedRows && storedRows.length > 0 ? storedRows : generatePackageBoqRows(spec);
 
   return {
     id: raw.id,
@@ -630,14 +633,24 @@ export function buildDefaultPackageCatalog(): BoqPackageRecord[] {
 
 export function cloneBoqRowsForLoad(rows: BoqRow[]): BoqRow[] {
   const stamp = Date.now();
+  // Row kind comes from row.type so stored package rows reproduce exactly,
+  // regardless of what id scheme they were saved with.
   return rows.map((row, index) => ({
     ...row,
-    id: row.id.startsWith("h-")
-      ? `row-heading-${stamp}-${index}`
-      : row.id.startsWith("s-")
-        ? `row-subtotal-${stamp}-${index}`
-        : `row-item-${stamp}-${index}`,
+    id:
+      row.type === "heading"
+        ? `row-heading-${stamp}-${index}`
+        : row.type === "subtotal"
+          ? `row-subtotal-${stamp}-${index}`
+          : `row-item-${stamp}-${index}`,
   }));
+}
+
+/** True when the raw library record carries its own persisted BOQ rows. */
+export function packageHasStoredBoqRows(raw: any): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const rows = Array.isArray(raw.boqRows) ? raw.boqRows : Array.isArray(raw.boq_rows) ? raw.boq_rows : null;
+  return !!rows && rows.length > 0;
 }
 
 export function groupActivePackagesBySize(

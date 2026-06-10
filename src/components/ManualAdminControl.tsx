@@ -14,6 +14,7 @@ import {
   generatePackageBoqRows,
   getPackageShortLabel,
   normalizeSolarPackage,
+  packageHasStoredBoqRows,
   PACKAGE_STRUCTURE_OPTIONS,
   PACKAGE_SYSTEM_SIZES_KW,
   PACKAGE_TIER_OPTIONS,
@@ -122,6 +123,7 @@ export default function ManualAdminControl({
 
   // 2. SOLAR PACKAGES Local States
   const [editingPkg, setEditingPkg] = useState<BoqPackageRecord | null>(null);
+  const [editingPkgBoqSource, setEditingPkgBoqSource] = useState<"stored" | "generated">("stored");
   const [creatingPkg, setCreatingPkg] = useState(false);
   const [showArchivedPackages, setShowArchivedPackages] = useState(false);
   const [packageSearchQuery, setPackageSearchQuery] = useState("");
@@ -806,7 +808,11 @@ export default function ManualAdminControl({
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             <button
                               type="button"
-                              onClick={() => setEditingPkg(pkg)}
+                              onClick={() => {
+                                const raw = (solarPackages || []).find((sp: any) => sp?.id === pkg.id);
+                                setEditingPkgBoqSource(packageHasStoredBoqRows(raw) ? "stored" : "generated");
+                                setEditingPkg(pkg);
+                              }}
                               className="bg-neutral-800 hover:bg-neutral-700 text-[10px] text-neutral-200 px-2 py-1 rounded-lg cursor-pointer"
                             >
                               Edit
@@ -860,9 +866,25 @@ export default function ManualAdminControl({
 
             {editingPkg && (
               <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 space-y-4">
-                <h4 className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">
-                  Edit Package: {editingPkg.name}
-                </h4>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">
+                    Edit Package: {editingPkg.name}
+                  </h4>
+                  <span
+                    className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded-full ${
+                      editingPkgBoqSource === "stored"
+                        ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                        : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                    }`}
+                    title={
+                      editingPkgBoqSource === "stored"
+                        ? "BOQ rows are persisted on this package record and used as-is by Load Package."
+                        : "BOQ rows were regenerated from size/tier/structure spec and are not yet persisted. Save the package to store them."
+                    }
+                  >
+                    BOQ Source: {editingPkgBoqSource === "stored" ? "✓ Stored Package BOQ" : "⚠ Auto Generated BOQ"}
+                  </span>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs font-sans">
                   <div>
                     <label className="text-neutral-400 block mb-1">Package Name</label>
@@ -956,6 +978,7 @@ export default function ManualAdminControl({
                           inverterCapacity: editingPkg.inverterCapacity,
                           batteryOption: editingPkg.batteryOption,
                         });
+                        setEditingPkgBoqSource("generated");
                         setEditingPkg({
                           ...editingPkg,
                           boqRows,
