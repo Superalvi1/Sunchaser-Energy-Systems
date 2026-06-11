@@ -6,6 +6,7 @@ import {
 import { generateCustomerCode } from "./customerCode.js";
 import { pickQuoteForInvoice, resolveLeadCustomerId } from "./src/lib/invoiceFromLead.ts";
 import { createInvoiceFromContractedLead } from "./invoiceDb.js";
+import { provisionInternalCostingSheet } from "./internalCostingDb.js";
 import { computeNetProposalValue, resolveQuoteDiscountAmount } from "./src/lib/quoteDiscount.ts";
 import { filterBoqRowsForPdf, renderBoqTableBodyHtml } from "./src/lib/quoteBoqPdf.ts";
 
@@ -35,6 +36,8 @@ export type ContractProvisionResult = {
   invoiceExisting: boolean;
   paymentTrackEnsured: boolean;
   quoteId: string | null;
+  costingSheetId: string | null;
+  costingSheetExisting: boolean;
   skipped?: string;
 };
 
@@ -327,6 +330,8 @@ export async function provisionContractToInvoiceWorkflow(
       invoiceExisting: false,
       paymentTrackEnsured: false,
       quoteId: null,
+      costingSheetId: null,
+      costingSheetExisting: false,
       skipped: "Lead is not Contracted.",
     };
   }
@@ -344,6 +349,8 @@ export async function provisionContractToInvoiceWorkflow(
       invoiceExisting: false,
       paymentTrackEnsured: false,
       quoteId: null,
+      costingSheetId: null,
+      costingSheetExisting: false,
       skipped: "No quotation on lead.",
     };
   }
@@ -375,6 +382,30 @@ export async function provisionContractToInvoiceWorkflow(
     localDb
   );
 
+  let costingSheetId: string | null = null;
+  let costingSheetExisting = false;
+  try {
+    const costing = await provisionInternalCostingSheet(
+      {
+        lead,
+        quote,
+        customerId,
+        projectId,
+        invoiceId: invoice?.id || null,
+        amountReceived: Number(invoice?.paidAmount ?? (invoice as any)?.paid_amount ?? 0),
+        actor,
+      },
+      localDb
+    );
+    costingSheetId = costing.sheetId;
+    costingSheetExisting = costing.existing;
+    if (costing.skipped && !costing.sheetId) {
+      console.warn("[CostingProvision]", costing.skipped);
+    }
+  } catch (err: any) {
+    console.warn("[CostingProvision]", err?.message || err);
+  }
+
   return {
     customerId,
     projectId,
@@ -382,5 +413,7 @@ export async function provisionContractToInvoiceWorkflow(
     invoiceExisting: existing,
     paymentTrackEnsured,
     quoteId: quote.id,
+    costingSheetId,
+    costingSheetExisting,
   };
 }

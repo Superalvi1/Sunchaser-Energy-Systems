@@ -49,9 +49,11 @@ export type InternalCostingTotals = {
 
 export type InternalCostingSheet = {
   id: string;
+  title: string;
   clientName: string;
   leadId: string | null;
   customerId: string | null;
+  projectId: string | null;
   quotationId: string | null;
   invoiceId: string | null;
   quotationValue: number;
@@ -59,6 +61,12 @@ export type InternalCostingSheet = {
   items: InternalCostingItem[];
   totals: InternalCostingTotals;
   notes: string;
+  autoCreated: boolean;
+  /** When enabled: reserve stock on save (contracted), consume when installation starts. */
+  consumeInventory: boolean;
+  stockReserved: boolean;
+  reservedStockValue: number;
+  consumedStockValue: number;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: string;
@@ -194,3 +202,98 @@ export function computeInvestorBalance(
     purchaseCount: linked.length,
   };
 }
+
+export type BoqImportRow = {
+  id?: string;
+  type?: string;
+  name?: string;
+  description?: string;
+  qty?: number;
+  rate?: number;
+  total?: number;
+};
+
+/** Phase 23 — Map accepted quotation BOQ rows into blank-purchase costing items. */
+export function boqRowsToCostingItems(rows: BoqImportRow[] | null | undefined): InternalCostingItem[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row) => {
+      const t = String(row.type || "item").toLowerCase();
+      return t === "item";
+    })
+    .map((row) => {
+      const qty = Math.max(0, num(row.qty));
+      const rate = Math.max(0, num(row.rate));
+      const total = num(row.total);
+      const saleRate = rate > 0 ? rate : qty > 0 && total > 0 ? total / qty : 0;
+      const label = String(row.name || row.description || "").trim() || "BOQ Item";
+      return computeCostingItem({
+        itemName: label,
+        supplierName: "",
+        purchaseRate: 0,
+        purchaseQty: 0,
+        saleRate,
+        saleQty: qty,
+        paidToSupplier: false,
+        supplierPaymentDate: null,
+        inventoryItemId: null,
+        stockConsumed: false,
+        notes: "",
+      });
+    })
+    .filter((it) => it.itemName && (it.saleQty > 0 || it.saleRate > 0));
+}
+
+export function quotationBoqRows(quote: Record<string, unknown> | null | undefined): BoqImportRow[] {
+  if (!quote) return [];
+  const rows = (quote as any).boqRows ?? (quote as any).boqItems;
+  return Array.isArray(rows) ? rows : [];
+}
+
+export function buildAutoCostingTitle(clientName: string): string {
+  const name = String(clientName || "").trim() || "Client";
+  return `Internal Costing — ${name}`;
+}
+
+export type ProjectProfitabilitySummary = {
+  monthLabel: string;
+  totalRevenue: number;
+  totalCost: number;
+  grossProfit: number;
+  marginPercent: number;
+  sheetCount: number;
+};
+
+/** Aggregate profitability for sheets created in the current calendar month. */
+export function computeProjectProfitabilitySummary(
+  sheets: InternalCostingSheet[],
+  refDate = new Date()
+): ProjectProfitabilitySummary {
+  const monthStart = new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+  const monthEnd = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0, 23, 59, 59, 999);
+  const monthLabel = monthStart.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const inMonth = sheets.filter((s) => {
+    const created = new Date(s.createdAt || 0);
+    return created >= monthStart && created <= monthEnd;
+  });
+  const totalRevenue = moneyRound(inMonth.reduce((s, x) => s + x.totals.quotationValue, 0));
+  const totalCost = moneyRound(inMonth.reduce((s, x) => s + x.totals.totalPurchaseCost, 0));
+  const grossProfit = moneyRound(totalRevenue - totalCost);
+  const marginPercent = totalRevenue > 0 ? moneyRound((grossProfit / totalRevenue) * 100) : 0;
+  return {
+    monthLabel,
+    totalRevenue,
+    totalCost,
+    grossProfit,
+    marginPercent,
+    sheetCount: inMonth.length,
+  };
+}
+
+export const INSTALLATION_START_STAGES = new Set([
+  "Structure Installation",
+  "Panel Installation",
+  "Inverter Installation",
+  "Testing & Commissioning",
+  "Material Procurement",
+]);

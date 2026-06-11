@@ -3,9 +3,11 @@
 
 create table if not exists public.internal_costing_sheets (
   id text primary key,
+  title text default '',
   client_name text not null default '',
   lead_id text,
   customer_id text,
+  project_id text,
   quotation_id text,
   invoice_id text,
   quotation_value numeric not null default 0,
@@ -18,6 +20,11 @@ create table if not exists public.internal_costing_sheets (
   amount_paid_to_suppliers numeric not null default 0,
   net_cash_remaining numeric not null default 0,
   notes text default '',
+  auto_created boolean default false not null,
+  consume_inventory boolean default false not null,
+  stock_reserved boolean default false not null,
+  reserved_stock_value numeric not null default 0,
+  consumed_stock_value numeric not null default 0,
   created_by text,
   updated_by text,
   created_at timestamptz not null default now(),
@@ -26,6 +33,7 @@ create table if not exists public.internal_costing_sheets (
 
 create index if not exists idx_internal_costing_sheets_lead on public.internal_costing_sheets (lead_id);
 create index if not exists idx_internal_costing_sheets_customer on public.internal_costing_sheets (customer_id);
+create unique index if not exists idx_internal_costing_sheets_project on public.internal_costing_sheets (project_id) where project_id is not null;
 
 create table if not exists public.investors (
   id text primary key,

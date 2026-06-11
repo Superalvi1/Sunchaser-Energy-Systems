@@ -7,10 +7,14 @@ import {
 } from "./dbManager.js";
 import {
   canViewInternalCosting,
+  boqRowsToCostingItems,
+  buildAutoCostingTitle,
   computeCostingItem,
   computeCostingTotals,
   computeInvestorBalance,
+  computeProjectProfitabilitySummary,
   computePurchaseTotal,
+  quotationBoqRows,
   moneyRound,
   PURCHASE_PAYMENT_STATUSES,
   type InternalCostingItem,
@@ -22,6 +26,7 @@ import {
 import {
   stockInAdminInventoryItem,
   stockOutAdminInventoryItem,
+  reserveAdminInventoryForProject,
 } from "./inventoryFoundationDb.ts";
 
 export class InternalCostingDbError extends Error {
@@ -86,11 +91,14 @@ function mapSheetRow(row: any): InternalCostingSheet {
     amountReceived: row.amount_received ?? row.amountReceived,
     items,
   });
+  const clientName = row.client_name || row.clientName || "";
   return {
     id: row.id,
-    clientName: row.client_name || row.clientName || "",
+    title: row.title || buildAutoCostingTitle(clientName),
+    clientName,
     leadId: row.lead_id ?? row.leadId ?? null,
     customerId: row.customer_id ?? row.customerId ?? null,
+    projectId: row.project_id ?? row.projectId ?? null,
     quotationId: row.quotation_id ?? row.quotationId ?? null,
     invoiceId: row.invoice_id ?? row.invoiceId ?? null,
     quotationValue: totals.quotationValue,
@@ -98,6 +106,11 @@ function mapSheetRow(row: any): InternalCostingSheet {
     items,
     totals,
     notes: row.notes || "",
+    autoCreated: !!(row.auto_created ?? row.autoCreated),
+    consumeInventory: !!(row.consume_inventory ?? row.consumeInventory),
+    stockReserved: !!(row.stock_reserved ?? row.stockReserved),
+    reservedStockValue: Number(row.reserved_stock_value ?? row.reservedStockValue ?? 0),
+    consumedStockValue: Number(row.consumed_stock_value ?? row.consumedStockValue ?? 0),
     createdBy: row.created_by ?? row.createdBy ?? null,
     updatedBy: row.updated_by ?? row.updatedBy ?? null,
     createdAt: row.created_at || row.createdAt,
@@ -240,9 +253,11 @@ function buildSheetDbRow(
   const now = new Date().toISOString();
   const row: Record<string, unknown> = {
     id,
+    title: String(body.title ?? body.sheetTitle ?? buildAutoCostingTitle(String(body.clientName ?? body.client_name ?? ""))),
     client_name: String(body.clientName ?? body.client_name ?? "").trim(),
     lead_id: body.leadId ?? body.lead_id ?? null,
     customer_id: body.customerId ?? body.customer_id ?? null,
+    project_id: body.projectId ?? body.project_id ?? null,
     quotation_id: body.quotationId ?? body.quotation_id ?? null,
     invoice_id: body.invoiceId ?? body.invoice_id ?? null,
     quotation_value: totals.quotationValue,
@@ -258,6 +273,11 @@ function buildSheetDbRow(
     amount_paid_to_suppliers: totals.amountPaidToSuppliers,
     net_cash_remaining: totals.netCashRemaining,
     notes: body.notes != null ? String(body.notes) : "",
+    auto_created: body.autoCreated ?? body.auto_created ?? false,
+    consume_inventory: body.consumeInventory ?? body.consume_inventory ?? false,
+    stock_reserved: body.stockReserved ?? body.stock_reserved ?? false,
+    reserved_stock_value: body.reservedStockValue ?? body.reserved_stock_value ?? 0,
+    consumed_stock_value: body.consumedStockValue ?? body.consumed_stock_value ?? 0,
     updated_by: userId,
     updated_at: now,
   };
@@ -317,6 +337,204 @@ async function applyStockConsumption(
   return items;
 }
 
+async function loadCostingSheetRows(localDb?: Database) {
+  try {
+    return await loadRows(SHEETS_TABLE, "internalCostingSheets", localDb);
+  } catch (err: any) {
+    if (err instanceof InternalCostingDbError && err.statusCode === 503) return null;
+    throw err;
+  }
+}
+
+function findExistingCostingSheet(
+  rows: any[],
+  keys: { projectId?: string | null; leadId?: string | null; quotationId?: string | null }
+) {
+  const { projectId, leadId, quotationId } = keys;
+  if (projectId) {
+    const hit = rows.find(
+      (r) => (r.project_id || r.projectId) === projectId
+    );
+    if (hit) return hit;
+  }
+  if (leadId) {
+    const hit = rows.find((r) => (r.lead_id || r.leadId) === leadId);
+    if (hit) return hit;
+  }
+  if (quotationId) {
+    const hit = rows.find((r) => (r.quotation_id || r.quotationId) === quotationId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+export type CostingProvisionResult = {
+  sheetId: string | null;
+  existing: boolean;
+  skipped?: string;
+};
+
+/**
+ * Phase 23 — Auto-create internal costing sheet when a lead becomes Contracted.
+ * Idempotent: returns existing sheet if one is already linked to the project/lead/quote.
+ */
+export async function provisionInternalCostingSheet(
+  input: {
+    lead: any;
+    quote: any;
+    customerId: string;
+    projectId: string;
+    invoiceId: string | null;
+    amountReceived?: number;
+    actor: { userId: string; username: string; role: string };
+  },
+  localDb?: Database
+): Promise<CostingProvisionResult> {
+  const rows = await loadCostingSheetRows(localDb);
+  if (rows === null) {
+    return { sheetId: null, existing: false, skipped: TABLES_NOT_READY };
+  }
+
+  const existing = findExistingCostingSheet(rows, {
+    projectId: input.projectId,
+    leadId: input.lead?.id,
+    quotationId: input.quote?.id,
+  });
+  if (existing) {
+    return { sheetId: existing.id, existing: true };
+  }
+
+  const clientName = String(input.lead?.name || input.quote?.clientName || "").trim();
+  if (!clientName) {
+    return { sheetId: null, existing: false, skipped: "Client name missing." };
+  }
+
+  const boqItems = boqRowsToCostingItems(quotationBoqRows(input.quote));
+  const saleTotal = moneyRound(boqItems.reduce((s, it) => s + it.totalSaleValue, 0));
+  const quotationValue =
+    saleTotal ||
+    Number(input.quote?.grandTotal ?? input.quote?.totalCost ?? input.quote?.netCost ?? 0);
+
+  const id = `cost-${Date.now()}`;
+  const body = {
+    title: buildAutoCostingTitle(clientName),
+    clientName,
+    leadId: input.lead?.id || null,
+    customerId: input.customerId,
+    projectId: input.projectId,
+    quotationId: input.quote?.id || null,
+    invoiceId: input.invoiceId,
+    quotationValue,
+    amountReceived: Math.max(0, Number(input.amountReceived ?? 0)),
+    items: boqItems,
+    notes: "Auto-created from contracted quotation BOQ.",
+    autoCreated: true,
+    consumeInventory: false,
+    stockReserved: false,
+    reservedStockValue: 0,
+    consumedStockValue: 0,
+  };
+  const row = buildSheetDbRow(body, boqItems, input.actor.userId, id, true);
+  const saved = await insertRow(SHEETS_TABLE, "internalCostingSheets", row, localDb);
+  return { sheetId: saved.id, existing: false };
+}
+
+/** Sync amount received on the costing sheet linked to an invoice (Phase 23 PART 5). */
+export async function syncCostingSheetFromInvoice(
+  invoiceId: string,
+  paidAmount: number,
+  localDb?: Database
+): Promise<{ sheetId: string } | null> {
+  const rows = await loadCostingSheetRows(localDb);
+  if (!rows) return null;
+  const row = rows.find((r) => (r.invoice_id || r.invoiceId) === invoiceId);
+  if (!row) return null;
+
+  const sheet = mapSheetRow(row);
+  const totals = computeCostingTotals({
+    quotationValue: sheet.quotationValue,
+    amountReceived: paidAmount,
+    items: sheet.items,
+  });
+  const patch = {
+    amount_received: totals.amountReceived,
+    net_cash_remaining: totals.netCashRemaining,
+    updated_at: new Date().toISOString(),
+  };
+  await updateRow(SHEETS_TABLE, "internalCostingSheets", sheet.id, patch, localDb);
+  return { sheetId: sheet.id };
+}
+
+async function applySheetInventoryReserve(
+  userId: string,
+  username: string,
+  sheet: InternalCostingSheet,
+  localDb?: Database
+) {
+  if (!sheet.projectId) return { reservedStockValue: 0 };
+  let reservedStockValue = 0;
+  for (const item of sheet.items) {
+    if (!item.inventoryItemId) continue;
+    const qty = Math.max(0, item.purchaseQty || item.saleQty);
+    if (qty <= 0) continue;
+    await reserveAdminInventoryForProject(userId, username, {
+      inventoryItemId: item.inventoryItemId,
+      projectId: sheet.projectId,
+      qty,
+      notes: `Reserved for costing sheet ${sheet.id}: ${item.itemName}`,
+    }, localDb);
+    reservedStockValue = moneyRound(
+      reservedStockValue + qty * Math.max(0, item.purchaseRate || 0)
+    );
+  }
+  return { reservedStockValue };
+}
+
+/** Consume reserved inventory when installation starts (Phase 23 PART 6). */
+export async function maybeConsumeCostingInventoryForProject(
+  projectId: string,
+  actor: { userId: string; username: string; role: string },
+  localDb?: Database
+) {
+  const rows = await loadCostingSheetRows(localDb);
+  if (!rows) return null;
+  const row = rows.find((r) => (r.project_id || r.projectId) === projectId);
+  if (!row) return null;
+  const sheet = mapSheetRow(row);
+  if (!sheet.consumeInventory || sheet.consumedStockValue > 0) return { sheetId: sheet.id, consumed: false };
+
+  let items = sheet.items.map((it) => ({ ...it, consumeStock: !!it.inventoryItemId && !it.stockConsumed }));
+  items = await applyStockConsumption(actor.userId, actor.username, sheet.id, items, sheet.items, localDb);
+  const consumedStockValue = moneyRound(
+    items
+      .filter((it) => it.stockConsumed && it.inventoryItemId)
+      .reduce((s, it) => s + (it.purchaseQty || it.saleQty) * Math.max(0, it.purchaseRate || 0), 0)
+  );
+  await updateRow(
+    SHEETS_TABLE,
+    "internalCostingSheets",
+    sheet.id,
+    {
+      items: items.map(({ consumeStock, ...rest }) => rest),
+      consumed_stock_value: consumedStockValue,
+      updated_at: new Date().toISOString(),
+    },
+    localDb
+  );
+  return { sheetId: sheet.id, consumed: true, consumedStockValue };
+}
+
+export async function fetchProjectProfitabilitySummary(
+  userId: string,
+  username: string,
+  localDb?: Database
+) {
+  await assertInternalCostingAdmin(userId, username, localDb);
+  const rows = await loadRows(SHEETS_TABLE, "internalCostingSheets", localDb);
+  const sheets = rows.map(mapSheetRow);
+  return { summary: computeProjectProfitabilitySummary(sheets) };
+}
+
 export async function listAdminCostingSheets(
   userId: string,
   username: string,
@@ -370,16 +588,32 @@ export async function updateAdminCostingSheet(
   await assertInternalCostingAdmin(userId, username, localDb);
   const { sheet: existing } = await getAdminCostingSheet(userId, username, id, localDb);
   const merged: Record<string, unknown> = {
+    title: body.title ?? existing.title,
     clientName: body.clientName ?? body.client_name ?? existing.clientName,
     leadId: body.leadId ?? body.lead_id ?? existing.leadId,
     customerId: body.customerId ?? body.customer_id ?? existing.customerId,
+    projectId: body.projectId ?? body.project_id ?? existing.projectId,
     quotationId: body.quotationId ?? body.quotation_id ?? existing.quotationId,
     invoiceId: body.invoiceId ?? body.invoice_id ?? existing.invoiceId,
     quotationValue: body.quotationValue ?? body.quotation_value ?? existing.quotationValue,
     amountReceived: body.amountReceived ?? body.amount_received ?? existing.amountReceived,
     notes: body.notes !== undefined ? body.notes : existing.notes,
+    autoCreated: body.autoCreated ?? body.auto_created ?? existing.autoCreated,
+    consumeInventory: body.consumeInventory ?? body.consume_inventory ?? existing.consumeInventory,
+    stockReserved: existing.stockReserved,
+    reservedStockValue: existing.reservedStockValue,
+    consumedStockValue: existing.consumedStockValue,
   };
   let items = body.items !== undefined ? parseItems(body.items) : existing.items;
+
+  const consumeEnabled = !!merged.consumeInventory;
+  const wasConsumeEnabled = existing.consumeInventory;
+  if (consumeEnabled && !wasConsumeEnabled && !existing.stockReserved) {
+    const reserve = await applySheetInventoryReserve(userId, username, { ...existing, items }, localDb);
+    merged.stockReserved = true;
+    merged.reservedStockValue = reserve.reservedStockValue;
+  }
+
   items = await applyStockConsumption(userId, username, id, items, existing.items, localDb);
   const row = buildSheetDbRow(merged, items, userId, id, false);
   const saved = await updateRow(SHEETS_TABLE, "internalCostingSheets", id, row, localDb);

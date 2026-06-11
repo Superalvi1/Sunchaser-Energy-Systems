@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   TrendingUp,
   BarChart4,
@@ -43,7 +43,7 @@ import {
 import ManualAdminControl from "./ManualAdminControl";
 import AdminModuleNav, { type AdminSegmentId, type AdminQuickAction } from "./AdminModuleNav";
 import InventoryStaff from "./InventoryStaff";
-import { currencySymbol, API_BASE_URL } from "../services/api";
+import { currencySymbol, API_BASE_URL, fetchProjectProfitabilitySummary } from "../services/api";
 import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
 
 interface AdminAppProps {
@@ -123,6 +123,22 @@ export default function AdminApp({
   const showUserManagement = isSuperAdmin(staffUser.username, staffUser.role);
   const showBranding = isSuperAdmin(staffUser.username, staffUser.role);
   const showInternalCosting = canViewInternalCosting(staffUser.username, staffUser.role);
+
+  const [profitabilitySummary, setProfitabilitySummary] = useState<{
+    monthLabel: string;
+    totalRevenue: number;
+    totalCost: number;
+    grossProfit: number;
+    marginPercent: number;
+    sheetCount: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!showInternalCosting || activeSegment !== "overview") return;
+    fetchProjectProfitabilitySummary(staffUser)
+      .then((data) => setProfitabilitySummary(data.summary))
+      .catch(() => setProfitabilitySummary(null));
+  }, [showInternalCosting, activeSegment, staffUser.id, staffUser.username]);
 
   // Template Manager Tab states
   const [selectedSubTab, setSelectedSubTab] = useState<'pages' | 'banks' | 'terms' | 'ceo' | 'structures' | 'settings'>('pages');
@@ -269,6 +285,50 @@ export default function AdminApp({
         />
 
         <div className="flex-1 min-w-0 w-full space-y-6">
+          {showInternalCosting && activeSegment === "overview" && profitabilitySummary && (
+            <button
+              type="button"
+              onClick={() => selectSegment("internal-costing")}
+              className="w-full text-left bg-neutral-900 border border-amber-500/30 rounded-3xl p-6 shadow-sm hover:border-amber-500/50 transition group"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 font-mono mb-1">
+                    Project Profitability
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">{profitabilitySummary.monthLabel} · {profitabilitySummary.sheetCount} sheet(s)</p>
+                </div>
+                <span className="text-[10px] font-bold text-amber-400 group-hover:text-amber-300">
+                  View Internal Costing Reports →
+                </span>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Total Revenue</div>
+                  <div className="text-lg font-black text-neutral-100">
+                    Rs. {profitabilitySummary.totalRevenue.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Total Cost</div>
+                  <div className="text-lg font-black text-neutral-100">
+                    Rs. {profitabilitySummary.totalCost.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Gross Profit</div>
+                  <div className={`text-lg font-black ${profitabilitySummary.grossProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    Rs. {profitabilitySummary.grossProfit.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Margin</div>
+                  <div className="text-lg font-black text-amber-300">{profitabilitySummary.marginPercent}%</div>
+                </div>
+              </div>
+            </button>
+          )}
+
           {(activeSegment === "overview" || activeSegment === "reports") && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Leads status tracker Recharts */}

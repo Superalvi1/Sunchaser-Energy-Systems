@@ -34,6 +34,7 @@ import {
 } from "./src/lib/invoiceFromLead.ts";
 import { isInvoiceArchived } from "./src/lib/invoices.ts";
 import { isSuperAdmin } from "./src/lib/roles.ts";
+import { syncCostingSheetFromInvoice } from "./internalCostingDb.js";
 
 export class InvoiceDbError extends Error {
   statusCode: number;
@@ -721,6 +722,12 @@ export async function recordInvoicePayment(
     const db = localDb as any;
     const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
     if (idx >= 0) Object.assign(db.invoices[idx], patch);
+  }
+
+  try {
+    await syncCostingSheetFromInvoice(invoiceId, paidTotal, localDb);
+  } catch (err: any) {
+    console.warn("[CostingPaymentSync]", err?.message || err);
   }
 
   return { payment: payRow, invoice: await getAdminInvoiceById(userId, username, role, invoiceId, localDb) };

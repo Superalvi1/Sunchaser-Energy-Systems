@@ -89,6 +89,7 @@ export default function InternalCostingStaff({ staffUser, leads }: Props) {
     quotationValue: "",
     amountReceived: "",
     notes: "",
+    consumeInventory: false,
   });
   const [itemsDraft, setItemsDraft] = useState<InternalCostingItem[]>([]);
   const [showSheetEditor, setShowSheetEditor] = useState(false);
@@ -186,6 +187,7 @@ export default function InternalCostingStaff({ staffUser, leads }: Props) {
       quotationValue: "",
       amountReceived: "",
       notes: "",
+      consumeInventory: false,
     });
     setItemsDraft([emptyItem()]);
     setShowSheetEditor(true);
@@ -200,6 +202,7 @@ export default function InternalCostingStaff({ staffUser, leads }: Props) {
       quotationValue: String(sheet.quotationValue || ""),
       amountReceived: String(sheet.amountReceived || ""),
       notes: sheet.notes || "",
+      consumeInventory: !!sheet.consumeInventory,
     });
     setItemsDraft(sheet.items.map((it) => computeCostingItem(it)));
     setShowSheetEditor(true);
@@ -237,6 +240,7 @@ export default function InternalCostingStaff({ staffUser, leads }: Props) {
         quotationValue: Number(sheetDraft.quotationValue || 0),
         amountReceived: Number(sheetDraft.amountReceived || 0),
         notes: sheetDraft.notes,
+        consumeInventory: sheetDraft.consumeInventory,
         items: itemsDraft.filter((it) => it.itemName.trim() || it.totalPurchaseCost > 0),
       };
       if (editingSheet) {
@@ -453,7 +457,14 @@ export default function InternalCostingStaff({ staffUser, leads }: Props) {
               <div key={sheet.id} className={`${cardCls} space-y-3`}>
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-sm font-bold text-neutral-100">{sheet.clientName}</div>
+                    <div className="text-sm font-bold text-neutral-100">
+                      {sheet.title || sheet.clientName}
+                    </div>
+                    {sheet.autoCreated && (
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-amber-500/80">
+                        Auto from contract
+                      </span>
+                    )}
                     <div className="text-[10px] text-neutral-500 font-mono">
                       {sheet.id}
                       {sheet.quotationId ? ` · quote ${sheet.quotationId}` : ""}
@@ -580,6 +591,28 @@ export default function InternalCostingStaff({ staffUser, leads }: Props) {
                   onChange={(e) => setSheetDraft((d) => ({ ...d, notes: e.target.value }))}
                   placeholder="Internal notes (never shown to customer)"
                 />
+              </div>
+              <div className="sm:col-span-3 flex flex-wrap items-center gap-4 pt-1">
+                <label className="flex items-center gap-2 text-[11px] text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={sheetDraft.consumeInventory}
+                    onChange={(e) =>
+                      setSheetDraft((d) => ({ ...d, consumeInventory: e.target.checked }))
+                    }
+                  />
+                  Consume Inventory (reserve on save, consume when installation starts)
+                </label>
+                {editingSheet?.stockReserved && (
+                  <span className="text-[10px] text-neutral-500">
+                    Reserved stock value: {fmt(editingSheet.reservedStockValue)}
+                  </span>
+                )}
+                {editingSheet && editingSheet.consumedStockValue > 0 && (
+                  <span className="text-[10px] text-emerald-400">
+                    Consumed stock value: {fmt(editingSheet.consumedStockValue)}
+                  </span>
+                )}
               </div>
             </div>
 

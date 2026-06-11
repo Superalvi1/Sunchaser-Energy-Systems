@@ -201,6 +201,8 @@ import {
   createAdminInventoryPurchase,
   deleteAdminInventoryPurchase,
   fetchAdminCostingReports,
+  fetchProjectProfitabilitySummary,
+  maybeConsumeCostingInventoryForProject,
   InternalCostingDbError,
 } from "./internalCostingDb.js";
 import {
@@ -2481,6 +2483,10 @@ app.get(
   "/api/admin/costing/reports",
   costingRoute((u, n) => fetchAdminCostingReports(u, n, db), { save: false })
 );
+app.get(
+  "/api/admin/costing/profitability-summary",
+  costingRoute((u, n) => fetchProjectProfitabilitySummary(u, n, db), { save: false })
+);
 
 app.get("/api/branding", async (_req, res) => {
   try {
@@ -3896,7 +3902,7 @@ app.put("/api/leads/:id", async (req, res) => {
         "Contract Automation",
         "Finance",
         "Contract-to-Invoice",
-        `Lead ${id} contracted — invoice ${contractProvision.invoiceId || "pending"}${contractProvision.invoiceExisting ? " (existing)" : ""}`
+        `Lead ${id} contracted — invoice ${contractProvision.invoiceId || "pending"}${contractProvision.invoiceExisting ? " (existing)" : ""}, costing ${contractProvision.costingSheetId || "pending"}${contractProvision.costingSheetExisting ? " (existing)" : ""}`
       );
     }
 
@@ -5386,6 +5392,30 @@ app.post("/api/projects/:id/update-stage", async (req, res) => {
   }
 
   await appendActivityLog("installer", "Installation Manager", "Installation Team", "Project Staged", `Adjourned project ${project.id} milestones to ${stage}`);
+
+  const installStages = new Set([
+    "Structure Installation",
+    "Panel Installation",
+    "Inverter Installation",
+    "Testing & Commissioning",
+    "Material Procurement",
+  ]);
+  if (installStages.has(String(stage || ""))) {
+    const actor = readStaffAuth(req);
+    const actorId = actor.userId || "u-allauddin";
+    const actorName = actor.username || "allauddin";
+    try {
+      await maybeConsumeCostingInventoryForProject(
+        project.id,
+        { userId: actorId, username: actorName, role: actor.role || "Super Admin" },
+        db
+      );
+      if (!leadCtx?.supabase) saveDb();
+    } catch (err: any) {
+      console.warn("[CostingInventoryConsume]", err?.message || err);
+    }
+  }
+
   res.json(project);
 });
 

@@ -2724,6 +2724,17 @@ export async function fetchAdminCostingReports(staff: StaffIdent) {
   return costingRequest<any>("Load costing reports", "/api/admin/costing/reports", staff);
 }
 
+export async function fetchProjectProfitabilitySummary(staff: StaffIdent) {
+  return costingRequest<{ summary: {
+    monthLabel: string;
+    totalRevenue: number;
+    totalCost: number;
+    grossProfit: number;
+    marginPercent: number;
+    sheetCount: number;
+  } }>("Load profitability summary", "/api/admin/costing/profitability-summary", staff);
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {
