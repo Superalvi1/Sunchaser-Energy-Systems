@@ -12,6 +12,43 @@ export function buildQuotationPdfFilename(lead: any, quote: any): string {
   return `Sunchaser-Quotation-${safe}${kw ? `-${kw}` : ""}.pdf`;
 }
 
+const CHROMIUM_LAUNCH_OPTIONS = {
+  headless: true,
+  args: ["--no-sandbox", "--disable-setuid-sandbox"],
+} as const;
+
+let chromiumInstallPromise: Promise<void> | null = null;
+
+/** One-shot runtime install for hosts where the build-phase browser cache is missing (e.g. Render). */
+async function installChromiumAtRuntime(): Promise<void> {
+  if (!chromiumInstallPromise) {
+    chromiumInstallPromise = (async () => {
+      const { spawn } = await import("node:child_process");
+      console.warn("[PDF] Chromium executable missing — running `playwright install chromium`…");
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn("npx", ["playwright", "install", "chromium"], {
+          stdio: "inherit",
+          env: process.env,
+        });
+        child.on("error", reject);
+        child.on("exit", (code) =>
+          code === 0 ? resolve() : reject(new Error(`playwright install exited with code ${code}`))
+        );
+      });
+      console.warn("[PDF] Chromium runtime install complete.");
+    })().catch((err) => {
+      chromiumInstallPromise = null;
+      throw err;
+    });
+  }
+  return chromiumInstallPromise;
+}
+
+function isMissingBrowserError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "");
+  return /executable doesn't exist|please run the following command|playwright install/i.test(msg);
+}
+
 export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
   let chromium: typeof import("playwright").chromium;
   try {
@@ -22,10 +59,14 @@ export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
     );
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  let browser;
+  try {
+    browser = await chromium.launch(CHROMIUM_LAUNCH_OPTIONS);
+  } catch (err) {
+    if (!isMissingBrowserError(err)) throw err;
+    await installChromiumAtRuntime();
+    browser = await chromium.launch(CHROMIUM_LAUNCH_OPTIONS);
+  }
 
   try {
     const page = await browser.newPage();
