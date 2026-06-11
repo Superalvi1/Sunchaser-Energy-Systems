@@ -12,6 +12,7 @@ import {
   Headphones,
   History,
   LayoutGrid,
+  Lock,
   Package,
   PieChart,
   Plus,
@@ -35,6 +36,7 @@ export type AdminSegmentId =
   | "parties"
   | "finance-dashboard"
   | "project-finance"
+  | "internal-costing"
   | "project-delivery"
   | "project-operations"
   | "asset-maintenance"
@@ -78,6 +80,7 @@ type AdminModuleNavProps = {
   showInvoices: boolean;
   showBranding: boolean;
   showUserManagement: boolean;
+  showInternalCosting: boolean;
   onQuickAction?: (action: AdminQuickAction) => void;
 };
 
@@ -161,8 +164,9 @@ export function buildAdminNavGroups(opts: {
   showInvoices: boolean;
   showBranding: boolean;
   showUserManagement: boolean;
+  showInternalCosting: boolean;
 }): NavGroup[] {
-  const { showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement } = opts;
+  const { showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting } = opts;
 
   return [
     {
@@ -232,6 +236,16 @@ export function buildAdminNavGroups(opts: {
                 title: "Project Finance",
                 description: "Margins, payments, project P&L",
                 icon: DollarSign,
+              },
+            ]
+          : []),
+        ...(showInternalCosting
+          ? [
+              {
+                id: "internal-costing" as const,
+                title: "Internal Costing",
+                description: "Purchase costs, investors, profit (Super Admin)",
+                icon: Lock,
               },
             ]
           : []),
@@ -397,6 +411,7 @@ export default function AdminModuleNav({
   showInvoices,
   showBranding,
   showUserManagement,
+  showInternalCosting,
   onQuickAction,
 }: AdminModuleNavProps) {
   const [query, setQuery] = useState("");
@@ -411,8 +426,9 @@ export default function AdminModuleNav({
         showInvoices,
         showBranding,
         showUserManagement,
+        showInternalCosting,
       }),
-    [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement]
+    [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting]
   );
 
   const q = query.trim().toLowerCase();

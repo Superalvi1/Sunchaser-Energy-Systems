@@ -2603,6 +2603,127 @@ export async function fetchAdminInventoryReservations(
   return data as { reservations: any[] };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 22 — Internal Costing + Investor Inventory Ledger (Super Admin only)
+// ---------------------------------------------------------------------------
+
+async function costingRequest<T>(
+  label: string,
+  path: string,
+  staff: { id: string; username: string; role: string },
+  init?: { method?: string; body?: Record<string, unknown> }
+): Promise<T> {
+  const res = await apiFetch(path, {
+    method: init?.method || "GET",
+    headers: staffPortalHeaders(staff.id, staff.username, staff.role),
+    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as any).error || `${label} failed.`);
+  return data as T;
+}
+
+type StaffIdent = { id: string; username: string; role: string };
+
+export async function fetchAdminCostingSheets(staff: StaffIdent) {
+  return costingRequest<{ sheets: any[] }>("Load costing sheets", "/api/admin/costing/sheets", staff);
+}
+
+export async function createAdminCostingSheet(staff: StaffIdent, body: Record<string, unknown>) {
+  return costingRequest<{ sheet: any }>("Create costing sheet", "/api/admin/costing/sheets", staff, {
+    method: "POST",
+    body,
+  });
+}
+
+export async function updateAdminCostingSheet(
+  staff: StaffIdent,
+  sheetId: string,
+  body: Record<string, unknown>
+) {
+  return costingRequest<{ sheet: any }>(
+    "Update costing sheet",
+    `/api/admin/costing/sheets/${encodeURIComponent(sheetId)}`,
+    staff,
+    { method: "PATCH", body }
+  );
+}
+
+export async function deleteAdminCostingSheet(staff: StaffIdent, sheetId: string) {
+  return costingRequest<{ success: boolean }>(
+    "Delete costing sheet",
+    `/api/admin/costing/sheets/${encodeURIComponent(sheetId)}`,
+    staff,
+    { method: "DELETE" }
+  );
+}
+
+export async function fetchAdminInvestors(staff: StaffIdent) {
+  return costingRequest<{ investors: any[] }>("Load investors", "/api/admin/costing/investors", staff);
+}
+
+export async function createAdminInvestor(staff: StaffIdent, body: Record<string, unknown>) {
+  return costingRequest<{ investor: any }>("Create investor", "/api/admin/costing/investors", staff, {
+    method: "POST",
+    body,
+  });
+}
+
+export async function updateAdminInvestor(
+  staff: StaffIdent,
+  investorId: string,
+  body: Record<string, unknown>
+) {
+  return costingRequest<{ investor: any }>(
+    "Update investor",
+    `/api/admin/costing/investors/${encodeURIComponent(investorId)}`,
+    staff,
+    { method: "PATCH", body }
+  );
+}
+
+export async function deleteAdminInvestor(staff: StaffIdent, investorId: string) {
+  return costingRequest<{ success: boolean }>(
+    "Delete investor",
+    `/api/admin/costing/investors/${encodeURIComponent(investorId)}`,
+    staff,
+    { method: "DELETE" }
+  );
+}
+
+export async function fetchAdminInventoryPurchases(staff: StaffIdent) {
+  return costingRequest<{ purchases: any[] }>(
+    "Load purchases",
+    "/api/admin/costing/purchases",
+    staff
+  );
+}
+
+export async function createAdminInventoryPurchase(
+  staff: StaffIdent,
+  body: Record<string, unknown>
+) {
+  return costingRequest<{ purchase: any; inventoryItem: any | null }>(
+    "Create purchase",
+    "/api/admin/costing/purchases",
+    staff,
+    { method: "POST", body }
+  );
+}
+
+export async function deleteAdminInventoryPurchase(staff: StaffIdent, purchaseId: string) {
+  return costingRequest<{ success: boolean }>(
+    "Delete purchase",
+    `/api/admin/costing/purchases/${encodeURIComponent(purchaseId)}`,
+    staff,
+    { method: "DELETE" }
+  );
+}
+
+export async function fetchAdminCostingReports(staff: StaffIdent) {
+  return costingRequest<any>("Load costing reports", "/api/admin/costing/reports", staff);
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {

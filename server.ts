@@ -188,6 +188,22 @@ import {
   ProjectFinanceDbError,
 } from "./projectFinanceDb.js";
 import {
+  listAdminCostingSheets,
+  getAdminCostingSheet,
+  createAdminCostingSheet,
+  updateAdminCostingSheet,
+  deleteAdminCostingSheet,
+  listAdminInvestors,
+  createAdminInvestor,
+  updateAdminInvestor,
+  deleteAdminInvestor,
+  listAdminInventoryPurchases,
+  createAdminInventoryPurchase,
+  deleteAdminInventoryPurchase,
+  fetchAdminCostingReports,
+  InternalCostingDbError,
+} from "./internalCostingDb.js";
+import {
   authenticateUser,
   registerUser,
   verifyEmailToken,
@@ -2379,6 +2395,92 @@ app.patch("/api/admin/finance/projects/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 22 — Internal Costing + Investor Inventory Ledger (Super Admin only)
+// ---------------------------------------------------------------------------
+
+function handleCostingError(res: any, err: any) {
+  if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+  if (err instanceof InternalCostingDbError)
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  return res.status(500).json({ error: err.message });
+}
+
+type CostingHandler = (userId: string, username: string, req: any) => Promise<unknown>;
+
+function costingRoute(handler: CostingHandler, options?: { save?: boolean; status?: number }) {
+  return async (req: any, res: any) => {
+    const { userId, username } = readStaffAuth(req);
+    if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+    try {
+      loadDb();
+      const data = await handler(userId, username, req);
+      if (options?.save !== false) saveDb();
+      return res.status(options?.status || 200).json(data);
+    } catch (err: any) {
+      return handleCostingError(res, err);
+    }
+  };
+}
+
+app.get(
+  "/api/admin/costing/sheets",
+  costingRoute((u, n) => listAdminCostingSheets(u, n, db), { save: false })
+);
+app.get(
+  "/api/admin/costing/sheets/:id",
+  costingRoute((u, n, req) => getAdminCostingSheet(u, n, req.params.id, db), { save: false })
+);
+app.post(
+  "/api/admin/costing/sheets",
+  costingRoute((u, n, req) => createAdminCostingSheet(u, n, req.body || {}, db), { status: 201 })
+);
+app.patch(
+  "/api/admin/costing/sheets/:id",
+  costingRoute((u, n, req) => updateAdminCostingSheet(u, n, req.params.id, req.body || {}, db))
+);
+app.delete(
+  "/api/admin/costing/sheets/:id",
+  costingRoute((u, n, req) => deleteAdminCostingSheet(u, n, req.params.id, db))
+);
+
+app.get(
+  "/api/admin/costing/investors",
+  costingRoute((u, n) => listAdminInvestors(u, n, db), { save: false })
+);
+app.post(
+  "/api/admin/costing/investors",
+  costingRoute((u, n, req) => createAdminInvestor(u, n, req.body || {}, db), { status: 201 })
+);
+app.patch(
+  "/api/admin/costing/investors/:id",
+  costingRoute((u, n, req) => updateAdminInvestor(u, n, req.params.id, req.body || {}, db))
+);
+app.delete(
+  "/api/admin/costing/investors/:id",
+  costingRoute((u, n, req) => deleteAdminInvestor(u, n, req.params.id, db))
+);
+
+app.get(
+  "/api/admin/costing/purchases",
+  costingRoute((u, n) => listAdminInventoryPurchases(u, n, db), { save: false })
+);
+app.post(
+  "/api/admin/costing/purchases",
+  costingRoute((u, n, req) => createAdminInventoryPurchase(u, n, req.body || {}, db), {
+    status: 201,
+  })
+);
+app.delete(
+  "/api/admin/costing/purchases/:id",
+  costingRoute((u, n, req) => deleteAdminInventoryPurchase(u, n, req.params.id, db))
+);
+
+app.get(
+  "/api/admin/costing/reports",
+  costingRoute((u, n) => fetchAdminCostingReports(u, n, db), { save: false })
+);
 
 app.get("/api/branding", async (_req, res) => {
   try {

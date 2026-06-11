@@ -25,6 +25,8 @@ import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import EnergyMonitoringStaff from "./EnergyMonitoringStaff";
 import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
 import ProjectFinanceStaff from "./ProjectFinanceStaff";
+import InternalCostingStaff from "./InternalCostingStaff";
+import { canViewInternalCosting } from "../lib/internalCosting";
 import InvoiceStaff from "./InvoiceStaff";
 import PartyLedgerStaff from "./PartyLedgerStaff";
 import FinanceDashboardStaff from "./FinanceDashboardStaff";
@@ -120,6 +122,7 @@ export default function AdminApp({
   const showInvoices = canCreateInvoice(staffUser.username, staffUser.role);
   const showUserManagement = isSuperAdmin(staffUser.username, staffUser.role);
   const showBranding = isSuperAdmin(staffUser.username, staffUser.role);
+  const showInternalCosting = canViewInternalCosting(staffUser.username, staffUser.role);
 
   // Template Manager Tab states
   const [selectedSubTab, setSelectedSubTab] = useState<'pages' | 'banks' | 'terms' | 'ceo' | 'structures' | 'settings'>('pages');
@@ -261,6 +264,7 @@ export default function AdminApp({
           showInvoices={showInvoices}
           showBranding={showBranding}
           showUserManagement={showUserManagement}
+          showInternalCosting={showInternalCosting}
           onQuickAction={onQuickAction}
         />
 
@@ -1463,6 +1467,9 @@ export default function AdminApp({
         )}
         {activeSegment === 'project-finance' && showFinanceAdmin && (
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />
+        )}
+        {activeSegment === 'internal-costing' && showInternalCosting && (
+          <InternalCostingStaff staffUser={staffUser} leads={leads} />
         )}
         {activeSegment === "finance-dashboard" && showFinanceDashboard && (
           <FinanceDashboardStaff
