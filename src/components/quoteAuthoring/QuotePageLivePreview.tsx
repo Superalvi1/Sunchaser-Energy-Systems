@@ -17,6 +17,8 @@ type QuotePageLivePreviewProps = {
   signatureBlock?: any;
   ceoMessages?: any[];
   pageTypeLabel?: string;
+  embedded?: boolean;
+  large?: boolean;
 };
 
 export default function QuotePageLivePreview({
@@ -29,6 +31,8 @@ export default function QuotePageLivePreview({
   signatureBlock,
   ceoMessages = [],
   pageTypeLabel,
+  embedded = false,
+  large = false,
 }: QuotePageLivePreviewProps) {
   const bodyMarkup = useMemo(
     () =>
@@ -50,9 +54,15 @@ export default function QuotePageLivePreview({
   const templateMeta = pageTypeLabel ? getAuthoringTemplateMeta(pageTypeLabel as any) : null;
 
   return (
-    <div className="space-y-2">
-      <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Live A4 Preview</label>
-      <div className="flex justify-center bg-slate-950 p-3 rounded-xl border border-slate-850 overflow-auto max-h-[420px]">
+    <div className={embedded ? "h-full" : "space-y-2"}>
+      {!embedded && (
+        <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Live A4 Preview</label>
+      )}
+      <div
+        className={`flex justify-center bg-slate-950 rounded-xl border border-slate-850 overflow-auto ${
+          embedded ? "h-full p-2" : large ? "p-4 max-h-[min(72vh,900px)]" : "p-3 max-h-[420px]"
+        }`}
+      >
         <div
           className="relative bg-white shadow-lg flex flex-col text-left"
           style={{

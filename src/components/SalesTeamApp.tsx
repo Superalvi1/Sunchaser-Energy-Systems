@@ -53,7 +53,7 @@ import {
   sanitizeLeadAdvisorInput,
   sanitizeLeadLocationInput,
 } from "../lib/leadDisplay";
-import QuotePageAuthoringFields from "./quoteAuthoring/QuotePageAuthoringFields";
+import QuoteTemplateStudio from "./quoteAuthoring/QuoteTemplateStudio";
 import {
   mergeContentLibrary,
   type ContentLibraryBlock,
@@ -441,6 +441,10 @@ export default function SalesTeamApp({
   const [globalBodyColor, setGlobalBodyColor] = useState<string>("#475569");
   const [globalLineHeight, setGlobalLineHeight] = useState<string>("1.6");
   const [pdfQuality, setPdfQuality] = useState<PdfQualityMode>("print");
+  const [pageMarginTop, setPageMarginTop] = useState("20");
+  const [pageMarginBottom, setPageMarginBottom] = useState("20");
+  const [pageMarginLeft, setPageMarginLeft] = useState("20");
+  const [pageMarginRight, setPageMarginRight] = useState("20");
   const [contentLibrary, setContentLibrary] = useState<ContentLibraryBlock[]>(mergeContentLibrary([]));
 
   const globalWatermarkPreviewStyle = useMemo(() => {
@@ -542,6 +546,13 @@ export default function SalesTeamApp({
     }
     const quality = pdfCfg?.pdfQuality || pdfCfg?.globalAuthoring?.pdfQuality;
     if (quality === "screen" || quality === "print") setPdfQuality(quality);
+    const margins = pdfCfg?.globalAuthoring?.pageMargins || pdfCfg?.pageMargins;
+    if (margins) {
+      setPageMarginTop(String(margins.top ?? "20"));
+      setPageMarginBottom(String(margins.bottom ?? "20"));
+      setPageMarginLeft(String(margins.left ?? "20"));
+      setPageMarginRight(String(margins.right ?? "20"));
+    }
     setContentLibrary(mergeContentLibrary(pdfCfg?.contentLibrary || pdfCfg?.globalAuthoring?.contentLibrary));
   }, [settings, quotePdfSettings]);
 
@@ -605,6 +616,12 @@ export default function SalesTeamApp({
           },
           pdfQuality,
           contentLibrary,
+          pageMargins: {
+            top: pageMarginTop,
+            bottom: pageMarginBottom,
+            left: pageMarginLeft,
+            right: pageMarginRight,
+          },
         },
       };
 
@@ -735,6 +752,7 @@ export default function SalesTeamApp({
       } else if (actionType === 'reset') {
         updated.title = "";
         updated.body_text = "";
+        updated.body_html = "";
         updated.image_url = "";
         updated.bg_image_url = "";
         updated.layoutMode = "standard";
@@ -744,6 +762,7 @@ export default function SalesTeamApp({
         updated.footerMode = "inherit";
         updated.footerText = "";
         updated.bodyImages = [];
+        updated.imageSections = [];
       }
       
       updated.saveStatus = 'Unsaved';
@@ -2758,6 +2777,35 @@ export default function SalesTeamApp({
     }
   };
 
+  const handleDuplicateTemplatePage = async (pageId: string) => {
+    const page = quoteTemplatePages.find((p) => p.id === pageId);
+    if (!page) return;
+    const maxOrder = Math.max(0, ...quoteTemplatePages.map((p) => Number(p.sort_order || p.sortOrder || 0)));
+    const newId = `tmpl-p-${Date.now()}`;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add",
+          table: "quoteTemplatePages",
+          data: {
+            ...page,
+            id: newId,
+            title: `${page.title || "Page"} (Copy)`,
+            sort_order: maxOrder + 1,
+            sortOrder: maxOrder + 1,
+          },
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      alert("Page duplicated.");
+      if (onRefreshState) onRefreshState();
+    } catch (err: any) {
+      alert("Duplicate failed: " + (err.message || err));
+    }
+  };
+
   // Product library CRUD helpers
   const handleOpenAddProduct = () => {
     setEditingProduct(null);
@@ -4260,963 +4308,84 @@ export default function SalesTeamApp({
 
               {/* MODULE 3: QUOTE TEMPLATES */}
               {activeModule === 'templates' && (
-                <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
-                  <div className="border-b border-slate-800 pb-2">
-                    <h3 className="text-sm font-bold text-slate-100 font-sans">Visual Proposal Template Pages</h3>
-                    <span className="text-[10px] text-slate-500 font-sans">Reorder pages, configure text bodies, and upload base64 asset files.</span>
-                  </div>
-
-                  {/* Global Header & Footer Settings Card (BUG 5) */}
-                  <div className="bg-slate-950 border border-slate-850 p-5 rounded-2xl space-y-4">
-                    <div className="border-b border-slate-900 pb-2 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-sans">Global PDF Header & Footer Settings</h4>
-                        <p className="text-[9px] text-slate-500 font-sans">These settings apply to all proposal pages unless explicitly overridden at the page level.</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleSaveGlobalPdfSettings}
-                        className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-3 py-1.5 text-xs rounded-lg transition shrink-0"
-                      >
-                        Save Global Settings
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                      {/* Global Header */}
-                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
-                        <div className="flex justify-between items-center">
-                          <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Header</label>
-                          <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-slate-400">
-                            <input
-                              type="checkbox"
-                              checked={globalHeaderEnabled}
-                              onChange={(e) => setGlobalHeaderEnabled(e.target.checked)}
-                              className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
-                            />
-                            <span>Enabled</span>
-                          </label>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Header Company Name Text</label>
-                          <input
-                            type="text"
-                            value={globalHeaderText}
-                            onChange={(e) => setGlobalHeaderText(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-2">
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Logo Alignment</label>
-                            <select
-                              value={globalHeaderAlignment}
-                              onChange={(e) => setGlobalHeaderAlignment(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white"
-                            >
-                              <option value="left">Left</option>
-                              <option value="center">Center</option>
-                              <option value="right">Right</option>
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Line Color</label>
-                            <input
-                              type="text"
-                              value={globalHeaderLineColor}
-                              onChange={(e) => setGlobalHeaderLineColor(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white font-mono"
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Logo Max Height</label>
-                          <input
-                            type="text"
-                            value={globalHeaderLogoSize}
-                            onChange={(e) => setGlobalHeaderLogoSize(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white font-mono"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Global Header Logo Image</label>
-                          {globalHeaderLogoUrl ? (
-                            <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-10 bg-slate-950 flex items-center justify-center">
-                              <img src={globalHeaderLogoUrl} style={{ maxHeight: globalHeaderLogoSize }} className="object-contain" alt="global logo preview" />
-                              <button
-                                type="button"
-                                onClick={() => setGlobalHeaderLogoUrl("")}
-                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          ) : (
-                            <label className="border border-dashed border-slate-800 hover:border-slate-700 rounded-lg h-10 bg-slate-950 flex flex-col items-center justify-center text-slate-500 hover:text-slate-350 cursor-pointer transition">
-                              <Upload className="h-3 w-3 mb-0.5" />
-                              <span className="text-[9px]">Upload Header Logo</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={async (e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    try {
-                                      const url = await uploadImageFile(file, false);
-                                      setGlobalHeaderLogoUrl(url);
-                                    } catch (err: any) {
-                                      alert("Upload failed: " + err.message);
-                                    }
-                                  }
-                                }}
-                                className="hidden"
-                              />
-                            </label>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Global Footer */}
-                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
-                        <div className="flex justify-between items-center">
-                          <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Footer</label>
-                          <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-slate-400">
-                            <input
-                              type="checkbox"
-                              checked={globalFooterEnabled}
-                              onChange={(e) => setGlobalFooterEnabled(e.target.checked)}
-                              className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
-                            />
-                            <span>Enabled</span>
-                          </label>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Footer Text</label>
-                          <input
-                            type="text"
-                            value={globalFooterText}
-                            onChange={(e) => setGlobalFooterText(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-2">
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Alignment</label>
-                            <select
-                              value={globalFooterAlignment}
-                              onChange={(e) => setGlobalFooterAlignment(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white"
-                            >
-                              <option value="left">Left</option>
-                              <option value="center">Center</option>
-                              <option value="right">Right</option>
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Line Color</label>
-                            <input
-                              type="text"
-                              value={globalFooterLineColor}
-                              onChange={(e) => setGlobalFooterLineColor(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2 py-1 text-xs text-white font-mono"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-900">
-                        <label className="text-[10px] uppercase font-mono text-amber-500 font-bold">Global Watermark (All Pages)</label>
-
-                        {globalWatermarkPreviewUrl ? (
-                          <div className="relative group rounded-lg border border-slate-850 bg-slate-950 p-2 flex items-center gap-3">
-                            <img
-                              src={globalWatermarkPreviewUrl}
-                              alt="Global watermark preview"
-                              className="h-16 w-16 object-contain rounded border border-slate-800 bg-white/90"
-                            />
-                            <div className="flex-1 min-w-0 text-[10px] text-slate-400">
-                              {globalWatermarkFile ? (
-                                <span className="font-mono break-all">{globalWatermarkFile}</span>
-                              ) : (
-                                <span className="break-all">{globalWatermarkUrl}</span>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={handleRemoveGlobalWatermark}
-                              className="text-rose-400 hover:text-rose-300 text-[10px] font-bold uppercase px-2 py-1 border border-rose-500/30 rounded"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ) : (
-                          <label className="border border-dashed border-slate-850 hover:border-slate-700 rounded-lg h-20 bg-slate-950 flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 cursor-pointer transition text-[10px]">
-                            {globalWatermarkUploading ? (
-                              <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Uploading...</span>
-                            ) : (
-                              <>
-                                <Upload className="h-4 w-4 mb-1" />
-                                <span>Upload Watermark Image</span>
-                                <span className="text-[9px] text-slate-600 mt-0.5">PNG, JPG, WEBP · Max 5MB</span>
-                              </>
-                            )}
-                            <input
-                              type="file"
-                              accept="image/png,image/jpeg,image/webp"
-                              className="hidden"
-                              disabled={globalWatermarkUploading}
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleGlobalWatermarkUpload(file);
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
-                        )}
-
-                        <details className="text-[10px] text-slate-500">
-                          <summary className="cursor-pointer text-slate-400 hover:text-slate-300">Or use external URL (legacy)</summary>
-                          <input
-                            type="text"
-                            placeholder="https://example.com/watermark.png"
-                            value={globalWatermarkUrl}
-                            onChange={(e) => {
-                              setGlobalWatermarkUrl(e.target.value);
-                              setGlobalWatermarkFile("");
-                              setGlobalWatermarkPreviewUrl(e.target.value.trim());
-                            }}
-                            className="mt-2 w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1 text-xs text-white"
-                          />
-                        </details>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">
-                              Scale ({globalWatermarkScale}%)
-                            </label>
-                            <input
-                              type="range"
-                              min="10"
-                              max="100"
-                              step="1"
-                              value={globalWatermarkScale}
-                              onChange={(e) => setGlobalWatermarkScale(parseInt(e.target.value, 10))}
-                              className="w-full accent-amber-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">
-                              Opacity ({Math.round(globalWatermarkOpacity * 100)}%)
-                            </label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="0.2"
-                              step="0.01"
-                              value={globalWatermarkOpacity}
-                              onChange={(e) => setGlobalWatermarkOpacity(parseFloat(e.target.value))}
-                              className="w-full accent-amber-500"
-                            />
-                          </div>
-                          <div className="col-span-2">
-                            <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Position</label>
-                            <select
-                              value={globalWatermarkPosition}
-                              onChange={(e) => setGlobalWatermarkPosition(e.target.value as WatermarkPlacement)}
-                              className="w-full bg-slate-950 border border-slate-850 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                            >
-                              {WATERMARK_PLACEMENT_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-[9px] uppercase font-mono text-slate-500 font-bold block">Live Preview</label>
-                          <div
-                            className="relative mx-auto w-full max-w-[240px] rounded-lg border border-slate-800 bg-white shadow-inner overflow-hidden"
-                            style={{ aspectRatio: "210 / 297" }}
-                          >
-                            <div className="absolute inset-0 p-3 pointer-events-none">
-                              <div className="h-2 w-20 bg-slate-200 rounded mb-2" />
-                              <div className="space-y-1.5">
-                                <div className="h-1 w-full bg-slate-100 rounded" />
-                                <div className="h-1 bg-slate-100 rounded" style={{ width: "92%" }} />
-                                <div className="h-1 bg-slate-100 rounded" style={{ width: "84%" }} />
-                                <div className="h-1 w-full bg-slate-100 rounded" />
-                                <div className="h-1 bg-slate-100 rounded" style={{ width: "76%" }} />
-                              </div>
-                            </div>
-                            {globalWatermarkPreviewStyle ? (
-                              <div aria-hidden="true" style={globalWatermarkPreviewStyle as React.CSSProperties} />
-                            ) : (
-                              <div className="absolute inset-0 flex items-center justify-center text-[9px] text-slate-400 px-4 text-center">
-                                Upload or enter a watermark URL to preview placement
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {quoteTemplatePages
-                      .filter(Boolean)
-                      .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
-                      .map((page, idx) => {
-                        const pageState = getPageState(page);
-                        return (
-                          <div key={page.id} className="bg-slate-950 border border-slate-850 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow hover:border-slate-800 transition">
-                            <div className="space-y-3">
-                              
-                              {/* Page Title header */}
-                              <div className="flex justify-between items-center border-b border-slate-900 pb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="bg-slate-900 text-amber-500 border border-slate-800 text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
-                                    #{page.sort_order || idx + 1}
-                                  </span>
-                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] font-mono">
-                                    {page.page_type || page.pageType}
-                                  </span>
-                                  {/* Save status indicator */}
-                                  <span className={`text-[9px] px-2 py-0.5 rounded-full font-mono font-bold ${
-                                    pageState.saveStatus === 'Saved' 
-                                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' 
-                                      : pageState.saveStatus === 'Saving...'
-                                        ? 'bg-blue-500/15 text-blue-400 border border-blue-500/20 animate-pulse'
-                                        : 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                                  }`}>
-                                    {pageState.saveStatus}
-                                  </span>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <label className="flex items-center gap-1 cursor-pointer text-[10px] text-slate-400">
-                                    <input
-                                      type="checkbox"
-                                      checked={pageState.is_enabled}
-                                      onChange={(e) => handleFieldChange(page.id, 'is_enabled', e.target.checked)}
-                                      className="rounded border-slate-800 text-amber-500 bg-slate-900 h-3.5 w-3.5 focus:ring-0"
-                                    />
-                                    <span>Enabled</span>
-                                  </label>
-                                  <button type="button" onClick={() => handleUpdatePageSortOrder(page.id, page.sort_order, 'up')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-500 cursor-pointer inline-flex"><ArrowUp className="h-3 w-3" /></button>
-                                  <button type="button" onClick={() => handleUpdatePageSortOrder(page.id, page.sort_order, 'down')} className="bg-slate-900 border border-slate-800 p-1 rounded hover:text-amber-500 cursor-pointer inline-flex"><ArrowDown className="h-3 w-3" /></button>
-                                </div>
-                              </div>
-
-                              <div className="space-y-2">
-                                <label className="text-[9px] uppercase font-mono text-slate-500 font-bold">Page Header Title</label>
-                                <input
-                                  type="text"
-                                  value={pageState.title}
-                                  onChange={(e) => handleFieldChange(page.id, 'title', e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                                />
-                              </div>
-
-                              <QuotePageAuthoringFields
-                                pageId={page.id}
-                                pageState={pageState as any}
-                                contentLibrary={contentLibrary}
-                                ceoMessages={ceoMessages}
-                                onFieldChange={handleFieldChange}
-                              />
-
-                              {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
-                                <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
-                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold block">Typography & Page Density</label>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Density</label>
-                                      <select
-                                        value={pageState.densityMode}
-                                        onChange={(e) => handleFieldChange(page.id, 'densityMode', e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
-                                      >
-                                        <option value="compact">Compact</option>
-                                        <option value="normal">Normal</option>
-                                        <option value="spacious">Spacious</option>
-                                      </select>
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Text Align</label>
-                                      <select
-                                        value={pageState.textAlign}
-                                        onChange={(e) => handleFieldChange(page.id, 'textAlign', e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
-                                      >
-                                        <option value="left">Left</option>
-                                        <option value="center">Center</option>
-                                        <option value="right">Right</option>
-                                      </select>
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Font Size</label>
-                                      <input type="text" placeholder="11px" value={pageState.fontSize} onChange={(e) => handleFieldChange(page.id, 'fontSize', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Height</label>
-                                      <input type="text" placeholder="1.6" value={pageState.lineHeight} onChange={(e) => handleFieldChange(page.id, 'lineHeight', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Font Family Override</label>
-                                      <input type="text" placeholder={globalFontFamily} value={pageState.fontFamily} onChange={(e) => handleFieldChange(page.id, 'fontFamily', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Heading Color</label>
-                                      <input type="color" value={pageState.headingColor || globalHeadingColor} onChange={(e) => handleFieldChange(page.id, 'headingColor', e.target.value)} className="w-full h-8 bg-slate-950 border border-slate-850 rounded" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Body Color</label>
-                                      <input type="color" value={pageState.bodyColor || globalBodyColor} onChange={(e) => handleFieldChange(page.id, 'bodyColor', e.target.value)} className="w-full h-8 bg-slate-950 border border-slate-850 rounded" />
-                                    </div>
-                                  </div>
-                                  {(page.page_type === 'cover' || page.pageType === 'cover') && (
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Cover Layout</label>
-                                      <select value={pageState.coverLayoutMode} onChange={(e) => handleFieldChange(page.id, 'coverLayoutMode', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white">
-                                        <option value="classic">Classic Word Style</option>
-                                        <option value="modern">Modern CRM Style</option>
-                                      </select>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
-                                <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
-                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold block">Page Watermark / Background</label>
-                                  <input type="text" placeholder="Watermark image URL (optional)" value={pageState.watermarkUrl} onChange={(e) => handleFieldChange(page.id, 'watermarkUrl', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white" />
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Opacity ({pageState.watermarkOpacity})</label>
-                                      <input type="range" min="0.02" max="0.3" step="0.01" value={pageState.watermarkOpacity} onChange={(e) => handleFieldChange(page.id, 'watermarkOpacity', parseFloat(e.target.value))} className="w-full accent-amber-500" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[8px] text-slate-500 uppercase font-mono block">Position</label>
-                                      <select value={pageState.watermarkPosition} onChange={(e) => handleFieldChange(page.id, 'watermarkPosition', e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white">
-                                        <option value="center">Center</option>
-                                        <option value="cover">Cover</option>
-                                        <option value="contain">Contain</option>
-                                      </select>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                              {pageState.layoutMode !== 'full_page_image' && pageState.layoutMode !== 'image_only' && (
-                                <>
-                                  {/* Page Header Customizations (BUG 2) */}
-                                  <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
-                                    <div className="flex justify-between items-center">
-                                      <label className="text-[9px] uppercase font-mono text-amber-500 font-bold">Page Header Override</label>
-                                      <select
-                                        value={pageState.headerMode}
-                                        onChange={(e) => handleFieldChange(page.id, 'headerMode', e.target.value)}
-                                        className="bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-none"
-                                      >
-                                        <option value="inherit">Inherit Global</option>
-                                        <option value="custom">Custom Header</option>
-                                        <option value="disabled">Hide Header</option>
-                                      </select>
-                                    </div>
-                                    {pageState.headerMode === 'custom' && (
-                                      <div className="space-y-2.5 pt-1">
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Header Text</label>
-                                            <input
-                                              type="text"
-                                              value={pageState.headerText}
-                                              onChange={(e) => handleFieldChange(page.id, 'headerText', e.target.value)}
-                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white"
-                                            />
-                                          </div>
-                                          <div>
-                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Color</label>
-                                            <input
-                                              type="text"
-                                              value={pageState.headerLineColor}
-                                              onChange={(e) => handleFieldChange(page.id, 'headerLineColor', e.target.value)}
-                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                            />
-                                          </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Logo Align</label>
-                                            <select
-                                              value={pageState.headerAlignment}
-                                              onChange={(e) => handleFieldChange(page.id, 'headerAlignment', e.target.value)}
-                                              className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
-                                            >
-                                              <option value="left">Left</option>
-                                              <option value="center">Center</option>
-                                              <option value="right">Right</option>
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Logo Max Height</label>
-                                            <input
-                                              type="text"
-                                              value={pageState.headerLogoSize}
-                                              onChange={(e) => handleFieldChange(page.id, 'headerLogoSize', e.target.value)}
-                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                            />
-                                          </div>
-                                        </div>
-                                        <div>
-                                          <label className="text-[8px] text-slate-500 uppercase font-mono block mb-1">Header Custom Logo</label>
-                                          {pageState.headerLogoUrl ? (
-                                            <div className="relative group rounded border border-slate-850 h-8 bg-slate-950 flex items-center justify-center">
-                                              <img src={pageState.headerLogoUrl} style={{ maxHeight: pageState.headerLogoSize }} className="object-contain" alt="custom header logo preview" />
-                                              <button
-                                                type="button"
-                                                onClick={() => handleFieldChange(page.id, 'headerLogoUrl', "")}
-                                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[8px] transition cursor-pointer"
-                                              >
-                                                Remove
-                                              </button>
-                                            </div>
-                                          ) : (
-                                            <label className="border border-dashed border-slate-850 hover:border-slate-800 rounded h-8 bg-slate-950 flex flex-col items-center justify-center text-slate-500 cursor-pointer transition text-[9px]">
-                                              <span>Upload Custom Logo</span>
-                                              <input
-                                                type="file"
-                                                accept="image/*"
-                                                onChange={async (e) => {
-                                                  const file = e.target.files?.[0];
-                                                  if (file) {
-                                                    try {
-                                                      const url = await uploadImageFile(file, false);
-                                                      handleFieldChange(page.id, 'headerLogoUrl', url);
-                                                    } catch (err: any) {
-                                                      alert("Logo upload failed: " + err.message);
-                                                    }
-                                                  }
-                                                }}
-                                                className="hidden"
-                                              />
-                                            </label>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* Page Footer Customizations (BUG 2) */}
-                                  <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80">
-                                    <div className="flex justify-between items-center">
-                                      <label className="text-[9px] uppercase font-mono text-amber-500 font-bold">Page Footer Override</label>
-                                      <select
-                                        value={pageState.footerMode}
-                                        onChange={(e) => handleFieldChange(page.id, 'footerMode', e.target.value)}
-                                        className="bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-none"
-                                      >
-                                        <option value="inherit">Inherit Global</option>
-                                        <option value="custom">Custom Footer</option>
-                                        <option value="disabled">Hide Footer</option>
-                                      </select>
-                                    </div>
-                                    {pageState.footerMode === 'custom' && (
-                                      <div className="space-y-2 pt-1">
-                                        <div>
-                                          <label className="text-[8px] text-slate-500 uppercase font-mono block">Footer Text</label>
-                                          <input
-                                            type="text"
-                                            value={pageState.footerText}
-                                            onChange={(e) => handleFieldChange(page.id, 'footerText', e.target.value)}
-                                            className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white"
-                                          />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Alignment</label>
-                                            <select
-                                              value={pageState.footerAlignment}
-                                              onChange={(e) => handleFieldChange(page.id, 'footerAlignment', e.target.value)}
-                                              className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-1 text-[11px] text-white"
-                                            >
-                                              <option value="left">Left</option>
-                                              <option value="center">Center</option>
-                                              <option value="right">Right</option>
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-[8px] text-slate-500 uppercase font-mono block">Line Color</label>
-                                            <input
-                                              type="text"
-                                              value={pageState.footerLineColor}
-                                              onChange={(e) => handleFieldChange(page.id, 'footerLineColor', e.target.value)}
-                                              className="w-full bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-
-                              {/* Body Images list (BUG 2) */}
-                              <div className="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-900/80 text-left">
-                                <div className="flex justify-between items-center">
-                                  <label className="text-[9px] uppercase font-mono text-amber-500 font-bold">Body Content Images</label>
-                                  <label className="bg-slate-950 border border-slate-850 hover:border-slate-800 text-slate-350 hover:text-slate-100 font-semibold px-2 py-0.5 rounded text-[10px] cursor-pointer inline-flex items-center gap-1 transition">
-                                    <Plus className="h-3 w-3" /> Add Image
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      onChange={async (e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) {
-                                          try {
-                                            const url = await uploadImageFile(file, false);
-                                            const newImg = {
-                                              url,
-                                              title: "",
-                                              position: "middle",
-                                              alignment: "center",
-                                              width: "50%",
-                                              opacity: 1,
-                                              order: pageState.bodyImages.length + 1
-                                            };
-                                            handleFieldChange(page.id, 'bodyImages', [...pageState.bodyImages, newImg]);
-                                          } catch (err: any) {
-                                            alert("Body image upload failed: " + err.message);
-                                          }
-                                        }
-                                      }}
-                                      className="hidden"
-                                    />
-                                  </label>
-                                </div>
-
-                                {pageState.bodyImages && pageState.bodyImages.length > 0 ? (
-                                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                    {pageState.bodyImages.map((img: any, imgIdx: number) => (
-                                      <div key={imgIdx} className="bg-slate-950 border border-slate-900 rounded p-2 text-[10px] space-y-1.5">
-                                        <div className="flex justify-between items-center gap-2">
-                                          <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                            <img src={img.url} className="w-8 h-8 rounded border border-slate-850 object-cover" alt="body image preview" />
-                                            <input
-                                              type="text"
-                                              value={img.title || ""}
-                                              placeholder="Image label (optional)"
-                                              onChange={(e) => {
-                                                const updatedList = [...pageState.bodyImages];
-                                                updatedList[imgIdx] = { ...updatedList[imgIdx], title: e.target.value };
-                                                handleFieldChange(page.id, 'bodyImages', updatedList);
-                                              }}
-                                              className="bg-slate-900 border border-slate-850 rounded px-1.5 py-0.5 text-[10.5px] text-white flex-1 min-w-0"
-                                            />
-                                          </div>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              const updatedList = pageState.bodyImages.filter((_: any, i: number) => i !== imgIdx);
-                                              handleFieldChange(page.id, 'bodyImages', updatedList);
-                                            }}
-                                            className="text-rose-400 hover:text-rose-300 font-bold px-1 py-0.5"
-                                          >
-                                            Delete
-                                          </button>
-                                        </div>
-                                        <div className="grid grid-cols-3 gap-1.5 text-[9px] text-slate-400">
-                                          <div>
-                                            <label className="block text-[8px] text-slate-500 uppercase">Position</label>
-                                            <select
-                                              value={img.position || 'middle'}
-                                              onChange={(e) => {
-                                                const updatedList = [...pageState.bodyImages];
-                                                updatedList[imgIdx] = { ...updatedList[imgIdx], position: e.target.value };
-                                                handleFieldChange(page.id, 'bodyImages', updatedList);
-                                              }}
-                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white focus:outline-none"
-                                            >
-                                              <option value="top">Top</option>
-                                              <option value="middle">Middle</option>
-                                              <option value="bottom">Bottom</option>
-                                              <option value="absolute">Absolute</option>
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="block text-[8px] text-slate-500 uppercase">Alignment</label>
-                                            <select
-                                              value={img.alignment || 'center'}
-                                              onChange={(e) => {
-                                                const updatedList = [...pageState.bodyImages];
-                                                updatedList[imgIdx] = { ...updatedList[imgIdx], alignment: e.target.value };
-                                                handleFieldChange(page.id, 'bodyImages', updatedList);
-                                              }}
-                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white focus:outline-none"
-                                            >
-                                              <option value="left">Left</option>
-                                              <option value="center">Center</option>
-                                              <option value="right">Right</option>
-                                              <option value="full_width">Full Width</option>
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="block text-[8px] text-slate-500 uppercase">Width</label>
-                                            <select
-                                              value={img.width || '50%'}
-                                              onChange={(e) => {
-                                                const updatedList = [...pageState.bodyImages];
-                                                updatedList[imgIdx] = { ...updatedList[imgIdx], width: e.target.value };
-                                                handleFieldChange(page.id, 'bodyImages', updatedList);
-                                              }}
-                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white focus:outline-none"
-                                            >
-                                              <option value="25%">25%</option>
-                                              <option value="50%">50%</option>
-                                              <option value="75%">75%</option>
-                                              <option value="100%">100%</option>
-                                            </select>
-                                          </div>
-                                        </div>
-                                        {img.position === 'absolute' && (
-                                          <div className="grid grid-cols-4 gap-1 text-[8.5px]">
-                                            <div>
-                                              <label className="block text-[7.5px] text-slate-500 uppercase">Top</label>
-                                              <input
-                                                type="text"
-                                                placeholder="auto"
-                                                value={img.top || ""}
-                                                onChange={(e) => {
-                                                  const updatedList = [...pageState.bodyImages];
-                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], top: e.target.value };
-                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
-                                                }}
-                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="block text-[7.5px] text-slate-500 uppercase">Bottom</label>
-                                              <input
-                                                type="text"
-                                                placeholder="auto"
-                                                value={img.bottom || ""}
-                                                onChange={(e) => {
-                                                  const updatedList = [...pageState.bodyImages];
-                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], bottom: e.target.value };
-                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
-                                                }}
-                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="block text-[7.5px] text-slate-500 uppercase">Left</label>
-                                              <input
-                                                type="text"
-                                                placeholder="auto"
-                                                value={img.left || ""}
-                                                onChange={(e) => {
-                                                  const updatedList = [...pageState.bodyImages];
-                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], left: e.target.value };
-                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
-                                                }}
-                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="block text-[7.5px] text-slate-500 uppercase">Right</label>
-                                              <input
-                                                type="text"
-                                                placeholder="auto"
-                                                value={img.right || ""}
-                                                onChange={(e) => {
-                                                  const updatedList = [...pageState.bodyImages];
-                                                  updatedList[imgIdx] = { ...updatedList[imgIdx], right: e.target.value };
-                                                  handleFieldChange(page.id, 'bodyImages', updatedList);
-                                                }}
-                                                className="w-full bg-slate-900 border border-slate-850 rounded px-1 py-0.5 text-white font-mono text-center"
-                                              />
-                                            </div>
-                                          </div>
-                                        )}
-                                        <div className="grid grid-cols-2 gap-3 text-[9px] text-slate-400">
-                                          <div>
-                                            <label className="block text-[8px] text-slate-500 uppercase">Opacity ({img.opacity !== undefined ? img.opacity : 1})</label>
-                                            <input
-                                              type="range"
-                                              min="0.1"
-                                              max="1.0"
-                                              step="0.1"
-                                              value={img.opacity !== undefined ? img.opacity : 1}
-                                              onChange={(e) => {
-                                                const updatedList = [...pageState.bodyImages];
-                                                updatedList[imgIdx] = { ...updatedList[imgIdx], opacity: parseFloat(e.target.value) };
-                                                handleFieldChange(page.id, 'bodyImages', updatedList);
-                                              }}
-                                              className="w-full accent-amber-500"
-                                            />
-                                          </div>
-                                          <div>
-                                            <label className="block text-[8px] text-slate-500 uppercase">Order</label>
-                                            <input
-                                              type="number"
-                                              value={img.order || 1}
-                                              onChange={(e) => {
-                                                const updatedList = [...pageState.bodyImages];
-                                                updatedList[imgIdx] = { ...updatedList[imgIdx], order: parseInt(e.target.value) || 1 };
-                                                handleFieldChange(page.id, 'bodyImages', updatedList);
-                                              }}
-                                              className="w-full bg-slate-900 border border-slate-850 rounded px-1.5 py-0.5 text-white font-mono focus:outline-none"
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className="text-[10px] text-slate-650 text-slate-600 italic">No body content images added.</div>
-                                )}
-                              </div>
-
-                              {/* Asset images upload preview */}
-                              <div className="grid grid-cols-2 gap-3 pt-1 text-[9px] font-sans">
-                                
-                                {/* Background Image */}
-                                <div className="space-y-1.5 text-left">
-                                  <label className="text-[9px] text-slate-500 font-bold block uppercase">Background Graphic</label>
-                                  {pageState.bg_image_url ? (
-                                    <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-16 bg-slate-900 flex items-center justify-center">
-                                      <img src={pageState.bg_image_url} className="h-full w-full object-cover opacity-60" alt="bg preview" />
-                                      <button
-                                        type="button"
-                                        onClick={() => handleFieldChange(page.id, 'bg_image_url', "")}
-                                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <label className="border border-dashed border-slate-800 hover:border-slate-700 rounded-lg h-16 bg-slate-900 flex flex-col items-center justify-center text-slate-500 hover:text-slate-350 cursor-pointer transition">
-                                      <Upload className="h-4 w-4 mb-0.5" />
-                                      <span>Upload BG</span>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => {
-                                          const file = e.target.files?.[0];
-                                          if (file) handleImageUpload(page.id, file, 'bg');
-                                        }}
-                                        className="hidden"
-                                      />
-                                    </label>
-                                  )}
-                                </div>
-
-                                {/* Main/Logo Image */}
-                                <div className="space-y-1.5 text-left">
-                                  <label className="text-[9px] text-slate-500 font-bold block uppercase">Foreground Logo/Photo</label>
-                                  {pageState.image_url ? (
-                                    <div className="relative group rounded-lg overflow-hidden border border-slate-800 h-16 bg-slate-900 flex items-center justify-center">
-                                      <img src={pageState.image_url} className="max-h-[85%] max-w-[85%] object-contain" alt="logo preview" />
-                                      <button
-                                        type="button"
-                                        onClick={() => handleFieldChange(page.id, 'image_url', "")}
-                                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 font-bold uppercase text-[9px] transition cursor-pointer"
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <label className="border border-dashed border-slate-800 hover:border-slate-700 rounded-lg h-16 bg-slate-900 flex flex-col items-center justify-center text-slate-500 hover:text-slate-350 cursor-pointer transition">
-                                      <Upload className="h-4 w-4 mb-0.5" />
-                                      <span>Upload Asset</span>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => {
-                                          const file = e.target.files?.[0];
-                                          if (file) handleImageUpload(page.id, file, 'image');
-                                        }}
-                                        className="hidden"
-                                      />
-                                    </label>
-                                  )}
-                                </div>
-
-                              </div>
-                              {/* Clear/Reset Controls */}
-                              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono text-slate-500 border-t border-slate-900/60 pt-2 mt-2">
-                                <span className="text-slate-600 font-bold">Quick Clean:</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCleanAction(page.id, 'content')}
-                                  className="text-amber-500/80 hover:text-amber-400 cursor-pointer transition underline decoration-dotted"
-                                >
-                                  Clear Page Content
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCleanAction(page.id, 'bg')}
-                                  className="text-amber-500/80 hover:text-amber-400 cursor-pointer transition underline decoration-dotted"
-                                >
-                                  Clear Background
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCleanAction(page.id, 'logo')}
-                                  className="text-amber-500/80 hover:text-amber-400 cursor-pointer transition underline decoration-dotted"
-                                >
-                                  Clear Logo/Image
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCleanAction(page.id, 'reset')}
-                                  className="text-rose-400 hover:text-rose-300 cursor-pointer transition underline decoration-dotted ml-auto"
-                                >
-                                  Reset Entire Template
-                                </button>
-                              </div>
-
-                            </div>
-
-                            {/* Action buttons footer */}
-                            <div className="flex gap-2 pt-2 border-t border-slate-900 text-xs">
-                              <button
-                                type="button"
-                                onClick={() => setPreviewPage(pageState)}
-                                className="flex-1 bg-slate-900 border border-slate-800 text-slate-350 hover:text-slate-100 hover:border-slate-700 py-1.5 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 font-bold font-sans"
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                                <span>Preview</span>
-                              </button>
-                              
-                              <button
-                                type="button"
-                                onClick={() => setPrintPageData(pageState)}
-                                className="flex-1 bg-slate-900 border border-slate-800 text-slate-350 hover:text-slate-100 hover:border-slate-700 py-1.5 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 font-bold font-sans"
-                              >
-                                <Printer className="h-3.5 w-3.5" />
-                                <span>Print</span>
-                              </button>
-                              
-                              <button
-                                type="button"
-                                onClick={() => handleSavePage(page.id)}
-                                disabled={pageState.saveStatus === 'Saved' || pageState.saveStatus === 'Saving...'}
-                                className="flex-1 bg-amber-500/10 hover:bg-amber-500/20 disabled:bg-slate-900 text-amber-400 disabled:text-slate-600 border border-amber-500/20 disabled:border-slate-850 py-1.5 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 font-bold font-sans"
-                              >
-                                <Save className="h-3.5 w-3.5" />
-                                <span>Save</span>
-                              </button>
-                            </div>
-
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+                <QuoteTemplateStudio
+                  quoteTemplatePages={quoteTemplatePages}
+                  selectedTemplateId={selectedTemplateId}
+                  contentLibrary={contentLibrary}
+                  ceoMessages={ceoMessages}
+                  getPageState={getPageState}
+                  onFieldChange={handleFieldChange}
+                  onSavePage={handleSavePage}
+                  onResetPage={(pageId) => handleCleanAction(pageId, "reset")}
+                  onDuplicatePage={handleDuplicateTemplatePage}
+                  onMovePage={handleUpdatePageSortOrder}
+                  onImageUpload={handleImageUpload}
+                  uploadImageFile={uploadImageFile}
+                  globalFontFamily={globalFontFamily}
+                  globalHeadingColor={globalHeadingColor}
+                  globalBodyColor={globalBodyColor}
+                  globalSettings={{
+                    globalHeaderEnabled,
+                    setGlobalHeaderEnabled,
+                    globalHeaderText,
+                    setGlobalHeaderText,
+                    globalHeaderLogoUrl,
+                    setGlobalHeaderLogoUrl,
+                    globalHeaderLogoSize,
+                    setGlobalHeaderLogoSize,
+                    globalHeaderLineColor,
+                    setGlobalHeaderLineColor,
+                    globalHeaderAlignment,
+                    setGlobalHeaderAlignment,
+                    globalFooterEnabled,
+                    setGlobalFooterEnabled,
+                    globalFooterText,
+                    setGlobalFooterText,
+                    globalFooterLineColor,
+                    setGlobalFooterLineColor,
+                    globalFooterAlignment,
+                    setGlobalFooterAlignment,
+                    globalWatermarkPreviewUrl,
+                    globalWatermarkUrl,
+                    setGlobalWatermarkUrl,
+                    globalWatermarkFile,
+                    setGlobalWatermarkFile,
+                    setGlobalWatermarkPreviewUrl,
+                    globalWatermarkOpacity,
+                    setGlobalWatermarkOpacity,
+                    globalWatermarkScale,
+                    setGlobalWatermarkScale,
+                    globalWatermarkPosition,
+                    setGlobalWatermarkPosition,
+                    globalWatermarkUploading,
+                    handleGlobalWatermarkUpload,
+                    handleRemoveGlobalWatermark,
+                    globalWatermarkPreviewStyle,
+                    globalFontFamily,
+                    setGlobalFontFamily,
+                    globalFontSize,
+                    setGlobalFontSize,
+                    globalHeadingColor,
+                    setGlobalHeadingColor,
+                    globalBodyColor,
+                    setGlobalBodyColor,
+                    globalLineHeight,
+                    setGlobalLineHeight,
+                    pdfQuality,
+                    setPdfQuality,
+                    pageMarginTop,
+                    setPageMarginTop,
+                    pageMarginBottom,
+                    setPageMarginBottom,
+                    pageMarginLeft,
+                    setPageMarginLeft,
+                    pageMarginRight,
+                    setPageMarginRight,
+                    onSave: handleSaveGlobalPdfSettings,
+                    onUploadHeaderLogo: handleGlobalHeaderLogoUpload,
+                  }}
+                />
+              )}
 
               {/* MODULE 4: GENERATED QUOTES & VERSION HISTORY */}
               {activeModule === 'quotes' && (

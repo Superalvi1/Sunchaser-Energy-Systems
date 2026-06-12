@@ -23,15 +23,18 @@ type QuoteRichTextEditorProps = {
   onChange: (html: string) => void;
   placeholder?: string;
   minHeight?: number;
+  stickyToolbar?: boolean;
 };
 
 const TEXT_COLORS = ["#0f172a", "#475569", "#d97706", "#1e3a8a", "#dc2626", "#059669"];
+const FONT_SIZES = ["10px", "11px", "12px", "14px", "16px", "18px", "24px"];
 
 export default function QuoteRichTextEditor({
   value,
   onChange,
   placeholder = "Compose page content…",
-  minHeight = 160,
+  minHeight = 480,
+  stickyToolbar = true,
 }: QuoteRichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastHtml = useRef(value);
@@ -63,12 +66,29 @@ export default function QuoteRichTextEditor({
     emitChange();
   };
 
+  const applyFontSize = (size: string) => {
+    editorRef.current?.focus();
+    document.execCommand("fontSize", false, "4");
+    const fontElements = editorRef.current?.querySelectorAll("font[size='4']");
+    fontElements?.forEach((el) => {
+      const span = document.createElement("span");
+      span.style.fontSize = size;
+      span.innerHTML = el.innerHTML;
+      el.replaceWith(span);
+    });
+    emitChange();
+  };
+
   const btn =
     "p-1.5 rounded border border-slate-800 bg-slate-950 hover:bg-slate-900 hover:text-amber-400 text-slate-400 transition";
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1 p-1.5 bg-slate-950 border border-slate-850 rounded-lg">
+    <div className="flex flex-col h-full min-h-0">
+      <div
+        className={`flex flex-wrap gap-1 p-1.5 bg-slate-950 border border-slate-850 rounded-t-lg z-10 ${
+          stickyToolbar ? "sticky top-0" : ""
+        }`}
+      >
         <button type="button" className={btn} title="Bold" onClick={() => exec("bold")}>
           <Bold className="h-3.5 w-3.5" />
         </button>
@@ -78,6 +98,22 @@ export default function QuoteRichTextEditor({
         <button type="button" className={btn} title="Underline" onClick={() => exec("underline")}>
           <Underline className="h-3.5 w-3.5" />
         </button>
+        <select
+          className="bg-slate-950 border border-slate-800 rounded text-[10px] text-slate-300 px-1 py-0.5"
+          defaultValue=""
+          onChange={(e) => {
+            if (e.target.value) applyFontSize(e.target.value);
+            e.target.value = "";
+          }}
+          aria-label="Font size"
+        >
+          <option value="">Size</option>
+          {FONT_SIZES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
         <span className="w-px h-6 bg-slate-800 mx-0.5 self-center" />
         <button type="button" className={btn} title="Heading 1" onClick={() => exec("formatBlock", "h1")}>
           <Heading1 className="h-3.5 w-3.5" />
@@ -150,7 +186,7 @@ export default function QuoteRichTextEditor({
         onInput={emitChange}
         onBlur={emitChange}
         data-placeholder={placeholder}
-        className="quote-rich-editor w-full bg-white text-slate-800 border border-slate-850 rounded-lg px-3 py-2 text-xs leading-relaxed outline-none focus:border-amber-500/60 overflow-auto"
+        className="quote-rich-editor flex-1 w-full bg-white text-slate-800 border border-t-0 border-slate-850 rounded-b-lg px-4 py-3 text-sm leading-relaxed outline-none focus:border-amber-500/60 overflow-auto"
         style={{ minHeight }}
       />
       <style>{`
