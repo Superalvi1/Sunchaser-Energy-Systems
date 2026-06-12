@@ -18,6 +18,7 @@ import { projectStatusHeadline } from "../lib/clientPortalCompletion";
 import ClientPortalHome from "./ClientPortalHome";
 import ClientPortalHeader from "./ClientPortalHeader";
 import ClientPortalDocuments from "./ClientPortalDocuments";
+import ClientPortalDeliveries from "./ClientPortalDeliveries";
 import ClientPortalSupport from "./ClientPortalSupport";
 import ClientPortalPayments from "./ClientPortalPayments";
 import ClientPortalInvoices from "./ClientPortalInvoices";
@@ -186,7 +187,16 @@ export default function ClientPortalApp({
     if (mainTab === "documents") {
       return (
         <PortalScreen title="Documents" subtitle="Quotations, agreements, warranties, and certificates">
-          <ClientPortalDocuments user={user} />
+          <div className="space-y-8">
+            <ClientPortalDocuments user={user} />
+            <section className={portal.divider + " pt-6 space-y-4"}>
+              <div>
+                <h3 className="text-base font-semibold text-white">Material Deliveries</h3>
+                <p className={portal.subtitle}>Partial delivery challans and certificates</p>
+              </div>
+              <ClientPortalDeliveries user={user} />
+            </section>
+          </div>
         </PortalScreen>
       );
     }

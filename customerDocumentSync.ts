@@ -29,7 +29,7 @@ export function vaultWarrantyCertificateDocumentUrl(customerId: string): string 
   return base ? `${base}${path}` : path;
 }
 
-async function upsertVaultCustomerDocument(
+export async function upsertVaultCustomerDocument(
   body: {
     customerId: string;
     documentType: string;
@@ -249,4 +249,85 @@ export async function syncWarrantyCertificateDocumentVault(
     },
     localDb
   );
+}
+
+/** One customer document row per delivery challan certificate. */
+export async function syncDeliveryCertificateDocumentVault(
+  opts: {
+    customerId: string;
+    challanId: string;
+    challanNumber: string;
+    fileUrl: string;
+    notes?: string;
+  },
+  localDb?: Database
+) {
+  const customerId = String(opts.customerId || "").trim();
+  if (!customerId || !opts.challanId || !opts.fileUrl) return null;
+
+  const now = new Date().toISOString();
+  const doc = {
+    id: `doc-delivery-${opts.challanId}`,
+    customer_id: customerId,
+    project_id: null,
+    document_type: "material_delivery_certificate",
+    title: `Delivery Certificate — ${opts.challanNumber}`,
+    file_url: opts.fileUrl,
+    file_name: `${opts.challanNumber}.html`,
+    mime_type: "text/html",
+    storage_path: null,
+    visible_to_customer: true,
+    internal_only: false,
+    notes: opts.notes || null,
+    uploaded_by: "delivery-system",
+    uploaded_at: now,
+  };
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data: existing } = await supabase
+      .from("customer_documents")
+      .select("id")
+      .eq("id", doc.id)
+      .maybeSingle();
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from("customer_documents")
+        .update({
+          title: doc.title,
+          file_url: doc.file_url,
+          file_name: doc.file_name,
+          visible_to_customer: true,
+          internal_only: false,
+          notes: doc.notes,
+          uploaded_at: now,
+        })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      if (error) throw error;
+      return mapDocumentRow(data);
+    }
+    const { data, error } = await supabase.from("customer_documents").insert(doc).select("*").single();
+    if (error) throw error;
+    return mapDocumentRow(data);
+  }
+
+  const db = localDb as any;
+  db.customerDocuments = db.customerDocuments || [];
+  const idx = db.customerDocuments.findIndex((d: any) => d.id === doc.id);
+  const mapped = {
+    ...doc,
+    customerId: doc.customer_id,
+    documentType: doc.document_type,
+    fileUrl: doc.file_url,
+    visibleToCustomer: true,
+    internalOnly: false,
+  };
+  if (idx >= 0) {
+    db.customerDocuments[idx] = { ...db.customerDocuments[idx], ...mapped, uploadedAt: now };
+    return mapDocumentRow(db.customerDocuments[idx]);
+  }
+  db.customerDocuments.unshift(mapped);
+  return mapDocumentRow(mapped);
 }

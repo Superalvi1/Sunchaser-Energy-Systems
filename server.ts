@@ -206,6 +206,25 @@ import {
   InternalCostingDbError,
 } from "./internalCostingDb.js";
 import {
+  listAdminDeliveriesForInvoice,
+  getAdminDeliveryChallan,
+  createAdminDeliveryChallan,
+  updateAdminDeliveryChallan,
+  updateAdminDeliveryChallanStatus,
+  sendAdminDeliveryOtp,
+  verifyAdminDeliveryOtp,
+  captureAdminDeliverySignature,
+  uploadAdminDeliveryPhoto,
+  verifyAdminDeliveryChallan,
+  disputeAdminDeliveryChallan,
+  renderDeliveryCertificateHtml,
+  fetchDeliveryDashboardSummary,
+  fetchCustomerPortalDeliveriesMe,
+  getCustomerPortalDeliveryCertificate,
+  getInvoiceDeliverySummaryAdmin,
+  DeliveryManagementDbError,
+} from "./deliveryManagementDb.js";
+import {
   authenticateUser,
   registerUser,
   verifyEmailToken,
@@ -2487,6 +2506,244 @@ app.get(
   "/api/admin/costing/profitability-summary",
   costingRoute((u, n) => fetchProjectProfitabilitySummary(u, n, db), { save: false })
 );
+
+// ---------------------------------------------------------------------------
+// Phase 24 — Invoice-Linked Partial Delivery Management
+// ---------------------------------------------------------------------------
+
+function handleDeliveryError(res: any, err: any) {
+  if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+  if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+  if (err instanceof DeliveryManagementDbError)
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  return res.status(500).json({ error: err.message });
+}
+
+async function logDeliveryAudit(
+  req: any,
+  action: string,
+  details: string
+) {
+  const { userId, username, role } = readStaffAuth(req);
+  await appendActivityLog(userId || "system", username || "staff", role || "Admin", action, details);
+}
+
+app.get("/api/admin/invoices/:invoiceId/deliveries", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await listAdminDeliveriesForInvoice(userId, username, role, req.params.invoiceId, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/admin/invoices/:invoiceId/delivery-summary", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await getInvoiceDeliverySummaryAdmin(userId, username, role, req.params.invoiceId, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/admin/deliveries/:challanId", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await getAdminDeliveryChallan(userId, username, role, req.params.challanId, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await createAdminDeliveryChallan(userId, username, role, req.body || {}, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Challan Created", `${data.challan.challanNumber} for invoice ${data.challan.invoiceId}`);
+    return res.status(201).json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.patch("/api/admin/deliveries/:challanId", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await updateAdminDeliveryChallan(userId, username, role, req.params.challanId, req.body || {}, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Challan Updated", data.challan.challanNumber);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/status", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await updateAdminDeliveryChallanStatus(userId, username, role, req.params.challanId, String(req.body?.status || ""), db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Status Changed", `${data.challan.challanNumber} → ${data.status}`);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/send-otp", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await sendAdminDeliveryOtp(userId, username, role, req.params.challanId, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery OTP Sent", data.challan.challanNumber);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/verify-otp", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await verifyAdminDeliveryOtp(userId, username, role, req.params.challanId, req.body || {}, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery OTP Verified", data.challan.challanNumber);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/signature", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await captureAdminDeliverySignature(userId, username, role, req.params.challanId, req.body || {}, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Signature Captured", data.challan.challanNumber);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/photos", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await uploadAdminDeliveryPhoto(userId, username, role, req.params.challanId, req.body || {}, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Photo Uploaded", `${data.challan.challanNumber} (${data.photoType})`);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/verify", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await verifyAdminDeliveryChallan(userId, username, role, req.params.challanId, req.body || {}, db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Verified", data.challan.challanNumber);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/admin/deliveries/:challanId/dispute", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await disputeAdminDeliveryChallan(userId, username, role, req.params.challanId, String(req.body?.reason || ""), db);
+    saveDb();
+    await logDeliveryAudit(req, "Delivery Disputed", `${data.challan.challanNumber}: ${data.reason}`);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/admin/deliveries/:challanId/certificate", async (req, res) => {
+  const userId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
+  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const branding = await getCompanyBranding(db);
+    const html = await renderDeliveryCertificateHtml(req.params.challanId, db, branding);
+    await logDeliveryAudit(req, "Delivery Certificate Generated", req.params.challanId);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/admin/deliveries/dashboard/summary", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await fetchDeliveryDashboardSummary(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/customer-portal/deliveries/me", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const data = await fetchCustomerPortalDeliveriesMe(userId, username, db);
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/customer-portal/deliveries/:challanId/certificate", async (req, res) => {
+  const { userId, username } = readPortalAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  try {
+    loadDb();
+    const html = await getCustomerPortalDeliveryCertificate(userId, username, req.params.challanId, db);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
 
 app.get("/api/branding", async (_req, res) => {
   try {

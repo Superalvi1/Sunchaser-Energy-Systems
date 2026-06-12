@@ -29,6 +29,7 @@ import { isSuperAdmin } from "../lib/roles";
 import { decodeInvoiceMeta, stripInvoiceMeta, type InvoiceProjectInfo } from "../lib/invoicePdfMeta";
 import WhatsAppActionButton from "./WhatsAppActionButton";
 import AppLogo from "./AppLogo";
+import DeliveryChallanPanel from "./DeliveryChallanPanel";
 
 interface InvoiceStaffProps {
   staffUser: User;
@@ -90,6 +91,7 @@ export default function InvoiceStaff({
   const [bulkSelected, setBulkSelected] = useState<Record<string, boolean>>({});
   const [creatingLeadId, setCreatingLeadId] = useState<string | null>(null);
   const [paymentDraft, setPaymentDraft] = useState({ amount: "", method: "Cash", notes: "" });
+  const [editorTab, setEditorTab] = useState<"invoice" | "delivery">("invoice");
 
   const [draft, setDraft] = useState({
     customerName: "",
@@ -254,6 +256,7 @@ export default function InvoiceStaff({
   const selectInvoice = (inv: any) => {
     const meta = decodeInvoiceMeta(inv.notes);
     setSelectedId(inv.id);
+    setEditorTab("invoice");
     setDraft({
       customerName: inv.customerName || "",
       customerPhone: inv.customerPhone || "",
@@ -792,6 +795,43 @@ export default function InvoiceStaff({
         <p className="text-xs text-amber-800 bg-amber-50 border-b border-amber-200 px-4 py-2">{msg}</p>
       )}
 
+      {selectedId && (
+        <div className="flex gap-1 px-4 pt-3 border-b border-slate-200 bg-white">
+          <button
+            type="button"
+            onClick={() => setEditorTab("invoice")}
+            className={`px-4 py-2 text-xs font-bold rounded-t-lg border-b-2 ${
+              editorTab === "invoice"
+                ? "border-violet-600 text-violet-800 bg-violet-50"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Invoice
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditorTab("delivery")}
+            className={`px-4 py-2 text-xs font-bold rounded-t-lg border-b-2 ${
+              editorTab === "delivery"
+                ? "border-violet-600 text-violet-800 bg-violet-50"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Delivery
+          </button>
+        </div>
+      )}
+
+      {selectedId && editorTab === "delivery" ? (
+        <div className="p-4">
+          <DeliveryChallanPanel
+            staffUser={staffUser}
+            invoiceId={selectedId}
+            invoiceNumber={selected?.invoiceNumber || draft.invoiceNumber}
+            customerName={draft.customerName}
+          />
+        </div>
+      ) : (
       <div className="p-4 space-y-4">
         {/* Customer row */}
         <div className="grid grid-cols-12 gap-3 items-end">
@@ -1269,6 +1309,7 @@ export default function InvoiceStaff({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

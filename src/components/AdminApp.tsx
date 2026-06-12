@@ -9,6 +9,7 @@ import {
   Users,
   Settings2,
   Trash2,
+  Truck,
 } from "lucide-react";
 import UserManagementStaff from "./UserManagementStaff";
 import { useToast } from "../lib/toast";
@@ -43,7 +44,7 @@ import {
 import ManualAdminControl from "./ManualAdminControl";
 import AdminModuleNav, { type AdminSegmentId, type AdminQuickAction } from "./AdminModuleNav";
 import InventoryStaff from "./InventoryStaff";
-import { currencySymbol, API_BASE_URL, fetchProjectProfitabilitySummary } from "../services/api";
+import { currencySymbol, API_BASE_URL, fetchProjectProfitabilitySummary, fetchDeliveryDashboardSummary } from "../services/api";
 import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
 
 interface AdminAppProps {
@@ -139,6 +140,20 @@ export default function AdminApp({
       .then((data) => setProfitabilitySummary(data.summary))
       .catch(() => setProfitabilitySummary(null));
   }, [showInternalCosting, activeSegment, staffUser.id, staffUser.username]);
+
+  const [deliverySummary, setDeliverySummary] = useState<{
+    deliveriesToday: number;
+    pendingDeliveries: number;
+    verifiedDeliveries: number;
+    materialsPendingValue: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!showUserManagement || activeSegment !== "overview") return;
+    fetchDeliveryDashboardSummary(staffUser)
+      .then((data) => setDeliverySummary(data.summary))
+      .catch(() => setDeliverySummary(null));
+  }, [showUserManagement, activeSegment, staffUser.id, staffUser.username]);
 
   // Template Manager Tab states
   const [selectedSubTab, setSelectedSubTab] = useState<'pages' | 'banks' | 'terms' | 'ceo' | 'structures' | 'settings'>('pages');
@@ -324,6 +339,46 @@ export default function AdminApp({
                 <div>
                   <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Margin</div>
                   <div className="text-lg font-black text-amber-300">{profitabilitySummary.marginPercent}%</div>
+                </div>
+              </div>
+            </button>
+          )}
+
+          {showUserManagement && activeSegment === "overview" && deliverySummary && (
+            <button
+              type="button"
+              onClick={() => selectSegment("invoices")}
+              className="w-full text-left bg-neutral-900 border border-sky-500/30 rounded-3xl p-6 shadow-sm hover:border-sky-500/50 transition group"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-sky-400 font-mono mb-1 flex items-center gap-2">
+                    <Truck className="h-4 w-4" /> Material Deliveries
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">Invoice-linked partial delivery challans</p>
+                </div>
+                <span className="text-[10px] font-bold text-sky-400 group-hover:text-sky-300">
+                  Open Invoices →
+                </span>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Deliveries Today</div>
+                  <div className="text-lg font-black text-neutral-100">{deliverySummary.deliveriesToday}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Pending</div>
+                  <div className="text-lg font-black text-amber-400">{deliverySummary.pendingDeliveries}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Verified</div>
+                  <div className="text-lg font-black text-emerald-400">{deliverySummary.verifiedDeliveries}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Materials Pending Value</div>
+                  <div className="text-lg font-black text-neutral-100">
+                    Rs. {deliverySummary.materialsPendingValue.toLocaleString()}
+                  </div>
                 </div>
               </div>
             </button>

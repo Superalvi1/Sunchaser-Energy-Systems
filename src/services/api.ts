@@ -2735,6 +2735,143 @@ export async function fetchProjectProfitabilitySummary(staff: StaffIdent) {
   } }>("Load profitability summary", "/api/admin/costing/profitability-summary", staff);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 24 — Delivery Management
+// ---------------------------------------------------------------------------
+
+export async function fetchAdminDeliveriesForInvoice(staff: StaffIdent, invoiceId: string) {
+  return costingRequest<any>(
+    "Load invoice deliveries",
+    `/api/admin/invoices/${encodeURIComponent(invoiceId)}/deliveries`,
+    staff
+  );
+}
+
+export async function createAdminDeliveryChallan(staff: StaffIdent, body: Record<string, unknown>) {
+  return costingRequest<{ challan: any }>("Create delivery challan", "/api/admin/deliveries", staff, {
+    method: "POST",
+    body,
+  });
+}
+
+export async function updateAdminDeliveryChallan(
+  staff: StaffIdent,
+  challanId: string,
+  body: Record<string, unknown>
+) {
+  return costingRequest<{ challan: any }>(
+    "Update delivery challan",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}`,
+    staff,
+    { method: "PATCH", body }
+  );
+}
+
+export async function updateAdminDeliveryChallanStatus(
+  staff: StaffIdent,
+  challanId: string,
+  status: string
+) {
+  return costingRequest<{ challan: any }>(
+    "Update delivery status",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/status`,
+    staff,
+    { method: "POST", body: { status } }
+  );
+}
+
+export async function sendAdminDeliveryOtp(staff: StaffIdent, challanId: string) {
+  return costingRequest<{ challan: any; otp: string }>(
+    "Send delivery OTP",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/send-otp`,
+    staff,
+    { method: "POST", body: {} }
+  );
+}
+
+export async function verifyAdminDeliveryOtp(
+  staff: StaffIdent,
+  challanId: string,
+  body: { code: string; verifiedByPhone?: string }
+) {
+  return costingRequest<{ challan: any }>(
+    "Verify delivery OTP",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/verify-otp`,
+    staff,
+    { method: "POST", body }
+  );
+}
+
+export async function captureAdminDeliverySignature(
+  staff: StaffIdent,
+  challanId: string,
+  body: { signatureDataUrl?: string }
+) {
+  return costingRequest<{ challan: any }>(
+    "Capture signature",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/signature`,
+    staff,
+    { method: "POST", body }
+  );
+}
+
+export async function uploadAdminDeliveryPhoto(
+  staff: StaffIdent,
+  challanId: string,
+  body: Record<string, unknown>
+) {
+  return costingRequest<{ challan: any }>(
+    "Upload delivery photo",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/photos`,
+    staff,
+    { method: "POST", body }
+  );
+}
+
+export async function verifyAdminDeliveryChallan(
+  staff: StaffIdent,
+  challanId: string,
+  body: Record<string, unknown>
+) {
+  return costingRequest<{ challan: any }>(
+    "Verify delivery",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/verify`,
+    staff,
+    { method: "POST", body }
+  );
+}
+
+export function deliveryCertificateUrl(challanId: string, staff: StaffIdent) {
+  const q = new URLSearchParams();
+  q.set("userId", staff.id);
+  q.set("username", staff.username);
+  q.set("role", staff.role);
+  return `${API_BASE_URL}/api/admin/deliveries/${encodeURIComponent(challanId)}/certificate?${q}`;
+}
+
+export async function fetchDeliveryDashboardSummary(staff: StaffIdent) {
+  return costingRequest<{ summary: {
+    deliveriesToday: number;
+    pendingDeliveries: number;
+    verifiedDeliveries: number;
+    materialsPendingValue: number;
+  } }>("Load delivery dashboard", "/api/admin/deliveries/dashboard/summary", staff);
+}
+
+export async function fetchCustomerPortalDeliveries(userId: string, username: string) {
+  const res = await apiFetch(
+    `/api/customer-portal/deliveries/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
+    { headers: portalAuthHeaders(userId, username) }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as any).error || "Failed to load deliveries.");
+  return data as { deliveries: any[] };
+}
+
+export function customerDeliveryCertificateUrl(challanId: string, userId: string, username: string) {
+  return `${API_BASE_URL}/api/customer-portal/deliveries/${encodeURIComponent(challanId)}/certificate?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`;
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {

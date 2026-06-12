@@ -218,6 +218,9 @@ export interface Database {
   internalCostingSheets?: any[];
   investors?: any[];
   inventoryPurchases?: any[];
+  deliveryChallans?: any[];
+  deliveryChallanItems?: any[];
+  deliveryChallanPhotos?: any[];
 }
 
 export const initialSeed: Database = {
