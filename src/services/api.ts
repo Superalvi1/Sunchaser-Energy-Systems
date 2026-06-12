@@ -2739,6 +2739,14 @@ export async function fetchProjectProfitabilitySummary(staff: StaffIdent) {
 // Phase 24 — Delivery Management
 // ---------------------------------------------------------------------------
 
+export async function fetchDeliveryDashboardCustomers(staff: StaffIdent) {
+  return costingRequest<{ customers: import("../lib/deliveryManagement").DeliveryDashboardCustomerRow[] }>(
+    "Load delivery dashboard customers",
+    "/api/admin/delivery-dashboard/contracted-customers",
+    staff
+  );
+}
+
 export async function fetchAdminDeliveriesForInvoice(staff: StaffIdent, invoiceId: string) {
   return costingRequest<any>(
     "Load invoice deliveries",

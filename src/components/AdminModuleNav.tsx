@@ -258,7 +258,7 @@ export function buildAdminNavGroups(opts: {
         {
           id: "project-delivery",
           title: "Project Delivery",
-          description: "Install stages and handover",
+          description: "Invoice-linked material delivery and challans",
           icon: Truck,
         },
         ...(showProjectOperations

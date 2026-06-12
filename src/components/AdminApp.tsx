@@ -1578,7 +1578,7 @@ export default function AdminApp({
           <ProjectOperationsDashboardStaff staffUser={staffUser} />
         )}
         {activeSegment === 'project-delivery' && (
-          <ProjectDeliveryStaff staffUser={staffUser} leads={leads} />
+          <ProjectDeliveryStaff staffUser={staffUser} />
         )}
         {activeSegment === 'project-finance' && showFinanceAdmin && (
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />

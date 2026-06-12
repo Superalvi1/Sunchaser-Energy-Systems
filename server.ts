@@ -232,6 +232,7 @@ import {
   renderPublicDeliveryCertificate,
   renderDeliveryChallanHtml,
   getAdminDeliveryVerificationInfo,
+  listDeliveryDashboardCustomers,
   DeliveryManagementDbError,
 } from "./deliveryManagementDb.js";
 import {
@@ -2548,6 +2549,19 @@ function publicRequestMeta(req: express.Request) {
 async function logDeliveryPublicAudit(action: string, details: string, meta?: { ip?: string }) {
   await appendActivityLog("public-customer", "customer", "Customer", action, meta?.ip ? `${details} · IP ${meta.ip}` : details);
 }
+
+app.get("/api/admin/delivery-dashboard/contracted-customers", async (req, res) => {
+  const { userId, username } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const leads = await getLeadsForInvoiceOps();
+    const customers = await listDeliveryDashboardCustomers(userId, username, leads, db);
+    return res.json({ customers });
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
 
 app.get("/api/admin/invoices/:invoiceId/deliveries", async (req, res) => {
   const { userId, username, role } = readStaffAuth(req);

@@ -290,6 +290,27 @@ export async function listAdminInvoices(
   return out.filter(filterArchived);
 }
 
+export async function loadInvoiceRecordById(
+  invoiceId: string,
+  localDb?: Database
+): Promise<InvoiceRecord> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("invoices")
+      .select("*")
+      .eq("id", invoiceId)
+      .single();
+    if (error || !data) throw new InvoiceDbError("Invoice not found.", 404);
+    const items = await loadItems(invoiceId, localDb);
+    const payments = await loadPayments(invoiceId, localDb);
+    return mapInvoiceRow(data, items, payments);
+  }
+
+  const row = ((localDb as any)?.invoices || []).find((r: any) => r.id === invoiceId);
+  if (!row) throw new InvoiceDbError("Invoice not found.", 404);
+  return mapInvoiceRow(row, await loadItems(invoiceId, localDb), await loadPayments(invoiceId, localDb));
+}
+
 export async function getAdminInvoiceById(
   userId: string,
   username: string,
@@ -299,25 +320,7 @@ export async function getAdminInvoiceById(
 ): Promise<InvoiceRecord> {
   await assertInvoiceStaff(userId, username, localDb);
   const viewAll = canViewAllInvoices(username, role);
-
-  if (isSupabaseActive()) {
-    const { data, error } = await getSupabase()!
-      .from("invoices")
-      .select("*")
-      .eq("id", invoiceId)
-      .single();
-    if (error) throw new InvoiceDbError("Invoice not found.", 404);
-    if (!viewAll && (data.created_by || data.createdBy) !== username) {
-      throw new StaffPortalAuthError("Access denied.", 403);
-    }
-    const items = await loadItems(invoiceId, localDb);
-    const payments = await loadPayments(invoiceId, localDb);
-    return mapInvoiceRow(data, items, payments);
-  }
-
-  const row = ((localDb as any)?.invoices || []).find((r: any) => r.id === invoiceId);
-  if (!row) throw new InvoiceDbError("Invoice not found.", 404);
-  const inv = mapInvoiceRow(row, await loadItems(invoiceId, localDb), await loadPayments(invoiceId, localDb));
+  const inv = await loadInvoiceRecordById(invoiceId, localDb);
   if (!viewAll && inv.createdBy !== username) throw new StaffPortalAuthError("Access denied.", 403);
   return inv;
 }

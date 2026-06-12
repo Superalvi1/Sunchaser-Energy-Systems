@@ -8,7 +8,12 @@ import {
   CustomerPortalAuthError,
 } from "./dbManager.js";
 import { randomBytes } from "crypto";
-import { getAdminInvoiceById } from "./invoiceDb.js";
+import { findInvoiceByLeadAndQuote, loadInvoiceRecordById } from "./invoiceDb.js";
+import {
+  buildInvoiceDraftFromLead,
+  isContractedLeadReady,
+  pickQuoteForInvoice,
+} from "./src/lib/invoiceFromLead.ts";
 import { stockOutAdminInventoryItem } from "./inventoryFoundationDb.js";
 import { uploadFileToCustomerStorage } from "./customerProfileDb.js";
 import { syncDeliveryCertificateDocumentVault } from "./customerDocumentSync.js";
@@ -313,7 +318,7 @@ export async function getInvoiceDeliverySummaryAdmin(
   localDb?: Database
 ) {
   await assertDeliveryStaff(userId, username, localDb);
-  const invoice = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const invoice = await loadInvoiceRecordById(invoiceId, localDb);
   const challans = await loadInvoiceChallans(invoiceId, localDb);
   const allItems = await loadTable(ITEMS_TABLE, "deliveryChallanItems", localDb);
   const map = itemsByChallanMap(allItems);
@@ -358,7 +363,7 @@ export async function createAdminDeliveryChallan(
   await assertDeliveryStaff(userId, username, localDb);
   const invoiceId = String(body.invoiceId ?? body.invoice_id ?? "");
   if (!invoiceId) throw new DeliveryManagementDbError("invoiceId is required.");
-  const invoice = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const invoice = await loadInvoiceRecordById(invoiceId, localDb);
 
   const existingChallans = await loadInvoiceChallans(invoiceId, localDb);
   const allItems = await loadTable(ITEMS_TABLE, "deliveryChallanItems", localDb);
@@ -473,7 +478,7 @@ export async function updateAdminDeliveryChallan(
   await updateTable(CHALLANS_TABLE, "deliveryChallans", challanId, patch, localDb);
 
   if (Array.isArray(body.items)) {
-    const invoice = await getAdminInvoiceById(userId, username, role, existing.invoiceId, localDb);
+    const invoice = await loadInvoiceRecordById(existing.invoiceId, localDb);
     const existingChallans = (await loadInvoiceChallans(existing.invoiceId, localDb)).filter((c) => c.id !== challanId);
     const allItems = (await loadTable(ITEMS_TABLE, "deliveryChallanItems", localDb)).filter(
       (r: any) => (r.challan_id || r.challanId) !== challanId
@@ -849,13 +854,83 @@ export async function buildDeliveryCertificatePayload(challanId: string, localDb
   const challan = await loadChallanBundle(challanId, localDb);
   let invoice: any = null;
   try {
-    invoice = await getAdminInvoiceById("system", "system", "Super Admin", challan.invoiceId, localDb);
+    invoice = await loadInvoiceRecordById(challan.invoiceId, localDb);
   } catch {
     const rows = ((localDb as any)?.invoices || []) as any[];
     const row = rows.find((r) => r.id === challan.invoiceId);
     if (row) invoice = { invoiceNumber: row.invoice_number || row.invoiceNumber, customerName: row.customer_name, customerAddress: row.customer_address };
   }
   return { challan, invoice };
+}
+
+export type DeliveryDashboardCustomerRow = {
+  leadId: string;
+  customerId: string;
+  customerName: string;
+  phone: string;
+  siteAddress: string;
+  systemSize: string;
+  quotationId: string;
+  projectId: string | null;
+  invoiceId: string;
+  invoiceNumber: string;
+  quoteAmount: number;
+  leadStatus: string;
+  deliveredPercent: number;
+  remainingQty: number;
+  challanCount: number;
+};
+
+export async function listDeliveryDashboardCustomers(
+  userId: string,
+  username: string,
+  leads: any[],
+  localDb?: Database
+): Promise<DeliveryDashboardCustomerRow[]> {
+  await assertDeliveryStaff(userId, username, localDb);
+  const rows: DeliveryDashboardCustomerRow[] = [];
+  for (const lead of leads || []) {
+    if (!isContractedLeadReady(lead)) continue;
+    const quote = pickQuoteForInvoice(lead);
+    if (!quote?.id) continue;
+    const draft = buildInvoiceDraftFromLead(lead, quote);
+    const invoice = await findInvoiceByLeadAndQuote(lead.id, quote.id, localDb);
+    if (!invoice?.id) continue;
+
+    let deliveredPercent = 0;
+    let remainingQty = 0;
+    let challanCount = 0;
+    try {
+      const challans = await loadInvoiceChallans(invoice.id, localDb);
+      const allItems = await loadTable(ITEMS_TABLE, "deliveryChallanItems", localDb);
+      const map = itemsByChallanMap(allItems);
+      const summary = computeInvoiceDeliverySummary(invoice.items || [], challans, map);
+      deliveredPercent = summary.deliveredPercent;
+      remainingQty = summary.remainingQty;
+      challanCount = summary.challanCount;
+    } catch {
+      /* delivery tables may not exist yet */
+    }
+
+    rows.push({
+      leadId: lead.id,
+      customerId: invoice.customerId || draft.customerId,
+      customerName: invoice.customerName || lead.name,
+      phone: invoice.customerPhone || draft.customerPhone || lead.phone || "",
+      siteAddress: invoice.customerAddress || draft.customerAddress || "",
+      systemSize: draft.systemSize,
+      quotationId: quote.id,
+      projectId: invoice.projectId || draft.projectId || null,
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      quoteAmount: draft.quoteAmount,
+      leadStatus: lead.status,
+      deliveredPercent,
+      remainingQty,
+      challanCount,
+    });
+  }
+  return rows.sort((a, b) => a.customerName.localeCompare(b.customerName));
 }
 
 export async function renderDeliveryCertificateHtml(challanId: string, localDb?: Database, branding?: any) {

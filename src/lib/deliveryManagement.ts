@@ -320,6 +320,24 @@ export function computePreviouslyDeliveredQty(
   return total;
 }
 
+export type DeliveryDashboardCustomerRow = {
+  leadId: string;
+  customerId: string;
+  customerName: string;
+  phone: string;
+  siteAddress: string;
+  systemSize: string;
+  quotationId: string;
+  projectId: string | null;
+  invoiceId: string;
+  invoiceNumber: string;
+  quoteAmount: number;
+  leadStatus: string;
+  deliveredPercent: number;
+  remainingQty: number;
+  challanCount: number;
+};
+
 export type DeliveryDashboardSummary = {
   deliveriesToday: number;
   pendingDeliveries: number;
