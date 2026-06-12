@@ -2872,6 +2872,73 @@ export function customerDeliveryCertificateUrl(challanId: string, userId: string
   return `${API_BASE_URL}/api/customer-portal/deliveries/${encodeURIComponent(challanId)}/certificate?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`;
 }
 
+export function deliveryChallanPdfUrl(challanId: string, staff: StaffIdent) {
+  const q = new URLSearchParams();
+  q.set("userId", staff.id);
+  q.set("username", staff.username);
+  q.set("role", staff.role);
+  return `${API_BASE_URL}/api/admin/deliveries/${encodeURIComponent(challanId)}/challan-pdf?${q}`;
+}
+
+export async function fetchAdminDeliveryVerificationInfo(staff: StaffIdent, challanId: string) {
+  return costingRequest<{ challan: any; invoice: any; verificationUrl: string }>(
+    "Load verification info",
+    `/api/admin/deliveries/${encodeURIComponent(challanId)}/verification-info`,
+    staff
+  );
+}
+
+export async function fetchPublicDeliveryVerification(token: string) {
+  const res = await apiFetch(`/api/public/delivery/verify/${encodeURIComponent(token)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as any).error || "Verification link not found.");
+  return data as {
+    access: string;
+    challan: any;
+    invoice: any;
+    verificationUrl: string;
+    certificateUrl: string | null;
+  };
+}
+
+async function publicDeliveryRequest<T>(token: string, path: string, init?: { method?: string; body?: Record<string, unknown> }) {
+  const res = await apiFetch(`/api/public/delivery/verify/${encodeURIComponent(token)}${path}`, {
+    method: init?.method || "GET",
+    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as any).error || "Request failed.");
+  return data as T;
+}
+
+export async function sendPublicDeliveryOtp(token: string) {
+  return publicDeliveryRequest<{ sent: boolean; otp?: string; challan: any }>(token, "/send-otp", { method: "POST", body: {} });
+}
+
+export async function verifyPublicDeliveryOtp(token: string, body: { code: string; verifiedByPhone?: string }) {
+  return publicDeliveryRequest<{ challan: any }>(token, "/verify-otp", { method: "POST", body });
+}
+
+export async function capturePublicDeliverySignature(token: string, signatureDataUrl: string) {
+  return publicDeliveryRequest<{ challan: any }>(token, "/signature", { method: "POST", body: { signatureDataUrl } });
+}
+
+export async function uploadPublicDeliveryPhoto(token: string, body: Record<string, unknown>) {
+  return publicDeliveryRequest<{ challan: any }>(token, "/photos", { method: "POST", body });
+}
+
+export async function submitPublicDeliveryVerification(token: string, body: Record<string, unknown>) {
+  return publicDeliveryRequest<{ challan: any }>(token, "/submit", { method: "POST", body });
+}
+
+export async function disputePublicDeliveryChallan(token: string, body: Record<string, unknown>) {
+  return publicDeliveryRequest<{ challan: any }>(token, "/dispute", { method: "POST", body });
+}
+
+export function publicDeliveryCertificateUrl(token: string) {
+  return `${API_BASE_URL}/api/public/delivery/verify/${encodeURIComponent(token)}/certificate`;
+}
+
 export let currencySymbol = "$";
 
 export function setCurrencySymbol(symbol: string) {

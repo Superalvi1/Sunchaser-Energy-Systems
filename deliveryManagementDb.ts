@@ -7,6 +7,7 @@ import {
   StaffPortalAuthError,
   CustomerPortalAuthError,
 } from "./dbManager.js";
+import { randomBytes } from "crypto";
 import { getAdminInvoiceById } from "./invoiceDb.js";
 import { stockOutAdminInventoryItem } from "./inventoryFoundationDb.js";
 import { uploadFileToCustomerStorage } from "./customerProfileDb.js";
@@ -17,17 +18,23 @@ import {
   computePreviouslyDeliveredQty,
   generateOtpCode,
   isChallanLocked,
+  isVerificationTokenExpired,
+  tokenExpiresInDays,
   validateDeliverNowQty,
   type DeliveryChallan,
   type DeliveryChallanItem,
   type DeliveryChallanPhoto,
   type DeliveryDashboardSummary,
   type DeliveryStatus,
+  type DisputeDetails,
+  type PublicVerificationStatus,
   type VerificationChecklist,
   DELIVERY_STATUSES,
   PHOTO_TYPES,
 } from "./src/lib/deliveryManagement.ts";
+import { buildDeliveryVerificationUrl } from "./src/lib/deliveryQr.ts";
 import { compileDeliveryCertificateHtml } from "./deliveryCertificatePdf.ts";
+import { compileDeliveryChallanHtml } from "./deliveryChallanPdf.ts";
 import { isSuperAdmin } from "./src/lib/roles.ts";
 
 export class DeliveryManagementDbError extends Error {
@@ -65,6 +72,35 @@ function parseChecklist(raw: unknown): VerificationChecklist {
   };
 }
 
+function parseDisputeDetails(raw: unknown): DisputeDetails {
+  const o = (typeof raw === "string" ? JSON.parse(raw) : raw) as DisputeDetails | null;
+  if (!o || typeof o !== "object") return {};
+  return {
+    comments: o.comments ? String(o.comments) : undefined,
+    items: Array.isArray(o.items)
+      ? o.items.map((it) => ({
+          itemId: String((it as any).itemId || ""),
+          itemName: (it as any).itemName ? String((it as any).itemName) : undefined,
+          issueType: (it as any).issueType === "damaged" ? "damaged" : "missing",
+          notes: (it as any).notes ? String((it as any).notes) : undefined,
+        }))
+      : undefined,
+  };
+}
+
+function generateVerificationToken(): string {
+  return randomBytes(12).toString("base64url");
+}
+
+function verificationTokenFields(now = new Date().toISOString()) {
+  return {
+    verification_token: generateVerificationToken(),
+    token_expires_at: tokenExpiresInDays(7),
+    public_verification_status: "pending",
+    updated_at: now,
+  };
+}
+
 function mapChallanRow(row: any): DeliveryChallan {
   return {
     id: row.id,
@@ -95,6 +131,18 @@ function mapChallanRow(row: any): DeliveryChallan {
     signatureImageUrl: row.signature_image_url ?? row.signatureImageUrl ?? null,
     verificationChecklist: parseChecklist(row.verification_checklist ?? row.verificationChecklist),
     disputeReason: row.dispute_reason ?? row.disputeReason ?? null,
+    disputeDetails: parseDisputeDetails(row.dispute_details ?? row.disputeDetails),
+    verificationToken: row.verification_token ?? row.verificationToken ?? null,
+    tokenExpiresAt: row.token_expires_at ?? row.tokenExpiresAt ?? null,
+    publicVerificationStatus: (row.public_verification_status ||
+      row.publicVerificationStatus ||
+      "pending") as PublicVerificationStatus,
+    verifiedAt: row.verified_at ?? row.verifiedAt ?? null,
+    verifiedIp: row.verified_ip ?? row.verifiedIp ?? null,
+    verifiedUserAgent: row.verified_user_agent ?? row.verifiedUserAgent ?? null,
+    signedByName: row.signed_by_name ?? row.signedByName ?? null,
+    signedByPhone: row.signed_by_phone ?? row.signedByPhone ?? null,
+    signedRelation: row.signed_relation ?? row.signedRelation ?? null,
     notes: row.notes || "",
     createdBy: row.created_by ?? row.createdBy ?? null,
     createdAt: row.created_at || row.createdAt,
@@ -174,6 +222,45 @@ async function updateTable(table: string, localKey: LocalKey, id: string, patch:
   if (idx < 0) throw new DeliveryManagementDbError("Challan not found.", 404);
   list[idx] = { ...list[idx], ...patch };
   return list[idx];
+}
+
+async function loadChallanByToken(token: string, localDb?: Database) {
+  const rows = await loadTable(CHALLANS_TABLE, "deliveryChallans", localDb);
+  const row = rows.find((r: any) => (r.verification_token || r.verificationToken) === token);
+  if (!row) throw new DeliveryManagementDbError("Verification link not found.", 404);
+  return loadChallanBundle(row.id, localDb);
+}
+
+type PublicAccessState = "pending" | "expired" | "cancelled" | "verified_readonly" | "disputed_readonly";
+
+function resolvePublicAccess(challan: DeliveryChallan): PublicAccessState {
+  if (challan.status === "cancelled") return "cancelled";
+  if (isVerificationTokenExpired(challan.tokenExpiresAt) && challan.publicVerificationStatus === "pending") {
+    return "expired";
+  }
+  if (challan.status === "verified_received" || challan.publicVerificationStatus === "verified") {
+    return "verified_readonly";
+  }
+  if (challan.status === "disputed" || challan.publicVerificationStatus === "disputed") {
+    return "disputed_readonly";
+  }
+  return "pending";
+}
+
+function assertPublicVerificationWritable(challan: DeliveryChallan) {
+  const access = resolvePublicAccess(challan);
+  if (access === "cancelled") throw new DeliveryManagementDbError("This delivery was cancelled.", 403);
+  if (access === "expired") throw new DeliveryManagementDbError("This verification link has expired.", 410);
+  if (access === "verified_readonly") throw new DeliveryManagementDbError("This delivery is already verified.", 409);
+  if (access === "disputed_readonly") throw new DeliveryManagementDbError("This delivery is already marked as disputed.", 409);
+}
+
+async function ensureChallanVerificationToken(challanId: string, localDb?: Database) {
+  const challan = await loadChallanBundle(challanId, localDb);
+  if (challan.verificationToken) return challan;
+  const now = new Date().toISOString();
+  await updateTable(CHALLANS_TABLE, "deliveryChallans", challanId, verificationTokenFields(now), localDb);
+  return loadChallanBundle(challanId, localDb);
 }
 
 async function loadChallanBundle(challanId: string, localDb?: Database) {
@@ -332,6 +419,7 @@ export async function createAdminDeliveryChallan(
     created_by: username,
     created_at: now,
     updated_at: now,
+    ...verificationTokenFields(now),
   };
 
   await insertTable(CHALLANS_TABLE, "deliveryChallans", challanRow, localDb);
@@ -588,6 +676,15 @@ export async function uploadAdminDeliveryPhoto(
   return { challan: await loadChallanBundle(challanId, localDb), auditAction: "photo_uploaded", photoType };
 }
 
+function resolveDeliveryAutomationActor(localDb?: Database) {
+  const users = ((localDb as any)?.users || []) as any[];
+  const hit =
+    users.find((u) => String(u.username || "").toLowerCase() === "allauddin") ||
+    users.find((u) => u.role === "Super Admin");
+  if (hit) return { userId: hit.id, username: hit.username };
+  return { userId: "u-system", username: "system" };
+}
+
 async function applyVerifiedInventoryMovements(
   userId: string,
   username: string,
@@ -611,17 +708,17 @@ async function applyVerifiedInventoryMovements(
   }
 }
 
-export async function verifyAdminDeliveryChallan(
-  userId: string,
-  username: string,
-  role: string,
+async function finalizeDeliveryVerification(
   challanId: string,
   body: Record<string, unknown>,
-  localDb?: Database
+  meta: { ip?: string; userAgent?: string; source: "staff" | "customer" },
+  localDb?: Database,
+  actor?: { userId: string; username: string }
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
-  if (isChallanLocked(existing.status)) throw new DeliveryManagementDbError("Challan is already verified/disputed.", 409);
+  if (isChallanLocked(existing.status)) {
+    throw new DeliveryManagementDbError("Challan is already verified/disputed.", 409);
+  }
 
   const checklist = {
     receivedMaterial: !!(body.receivedMaterial ?? (body.checklist as any)?.receivedMaterial),
@@ -633,22 +730,39 @@ export async function verifyAdminDeliveryChallan(
   }
   if (!existing.otpVerifiedAt) throw new DeliveryManagementDbError("OTP must be verified first.");
   if (!existing.signatureImageUrl) throw new DeliveryManagementDbError("Signature is required.");
+
+  const receiverName = String(body.receiverName ?? body.receiver_name ?? existing.receiverName ?? existing.signedByName ?? "").trim();
+  const receiverPhone = String(body.receiverPhone ?? body.receiver_phone ?? existing.receiverPhone ?? existing.signedByPhone ?? "").trim();
+  if (!receiverName) throw new DeliveryManagementDbError("Receiver name is required.");
+  if (!receiverPhone) throw new DeliveryManagementDbError("Receiver phone is required.");
+
   const photos = existing.photos || [];
   if (!photos.some((p) => p.photoType === "material")) {
     throw new DeliveryManagementDbError("At least one material photo is recommended before verification.");
   }
 
   const now = new Date().toISOString();
+  const signedRelation = String(
+    body.receiverRelation ?? body.receiver_relation ?? body.signedRelation ?? existing.receiverRelation ?? existing.signedRelation ?? "owner"
+  );
+
   await updateTable(
     CHALLANS_TABLE,
     "deliveryChallans",
     challanId,
     {
       status: "verified_received",
-      receiver_name: body.receiverName ?? body.receiver_name ?? existing.receiverName,
-      receiver_phone: body.receiverPhone ?? body.receiver_phone ?? existing.receiverPhone,
+      public_verification_status: "verified",
+      verified_at: now,
+      verified_ip: meta.ip || null,
+      verified_user_agent: meta.userAgent || null,
+      receiver_name: receiverName,
+      receiver_phone: receiverPhone,
       receiver_cnic: body.receiverCnic ?? body.receiver_cnic ?? existing.receiverCnic,
-      receiver_relation: body.receiverRelation ?? body.receiver_relation ?? existing.receiverRelation,
+      receiver_relation: signedRelation,
+      signed_by_name: receiverName,
+      signed_by_phone: receiverPhone,
+      signed_relation: signedRelation,
       verification_checklist: checklist,
       gps_lat: body.gpsLat ?? body.gps_lat ?? existing.gpsLat,
       gps_lng: body.gpsLng ?? body.gps_lng ?? existing.gpsLng,
@@ -660,10 +774,28 @@ export async function verifyAdminDeliveryChallan(
   );
 
   const verified = await loadChallanBundle(challanId, localDb);
-  await applyVerifiedInventoryMovements(userId, username, verified, localDb);
+  const inventoryActor = actor || resolveDeliveryAutomationActor(localDb);
+  await applyVerifiedInventoryMovements(inventoryActor.userId, inventoryActor.username, verified, localDb);
   await syncDeliveryCertificateDocument(verified, localDb);
+  return { challan: verified, auditAction: meta.source === "customer" ? "delivery_verified_by_customer" : "delivery_verified" };
+}
 
-  return { challan: verified, auditAction: "delivery_verified" };
+export async function verifyAdminDeliveryChallan(
+  userId: string,
+  username: string,
+  role: string,
+  challanId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  await assertDeliveryStaff(userId, username, localDb);
+  return finalizeDeliveryVerification(
+    challanId,
+    body,
+    { source: "staff" },
+    localDb,
+    { userId, username }
+  );
 }
 
 export async function disputeAdminDeliveryChallan(
@@ -684,7 +816,7 @@ export async function disputeAdminDeliveryChallan(
     CHALLANS_TABLE,
     "deliveryChallans",
     challanId,
-    { status: "disputed", dispute_reason: reasonText, updated_at: new Date().toISOString() },
+    { status: "disputed", public_verification_status: "disputed", dispute_reason: reasonText, updated_at: new Date().toISOString() },
     localDb
   );
   return { challan: await loadChallanBundle(challanId, localDb), auditAction: "disputed", reason: reasonText };
@@ -815,4 +947,254 @@ export async function getCustomerPortalDeliveryCertificate(
     throw new DeliveryManagementDbError("Certificate available after verification only.", 403);
   }
   return renderDeliveryCertificateHtml(challanId, localDb);
+}
+
+function sanitizePublicChallan(ch: DeliveryChallan) {
+  const { otpCode: _otp, ...rest } = ch;
+  return rest;
+}
+
+async function loadPublicVerificationContext(token: string, localDb?: Database) {
+  const challan = await loadChallanByToken(token, localDb);
+  const ensured = challan.verificationToken ? challan : await ensureChallanVerificationToken(challan.id, localDb);
+  const access = resolvePublicAccess(ensured);
+  const { invoice } = await buildDeliveryCertificatePayload(ensured.id, localDb);
+  const verificationUrl = buildDeliveryVerificationUrl(ensured.verificationToken || token);
+  return {
+    access,
+    challan: sanitizePublicChallan(ensured),
+    invoice: {
+      invoiceNumber: invoice?.invoiceNumber || "—",
+      customerName: invoice?.customerName || "—",
+      customerAddress: invoice?.customerAddress || "—",
+      customerPhone: invoice?.customerPhone || "",
+    },
+    verificationUrl,
+    certificateUrl:
+      access === "verified_readonly"
+        ? `/api/public/delivery/verify/${encodeURIComponent(token)}/certificate`
+        : null,
+  };
+}
+
+export async function getPublicDeliveryVerificationPage(token: string, localDb?: Database) {
+  return loadPublicVerificationContext(token, localDb);
+}
+
+export async function sendPublicDeliveryOtp(token: string, localDb?: Database) {
+  const challan = await loadChallanByToken(token, localDb);
+  assertPublicVerificationWritable(challan);
+  const otp = generateOtpCode();
+  const now = new Date().toISOString();
+  await updateTable(
+    CHALLANS_TABLE,
+    "deliveryChallans",
+    challan.id,
+    { otp_code: otp, otp_sent_at: now, updated_at: now },
+    localDb
+  );
+  const updated = await loadChallanBundle(challan.id, localDb);
+  const devOtp = process.env.NODE_ENV !== "production" ? otp : undefined;
+  return { challan: sanitizePublicChallan(updated), sent: true, otp: devOtp, auditAction: "otp_sent" };
+}
+
+export async function verifyPublicDeliveryOtp(
+  token: string,
+  body: { code?: string; verifiedByPhone?: string },
+  localDb?: Database
+) {
+  const challan = await loadChallanByToken(token, localDb);
+  assertPublicVerificationWritable(challan);
+  const code = String(body.code || "").trim();
+  if (!code || code !== String(challan.otpCode || "")) {
+    throw new DeliveryManagementDbError("Invalid OTP code.");
+  }
+  const now = new Date().toISOString();
+  await updateTable(
+    CHALLANS_TABLE,
+    "deliveryChallans",
+    challan.id,
+    {
+      otp_verified_at: now,
+      verified_by_phone: body.verifiedByPhone || challan.receiverPhone || null,
+      updated_at: now,
+    },
+    localDb
+  );
+  return { challan: sanitizePublicChallan(await loadChallanBundle(challan.id, localDb)), auditAction: "otp_verified" };
+}
+
+export async function capturePublicDeliverySignature(
+  token: string,
+  body: { signatureDataUrl?: string; signatureImageUrl?: string },
+  localDb?: Database
+) {
+  const challan = await loadChallanByToken(token, localDb);
+  assertPublicVerificationWritable(challan);
+
+  let signatureUrl = body.signatureImageUrl || null;
+  if (body.signatureDataUrl && challan.customerId) {
+    const up = await uploadFileToCustomerStorage(
+      challan.customerId,
+      String(body.signatureDataUrl),
+      `delivery-signature-${challan.id}.png`,
+      "image/png"
+    );
+    signatureUrl = up.url;
+  } else if (body.signatureDataUrl) {
+    signatureUrl = String(body.signatureDataUrl);
+  }
+  if (!signatureUrl) throw new DeliveryManagementDbError("Signature data is required.");
+
+  const now = new Date().toISOString();
+  await updateTable(
+    CHALLANS_TABLE,
+    "deliveryChallans",
+    challan.id,
+    { signature_image_url: signatureUrl, signed_at: now, updated_at: now },
+    localDb
+  );
+  return { challan: sanitizePublicChallan(await loadChallanBundle(challan.id, localDb)), auditAction: "signature_captured" };
+}
+
+export async function uploadPublicDeliveryPhoto(
+  token: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
+  const challan = await loadChallanByToken(token, localDb);
+  assertPublicVerificationWritable(challan);
+
+  let photoUrl = String(body.photoUrl ?? body.photo_url ?? "");
+  if (body.base64Data && challan.customerId) {
+    const up = await uploadFileToCustomerStorage(
+      challan.customerId,
+      String(body.base64Data),
+      String(body.fileName || `delivery-public-${challan.id}.jpg`),
+      String(body.mimeType || "image/jpeg")
+    );
+    photoUrl = up.url;
+  }
+  if (!photoUrl) throw new DeliveryManagementDbError("Photo URL or base64Data is required.");
+
+  const photoType = String(body.photoType ?? body.photo_type ?? "material");
+  if (!(PHOTO_TYPES as readonly string[]).includes(photoType)) {
+    throw new DeliveryManagementDbError("Invalid photo type.");
+  }
+
+  const id = `dcp-${Date.now()}`;
+  const now = new Date().toISOString();
+  await insertTable(
+    PHOTOS_TABLE,
+    "deliveryChallanPhotos",
+    {
+      id,
+      challan_id: challan.id,
+      photo_url: photoUrl,
+      photo_type: photoType,
+      caption: String(body.caption ?? ""),
+      uploaded_by: "customer-public",
+      uploaded_at: now,
+    },
+    localDb
+  );
+  return {
+    challan: sanitizePublicChallan(await loadChallanBundle(challan.id, localDb)),
+    auditAction: "photo_uploaded",
+    photoType,
+  };
+}
+
+export async function submitPublicDeliveryVerification(
+  token: string,
+  body: Record<string, unknown>,
+  meta: { ip?: string; userAgent?: string },
+  localDb?: Database
+) {
+  const challan = await loadChallanByToken(token, localDb);
+  assertPublicVerificationWritable(challan);
+  return finalizeDeliveryVerification(challan.id, body, { ...meta, source: "customer" }, localDb);
+}
+
+export async function disputePublicDeliveryChallan(
+  token: string,
+  body: Record<string, unknown>,
+  meta: { ip?: string; userAgent?: string },
+  localDb?: Database
+) {
+  const challan = await loadChallanByToken(token, localDb);
+  assertPublicVerificationWritable(challan);
+
+  const comments = String(body.comments ?? body.disputeReason ?? "").trim();
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!comments && !items.length) {
+    throw new DeliveryManagementDbError("Please describe missing or damaged items.");
+  }
+
+  const disputeDetails: DisputeDetails = {
+    comments,
+    items: items.map((raw: any) => ({
+      itemId: String(raw.itemId || raw.id || ""),
+      itemName: raw.itemName ? String(raw.itemName) : undefined,
+      issueType: raw.issueType === "damaged" ? "damaged" : "missing",
+      notes: raw.notes ? String(raw.notes) : undefined,
+    })),
+  };
+
+  const now = new Date().toISOString();
+  await updateTable(
+    CHALLANS_TABLE,
+    "deliveryChallans",
+    challan.id,
+    {
+      status: "disputed",
+      public_verification_status: "disputed",
+      dispute_reason: comments || "Customer reported missing/damaged items.",
+      dispute_details: disputeDetails,
+      verified_at: now,
+      verified_ip: meta.ip || null,
+      verified_user_agent: meta.userAgent || null,
+      updated_at: now,
+    },
+    localDb
+  );
+
+  return {
+    challan: sanitizePublicChallan(await loadChallanBundle(challan.id, localDb)),
+    auditAction: "disputed",
+    reason: comments,
+  };
+}
+
+export async function renderPublicDeliveryCertificate(token: string, localDb?: Database) {
+  const challan = await loadChallanByToken(token, localDb);
+  if (challan.status !== "verified_received") {
+    throw new DeliveryManagementDbError("Certificate available after verification only.", 403);
+  }
+  return renderDeliveryCertificateHtml(challan.id, localDb);
+}
+
+export async function renderDeliveryChallanHtml(challanId: string, localDb?: Database, branding?: any) {
+  const ensured = await ensureChallanVerificationToken(challanId, localDb);
+  const { invoice } = await buildDeliveryCertificatePayload(challanId, localDb);
+  const verificationUrl = buildDeliveryVerificationUrl(ensured.verificationToken || "");
+  return compileDeliveryChallanHtml({ challan: ensured, invoice, branding, verificationUrl });
+}
+
+export async function getAdminDeliveryVerificationInfo(
+  userId: string,
+  username: string,
+  role: string,
+  challanId: string,
+  localDb?: Database
+) {
+  await assertDeliveryStaff(userId, username, localDb);
+  const challan = await ensureChallanVerificationToken(challanId, localDb);
+  const { invoice } = await buildDeliveryCertificatePayload(challanId, localDb);
+  const verificationUrl = buildDeliveryVerificationUrl(challan.verificationToken || "");
+  return {
+    challan,
+    invoice,
+    verificationUrl,
+  };
 }

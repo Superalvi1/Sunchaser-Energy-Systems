@@ -9,20 +9,28 @@ import {
   Plus,
   Send,
   Truck,
+  Copy,
+  MessageCircle,
+  Link2,
 } from "lucide-react";
 import type { User } from "../types";
 import {
   buildOtpWhatsAppText,
+  buildWhatsAppVerificationLink,
+  buildWhatsAppVerificationMessage,
   isChallanLocked,
   RECEIVER_RELATIONS,
   type DeliveryChallan,
   type InvoiceDeliverySummary,
 } from "../lib/deliveryManagement";
+import { qrCodeImageUrl } from "../lib/deliveryQr";
 import {
   captureAdminDeliverySignature,
   createAdminDeliveryChallan,
   deliveryCertificateUrl,
+  deliveryChallanPdfUrl,
   fetchAdminDeliveriesForInvoice,
+  fetchAdminDeliveryVerificationInfo,
   sendAdminDeliveryOtp,
   updateAdminDeliveryChallan,
   updateAdminDeliveryChallanStatus,
@@ -157,6 +165,8 @@ export default function DeliveryChallanPanel({
   >([]);
   const [otpInput, setOtpInput] = useState("");
   const [otpDisplay, setOtpDisplay] = useState<string | null>(null);
+  const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const [whatsappMessage, setWhatsappMessage] = useState<string>("");
   const [checklist, setChecklist] = useState({ receivedMaterial: false, quantityCorrect: false, conditionAcceptable: false });
   const [receiver, setReceiver] = useState({ name: "", phone: "", cnic: "", relation: "owner" });
 
@@ -200,6 +210,32 @@ export default function DeliveryChallanPanel({
       relation: ch.receiverRelation || "owner",
     });
     setView("detail");
+    setVerificationUrl(null);
+    setWhatsappMessage("");
+    fetchAdminDeliveryVerificationInfo(staffUser, ch.id)
+      .then((info) => {
+        setVerificationUrl(info.verificationUrl);
+        setWhatsappMessage(
+          buildWhatsAppVerificationMessage({
+            customerName: info.invoice?.customerName || customerName || "",
+            invoiceNumber: info.invoice?.invoiceNumber || invoiceNumber || "",
+            challanNumber: info.challan?.challanNumber || ch.challanNumber,
+            verificationUrl: info.verificationUrl,
+          })
+        );
+      })
+      .catch(() => {
+        setVerificationUrl(null);
+      });
+  };
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMsg(`${label} copied.`);
+    } catch {
+      setMsg(`Copy ${label} manually.`);
+    }
   };
 
   const handleCreate = async () => {
@@ -437,6 +473,16 @@ export default function DeliveryChallanPanel({
                   <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
                     {STATUS_LABELS[ch.status] || ch.status}
                   </span>
+                  {ch.publicVerificationStatus === "verified" && (
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 ml-1">
+                      Verified
+                    </span>
+                  )}
+                  {ch.publicVerificationStatus === "disputed" && (
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-red-100 text-red-700 ml-1">
+                      Disputed
+                    </span>
+                  )}
                 </div>
                 <div className="text-[10px] text-slate-500 mt-1">
                   {(ch.items || []).length} item(s) · {(ch.items || []).reduce((s, i) => s + i.deliverNowQty, 0)} units
@@ -530,7 +576,14 @@ export default function DeliveryChallanPanel({
               <div className="font-bold text-slate-900">{activeChallan.challanNumber}</div>
               <div className="text-[10px] text-slate-500">{STATUS_LABELS[activeChallan.status]}</div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                className="text-xs font-bold text-violet-700 flex items-center gap-1"
+                onClick={() => window.open(deliveryChallanPdfUrl(activeChallan.id, staffUser), "_blank")}
+              >
+                <Download className="h-3.5 w-3.5" /> Challan PDF
+              </button>
               <button
                 type="button"
                 className="text-xs font-bold text-violet-700 flex items-center gap-1"
@@ -562,6 +615,55 @@ export default function DeliveryChallanPanel({
               ))}
             </tbody>
           </table>
+
+          <div className="border border-sky-200 bg-sky-50/50 rounded-xl p-3 space-y-3">
+            <div className="text-[10px] font-bold uppercase text-sky-800">Customer Verification Link</div>
+            {verificationUrl ? (
+              <>
+                <div className="flex flex-wrap gap-3 items-start">
+                  <img
+                    src={qrCodeImageUrl(verificationUrl, 120)}
+                    alt="Verification QR"
+                    className="border border-sky-200 rounded-lg bg-white"
+                    width={120}
+                    height={120}
+                  />
+                  <div className="flex-1 min-w-[180px] space-y-2 text-xs">
+                    <p className="font-mono text-sky-900 break-all">{verificationUrl}</p>
+                    <p className="text-slate-600">
+                      Status: <strong>{activeChallan.publicVerificationStatus || "pending"}</strong>
+                      {activeChallan.verifiedAt ? ` · ${new Date(activeChallan.verifiedAt).toLocaleString()}` : ""}
+                    </p>
+                    {activeChallan.receiverName && (
+                      <p className="text-slate-600">Receiver: {activeChallan.receiverName} · {activeChallan.receiverPhone}</p>
+                    )}
+                    {activeChallan.disputeReason && (
+                      <p className="text-red-700 bg-red-50 border border-red-200 rounded p-2">{activeChallan.disputeReason}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className="text-xs font-bold border border-sky-300 rounded px-2 py-1 flex items-center gap-1" onClick={() => copyText(verificationUrl, "Link")}>
+                    <Link2 className="h-3 w-3" /> Copy Link
+                  </button>
+                  <button type="button" className="text-xs font-bold border border-sky-300 rounded px-2 py-1 flex items-center gap-1" onClick={() => copyText(whatsappMessage, "WhatsApp message")}>
+                    <Copy className="h-3 w-3" /> Copy Message
+                  </button>
+                  <a
+                    href={buildWhatsAppVerificationLink(activeChallan.receiverPhone || undefined, whatsappMessage)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-bold border border-emerald-400 bg-emerald-50 text-emerald-800 rounded px-2 py-1 flex items-center gap-1"
+                  >
+                    <MessageCircle className="h-3 w-3" /> Open WhatsApp
+                  </a>
+                </div>
+                <p className="text-[10px] text-slate-500 whitespace-pre-wrap border-t border-sky-100 pt-2">{whatsappMessage}</p>
+              </>
+            ) : (
+              <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
+            )}
+          </div>
 
           {!locked && (
             <>

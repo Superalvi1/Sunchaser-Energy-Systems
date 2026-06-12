@@ -30,6 +30,16 @@ create table if not exists public.delivery_challans (
   signature_image_url text,
   verification_checklist jsonb default '{}'::jsonb,
   dispute_reason text,
+  dispute_details jsonb default '{}'::jsonb,
+  verification_token text,
+  token_expires_at timestamptz,
+  public_verification_status text default 'pending',
+  verified_at timestamptz,
+  verified_ip text,
+  verified_user_agent text,
+  signed_by_name text,
+  signed_by_phone text,
+  signed_relation text,
   notes text default '',
   created_by text,
   created_at timestamptz not null default now(),
@@ -66,6 +76,9 @@ create index if not exists idx_delivery_challans_invoice on public.delivery_chal
 create index if not exists idx_delivery_challans_customer on public.delivery_challans (customer_id);
 create index if not exists idx_delivery_challans_status on public.delivery_challans (status);
 create index if not exists idx_delivery_challans_delivery_date on public.delivery_challans (delivery_date);
+create unique index if not exists idx_delivery_challans_verification_token
+  on public.delivery_challans (verification_token)
+  where verification_token is not null;
 create index if not exists idx_delivery_challan_items_challan on public.delivery_challan_items (challan_id);
 create index if not exists idx_delivery_challan_items_invoice_item on public.delivery_challan_items (invoice_item_id);
 create index if not exists idx_delivery_challan_photos_challan on public.delivery_challan_photos (challan_id);

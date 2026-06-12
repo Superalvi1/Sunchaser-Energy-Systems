@@ -1,5 +1,14 @@
 /** Phase 24 — Invoice-linked partial delivery challans */
 
+export const PUBLIC_VERIFICATION_STATUSES = [
+  "pending",
+  "verified",
+  "disputed",
+  "expired",
+] as const;
+
+export type PublicVerificationStatus = (typeof PUBLIC_VERIFICATION_STATUSES)[number];
+
 export const DELIVERY_STATUSES = [
   "draft",
   "out_for_delivery",
@@ -17,6 +26,7 @@ export const PHOTO_TYPES = [
   "vehicle",
   "site",
   "receiver",
+  "damaged",
   "other",
 ] as const;
 
@@ -36,6 +46,18 @@ export type VerificationChecklist = {
   receivedMaterial: boolean;
   quantityCorrect: boolean;
   conditionAcceptable: boolean;
+};
+
+export type DisputeItemReport = {
+  itemId: string;
+  itemName?: string;
+  issueType: "missing" | "damaged";
+  notes?: string;
+};
+
+export type DisputeDetails = {
+  comments?: string;
+  items?: DisputeItemReport[];
 };
 
 export type DeliveryChallanItem = {
@@ -93,6 +115,16 @@ export type DeliveryChallan = {
   signatureImageUrl: string | null;
   verificationChecklist: VerificationChecklist;
   disputeReason: string | null;
+  disputeDetails: DisputeDetails;
+  verificationToken: string | null;
+  tokenExpiresAt: string | null;
+  publicVerificationStatus: PublicVerificationStatus;
+  verifiedAt: string | null;
+  verifiedIp: string | null;
+  verifiedUserAgent: string | null;
+  signedByName: string | null;
+  signedByPhone: string | null;
+  signedRelation: string | null;
   notes: string;
   createdBy: string | null;
   createdAt: string;
@@ -144,6 +176,61 @@ export const ALLOCATING_STATUSES = new Set<DeliveryStatus>([
 
 export function generateOtpCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+export function generateVerificationToken(): string {
+  const bytes = new Uint8Array(12);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export function tokenExpiresInDays(days = 7): string {
+  return new Date(Date.now() + days * 24 * 3600 * 1000).toISOString();
+}
+
+export function isVerificationTokenExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) return false;
+  return new Date(expiresAt).getTime() < Date.now();
+}
+
+export function buildWhatsAppVerificationMessage(input: {
+  customerName: string;
+  invoiceNumber: string;
+  challanNumber: string;
+  verificationUrl: string;
+}): string {
+  const name = input.customerName || "Customer";
+  return `Dear ${name},
+
+Thank you for choosing Sunchaser Energy Systems.
+
+Your material delivery is ready for confirmation.
+
+Invoice: ${input.invoiceNumber}
+Delivery Challan: ${input.challanNumber}
+
+Please verify your received material using the secure link below:
+
+${input.verificationUrl}
+
+This link is valid for 7 days and is unique to your delivery.
+
+Thank you,
+Sunchaser Energy Systems`;
+}
+
+export function buildWhatsAppVerificationLink(phone: string | undefined, message: string): string {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const text = encodeURIComponent(message);
+  if (digits) return `https://wa.me/${digits}?text=${text}`;
+  return `https://wa.me/?text=${text}`;
 }
 
 export function validateDeliverNowQty(

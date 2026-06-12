@@ -1,4 +1,5 @@
 import type { DeliveryChallan } from "./src/lib/deliveryManagement.ts";
+import { buildDeliveryVerificationUrl, qrCodeImageUrl } from "./src/lib/deliveryQr.ts";
 
 function esc(s: unknown) {
   return String(s ?? "")
@@ -7,8 +8,6 @@ function esc(s: unknown) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-
-const fmt = (n: number) => "Rs " + Math.round(n || 0).toLocaleString("en-PK");
 
 export function compileDeliveryCertificateHtml(input: {
   challan: DeliveryChallan;
@@ -26,6 +25,10 @@ export function compileDeliveryCertificateHtml(input: {
     quantityCorrect: false,
     conditionAcceptable: false,
   };
+  const verificationUrl = challan.verificationToken
+    ? buildDeliveryVerificationUrl(challan.verificationToken)
+    : "";
+  const qrUrl = verificationUrl ? qrCodeImageUrl(verificationUrl, 140) : "";
 
   const itemRows = items
     .map(
@@ -38,8 +41,15 @@ export function compileDeliveryCertificateHtml(input: {
     )
     .join("");
 
+  const disputeItems = (challan.disputeDetails?.items || [])
+    .map(
+      (it) =>
+        `<li>${esc(it.itemName || it.itemId)} — ${esc(it.issueType)}${it.notes ? `: ${esc(it.notes)}` : ""}</li>`
+    )
+    .join("");
+
   const photoList = photos
-    .map((p) => `<li>${esc(p.photoType)} — ${esc(p.caption || p.photoUrl.slice(0, 60))}</li>`)
+    .map((p) => `<li>${esc(p.photoType)} — <a href="${esc(p.photoUrl)}">${esc(p.caption || "View photo")}</a></li>`)
     .join("");
 
   return `<!DOCTYPE html>
@@ -59,6 +69,8 @@ export function compileDeliveryCertificateHtml(input: {
   .declaration { background: #fffbeb; border: 1px solid ${primary}; padding: 12px; margin: 20px 0; font-style: italic; }
   .sig { max-width: 280px; max-height: 120px; border: 1px solid #ddd; margin-top: 8px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #ecfdf5; color: #047857; font-weight: bold; font-size: 10px; }
+  .qr-row { display: flex; gap: 16px; align-items: center; margin: 16px 0; }
+  .qr-row img { width: 120px; height: 120px; }
 </style>
 </head>
 <body>
@@ -78,8 +90,19 @@ export function compileDeliveryCertificateHtml(input: {
     <div><strong>Customer:</strong> ${esc(invoice?.customerName || "—")}</div>
     <div><strong>Site Address:</strong> ${esc(invoice?.customerAddress || "—")}</div>
     <div><strong>Status:</strong> <span class="badge">${esc(challan.status)}</span></div>
-    <div><strong>OTP:</strong> ${challan.otpVerifiedAt ? "Verified ✓" : "Pending"}</div>
+    <div><strong>Verified:</strong> ${esc(challan.verifiedAt || "—")}</div>
+    <div><strong>OTP:</strong> ${challan.otpVerifiedAt ? `Verified ✓ (${esc(challan.otpVerifiedAt)})` : "Pending"}</div>
+    <div><strong>Public Verification:</strong> ${esc(challan.publicVerificationStatus || "pending")}</div>
   </div>
+
+  ${
+    verificationUrl
+      ? `<div class="qr-row">
+    <img src="${esc(qrUrl)}" alt="Verification QR"/>
+    <div><strong>Verification URL</strong><br/><span style="word-break:break-all;font-family:monospace;font-size:10px">${esc(verificationUrl)}</span></div>
+  </div>`
+      : ""
+  }
 
   <h2>Delivered Items</h2>
   <table>
@@ -87,14 +110,22 @@ export function compileDeliveryCertificateHtml(input: {
     <tbody>${itemRows || "<tr><td colspan='4'>No items</td></tr>"}</tbody>
   </table>
 
+  ${
+    disputeItems
+      ? `<h2>Disputed / Missing Items</h2><ul>${disputeItems}</ul><p>${esc(challan.disputeReason || "")}</p>`
+      : ""
+  }
+
   <h2>Receiver Verification</h2>
   <div class="meta">
-    <div><strong>Name:</strong> ${esc(challan.receiverName)}</div>
-    <div><strong>Phone:</strong> ${esc(challan.receiverPhone)}</div>
+    <div><strong>Name:</strong> ${esc(challan.signedByName || challan.receiverName)}</div>
+    <div><strong>Phone:</strong> ${esc(challan.signedByPhone || challan.receiverPhone)}</div>
     <div><strong>CNIC:</strong> ${esc(challan.receiverCnic || "—")}</div>
-    <div><strong>Relation:</strong> ${esc(challan.receiverRelation || "—")}</div>
+    <div><strong>Relation:</strong> ${esc(challan.signedRelation || challan.receiverRelation || "—")}</div>
     <div><strong>GPS:</strong> ${esc(challan.gpsAddress || (challan.gpsLat != null ? `${challan.gpsLat}, ${challan.gpsLng}` : "—"))}</div>
     <div><strong>Signed At:</strong> ${esc(challan.signedAt || "—")}</div>
+    <div><strong>Verified IP:</strong> ${esc(challan.verifiedIp || "—")}</div>
+    <div><strong>Device:</strong> ${esc(challan.verifiedUserAgent || "—")}</div>
   </div>
 
   ${challan.signatureImageUrl ? `<div><strong>Digital Signature</strong><br/><img class="sig" src="${esc(challan.signatureImageUrl)}" alt="Signature"/></div>` : ""}

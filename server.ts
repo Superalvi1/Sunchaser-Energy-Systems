@@ -222,6 +222,16 @@ import {
   fetchCustomerPortalDeliveriesMe,
   getCustomerPortalDeliveryCertificate,
   getInvoiceDeliverySummaryAdmin,
+  getPublicDeliveryVerificationPage,
+  sendPublicDeliveryOtp,
+  verifyPublicDeliveryOtp,
+  capturePublicDeliverySignature,
+  uploadPublicDeliveryPhoto,
+  submitPublicDeliveryVerification,
+  disputePublicDeliveryChallan,
+  renderPublicDeliveryCertificate,
+  renderDeliveryChallanHtml,
+  getAdminDeliveryVerificationInfo,
   DeliveryManagementDbError,
 } from "./deliveryManagementDb.js";
 import {
@@ -2528,6 +2538,17 @@ async function logDeliveryAudit(
   await appendActivityLog(userId || "system", username || "staff", role || "Admin", action, details);
 }
 
+function publicRequestMeta(req: express.Request) {
+  return {
+    ip: String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim(),
+    userAgent: String(req.headers["user-agent"] || ""),
+  };
+}
+
+async function logDeliveryPublicAudit(action: string, details: string, meta?: { ip?: string }) {
+  await appendActivityLog("public-customer", "customer", "Customer", action, meta?.ip ? `${details} · IP ${meta.ip}` : details);
+}
+
 app.get("/api/admin/invoices/:invoiceId/deliveries", async (req, res) => {
   const { userId, username, role } = readStaffAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
@@ -2738,6 +2759,138 @@ app.get("/api/customer-portal/deliveries/:challanId/certificate", async (req, re
   try {
     loadDb();
     const html = await getCustomerPortalDeliveryCertificate(userId, username, req.params.challanId, db);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/admin/deliveries/:challanId/challan-pdf", async (req, res) => {
+  const userId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
+  const username = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
+  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const branding = await getCompanyBranding(db);
+    const html = await renderDeliveryChallanHtml(req.params.challanId, db, branding);
+    await logDeliveryAudit(req, "Delivery Challan PDF Generated", req.params.challanId);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/admin/deliveries/:challanId/verification-info", async (req, res) => {
+  const { userId, username, role } = readStaffAuth(req);
+  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  try {
+    loadDb();
+    const data = await getAdminDeliveryVerificationInfo(userId, username, role, req.params.challanId, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/public/delivery/verify/:token", async (req, res) => {
+  try {
+    loadDb();
+    const data = await getPublicDeliveryVerificationPage(req.params.token, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/public/delivery/verify/:token/send-otp", async (req, res) => {
+  try {
+    loadDb();
+    const meta = publicRequestMeta(req);
+    const data = await sendPublicDeliveryOtp(req.params.token, db);
+    await logDeliveryPublicAudit("Delivery OTP Sent", req.params.token, meta);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/public/delivery/verify/:token/verify-otp", async (req, res) => {
+  try {
+    loadDb();
+    const meta = publicRequestMeta(req);
+    const data = await verifyPublicDeliveryOtp(req.params.token, req.body || {}, db);
+    await logDeliveryPublicAudit("Delivery OTP Verified", req.params.token, meta);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/public/delivery/verify/:token/signature", async (req, res) => {
+  try {
+    loadDb();
+    const meta = publicRequestMeta(req);
+    const data = await capturePublicDeliverySignature(req.params.token, req.body || {}, db);
+    await logDeliveryPublicAudit("Delivery Signature Captured", req.params.token, meta);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/public/delivery/verify/:token/photos", async (req, res) => {
+  try {
+    loadDb();
+    const meta = publicRequestMeta(req);
+    const data = await uploadPublicDeliveryPhoto(req.params.token, req.body || {}, db);
+    await logDeliveryPublicAudit("Delivery Photo Uploaded", `${req.params.token} (${data.photoType})`, meta);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/public/delivery/verify/:token/submit", async (req, res) => {
+  try {
+    loadDb();
+    const meta = publicRequestMeta(req);
+    const data = await submitPublicDeliveryVerification(req.params.token, req.body || {}, meta, db);
+    await logDeliveryPublicAudit("Delivery Verified by Customer", data.challan.challanNumber, meta);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.post("/api/public/delivery/verify/:token/dispute", async (req, res) => {
+  try {
+    loadDb();
+    const meta = publicRequestMeta(req);
+    const data = await disputePublicDeliveryChallan(req.params.token, req.body || {}, meta, db);
+    await logDeliveryPublicAudit("Delivery Disputed by Customer", `${data.challan.challanNumber}: ${data.reason || ""}`, meta);
+    if (!isSupabaseActive()) saveDb();
+    return res.json(data);
+  } catch (err: any) {
+    return handleDeliveryError(res, err);
+  }
+});
+
+app.get("/api/public/delivery/verify/:token/certificate", async (req, res) => {
+  try {
+    loadDb();
+    const branding = await getCompanyBranding(db);
+    const html = await renderPublicDeliveryCertificate(req.params.token, db);
+    await logDeliveryPublicAudit("Delivery Certificate Generated", req.params.token);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
