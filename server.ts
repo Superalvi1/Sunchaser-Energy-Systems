@@ -7272,7 +7272,7 @@ function compileSunchaserPDFHtml(
     }
 
     const pageStyleAttr =
-      p.bgImageUrl && !wmSource
+      p.bgImageUrl && !wmResolved?.imageUrl
         ? `style="background: url('${p.bgImageUrl}') no-repeat center center / cover;"`
         : `style="${typoStyle}"`;
 
