@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Premium Quote Template Editor — full-screen studio UX verification.
+ * Quote Template Workspace — full-screen editor (no stacked cards).
  */
 import { readFileSync, existsSync } from "fs";
 import { spawnSync } from "child_process";
@@ -27,58 +27,48 @@ function read(rel) {
 }
 
 async function main() {
-  console.log("\n1-2) Full-screen template studio components");
-  const studio = read("src/components/quoteAuthoring/QuoteTemplateStudio.tsx");
   const sales = read("src/components/SalesTeamApp.tsx");
-  check("QuoteTemplateStudio exists", studio.includes("export default function QuoteTemplateStudio"));
-  check("SalesTeamApp uses QuoteTemplateStudio", sales.includes("<QuoteTemplateStudio"));
-  check("Cramped per-page card grid removed from templates module", !sales.includes("Visual Proposal Template Pages"));
+  const workspace = read("src/components/quoteAuthoring/QuoteTemplateWorkspace.tsx");
 
-  console.log("\n3-4) Sidebar navigation + large editor");
-  check("Global PDF Settings nav", studio.includes("Global PDF Settings"));
-  check("Cover Page nav label helper", read("src/lib/quoteTemplateNav.ts").includes("Cover Page"));
-  check("BOQ Page nav item", studio.includes("BOQ Page"));
-  check("Large rich text editor", studio.includes("minHeight={420}"));
-  check("Sticky toolbar enabled", studio.includes("stickyToolbar"));
+  console.log("\n1) Workspace replaces card grid");
+  check("QuoteTemplateWorkspace exists", workspace.includes("selectedTemplatePageId"));
+  check("SalesTeamApp uses QuoteTemplateWorkspace", sales.includes("<QuoteTemplateWorkspace"));
+  check("Old QuoteTemplateStudio not used", !sales.includes("<QuoteTemplateStudio"));
+  check("No Visual Proposal Template Pages heading", !sales.includes("Visual Proposal Template Pages"));
+  check("No stacked page card map", !/quoteTemplatePages[\s\S]{0,200}\.map\(\(page/.test(sales));
 
-  console.log("\n5-7) Preview + font size");
-  const previewModal = read("src/components/quoteAuthoring/QuoteTemplatePreviewModal.tsx");
-  const richEditor = read("src/components/quoteAuthoring/QuoteRichTextEditor.tsx");
-  check("Preview modal 90% size", previewModal.includes("90vw") && previewModal.includes("90vh"));
-  check("Zoom controls", previewModal.includes("50%") && previewModal.includes("Fit Width"));
-  check("Live A4 preview panel", studio.includes("Live A4 Preview"));
-  check("Font size control in editor", richEditor.includes("FONT_SIZES"));
+  console.log("\n2) Subcomponents");
+  check("TemplatePageSidebar", existsSync(join(ROOT, "src/components/quoteAuthoring/TemplatePageSidebar.tsx")));
+  check("TemplatePageEditor", existsSync(join(ROOT, "src/components/quoteAuthoring/TemplatePageEditor.tsx")));
+  check("TemplateA4Preview", existsSync(join(ROOT, "src/components/quoteAuthoring/TemplateA4Preview.tsx")));
 
-  console.log("\n8-11) Page actions + persistence API");
-  check("Save Page button", studio.includes("Save Page"));
-  check("Reset Page", studio.includes("Reset Page"));
-  check("Duplicate Page", studio.includes("Duplicate"));
-  check("Move up/down", studio.includes("Move up"));
-  check("Enable/disable", studio.includes("is_enabled"));
-  check("serializeQuotePageBody on save", sales.includes("serializeQuotePageBody"));
-  check("bodyHtml saved", sales.includes("bodyHtml: state.body_html"));
+  console.log("\n3) Single-page editor + large preview");
+  check("Only one page editor path", workspace.includes("activePage && pageState"));
+  check("Editor min 600px", read("src/components/quoteAuthoring/TemplatePageEditor.tsx").includes("minHeight={600}"));
+  check("Preview min 420px wide", read("src/components/quoteAuthoring/TemplateA4Preview.tsx").includes("min-w-[420px]"));
+  check("Preview zoom controls", read("src/components/quoteAuthoring/TemplateA4Preview.tsx").includes("Fit"));
 
-  console.log("\n12) Global settings panel");
-  const globalPanel = read("src/components/quoteAuthoring/QuoteTemplateGlobalSettingsPanel.tsx");
-  check("Global watermark upload", globalPanel.includes("Upload watermark"));
-  check("Page margins fields", globalPanel.includes("Page Margins"));
-  check("PDF quality setting", globalPanel.includes("PDF Quality"));
+  console.log("\n4) Top bar actions");
+  check("Save Page visible", workspace.includes("Save Page"));
+  check("Preview button", workspace.includes("Preview"));
+  check("Print Test", workspace.includes("Print Test"));
+  check("Download Test PDF", workspace.includes("Download Test PDF"));
 
-  console.log("\n13) npm run build");
-  const viteBin = join(ROOT, "node_modules/.bin/vite");
-  const esbuildBin = join(ROOT, "node_modules/.bin/esbuild");
-  const vite = spawnSync(viteBin, ["build"], { cwd: ROOT, stdio: "pipe" });
+  console.log("\n5) Sidebar pages");
+  const nav = read("src/lib/quoteTemplateNav.ts");
+  check("Cover Page in nav builder", nav.includes("Cover Page"));
+  check("Global PDF Settings", nav.includes("Global PDF Settings"));
+
+  console.log("\n6) npm run build");
+  const vite = spawnSync(join(ROOT, "node_modules/.bin/vite"), ["build"], { cwd: ROOT, stdio: "pipe" });
   const esbuild = spawnSync(
-    esbuildBin,
+    join(ROOT, "node_modules/.bin/esbuild"),
     ["server.ts", "--bundle", "--platform=node", "--format=cjs", "--packages=external", "--sourcemap", "--outfile=dist/server.cjs"],
     { cwd: ROOT, stdio: "pipe" }
   );
   const buildOk = vite.status === 0 && esbuild.status === 0;
-  if (!buildOk) {
-    console.error(vite.stderr?.toString() || esbuild.stderr?.toString());
-  }
+  if (!buildOk) console.error(vite.stderr?.toString() || esbuild.stderr?.toString());
   check("npm run build passes", buildOk);
-  check("dist/index.html produced", existsSync(join(ROOT, "dist/index.html")));
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

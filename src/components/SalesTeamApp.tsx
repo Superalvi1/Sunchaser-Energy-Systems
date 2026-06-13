@@ -53,7 +53,7 @@ import {
   sanitizeLeadAdvisorInput,
   sanitizeLeadLocationInput,
 } from "../lib/leadDisplay";
-import QuoteTemplateStudio from "./quoteAuthoring/QuoteTemplateStudio";
+import QuoteTemplateWorkspace from "./quoteAuthoring/QuoteTemplateWorkspace";
 import {
   mergeContentLibrary,
   type ContentLibraryBlock,
@@ -2985,8 +2985,9 @@ export default function SalesTeamApp({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* SIDE BAR: CRM TARGET CLIENT SELECTION */}
+      <div className={`grid gap-8 items-start ${activeModule === "templates" ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-12"}`}>
+        {/* SIDE BAR: CRM TARGET CLIENT SELECTION — hidden in template workspace */}
+        {activeModule !== "templates" && (
         <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-md text-left">
           <div className="border-b border-slate-800 pb-2 flex justify-between items-center">
             <div>
@@ -3056,12 +3057,14 @@ export default function SalesTeamApp({
             )}
           </div>
         </div>
+        )}
 
         {/* MAIN CONFIGURATION AREA */}
-        <div className="lg:col-span-9 space-y-6">
+        <div className={activeModule === "templates" ? "col-span-full" : "lg:col-span-9 space-y-6"}>
           {activeLead ? (
             <div className="space-y-6">
-              
+              {activeModule !== "templates" && (
+              <>
               {/* Client Briefing Profile summary card */}
               <div className="bg-slate-900 border border-slate-850 p-5 rounded-3xl flex flex-col md:flex-row justify-between gap-4 text-left shadow-sm">
                 <div>
@@ -3145,6 +3148,8 @@ export default function SalesTeamApp({
                 </div>
                 </div>
               </div>
+              </>
+              )}
 
               {/* MODULE SELECTOR ROUTING TAB BAR */}
               <div className="flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5">
@@ -4308,7 +4313,7 @@ export default function SalesTeamApp({
 
               {/* MODULE 3: QUOTE TEMPLATES */}
               {activeModule === 'templates' && (
-                <QuoteTemplateStudio
+                <QuoteTemplateWorkspace
                   quoteTemplatePages={quoteTemplatePages}
                   selectedTemplateId={selectedTemplateId}
                   contentLibrary={contentLibrary}
