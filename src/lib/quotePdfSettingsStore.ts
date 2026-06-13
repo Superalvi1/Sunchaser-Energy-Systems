@@ -80,9 +80,20 @@ export function withResolvedGlobalWatermark(
   return { ...normalized, imageUrl: resolvedUrl };
 }
 
+export function normalizeSettingsRows(
+  settings: unknown
+): Array<{ key?: string; value?: unknown }> {
+  if (Array.isArray(settings)) return settings;
+  if (settings && typeof settings === "object") {
+    const row = settings as { key?: string; value?: unknown };
+    if (row.key !== undefined) return [row];
+  }
+  return [];
+}
+
 export function resolveStoredGlobalWatermark(
   pdfRow: Record<string, unknown> | null | undefined,
-  settingsRows?: Array<{ key?: string; value?: unknown }>,
+  settingsRows?: Array<{ key?: string; value?: unknown }> | unknown,
   baseUrl?: string
 ): GlobalWatermarkValue | null {
   const fromRow = withResolvedGlobalWatermark(
@@ -94,7 +105,7 @@ export function resolveStoredGlobalWatermark(
   );
   if (fromRow) return fromRow;
 
-  const setting = (settingsRows || []).find(
+  const setting = normalizeSettingsRows(settingsRows).find(
     (s) => s.key === QUOTE_PDF_GLOBAL_WATERMARK_KEY
   );
   return withResolvedGlobalWatermark(setting?.value as GlobalWatermarkValue, baseUrl);

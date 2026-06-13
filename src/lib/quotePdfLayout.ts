@@ -420,7 +420,7 @@ export function resolvePageWatermark(
   globalWatermark: GlobalWatermarkValue | Record<string, unknown> | null | undefined,
   options?: {
     pdfRow?: Record<string, unknown> | null;
-    settingsRows?: Array<{ key?: string; value?: unknown }>;
+    settingsRows?: Array<{ key?: string; value?: unknown }> | unknown;
     baseUrl?: string;
   }
 ): { imageUrl: string; settings: QuoteWatermark } | null {
