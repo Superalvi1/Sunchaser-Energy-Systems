@@ -5,6 +5,11 @@ import {
   type WatermarkStyleInput,
   watermarkLayerStyleAttr,
 } from "./watermarkStyles";
+import {
+  resolveStoredGlobalWatermark,
+  withResolvedGlobalWatermark,
+  type GlobalWatermarkValue,
+} from "./quotePdfSettingsStore";
 
 export type QuoteTypography = {
   fontSize: string;
@@ -77,6 +82,16 @@ export type QuoteGlobalTypography = {
   textAlign?: string;
 };
 
+export const DEFAULT_TEMPLATE_TYPOGRAPHY: Required<
+  Pick<QuoteGlobalTypography, "fontFamily" | "fontSize" | "lineHeight" | "bodyColor" | "headingColor">
+> = {
+  fontFamily: "Inter, 'Segoe UI', Arial, sans-serif",
+  fontSize: "13px",
+  lineHeight: "1.55",
+  bodyColor: "#1f2937",
+  headingColor: "#d97706",
+};
+
 export type QuotePageExtendedSettings = {
   bodyText: string;
   bodyHtml?: string;
@@ -105,8 +120,8 @@ const DENSITY_PRESETS: Record<QuoteTypography["densityMode"], Omit<QuoteTypograp
     textAlign: "left",
   },
   normal: {
-    fontSize: "11px",
-    lineHeight: "1.6",
+    fontSize: "13px",
+    lineHeight: "1.55",
     paragraphSpacing: "12px",
     paddingTop: "12mm",
     paddingBottom: "14mm",
@@ -352,8 +367,13 @@ export function resolveTypography(
     "normal") as QuoteTypography["densityMode"];
   const base = DENSITY_PRESETS[density] || DENSITY_PRESETS.normal;
   return {
-    fontSize: ext.typography?.fontSize || globalTypography?.fontSize || base.fontSize,
-    lineHeight: ext.typography?.lineHeight || globalTypography?.lineHeight || base.lineHeight,
+    fontSize:
+      ext.typography?.fontSize || globalTypography?.fontSize || base.fontSize || DEFAULT_TEMPLATE_TYPOGRAPHY.fontSize,
+    lineHeight:
+      ext.typography?.lineHeight ||
+      globalTypography?.lineHeight ||
+      base.lineHeight ||
+      DEFAULT_TEMPLATE_TYPOGRAPHY.lineHeight,
     paragraphSpacing:
       ext.typography?.paragraphSpacing || globalTypography?.paragraphSpacing || base.paragraphSpacing,
     paddingTop: ext.typography?.paddingTop || globalTypography?.paddingTop || base.paddingTop,
@@ -362,25 +382,70 @@ export function resolveTypography(
     contentWidth: ext.typography?.contentWidth || globalTypography?.contentWidth || base.contentWidth,
     textAlign: ext.typography?.textAlign || globalTypography?.textAlign || base.textAlign,
     densityMode: density,
-    fontFamily: ext.typography?.fontFamily || (globalTypography as any)?.fontFamily,
-    headingColor: ext.typography?.headingColor || (globalTypography as any)?.headingColor,
-    bodyColor: ext.typography?.bodyColor || (globalTypography as any)?.bodyColor,
+    fontFamily:
+      ext.typography?.fontFamily ||
+      globalTypography?.fontFamily ||
+      DEFAULT_TEMPLATE_TYPOGRAPHY.fontFamily,
+    headingColor:
+      ext.typography?.headingColor ||
+      globalTypography?.headingColor ||
+      DEFAULT_TEMPLATE_TYPOGRAPHY.headingColor,
+    bodyColor:
+      ext.typography?.bodyColor || globalTypography?.bodyColor || DEFAULT_TEMPLATE_TYPOGRAPHY.bodyColor,
   } as QuoteTypography & { fontFamily?: string; headingColor?: string; bodyColor?: string };
 }
 
 export function typographyStyleAttr(typo: QuoteTypography & { fontFamily?: string; bodyColor?: string; headingColor?: string }): string {
+  const fontFamily = typo.fontFamily || DEFAULT_TEMPLATE_TYPOGRAPHY.fontFamily;
+  const bodyColor = typo.bodyColor || DEFAULT_TEMPLATE_TYPOGRAPHY.bodyColor;
+  const headingColor = typo.headingColor || DEFAULT_TEMPLATE_TYPOGRAPHY.headingColor;
   return [
+    `--quote-font-family:${fontFamily}`,
     `--quote-font-size:${typo.fontSize}`,
     `--quote-line-height:${typo.lineHeight}`,
     `--quote-para-gap:${typo.paragraphSpacing}`,
+    `--quote-body-color:${bodyColor}`,
+    `--quote-heading-color:${headingColor}`,
     `padding-top:${typo.paddingTop}`,
     `padding-bottom:${typo.paddingBottom}`,
     `max-width:${typo.contentWidth}`,
     `text-align:${typo.textAlign}`,
-    typo.fontFamily ? `font-family:${typo.fontFamily}` : "",
-    typo.bodyColor ? `color:${typo.bodyColor}` : "",
-    typo.headingColor ? `--quote-heading-color:${typo.headingColor}` : "",
+    `font-family:${fontFamily}`,
+    `color:${bodyColor}`,
   ].filter(Boolean).join(";");
+}
+
+export function resolvePageWatermark(
+  pageWatermark: QuoteWatermark | undefined | null,
+  globalWatermark: GlobalWatermarkValue | Record<string, unknown> | null | undefined,
+  options?: {
+    pdfRow?: Record<string, unknown> | null;
+    settingsRows?: Array<{ key?: string; value?: unknown }>;
+    baseUrl?: string;
+  }
+): { imageUrl: string; settings: QuoteWatermark } | null {
+  const pageUrl = String(pageWatermark?.imageUrl || "").trim();
+  if (pageUrl) {
+    return { imageUrl: pageUrl, settings: { ...(pageWatermark || {}), imageUrl: pageUrl } };
+  }
+
+  const resolvedFromSettings =
+    withResolvedGlobalWatermark(globalWatermark as GlobalWatermarkValue, options?.baseUrl) ||
+    resolveStoredGlobalWatermark(options?.pdfRow, options?.settingsRows, options?.baseUrl);
+
+  const globalUrl = String(resolvedFromSettings?.imageUrl || "").trim();
+  if (!globalUrl) return null;
+
+  return {
+    imageUrl: globalUrl,
+    settings: {
+      opacity: pageWatermark?.opacity ?? resolvedFromSettings?.opacity,
+      scale: pageWatermark?.scale ?? resolvedFromSettings?.scale,
+      position: pageWatermark?.position ?? resolvedFromSettings?.position,
+      repeat: pageWatermark?.repeat ?? resolvedFromSettings?.repeat,
+      imageUrl: globalUrl,
+    },
+  };
 }
 
 export function buildWatermarkLayer(
@@ -574,9 +639,11 @@ export function quotePdfShellCss(): string {
 export function quotePdfPrintCss(): string {
   return `
     .quote-rich-text {
-      font-size: var(--quote-font-size, 11px);
-      line-height: var(--quote-line-height, 1.6);
-      color: #475569;
+      font-family: var(--quote-font-family, Inter, 'Segoe UI', Arial, sans-serif);
+      font-size: var(--quote-font-size, 13px);
+      line-height: var(--quote-line-height, 1.55);
+      color: var(--quote-body-color, #1f2937);
+      text-decoration: none;
     }
     .quote-section-heading {
       color: #d97706;
@@ -597,9 +664,9 @@ export function quotePdfPrintCss(): string {
       letter-spacing: 0.02em;
     }
     .quote-heading-h3 {
-      color: #1e3a8a;
+      color: var(--quote-heading-color, #d97706);
       font-weight: 800;
-      font-size: calc(var(--quote-font-size, 11px) + 2px);
+      font-size: calc(var(--quote-font-size, 13px) + 2px);
       line-height: 1.35;
       margin: calc(var(--quote-para-gap, 12px) * 1.05) 0 calc(var(--quote-para-gap, 12px) * 0.75);
       letter-spacing: 0.01em;

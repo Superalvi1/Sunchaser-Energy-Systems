@@ -10,8 +10,11 @@ type Props = {
   pageState: PageAuthoringState & Record<string, any>;
   contentLibrary: ContentLibraryBlock[];
   globalFontFamily: string;
+  globalFontSize: string;
+  globalLineHeight: string;
   globalHeadingColor: string;
   globalBodyColor: string;
+  globalWatermarkPreviewUrl?: string;
   onFieldChange: (pageId: string, field: string, value: any) => void;
   onImageUpload: (pageId: string, file: File, type: "image" | "bg") => void;
   uploadImageFile: (file: File, isBg: boolean) => Promise<string>;
@@ -22,8 +25,11 @@ export default function TemplatePageEditor({
   pageState,
   contentLibrary,
   globalFontFamily,
+  globalFontSize,
+  globalLineHeight,
   globalHeadingColor,
   globalBodyColor,
+  globalWatermarkPreviewUrl = "",
   onFieldChange,
   onImageUpload,
   uploadImageFile,
@@ -51,6 +57,7 @@ export default function TemplatePageEditor({
               globalFontFamily={globalFontFamily}
               globalHeadingColor={globalHeadingColor}
               globalBodyColor={globalBodyColor}
+              hasGlobalWatermark={!!globalWatermarkPreviewUrl}
               onFieldChange={onFieldChange}
               onImageUpload={onImageUpload}
               uploadImageFile={uploadImageFile}
@@ -83,6 +90,15 @@ export default function TemplatePageEditor({
           onChange={(html) => onFieldChange(page.id, "body_html", html)}
           minHeight={600}
           stickyToolbar
+          typography={{
+            fontFamily: pageState.fontFamily || globalFontFamily,
+            fontSize: pageState.fontSize || globalFontSize,
+            lineHeight: pageState.lineHeight || globalLineHeight,
+            bodyColor: pageState.bodyColor || globalBodyColor,
+            headingColor: pageState.headingColor || globalHeadingColor,
+            textAlign: pageState.textAlign,
+            densityMode: pageState.densityMode,
+          }}
         />
       </div>
     </div>

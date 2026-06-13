@@ -46,6 +46,8 @@ export type QuoteTemplateWorkspaceProps = {
   globalHeadingColor: string;
   globalBodyColor: string;
   globalSettings: QuoteTemplateGlobalSettingsProps;
+  globalWatermarkPreviewUrl?: string;
+  globalWatermark?: Record<string, unknown> | null;
 };
 
 export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProps) {
@@ -68,6 +70,8 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
     globalHeadingColor,
     globalBodyColor,
     globalSettings,
+    globalWatermarkPreviewUrl = "",
+    globalWatermark = null,
   } = props;
 
   const sidebarItems = useMemo(() => buildTemplateSidebarItems(quoteTemplatePages), [quoteTemplatePages]);
@@ -241,8 +245,11 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
               pageState={pageState}
               contentLibrary={contentLibrary}
               globalFontFamily={globalFontFamily}
+              globalFontSize={globalFontSize}
+              globalLineHeight={globalLineHeight}
               globalHeadingColor={globalHeadingColor}
               globalBodyColor={globalBodyColor}
+              globalWatermarkPreviewUrl={globalWatermarkPreviewUrl}
               onFieldChange={onFieldChange}
               onImageUpload={onImageUpload}
               uploadImageFile={uploadImageFile}
@@ -254,6 +261,8 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
               globalLineHeight={globalLineHeight}
               globalHeadingColor={globalHeadingColor}
               globalBodyColor={globalBodyColor}
+              globalWatermarkPreviewUrl={globalWatermarkPreviewUrl}
+              globalWatermark={globalWatermark}
               ceoMessages={ceoMessages}
               onFullscreen={handleSaveAndPreview}
             />
@@ -320,6 +329,8 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
           globalFontFamily={globalFontFamily}
           globalHeadingColor={globalHeadingColor}
           globalBodyColor={globalBodyColor}
+          globalWatermarkPreviewUrl={globalWatermarkPreviewUrl}
+          globalWatermark={globalWatermark}
           onDownloadPage={() => handleDownloadTestPdf("page")}
           onDownloadFull={() => handleDownloadTestPdf("full")}
           pdfActionStatus={pdfActionStatus}

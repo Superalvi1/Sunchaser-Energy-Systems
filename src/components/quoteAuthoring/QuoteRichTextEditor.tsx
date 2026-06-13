@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   AlignCenter,
   AlignLeft,
@@ -16,7 +16,13 @@ import {
   Table,
   Underline,
 } from "lucide-react";
-import { createEmptyTableHtml, sanitizeQuoteHtml } from "../../lib/quoteAuthoring";
+import {
+  createEmptyTableHtml,
+  quoteTemplateBodyCss,
+  sanitizeQuoteEditorHtml,
+} from "../../lib/quoteAuthoring";
+import { typographyInlineStyle } from "../../lib/quoteTemplatePageRender";
+import { resolveTypography } from "../../lib/quotePdfLayout";
 
 type QuoteRichTextEditorProps = {
   value: string;
@@ -24,10 +30,19 @@ type QuoteRichTextEditorProps = {
   placeholder?: string;
   minHeight?: number;
   stickyToolbar?: boolean;
+  typography?: {
+    fontFamily?: string;
+    fontSize?: string;
+    lineHeight?: string;
+    bodyColor?: string;
+    headingColor?: string;
+    textAlign?: string;
+    densityMode?: string;
+  };
 };
 
-const TEXT_COLORS = ["#0f172a", "#475569", "#d97706", "#1e3a8a", "#dc2626", "#059669"];
-const FONT_SIZES = ["10px", "11px", "12px", "14px", "16px", "18px", "24px"];
+const TEXT_COLORS = ["#0f172a", "#475569", "#1f2937", "#d97706", "#1e3a8a", "#dc2626", "#059669"];
+const FONT_SIZES = ["10px", "11px", "12px", "13px", "14px", "16px", "18px", "24px"];
 
 export default function QuoteRichTextEditor({
   value,
@@ -35,9 +50,18 @@ export default function QuoteRichTextEditor({
   placeholder = "Compose page content…",
   minHeight = 480,
   stickyToolbar = true,
+  typography = {},
 }: QuoteRichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastHtml = useRef(value);
+
+  const editorStyle = useMemo(() => {
+    const typo = resolveTypography(
+      { typography: { densityMode: (typography.densityMode as any) || "normal", ...typography } },
+      typography
+    );
+    return typographyInlineStyle(typo);
+  }, [typography]);
 
   useEffect(() => {
     if (!editorRef.current) return;
@@ -49,7 +73,7 @@ export default function QuoteRichTextEditor({
 
   const emitChange = useCallback(() => {
     if (!editorRef.current) return;
-    const html = sanitizeQuoteHtml(editorRef.current.innerHTML);
+    const html = sanitizeQuoteEditorHtml(editorRef.current.innerHTML);
     lastHtml.current = html;
     onChange(html);
   }, [onChange]);
@@ -62,7 +86,7 @@ export default function QuoteRichTextEditor({
 
   const insertHtml = (html: string) => {
     editorRef.current?.focus();
-    document.execCommand("insertHTML", false, html);
+    document.execCommand("insertHTML", false, sanitizeQuoteEditorHtml(html));
     emitChange();
   };
 
@@ -76,6 +100,18 @@ export default function QuoteRichTextEditor({
       span.innerHTML = el.innerHTML;
       el.replaceWith(span);
     });
+    emitChange();
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData("text/html");
+    const plain = e.clipboardData.getData("text/plain");
+    const payload = html?.trim()
+      ? sanitizeQuoteEditorHtml(html)
+      : sanitizeQuoteEditorHtml(`<p>${plain.replace(/\n/g, "<br />")}</p>`);
+    editorRef.current?.focus();
+    document.execCommand("insertHTML", false, payload);
     emitChange();
   };
 
@@ -185,18 +221,20 @@ export default function QuoteRichTextEditor({
         suppressContentEditableWarning
         onInput={emitChange}
         onBlur={emitChange}
+        onPaste={handlePaste}
         data-placeholder={placeholder}
-        className="quote-rich-editor flex-1 w-full bg-white text-slate-800 border border-t-0 border-slate-850 rounded-b-lg px-4 py-3 text-sm leading-relaxed outline-none focus:border-amber-500/60 overflow-auto"
-        style={{ minHeight }}
+        className="quote-rich-editor quote-page-body flex-1 w-full bg-white border border-t-0 border-slate-850 rounded-b-lg px-4 py-3 outline-none focus:border-amber-500/60 overflow-auto"
+        style={{ ...editorStyle, minHeight }}
       />
       <style>{`
+        ${quoteTemplateBodyCss()}
         .quote-rich-editor:empty:before {
           content: attr(data-placeholder);
           color: #94a3b8;
         }
-        .quote-rich-editor h1 { font-size: 1.35rem; font-weight: 800; color: #d97706; margin: 0.75rem 0 0.5rem; }
-        .quote-rich-editor h2 { font-size: 1.15rem; font-weight: 800; color: #d97706; margin: 0.65rem 0 0.45rem; }
-        .quote-rich-editor h3 { font-size: 1rem; font-weight: 800; color: #1e3a8a; margin: 0.55rem 0 0.4rem; }
+        .quote-rich-editor h1 { font-size: calc(var(--quote-font-size, 13px) + 8px); margin: 0.75rem 0 0.5rem; }
+        .quote-rich-editor h2 { font-size: calc(var(--quote-font-size, 13px) + 5px); margin: 0.65rem 0 0.45rem; }
+        .quote-rich-editor h3 { font-size: calc(var(--quote-font-size, 13px) + 2px); margin: 0.55rem 0 0.4rem; }
         .quote-rich-editor table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
         .quote-rich-editor th, .quote-rich-editor td { border: 1px solid #cbd5e1; padding: 4px 6px; }
         .quote-rich-editor th { background: #f8fafc; font-weight: 700; }

@@ -17,6 +17,8 @@ import {
   buildQuotePdfSettingsSupabasePayload,
   applyGlobalWatermarkToPdfSettingsRow,
   QUOTE_PDF_GLOBAL_WATERMARK_KEY,
+  resolveStoredGlobalWatermark,
+  getSupabaseProjectUrlFromEnv,
   withResolvedGlobalWatermark,
 } from "./src/lib/quotePdfSettingsStore.ts";
 import {
@@ -33,6 +35,7 @@ import {
   quotePdfPrintCss,
   quotePdfShellCss,
   renderRichTextBlock,
+  resolvePageWatermark,
   resolveTypography,
   typographyStyleAttr,
 } from "./src/lib/quotePdfLayout.ts";
@@ -6521,11 +6524,16 @@ function resolveQuotePdfBranding(activeState: Database) {
   const logoUrl = resolveQuotePdfLogoUrl(pdf.logoUrl || pdf.logo_url);
   const savedHeader = pdf.globalPdfHeader || pdf.global_pdf_header || null;
   const savedFooter = pdf.globalPdfFooter || pdf.global_pdf_footer || null;
-  const savedWatermark = withResolvedGlobalWatermark(
+  const savedWatermark = resolveStoredGlobalWatermark(
+    pdf as Record<string, unknown>,
+    activeState.settings as any,
+    getSupabaseProjectUrlFromEnv()
+  ) || withResolvedGlobalWatermark(
     (pdf.globalWatermark ||
       pdf.global_watermark ||
       savedHeader?.watermark ||
-      null) as any
+      null) as any,
+    getSupabaseProjectUrlFromEnv()
   );
   return {
     companyName,
@@ -7149,14 +7157,15 @@ function compileSunchaserPDFHtml(
 
     const typo = resolveTypography(ext, globalTypography);
     const typoStyle = typographyStyleAttr(typo);
-    const wmSource = String(
-      ext.watermark?.imageUrl || p.bgImageUrl || globalWatermark?.imageUrl || ""
-    ).trim();
-    const wmSettings =
-      ext.watermark?.imageUrl
-        ? ext.watermark
-        : { ...(globalWatermark || {}), ...(ext.watermark || {}) };
-    const watermarkHtml = buildWatermarkLayer(wmSource, wmSettings);
+    const pdfRow = (activeState.quotePdfSettings || [])[0] || {};
+    const wmResolved = resolvePageWatermark(ext.watermark, globalWatermark as any, {
+      pdfRow,
+      settingsRows: activeState.settings as any,
+      baseUrl: getSupabaseProjectUrlFromEnv(),
+    });
+    const watermarkHtml = wmResolved
+      ? buildWatermarkLayer(wmResolved.imageUrl, wmResolved.settings)
+      : "";
     const mergedTypography = { ...globalTypography, ...ext.typography };
     const pageBody = (contentExt: typeof ext) =>
       renderPageBodyHtml(contentExt, {

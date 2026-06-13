@@ -17,6 +17,7 @@ type Props = {
   globalFontFamily: string;
   globalHeadingColor: string;
   globalBodyColor: string;
+  hasGlobalWatermark?: boolean;
   onFieldChange: (pageId: string, field: string, value: any) => void;
   onImageUpload: (pageId: string, file: File, type: "image" | "bg") => void;
   uploadImageFile: (file: File, isBg: boolean) => Promise<string>;
@@ -32,6 +33,7 @@ export default function QuoteTemplatePageSettingsPanel({
   globalFontFamily,
   globalHeadingColor,
   globalBodyColor,
+  hasGlobalWatermark = false,
   onFieldChange,
   onImageUpload,
   uploadImageFile,
@@ -165,7 +167,14 @@ export default function QuoteTemplatePageSettingsPanel({
 
       <div className="space-y-2 border-t border-slate-800 pt-3">
         <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Watermark / Background</p>
-        <input className={field} placeholder="Watermark image URL" value={pageState.watermarkUrl} onChange={(e) => onFieldChange(pageId, "watermarkUrl", e.target.value)} />
+        {pageState.watermarkUrl?.trim() ? (
+          <p className="text-[9px] text-amber-400 font-mono">Using Page Watermark Override</p>
+        ) : hasGlobalWatermark ? (
+          <p className="text-[9px] text-emerald-400 font-mono">Using Global Watermark</p>
+        ) : (
+          <p className="text-[9px] text-slate-500 font-mono">No watermark configured</p>
+        )}
+        <input className={field} placeholder="Page watermark URL override" value={pageState.watermarkUrl} onChange={(e) => onFieldChange(pageId, "watermarkUrl", e.target.value)} />
         <label className="text-[9px] text-slate-500 cursor-pointer flex items-center gap-1">
           <Upload className="h-3 w-3" /> Upload background
           <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImageUpload(pageId, f, "bg"); e.target.value = ""; }} />

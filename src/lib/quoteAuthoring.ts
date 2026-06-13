@@ -80,28 +80,170 @@ export const DEFAULT_CONTENT_LIBRARY: ContentLibraryBlock[] = [
 ];
 
 const ALLOWED_TAGS =
-  /^(p|h1|h2|h3|h4|strong|b|em|i|u|ul|ol|li|table|thead|tbody|tr|th|td|img|hr|div|span|br|a)$/i;
+  /^(p|h1|h2|h3|h4|strong|b|em|i|u|ul|ol|li|table|thead|tbody|tr|th|td|img|hr|div|span|br)$/i;
 
-/** Lightweight HTML sanitizer for stored editor content. */
-export function sanitizeQuoteHtml(html: string): string {
+const EDITOR_TOOLBAR_COLORS = new Set([
+  "#0f172a",
+  "#475569",
+  "#1f2937",
+  "#d97706",
+  "#1e3a8a",
+  "#dc2626",
+  "#059669",
+]);
+
+function normalizeCssColor(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+function isToolbarColor(value: string): boolean {
+  const normalized = normalizeCssColor(value);
+  return EDITOR_TOOLBAR_COLORS.has(normalized) || /^#[0-9a-f]{3,8}$/i.test(normalized);
+}
+
+function cleanInlineStyle(styleRaw: string, tagName: string): string {
+  const tag = tagName.toLowerCase();
+  const kept: string[] = [];
+  for (const decl of String(styleRaw || "").split(";")) {
+    const colon = decl.indexOf(":");
+    if (colon < 0) continue;
+    const prop = decl.slice(0, colon).trim().toLowerCase();
+    const val = decl.slice(colon + 1).trim();
+    if (!val) continue;
+    if (prop === "text-align" && /^(left|center|right|justify)$/i.test(val)) {
+      kept.push(`text-align:${val.toLowerCase()}`);
+    } else if (prop === "color" && isToolbarColor(val)) {
+      kept.push(`color:${val}`);
+    } else if (prop === "font-weight" && /^(normal|bold|[1-9]00)$/i.test(val)) {
+      kept.push(`font-weight:${val.toLowerCase()}`);
+    } else if (prop === "font-style" && /^(normal|italic)$/i.test(val)) {
+      kept.push(`font-style:${val.toLowerCase()}`);
+    } else if (
+      prop === "text-decoration" &&
+      (tag === "u" || val.toLowerCase().includes("underline"))
+    ) {
+      if (tag === "u") kept.push("text-decoration:underline");
+    }
+  }
+  return kept.join(";");
+}
+
+function stripAttrsExceptStyleAndData(attrs: string, tagName: string): string {
+  let style = "";
+  const styleMatch = attrs.match(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i);
+  if (styleMatch) {
+    style = cleanInlineStyle(styleMatch[2] || styleMatch[3] || "", tagName);
+  }
+  const underline =
+    /\sclass\s*=\s*("[^"]*\bql-underline\b[^"]*"|'[^']*\bql-underline\b[^']*')/i.test(attrs) ||
+    /\sdata-underline\s*=\s*("true"|'true'|true)/i.test(attrs);
+  const dataColor = /\sdata-toolbar-color\s*=\s*("true"|'true'|true)/i.test(attrs);
+  let out = "";
+  if (style) out += ` style="${style}"`;
+  if (underline && tagName.toLowerCase() !== "u") out += ` data-underline="true"`;
+  if (dataColor) out += ` data-toolbar-color="true"`;
+  return out;
+}
+
+/** Strip pasted/copied formatting; keep only safe tags and toolbar-applied styles. */
+export function sanitizeQuoteEditorHtml(html: string): string {
   if (!html || !String(html).trim()) return "";
   let out = String(html);
   out = out.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
   out = out.replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "");
+  out = out.replace(/<!--[\s\S]*?-->/g, "");
   out = out.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  out = out.replace(/\sspellcheck\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
   out = out.replace(/javascript:/gi, "");
   out = out.replace(/<\/?([a-z0-9]+)([^>]*)>/gi, (match, tag, attrs) => {
-    if (!ALLOWED_TAGS.test(tag)) return "";
-    if (tag.toLowerCase() === "img") {
+    const lower = String(tag).toLowerCase();
+    const isClose = match.startsWith("</");
+    if (lower === "a" || lower === "font") {
+      return isClose ? "" : "";
+    }
+    if (!ALLOWED_TAGS.test(lower)) return "";
+    if (isClose) return `</${lower}>`;
+    if (lower === "img") {
       const src = String(attrs).match(/src\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const url = src?.[2] || src?.[3] || src?.[4] || "";
       const w = String(attrs).match(/width\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const width = w?.[2] || w?.[3] || w?.[4] || "";
       return `<img src="${escapeHtml(url)}"${width ? ` width="${escapeHtml(width)}"` : ""} style="max-width:100%;height:auto;" alt="" />`;
     }
-    return `<${tag.toLowerCase()}${attrs}>`;
+    if (lower === "br" || lower === "hr") return `<${lower} />`;
+    if (lower === "u") return "<u>";
+    return `<${lower}${stripAttrsExceptStyleAndData(attrs, lower)}>`;
   });
-  return out;
+  out = out.replace(/<u([^>]*)>/gi, (_, attrs) => `<u${stripAttrsExceptStyleAndData(attrs, "u")}>`);
+  return out.replace(/\s+/g, " ").replace(/>\s+</g, "><").trim();
+}
+
+/** Lightweight HTML sanitizer for stored editor content. */
+export function sanitizeQuoteHtml(html: string): string {
+  return sanitizeQuoteEditorHtml(html);
+}
+
+/** Shared body typography + underline rules for editor, preview, and PDF. */
+export function quoteTemplateBodyCss(): string {
+  return `
+    .quote-page-body,
+    .quote-authoring-body,
+    .quote-rich-editor {
+      font-family: var(--quote-font-family, Inter, 'Segoe UI', Arial, sans-serif);
+      font-size: var(--quote-font-size, 13px);
+      line-height: var(--quote-line-height, 1.55);
+      color: var(--quote-body-color, #1f2937);
+      text-decoration: none;
+    }
+    .quote-page-body p,
+    .quote-page-body span,
+    .quote-page-body div,
+    .quote-page-body li,
+    .quote-authoring-body p,
+    .quote-authoring-body span,
+    .quote-authoring-body div,
+    .quote-authoring-body li,
+    .quote-rich-editor p,
+    .quote-rich-editor span,
+    .quote-rich-editor div,
+    .quote-rich-editor li {
+      color: var(--quote-body-color, #1f2937);
+      text-decoration: none;
+      border-bottom: none;
+    }
+    .quote-page-body h1,
+    .quote-page-body h2,
+    .quote-page-body h3,
+    .quote-authoring-body h1,
+    .quote-authoring-body h2,
+    .quote-authoring-body h3,
+    .quote-rich-editor h1,
+    .quote-rich-editor h2,
+    .quote-rich-editor h3 {
+      color: var(--quote-heading-color, #d97706);
+      font-weight: 700;
+      text-decoration: none;
+      border-bottom: none;
+    }
+    .quote-page-body u,
+    .quote-page-body .ql-underline,
+    .quote-page-body [data-underline="true"],
+    .quote-authoring-body u,
+    .quote-authoring-body .ql-underline,
+    .quote-authoring-body [data-underline="true"],
+    .quote-rich-editor u {
+      text-decoration: underline;
+    }
+    .quote-page-body a,
+    .quote-authoring-body a {
+      color: inherit;
+      text-decoration: none;
+      border-bottom: none;
+    }
+  `;
 }
 
 export function resolveAuthoringPageType(value: unknown): AuthoringPageType {
@@ -219,24 +361,27 @@ export function renderPageBodyHtml(
   const imageHtml = renderImageSectionsHtml(ext.imageSections || []);
   let inner = "";
   if (ext.bodyHtml && String(ext.bodyHtml).trim()) {
-    inner = sanitizeQuoteHtml(ext.bodyHtml);
+    inner = sanitizeQuoteEditorHtml(ext.bodyHtml);
   } else if (ext.bodyText && String(ext.bodyText).trim()) {
     inner = renderRichTextBlock(ext.bodyText, { align }).replace(/^<div class="quote-rich-text"[^>]*>/, "").replace(/<\/div>$/, "");
   }
   if (!imageHtml && !inner) return "";
-  const fontFamily = opts?.typography?.fontFamily || "Inter, 'Segoe UI', sans-serif";
-  const bodyColor = opts?.typography?.bodyColor || "#475569";
+  const fontFamily = opts?.typography?.fontFamily || "Inter, 'Segoe UI', Arial, sans-serif";
+  const bodyColor = opts?.typography?.bodyColor || "#1f2937";
   const headingColor = opts?.typography?.headingColor || "#d97706";
-  return `<div class="quote-authoring-body quote-rich-text" style="text-align:${align};font-family:${fontFamily};color:${bodyColor};--quote-heading-color:${headingColor};">${imageHtml}${inner}</div>`;
+  const fontSize = opts?.typography?.fontSize || "13px";
+  const lineHeight = opts?.typography?.lineHeight || "1.55";
+  return `<div class="quote-page-body quote-authoring-body quote-rich-text" style="text-align:${align};--quote-font-family:${fontFamily};--quote-font-size:${fontSize};--quote-line-height:${lineHeight};--quote-body-color:${bodyColor};--quote-heading-color:${headingColor};">${imageHtml}${inner}</div>`;
 }
 
 export function quoteAuthoringPrintCss(pdfQuality: PdfQualityMode = "print"): string {
   const imageSharp = pdfQuality === "print" ? "crisp-edges" : "auto";
   return `
+    ${quoteTemplateBodyCss()}
     .quote-authoring-body h1 {
       color: var(--quote-heading-color, #d97706);
       font-weight: 800;
-      font-size: calc(var(--quote-font-size, 11px) + 8px);
+      font-size: calc(var(--quote-font-size, 13px) + 8px);
       margin: calc(var(--quote-para-gap, 12px) * 1.5) 0 var(--quote-para-gap, 12px);
       break-inside: avoid;
       page-break-inside: avoid;
@@ -244,15 +389,15 @@ export function quoteAuthoringPrintCss(pdfQuality: PdfQualityMode = "print"): st
     .quote-authoring-body h2 {
       color: var(--quote-heading-color, #d97706);
       font-weight: 800;
-      font-size: calc(var(--quote-font-size, 11px) + 5px);
+      font-size: calc(var(--quote-font-size, 13px) + 5px);
       margin: calc(var(--quote-para-gap, 12px) * 1.35) 0 var(--quote-para-gap, 12px);
       break-inside: avoid;
       page-break-inside: avoid;
     }
     .quote-authoring-body h3 {
-      color: #1e3a8a;
+      color: var(--quote-heading-color, #d97706);
       font-weight: 800;
-      font-size: calc(var(--quote-font-size, 11px) + 2px);
+      font-size: calc(var(--quote-font-size, 13px) + 2px);
       margin: calc(var(--quote-para-gap, 12px) * 1.05) 0 calc(var(--quote-para-gap, 12px) * 0.75);
       break-inside: avoid;
       page-break-inside: avoid;
@@ -266,7 +411,7 @@ export function quoteAuthoringPrintCss(pdfQuality: PdfQualityMode = "print"): st
       width: 100%;
       border-collapse: collapse;
       margin: calc(var(--quote-para-gap, 12px) * 1.1) 0;
-      font-size: calc(var(--quote-font-size, 11px) - 0.5px);
+      font-size: calc(var(--quote-font-size, 13px) - 0.5px);
       break-inside: avoid;
       page-break-inside: avoid;
     }

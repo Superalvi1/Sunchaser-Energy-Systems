@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import {
   quoteAuthoringPrintCss,
+  quoteTemplateBodyCss,
   renderEnhancedSignatureBlockHtml,
   getAuthoringTemplateMeta,
 } from "../../lib/quoteAuthoring";
@@ -9,6 +10,7 @@ import {
   buildLivePreviewPageStyle,
   pageStateToExtendedSettings,
   renderQuoteTemplatePage,
+  resolvePreviewWatermarkStyle,
   type TemplatePageAuthoringState,
 } from "../../lib/quoteTemplatePageRender";
 
@@ -25,6 +27,8 @@ type QuotePageLivePreviewProps = {
   embedded?: boolean;
   large?: boolean;
   densityMode?: string;
+  pageWatermark?: { imageUrl?: string; opacity?: number; scale?: number; position?: string };
+  globalWatermark?: Record<string, unknown> | null;
 };
 
 export default function QuotePageLivePreview({
@@ -40,6 +44,8 @@ export default function QuotePageLivePreview({
   embedded = false,
   large = false,
   densityMode,
+  pageWatermark,
+  globalWatermark,
 }: QuotePageLivePreviewProps) {
   const pageState: TemplatePageAuthoringState = {
     body_text: bodyText,
@@ -57,8 +63,32 @@ export default function QuotePageLivePreview({
 
   const { bodyHtml: bodyMarkup, typography: resolvedTypo } = useMemo(() => {
     const ext = pageStateToExtendedSettings(pageState, typography as Record<string, unknown>);
+    if (pageWatermark?.imageUrl) {
+      ext.watermark = {
+        imageUrl: pageWatermark.imageUrl,
+        opacity: pageWatermark.opacity,
+        scale: pageWatermark.scale,
+        position: pageWatermark.position as any,
+      };
+    }
     return renderQuoteTemplatePage(ext, typography as Record<string, unknown>);
-  }, [bodyHtml, bodyText, imageSections, typography, layoutMode, densityMode]);
+  }, [bodyHtml, bodyText, imageSections, typography, layoutMode, densityMode, pageWatermark]);
+
+  const watermarkStyle = useMemo(
+    () =>
+      resolvePreviewWatermarkStyle(
+        pageWatermark?.imageUrl
+          ? {
+              imageUrl: pageWatermark.imageUrl,
+              opacity: pageWatermark.opacity,
+              scale: pageWatermark.scale,
+              position: pageWatermark.position as any,
+            }
+          : {},
+        globalWatermark as any
+      ),
+    [pageWatermark, globalWatermark]
+  );
 
   const signatureHtml = useMemo(() => {
     if (layoutMode !== "ceo_signature_block" && layoutMode !== "signature_block") return "";
@@ -81,20 +111,22 @@ export default function QuotePageLivePreview({
         <div className="relative bg-white shadow-lg flex flex-col text-left page authoring-page" style={pageStyle}>
           <style>{quotePdfPrintCss()}</style>
           <style>{quoteAuthoringPrintCss("screen")}</style>
-          <div className="flex justify-between items-center border-b-2 border-amber-500 pb-3 mb-4 page-header-logo">
+          <style>{quoteTemplateBodyCss()}</style>
+          {watermarkStyle ? <div className="page-watermark" aria-hidden style={watermarkStyle as React.CSSProperties} /> : null}
+          <div className="flex justify-between items-center border-b-2 border-amber-500 pb-3 mb-4 page-header-logo relative z-[1]">
             <div className="font-extrabold text-sm text-slate-900">SUNCHASER ENERGY</div>
             {templateMeta && (
               <span className="text-[8px] uppercase font-mono text-slate-500">{templateMeta.label}</span>
             )}
           </div>
-          <div className="quote-page-shell quote-page-body-flow flex-1 flex flex-col min-h-0">
+          <div className="quote-page-shell quote-page-body-flow flex-1 flex flex-col min-h-0 relative z-[1]">
             {title ? <div className="page-title text-lg font-extrabold text-amber-600 mb-3">{title}</div> : null}
             {bodyMarkup ? <div dangerouslySetInnerHTML={{ __html: bodyMarkup }} /> : null}
             {signatureHtml ? (
               <div className="page-footer-slot mt-auto" dangerouslySetInnerHTML={{ __html: signatureHtml }} />
             ) : null}
           </div>
-          <div className="page-footer border-t border-slate-200 pt-2 mt-4 text-[8px] text-slate-500 font-mono">
+          <div className="page-footer border-t border-slate-200 pt-2 mt-4 text-[8px] text-slate-500 font-mono relative z-[1]">
             Sunchaser Energy Systems Proposal
           </div>
         </div>

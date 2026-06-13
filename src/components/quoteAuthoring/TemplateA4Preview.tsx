@@ -10,6 +10,8 @@ type Props = {
   globalLineHeight: string;
   globalHeadingColor: string;
   globalBodyColor: string;
+  globalWatermarkPreviewUrl?: string;
+  globalWatermark?: Record<string, unknown> | null;
   ceoMessages?: any[];
   onFullscreen: () => void;
 };
@@ -27,6 +29,8 @@ export default function TemplateA4Preview({
   globalLineHeight,
   globalHeadingColor,
   globalBodyColor,
+  globalWatermarkPreviewUrl = "",
+  globalWatermark = null,
   ceoMessages = [],
   onFullscreen,
 }: Props) {
@@ -104,6 +108,21 @@ export default function TemplateA4Preview({
               densityMode: pageState.densityMode,
             }}
             densityMode={pageState.densityMode}
+            pageWatermark={
+              pageState.watermarkUrl
+                ? {
+                    imageUrl: pageState.watermarkUrl,
+                    opacity: pageState.watermarkOpacity,
+                    position: pageState.watermarkPosition,
+                  }
+                : undefined
+            }
+            globalWatermark={
+              globalWatermark ||
+              (globalWatermarkPreviewUrl
+                ? { imageUrl: globalWatermarkPreviewUrl, opacity: pageState.watermarkOpacity }
+                : null)
+            }
             layoutMode={pageState.layoutMode}
             signatureBlock={signatureBlock}
             ceoMessages={ceoMessages}

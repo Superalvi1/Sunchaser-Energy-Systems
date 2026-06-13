@@ -60,6 +60,7 @@ import {
   type PdfQualityMode,
   getAuthoringTemplateMeta,
   resolveAuthoringPageType,
+  sanitizeQuoteEditorHtml,
 } from "../lib/quoteAuthoring";
 import {
   getWatermarkLayerInlineStyle,
@@ -436,16 +437,36 @@ export default function SalesTeamApp({
   const [globalWatermarkUploading, setGlobalWatermarkUploading] = useState<boolean>(false);
   const [useDefaultCompanyContent, setUseDefaultCompanyContent] = useState<boolean>(false);
   const [globalFontFamily, setGlobalFontFamily] = useState<string>("Inter, 'Segoe UI', sans-serif");
-  const [globalFontSize, setGlobalFontSize] = useState<string>("11px");
+  const [globalFontSize, setGlobalFontSize] = useState<string>("13px");
   const [globalHeadingColor, setGlobalHeadingColor] = useState<string>("#d97706");
-  const [globalBodyColor, setGlobalBodyColor] = useState<string>("#475569");
-  const [globalLineHeight, setGlobalLineHeight] = useState<string>("1.6");
+  const [globalBodyColor, setGlobalBodyColor] = useState<string>("#1f2937");
+  const [globalLineHeight, setGlobalLineHeight] = useState<string>("1.55");
   const [pdfQuality, setPdfQuality] = useState<PdfQualityMode>("print");
   const [pageMarginTop, setPageMarginTop] = useState("20");
   const [pageMarginBottom, setPageMarginBottom] = useState("20");
   const [pageMarginLeft, setPageMarginLeft] = useState("20");
   const [pageMarginRight, setPageMarginRight] = useState("20");
   const [contentLibrary, setContentLibrary] = useState<ContentLibraryBlock[]>(mergeContentLibrary([]));
+
+  const globalWatermarkForPreview = useMemo(
+    () =>
+      globalWatermarkPreviewUrl || globalWatermarkFile
+        ? {
+            imageUrl: globalWatermarkPreviewUrl,
+            globalWatermarkFile: globalWatermarkFile || undefined,
+            opacity: globalWatermarkOpacity,
+            scale: globalWatermarkScale,
+            position: globalWatermarkPosition,
+          }
+        : null,
+    [
+      globalWatermarkPreviewUrl,
+      globalWatermarkFile,
+      globalWatermarkOpacity,
+      globalWatermarkScale,
+      globalWatermarkPosition,
+    ]
+  );
 
   const globalWatermarkPreviewStyle = useMemo(() => {
     if (!globalWatermarkPreviewUrl) return null;
@@ -538,11 +559,11 @@ export default function SalesTeamApp({
     }
     const typo = pdfCfg?.globalTypography || pdfCfg?.globalAuthoring?.typography || settings?.globalTypography;
     if (typo) {
-      setGlobalFontFamily(typo.fontFamily || "Inter, 'Segoe UI', sans-serif");
-      setGlobalFontSize(typo.fontSize || "11px");
+      setGlobalFontFamily(typo.fontFamily || "Inter, 'Segoe UI', Arial, sans-serif");
+      setGlobalFontSize(typo.fontSize || "13px");
       setGlobalHeadingColor(typo.headingColor || "#d97706");
-      setGlobalBodyColor(typo.bodyColor || "#475569");
-      setGlobalLineHeight(typo.lineHeight || "1.6");
+      setGlobalBodyColor(typo.bodyColor || "#1f2937");
+      setGlobalLineHeight(typo.lineHeight || "1.55");
     }
     const quality = pdfCfg?.pdfQuality || pdfCfg?.globalAuthoring?.pdfQuality;
     if (quality === "screen" || quality === "print") setPdfQuality(quality);
@@ -2566,7 +2587,7 @@ export default function SalesTeamApp({
             title: state.title,
             body_text: serializeQuotePageBody({
               bodyText: state.body_text,
-              bodyHtml: state.body_html,
+              bodyHtml: sanitizeQuoteEditorHtml(state.body_html || ""),
               authoringPageType: state.authoringPageType,
               layoutMode: state.layoutMode,
               coverLayoutMode: state.coverLayoutMode,
@@ -4342,6 +4363,8 @@ export default function SalesTeamApp({
                   globalLineHeight={globalLineHeight}
                   globalHeadingColor={globalHeadingColor}
                   globalBodyColor={globalBodyColor}
+                  globalWatermarkPreviewUrl={globalWatermarkPreviewUrl}
+                  globalWatermark={globalWatermarkForPreview}
                   globalSettings={{
                     globalHeaderEnabled,
                     setGlobalHeaderEnabled,

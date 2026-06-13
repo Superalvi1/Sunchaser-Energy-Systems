@@ -16,6 +16,8 @@ type Props = {
   globalFontFamily?: string;
   globalHeadingColor?: string;
   globalBodyColor?: string;
+  globalWatermarkPreviewUrl?: string;
+  globalWatermark?: Record<string, unknown> | null;
   onDownloadPage?: () => void | Promise<void>;
   onDownloadFull?: () => void | Promise<void>;
   pdfActionStatus?: string | null;
@@ -34,11 +36,13 @@ export default function QuoteTemplatePreviewModal({
   pageState,
   ceoMessages = [],
   mode = "page",
-  globalFontSize = "11px",
-  globalLineHeight = "1.6",
+  globalFontSize = "13px",
+  globalLineHeight = "1.55",
   globalFontFamily = "Inter, sans-serif",
   globalHeadingColor = "#d97706",
-  globalBodyColor = "#475569",
+  globalBodyColor = "#1f2937",
+  globalWatermarkPreviewUrl = "",
+  globalWatermark = null,
   onDownloadPage,
   onDownloadFull,
   pdfActionStatus,
@@ -167,6 +171,19 @@ export default function QuoteTemplatePreviewModal({
                   densityMode: pageState.densityMode,
                 }}
                 densityMode={pageState.densityMode}
+                pageWatermark={
+                  pageState.watermarkUrl
+                    ? {
+                        imageUrl: pageState.watermarkUrl,
+                        opacity: pageState.watermarkOpacity,
+                        position: pageState.watermarkPosition,
+                      }
+                    : undefined
+                }
+                globalWatermark={
+                  globalWatermark ||
+                  (globalWatermarkPreviewUrl ? { imageUrl: globalWatermarkPreviewUrl } : null)
+                }
                 layoutMode={pageState.layoutMode}
                 signatureBlock={signatureBlock}
                 ceoMessages={ceoMessages}

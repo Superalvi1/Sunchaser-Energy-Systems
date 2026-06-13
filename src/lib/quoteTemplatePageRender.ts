@@ -1,14 +1,21 @@
 /** Shared quote template page rendering — used by live preview and PDF export. */
 
 import {
+  DEFAULT_TEMPLATE_TYPOGRAPHY,
   parseQuotePageExtendedSettings,
+  resolvePageWatermark,
   resolveTypography,
   typographyStyleAttr,
   type QuoteGlobalTypography,
   type QuotePageExtendedSettings,
   type QuoteTypography,
+  type QuoteWatermark,
 } from "./quotePdfLayout";
-import { renderPageBodyHtml } from "./quoteAuthoring";
+import { renderPageBodyHtml, quoteTemplateBodyCss } from "./quoteAuthoring";
+import { getWatermarkLayerInlineStyle } from "./watermarkStyles";
+import type { GlobalWatermarkValue } from "./quotePdfSettingsStore";
+
+export { quoteTemplateBodyCss };
 
 export const QUOTE_PAGE_SAFE_PADDING = "18mm 18mm 16mm 18mm";
 
@@ -96,18 +103,37 @@ export function renderQuoteTemplatePage(
 export function typographyInlineStyle(
   typo: QuoteTypography & { fontFamily?: string; headingColor?: string; bodyColor?: string }
 ): Record<string, string> {
+  const fontFamily = typo.fontFamily || DEFAULT_TEMPLATE_TYPOGRAPHY.fontFamily;
+  const bodyColor = typo.bodyColor || DEFAULT_TEMPLATE_TYPOGRAPHY.bodyColor;
+  const headingColor = typo.headingColor || DEFAULT_TEMPLATE_TYPOGRAPHY.headingColor;
   return {
-    fontFamily: typo.fontFamily || "Inter, 'Segoe UI', sans-serif",
-    color: typo.bodyColor || "#475569",
+    fontFamily,
+    color: bodyColor,
     textAlign: typo.textAlign || "left",
     paddingTop: typo.paddingTop,
     paddingBottom: typo.paddingBottom,
     maxWidth: typo.contentWidth,
-    "--quote-font-size": typo.fontSize,
-    "--quote-line-height": typo.lineHeight,
+    "--quote-font-family": fontFamily,
+    "--quote-font-size": typo.fontSize || DEFAULT_TEMPLATE_TYPOGRAPHY.fontSize,
+    "--quote-line-height": typo.lineHeight || DEFAULT_TEMPLATE_TYPOGRAPHY.lineHeight,
     "--quote-para-gap": typo.paragraphSpacing,
-    "--quote-heading-color": typo.headingColor || "#d97706",
+    "--quote-body-color": bodyColor,
+    "--quote-heading-color": headingColor,
   } as Record<string, string>;
+}
+
+export function resolvePreviewWatermarkStyle(
+  pageWatermark: QuoteWatermark | undefined,
+  globalWatermark: GlobalWatermarkValue | null | undefined,
+  options?: {
+    pdfRow?: Record<string, unknown> | null;
+    settingsRows?: Array<{ key?: string; value?: unknown }>;
+    baseUrl?: string;
+  }
+): Record<string, string | number> | null {
+  const resolved = resolvePageWatermark(pageWatermark, globalWatermark, options);
+  if (!resolved?.imageUrl) return null;
+  return getWatermarkLayerInlineStyle(resolved.imageUrl, resolved.settings);
 }
 
 export function buildLivePreviewPageStyle(
