@@ -34,6 +34,7 @@ import {
   parseQuotePageExtendedSettings,
   quotePdfPrintCss,
   quotePdfShellCss,
+  quotePdfDebugLayoutCss,
   renderRichTextBlock,
   resolvePageWatermark,
   resolveTypography,
@@ -46,6 +47,7 @@ import {
   renderBoqTableBodyHtml,
 } from "./src/lib/quoteBoqPdf.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
+import { formatQuotationPdfError } from "./src/lib/quotePdfErrors.ts";
 import {
   buildQuotationPdfFilename,
   quotePdfDeckActionBarCss,
@@ -6592,6 +6594,7 @@ function compileSunchaserPDFHtml(
     pdfQuality?: PdfQualityMode;
     pageId?: string;
     scope?: 'full' | 'page';
+    debugBox?: boolean;
   } = {}
 ): string {
   const settings = resolveQuotePdfBranding(activeState);
@@ -8172,6 +8175,7 @@ function compileSunchaserPDFHtml(
         }
         ${boqPdfSectionCss()}
         ${quotePdfDeckActionBarCss()}
+        ${options.debugBox ? quotePdfDebugLayoutCss() : ""}
         @media print {
           body {
             background-color: #ffffff !important;
@@ -8182,7 +8186,7 @@ function compileSunchaserPDFHtml(
         }
       </style>
     </head>
-    <body>
+    <body${options.debugBox ? ' class="quote-pdf-debug-mode"' : ""}>
       <div class="action-bar">
         <div><strong>Sunchaser Proposal Deck</strong> - Client: ${quoteObj.clientName || leadObj.name}</div>
         <div class="action-bar-actions">
@@ -8422,6 +8426,79 @@ async function compileTemplatePreviewHtml(
   return { html, filename };
 }
 
+async function sendQuotationPdfResponse(
+  res: express.Response,
+  html: string,
+  filename: string
+): Promise<void> {
+  try {
+    const pdfBuffer = await renderQuotationHtmlToPdf(html);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    console.error("[PDF DOWNLOAD]", err);
+    const message = formatQuotationPdfError(err);
+    res.status(503).send(message);
+  }
+}
+
+const DEFAULT_AUTO_SIZER_BOQ_ROW_IDS = [
+  'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
+  'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
+  'h-3', 'db_box_row', 's-3',
+  'h-4', 'supplies_row', 's-4',
+  'h-5', 'earthing_bore_row', 's-5',
+  'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+  'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
+];
+
+async function resolveSavedManualQuoteForExport(leadId: string, quoteId?: string) {
+  const activeState = await resolveQuoteExportState();
+  const lead = activeState.leads.find((l: any) => l.id === leadId);
+  if (!lead) {
+    return { error: { status: 404, message: "Lead not found." } as const };
+  }
+
+  let quote = null;
+  if (quoteId) {
+    quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq");
+  } else {
+    quote = getLatestSavedQuote(lead, "manual_boq");
+  }
+
+  if (!quote) {
+    return { error: { status: 404, message: "Save a quote first." } as const };
+  }
+
+  const options = {
+    includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
+    templateId: quote.templateId || "tmpl-1",
+    includeSizerItems: quote.includeSizerItems === true,
+    debugBox: false,
+  };
+
+  const allRows = quote.boqRows || quote.boqItems || [];
+  const manualBoqCount = allRows.filter(
+    (r: any) => r && r.type === "item" && !DEFAULT_AUTO_SIZER_BOQ_ROW_IDS.includes(r.id)
+  ).length;
+
+  if (manualBoqCount === 0) {
+    return { error: { status: 400, message: "No BOQ items added yet. Please add BOQ rows and compile quote first." } as const };
+  }
+
+  return { activeState, lead, quote, options };
+}
+
+function compileManualQuoteExportHtml(
+  activeState: Database,
+  quote: any,
+  lead: any,
+  options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean; debugBox?: boolean }
+) {
+  return compileSunchaserPDFHtml("manual", quote, lead, activeState, options);
+}
+
 app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
   try {
     const templateId = req.params.templateId;
@@ -8442,67 +8519,45 @@ app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res
       scope: req.query.scope ? String(req.query.scope) : undefined,
       pageId: req.query.pageId ? String(req.query.pageId) : undefined,
     });
-    const pdfBuffer = await renderQuotationHtmlToPdf(html);
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.send(pdfBuffer);
+    await sendQuotationPdfResponse(res, html, filename);
   } catch (err: any) {
-    res.status(500).send("Error generating template test PDF: " + err.message);
+    console.error("[PDF DOWNLOAD]", err);
+    res.status(500).send(formatQuotationPdfError(err));
+  }
+});
+
+app.get("/api/export/pdf/manual-quote/:leadId/debug-html", async (req, res) => {
+  try {
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
+    const resolved = await resolveSavedManualQuoteForExport(req.params.leadId, quoteId || undefined);
+    if ("error" in resolved && resolved.error) {
+      return res.status(resolved.error.status).send(resolved.error.message);
+    }
+    const { activeState, lead, quote, options } = resolved;
+    const debugBox = req.query.debugBox === "1" || req.query.debugBox === "true";
+    const html = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, debugBox });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (err: any) {
+    console.error("[PDF DEBUG HTML]", err);
+    res.status(500).send("Error compiling debug HTML: " + formatQuotationPdfError(err));
   }
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
   try {
-    const activeState = await resolveQuoteExportState();
-
-    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
-    if (!lead) {
-      return res.status(404).send("Lead not found.");
-    }
     const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
-    let quote = null;
-    if (quoteId) {
-      quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq");
-    } else {
-      quote = getLatestSavedQuote(lead, "manual_boq");
+    const resolved = await resolveSavedManualQuoteForExport(req.params.leadId, quoteId || undefined);
+    if ("error" in resolved && resolved.error) {
+      return res.status(resolved.error.status).send(resolved.error.message);
     }
-
-    if (!quote) {
-      return res.status(404).send("Save a quote first.");
-    }
-
-    const options = {
-      includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
-      templateId: quote.templateId || "tmpl-1",
-      includeSizerItems: quote.includeSizerItems === true
-    };
-
-    const defaultAutoSizerIds = [
-      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
-      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
-      'h-3', 'db_box_row', 's-3',
-      'h-4', 'supplies_row', 's-4',
-      'h-5', 'earthing_bore_row', 's-5',
-      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
-      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
-    ];
-    const allRows = quote.boqRows || quote.boqItems || [];
-    const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
-
-    if (manualBoqCount === 0) {
-      return res.status(400).send("No BOQ items added yet. Please add BOQ rows and compile quote first.");
-    }
-
-    const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
-    const pdfBuffer = await renderQuotationHtmlToPdf(pdfHtml);
+    const { activeState, lead, quote, options } = resolved;
+    const pdfHtml = compileManualQuoteExportHtml(activeState, quote, lead, options);
     const filename = buildQuotationPdfFilename(lead, quote);
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.send(pdfBuffer);
+    await sendQuotationPdfResponse(res, pdfHtml, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
-    res.status(500).send("Error generating quotation PDF: " + err.message);
+    res.status(500).send(formatQuotationPdfError(err));
   }
 });
 

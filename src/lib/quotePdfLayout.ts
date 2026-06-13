@@ -711,6 +711,48 @@ export function quotePdfPrintCss(): string {
   `;
 }
 
+/** Debug overlays for Playwright HTML inspection (?debugBox=1). */
+export function quotePdfDebugLayoutCss(): string {
+  return `
+    body.quote-pdf-debug-mode .page {
+      outline: 2px solid #ef4444;
+      outline-offset: -2px;
+    }
+    body.quote-pdf-debug-mode .page::after {
+      content: "A4 210×297mm";
+      position: absolute;
+      top: 4mm;
+      right: 4mm;
+      font: 700 8px/1.2 Inter, sans-serif;
+      color: #ef4444;
+      background: rgba(255,255,255,0.92);
+      padding: 2px 6px;
+      border: 1px solid #ef4444;
+      z-index: 50;
+      pointer-events: none;
+    }
+    body.quote-pdf-debug-mode .page-flow,
+    body.quote-pdf-debug-mode .quote-page-shell {
+      outline: 1px dashed #3b82f6;
+      outline-offset: -1px;
+    }
+    body.quote-pdf-debug-mode .page-footer {
+      outline: 2px solid #22c55e;
+      outline-offset: -2px;
+    }
+    body.quote-pdf-debug-mode .page-footer::before {
+      content: "Footer boundary";
+      position: absolute;
+      left: 0;
+      top: -14px;
+      font: 700 7px/1 Inter, sans-serif;
+      color: #16a34a;
+      background: #fff;
+      padding: 1px 4px;
+    }
+  `;
+}
+
 export function serializeQuotePageBody(state: {
   bodyText: string;
   bodyHtml?: string;

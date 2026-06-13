@@ -1,4 +1,12 @@
 import { API_BASE_URL } from "../services/api";
+import { PDF_ENGINE_MISSING_MESSAGE } from "./quotePdfErrors";
+
+function friendlyPdfError(status: number, text: string): string {
+  const trimmed = (text || "").trim();
+  if (trimmed.includes("PDF engine is not installed")) return PDF_ENGINE_MISSING_MESSAGE;
+  if (/executable doesn't exist|playwright install/i.test(trimmed)) return PDF_ENGINE_MISSING_MESSAGE;
+  return trimmed || `PDF download failed (${status})`;
+}
 
 export function manualQuotePdfPreviewUrl(leadId: string, quoteId?: string): string {
   const q = quoteId ? `?quoteId=${encodeURIComponent(quoteId)}` : "";
@@ -23,9 +31,17 @@ export async function downloadManualQuotePdf(leadId: string, quoteId?: string): 
   const res = await fetch(manualQuotePdfDownloadUrl(leadId, quoteId));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `PDF download failed (${res.status})`);
+    throw new Error(friendlyPdfError(res.status, text));
   }
   await triggerBlobDownload(res);
+}
+
+export function manualQuotePdfDebugHtmlUrl(leadId: string, quoteId?: string, debugBox?: boolean): string {
+  const params = new URLSearchParams();
+  if (quoteId) params.set("quoteId", quoteId);
+  if (debugBox) params.set("debugBox", "1");
+  const q = params.toString();
+  return `${API_BASE_URL}/api/export/pdf/manual-quote/${encodeURIComponent(leadId)}/debug-html${q ? `?${q}` : ""}`;
 }
 
 export function templateTestPdfDownloadUrl(
@@ -48,7 +64,7 @@ export async function downloadTemplateTestPdf(
   const res = await fetch(templateTestPdfDownloadUrl(templateId, options));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `Template PDF download failed (${res.status})`);
+    throw new Error(friendlyPdfError(res.status, text));
   }
   await triggerBlobDownload(res);
 }

@@ -418,6 +418,7 @@ export default function SalesTeamApp({
   const [proposalPreviewHtml, setProposalPreviewHtml] = useState<string>("");
   const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
   const [downloadingQuotePdf, setDownloadingQuotePdf] = useState(false);
+  const [quotePdfStatus, setQuotePdfStatus] = useState<string | null>(null);
   const [globalHeaderEnabled, setGlobalHeaderEnabled] = useState<boolean>(true);
   const [globalHeaderText, setGlobalHeaderText] = useState<string>("☀️ SUNCHASER ENERGY");
   const [globalHeaderLogoUrl, setGlobalHeaderLogoUrl] = useState<string>("");
@@ -577,7 +578,7 @@ export default function SalesTeamApp({
     setContentLibrary(mergeContentLibrary(pdfCfg?.contentLibrary || pdfCfg?.globalAuthoring?.contentLibrary));
   }, [settings, quotePdfSettings]);
 
-  const handleSaveGlobalPdfSettings = async () => {
+  const handleSaveGlobalPdfSettings = async (options?: { silent?: boolean }): Promise<boolean> => {
     try {
       const base = quotePdfSettings?.[0] || {
         id: "settings-1",
@@ -661,11 +662,17 @@ export default function SalesTeamApp({
         throw new Error(`HTTP error ${response.status}`);
       }
 
-      alert("Global PDF Header & Footer settings saved successfully!");
+      if (!options?.silent) {
+        alert("Global PDF Header & Footer settings saved successfully!");
+      }
       if (onRefreshState) onRefreshState();
+      return true;
     } catch (err: any) {
       console.error("Save global settings error:", err);
-      alert("Failed to save global PDF settings: " + (err.message || err.toString()));
+      if (!options?.silent) {
+        alert("Failed to save global PDF settings: " + (err.message || err.toString()));
+      }
+      return false;
     }
   };
 
@@ -1781,13 +1788,13 @@ export default function SalesTeamApp({
   };
 
   // Compile Quote Payload & Send to API (Manual BOQ — explicit save only)
-  const handleSaveQuote = async (e?: React.FormEvent) => {
+  const handleSaveQuote = async (e?: React.FormEvent): Promise<string | null> => {
     if (e) e.preventDefault();
-    if (!activeLead) return;
-    if (savingQuote) return;
+    if (!activeLead) return null;
+    if (savingQuote) return null;
     if (activeModule === "sizer") {
       await handleSaveSizerQuote();
-      return;
+      return null;
     }
     setSubmitError(null);
 
@@ -1796,7 +1803,7 @@ export default function SalesTeamApp({
     const sMax = systemSector === 'residential' ? 30.0 : 500.0;
     if (systemSizekW < sMin || systemSizekW > sMax) {
       setSubmitError(`Impossible system size for ${systemSector} sector. Must be between ${sMin}kW and ${sMax}kW.`);
-      return;
+      return null;
     }
 
     setSavingQuote(true);
@@ -1828,7 +1835,7 @@ export default function SalesTeamApp({
       if (manualOnlyRows.filter((r) => r.type === "item").length === 0) {
         setSubmitError("No BOQ items added yet.");
         setSavingQuote(false);
-        return;
+        return null;
       }
 
       const calculatedGrandTotal = finalBoqRows
@@ -1951,9 +1958,11 @@ export default function SalesTeamApp({
       setTimeout(() => setQuoteCreatedConfirm(false), 8000);
 
       if (onRefreshState) await onRefreshState();
+      return savedQuoteId || null;
     } catch (err: any) {
       console.error("Quote save failed:", err);
       setSubmitError(err.message || "Failed to save quotation on server.");
+      return null;
     } finally {
       setSavingQuote(false);
     }
@@ -1969,128 +1978,39 @@ export default function SalesTeamApp({
   const handleDownloadManualQuotePDF = async (quoteId?: string) => {
     if (!activeLead) return;
 
-    const targetManualQuote = quoteId
-      ? activeLead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq")
-      : resolveTargetManualQuote();
-    if (!targetManualQuote) {
-      alert("Save a quote first.");
-      return;
-    }
     try {
       setDownloadingQuotePdf(true);
-      await downloadManualQuotePdf(activeLead.id, targetManualQuote.id);
+      let resolvedQuoteId = quoteId;
+
+      if (!quoteId && activeModule === "boq_builder") {
+        const manualItemCount = boqRows.filter(
+          (r) => r && r.type === "item" && !isDefaultAutoSizerRow(r)
+        ).length;
+        if (manualItemCount > 0 || !resolveTargetManualQuote()) {
+          setQuotePdfStatus("Saving…");
+          const savedId = await handleSaveQuote();
+          if (!savedId) return;
+          resolvedQuoteId = savedId;
+        }
+      }
+
+      if (!resolvedQuoteId) {
+        const targetManualQuote = resolveTargetManualQuote();
+        if (!targetManualQuote) {
+          alert("Save a quote first.");
+          return;
+        }
+        resolvedQuoteId = targetManualQuote.id;
+      }
+
+      setQuotePdfStatus("Generating PDF…");
+      await downloadManualQuotePdf(activeLead.id, resolvedQuoteId);
     } catch (err: any) {
       alert(err?.message || "PDF download failed.");
     } finally {
       setDownloadingQuotePdf(false);
+      setQuotePdfStatus(null);
     }
-    return;
-
-    const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
-
-    let customStructurePayload = undefined;
-    if (selectedStructure === 'custom') {
-      customStructurePayload = {
-        name: customStructName,
-        descEn: customStructDescEn,
-        descUr: customStructDescUr,
-        rate: Number(customStructRate) || 0,
-        weight: customStructWeight,
-        materialType: customStructMaterial,
-        warranty: customStructWarranty,
-        windRating: customStructWind,
-        image: ""
-      };
-    }
-
-    const calculatedGrandTotal = boqRows
-      .filter(r => r && r.type === 'item')
-      .reduce((sum, r) => sum + (r.total || 0), 0);
-
-    const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
-    const resolvedDiscount = resolveQuoteDiscountAmount(calculatedGrandTotal, {
-      discountType,
-      discountValue,
-    });
-    const calculatedNetTotal = computeNetProposalValue(
-      calculatedGrandTotal,
-      resolvedDiscount.discountAmount,
-      {
-        taxAmount: calculatedTaxAmount,
-        societyCharges: Number(societyCharges) || 0,
-      }
-    );
-
-    const quoteData = {
-      systemSizekW,
-      panelCount: panelsCount,
-      panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
-      inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
-      batteryCapacity: batteryOption !== "None" ? batteryOption : "",
-      totalCost: calculatedGrandTotal,
-      structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
-      accessories,
-      installationCharges: Number(boqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
-      netMeteringCharges: netMeteringRequired === "Yes" ? (Number(boqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
-      paymentTerms: paymentSchedule,
-      warrantyTerms,
-      termsAndConditions,
-      clientName,
-      clientPhone,
-      clientEmail,
-      clientAddress,
-      cnic,
-      cityArea,
-      bdmName,
-      quoteDate,
-      systemType,
-      panelBrand,
-      panelWattage,
-      inverterBrand,
-      inverterCapacity,
-      batteryOption,
-      netMeteringRequired,
-      discount: resolvedDiscount.discountAmount,
-      discountType: resolvedDiscount.discountType,
-      discountValue: resolvedDiscount.discountValue,
-      paymentSchedule,
-      boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
-      lescoSettings: {
-        meterNo: lescoMeterNo,
-        consumerNo: lescoConsumerNo,
-        sanctionedLoad: lescoSanctionedLoad,
-        phaseType: lescoPhaseType
-      },
-      societyCharges: Number(societyCharges) || 0,
-      taxEnabled,
-      taxRate: Number(taxRate) || 0,
-      taxAmount: calculatedTaxAmount,
-      selectedStructure,
-      customStructure: customStructurePayload,
-      boqRows: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
-      customNotes,
-      grandTotal: calculatedGrandTotal,
-      netTotal: calculatedNetTotal,
-      leadId: activeLead.id,
-      includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
-      templateId: selectedTemplateId,
-      includeSizerItems
-    };
-
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${API_BASE_URL}/api/export/pdf/manual-quote`;
-    form.target = '_blank';
-
-    const hiddenInput = document.createElement('input');
-    hiddenInput.type = 'hidden';
-    hiddenInput.name = 'payload';
-    hiddenInput.value = JSON.stringify(quoteData);
-    form.appendChild(hiddenInput);
-
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
   };
 
   const handlePrintManualQuotePDF = async (quoteId?: string) => {
@@ -2136,123 +2056,6 @@ export default function SalesTeamApp({
       if (!response.ok) {
         throw new Error(`Failed to compile proposal preview layout: ${response.statusText}`);
       }
-      const html = await response.text();
-      setProposalPreviewHtml(html);
-    } catch (err: any) {
-      console.error(err);
-      setProposalPreviewHtml(`<div style="padding: 20px; color: #ef4444; font-weight: bold; font-family: sans-serif;">Error loading preview: ${err.message}</div>`);
-    } finally {
-      setLoadingPreview(false);
-    }
-    return;
-
-    const panelsCount = Math.ceil((systemSizekW * 1000) / panelWattage);
-
-    let customStructurePayload = undefined;
-    if (selectedStructure === 'custom') {
-      customStructurePayload = {
-        name: customStructName,
-        descEn: customStructDescEn,
-        descUr: customStructDescUr,
-        rate: Number(customStructRate) || 0,
-        weight: customStructWeight,
-        materialType: customStructMaterial,
-        warranty: customStructWarranty,
-        windRating: customStructWind,
-        image: ""
-      };
-    }
-
-    const calculatedGrandTotal = boqRows
-      .filter(r => r && r.type === 'item')
-      .reduce((sum, r) => sum + (r.total || 0), 0);
-
-    const calculatedTaxAmount = taxEnabled ? Math.round(calculatedGrandTotal * (taxRate / 100)) : 0;
-    const resolvedDiscount = resolveQuoteDiscountAmount(calculatedGrandTotal, {
-      discountType,
-      discountValue,
-    });
-    const calculatedNetTotal = computeNetProposalValue(
-      calculatedGrandTotal,
-      resolvedDiscount.discountAmount,
-      {
-        taxAmount: calculatedTaxAmount,
-        societyCharges: Number(societyCharges) || 0,
-      }
-    );
-
-    const quoteData = {
-      systemSizekW,
-      panelCount: panelsCount,
-      panelType: `${panelBrand} ${panelWattage}W Mono-PERC Panels`,
-      inverterType: `${inverterBrand} ${inverterCapacity} Inverter`,
-      batteryCapacity: batteryOption !== "None" ? batteryOption : "",
-      totalCost: calculatedGrandTotal,
-      structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
-      accessories,
-      installationCharges: Number(boqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
-      netMeteringCharges: netMeteringRequired === "Yes" ? (Number(boqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
-      paymentTerms: paymentSchedule,
-      warrantyTerms,
-      termsAndConditions,
-      clientName,
-      clientPhone,
-      clientEmail,
-      clientAddress,
-      cnic,
-      cityArea,
-      bdmName,
-      quoteDate,
-      systemType,
-      panelBrand,
-      panelWattage,
-      inverterBrand,
-      inverterCapacity,
-      batteryOption,
-      netMeteringRequired,
-      discount: resolvedDiscount.discountAmount,
-      discountType: resolvedDiscount.discountType,
-      discountValue: resolvedDiscount.discountValue,
-      paymentSchedule,
-      boqItems: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
-      lescoSettings: {
-        meterNo: lescoMeterNo,
-        consumerNo: lescoConsumerNo,
-        sanctionedLoad: lescoSanctionedLoad,
-        phaseType: lescoPhaseType
-      },
-      societyCharges: Number(societyCharges) || 0,
-      taxEnabled,
-      taxRate: Number(taxRate) || 0,
-      taxAmount: calculatedTaxAmount,
-      selectedStructure,
-      customStructure: customStructurePayload,
-      boqRows: includeSizerItems ? boqRows : boqRows.filter(r => !isDefaultAutoSizerRow(r)),
-      customNotes,
-      grandTotal: calculatedGrandTotal,
-      netTotal: calculatedNetTotal,
-      leadId: activeLead.id,
-      includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
-      templateId: selectedTemplateId,
-      includeSizerItems
-    };
-
-    try {
-      setLoadingPreview(true);
-      setShowProposalPreview(true);
-      
-      const response = await fetch(`${API_BASE_URL}/api/export/pdf/manual-quote`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(quoteData)
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to compile proposal preview layout: ${response.statusText}`);
-      }
-      
       const html = await response.text();
       setProposalPreviewHtml(html);
     } catch (err: any) {
@@ -3161,21 +2964,21 @@ export default function SalesTeamApp({
                   <button
                     type="button"
                     disabled={!latestManualSavedQuote}
-                    title={!latestManualSavedQuote ? "Save a quote first" : "Print latest saved manual quote"}
+                    title={!latestManualSavedQuote ? "Save a quote first" : "Browser print may vary. Use Download PDF for final client sharing."}
                     onClick={() => handlePrintManualQuotePDF()}
                     className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Printer className="h-3.5 w-3.5 text-amber-500" /> Print Quote
+                    <Printer className="h-3.5 w-3.5 text-amber-500" /> Print Preview
                   </button>
                   <button
                     type="button"
                     disabled={!latestManualSavedQuote || downloadingQuotePdf}
-                    title={!latestManualSavedQuote ? "Save a quote first" : "Download latest saved manual quote PDF"}
+                    title={!latestManualSavedQuote ? "Save a quote first" : "Downloads final A4 PDF generated by server"}
                     onClick={() => handleDownloadManualQuotePDF()}
                     className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    {downloadingQuotePdf ? "Downloading…" : "Download PDF"}
+                    {quotePdfStatus || (downloadingQuotePdf ? "Downloading…" : "Download PDF")}
                   </button>
                 </div>
                 </div>
@@ -4319,19 +4122,21 @@ export default function SalesTeamApp({
                           <button
                             type="button"
                             onClick={() => handlePrintManualQuotePDF()}
+                            title="Browser print may vary. Use Download PDF for final client sharing."
                             className="w-full bg-slate-950 hover:bg-slate-800 text-slate-200 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-850"
                           >
                             <Printer className="h-4 w-4 text-amber-500" />
-                            <span>Print</span>
+                            <span>Print Preview</span>
                           </button>
                           <button
                             type="button"
                             disabled={downloadingQuotePdf}
+                            title="Downloads final A4 PDF generated by server"
                             onClick={() => handleDownloadManualQuotePDF()}
                             className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-amber-500 font-sans font-extrabold py-3 px-4 rounded-xl shadow cursor-pointer transition flex items-center justify-center gap-2 text-sm border border-slate-700"
                           >
                             <Download className="h-4 w-4" />
-                            <span>{downloadingQuotePdf ? "Downloading…" : "Download PDF"}</span>
+                            <span>{quotePdfStatus || (downloadingQuotePdf ? "Downloading…" : "Download PDF")}</span>
                           </button>
                         </div>
                       </div>
@@ -4365,6 +4170,7 @@ export default function SalesTeamApp({
                   globalBodyColor={globalBodyColor}
                   globalWatermarkPreviewUrl={globalWatermarkPreviewUrl}
                   globalWatermark={globalWatermarkForPreview}
+                  onSaveGlobalSettings={() => handleSaveGlobalPdfSettings({ silent: true })}
                   globalSettings={{
                     globalHeaderEnabled,
                     setGlobalHeaderEnabled,
@@ -5188,7 +4994,7 @@ export default function SalesTeamApp({
                     <span>Live Proposal Deck PDF Preview</span>
                   </h3>
                   <span className="text-[10px] text-slate-500 font-sans block mt-0.5">
-                    Live layout rendering showing exactly how the exported PDF pages will print.
+                    HTML layout preview. Browser print may vary — use Download PDF for final client sharing.
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -5202,16 +5008,17 @@ export default function SalesTeamApp({
                     className="text-amber-500 hover:text-amber-400 disabled:text-slate-650 transition cursor-pointer text-xs font-bold bg-slate-850 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-1"
                   >
                     <Printer className="h-3.5 w-3.5" />
-                    Print
+                    Print Preview
                   </button>
                   <button
                     type="button"
                     disabled={loadingPreview || !proposalPreviewHtml || downloadingQuotePdf}
+                    title="Downloads final A4 PDF generated by server"
                     onClick={() => handleDownloadManualQuotePDF()}
                     className="text-amber-500 hover:text-amber-400 disabled:text-slate-650 transition cursor-pointer text-xs font-bold bg-slate-850 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-1"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    {downloadingQuotePdf ? "Downloading…" : "Download PDF"}
+                    {quotePdfStatus || (downloadingQuotePdf ? "Downloading…" : "Download PDF")}
                   </button>
                   <button
                     type="button"

@@ -1,5 +1,9 @@
 /** Server-side HTML → PDF via Playwright Chromium. */
 
+import { PDF_ENGINE_MISSING_MESSAGE, formatQuotationPdfError } from "./quotePdfErrors.ts";
+
+export { PDF_ENGINE_MISSING_MESSAGE, formatQuotationPdfError };
+
 export function buildTemplateTestPdfFilename(title?: string, scope: "page" | "full" = "full"): string {
   if (scope === "page" && title) {
     const safe = String(title)
@@ -38,7 +42,7 @@ async function installChromiumAtRuntime(): Promise<void> {
       const { spawn } = await import("node:child_process");
       console.warn("[PDF] Chromium executable missing — running `playwright install chromium`…");
       await new Promise<void>((resolve, reject) => {
-        const child = spawn("npx", ["playwright", "install", "chromium"], {
+        const child = spawn("npx", ["playwright", "install", "chromium", "--with-deps"], {
           stdio: "inherit",
           env: process.env,
         });
@@ -66,9 +70,7 @@ export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
   try {
     ({ chromium } = await import("playwright"));
   } catch {
-    throw new Error(
-      "Playwright is required for PDF download. Install with: npm install playwright && npx playwright install chromium"
-    );
+    throw new Error(PDF_ENGINE_MISSING_MESSAGE);
   }
 
   let browser;
