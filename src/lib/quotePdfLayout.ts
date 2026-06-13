@@ -440,7 +440,7 @@ export function quotePdfShellCss(): string {
   return `
     @page {
       size: A4;
-      margin: 20mm;
+      margin: 0;
     }
     .pages-container {
       display: flex;
@@ -454,7 +454,7 @@ export function quotePdfShellCss(): string {
       min-height: 297mm;
       background: #ffffff;
       box-sizing: border-box;
-      padding: 20mm;
+      padding: 18mm 18mm 16mm 18mm;
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
@@ -536,29 +536,36 @@ export function quotePdfShellCss(): string {
         align-items: stretch;
       }
       .page {
-        width: 100%;
-        min-height: 257mm;
+        width: 210mm;
+        min-height: 297mm;
         height: auto;
-        padding: 0;
+        padding: 18mm 18mm 16mm 18mm;
         margin: 0 !important;
         box-shadow: none !important;
         overflow: visible !important;
+        break-after: page;
+        page-break-after: always;
+      }
+      .page:last-child {
+        break-after: auto;
+        page-break-after: auto;
       }
       .page.cover {
         border: none;
-        min-height: 257mm;
+        min-height: 297mm;
       }
       .page.cover .cover-footer-block {
         margin-top: auto;
       }
       .page.boq-page {
-        min-height: 257mm;
-        padding: 0;
+        min-height: 297mm;
+        padding: 12mm 18mm 16mm 18mm;
       }
       .page.full-page-image-only {
-        width: 100%;
-        height: 257mm;
-        min-height: 257mm;
+        width: 210mm;
+        height: 297mm;
+        min-height: 297mm;
+        padding: 0 !important;
       }
     }
   `;

@@ -6,6 +6,8 @@ import type { PageAuthoringState } from "./QuotePageAuthoringFields";
 type Props = {
   pageState: PageAuthoringState & Record<string, any>;
   globalFontFamily: string;
+  globalFontSize: string;
+  globalLineHeight: string;
   globalHeadingColor: string;
   globalBodyColor: string;
   ceoMessages?: any[];
@@ -21,6 +23,8 @@ const ZOOM_PRESETS = [
 export default function TemplateA4Preview({
   pageState,
   globalFontFamily,
+  globalFontSize,
+  globalLineHeight,
   globalHeadingColor,
   globalBodyColor,
   ceoMessages = [],
@@ -92,12 +96,14 @@ export default function TemplateA4Preview({
             imageSections={pageState.imageSections}
             typography={{
               fontFamily: pageState.fontFamily || globalFontFamily,
-              fontSize: pageState.fontSize,
+              fontSize: pageState.fontSize || globalFontSize,
               headingColor: pageState.headingColor || globalHeadingColor,
               bodyColor: pageState.bodyColor || globalBodyColor,
-              lineHeight: pageState.lineHeight,
+              lineHeight: pageState.lineHeight || globalLineHeight,
               textAlign: pageState.textAlign,
+              densityMode: pageState.densityMode,
             }}
+            densityMode={pageState.densityMode}
             layoutMode={pageState.layoutMode}
             signatureBlock={signatureBlock}
             ceoMessages={ceoMessages}

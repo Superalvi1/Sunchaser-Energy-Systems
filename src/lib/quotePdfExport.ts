@@ -25,6 +25,35 @@ export async function downloadManualQuotePdf(leadId: string, quoteId?: string): 
     const text = await res.text().catch(() => "");
     throw new Error(text || `PDF download failed (${res.status})`);
   }
+  await triggerBlobDownload(res);
+}
+
+export function templateTestPdfDownloadUrl(
+  templateId: string,
+  options?: { pageId?: string; scope?: "page" | "full" }
+): string {
+  const scope = options?.scope || (options?.pageId ? "page" : "full");
+  const params = new URLSearchParams();
+  params.set("scope", scope);
+  if (options?.pageId) params.set("pageId", options.pageId);
+  const q = params.toString();
+  return `${API_BASE_URL}/api/export/pdf/template-preview/${encodeURIComponent(templateId)}/download${q ? `?${q}` : ""}`;
+}
+
+/** Download template test PDF (full deck or single page). Caller should save first. */
+export async function downloadTemplateTestPdf(
+  templateId: string,
+  options?: { pageId?: string; scope?: "page" | "full" }
+): Promise<void> {
+  const res = await fetch(templateTestPdfDownloadUrl(templateId, options));
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Template PDF download failed (${res.status})`);
+  }
+  await triggerBlobDownload(res);
+}
+
+async function triggerBlobDownload(res: Response): Promise<void> {
   const blob = await res.blob();
   const filename =
     parseContentDispositionFilename(res.headers.get("Content-Disposition")) ||

@@ -1,5 +1,17 @@
 /** Server-side HTML → PDF via Playwright Chromium. */
 
+export function buildTemplateTestPdfFilename(title?: string, scope: "page" | "full" = "full"): string {
+  if (scope === "page" && title) {
+    const safe = String(title)
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .slice(0, 48) || "page";
+    return `template-page-${safe}.pdf`;
+  }
+  return "sunchaser-template-test.pdf";
+}
+
 export function buildQuotationPdfFilename(lead: any, quote: any): string {
   const client = String(quote?.clientName || lead?.name || "Client").trim();
   const safe = client

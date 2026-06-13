@@ -2495,6 +2495,7 @@ export default function SalesTeamApp({
 
         if (field === 'title') originalVal = page.title || "";
         else if (field === 'body_text') originalVal = parsed?.bodyText || "";
+        else if (field === 'body_html') originalVal = parsed?.bodyHtml || "";
         else if (field === 'is_enabled') originalVal = page.is_enabled !== false;
         else if (field === 'image_url') originalVal = page.image_url || page.imageUrl || "";
         else if (field === 'bg_image_url') originalVal = page.bg_image_url || page.bgImageUrl || "";
@@ -2512,6 +2513,10 @@ export default function SalesTeamApp({
         else if (field === 'bodyImages') originalVal = parsed.bodyImages || [];
         else if (field === 'densityMode') originalVal = parsed.typography?.densityMode || "normal";
         else if (field === 'fontSize') originalVal = parsed.typography?.fontSize || "";
+        else if (field === 'lineHeight') originalVal = parsed.typography?.lineHeight || "";
+        else if (field === 'fontFamily') originalVal = parsed.typography?.fontFamily || "";
+        else if (field === 'headingColor') originalVal = parsed.typography?.headingColor || "";
+        else if (field === 'bodyColor') originalVal = parsed.typography?.bodyColor || "";
         else if (field === 'watermarkUrl') originalVal = parsed.watermark?.imageUrl || "";
         else if (field === 'coverLayoutMode') originalVal = parsed.coverLayoutMode || "classic";
       }
@@ -2530,9 +2535,9 @@ export default function SalesTeamApp({
     });
   };
 
-  const handleSavePage = async (pageId: string) => {
+  const handleSavePage = async (pageId: string, options?: { silent?: boolean }): Promise<boolean> => {
     const page = quoteTemplatePages.find(p => p.id === pageId);
-    if (!page) return;
+    if (!page) return false;
 
     const state = getPageState(page);
 
@@ -2647,11 +2652,16 @@ export default function SalesTeamApp({
         }
       }));
 
-      alert("Page configuration saved successfully!");
-      if (onRefreshState) onRefreshState();
+      if (!options?.silent) {
+        alert("Page configuration saved successfully!");
+      }
+      if (onRefreshState) await onRefreshState();
+      return true;
     } catch (err: any) {
       console.error("Save error:", err);
-      alert("Failed to save template page changes: " + (err.message || err.toString()));
+      if (!options?.silent) {
+        alert("Failed to save template page changes: " + (err.message || err.toString()));
+      }
       setLocalPageStates(prev => ({
         ...prev,
         [pageId]: {
@@ -2659,6 +2669,7 @@ export default function SalesTeamApp({
           saveStatus: 'Unsaved'
         }
       }));
+      return false;
     }
   };
 
@@ -4327,6 +4338,8 @@ export default function SalesTeamApp({
                   onImageUpload={handleImageUpload}
                   uploadImageFile={uploadImageFile}
                   globalFontFamily={globalFontFamily}
+                  globalFontSize={globalFontSize}
+                  globalLineHeight={globalLineHeight}
                   globalHeadingColor={globalHeadingColor}
                   globalBodyColor={globalBodyColor}
                   globalSettings={{

@@ -17,7 +17,7 @@ import {
   buildTemplateSidebarItems,
   isTemplateSpecialNav,
 } from "../../lib/quoteTemplateNav";
-import { API_BASE_URL } from "../../services/api";
+import { downloadTemplateTestPdf } from "../../lib/quotePdfExport";
 import QuoteTemplateGlobalSettingsPanel, {
   type QuoteTemplateGlobalSettingsProps,
 } from "./QuoteTemplateGlobalSettingsPanel";
@@ -34,13 +34,15 @@ export type QuoteTemplateWorkspaceProps = {
   ceoMessages?: any[];
   getPageState: (page: any) => PageAuthoringState & Record<string, any>;
   onFieldChange: (pageId: string, field: string, value: any) => void;
-  onSavePage: (pageId: string) => void;
+  onSavePage: (pageId: string, options?: { silent?: boolean }) => Promise<boolean>;
   onResetPage: (pageId: string) => void;
   onDuplicatePage: (pageId: string) => void;
   onMovePage: (pageId: string, currentOrder: number, direction: "up" | "down") => void;
   onImageUpload: (pageId: string, file: File, type: "image" | "bg") => void;
   uploadImageFile: (file: File, isBg: boolean) => Promise<string>;
   globalFontFamily: string;
+  globalFontSize: string;
+  globalLineHeight: string;
   globalHeadingColor: string;
   globalBodyColor: string;
   globalSettings: QuoteTemplateGlobalSettingsProps;
@@ -61,6 +63,8 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
     onImageUpload,
     uploadImageFile,
     globalFontFamily,
+    globalFontSize,
+    globalLineHeight,
     globalHeadingColor,
     globalBodyColor,
     globalSettings,
@@ -72,6 +76,7 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
   const [selectedTemplatePageId, setSelectedTemplatePageId] = useState<string>(firstPageId);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewMode, setPreviewMode] = useState<"page" | "full">("page");
+  const [pdfActionStatus, setPdfActionStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sidebarItems.some((i) => i.id === selectedTemplatePageId)) {
@@ -84,18 +89,54 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
       ? quoteTemplatePages.find((p) => p.id === selectedTemplatePageId) || null
       : null;
   const pageState = activePage ? getPageState(activePage) : null;
+  const isDirty = pageState?.saveStatus === "Unsaved";
 
-  const openTemplatePreview = () => {
-    window.open(`${API_BASE_URL}/api/export/pdf/template-preview/${encodeURIComponent(selectedTemplateId)}`, "_blank");
+  const ensurePageSaved = async (): Promise<boolean> => {
+    if (!activePage) return true;
+    if (pageState?.saveStatus === "Saved") return true;
+    setPdfActionStatus("Saving template...");
+    const ok = await onSavePage(activePage.id, { silent: true });
+    setPdfActionStatus(null);
+    return ok;
   };
 
-  const printTest = () => {
-    if (selectedTemplatePageId === TEMPLATE_NAV_GLOBAL || selectedTemplatePageId === TEMPLATE_NAV_BOQ) {
-      openTemplatePreview();
-      return;
+  const handleSaveAndPreview = async () => {
+    if (!activePage) return;
+    if (pageState?.saveStatus !== "Saved") {
+      setPdfActionStatus("Saving template...");
+      const ok = await onSavePage(activePage.id, { silent: true });
+      setPdfActionStatus(null);
+      if (!ok) return;
     }
     setPreviewMode("page");
     setPreviewOpen(true);
+  };
+
+  const handleDownloadTestPdf = async (scope: "page" | "full") => {
+    try {
+      if (scope === "page" && activePage) {
+        const ok = await ensurePageSaved();
+        if (!ok) return;
+      }
+      setPdfActionStatus("Generating PDF...");
+      await downloadTemplateTestPdf(selectedTemplateId, {
+        scope,
+        pageId: scope === "page" && activePage ? activePage.id : undefined,
+      });
+    } catch (err: any) {
+      alert(err?.message || "Template PDF download failed.");
+    } finally {
+      setPdfActionStatus(null);
+    }
+  };
+
+  const handlePrintTest = async () => {
+    if (selectedTemplatePageId === TEMPLATE_NAV_GLOBAL || selectedTemplatePageId === TEMPLATE_NAV_BOQ) {
+      await handleDownloadTestPdf("full");
+      return;
+    }
+    await handleSaveAndPreview();
+    setTimeout(() => window.print(), 400);
   };
 
   const showPageActions = !!activePage && !!pageState;
@@ -111,6 +152,9 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {pdfActionStatus && (
+            <span className="text-[10px] font-mono text-blue-400 animate-pulse">{pdfActionStatus}</span>
+          )}
           {showPageActions && (
             <>
               <span
@@ -122,36 +166,37 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
                       : "bg-amber-500/15 text-amber-400 border border-amber-500/20"
                 }`}
               >
-                {pageState!.saveStatus}
+                {isDirty ? "Unsaved changes" : pageState!.saveStatus}
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  setPreviewMode("page");
-                  setPreviewOpen(true);
-                }}
-                className="text-xs font-bold px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 flex items-center gap-1.5"
+                onClick={handleSaveAndPreview}
+                disabled={!!pdfActionStatus}
+                className="text-xs font-bold px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-50 flex items-center gap-1.5"
               >
-                <Eye className="h-3.5 w-3.5" /> Preview
+                <Eye className="h-3.5 w-3.5" /> Save & Preview
               </button>
               <button
                 type="button"
-                onClick={printTest}
-                className="text-xs font-bold px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 flex items-center gap-1.5"
+                onClick={handlePrintTest}
+                disabled={!!pdfActionStatus}
+                className="text-xs font-bold px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-50 flex items-center gap-1.5"
               >
                 <Printer className="h-3.5 w-3.5" /> Print Test
               </button>
               <button
                 type="button"
-                onClick={openTemplatePreview}
-                className="text-xs font-bold px-3 py-2 rounded-lg bg-violet-700 text-white hover:bg-violet-600 flex items-center gap-1.5"
+                onClick={() => handleDownloadTestPdf("page")}
+                disabled={!!pdfActionStatus}
+                className="text-xs font-bold px-3 py-2 rounded-lg bg-violet-700 text-white hover:bg-violet-600 disabled:opacity-50 flex items-center gap-1.5"
               >
-                <Download className="h-3.5 w-3.5" /> Download Test PDF
+                <Download className="h-3.5 w-3.5" /> Save & Download Test PDF
               </button>
               <button
                 type="button"
                 onClick={() => onSavePage(activePage!.id)}
-                className="text-xs font-bold px-4 py-2 rounded-lg bg-amber-500 text-slate-950 hover:bg-amber-400 flex items-center gap-1.5"
+                disabled={!!pdfActionStatus}
+                className="text-xs font-bold px-4 py-2 rounded-lg bg-amber-500 text-slate-950 hover:bg-amber-400 disabled:opacity-50 flex items-center gap-1.5"
               >
                 <Save className="h-3.5 w-3.5" /> Save Page
               </button>
@@ -185,8 +230,8 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
               Generated automatically from Manual BOQ Builder when you compile a proposal PDF. Use Download Test PDF to
               preview the full deck including BOQ styling.
             </p>
-            <button type="button" onClick={openTemplatePreview} className="bg-violet-600 text-white font-bold px-5 py-2.5 rounded-lg">
-              Open Full Proposal Preview
+            <button type="button" onClick={() => handleDownloadTestPdf("full")} className="bg-violet-600 text-white font-bold px-5 py-2.5 rounded-lg">
+              Download Full Template Test PDF
             </button>
           </div>
         ) : activePage && pageState ? (
@@ -205,13 +250,12 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
             <TemplateA4Preview
               pageState={pageState}
               globalFontFamily={globalFontFamily}
+              globalFontSize={globalFontSize}
+              globalLineHeight={globalLineHeight}
               globalHeadingColor={globalHeadingColor}
               globalBodyColor={globalBodyColor}
               ceoMessages={ceoMessages}
-              onFullscreen={() => {
-                setPreviewMode("page");
-                setPreviewOpen(true);
-              }}
+              onFullscreen={handleSaveAndPreview}
             />
           </>
         ) : (
@@ -269,7 +313,16 @@ export default function QuoteTemplateWorkspace(props: QuoteTemplateWorkspaceProp
           pageState={pageState}
           ceoMessages={ceoMessages}
           templateId={selectedTemplateId}
+          activePageId={activePage?.id}
           mode={previewMode}
+          globalFontSize={globalFontSize}
+          globalLineHeight={globalLineHeight}
+          globalFontFamily={globalFontFamily}
+          globalHeadingColor={globalHeadingColor}
+          globalBodyColor={globalBodyColor}
+          onDownloadPage={() => handleDownloadTestPdf("page")}
+          onDownloadFull={() => handleDownloadTestPdf("full")}
+          pdfActionStatus={pdfActionStatus}
         />
       )}
     </div>

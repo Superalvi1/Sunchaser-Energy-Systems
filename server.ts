@@ -48,7 +48,9 @@ import {
   quotePdfDeckActionBarCss,
   quotePdfDeckPreviewScripts,
   renderQuotationHtmlToPdf,
+  buildTemplateTestPdfFilename,
 } from "./src/lib/quotePdfRender.ts";
+import { hasTemplatePageBodyContent } from "./src/lib/quoteTemplatePageRender.ts";
 import {
   ensurePackageLibraryCatalog,
 } from "./src/lib/boqPackageLibrary.ts";
@@ -6555,6 +6557,21 @@ function resolveQuotePdfBranding(activeState: Database) {
 }
 
 // Helper function to compile printable Sunchaser PDF HTML (White/Light Theme)
+async function resolveQuoteExportState(): Promise<Database> {
+  loadDb();
+  if (!isSupabaseActive()) return db;
+  try {
+    const remote = await fetchAppStateFromSupabase();
+    return {
+      ...remote,
+      quoteTemplatePages: db.quoteTemplatePages?.length ? db.quoteTemplatePages : remote.quoteTemplatePages,
+      quotePdfSettings: db.quotePdfSettings?.length ? db.quotePdfSettings : remote.quotePdfSettings,
+    };
+  } catch {
+    return db;
+  }
+}
+
 function compileSunchaserPDFHtml(
   mode: 'sizer' | 'manual' | 'preview',
   quoteObj: any,
@@ -6565,6 +6582,8 @@ function compileSunchaserPDFHtml(
     templateId?: string;
     includeSizerItems?: boolean;
     pdfQuality?: PdfQualityMode;
+    pageId?: string;
+    scope?: 'full' | 'page';
   } = {}
 ): string {
   const settings = resolveQuotePdfBranding(activeState);
@@ -6834,7 +6853,7 @@ function compileSunchaserPDFHtml(
   const dbPages = allDbPages.filter((p: any) => (p.templateId || p.template_id) === templateId);
 
   const getPageConfig = (pageType: string, defaultTitle: string, defaultBody: string) => {
-    const dbPage = dbPages.find((p: any) => p.pageType === pageType);
+    const dbPage = dbPages.find((p: any) => (p.pageType || p.page_type) === pageType);
     if (dbPage) {
       const rawBody = dbPage.bodyText || dbPage.body_text || "";
       const ext = parseExtendedSettings(rawBody, pageType);
@@ -7039,13 +7058,17 @@ function compileSunchaserPDFHtml(
   const activeStructurePageType = getStructurePageType();
 
   // Load all enabled quote template pages for this template from Supabase / DB
-  const enabledDbPages = dbPages.filter((p: any) => {
+  let enabledDbPages = dbPages.filter((p: any) => {
     if (p.isEnabled === false || p.is_enabled === false) return false;
     const type = p.pageType || p.page_type || "";
     if (!getIncludedFlagForPageType(type)) return false;
     if (type.startsWith('structure_') && type !== activeStructurePageType) return false;
     return true;
   });
+
+  if (options.scope === 'page' && options.pageId) {
+    enabledDbPages = enabledDbPages.filter((p: any) => p.id === options.pageId);
+  }
 
   const pagesList: any[] = enabledDbPages.map((p: any) => ({
     type: p.pageType || p.page_type,
@@ -7149,6 +7172,9 @@ function compileSunchaserPDFHtml(
       return "";
     };
     const rich = renderBody;
+    const hasAuthoringBody = () => hasTemplatePageBodyContent(ext) || !!bodyImagesHtml;
+    const richBody = () => (hasAuthoringBody() ? rich() : "");
+    const richBodyOrFallback = (fallback: string) => (hasAuthoringBody() ? rich() : fallback);
 
     // Resolve header settings
     let hEnabled = globalHeader.enabled !== false;
@@ -7319,7 +7345,7 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
                 ${p.title ? `<div class="page-title">${p.title}</div>` : ""}
-                ${p.bodyText ? rich(p.bodyText) : ""}
+                ${richBody()}
                 ${bodyImagesHtml}
                 <div style="margin-top: auto;">${signatureHtml}</div>
               </div>
@@ -7339,7 +7365,7 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               ${coverLogoHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
-              ${p.bodyText ? rich(p.bodyText) : ''}
+              ${richBody()}
               ${bodyImagesHtml}
             ${pageShellClose}
             ${footerHtml}
@@ -7374,7 +7400,7 @@ function compileSunchaserPDFHtml(
             ${headerHtml}
             <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
               ${p.title ? `<div class="page-title">${p.title}</div>` : ""}
-              ${p.bodyText ? rich(p.bodyText) : ""}
+              ${richBody()}
               ${bodyImagesHtml}
               <div style="margin-top: auto;">${signatureHtml}</div>
             </div>
@@ -7472,7 +7498,7 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
               
-              ${p.bodyText ? rich(p.bodyText) : ''}
+              ${richBody()}
 
               ${bodyImagesHtml}
 
@@ -7526,7 +7552,7 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
 
-              ${p.bodyText ? rich(p.bodyText) : ''}
+              ${richBody()}
 
               ${bodyImagesHtml}
 
@@ -7618,7 +7644,7 @@ function compileSunchaserPDFHtml(
             ${pageShellOpen}
               ${headerHtml}
               ${p.title ? `<div class="page-title">${p.title}</div>` : ''}
-              ${p.bodyText ? rich(p.bodyText) : ''}
+              ${richBody()}
 
               ${bodyImagesHtml}
 
@@ -7678,7 +7704,7 @@ function compileSunchaserPDFHtml(
                 </div>
                 <div style="font-size: 11px; line-height: 1.5; color: #475569;">
                   <strong>English Specification:</strong><br/>
-                  ${p.bodyText ? rich(p.bodyText) : renderRichTextBlock(structDetails.descriptionEn)}
+                  ${richBodyOrFallback(renderRichTextBlock(structDetails.descriptionEn))}
                 </div>
               </div>
               ` : ''}
@@ -7854,9 +7880,9 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               <div class="page-title">${p.title}</div>
               
-              ${p.bodyText ? rich(p.bodyText) : `<div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              ${richBodyOrFallback(`<div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
                 All engineering activities, supply dispatch, and LESCO utility agreements are governed strictly by the Sunchaser covenants below:
-              </div>`}
+              </div>`)}
 
               ${bodyImagesHtml}
 
@@ -7878,9 +7904,9 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               <div class="page-title">${p.title}</div>
               
-              ${p.bodyText ? rich(p.bodyText) : `<div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
+              ${richBodyOrFallback(`<div style="font-size: 11.5px; line-height: 1.5; color: #475569; margin: 15px 0;">
                 Consortium hardware replacement and force majeure exclusions continue below:
-              </div>`}
+              </div>`)}
 
               ${bodyImagesHtml}
 
@@ -7965,7 +7991,7 @@ function compileSunchaserPDFHtml(
               ${headerHtml}
               <div class="page-title">${p.title}</div>
 
-              ${p.bodyText ? rich(p.bodyText) : ""}
+              ${richBody()}
 
               <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
                 <span style="font-size: 18px;">⚠️</span>
@@ -8315,76 +8341,110 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
   }
 });
 
+function buildTemplatePreviewMockData() {
+  const mockLead = {
+    id: "lead-preview",
+    name: "Muhammad Allauddin (Preview)",
+    email: "allai1432009@gmail.com",
+    phone: "0309-0236666",
+    address: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
+    location: "Lahore",
+    monthlyBill: 120000,
+    roofSpace: 1200,
+    shading: "None",
+    rating: 5,
+    assignedSalesperson: "Technical Advisor (Preview)",
+    createdAt: new Date().toISOString(),
+    notes: "Preview of corporate proposal styling.",
+  };
+  const mockQuote = {
+    systemSizekW: 15,
+    panelCount: 24,
+    panelType: "JA Solar 550W Mono-PERC Panels",
+    inverterType: "Growatt 15kW Hybrid Inverter",
+    batteryCapacity: "10.24kWh Lithium Pack",
+    totalCost: 1850000,
+    structureType: "Elevated",
+    accessories: "Standard accessories bundle",
+    installationCharges: 80000,
+    netMeteringCharges: 90000,
+    paymentTerms: "50% Advance, 40% Delivery, 10% Commissioning",
+    warrantyTerms: "Standard warranties apply",
+    termsAndConditions: "Standard terms and conditions apply.",
+    clientName: "Muhammad Allauddin",
+    clientPhone: "0309-0236666",
+    clientEmail: "allai1432009@gmail.com",
+    clientAddress: "DHA Phase 6, Lahore",
+    cityArea: "Lahore",
+    systemType: "Hybrid",
+    bdmName: "Technical Advisor (Preview)",
+  };
+  return { mockLead, mockQuote };
+}
+
+async function compileTemplatePreviewHtml(
+  templateId: string,
+  query: { scope?: string; pageId?: string }
+): Promise<{ html: string; filename: string }> {
+  const activeState = await resolveQuoteExportState();
+  const { mockLead, mockQuote } = buildTemplatePreviewMockData();
+  const scope = query.scope === "page" || query.pageId ? "page" : "full";
+  const pageId = query.pageId ? String(query.pageId) : undefined;
+  const includedFromTemplate = buildIncludedPagesFromTemplate(activeState, templateId);
+  const options = {
+    templateId,
+    includedPages: includedFromTemplate,
+    scope: scope as "full" | "page",
+    pageId,
+  };
+  const html = compileSunchaserPDFHtml(
+    "preview",
+    { ...mockQuote, boqRows: [], boqItems: [] },
+    mockLead,
+    activeState,
+    options
+  );
+  let pageTitle = "";
+  if (scope === "page" && pageId) {
+    const pageRow = (activeState.quoteTemplatePages || []).find((p: any) => p.id === pageId);
+    pageTitle = pageRow?.title || "";
+  }
+  const filename = buildTemplateTestPdfFilename(pageTitle, scope);
+  return { html, filename };
+}
+
 app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
   try {
-    loadDb();
-    let activeState: Database = db;
-    if (isSupabaseActive()) {
-      activeState = await fetchAppStateFromSupabase();
-    }
-
     const templateId = req.params.templateId;
-    
-    // Create mock objects for previewing
-    const mockLead = {
-      id: "lead-preview",
-      name: "Muhammad Allauddin (Preview)",
-      email: "allai1432009@gmail.com",
-      phone: "0309-0236666",
-      address: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
-      location: "Lahore",
-      monthlyBill: 120000,
-      roofSpace: 1200,
-      shading: "None",
-      rating: 5,
-      assignedSalesperson: "Technical Advisor (Preview)",
-      createdAt: new Date().toISOString(),
-      notes: "Preview of corporate proposal styling."
-    };
-
-    const mockQuote = {
-      systemSizekW: 15,
-      panelCount: 24,
-      panelType: "JA Solar 550W Mono-PERC Panels",
-      inverterType: "Growatt 15kW Hybrid Inverter",
-      batteryCapacity: "10.24kWh Lithium Pack",
-      totalCost: 1850000,
-      structureType: "Elevated",
-      accessories: "Standard accessories bundle",
-      installationCharges: 80000,
-      netMeteringCharges: 90000,
-      paymentTerms: "50% Advance, 40% Delivery, 10% Commissioning",
-      warrantyTerms: "Standard warranties apply",
-      termsAndConditions: "Standard terms and conditions apply.",
-      clientName: "Muhammad Allauddin",
-      clientPhone: "0309-0236666",
-      clientEmail: "allai1432009@gmail.com",
-      clientAddress: "DHA Phase 6, Lahore",
-      cityArea: "Lahore",
-      systemType: "Hybrid",
-      bdmName: "Technical Advisor (Preview)"
-    };
-
-    const includedFromTemplate = buildIncludedPagesFromTemplate(activeState, templateId);
-    const options = {
-      templateId,
-      includedPages: includedFromTemplate
-    };
-
-    const pdfHtml = compileSunchaserPDFHtml('preview', { ...mockQuote, boqRows: [], boqItems: [] }, mockLead, activeState, options);
-    res.send(pdfHtml);
+    const { html } = await compileTemplatePreviewHtml(templateId, {
+      scope: req.query.scope ? String(req.query.scope) : undefined,
+      pageId: req.query.pageId ? String(req.query.pageId) : undefined,
+    });
+    res.send(html);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF preview: " + err.message);
   }
 });
 
+app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res) => {
+  try {
+    const templateId = req.params.templateId;
+    const { html, filename } = await compileTemplatePreviewHtml(templateId, {
+      scope: req.query.scope ? String(req.query.scope) : undefined,
+      pageId: req.query.pageId ? String(req.query.pageId) : undefined,
+    });
+    const pdfBuffer = await renderQuotationHtmlToPdf(html);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    res.status(500).send("Error generating template test PDF: " + err.message);
+  }
+});
+
 app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
   try {
-    loadDb();
-    let activeState: Database = db;
-    if (isSupabaseActive()) {
-      activeState = await fetchAppStateFromSupabase();
-    }
+    const activeState = await resolveQuoteExportState();
 
     const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
     if (!lead) {

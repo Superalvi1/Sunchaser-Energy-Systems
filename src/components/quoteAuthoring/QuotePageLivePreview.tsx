@@ -1,11 +1,16 @@
 import React, { useMemo } from "react";
 import {
   quoteAuthoringPrintCss,
-  renderPageBodyHtml,
   renderEnhancedSignatureBlockHtml,
   getAuthoringTemplateMeta,
 } from "../../lib/quoteAuthoring";
 import { quotePdfPrintCss } from "../../lib/quotePdfLayout";
+import {
+  buildLivePreviewPageStyle,
+  pageStateToExtendedSettings,
+  renderQuoteTemplatePage,
+  type TemplatePageAuthoringState,
+} from "../../lib/quoteTemplatePageRender";
 
 type QuotePageLivePreviewProps = {
   title?: string;
@@ -19,6 +24,7 @@ type QuotePageLivePreviewProps = {
   pageTypeLabel?: string;
   embedded?: boolean;
   large?: boolean;
+  densityMode?: string;
 };
 
 export default function QuotePageLivePreview({
@@ -33,18 +39,26 @@ export default function QuotePageLivePreview({
   pageTypeLabel,
   embedded = false,
   large = false,
+  densityMode,
 }: QuotePageLivePreviewProps) {
-  const bodyMarkup = useMemo(
-    () =>
-      renderPageBodyHtml(
-        { bodyHtml, bodyText, imageSections },
-        {
-          align: String(typography?.textAlign || "left"),
-          typography: typography as any,
-        }
-      ),
-    [bodyHtml, bodyText, imageSections, typography]
-  );
+  const pageState: TemplatePageAuthoringState = {
+    body_text: bodyText,
+    body_html: bodyHtml,
+    imageSections,
+    layoutMode,
+    densityMode: densityMode as TemplatePageAuthoringState["densityMode"],
+    fontSize: typography?.fontSize as string | undefined,
+    lineHeight: typography?.lineHeight as string | undefined,
+    fontFamily: typography?.fontFamily as string | undefined,
+    headingColor: typography?.headingColor as string | undefined,
+    bodyColor: typography?.bodyColor as string | undefined,
+    textAlign: typography?.textAlign as string | undefined,
+  };
+
+  const { bodyHtml: bodyMarkup, typography: resolvedTypo } = useMemo(() => {
+    const ext = pageStateToExtendedSettings(pageState, typography as Record<string, unknown>);
+    return renderQuoteTemplatePage(ext, typography as Record<string, unknown>);
+  }, [bodyHtml, bodyText, imageSections, typography, layoutMode, densityMode]);
 
   const signatureHtml = useMemo(() => {
     if (layoutMode !== "ceo_signature_block" && layoutMode !== "signature_block") return "";
@@ -52,6 +66,7 @@ export default function QuotePageLivePreview({
   }, [layoutMode, signatureBlock, ceoMessages]);
 
   const templateMeta = pageTypeLabel ? getAuthoringTemplateMeta(pageTypeLabel as any) : null;
+  const pageStyle = buildLivePreviewPageStyle(resolvedTypo);
 
   return (
     <div className={embedded ? "h-full" : "space-y-2"}>
@@ -63,36 +78,23 @@ export default function QuotePageLivePreview({
           embedded ? "h-full p-2" : large ? "p-4 max-h-[min(72vh,900px)]" : "p-3 max-h-[420px]"
         }`}
       >
-        <div
-          className="relative bg-white shadow-lg flex flex-col text-left"
-          style={{
-            width: "210mm",
-            minHeight: "297mm",
-            maxWidth: "100%",
-            padding: "16mm",
-            boxSizing: "border-box",
-            fontFamily: String(typography?.fontFamily || "Inter, sans-serif"),
-            fontSize: String(typography?.fontSize || "11px"),
-            lineHeight: String(typography?.lineHeight || "1.6"),
-            color: String(typography?.bodyColor || "#475569"),
-          }}
-        >
+        <div className="relative bg-white shadow-lg flex flex-col text-left page authoring-page" style={pageStyle}>
           <style>{quotePdfPrintCss()}</style>
           <style>{quoteAuthoringPrintCss("screen")}</style>
-          <div className="flex justify-between items-center border-b-2 border-amber-500 pb-3 mb-4">
+          <div className="flex justify-between items-center border-b-2 border-amber-500 pb-3 mb-4 page-header-logo">
             <div className="font-extrabold text-sm text-slate-900">SUNCHASER ENERGY</div>
             {templateMeta && (
               <span className="text-[8px] uppercase font-mono text-slate-500">{templateMeta.label}</span>
             )}
           </div>
-          <div className="quote-page-body-flow flex-1 flex flex-col min-h-0">
+          <div className="quote-page-shell quote-page-body-flow flex-1 flex flex-col min-h-0">
             {title ? <div className="page-title text-lg font-extrabold text-amber-600 mb-3">{title}</div> : null}
             {bodyMarkup ? <div dangerouslySetInnerHTML={{ __html: bodyMarkup }} /> : null}
             {signatureHtml ? (
               <div className="page-footer-slot mt-auto" dangerouslySetInnerHTML={{ __html: signatureHtml }} />
             ) : null}
           </div>
-          <div className="border-t border-slate-200 pt-2 mt-4 text-[8px] text-slate-500 font-mono">
+          <div className="page-footer border-t border-slate-200 pt-2 mt-4 text-[8px] text-slate-500 font-mono">
             Sunchaser Energy Systems Proposal
           </div>
         </div>
