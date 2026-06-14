@@ -289,6 +289,37 @@ export function renderRichTextBlock(
   return `<div class="quote-rich-text${cls}" style="text-align:${align};">${parts.join("")}</div>`;
 }
 
+export function getQuotePdfAppBaseUrl(): string {
+  const raw =
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.VITE_APP_URL ||
+    "";
+  const trimmed = String(raw).trim().replace(/\/$/, "");
+  if (trimmed) return trimmed;
+  const port = process.env.PORT || "3000";
+  return `http://localhost:${port}`;
+}
+
+/** Absolute URL for Playwright PDF rendering (relative /assets and /uploads paths). */
+export function resolveQuotePdfAssetUrl(raw?: string | null, appBase?: string): string {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^data:/i.test(trimmed)) return trimmed;
+  const base = (appBase || getQuotePdfAppBaseUrl()).replace(/\/$/, "");
+  if (trimmed.startsWith("/")) return `${base}${trimmed}`;
+  return `${base}/${trimmed.replace(/^\.\//, "")}`;
+}
+
+export const OFFICIAL_QUOTE_LOGO_PATH = "/assets/sunchaser-logo.png";
+
+export function resolveQuotePdfLogoUrl(raw?: string | null, appBase?: string): string {
+  const trimmed = String(raw || "").trim();
+  const path = trimmed || OFFICIAL_QUOTE_LOGO_PATH;
+  return resolveQuotePdfAssetUrl(path, appBase);
+}
+
 export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePageExtendedSettings {
   let bodyText = bodyTextContent || "";
   let bodyHtml = "";
@@ -336,6 +367,22 @@ export function parseQuotePageExtendedSettings(bodyTextContent: string): QuotePa
       if (parsed.watermark) watermark = parsed.watermark;
       if (parsed.signatureBlock) {
         signatureBlock = { ...signatureBlock, ...parsed.signatureBlock };
+      }
+      // Legacy double-encoded payload: inner JSON stored in bodyText string
+      if (typeof bodyText === "string" && bodyText.trim().startsWith("{")) {
+        try {
+          const inner = JSON.parse(bodyText);
+          if (inner && typeof inner === "object") {
+            if (inner.bodyHtml && String(inner.bodyHtml).trim()) {
+              bodyHtml = String(inner.bodyHtml);
+            }
+            if (inner.bodyText !== undefined && String(inner.bodyText).trim()) {
+              bodyText = String(inner.bodyText);
+            }
+          }
+        } catch {
+          /* keep first-level parse */
+        }
       }
     } catch {
       /* plain text */
@@ -451,7 +498,7 @@ export function resolvePageWatermark(
 export function buildWatermarkLayer(
   imageUrl: string | undefined | null,
   wm?: QuoteWatermark | null,
-  fallbackOpacity = 0.08
+  fallbackOpacity = 0.07
 ): string {
   const url = String(imageUrl || "").trim();
   if (!url) return "";
@@ -500,12 +547,20 @@ export function formatSiteLocation(proposal: Record<string, any>): string {
   return "Not specified";
 }
 
-/** A4 deck shell: page sizing, margins, footer slot, and print pagination. */
+/** A4 deck shell: fixed page sizing for Playwright PDF output. */
 export function quotePdfShellCss(): string {
   return `
     @page {
       size: A4;
       margin: 0;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 210mm;
+      background: white;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
     .pages-container {
       display: flex;
@@ -513,54 +568,63 @@ export function quotePdfShellCss(): string {
       align-items: center;
       gap: 20px;
       padding: 30px 0;
+      width: 210mm;
+      margin: 0 auto;
     }
     .page {
       width: 210mm;
+      height: 297mm;
       min-height: 297mm;
-      background: #ffffff;
+      max-height: 297mm;
       box-sizing: border-box;
-      padding: 18mm 18mm 16mm 18mm;
+      position: relative;
+      overflow: hidden;
+      page-break-after: always;
+      break-after: page;
+      background: white;
       display: flex;
       flex-direction: column;
-      justify-content: flex-start;
-      position: relative;
-      overflow: visible;
-      break-after: page;
-      page-break-after: always;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
     .page:last-child {
       break-after: auto;
       page-break-after: auto;
     }
+    .page-safe-area,
+    .quote-page-shell {
+      padding: 16mm 17mm 14mm 17mm;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      z-index: 2;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .page-body {
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
     .page.cover {
       border: 2mm solid #f59e0b;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      min-height: auto;
     }
     .page.cover .cover-main {
       flex: 0 0 auto;
     }
     .page.cover .cover-footer-block {
       flex: 0 0 auto;
-      margin-top: 20px;
+      margin-top: auto;
       padding-top: 12px;
     }
-    .page.boq-page {
-      min-height: 297mm;
-      height: auto;
-      padding: 12mm 20mm 20mm;
-      overflow: visible;
+    .page.boq-page .page-body {
+      overflow: hidden;
     }
     .page.full-page-image-only {
-      width: 210mm;
-      height: 297mm;
-      min-height: 297mm;
       padding: 0 !important;
-      margin: 0;
-      display: block;
-      overflow: hidden;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
     .page-watermark {
       position: absolute;
@@ -569,19 +633,35 @@ export function quotePdfShellCss(): string {
       pointer-events: none;
     }
     .page-footer {
-      flex: 0 0 auto;
+      flex-shrink: 0;
       margin-top: auto;
       border-top: 1px solid #cbd5e1;
-      padding-top: 6px;
+      padding-top: 5px;
+      font-size: 8px;
+      color: #64748b;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 8.5px;
-      color: #64748b;
-      font-weight: 600;
-      width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
       gap: 8px;
-      position: static;
+      width: 100%;
+      position: relative;
+      z-index: 2;
+    }
+    .page-footer .footer-doc-id {
+      flex-shrink: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: monospace;
+      font-size: 8px;
+      white-space: nowrap;
+      text-align: right;
+    }
+    .page-footer .footer-date {
+      flex-shrink: 0;
+      white-space: nowrap;
     }
     .section,
     .card,
@@ -594,6 +674,11 @@ export function quotePdfShellCss(): string {
       break-inside: avoid;
       page-break-inside: avoid;
     }
+    .boq-section-subtotal,
+    .boq-section-header {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
     @media print {
       .pages-container {
         padding: 0 !important;
@@ -602,35 +687,18 @@ export function quotePdfShellCss(): string {
       }
       .page {
         width: 210mm;
+        height: 297mm;
         min-height: 297mm;
-        height: auto;
-        padding: 18mm 18mm 16mm 18mm;
+        max-height: 297mm;
         margin: 0 !important;
         box-shadow: none !important;
-        overflow: visible !important;
-        break-after: page;
-        page-break-after: always;
-      }
-      .page:last-child {
-        break-after: auto;
-        page-break-after: auto;
+        overflow: hidden !important;
       }
       .page.cover {
         border: none;
-        min-height: 297mm;
       }
-      .page.cover .cover-footer-block {
-        margin-top: auto;
-      }
-      .page.boq-page {
-        min-height: 297mm;
-        padding: 12mm 18mm 16mm 18mm;
-      }
-      .page.full-page-image-only {
-        width: 210mm;
-        height: 297mm;
-        min-height: 297mm;
-        padding: 0 !important;
+      .action-bar {
+        display: none !important;
       }
     }
   `;

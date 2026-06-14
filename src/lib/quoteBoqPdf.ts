@@ -120,6 +120,159 @@ export function ensureBoqSectionSubtotals(rows: BoqPdfRow[]): BoqPdfRow[] {
   return out;
 }
 
+export const BOQ_FIRST_PAGE_MAX_WEIGHT = 20;
+export const BOQ_PAGE_MAX_WEIGHT = 22;
+
+export function boqRowWeight(row: BoqPdfRow): number {
+  if (!row?.type) return 0.5;
+  if (row.type === "heading") return 1.5;
+  if (row.type === "subtotal") return 1;
+  if (row.type === "item") {
+    const desc = String(row.description || "").trim();
+    return desc.length > 80 ? 2 : 1;
+  }
+  return 0.5;
+}
+
+export type BoqPdfPageChunk = {
+  rows: BoqPdfRow[];
+  isFirst: boolean;
+};
+
+/** Deterministic BOQ pagination — row weights, no Playwright measurement. */
+export function paginateBoqRowsForPdf(rows: BoqPdfRow[]): BoqPdfPageChunk[] {
+  const normalized = ensureBoqSectionSubtotals(rows);
+  if (!normalized.length) return [{ rows: [], isFirst: true }];
+
+  const chunks: BoqPdfPageChunk[] = [];
+  let current: BoqPdfRow[] = [];
+  let weight = 0;
+  let isFirst = true;
+
+  const pageMax = () => (isFirst ? BOQ_FIRST_PAGE_MAX_WEIGHT : BOQ_PAGE_MAX_WEIGHT);
+
+  const flush = () => {
+    if (!current.length) return;
+    chunks.push({ rows: current, isFirst });
+    current = [];
+    weight = 0;
+    isFirst = false;
+  };
+
+  for (let i = 0; i < normalized.length; i++) {
+    const row = normalized[i];
+    const w = boqRowWeight(row);
+
+    if (weight + w > pageMax() && current.length > 0) {
+      if (row.type === "subtotal") {
+        const last = current[current.length - 1];
+        if (last?.type === "item") {
+          const moved = current.pop()!;
+          weight -= boqRowWeight(moved);
+          flush();
+          current.push(moved);
+          weight += boqRowWeight(moved);
+        } else {
+          flush();
+        }
+      } else if (row.type === "heading") {
+        flush();
+      } else {
+        flush();
+      }
+    }
+
+    current.push(row);
+    weight += w;
+  }
+
+  flush();
+  return chunks.length ? chunks : [{ rows: [], isFirst: true }];
+}
+
+export function renderBoqTableHeadHtml(): string {
+  return `
+                  <thead>
+                    <tr style="height: 28px;">
+                      <th style="width: 5%; text-align: center; border-bottom: 2px solid #0f172a;">Sr.</th>
+                      <th style="width: 25%; border-bottom: 2px solid #0f172a;">Item Name</th>
+                      <th style="width: 32%; border-bottom: 2px solid #0f172a;">Material Specifications</th>
+                      <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Unit</th>
+                      <th style="width: 7%; text-align: center; border-bottom: 2px solid #0f172a;">Qty</th>
+                      <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Rate</th>
+                      <th style="width: 12%; text-align: right; border-bottom: 2px solid #0f172a;">Total</th>
+                    </tr>
+                  </thead>`;
+}
+
+export function buildBoqTotalsHtml(options: {
+  formatPKR: (val: number) => string;
+  grossTotal: number;
+  netTotal: number;
+  discountAmount: number;
+  discountLabel: string;
+  taxEnabled: boolean;
+  taxRate: number;
+  taxAmount: number;
+  societyCharges: number;
+  customNotes?: string;
+  strictTemplateOnly?: boolean;
+}): string {
+  const {
+    formatPKR,
+    grossTotal,
+    netTotal,
+    discountAmount,
+    discountLabel,
+    taxEnabled,
+    taxRate,
+    taxAmount,
+    societyCharges,
+    customNotes,
+    strictTemplateOnly,
+  } = options;
+
+  return `
+              <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: flex-start;">
+                <div style="width: 48%; font-size: 9.5px; color: #64748b; line-height: 1.45;">
+                  ${customNotes ? `
+                    <div style="background-color: #fdf4ff; border: 1px solid #f3e8ff; border-radius: 6px; padding: 6px 10px; color: #6b21a8; font-weight: 500;">
+                      <strong>Special Execution Notes:</strong><br/>
+                      ${customNotes}
+                    </div>
+                  ` : strictTemplateOnly ? "" : "Note: Complete hardware clearances are direct clearance imported. Local mounts are AL ADAM galvanized Mughal steel."}
+                </div>
+                <div style="width: 46%;">
+                  <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                    <span style="color: #64748b; font-weight: 500;">Subtotal:</span>
+                    <span style="font-weight: 600; color: #0f172a;">${formatPKR(grossTotal)}</span>
+                  </div>
+                  ${discountAmount > 0 ? `
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                      <span style="color: #64748b; font-weight: 500;">${escapeHtml(discountLabel)}:</span>
+                      <span style="font-weight: 600; color: #dc2626;">-${formatPKR(discountAmount)}</span>
+                    </div>
+                  ` : ""}
+                  ${taxEnabled ? `
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                      <span style="color: #64748b; font-weight: 500;">Sales Tax (${taxRate}%):</span>
+                      <span style="font-weight: 600; color: #dc2626;">+${formatPKR(taxAmount)}</span>
+                    </div>
+                  ` : ""}
+                  ${societyCharges > 0 ? `
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px;">
+                      <span style="color: #64748b; font-weight: 500;">Society Approval / Dues:</span>
+                      <span style="font-weight: 600; color: #0f172a;">+${formatPKR(societyCharges)}</span>
+                    </div>
+                  ` : ""}
+                  <div style="display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 850; border-top: 1.5px solid #0f172a; padding-top: 4px; margin-top: 4px;">
+                    <span style="color: #0f172a;">Final Price:</span>
+                    <span style="color: #d97706; font-size: 13.5px;">${formatPKR(netTotal)}</span>
+                  </div>
+                </div>
+              </div>`;
+}
+
 export function renderBoqTableBodyHtml(
   rows: BoqPdfRow[],
   formatPKR: (val: number) => string

@@ -1,6 +1,7 @@
 /** Server-side HTML → PDF via Playwright Chromium. */
 
 import { PDF_ENGINE_MISSING_MESSAGE, formatQuotationPdfError } from "./quotePdfErrors.ts";
+import { getQuotePdfAppBaseUrl } from "./quotePdfLayout.ts";
 
 export { PDF_ENGINE_MISSING_MESSAGE, formatQuotationPdfError };
 
@@ -84,7 +85,12 @@ export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle", timeout: 120_000 });
+    const pdfBaseUrl = getQuotePdfAppBaseUrl();
+    await page.setContent(html, {
+      waitUntil: "networkidle",
+      timeout: 120_000,
+      baseURL: pdfBaseUrl,
+    });
     await page.emulateMedia({ media: "print" });
     await page.evaluate(async () => {
       if (document.fonts?.ready) await document.fonts.ready;
