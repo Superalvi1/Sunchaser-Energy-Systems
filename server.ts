@@ -60,6 +60,7 @@ import {
   quotePdfDeckPreviewScripts,
   renderQuotationHtmlToPdf,
   buildTemplateTestPdfFilename,
+  diagnosePdfEngine,
 } from "./src/lib/quotePdfRender.ts";
 import { hasTemplatePageBodyContent } from "./src/lib/quoteTemplatePageRender.ts";
 import {
@@ -8869,6 +8870,21 @@ setInterval(async () => {
 // Simple health check and status endpoints for separated deployments
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "sunchaser-crm" });
+});
+
+/** PDF engine diagnostic — confirms Playwright/Chromium availability on this host (Render, not Vercel). */
+app.get("/api/debug/pdf-engine", async (_req, res) => {
+  try {
+    const diagnostic = await diagnosePdfEngine();
+    res.json(diagnostic);
+  } catch (err: any) {
+    console.error("[PDF ENGINE DIAGNOSTIC]", err);
+    res.status(500).json({
+      error: formatQuotationPdfError(err),
+      platform: process.platform,
+      browserLaunchSuccess: false,
+    });
+  }
 });
 
 /* --- VITE / PRODUCTION SPA --- */

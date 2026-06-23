@@ -37,7 +37,15 @@ Choose either Render or Railway to host the backend Express server.
     *   **Region**: Select the region closest to your target audience.
     *   **Branch**: `main`
     *   **Build Command**: `npm install && npm run build`
-    *   **Start Command**: `npm run start`
+        *   `npm run build` runs `npx playwright install chromium --with-deps` (required for PDF export).
+    *   **Start Command**: `npm run start` (runs `node dist/server.cjs`)
+    *   **Environment** (add in Render dashboard):
+        *   `PLAYWRIGHT_BROWSERS_PATH`: `0` (bundled browsers under `node_modules`)
+    *   **Canonical server bundle** (do not use legacy paths):
+        *   **Build output**: `dist/server.cjs` (Express API + static SPA from `dist/`)
+        *   **Client output**: `dist/index.html`, `dist/assets/*`
+        *   **Runtime**: `npm start` → `node dist/server.cjs`
+        *   **Legacy (removed)**: `dist-server/server.js` was an old committed bundle and is no longer built or started. Startup logs must show `Running bundle: dist/server.cjs`.
 3.  **Add Environment Variables**:
     *   Navigate to the **Environment** tab and add:
         *   `NODE_ENV`: `production`

@@ -4,9 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium --with-deps",
+    "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium --with-deps",
+    "install:chromium": "PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium --with-deps",
     "dev": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && npm run install:chromium",
     "start": "PLAYWRIGHT_BROWSERS_PATH=0 node dist/server.cjs",
     "clean": "rm -rf dist dist-server server.js",
     "lint": "tsc --noEmit",

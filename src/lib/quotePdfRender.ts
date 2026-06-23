@@ -34,6 +34,17 @@ const CHROMIUM_LAUNCH_OPTIONS = {
   args: ["--no-sandbox", "--disable-setuid-sandbox"],
 } as const;
 
+export function getPlaywrightBrowsersPath(): string {
+  return process.env.PLAYWRIGHT_BROWSERS_PATH ?? "0";
+}
+
+function playwrightInstallEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PLAYWRIGHT_BROWSERS_PATH: getPlaywrightBrowsersPath(),
+  };
+}
+
 let chromiumInstallPromise: Promise<void> | null = null;
 
 /** One-shot runtime install for hosts where the build-phase browser cache is missing (e.g. Render). */
@@ -45,7 +56,7 @@ async function installChromiumAtRuntime(): Promise<void> {
       await new Promise<void>((resolve, reject) => {
         const child = spawn("npx", ["playwright", "install", "chromium", "--with-deps"], {
           stdio: "inherit",
-          env: process.env,
+          env: playwrightInstallEnv(),
         });
         child.on("error", reject);
         child.on("exit", (code) =>
@@ -63,7 +74,110 @@ async function installChromiumAtRuntime(): Promise<void> {
 
 function isMissingBrowserError(err: unknown): boolean {
   const msg = String((err as any)?.message || err || "");
-  return /executable doesn't exist|please run the following command|playwright install/i.test(msg);
+  return /executable doesn't exist|please run the following command|playwright install|browserType\.launch|ENOENT/i.test(msg);
+}
+
+export type PdfEngineDiagnostic = {
+  platform: string;
+  arch: string;
+  nodeVersion: string;
+  playwrightVersion: string | null;
+  playwrightImportOk: boolean;
+  playwrightBrowsersPath: string;
+  chromiumExecutablePath: string | null;
+  chromiumExecutableExists: boolean;
+  browserLaunchSuccess: boolean;
+  browserLaunchError: string | null;
+  hostingHint: string;
+  renderGitCommit: string | null;
+};
+
+export async function diagnosePdfEngine(): Promise<PdfEngineDiagnostic> {
+  const fs = await import("node:fs");
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+
+  let playwrightVersion: string | null = null;
+  try {
+    playwrightVersion = require("playwright/package.json").version as string;
+  } catch {
+    /* optional */
+  }
+
+  let chromium: typeof import("playwright").chromium | null = null;
+  let playwrightImportOk = false;
+  let chromiumExecutablePath: string | null = null;
+  let chromiumExecutableExists = false;
+  let browserLaunchSuccess = false;
+  let browserLaunchError: string | null = null;
+
+  try {
+    ({ chromium } = await import("playwright"));
+    playwrightImportOk = true;
+    try {
+      chromiumExecutablePath = chromium.executablePath();
+      chromiumExecutableExists = fs.existsSync(chromiumExecutablePath);
+    } catch (pathErr: any) {
+      browserLaunchError = String(pathErr?.message || pathErr);
+    }
+
+    if (!chromiumExecutableExists) {
+      try {
+        await installChromiumAtRuntime();
+        chromiumExecutablePath = chromium.executablePath();
+        chromiumExecutableExists = fs.existsSync(chromiumExecutablePath);
+      } catch (installErr: any) {
+        browserLaunchError = String(installErr?.message || installErr);
+      }
+    }
+
+    if (chromiumExecutableExists && chromium) {
+      let browser;
+      try {
+        browser = await chromium.launch(CHROMIUM_LAUNCH_OPTIONS);
+        await browser.close();
+        browserLaunchSuccess = true;
+        browserLaunchError = null;
+      } catch (launchErr: any) {
+        browserLaunchError = String(launchErr?.message || launchErr);
+      }
+    }
+  } catch (importErr: any) {
+    browserLaunchError = String(importErr?.message || importErr);
+  }
+
+  const hostingHint = process.env.RENDER
+    ? "render"
+    : process.env.VERCEL
+      ? "vercel"
+      : process.env.RAILWAY_ENVIRONMENT
+        ? "railway"
+        : "unknown";
+
+  console.log("[PDF ENGINE DIAGNOSTIC]", {
+    platform: process.platform,
+    playwrightBrowsersPath: getPlaywrightBrowsersPath(),
+    chromiumExecutablePath,
+    chromiumExecutableExists,
+    browserLaunchSuccess,
+    browserLaunchError,
+    hostingHint,
+  });
+
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.version,
+    playwrightVersion,
+    playwrightImportOk,
+    playwrightBrowsersPath: getPlaywrightBrowsersPath(),
+    chromiumExecutablePath,
+    chromiumExecutableExists,
+    browserLaunchSuccess,
+    browserLaunchError,
+    hostingHint,
+    renderGitCommit: process.env.RENDER_GIT_COMMIT || null,
+  };
 }
 
 export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
@@ -76,11 +190,21 @@ export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
 
   let browser;
   try {
-    browser = await chromium.launch(CHROMIUM_LAUNCH_OPTIONS);
+    browser = await chromium.launch({
+      ...CHROMIUM_LAUNCH_OPTIONS,
+      env: playwrightInstallEnv(),
+    });
   } catch (err) {
     if (!isMissingBrowserError(err)) throw err;
+    console.warn("[PDF] Chromium missing at launch — attempting runtime install…", {
+      path: getPlaywrightBrowsersPath(),
+      message: String((err as any)?.message || err),
+    });
     await installChromiumAtRuntime();
-    browser = await chromium.launch(CHROMIUM_LAUNCH_OPTIONS);
+    browser = await chromium.launch({
+      ...CHROMIUM_LAUNCH_OPTIONS,
+      env: playwrightInstallEnv(),
+    });
   }
 
   try {
