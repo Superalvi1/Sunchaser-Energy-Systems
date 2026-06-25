@@ -95,7 +95,7 @@ export type PdfEngineDiagnostic = {
 export async function diagnosePdfEngine(): Promise<PdfEngineDiagnostic> {
   const fs = await import("node:fs");
   const { createRequire } = await import("node:module");
-  const require = createRequire(import.meta.url);
+  const require = createRequire(__filename);
 
   let playwrightVersion: string | null = null;
   try {
