@@ -1,4 +1,5 @@
 import { escapeHtml } from "./quotePdfLayout";
+import { normalizeRows } from "./normalizeRows";
 
 export const DEFAULT_AUTO_SIZER_BOQ_IDS = [
   "h-1",
@@ -46,13 +47,14 @@ export type BoqPdfRow = {
 
 /** Preserve builder row order; include section/subtotal rows; filter auto-sizer items when manual-only. */
 export function filterBoqRowsForPdf(
-  allRows: BoqPdfRow[] | null | undefined,
+  allRows: BoqPdfRow[] | null | undefined | unknown,
   options: { includeSizerItems?: boolean; defaultAutoSizerIds?: string[] } = {}
 ): BoqPdfRow[] {
   const defaultAutoSizerIds = options.defaultAutoSizerIds ?? DEFAULT_AUTO_SIZER_BOQ_IDS;
   const includeSizerItems = options.includeSizerItems === true;
+  const rows = normalizeRows(allRows) as BoqPdfRow[];
 
-  return (allRows || []).filter((r) => {
+  return rows.filter((r) => {
     if (!r?.type) return false;
     if (r.type === "heading" || r.type === "subtotal") return true;
     if (r.type !== "item") return false;

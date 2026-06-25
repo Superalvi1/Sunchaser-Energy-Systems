@@ -14,6 +14,7 @@ import {
   resolveStoredGlobalWatermark,
   withResolvedGlobalWatermark,
   getSupabaseProjectUrlFromEnv,
+  normalizeSettingsRows,
 } from "./quotePdfSettingsStore";
 
 export { resolvePdfAssetUrl };
@@ -83,12 +84,27 @@ export function isManualQuotePageIncluded(
   return includedPages.includes(pageType);
 }
 
-export function getCompanyBrandingLogoUrl(activeState: { settings?: any[] }): string {
-  const rows = activeState.settings || [];
-  const row = rows.find((s: any) => s?.key === "companyLogo" || s?.key === "company_logo");
-  const value = row?.value;
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (value && typeof value === "object" && typeof value.url === "string") return value.url.trim();
+export function getCompanyBrandingLogoUrl(activeState: { settings?: unknown }): string {
+  const settings = activeState.settings;
+  if (!settings) return "";
+
+  const keyed = normalizeSettingsRows(settings).find(
+    (s) => s.key === "companyLogo" || s.key === "company_logo"
+  );
+  const keyedValue = keyed?.value;
+  if (typeof keyedValue === "string" && keyedValue.trim()) return keyedValue.trim();
+  if (keyedValue && typeof keyedValue === "object" && typeof (keyedValue as { url?: string }).url === "string") {
+    return String((keyedValue as { url: string }).url).trim();
+  }
+
+  if (settings && typeof settings === "object" && !Array.isArray(settings)) {
+    const obj = settings as Record<string, unknown>;
+    const direct = obj.companyLogo ?? obj.company_logo;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+    if (direct && typeof direct === "object" && typeof (direct as { url?: string }).url === "string") {
+      return String((direct as { url: string }).url).trim();
+    }
+  }
   return "";
 }
 

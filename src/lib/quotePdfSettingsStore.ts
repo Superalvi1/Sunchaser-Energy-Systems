@@ -83,10 +83,28 @@ export function withResolvedGlobalWatermark(
 export function normalizeSettingsRows(
   settings: unknown
 ): Array<{ key?: string; value?: unknown }> {
+  if (typeof settings === "string") {
+    const trimmed = settings.trim();
+    if (!trimmed) return [];
+    try {
+      return normalizeSettingsRows(JSON.parse(trimmed));
+    } catch {
+      return [];
+    }
+  }
   if (Array.isArray(settings)) return settings;
   if (settings && typeof settings === "object") {
-    const row = settings as { key?: string; value?: unknown };
+    const row = settings as {
+      key?: string;
+      value?: unknown;
+      companyLogo?: unknown;
+      company_logo?: unknown;
+    };
     if (row.key !== undefined) return [row];
+    const entries: Array<{ key?: string; value?: unknown }> = [];
+    if (row.companyLogo !== undefined) entries.push({ key: "companyLogo", value: row.companyLogo });
+    if (row.company_logo !== undefined) entries.push({ key: "company_logo", value: row.company_logo });
+    if (entries.length) return entries;
   }
   return [];
 }

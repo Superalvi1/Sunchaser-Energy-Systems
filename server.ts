@@ -71,6 +71,11 @@ import {
   resolvePdfLogoForExport,
 } from "./src/lib/manualQuotePdfTemplate.ts";
 import {
+  describeRowsInput,
+  normalizeQuoteBoqRows,
+  normalizeRows,
+} from "./src/lib/normalizeRows.ts";
+import {
   ensurePackageLibraryCatalog,
 } from "./src/lib/boqPackageLibrary.ts";
 import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
@@ -7121,7 +7126,7 @@ function compileSunchaserPDFHtml(
 
   // Ensure BOQ page exists for manual quotes when template editor has no boq page configured
   if (mode === "manual") {
-    const allRowsForCheck = quoteObj.boqRows || quoteObj.boqItems || [];
+    const allRowsForCheck = normalizeQuoteBoqRows(quoteObj);
     const manualRowCount = allRowsForCheck.filter(
       (r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)
     ).length;
@@ -7827,7 +7832,7 @@ function compileSunchaserPDFHtml(
         let discountAmount = 0;
         let netTotal = 0;
 
-        const allRows = quoteObj.boqRows || quoteObj.boqItems || [];
+        const allRows = normalizeQuoteBoqRows(quoteObj);
         const includeSizerItems = options.includeSizerItems === true;
         
         // Count manual rows and auto sizer rows
@@ -8392,7 +8397,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
       'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
     ];
-    const allRows = payload.boqRows || payload.boqItems || [];
+    const allRows = normalizeQuoteBoqRows(payload);
     const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
     const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
     const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
@@ -8548,8 +8553,18 @@ async function resolveSavedManualQuoteForExport(leadId: string, quoteId?: string
     debugBox: false,
   };
 
-  const allRows = quote.boqRows || quote.boqItems || [];
-  const manualBoqCount = allRows.filter(
+  const rawRows = quote.boqRows ?? quote.boq_items ?? quote.boqItems;
+  const normalizedRows = normalizeQuoteBoqRows(quote);
+  const rowDiag = describeRowsInput(rawRows);
+  console.log(`[PDF EXPORT ROWS] leadId=${leadId} quoteId=${quote.id} typeofRows=${rowDiag.typeofRows} isArray=${rowDiag.isArray} normalizedRows.length=${normalizedRows.length}`);
+
+  const quoteForExport = {
+    ...quote,
+    boqRows: normalizedRows,
+    boqItems: normalizedRows,
+  };
+
+  const manualBoqCount = normalizedRows.filter(
     (r: any) => r && r.type === "item" && !DEFAULT_AUTO_SIZER_BOQ_ROW_IDS.includes(r.id)
   ).length;
 
@@ -8557,7 +8572,7 @@ async function resolveSavedManualQuoteForExport(leadId: string, quoteId?: string
     return { error: { status: 400, message: "No BOQ items added yet. Please add BOQ rows and compile quote first." } as const };
   }
 
-  return { activeState, lead, quote, options };
+  return { activeState, lead, quote: quoteForExport, options };
 }
 
 function compileManualQuoteExportHtml(
@@ -8687,7 +8702,7 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
       'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
       'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
     ];
-    const allRows = quote.boqRows || quote.boqItems || [];
+    const allRows = normalizeQuoteBoqRows(quote);
     const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
     const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
     const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;

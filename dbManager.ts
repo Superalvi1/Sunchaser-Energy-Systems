@@ -11,6 +11,7 @@ import {
 } from "./src/lib/quotePdfSettingsStore.ts";
 import { getSupabaseProjectUrlFromEnv } from "./src/lib/quotePdfSettingsStore.ts";
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
+import { normalizeQuoteBoqRows } from "./src/lib/normalizeRows.ts";
 import { phonesMatch } from "./src/lib/phoneNormalize.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
@@ -985,6 +986,7 @@ export function parseQuotationExtendedData(row: any): Record<string, any> {
 
 export function mapSupabaseQuotationRowToAppQuote(q: any): any {
   const ext = parseQuotationExtendedData(q);
+  const boqRows = normalizeQuoteBoqRows({ ...q, ...ext });
   return {
     id: q.id,
     systemSizekW: Number(q.system_size_kw),
@@ -1007,6 +1009,8 @@ export function mapSupabaseQuotationRowToAppQuote(q: any): any {
     warrantyTerms: q.warranty_terms,
     termsAndConditions: q.terms_and_conditions,
     ...ext,
+    boqRows,
+    boqItems: boqRows,
     updatedAt: ext.updatedAt || q.updated_at || q.created_at,
   };
 }
