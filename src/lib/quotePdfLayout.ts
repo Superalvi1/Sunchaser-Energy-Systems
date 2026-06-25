@@ -312,6 +312,9 @@ export function resolveQuotePdfAssetUrl(raw?: string | null, appBase?: string): 
   return `${base}/${trimmed.replace(/^\.\//, "")}`;
 }
 
+/** Alias used by PDF export routes and verification scripts. */
+export const resolvePdfAssetUrl = resolveQuotePdfAssetUrl;
+
 export const OFFICIAL_QUOTE_LOGO_PATH = "/assets/sunchaser-logo.png";
 
 export function resolveQuotePdfLogoUrl(raw?: string | null, appBase?: string): string {

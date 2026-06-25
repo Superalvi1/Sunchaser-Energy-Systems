@@ -64,6 +64,13 @@ import {
 } from "./src/lib/quotePdfRender.ts";
 import { hasTemplatePageBodyContent } from "./src/lib/quoteTemplatePageRender.ts";
 import {
+  buildManualQuoteTemplateDebugMap,
+  getCompanyBrandingLogoUrl,
+  isManualQuotePageIncluded,
+  normalizeManualQuoteIncludedPages,
+  resolvePdfLogoForExport,
+} from "./src/lib/manualQuotePdfTemplate.ts";
+import {
   ensurePackageLibraryCatalog,
 } from "./src/lib/boqPackageLibrary.ts";
 import { sanitizeLeadAdvisorInput } from "./src/lib/leadDisplay.ts";
@@ -4826,7 +4833,10 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     grandTotal,
     netTotal,
     idempotencyKey,
-    quote_type
+    quote_type,
+    templateId,
+    includedPages,
+    includeSizerItems,
   } = req.body;
 
   console.log(`[API POST /api/leads/${id}/create-quote] Received request body:`, {
@@ -4954,6 +4964,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     customNotes: customNotes || "",
     grandTotal: Number(grandTotal) || cost,
     netTotal: Number(netTotal) || netCost,
+    templateId: templateId || "tmpl-1",
+    includedPages: normalizeManualQuoteIncludedPages(includedPages),
+    includeSizerItems: includeSizerItems === true,
     quote_type: resolvedQuoteType,
     source: resolvedQuoteType === "auto_sizer" ? "autosizer" : "manual",
     updatedAt: new Date().toISOString(),
@@ -6571,12 +6584,8 @@ async function resolveQuoteExportState(): Promise<Database> {
   loadDb();
   if (!isSupabaseActive()) return db;
   try {
-    const remote = await fetchAppStateFromSupabase();
-    return {
-      ...remote,
-      quoteTemplatePages: db.quoteTemplatePages?.length ? db.quoteTemplatePages : remote.quoteTemplatePages,
-      quotePdfSettings: db.quotePdfSettings?.length ? db.quotePdfSettings : remote.quotePdfSettings,
-    };
+    // PDF export must use live Supabase template pages — not local database.json seed.
+    return await fetchAppStateFromSupabase();
   } catch {
     return db;
   }
@@ -6860,10 +6869,15 @@ function compileSunchaserPDFHtml(
     "print";
 
   // Resolve template pages from database if available
-  const templateId = options.templateId || "tmpl-1";
+  const templateId = options.templateId || quoteObj.templateId || quoteObj.template_id || "tmpl-1";
   const strictTemplateOnly = mode === 'manual' || mode === 'preview';
   const allDbPages = activeState.quoteTemplatePages || [];
   const dbPages = allDbPages.filter((p: any) => (p.templateId || p.template_id) === templateId);
+  const normalizedIncludedPages =
+    options.includedPages && options.includedPages.length > 0
+      ? normalizeManualQuoteIncludedPages(options.includedPages)
+      : null;
+  const companyBrandingLogoUrl = getCompanyBrandingLogoUrl(activeState);
 
   const getPageConfig = (pageType: string, defaultTitle: string, defaultBody: string) => {
     const dbPage = dbPages.find((p: any) => (p.pageType || p.page_type) === pageType);
@@ -6888,8 +6902,11 @@ function compileSunchaserPDFHtml(
   };
 
   const getIncludedFlag = (pageType: string) => {
+    if (normalizedIncludedPages) {
+      return isManualQuotePageIncluded(pageType, normalizedIncludedPages);
+    }
     if (options.includedPages && Array.isArray(options.includedPages)) {
-      return options.includedPages.includes(pageType);
+      return isManualQuotePageIncluded(pageType, options.includedPages);
     }
     if (strictTemplateOnly) {
       return dbPages.some((p: any) => {
@@ -7291,7 +7308,13 @@ function compileSunchaserPDFHtml(
 
     let headerHtml = "";
     if (hEnabled) {
-      hLogoUrl = resolveQuotePdfLogoUrl(hLogoUrl || settings.logoUrl, pdfAppBase);
+      hLogoUrl = resolvePdfLogoForExport({
+        pageHeaderLogoUrl: ext.header.mode === "custom" ? hLogoUrl : "",
+        pageImageUrl: p.imageUrl,
+        globalPdfLogoUrl: settings.logoUrl,
+        companyBrandingLogoUrl,
+        appBase: pdfAppBase,
+      });
       let justifyValue = "space-between";
       let alignValue = "center";
       let flexDir = "row";
@@ -7389,8 +7412,14 @@ function compileSunchaserPDFHtml(
           </div>
         `;
       } else {
-        const coverLogoHtml = (pageType === 'cover' && p.imageUrl)
-          ? `<img src="${p.imageUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="Logo" />`
+        const coverLogoSrc = resolvePdfLogoForExport({
+          pageImageUrl: p.imageUrl,
+          globalPdfLogoUrl: settings.logoUrl,
+          companyBrandingLogoUrl,
+          appBase: pdfAppBase,
+        });
+        const coverLogoHtml = (pageType === 'cover' && coverLogoSrc)
+          ? `<img src="${coverLogoSrc}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="${settings.companyName}" />`
           : '';
         pagesHtml += `
           <div class="page${pageType === 'cover' ? ' cover' : ''}" style="${typoStyle}">
@@ -7446,9 +7475,18 @@ function compileSunchaserPDFHtml(
     } else {
       if (pageType === 'cover') {
         const coverClassic = ext.coverLayoutMode !== 'modern';
+        const coverLogoSrc = resolvePdfLogoForExport({
+          pageImageUrl: p.imageUrl,
+          globalPdfLogoUrl: settings.logoUrl,
+          companyBrandingLogoUrl,
+          appBase: pdfAppBase,
+        });
+        const coverLogoHtml = (pageType === 'cover' && (p.imageUrl || coverLogoSrc))
+          ? `<img src="${coverLogoSrc}" style="max-height: 55px; max-width: 150px; object-fit: contain; margin-bottom: 12px;" alt="${settings.companyName}" />`
+          : '';
         const coverLogoCenter = coverClassic
           ? `<div style="text-align: center; margin-bottom: 24px;">
-              ${p.imageUrl || settings.logoUrl ? `<img src="${p.imageUrl || settings.logoUrl}" style="max-height: 72px; max-width: 180px; object-fit: contain; margin: 0 auto 12px auto; display: block;" alt="Logo" />` : (useDefaultCompanyContent ? `<div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 12px auto;">☀️</div>` : '')}
+              ${coverLogoSrc ? `<img src="${coverLogoSrc}" style="max-height: 72px; max-width: 180px; object-fit: contain; margin: 0 auto 12px auto; display: block;" alt="${settings.companyName}" />` : (useDefaultCompanyContent ? `<div style="background-color: #0f172a; width: 64px; height: 64px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #ffffff; font-weight: bold; margin: 0 auto 12px auto;">☀️</div>` : '')}
               ${useDefaultCompanyContent ? `<div style="font-weight: 850; font-size: 18px; letter-spacing: -0.02em; color: #0f172a;">${settings.companyName.toUpperCase()}</div>
               <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; color: #d97706; font-weight: bold; margin-top: 4px;">Generational Infrastructure</div>` : ''}
             </div>`
@@ -7460,8 +7498,8 @@ function compileSunchaserPDFHtml(
             ${coverClassic ? coverLogoCenter : `
             <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
               <div style="display: flex; align-items: center; gap: 12px;">
-                ${p.imageUrl || settings.logoUrl ? `
-                  <img src="${p.imageUrl || settings.logoUrl}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
+                ${coverLogoSrc ? `
+                  <img src="${coverLogoSrc}" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="${settings.companyName}" />
                 ` : (useDefaultCompanyContent ? `
                   <div style="background-color: #0f172a; width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ffffff; font-weight: bold;">☀️</div>
                   <div>
@@ -7537,7 +7575,7 @@ function compileSunchaserPDFHtml(
 
               ${bodyImagesHtml}
 
-              ${useDefaultCompanyContent ? `
+              ${useDefaultCompanyContent && !hasAuthoringBody() ? `
               <div class="grid-2" style="margin-top: 25px;">
                 <div class="card">
                   <div style="font-weight: 800; color: #0f172a; margin-bottom: 4px; font-size: 12px;">☀️ Sunchaser Energy</div>
@@ -7591,7 +7629,7 @@ function compileSunchaserPDFHtml(
 
               ${bodyImagesHtml}
 
-              ${useDefaultCompanyContent ? `
+              ${useDefaultCompanyContent && !hasAuthoringBody() ? `
               <div class="grid-2" style="row-gap: 15px; margin-top: 20px;">
                 <div style="display: flex; gap: 10px; align-items: flex-start;">
                   <span style="font-size: 20px;">🏆</span>
@@ -8504,8 +8542,8 @@ async function resolveSavedManualQuoteForExport(leadId: string, quoteId?: string
   }
 
   const options = {
-    includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
-    templateId: quote.templateId || "tmpl-1",
+    includedPages: normalizeManualQuoteIncludedPages(quote.includedPages),
+    templateId: quote.templateId || quote.template_id || "tmpl-1",
     includeSizerItems: quote.includeSizerItems === true,
     debugBox: false,
   };
@@ -8555,6 +8593,22 @@ app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
     res.status(500).send(formatQuotationPdfError(err));
+  }
+});
+
+app.get("/api/export/pdf/manual-quote/:leadId/debug-template-map", async (req, res) => {
+  try {
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
+    const resolved = await resolveSavedManualQuoteForExport(req.params.leadId, quoteId || undefined);
+    if ("error" in resolved && resolved.error) {
+      return res.status(resolved.error.status).json({ error: resolved.error.message });
+    }
+    const { activeState, quote, options } = resolved;
+    const map = buildManualQuoteTemplateDebugMap(activeState, quote, options);
+    res.json(map);
+  } catch (err: any) {
+    console.error("[PDF DEBUG TEMPLATE MAP]", err);
+    res.status(500).json({ error: formatQuotationPdfError(err) });
   }
 });
 
@@ -8619,8 +8673,8 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
     }
 
     const options = {
-      includedPages: quote.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
-      templateId: quote.templateId || "tmpl-1",
+      includedPages: normalizeManualQuoteIncludedPages(quote.includedPages),
+      templateId: quote.templateId || quote.template_id || "tmpl-1",
       includeSizerItems: quote.includeSizerItems === true
     };
 
