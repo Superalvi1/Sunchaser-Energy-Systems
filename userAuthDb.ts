@@ -78,7 +78,7 @@ export async function sendAuthEmail(to: string, subject: string, html: string) {
   }
 }
 
-async function findUserByUsername(username: string, localDb?: Database) {
+export async function findUserByUsername(username: string, localDb?: Database) {
   const normalized = String(username || "").trim().toLowerCase();
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;

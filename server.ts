@@ -277,7 +277,12 @@ import {
   listDemoSeedUsersForCleanup,
   deleteDemoSeedUsersByAdmin,
   UserAuthError,
+  mapUserRow,
+  findUserByUsername,
 } from "./userAuthDb.js";
+import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
+import { protectSelectedApiRoutes, requireAuth } from "./server/middleware/auth.ts";
+import { loginRateLimit } from "./server/middleware/rateLimit.ts";
 import {
   listManagedRoles,
   createManagedRole,
@@ -418,6 +423,8 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+app.use(protectSelectedApiRoutes);
 
 // Production database requirement check
 if (process.env.NODE_ENV === "production") {
@@ -823,7 +830,7 @@ async function triggerWhatsAppNotification(customerName: string, phone: string, 
 /* --- REST SYSTEM API GATEWAYS --- */
 
 // 1. Auth — login, register, verify, reset, admin user management
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body;
   const normalizedUsername = String(username || "").trim().toLowerCase();
   const normalizedPassword = String(password ?? "");
@@ -835,6 +842,11 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     loadDb();
     const user = await authenticateUser(normalizedUsername, normalizedPassword, db);
+    const token = signAccessToken({
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+    });
     await appendActivityLog(
       user.id,
       user.name,
@@ -842,13 +854,35 @@ app.post("/api/auth/login", async (req, res) => {
       "User Logged In",
       `Role ${user.role} · status ${user.accountStatus}`
     );
-    return res.json({ success: true, user });
+    return res.json({ success: true, user, token });
   } catch (err: any) {
     if (err instanceof UserAuthError) {
       return res.status(err.statusCode).json({ error: err.message });
     }
     console.error("[Login Error]:", err);
     return res.status(500).json({ error: err.message || "Login failed." });
+  }
+});
+
+app.get("/api/auth/me", requireAuth, async (req, res) => {
+  try {
+    loadDb();
+    const actor = req.user;
+    if (!actor?.username) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const row = await findUserByUsername(actor.username, db);
+    if (!row) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const status = row.account_status || row.accountStatus || "Approved";
+    if (status === "Suspended" || status === "Rejected") {
+      return res.status(403).json({ error: "Account is not active." });
+    }
+    return res.json({ success: true, user: mapUserRow(row) });
+  } catch (err: any) {
+    console.error("[Auth Me Error]:", err);
+    return res.status(500).json({ error: err.message || "Failed to load session." });
   }
 });
 
@@ -9003,6 +9037,16 @@ function logServerBuildIdentity() {
 }
 
 async function startServer() {
+  try {
+    assertProductionJwtConfig();
+  } catch (err) {
+    console.error(
+      "\x1b[31m%s\x1b[0m",
+      `🚨 [CRITICAL] ${err instanceof Error ? err.message : String(err)}`
+    );
+    process.exit(1);
+  }
+
   logServerBuildIdentity();
 
   if (!shouldServeBuiltFrontend()) {

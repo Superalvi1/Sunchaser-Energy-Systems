@@ -30,9 +30,12 @@ import {
   fetchTechnicalJobsMe,
   fetchOnboardingMe,
   completeOnboarding,
+  updateStoredUser,
+  getStoredUser,
 } from "./services/api";
 import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
 import { isNativeApp } from "./lib/appPlatform";
+import { restoreAuthSession, clearAuthSession } from "./lib/authSession";
 
 declare const __GIT_COMMIT_HASH__: string;
 declare const __BUILD_TIME__: string;
@@ -167,36 +170,38 @@ export default function App() {
       onboardingCompletedAt: new Date().toISOString(),
     };
     setCurrentUser(updated);
-    localStorage.setItem("sunchaser_user", JSON.stringify(updated));
+    updateStoredUser(updated);
     setShowOnboarding(false);
     setForceWelcomeGuide(false);
   };
 
   useEffect(() => {
-    const cachedUser = localStorage.getItem("sunchaser_user");
-    let parsed: User | null = null;
-    if (cachedUser) {
-      try {
-        parsed = JSON.parse(cachedUser);
-      } catch {
-        localStorage.removeItem("sunchaser_user");
+    let cancelled = false;
+
+    (async () => {
+      if (isNativeApp()) {
+        const cached = getStoredUser();
+        if (cached?.username) setCachedUsername(cached.username);
+        if (!cancelled) setLoading(false);
+        return;
       }
-    }
 
-    if (isNativeApp()) {
-      // Android/iOS: never auto-sync /api/state — show login until explicit sign-in
-      if (parsed?.username) setCachedUsername(parsed.username);
-      setLoading(false);
-      return;
-    }
+      const { user } = await restoreAuthSession();
+      if (cancelled) return;
 
-    if (parsed) {
-      setCurrentUser(parsed);
-      loadSessionForUser(parsed);
-      refreshOnboardingGate(parsed, forceWelcomeGuide);
-    } else {
-      setLoading(false);
-    }
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      setCurrentUser(user);
+      await loadSessionForUser(user);
+      await refreshOnboardingGate(user, forceWelcomeGuide);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Set default tab based on logged-in role
@@ -224,7 +229,6 @@ export default function App() {
 
   const handleAuthLoginSuccess = async (user: User) => {
     setCurrentUser(user);
-    localStorage.setItem("sunchaser_user", JSON.stringify(user));
     await loadSessionForUser(user);
     await refreshOnboardingGate(user);
   };
@@ -246,7 +250,7 @@ export default function App() {
     setAppState(null);
     setLoading(false);
     clearLeadClientCache();
-    localStorage.removeItem("sunchaser_user");
+    clearAuthSession();
     setActiveTab("Overview");
   };
 

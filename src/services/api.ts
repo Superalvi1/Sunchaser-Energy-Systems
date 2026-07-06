@@ -19,9 +19,59 @@ export const API_BASE_URL = (
 
 console.log("API URL:", API_BASE_URL);
 
+const AUTH_TOKEN_KEY = "sunchaser_auth_token";
+const AUTH_USER_KEY = "sunchaser_user";
+
+export function getStoredAuthToken(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  return token && token.trim() ? token.trim() : null;
+}
+
+export function getStoredUser(): User | null {
+  if (typeof localStorage === "undefined") return null;
+  const raw = localStorage.getItem(AUTH_USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as User;
+  } catch {
+    localStorage.removeItem(AUTH_USER_KEY);
+    return null;
+  }
+}
+
+export function persistAuthSession(user: User, token: string): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+}
+
+export function updateStoredUser(user: User): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+}
+
+export function clearAuthSession(): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
+
+function withAuthHeaders(init?: RequestInit): RequestInit {
+  const headers = new Headers(init?.headers || undefined);
+  if (!headers.has("Content-Type") && init?.body) {
+    headers.set("Content-Type", "application/json");
+  }
+  const token = getStoredAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return { ...init, headers };
+}
+
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
-  return fetch(url, init);
+  return fetch(url, withAuthHeaders(init));
 }
 
 /** Staff portal PATCH/POST with request/response logging and backend error text. */
@@ -1278,7 +1328,18 @@ export async function deleteDemoSeedUsers(
   );
 }
 
-export async function loginUser(body: { username: string; password?: string }): Promise<{ success: boolean; user: User }> {
+export async function fetchAuthMe(): Promise<{ success: boolean; user: User }> {
+  const res = await apiFetch("/api/auth/me");
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(parsed.error || `Session expired (HTTP ${res.status}).`);
+  }
+  return parsed as { success: boolean; user: User };
+}
+
+export async function loginUser(
+  body: { username: string; password?: string }
+): Promise<{ success: boolean; user: User; token?: string }> {
   const url = `${API_BASE_URL}/api/auth/login`;
   const payload = { username: body.username, password: body.password };
   console.log("Login URL:", url);
@@ -1294,7 +1355,7 @@ export async function loginUser(body: { username: string; password?: string }): 
     });
     console.log("Login response status:", res.status);
     const responseText = await res.text();
-    let parsed: { success?: boolean; user?: User; error?: string } = {};
+    let parsed: { success?: boolean; user?: User; token?: string; error?: string } = {};
     try {
       parsed = responseText ? JSON.parse(responseText) : {};
     } catch {
@@ -1310,7 +1371,10 @@ export async function loginUser(body: { username: string; password?: string }): 
       throw new Error(parsed.error || `Login failed (HTTP ${res.status}).`);
     }
     console.log("Login success for user:", parsed.user?.username, parsed.user?.role);
-    return parsed as { success: boolean; user: User };
+    if (parsed.user && parsed.token) {
+      persistAuthSession(parsed.user, parsed.token);
+    }
+    return parsed as { success: boolean; user: User; token?: string };
   } catch (err) {
     console.error("Login error:", err);
     throw toLoginError(err);
