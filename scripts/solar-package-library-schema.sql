@@ -9,3 +9,4 @@ alter table if exists public.solar_packages add column if not exists discount_ty
 alter table if exists public.solar_packages add column if not exists discount_value numeric default 0;
 
 NOTIFY pgrst, 'reload schema';
+``  

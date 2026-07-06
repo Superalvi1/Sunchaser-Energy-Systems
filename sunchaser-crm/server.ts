@@ -13,6 +13,7 @@ import {
   calculateLeadScore,
   Database,
   persistQuotationToSupabase,
+  generateQuotationId,
   AUTO_SIZER_QUOTE_CREATION_ENABLED,
   resolveAppUserRole,
   fetchCustomerPortalData,
@@ -2580,7 +2581,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     return res.status(429).json({ error: "Rate limit: Please wait 4 seconds between generating quotes." });
   }
 
-  const quoteId = `q-${(lead.quotes || []).length + 1}`;
+  const quoteId = generateQuotationId();
   const cost = Number(totalCost) || (Number(systemSizekW) * 19500 + (batteryCapacity ? 480000 : 0));
   const disc = Number(discount) || 0;
   const netCost = cost - disc;
@@ -2696,7 +2697,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     }
   }
 
-  await appendActivityLog("sales", bdmName || "Sarah Connor", "Sales Executive", "Quotation Written", `Formulated quote ${quoteId} for ${lead.name}`);
+  await appendActivityLog("sales", bdmName || "Sarah Connor", "Sales Executive", "Quotation Written", `Formulated quote ${newQuote.id} for ${lead.name}`);
   const msgText = `☀️ Hi ${lead.name}! Sunchaser has unlocked your custom solar proposal: ${newQuote.systemSizekW} kW with ${newQuote.inverterType}. Total final cost is Rs. ${newQuote.netCost.toLocaleString()}. Open file: http://sunchaser.co/portal`;
   await triggerWhatsAppNotification(lead.name, lead.phone, "quote_generation", msgText);
 
@@ -2714,7 +2715,7 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
   const quoteToDup = lead.quotes?.find((q: any) => q.id === quoteId);
   if (!quoteToDup) return res.status(404).json({ error: "Quote not found" });
 
-  const newQuoteId = `q-${(lead.quotes || []).length + 1}`;
+  const newQuoteId = generateQuotationId();
   const duplicated = {
     ...quoteToDup,
     id: newQuoteId,

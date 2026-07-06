@@ -85,7 +85,7 @@ async function main() {
     const quote = minimalQuote(ids[i]);
     const result = await persistQuotationToSupabase(supabase, leadId, customerId, quote, "insert");
     if (result.ok) {
-      inserted.push(ids[i]);
+      inserted.push(result.quoteId!);
     } else {
       errors.push(`#${i + 1} ${ids[i]}: ${result.error}`);
     }

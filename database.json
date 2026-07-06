@@ -630,6 +630,245 @@
       "quotes": [],
       "conversionScore": 65,
       "conversionProbability": 62
+    },
+    {
+      "id": "lead-105",
+      "name": "PhantomTest1-1780644771165",
+      "email": "phantom@test.com",
+      "phone": "03001234567",
+      "address": "",
+      "status": "Quoted",
+      "monthlyBill": 0,
+      "monthlyUnits": 900,
+      "sanctionedLoad": 7,
+      "backupRequirement": "None",
+      "location": "Lahore",
+      "roofType": "Asphalt Shingle",
+      "roofSpace": 800,
+      "shading": "Medium",
+      "rating": 3,
+      "assignedSalesperson": "Sarah Connor",
+      "createdAt": "2026-06-05T07:32:51.217Z",
+      "notes": "Submitted via Sunchaser Sizing Calculator.",
+      "leadSource": "Self-registration Web Portal",
+      "engagementLevel": "Medium",
+      "quotes": [
+        {
+          "id": "q-2",
+          "idempotencyKey": "",
+          "systemSizekW": 8,
+          "panelCount": 12,
+          "panelType": "Longi 580W Panels",
+          "inverterType": "Goodwe 20kW Inverter",
+          "batteryCapacity": "",
+          "totalCost": 300000,
+          "federalTaxCredit": 0,
+          "netCost": 300000,
+          "estimatedAnnualSavings": 392000,
+          "paybackPeriodYears": 0.8,
+          "status": "Pending",
+          "createdAt": "2026-06-05T07:33:09.260Z",
+          "structureType": "Standard",
+          "accessories": "Dual DC cables, PVC ducting & safety switches",
+          "installationCharges": 75000,
+          "netMeteringCharges": 90000,
+          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
+          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
+          "termsAndConditions": "Generation yield matches simulation rules.",
+          "clientName": "PhantomTest1-1780644771165",
+          "clientPhone": "03001234567",
+          "clientEmail": "phantom@test.com",
+          "clientAddress": "",
+          "cnic": "",
+          "cityArea": "Lahore",
+          "bdmName": "Sarah Connor",
+          "quoteDate": "2026-06-05",
+          "systemType": "Hybrid",
+          "panelBrand": "Jinko",
+          "panelWattage": 580,
+          "inverterBrand": "Knox",
+          "inverterCapacity": "10kW",
+          "batteryOption": "None",
+          "netMeteringRequired": "Yes",
+          "discount": 0,
+          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
+          "boqItems": [
+            {
+              "id": "m1",
+              "type": "item",
+              "name": "Item A edited",
+              "qty": 1,
+              "rate": 100000,
+              "total": 100000
+            },
+            {
+              "id": "m2",
+              "type": "item",
+              "name": "Item B",
+              "qty": 1,
+              "rate": 100000,
+              "total": 100000
+            },
+            {
+              "id": "m3",
+              "type": "item",
+              "name": "Item C",
+              "qty": 1,
+              "rate": 100000,
+              "total": 100000
+            }
+          ],
+          "lescoSettings": {
+            "meterNo": "",
+            "consumerNo": "",
+            "sanctionedLoad": "",
+            "phaseType": "Three Phase"
+          },
+          "societyCharges": 0,
+          "taxEnabled": false,
+          "taxRate": 0,
+          "taxAmount": 0,
+          "selectedStructure": "standard",
+          "customStructure": null,
+          "boqRows": [
+            {
+              "id": "m1",
+              "type": "item",
+              "name": "Item A edited",
+              "qty": 1,
+              "rate": 100000,
+              "total": 100000
+            },
+            {
+              "id": "m2",
+              "type": "item",
+              "name": "Item B",
+              "qty": 1,
+              "rate": 100000,
+              "total": 100000
+            },
+            {
+              "id": "m3",
+              "type": "item",
+              "name": "Item C",
+              "qty": 1,
+              "rate": 100000,
+              "total": 100000
+            }
+          ],
+          "customNotes": "",
+          "grandTotal": 300000,
+          "netTotal": 300000,
+          "quote_type": "manual_boq",
+          "source": "manual",
+          "updatedAt": "2026-06-05T07:33:17.989Z"
+        },
+        {
+          "id": "q-1",
+          "idempotencyKey": "",
+          "systemSizekW": 10,
+          "panelCount": 18,
+          "panelType": "Jinko 580W",
+          "inverterType": "Knox 5kW",
+          "batteryCapacity": "",
+          "totalCost": 100000,
+          "federalTaxCredit": 0,
+          "netCost": 100000,
+          "estimatedAnnualSavings": 245000,
+          "paybackPeriodYears": 0.4,
+          "status": "Pending",
+          "createdAt": "2026-06-05T07:32:53.593Z",
+          "structureType": "Standard",
+          "accessories": "Dual DC cables, PVC ducting & safety switches",
+          "installationCharges": 75000,
+          "netMeteringCharges": 90000,
+          "paymentTerms": "50% Advance, 40% Delivery, 10% Commissioning",
+          "warrantyTerms": "25 year power degradation, 10 year inverter warranty",
+          "termsAndConditions": "Generation yield matches simulation rules.",
+          "clientName": "PhantomTest1-1780644771165",
+          "clientPhone": "03001234567",
+          "clientEmail": "phantom@test.com",
+          "clientAddress": "",
+          "cnic": "",
+          "cityArea": "Lahore",
+          "bdmName": "Sarah Connor",
+          "quoteDate": "2026-06-05",
+          "systemType": "Hybrid",
+          "panelBrand": "Jinko",
+          "panelWattage": 580,
+          "inverterBrand": "Knox",
+          "inverterCapacity": "10kW",
+          "batteryOption": "None",
+          "netMeteringRequired": "Yes",
+          "discount": 0,
+          "paymentSchedule": "50% Advance, 40% Delivery, 10% Commissioning",
+          "boqItems": [
+            {
+              "id": "row-1",
+              "type": "item",
+              "name": "Panels",
+              "qty": 18,
+              "rate": 10000,
+              "total": 180000
+            }
+          ],
+          "lescoSettings": {
+            "meterNo": "",
+            "consumerNo": "",
+            "sanctionedLoad": "",
+            "phaseType": "Three Phase"
+          },
+          "societyCharges": 0,
+          "taxEnabled": false,
+          "taxRate": 0,
+          "taxAmount": 0,
+          "selectedStructure": "standard",
+          "customStructure": null,
+          "boqRows": [
+            {
+              "id": "row-1",
+              "type": "item",
+              "name": "Panels",
+              "qty": 18,
+              "rate": 10000,
+              "total": 180000
+            }
+          ],
+          "customNotes": "",
+          "grandTotal": 100000,
+          "netTotal": 100000,
+          "quote_type": "auto_sizer",
+          "source": "autosizer",
+          "updatedAt": "2026-06-05T07:32:59.284Z"
+        }
+      ],
+      "conversionScore": 65,
+      "conversionProbability": 62
+    },
+    {
+      "id": "lead-106",
+      "name": "PhantomEmpty-1780644792233",
+      "email": "empty@test.com",
+      "phone": "03009999999",
+      "address": "",
+      "status": "New",
+      "monthlyBill": 0,
+      "monthlyUnits": 0,
+      "sanctionedLoad": 7,
+      "backupRequirement": "None",
+      "location": "Springfield",
+      "roofType": "Asphalt Shingle",
+      "roofSpace": 800,
+      "shading": "Medium",
+      "rating": 3,
+      "assignedSalesperson": "Sarah Connor",
+      "createdAt": "2026-06-05T07:33:12.235Z",
+      "notes": "Submitted via Sunchaser Sizing Calculator.",
+      "leadSource": "Self-registration Web Portal",
+      "engagementLevel": "Medium",
+      "quotes": [],
+      "conversionScore": 65,
+      "conversionProbability": 62
     }
   ],
   "tickets": [],
@@ -770,6 +1009,141 @@
   "netMeteringTrackers": {},
   "paymentTracks": {},
   "activityLogs": [
+    {
+      "id": "log-1780732912680",
+      "timestamp": "2026-06-06T08:01:52.680Z",
+      "userId": "guest",
+      "userName": "LeadVerify-1780732896724-5",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780732911603",
+      "timestamp": "2026-06-06T08:01:51.603Z",
+      "userId": "guest",
+      "userName": "LeadVerify-1780732896724-4",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780732909951",
+      "timestamp": "2026-06-06T08:01:49.951Z",
+      "userId": "guest",
+      "userName": "LeadVerify-1780732896724-3",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780732907622",
+      "timestamp": "2026-06-06T08:01:47.622Z",
+      "userId": "guest",
+      "userName": "LeadVerify-1780732896724-2",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780732906101",
+      "timestamp": "2026-06-06T08:01:46.101Z",
+      "userId": "guest",
+      "userName": "LeadVerify-1780732896724-1",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780648203365",
+      "timestamp": "2026-06-05T08:30:03.365Z",
+      "userId": "admin",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "Manual Database Modifier",
+      "details": "Action: edit on table: quotePdfSettings with id: settings-1"
+    },
+    {
+      "id": "log-1780648196165",
+      "timestamp": "2026-06-05T08:29:56.165Z",
+      "userId": "admin",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "Manual Database Modifier",
+      "details": "Action: edit on table: quotePdfSettings with id: settings-1"
+    },
+    {
+      "id": "log-1780648059713",
+      "timestamp": "2026-06-05T08:27:39.713Z",
+      "userId": "admin",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "Manual Database Modifier",
+      "details": "Action: edit on table: quotePdfSettings with id: settings-1"
+    },
+    {
+      "id": "log-1780648057171",
+      "timestamp": "2026-06-05T08:27:37.171Z",
+      "userId": "admin",
+      "userName": "Alex Admin",
+      "role": "Super Admin",
+      "action": "Manual Database Modifier",
+      "details": "Action: edit on table: quotePdfSettings with id: settings-1"
+    },
+    {
+      "id": "log-1780644798618",
+      "timestamp": "2026-06-05T07:33:18.618Z",
+      "userId": "sales",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Updated",
+      "details": "Updated quote q-2 for PhantomTest1-1780644771165"
+    },
+    {
+      "id": "log-1780644792717",
+      "timestamp": "2026-06-05T07:33:12.718Z",
+      "userId": "guest",
+      "userName": "PhantomEmpty-1780644792233",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1780644790238",
+      "timestamp": "2026-06-05T07:33:10.238Z",
+      "userId": "sales",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-2 for PhantomTest1-1780644771165"
+    },
+    {
+      "id": "log-1780644779915",
+      "timestamp": "2026-06-05T07:32:59.915Z",
+      "userId": "sales",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Updated",
+      "details": "Updated quote q-1 for PhantomTest1-1780644771165"
+    },
+    {
+      "id": "log-1780644774297",
+      "timestamp": "2026-06-05T07:32:54.297Z",
+      "userId": "sales",
+      "userName": "Sarah Connor",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-1 for PhantomTest1-1780644771165"
+    },
+    {
+      "id": "log-1780644772911",
+      "timestamp": "2026-06-05T07:32:52.911Z",
+      "userId": "guest",
+      "userName": "PhantomTest1-1780644771165",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
     {
       "id": "log-1780640406098",
       "timestamp": "2026-06-05T06:20:06.098Z",
@@ -1222,6 +1596,87 @@
     }
   ],
   "whatsAppLogs": [
+    {
+      "id": "wa-1780732913000",
+      "timestamp": "2026-06-06T08:01:53.000Z",
+      "customerName": "LeadVerify-1780732896724-5",
+      "phone": "030028967245",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi LeadVerify-1780732896724-5! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780732911886",
+      "timestamp": "2026-06-06T08:01:51.886Z",
+      "customerName": "LeadVerify-1780732896724-4",
+      "phone": "030028967244",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi LeadVerify-1780732896724-4! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780732910395",
+      "timestamp": "2026-06-06T08:01:50.395Z",
+      "customerName": "LeadVerify-1780732896724-3",
+      "phone": "030028967243",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi LeadVerify-1780732896724-3! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780732908126",
+      "timestamp": "2026-06-06T08:01:48.127Z",
+      "customerName": "LeadVerify-1780732896724-2",
+      "phone": "030028967242",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi LeadVerify-1780732896724-2! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780732906475",
+      "timestamp": "2026-06-06T08:01:46.475Z",
+      "customerName": "LeadVerify-1780732896724-1",
+      "phone": "030028967241",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi LeadVerify-1780732896724-1! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780644792938",
+      "timestamp": "2026-06-05T07:33:12.939Z",
+      "customerName": "PhantomEmpty-1780644792233",
+      "phone": "03009999999",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi PhantomEmpty-1780644792233! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780644790553",
+      "timestamp": "2026-06-05T07:33:10.553Z",
+      "customerName": "PhantomTest1-1780644771165",
+      "phone": "03001234567",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi PhantomTest1-1780644771165! Sunchaser has unlocked your custom solar proposal: 8 kW with Goodwe 20kW Inverter. Total final cost is Rs. 300,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780644774552",
+      "timestamp": "2026-06-05T07:32:54.552Z",
+      "customerName": "PhantomTest1-1780644771165",
+      "phone": "03001234567",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi PhantomTest1-1780644771165! Sunchaser has unlocked your custom solar proposal: 5 kW with Knox 5kW. Total final cost is Rs. 100,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1780644773279",
+      "timestamp": "2026-06-05T07:32:53.279Z",
+      "customerName": "PhantomTest1-1780644771165",
+      "phone": "03001234567",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi PhantomTest1-1780644771165! Sunchaser Energy has scheduled your structural solar survey. Our advisor Sarah Connor will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
     {
       "id": "wa-1780640399435",
       "timestamp": "2026-06-05T06:19:59.435Z",
@@ -2715,7 +3170,25 @@
       "hotline_phones": "0309-0236666, 0330-7776444",
       "billing_email": "billing@sunchaser-energy.com",
       "website_url": "www.sunchaser-energy.com",
-      "logo_url": ""
+      "logo_url": "",
+      "companyName": "PDF-VERIFY-1780648052813",
+      "officeAddress": "PDF-VERIFY-1780648052813 Office Address",
+      "hotlinePhones": "0999-VERIFY-LINE",
+      "logoUrl": "/assets/sunchaser-logo.png",
+      "globalPdfHeader": {
+        "enabled": true,
+        "text": "PDF-VERIFY-1780648052813 Header",
+        "logoUrl": "/assets/sunchaser-logo.png",
+        "logoSize": "25px",
+        "lineColor": "#f59e0b",
+        "alignment": "left"
+      },
+      "globalPdfFooter": {
+        "enabled": true,
+        "text": "PDF-VERIFY-1780648052813 Footer",
+        "lineColor": "#cbd5e1",
+        "alignment": "left"
+      }
     }
   ]
 }

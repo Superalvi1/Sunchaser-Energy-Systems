@@ -42,7 +42,7 @@ async function main() {
     process.exit(1);
   }
   ok("staff login", staff.body.user?.username);
-  const H = hdr(staff);
+  const H = hdr(staff.body);
 
   const sku = `VERIFY-INV-${Date.now()}`;
   const create = await fetch(`${API}/api/admin/inventory/items`, {

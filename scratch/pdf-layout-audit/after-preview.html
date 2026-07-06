@@ -1,0 +1,803 @@
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Sunchaser Proposal Deck</title>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
+      <style>
+        body {
+          font-family: 'Inter', system-ui, sans-serif;
+          margin: 0;
+          padding: 0;
+          background-color: #f1f5f9;
+          color: #1e293b;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        .action-bar {
+          background-color: #0f172a;
+          color: #ffffff;
+          padding: 12px 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+          font-size: 14px;
+        }
+        .btn-print {
+          background-color: #f59e0b;
+          color: #0f172a;
+          border: none;
+          padding: 8px 18px;
+          border-radius: 8px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: 'Inter', sans-serif;
+        }
+        .btn-print:hover {
+          background-color: #d97706;
+        }
+        
+    @page {
+      size: A4;
+      margin: 20mm;
+    }
+    .pages-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      padding: 30px 0;
+    }
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      background: #ffffff;
+      box-sizing: border-box;
+      padding: 20mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      position: relative;
+      overflow: visible;
+      break-after: page;
+      page-break-after: always;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    .page:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .page.cover {
+      border: 2mm solid #f59e0b;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    .page.cover .cover-main {
+      flex: 0 0 auto;
+    }
+    .page.cover .cover-footer-block {
+      flex: 0 0 auto;
+      margin-top: auto;
+      padding-top: 12px;
+    }
+    .page.boq-page {
+      min-height: 297mm;
+      height: auto;
+      padding: 12mm 20mm 20mm;
+      overflow: visible;
+    }
+    .page.full-page-image-only {
+      width: 210mm;
+      height: 297mm;
+      min-height: 297mm;
+      padding: 0 !important;
+      margin: 0;
+      display: block;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    .page-watermark {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .page-footer {
+          flex: 0 0 auto;
+          margin-top: auto;
+        }
+    .section,
+    .card,
+    .grid-2,
+    .cover-meta-grid,
+    .ceo-signature-block,
+    .quote-signature-block,
+    .page-title,
+    .page-header-logo {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    @media print {
+      .pages-container {
+        padding: 0 !important;
+        gap: 0 !important;
+        align-items: stretch;
+      }
+      .page {
+        width: 100%;
+        min-height: 257mm;
+        height: auto;
+        padding: 0;
+        margin: 0 !important;
+        box-shadow: none !important;
+        overflow: visible !important;
+      }
+      .page.cover {
+        border: none;
+      }
+      .page.boq-page {
+        min-height: 257mm;
+        padding: 0;
+      }
+      .page.full-page-image-only {
+        width: 100%;
+        height: 257mm;
+        min-height: 257mm;
+      }
+    }
+  
+        .page.boq-page {
+          height: auto !important;
+          min-height: 297mm;
+          overflow: visible !important;
+        }
+        .page.cover {
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .page.full-page-image-only {
+          padding: 0 !important;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .page-header-logo {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1.5px solid #cbd5e1;
+          padding-bottom: 6px;
+          margin-bottom: 12px;
+        }
+        .header-company-name {
+          font-weight: 800;
+          font-size: 13px;
+          color: #0f172a;
+          letter-spacing: 0.05em;
+        }
+        .page-title {
+          font-size: 16px;
+          font-weight: 850;
+          color: #d97706;
+          border-left: 4px solid #f59e0b;
+          padding-left: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+        }
+        
+    .quote-rich-text {
+      font-size: var(--quote-font-size, 11px);
+      line-height: var(--quote-line-height, 1.6);
+      color: #475569;
+    }
+    .quote-section-heading {
+      color: #d97706;
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 2px);
+      margin: calc(var(--quote-para-gap, 12px) * 1.1) 0 var(--quote-para-gap, 12px);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border-left: 3px solid #f59e0b;
+      padding-left: 8px;
+    }
+    .quote-heading-h2 {
+      color: #d97706;
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 5px);
+      line-height: 1.25;
+      margin: calc(var(--quote-para-gap, 12px) * 1.35) 0 var(--quote-para-gap, 12px);
+      letter-spacing: 0.02em;
+    }
+    .quote-heading-h3 {
+      color: #1e3a8a;
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 2px);
+      line-height: 1.35;
+      margin: calc(var(--quote-para-gap, 12px) * 1.05) 0 calc(var(--quote-para-gap, 12px) * 0.75);
+      letter-spacing: 0.01em;
+    }
+    .quote-paragraph {
+      margin: 0 0 var(--quote-para-gap, 12px);
+      font-weight: 500;
+    }
+    .quote-bullet-list {
+      margin: 0 0 var(--quote-para-gap, 12px);
+      padding-left: 1.25em;
+    }
+    .quote-bullet-list li {
+      margin-bottom: calc(var(--quote-para-gap, 12px) * 0.6);
+    }
+    .quote-page-shell {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .page.cover.classic-layout {
+      text-align: center;
+    }
+    .page.cover.classic-layout .cover-meta-grid {
+      text-align: left;
+    }
+    .page-title {
+      color: #d97706 !important;
+    }
+    
+  
+        
+    .quote-authoring-body h1 {
+      color: var(--quote-heading-color, #d97706);
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 8px);
+      margin: calc(var(--quote-para-gap, 12px) * 1.5) 0 var(--quote-para-gap, 12px);
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .quote-authoring-body h2 {
+      color: var(--quote-heading-color, #d97706);
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 5px);
+      margin: calc(var(--quote-para-gap, 12px) * 1.35) 0 var(--quote-para-gap, 12px);
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .quote-authoring-body h3 {
+      color: #1e3a8a;
+      font-weight: 800;
+      font-size: calc(var(--quote-font-size, 11px) + 2px);
+      margin: calc(var(--quote-para-gap, 12px) * 1.05) 0 calc(var(--quote-para-gap, 12px) * 0.75);
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .quote-authoring-body p,
+    .quote-authoring-body li {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .quote-authoring-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: calc(var(--quote-para-gap, 12px) * 1.1) 0;
+      font-size: calc(var(--quote-font-size, 11px) - 0.5px);
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .quote-authoring-body th,
+    .quote-authoring-body td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .quote-authoring-body th {
+      background: #f8fafc;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .quote-authoring-body hr {
+      border: none;
+      border-top: 1.5px solid #e2e8f0;
+      margin: calc(var(--quote-para-gap, 12px) * 1.2) 0;
+    }
+    .quote-authoring-body img {
+      image-rendering: crisp-edges;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .quote-image-row {
+      margin: calc(var(--quote-para-gap, 12px) * 1.1) 0;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .quote-page-body-flow {
+      flex: 1;
+      min-height: 0;
+      overflow: visible;
+    }
+    .quote-page-body-flow > * {
+      orphans: 3;
+      widows: 3;
+    }
+    .page.authoring-page {
+      display: flex;
+      flex-direction: column;
+      min-height: 257mm;
+      box-sizing: border-box;
+    }
+    .page.authoring-page .page-footer-slot {
+      margin-top: auto;
+      flex-shrink: 0;
+    }
+    @media print {
+      .quote-authoring-body h1,
+      .quote-authoring-body h2,
+      .quote-authoring-body h3,
+      .quote-authoring-body p,
+      .quote-authoring-body table,
+      .quote-authoring-body .quote-image-row,
+      .quote-authoring-body hr,
+      .quote-signature-block {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .page.authoring-page {
+        page-break-after: always;
+      }
+    }
+  
+        .page-footer {
+          border-top: 1px solid #cbd5e1;
+          padding-top: 6px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 8.5px;
+          color: #64748b;
+          font-weight: 600;
+        }
+        .grid-2 {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 15px;
+        }
+        .card {
+          background-color: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 12px;
+        }
+        .badge {
+          font-size: 8.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          padding: 2px 7px;
+          border-radius: 4px;
+          background-color: #fef3c7;
+          color: #92400e;
+        }
+        .urdu-text {
+          font-family: 'Noto Nastaliq Urdu', serif;
+          direction: rtl;
+          text-align: right;
+          line-height: 2.2;
+          font-size: 11px;
+          color: #334155;
+        }
+        .boq-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 9.5px;
+        }
+        .boq-table th {
+          background-color: #0f172a;
+          color: #ffffff;
+          text-align: left;
+          padding: 6px 8px;
+          font-weight: 750;
+          text-transform: uppercase;
+          font-size: 8px;
+          letter-spacing: 0.03em;
+        }
+        .boq-table td {
+          padding: 5px 8px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        @page { size: A4; margin: 20mm; }
+        @media print {
+          body {
+            background-color: #ffffff !important;
+          }
+          .action-bar {
+            display: none !important;
+          }
+          .pages-container {
+            padding: 0 !important;
+            gap: 0 !important;
+          }
+          .page {
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="action-bar">
+        <div><strong>Sunchaser Proposal Deck</strong> - Client: Muhammad Allauddin</div>
+        <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
+      </div>
+
+      <div class="pages-container">
+        
+          <div class="page cover" style="background: #ffffff; color: #0f172a;">
+            <div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('https://xxtdfvgkurxabpbmjban.supabase.co/storage/v1/object/public/quote-assets/watermarks/settings-1-1780933341082.png');background-repeat:no-repeat;background-position:center center;background-size:100% auto;opacity:0.08;pointer-events:none;z-index:0"></div>
+            
+            
+            <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f59e0b; padding-bottom: 15px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                
+                  <img src="/assets/sunchaser-logo.png" style="max-height: 55px; max-width: 150px; object-fit: contain;" alt="Logo" />
+                
+              </div>
+            </div>
+
+            <div style="margin-top: 16px; position: relative; z-index: 1;">
+              <div style="font-size: 32px; font-weight: 850; line-height: 1.2; color: #0f172a; ">
+                15kW Hybrid<br/>Solar Power Solution
+              </div>
+              
+              <div style="font-size: 13px; color: #d97706; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px; ">
+                HYBRID SOLAR SYSTEM
+              </div>
+              
+              
+              
+              
+              
+              <div class="cover-meta-grid" style="border-top: 1px solid #cbd5e1; padding-top: 20px; margin-top: 20px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 11px;">
+                  <div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Prepared For</div>
+                    <div style="font-weight: 700; color: #0f172a; margin-top: 4px; font-size: 13px;">Muhammad Allauddin</div>
+                    <div style="font-size: 10px; color: #475569; margin-top: 2px;">0309-0236666</div>
+                  </div>
+                  <div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Proposal Validity</div>
+                    <div style="font-weight: 700; color: #d97706; margin-top: 4px;">3-Day Validity (Exp: 12 June 2026)</div>
+                  </div>
+                  <div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Site Location</div>
+                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">DHA Phase 6, Lahore</div>
+                  </div>
+                  <div>
+                    <div style="color: #64748b; font-weight: 800; font-size: 8px; text-transform: uppercase; letter-spacing: 0.05em;">Technical Advisor / BDM</div>
+                    <div style="font-weight: 600; color: #0f172a; margin-top: 4px;">Technical Advisor (Preview)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="border-top: 1px solid #cbd5e1; padding-top: 15px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 9px; color: #475569; margin-top: auto; position: relative; z-index: 1;">
+              <div>
+                <div style="font-weight: 700; color: #0f172a; margin-bottom: 2px;">SUNCHASER ENERGY SYSTEMS</div>
+                <div>Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</div>
+                <div style="color: #d97706;">Hotlines: 0309-0236666, 0330-7776444</div>
+                <div>www.sunchaser-energy.com</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-weight: 700; color: #0f172a;">Doc ID: SC-LEAD-PRE-DRAFT</div>
+                <div>Date: 9 June 2026</div>
+              </div>
+            </div>
+          </div>
+        
+          <div class="page" style="display: flex; flex-direction: column; padding: 20mm; position: relative; min-height: 257mm; box-sizing: border-box; --quote-font-size:14px;--quote-line-height:1.6;--quote-para-gap:12px;padding-top:12mm;padding-bottom:14mm;max-width:100%;text-align:left">
+            <div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('https://xxtdfvgkurxabpbmjban.supabase.co/storage/v1/object/public/quote-assets/watermarks/settings-1-1780933341082.png');background-repeat:no-repeat;background-position:center center;background-size:100% auto;opacity:0.08;pointer-events:none;z-index:0"></div>
+            
+            <div class="quote-page-shell" style="--quote-font-size:14px;--quote-line-height:1.6;--quote-para-gap:12px;padding-top:12mm;padding-bottom:14mm;max-width:100%;text-align:left">
+              
+        <div class="page-header-logo" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #f59e0b; padding-bottom: 6px; margin-bottom: 12px; width: 100%;">
+          <span class="header-company-name" style="display: flex; align-items: center; gap: 8px;">
+            <img src="/assets/sunchaser-logo.png" style="max-height: 25px; object-fit: contain;" alt="Logo" />
+            <span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">☀️ SUNCHASER ENERGY SYSTEMS</span>
+          </span>
+          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 2</span>
+        </div>
+      
+              
+              <div class="page-title">Sunchaser Group of Companies</div>
+              <div class="quote-authoring-body quote-rich-text" style="text-align:left;font-family:Inter, 'Segoe UI', sans-serif;color:#475569;--quote-heading-color:#d97706;"><p class="quote-paragraph">Sunchaser Group of Companies is a leading multi-disciplinary enterprise committed to innovation, excellence, and sustainability. With a powerful portfolio of specialized companies Sunchaser Energy, Helios Solar Energy, AL ADAM, and Signals Global we are transforming industries and shaping a smarter, greener future across Pakistan and beyond.<br/>Built on a foundation of trust, integrity, and performance, our group delivers cutting-edge solutions in renewable energy, infrastructure development, advanced engineering, and intelligent systems. Together, our companies work in synergy to provide high-impact services and future-ready technologies tailored to the unique needs of commercial, industrial, residential, and government sectors.<br/>Our Group Companies</p><p class="quote-paragraph">🌞 Sunchaser Energy<br/>Sunchaser Energy delivers forward-thinking, fully customized solar energy solutions. With a focus on affordability, innovation, and long-term value, we empower homes, farms, factories, and businesses with clean, efficient power systems that ensure maximum energy output and return on investment.</p><p class="quote-paragraph">☀️ Helios Solar Energy<br/>Renowned as one of Pakistan’s most trusted solar engineering firms, Helios Solar Energy offers complete solar system design, installation, auditing, and maintenance. Our highly skilled team integrates tier-one technology with deep industry expertise to power sustainable change efficiently and reliably.</p><p class="quote-paragraph">🏗️ AL ADAM<br/>AL ADAM is our infrastructure and engineering powerhouse. With a strong focus on construction, project management, and materials supply, AL ADAM supports critical development projects with unmatched precision, quality assurance, and delivery excellence.</p><p class="quote-paragraph">🌐 Signals Global<br/>Signals Global leads the way in digital transformation, automation, and smart security solutions. From intelligent surveillance and IoT to data infrastructure and smart city integrations, we help clients navigate a rapidly evolving technological landscape with confidence and control.</p><p class="quote-paragraph">Our Vision<br/>At Sunchaser Group, we envision a world where technology, clean energy, and intelligent infrastructure work in harmony to improve lives and protect the planet. Our mission is to be a catalyst for progress by delivering sustainable, scalable, and future-forward solutions through our group companies.</p></div>
+              
+            </div>
+            
+        <div class="page-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+          <span style="flex: 1;">SUNCHASER ENERGY SYSTEMS | Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</span>
+          <span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-LEAD-PRE</span>
+        </div>
+      
+          </div>
+        
+          <div class="page" style="position: relative; --quote-font-size:14px;--quote-line-height:1.75;--quote-para-gap:16px;padding-top:14mm;padding-bottom:16mm;max-width:92%;text-align:left">
+            <div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('https://xxtdfvgkurxabpbmjban.supabase.co/storage/v1/object/public/quote-assets/watermarks/settings-1-1780933341082.png');background-repeat:no-repeat;background-position:center center;background-size:100% auto;opacity:0.08;pointer-events:none;z-index:0"></div>
+            
+            <div class="quote-page-shell" style="--quote-font-size:14px;--quote-line-height:1.75;--quote-para-gap:16px;padding-top:14mm;padding-bottom:16mm;max-width:92%;text-align:left">
+              
+        <div class="page-header-logo" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #f59e0b; padding-bottom: 6px; margin-bottom: 12px; width: 100%;">
+          <span class="header-company-name" style="display: flex; align-items: center; gap: 8px;">
+            <img src="/assets/sunchaser-logo.png" style="max-height: 25px; object-fit: contain;" alt="Logo" />
+            <span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">☀️ SUNCHASER ENERGY SYSTEMS</span>
+          </span>
+          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 3</span>
+        </div>
+      
+              <div class="page-title">Why Partner With Sunchaser Group</div>
+
+              <div class="quote-authoring-body quote-rich-text" style="text-align:left;font-family:Inter, 'Segoe UI', sans-serif;color:#475569;--quote-heading-color:#d97706;"><p class="quote-paragraph">✅ Multi-Sector Expertise Under One Roof<br/>⚡ Cutting-Edge Technology &amp; Renewable Energy Leadership<br/>🏗️ Reliable Engineering, Infrastructure, and Project Delivery<br/>🌍 Sustainability-Driven Innovation<br/>🤝 Customer-Centric, Quality-Focused Approach</p></div>
+
+              
+            <div style="width: 100%;">
+              <!-- bodyImages -->
+              <img class="bodyImages" src="data:image/jpeg;base64,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" style="width: 75%; opacity: 1; margin: 10px auto; display: block; object-fit: contain;" alt="Body Image" />
+              
+            </div>
+          
+
+              
+            </div>
+            
+        <div class="page-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+          <span style="flex: 1;">SUNCHASER ENERGY SYSTEMS | Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</span>
+          <span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-LEAD-PRE</span>
+        </div>
+      
+          </div>
+        
+          <div class="page" style="position: relative; --quote-font-size:14px;--quote-line-height:1.75;--quote-para-gap:16px;padding-top:14mm;padding-bottom:16mm;max-width:92%;text-align:left">
+            <div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('https://xxtdfvgkurxabpbmjban.supabase.co/storage/v1/object/public/quote-assets/watermarks/settings-1-1780933341082.png');background-repeat:no-repeat;background-position:center center;background-size:100% auto;opacity:0.08;pointer-events:none;z-index:0"></div>
+            
+            <div class="quote-page-shell" style="--quote-font-size:14px;--quote-line-height:1.75;--quote-para-gap:16px;padding-top:14mm;padding-bottom:16mm;max-width:92%;text-align:left">
+              
+        <div class="page-header-logo" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #f59e0b; padding-bottom: 6px; margin-bottom: 12px; width: 100%;">
+          <span class="header-company-name" style="display: flex; align-items: center; gap: 8px;">
+            <img src="/assets/sunchaser-logo.png" style="max-height: 25px; object-fit: contain;" alt="Logo" />
+            <span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">☀️ SUNCHASER ENERGY SYSTEMS</span>
+          </span>
+          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 4</span>
+        </div>
+      
+              <div class="page-title">CEO’s Message</div>
+              <div class="quote-authoring-body quote-rich-text" style="text-align:left;font-family:Inter, 'Segoe UI', sans-serif;color:#475569;--quote-heading-color:#d97706;"><p class="quote-paragraph">At Sunchaser Group of Companies, our journey has always been defined by purpose, progress, and passion. What began as a vision to harness the power of renewable energy has evolved into a diversified group committed to transforming lives and industries through innovation, sustainability, and integrity.<br/>Each of our companies Sunchaser Energy, Helios Solar Energy, AL ADAM, and Signals Global represents a unique pillar of strength, collectively shaping a brighter, smarter, and more sustainable future for Pakistan and beyond. From delivering advanced solar energy systems and engineering excellence to building resilient infrastructure and deploying intelligent digital solutions, we are proud to stand at the intersection of opportunity and impact.<br/>Our success is built not only on cutting-edge technology and strategic growth but on the enduring trust of our clients and the tireless dedication of our teams. We believe in doing business with heart and purpose prioritizing customer needs, embracing sustainability, and delivering uncompromising quality.<br/>As we look to the future, we remain steadfast in our mission: to be a catalyst for meaningful change. Whether it's lighting up a village, modernizing an industrial complex, or pioneering smart city innovations, our goal is to create lasting value for communities, for businesses, and for generations to come.<br/>Thank you for being part of our journey.<br/>Warm regards,</p></div>
+
+              
+
+              
+            </div>
+            
+        <div class="page-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+          <span style="flex: 1;">SUNCHASER ENERGY SYSTEMS | Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</span>
+          <span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-LEAD-PRE</span>
+        </div>
+      
+          </div>
+        
+          <div class="page" style="position: relative; --quote-font-size:11px;--quote-line-height:1.6;--quote-para-gap:12px;padding-top:12mm;padding-bottom:14mm;max-width:100%;text-align:left">
+            <div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('https://xxtdfvgkurxabpbmjban.supabase.co/storage/v1/object/public/quote-assets/watermarks/settings-1-1780933341082.png');background-repeat:no-repeat;background-position:center center;background-size:100% auto;opacity:0.16;pointer-events:none;z-index:0"></div>
+            
+            <div class="quote-page-shell" style="--quote-font-size:11px;--quote-line-height:1.6;--quote-para-gap:12px;padding-top:12mm;padding-bottom:14mm;max-width:100%;text-align:left">
+              
+        <div class="page-header-logo" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #f59e0b; padding-bottom: 6px; margin-bottom: 12px; width: 100%;">
+          <span class="header-company-name" style="display: flex; align-items: center; gap: 8px;">
+            <img src="/assets/sunchaser-logo.png" style="max-height: 25px; object-fit: contain;" alt="Logo" />
+            <span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">☀️ SUNCHASER ENERGY SYSTEMS</span>
+          </span>
+          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 5</span>
+        </div>
+      
+              <div class="page-title">Client Verification & Sign-off</div>
+
+              
+
+              <div class="card" style="margin: 15px 0 10px 0;">
+                <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+                  1. Customer Billing Profile
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+                  <div><strong>Client Title:</strong> <span style="color: #0f172a; font-weight: 600;">Muhammad Allauddin</span></div>
+                  <div><strong>CNIC Passport:</strong> <span style="color: #0f172a; font-weight: 600;">Not specified</span></div>
+                  <div><strong>Active Line:</strong> <span style="color: #0f172a;">0309-0236666</span></div>
+                  <div><strong>Email Inbox:</strong> <span style="color: #0f172a;">allai1432009@gmail.com</span></div>
+                  <div style="grid-column: span 2;"><strong>Installation Address:</strong> <span style="color: #0f172a;">DHA Phase 6, Lahore</span></div>
+                </div>
+              </div>
+
+              <div class="card" style="margin-bottom: 15px; border-left: 4px solid #0284c7;">
+                <div style="font-weight: 800; color: #0f172a; font-size: 11.5px; margin-bottom: 8px; text-transform: uppercase; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 2px;">
+                  2. Utility Interconnect (LESCO Metering)
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #475569;">
+                  <div><strong>LESCO Meter ID:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">Not Scanned</span></div>
+                  <div><strong>Consumer A/C Number:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">Not Scanned</span></div>
+                  <div><strong>Sanctioned Grid Load:</strong> <span style="color: #0f172a; font-weight: 600;">Not Scanned</span></div>
+                  <div><strong>Terminations Phase:</strong> <span style="color: #0f172a;">Three Phase</span></div>
+                  <div style="grid-column: span 2;"><strong>Turnkey Net Metering Licensing:</strong> <span style="color: #0284c7; font-weight: 700;">REQUIRED &amp; SOW INCLUDED</span></div>
+                </div>
+              </div>
+
+              <div class="card" style="margin-bottom: 20px; font-size: 10px; line-height: 1.5; color: #475569;">
+                <strong>Contract Declaration:</strong> By signing below, the client confirms the technical parameters (Page 5), accepts the final turnkey financial quote (Page 6), accepts the terms &amp; exclusions (Page 7 &amp; 8), and formally authorizes Sunchaser Energy to proceed with hardware procurement, chemical bores, structural steel fabrication, and LESCO utility interconnect procedures.
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 25px;">
+                <div style="text-align: center;">
+                  <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                    Signature / Thumb Stamp
+                  </div>
+                  <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Client Representative Sign-off</div>
+                  <div style="font-size: 8px; color: #94a3b8;">Declaration Acceptance Authority</div>
+                </div>
+                <div style="text-align: center;">
+                  <div style="height: 15mm; border-bottom: 1.5px solid #cbd5e1; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #94a3b8; font-style: italic;">
+                    Sunchaser Central Staging
+                  </div>
+                  <div style="font-weight: 850; color: #0f172a; font-size: 11.5px; margin-top: 6px;">Sunchaser Central Operations</div>
+                  <div style="font-size: 8px; color: #94a3b8;">Design Release Validation Authorization</div>
+                </div>
+              </div>
+            </div>
+            
+        <div class="page-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+          <span style="flex: 1;">SUNCHASER ENERGY SYSTEMS | Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</span>
+          <span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-LEAD-PRE</span>
+        </div>
+      
+          </div>
+        
+          <div class="page" style="position: relative; --quote-font-size:11px;--quote-line-height:1.6;--quote-para-gap:12px;padding-top:12mm;padding-bottom:14mm;max-width:100%;text-align:left">
+            <div class="page-watermark" aria-hidden="true" style="position:absolute;inset:0;background-image:url('https://xxtdfvgkurxabpbmjban.supabase.co/storage/v1/object/public/quote-assets/watermarks/settings-1-1780933341082.png');background-repeat:no-repeat;background-position:center center;background-size:100% auto;opacity:0.16;pointer-events:none;z-index:0"></div>
+            
+            <div class="quote-page-shell" style="--quote-font-size:11px;--quote-line-height:1.6;--quote-para-gap:12px;padding-top:12mm;padding-bottom:14mm;max-width:100%;text-align:left">
+              
+        <div class="page-header-logo" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #f59e0b; padding-bottom: 6px; margin-bottom: 12px; width: 100%;">
+          <span class="header-company-name" style="display: flex; align-items: center; gap: 8px;">
+            <img src="/assets/sunchaser-logo.png" style="max-height: 25px; object-fit: contain;" alt="Logo" />
+            <span style="font-weight: 800; font-size: 13px; color: #0f172a; letter-spacing: 0.05em;">☀️ SUNCHASER ENERGY SYSTEMS</span>
+          </span>
+          <span style="font-size: 9px; font-weight: 600; color: #64748b;">Page 6</span>
+        </div>
+      
+              <div class="page-title">Official Payment Channels</div>
+
+              
+
+              <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 15px; display: flex; gap: 10px; align-items: center; padding: 8px 12px;">
+                <span style="font-size: 18px;">⚠️</span>
+                <span style="font-size: 10px; color: #b45309; line-height: 1.4; font-weight: 600;">
+                  <strong>Payment Safety Guidelines:</strong> Sunchaser Energy Systems never requests cash handovers or deposits to personal employee accounts. Verify all drafts match the official channels.
+                </span>
+              </div>
+
+              
+
+              <div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 15px;">
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>1. Standard Chartered Bank</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">HELIOS SOLAR ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">1702559001</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK91SCBL0000001702559001</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>2. United Bank Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">HELIOS SOLAR ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">1305307203838</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK93UNIL0109000307203838</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>3. Habib Metropolitan Bank</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">HELIOS SOLAR ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">6121020301714129916</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK42MPBL1210067140129916</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>4. Bank Al Habib Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">HELIOS SOLAR ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">03440981001290017</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK62BAHL0344098100129001</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>5. Bank Alfalah Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">AL ADAM</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">55265001858603</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK12ALFH5526005001858603</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>6. Allied Bank Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">SIGNALS GLOBAL</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">09090010112284650035</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> N/A</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>7. Meezan Bank Limited</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">HELIOS SOLAR ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">02490109527492</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK49MEZN0002490109527492</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>8. Allied Bank</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">SUNCHASER ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">04190010112276940012</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK81ABPA0010112276940012</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>9. Askari Bank</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">SUNCHASER ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">03860200001296</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> PK03ASCM0003860200001296</div>
+      </div>
+    
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 11px; line-height: 1.4;">
+        <div style="font-weight: 800; font-size: 11.5px; color: #0f172a; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <span>10. Bank Islamic</span>
+          <span style="font-size: 7.5px; font-weight: 700; color: #047857; background-color: #d1fae5; padding: 1px 6px; border-radius: 9999px; text-transform: uppercase;">Official Channel</span>
+        </div>
+        <div style="color: #475569;"><strong>Title:</strong> <span style="color: #0f172a; font-weight: 600;">SUNCHASER ENERGY</span></div>
+        <div style="color: #475569;"><strong>A/C:</strong> <span style="color: #0f172a; font-weight: 600; font-family: monospace;">201139501310001</span></div>
+        <div style="color: #475569; font-family: monospace; font-size: 9.5px; word-break: break-all; margin-top: 2px;"><strong>IBAN:</strong> N/A</div>
+      </div>
+    </div>
+              </div>
+
+              <div class="card" style="margin-top: 25px; font-size: 10px; color: #475569; line-height: 1.5; background-color: #fafaf9;">
+                <strong>Verification SLA:</strong> Once a bank transfer, direct deposit, or pay order is dispatched, snap the transfer slip and email to <strong>billing@sunchaser-energy.com</strong> or share with your advisor for warehouse component staging release.
+              </div>
+            </div>
+            
+        <div class="page-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 8.5px; color: #64748b; font-weight: 600; margin-top: auto; width: 100%; gap: 8px;">
+          <span style="flex: 1;">SUNCHASER ENERGY SYSTEMS | Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore</span>
+          <span style="font-size: 7.5px; font-family: monospace; white-space: nowrap;">Doc ID: SC-LEAD-PRE</span>
+        </div>
+      
+          </div>
+        
+      </div>
+    </body>
+    </html>
+  

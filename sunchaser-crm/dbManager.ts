@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import WebSocket from "ws";
@@ -804,6 +805,11 @@ export function parseQuotationExtendedData(row: any): Record<string, any> {
     }
   }
   return {};
+}
+
+/** Globally unique quotation id; legacy ids like q-1 remain valid when already stored. */
+export function generateQuotationId(): string {
+  return `q-${randomUUID()}`;
 }
 
 export function buildQuotationSupabaseRow(
@@ -2346,9 +2352,11 @@ export async function fetchCustomerPortalData(
 }
 
 export class StaffPortalAuthError extends Error {
-  constructor(message: string) {
+  statusCode: number;
+  constructor(message: string, statusCode = 403) {
     super(message);
     this.name = "StaffPortalAuthError";
+    this.statusCode = statusCode;
   }
 }
 

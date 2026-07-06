@@ -96,12 +96,47 @@ async function findUserByEmail(email: string, localDb?: Database) {
     const { data, error } = await supabase
       .from("users")
       .select("*")
-      .ilike("email", normalized)
+      .eq("email", normalized)
       .maybeSingle();
     if (error) throw error;
     return data;
   }
   return (localDb?.users || []).find((u: any) => String(u.email).toLowerCase() === normalized);
+}
+
+function userValidationSource(): "supabase" | "fallback" {
+  return isSupabaseActive() ? "supabase" : "fallback";
+}
+
+async function assertNewUserUnique(username: string, email: string, localDb?: Database) {
+  const validationSource = userValidationSource();
+  console.log("[UserCreate] validate uniqueness", {
+    requestUsername: username,
+    requestEmail: email,
+    validationSource,
+  });
+
+  const byUsername = await findUserByUsername(username, localDb);
+  if (byUsername) {
+    console.log("[UserCreate] username collision", {
+      requestUsername: username,
+      requestEmail: email,
+      matchedUserId: byUsername.id,
+      validationSource,
+    });
+    throw new UserAuthError("Username already exists.");
+  }
+
+  const byEmail = await findUserByEmail(email, localDb);
+  if (byEmail) {
+    console.log("[UserCreate] email collision", {
+      requestUsername: username,
+      requestEmail: email,
+      matchedUserId: byEmail.id,
+      validationSource,
+    });
+    throw new UserAuthError("Email already exists.");
+  }
 }
 
 export async function authenticateUser(
@@ -467,8 +502,7 @@ export async function createUserByAdmin(
     throw new UserAuthError("Username, name, and email are required.");
   }
 
-  if (await findUserByUsername(username, localDb)) throw new UserAuthError("Username taken.");
-  if (await findUserByEmail(email, localDb)) throw new UserAuthError("Email taken.");
+  await assertNewUserUnique(username, email, localDb);
 
   const id = `u-${Date.now()}`;
   const row: any = {
