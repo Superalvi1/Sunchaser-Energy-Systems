@@ -12,6 +12,9 @@
     "clean": "rm -rf dist dist-server server.js",
     "lint": "tsc --noEmit",
     "test:phase-1b1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/middleware/authorization.test.ts",
+    "test:phase-1b2a": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/ownership/ownership.test.ts",
+    "test:phase-1b2b": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/ownership/technicianOwnership.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/ownership/technicianJobsMe.test.ts",
+    "test:phase-1b2c": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/ownership/salesOwnership.test.ts",
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android"
   },

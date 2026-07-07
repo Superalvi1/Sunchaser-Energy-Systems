@@ -8,6 +8,97 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [Phase 1B.2C] — 2026-07-07
+
+**Commit:** _Pending (release prep in progress)_
+
+### Added
+
+- `server/ownership/SalesOwnershipResolver.ts` — centralized sales ownership with durable `assigned_sales_user_id`, Admin/Director/Super Admin bypass, legacy salesperson-name fallback, and app-state filtering
+- `server/ownership/salesOwnership.test.ts` — 26 automated unit tests
+- `docs/phases/PHASE-1B2C-Sales-Ownership.md` — detailed phase documentation
+- `package.json` — `test:phase-1b2c` script
+- `server.ts` — `guardSalesOwnedResource`, `guardSalesOwnedResourceText`, `salesAccessPrecheck`, `resolveSalesUserByNameOrUsername`
+
+### Changed
+
+- `server.ts` — lead, quote, project, customer admin, and PDF export routes enforce sales ownership via `req.actor`
+- `GET /api/state` — scoped for enforcing actors via `filterAppStateForActor` (leads, projects, quotations, paymentTracks, netMeteringTrackers)
+- `PUT /api/leads/:id/assign` — resolves and persists `assigned_sales_user_id` alongside legacy `assigned_salesperson`
+
+### Security
+
+- Sales Executive / Sales Manager may only access resources assigned to their user id.
+- Non-sales roles (Technician, Customer, Accounts Manager, etc.) receive **403** on guarded sales routes.
+- Spoofed `X-Sunchaser-*` headers or body/query identity do not grant cross-salesperson access when JWT is present.
+- Durable user id takes precedence over stale legacy salesperson name.
+- Admin, Director, and Super Admin retain override access.
+- Customer ownership (Phase 1B.2A) and technician ownership (Phase 1B.2B) unchanged.
+
+### Breaking
+
+- Sales staff accessing unassigned or other-rep leads, quotes, customers, projects, or PDFs receive **403**.
+- `GET /api/state` returns scoped data for sales staff (unowned leads hidden).
+- Soft-deleted leads excluded from mutation paths (**404**).
+
+---
+
+## [Phase 1B.2B] — 2026-07-07
+
+**Commit:** _Pending (release prep in progress)_
+
+### Added
+
+- `server/ownership/TechnicianOwnershipResolver.ts` — centralized technician ownership with durable user-id checks and legacy name fallback
+- `server/ownership/technicianOwnership.test.ts` — unit tests for assignment enforcement
+- `server/ownership/technicianJobsMe.test.ts` — integration tests for `/api/technical/jobs/me` filtering
+- `package.json` — `test:phase-1b2b` script
+
+### Changed
+
+- `dbManager.ts` — technical job list/detail uses `TechnicianOwnershipResolver.filterOwnedTechnicalJobs`; durable-id-first assignee matching
+- `projectDeliveryDb.ts` / `projectCompletionDb.ts` — delivery assignment enforced on completion workflows
+
+### Security
+
+- Technicians may only access assigned jobs, service requests, support tickets, warranty visits, and deliveries.
+- Stale legacy `assigned_technician` name cannot override durable `assigned_user_id`.
+
+### Breaking
+
+- Technicians accessing unassigned or other technicians' resources now receive **403**.
+
+---
+
+## [Phase 1B.2A] — 2026-07-07
+
+**Commit:** _Pending (release prep in progress)_
+
+### Added
+
+- `server/ownership/OwnershipResolver.ts` — customer ownership resolver with parent chain resolution
+- `server/middleware/customerRoutePolicy.ts` — customer JWT route allowlist
+- `server/middleware/staffActor.ts` — `resolveStaffActor()` for staff/admin handlers
+- `server/ownership/ownership.test.ts` — customer ownership unit tests
+- `package.json` — `test:phase-1b2a` script
+
+### Changed
+
+- `server.ts` — customer portal routes use `req.actor` only; staff PDF routes use `resolveStaffActor`
+- `server/middleware/authorization.ts` — customer actors blocked from non-allowlisted routes
+- `dbManager.ts` — portal lead lookup scoped to `customerId` only (email/phone fallback removed)
+
+### Security
+
+- Customer JWT actors limited to customer-portal and owned PDF routes.
+- `actor.customerId === resource.customer_id` enforced on protected customer resources.
+
+### Breaking
+
+- Customer actors reaching staff/admin routes receive **403** even with spoofed identity headers.
+
+---
+
 ## [Phase 1B.1] — 2026-07-07
 
 **Commit:** _Pending (release prep in progress)_

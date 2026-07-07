@@ -13,6 +13,14 @@ import { getSupabaseProjectUrlFromEnv } from "./src/lib/quotePdfSettingsStore.ts
 import { filterActiveLeads, isActiveLead } from "./src/lib/leadSoftDelete.ts";
 import { normalizeQuoteBoqRows } from "./src/lib/normalizeRows.ts";
 import { phonesMatch } from "./src/lib/phoneNormalize.ts";
+import { OwnershipResolver, OwnershipError } from "./server/ownership/OwnershipResolver.ts";
+import {
+  TechnicianOwnershipResolver,
+  isRowAssignedToActor,
+  readAssignedUserId,
+} from "./server/ownership/TechnicianOwnershipResolver.ts";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import type { RequestActor } from "./server/middleware/actor.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -2408,78 +2416,45 @@ async function fetchPortalPrimaryLeadRow(
   supabase: SupabaseClient,
   opts: {
     customerId: string | null;
-    userEmail: string;
-    customerPhone?: string | null;
   }
 ): Promise<any | null> {
-  const loadLeads = async (apply?: (rows: any[]) => any[]) => {
-    let { data, error } = await supabase
+  if (!opts.customerId) return null;
+
+  let { data, error } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("customer_id", opts.customerId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error?.message?.includes("deleted_at")) {
+    const fallback = await supabase
       .from("leads")
       .select("*")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
-    if (error?.message?.includes("deleted_at")) {
-      const fallback = await supabase.from("leads").select("*").order("created_at", { ascending: false });
-      data = fallback.data;
-    } else if (error) {
-      throw error;
-    }
-    const active = filterActiveLeads(data || []);
-    return apply ? apply(active) : active;
-  };
-
-  if (opts.customerId) {
-    const byCustomer = await loadLeads((rows) =>
-      rows.filter((l: any) => l.customer_id === opts.customerId)
-    );
-    if (byCustomer.length) return byCustomer[0];
+      .eq("customer_id", opts.customerId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    data = fallback.data;
+    error = fallback.error;
+  } else if (error) {
+    throw error;
   }
 
-  const email = String(opts.userEmail || "").trim();
-  if (email) {
-    const byEmail = await loadLeads((rows) =>
-      rows.filter((l: any) => String(l.email || "").trim() === email)
-    );
-    if (byEmail.length) return byEmail[0];
-  }
-
-  const phone = String(opts.customerPhone || "").trim();
-  if (phone) {
-    const byPhone = await loadLeads((rows) =>
-      rows.filter((l: any) => l.phone && phonesMatch(String(l.phone), phone))
-    );
-    if (byPhone.length) return byPhone[0];
-  }
-
-  return null;
+  const active = filterActiveLeads(data || []);
+  return active[0] || null;
 }
 
-function findPortalPrimaryLeadLocal(
+export function findPortalPrimaryLeadLocal(
   localDb: Database,
   opts: {
     customerId: string | null;
-    userEmail: string;
-    customerPhone?: string | null;
   }
 ): any | null {
+  if (!opts.customerId) return null;
   const leads = filterActiveLeads(localDb.leads || []);
-  if (opts.customerId) {
-    const hit = leads.find(
-      (l: any) => (l.customerId || l.customer_id) === opts.customerId
-    );
-    if (hit) return hit;
-  }
-  const email = String(opts.userEmail || "").trim().toLowerCase();
-  if (email) {
-    const hit = leads.find((l: any) => String(l.email || "").trim().toLowerCase() === email);
-    if (hit) return hit;
-  }
-  const phone = String(opts.customerPhone || "").trim();
-  if (phone) {
-    const hit = leads.find((l: any) => l.phone && phonesMatch(String(l.phone), phone));
-    if (hit) return hit;
-  }
-  return null;
+  return (
+    leads.find((l: any) => (l.customerId || l.customer_id) === opts.customerId) || null
+  );
 }
 
 export async function fetchCustomerPortalData(
@@ -2531,11 +2506,7 @@ export async function fetchCustomerPortalData(
 
     let primaryLeadRow: any = null;
     try {
-      primaryLeadRow = await fetchPortalPrimaryLeadRow(supabase, {
-        customerId,
-        userEmail: userRow.email,
-        customerPhone: customer?.phone,
-      });
+      primaryLeadRow = await fetchPortalPrimaryLeadRow(supabase, { customerId });
     } catch (portalLeadsErr) {
       console.warn("[Portal] lead lookup failed:", portalLeadsErr);
     }
@@ -2702,11 +2673,7 @@ export async function fetchCustomerPortalData(
   }
 
   const customerId = userRow.customerId || userRow.customer_id || null;
-  const lead = findPortalPrimaryLeadLocal(localDb, {
-    customerId,
-    userEmail: userRow.email,
-    customerPhone: null,
-  });
+  const lead = findPortalPrimaryLeadLocal(localDb, { customerId });
 
   const project =
     (localDb.projects || []).find(
@@ -2893,11 +2860,24 @@ export async function verifyStaffPortalUser(
   return { user: userRow, role };
 }
 
-function assertCustomerScope(customerId: string | null, requestedCustomerId?: string) {
+function assertCustomerScope(customerId: string | null) {
   if (!customerId) throw new CustomerPortalAuthError("Customer account is not linked to a project yet.");
-  if (requestedCustomerId && requestedCustomerId !== customerId) {
-    throw new CustomerPortalAuthError("You cannot access another customer's data.");
-  }
+}
+
+export function verifyCustomerPortalActor(actor: RequestActor) {
+  const customerId = OwnershipResolver.assertCustomerActor(actor);
+  return {
+    userId: actor.id,
+    username: actor.username,
+    customerId,
+    role: actor.role,
+    user: {
+      id: actor.id,
+      username: actor.username,
+      name: actor.name,
+      email: actor.email,
+    },
+  };
 }
 
 export async function fetchCustomerPortalDocuments(
@@ -3381,9 +3361,9 @@ function mapTicketWithTimeline(row: any, updates: any[]): any {
   return mapSupportTicketRow(row, timeline);
 }
 
-function ticketBelongsToCustomer(row: any, customerId: string | null, email: string) {
-  if (customerId && row.customer_id === customerId) return true;
-  return String(row.email || "").toLowerCase() === String(email || "").toLowerCase();
+function ticketBelongsToCustomer(row: any, customerId: string | null, _email?: string) {
+  if (!customerId) return false;
+  return String(row.customer_id || row.customerId || "") === customerId;
 }
 
 export async function fetchCustomerSupportTickets(
@@ -3391,17 +3371,16 @@ export async function fetchCustomerSupportTickets(
   username: string,
   localDb?: Database
 ) {
-  const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
-    let query = supabase.from("support_tickets").select("*").order("created_at", { ascending: false });
-    if (customerId) {
-      query = query.eq("customer_id", customerId);
-    } else {
-      query = query.eq("email", user.email);
-    }
-    const { data, error } = await query;
+    const { data, error } = await supabase
+      .from("support_tickets")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false });
     if (error) throw error;
     const ids = (data || []).map((t: any) => t.id);
     const updatesByTicket = await fetchTicketUpdates(supabase, ids);
@@ -3412,11 +3391,7 @@ export async function fetchCustomerSupportTickets(
   }
 
   const tickets = (localDb!.tickets || [])
-    .filter((t: any) =>
-      customerId
-        ? t.customerId === customerId || t.customer_id === customerId
-        : t.email === user.email
-    )
+    .filter((t: any) => t.customerId === customerId || t.customer_id === customerId)
     .map((t: any) => {
       const updates = (localDb!.supportTicketUpdates || []).filter(
         (u: any) => (u.ticketId || u.ticket_id) === t.id
@@ -3464,13 +3439,17 @@ export async function fetchCustomerSupportTicketById(
   localDb?: Database
 ) {
   const { user, customerId } = await verifyCustomerPortalUser(userId, username, localDb);
+  assertCustomerScope(customerId);
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const { data: row, error } = await supabase.from("support_tickets").select("*").eq("id", ticketId).single();
     if (error || !row) throw new CustomerPortalAuthError("Ticket not found.");
-    if (!ticketBelongsToCustomer(row, customerId, user.email)) {
-      throw new CustomerPortalAuthError("You cannot access another customer's ticket.");
+    try {
+      OwnershipResolver.assertDirectOwnership(customerId!, row as Record<string, unknown>);
+    } catch (err: any) {
+      if (err instanceof OwnershipError) throw new CustomerPortalAuthError(err.message);
+      throw err;
     }
     const updatesByTicket = await fetchTicketUpdates(supabase, [ticketId]);
     const ticket = mapTicketWithTimeline(row, updatesByTicket[ticketId] || []);
@@ -3485,14 +3464,13 @@ export async function fetchCustomerSupportTicketById(
 
   const row = (localDb!.tickets || []).find((t: any) => t.id === ticketId);
   if (!row) throw new CustomerPortalAuthError("Ticket not found.");
-  if (
-    !ticketBelongsToCustomer(
-      { customer_id: row.customerId || row.customer_id, email: row.email },
-      customerId,
-      user.email
-    )
-  ) {
-    throw new CustomerPortalAuthError("You cannot access another customer's ticket.");
+  try {
+    OwnershipResolver.assertDirectOwnership(customerId!, {
+      customer_id: row.customerId || row.customer_id,
+    });
+  } catch (err: any) {
+    if (err instanceof OwnershipError) throw new CustomerPortalAuthError(err.message);
+    throw err;
   }
   const updates = (localDb!.supportTicketUpdates || []).filter(
     (u: any) => (u.ticketId || u.ticket_id) === ticketId
@@ -3952,13 +3930,6 @@ export async function createCustomerServiceRequest(
   const { customerId } = await verifyCustomerPortalUser(userId, username, localDb);
   assertCustomerScope(customerId);
 
-  if (body.customer_id || body.customerId) {
-    const attempted = String(body.customer_id || body.customerId);
-    if (attempted !== customerId) {
-      throw new CustomerPortalAuthError("You cannot create a request for another customer.");
-    }
-  }
-
   const serviceType = String(body.serviceType || "").trim();
   if (!SERVICE_TYPES.includes(serviceType as any)) {
     throw new CustomerPortalAuthError("Invalid service type.");
@@ -4038,15 +4009,28 @@ export async function fetchCustomerServiceRequestById(
       throw new CustomerPortalAuthError("Service request not found.");
     }
     if (error || !data) throw new CustomerPortalAuthError("Service request not found.");
-    if (!serviceRequestBelongsToCustomer(data, customerId!)) {
-      throw new CustomerPortalAuthError("You cannot access another customer's service request.");
+    try {
+      OwnershipResolver.assertDirectOwnership(customerId!, data as Record<string, unknown>);
+    } catch (err: any) {
+      if (err instanceof OwnershipError) {
+        throw new CustomerPortalAuthError(err.message);
+      }
+      throw err;
     }
     return { request: mapServiceRequestRow(data) };
   }
 
   const row = (localDb!.serviceRequests || []).find((r: any) => r.id === requestId);
-  if (!row || !serviceRequestBelongsToCustomer(row, customerId!)) {
-    throw new CustomerPortalAuthError("Service request not found.");
+  if (!row) throw new CustomerPortalAuthError("Service request not found.");
+  try {
+    OwnershipResolver.assertDirectOwnership(customerId!, {
+      customer_id: row.customerId || row.customer_id,
+    });
+  } catch (err: any) {
+    if (err instanceof OwnershipError) {
+      throw new CustomerPortalAuthError(err.message);
+    }
+    throw err;
   }
   return {
     request: mapServiceRequestRow({
@@ -5910,19 +5894,22 @@ export async function verifyTechnicalStaffUser(
   return { user: userRow, role };
 }
 
-function technicianMatchesAssignee(assignee: string | null | undefined, user: any) {
-  const a = String(assignee || "").trim().toLowerCase();
-  if (!a) return false;
-  const name = String(user.name || "").trim().toLowerCase();
-  const username = String(user.username || "").trim().toLowerCase();
-  const userId = String(user.id || "").trim().toLowerCase();
-  return (
-    a === name ||
-    a === username ||
-    a === userId ||
-    (name.length > 2 && (a.includes(name) || name.includes(a))) ||
-    (username.length > 2 && (a.includes(username) || username.includes(a)))
-  );
+function toTechnicalStaffActor(user: any, role: string): RequestActor {
+  return {
+    id: String(user.id),
+    username: String(user.username || ""),
+    name: String(user.name || ""),
+    email: String(user.email || ""),
+    role,
+    accountStatus: String(user.accountStatus || user.account_status || "Approved"),
+    emailVerified: user.emailVerified ?? user.email_verified ?? true,
+    onboardingCompleted: user.onboardingCompleted ?? user.onboarding_completed ?? true,
+    authMethod: "legacy_header",
+  };
+}
+
+function rowAssignedToUser(row: Record<string, unknown>, user: any, role: string): boolean {
+  return isRowAssignedToActor(toTechnicalStaffActor(user, role), row);
 }
 
 function mapServiceTypeToJobType(serviceType: string): string {
@@ -6014,15 +6001,11 @@ async function buildTechnicalJobsForUser(
   localDb?: Database
 ): Promise<TechnicalJobCard[]> {
   const jobs: TechnicalJobCard[] = [];
-  const updates = await fetchTechnicalJobUpdates(localDb);
   const today = new Date().toISOString().slice(0, 10);
 
   const pushJob = (card: TechnicalJobCard) => {
     if (jobs.some((j) => j.id === card.id)) return;
-    jobs.push({
-      ...card,
-      status: overlayTechnicalStatus(card.id, card.status, updates),
-    });
+    jobs.push(card);
   };
 
   if (isSupabaseActive()) {
@@ -6085,14 +6068,10 @@ async function buildTechnicalJobsForUser(
 
     const { data: svcRows } = await supabase.from("service_requests").select("*").order("updated_at", { ascending: false }).limit(100);
     for (const row of svcRows || []) {
-      if (!technicianMatchesAssignee(row.assigned_technician, user) && role !== "Survey Engineer" && role !== "Installation Team") {
-        continue;
-      }
-      if ((role === "Survey Engineer" || role === "Installation Team") && !technicianMatchesAssignee(row.assigned_technician, user)) {
-        continue;
-      }
+      if (!rowAssignedToUser(row as Record<string, unknown>, user, role)) continue;
       const cid = row.customer_id;
       const basics = await loadCustomerBasics(cid, localDb);
+      const durableAssigneeId = readAssignedUserId(row as Record<string, unknown>);
       pushJob({
         id: `svc-${row.id}`,
         customerId: cid,
@@ -6106,7 +6085,7 @@ async function buildTechnicalJobsForUser(
         scheduledTime: row.preferred_time || null,
         status: row.status || "Assigned",
         assignedTechnician: row.assigned_technician || user.name,
-        assignedUserId: user.id,
+        assignedUserId: durableAssigneeId || user.id,
         serviceRequestId: row.id,
         notes: row.notes,
       });
@@ -6114,10 +6093,11 @@ async function buildTechnicalJobsForUser(
 
     const { data: tickets } = await supabase.from("support_tickets").select("*").order("updated_at", { ascending: false }).limit(80);
     for (const t of tickets || []) {
-      if (!technicianMatchesAssignee(t.assigned_technician, user)) continue;
+      if (!rowAssignedToUser(t as Record<string, unknown>, user, role)) continue;
       if (t.status === "Closed" || t.status === "Resolved") continue;
       const cid = t.customer_id;
       const basics = await loadCustomerBasics(cid, localDb);
+      const durableAssigneeId = readAssignedUserId(t as Record<string, unknown>);
       pushJob({
         id: `sup-${t.id}`,
         customerId: cid,
@@ -6131,33 +6111,9 @@ async function buildTechnicalJobsForUser(
         scheduledTime: t.preferred_visit_time || null,
         status: t.status || "Assigned",
         assignedTechnician: t.assigned_technician || user.name,
-        assignedUserId: user.id,
+        assignedUserId: durableAssigneeId || user.id,
         supportTicketId: t.id,
         notes: t.description,
-      });
-    }
-
-    const { data: claims } = await supabase.from("warranty_claims").select("*").order("updated_at", { ascending: false }).limit(50);
-    for (const c of claims || []) {
-      if (!["New", "In Review", "Technician Assigned"].includes(String(c.status || ""))) continue;
-      const cid = c.customer_id;
-      const basics = await loadCustomerBasics(cid, localDb);
-      pushJob({
-        id: `war-${c.id}`,
-        customerId: cid,
-        projectId: null,
-        customerName: basics.name,
-        customerPhone: basics.phone,
-        siteAddress: basics.address,
-        jobType: "Warranty Claim",
-        priority: "Normal",
-        scheduledDate: today,
-        scheduledTime: null,
-        status: c.status === "Technician Assigned" ? "Assigned" : "Assigned",
-        assignedTechnician: user.name,
-        assignedUserId: user.id,
-        warrantyClaimId: c.id,
-        notes: c.issue_description,
       });
     }
   } else if (localDb) {
@@ -6204,7 +6160,8 @@ async function buildTechnicalJobsForUser(
       }
     }
     for (const row of localDb.serviceRequests || []) {
-      if (!technicianMatchesAssignee(row.assignedTechnician || row.assigned_technician, user)) continue;
+      if (!rowAssignedToUser(row as Record<string, unknown>, user, role)) continue;
+      const durableAssigneeId = readAssignedUserId(row as Record<string, unknown>);
       pushJob({
         id: `svc-${row.id}`,
         customerId: row.customerId || row.customer_id,
@@ -6218,14 +6175,15 @@ async function buildTechnicalJobsForUser(
         scheduledTime: row.preferredTime || row.preferred_time || null,
         status: row.status || "Assigned",
         assignedTechnician: row.assignedTechnician || row.assigned_technician || user.name,
-        assignedUserId: user.id,
+        assignedUserId: durableAssigneeId || user.id,
         serviceRequestId: row.id,
         notes: row.notes,
       });
     }
     for (const t of localDb.tickets || []) {
-      if (!technicianMatchesAssignee(t.assignedTechnician, user)) continue;
+      if (!rowAssignedToUser(t as Record<string, unknown>, user, role)) continue;
       if (t.status === "Closed" || t.status === "Resolved") continue;
+      const durableAssigneeId = readAssignedUserId(t as Record<string, unknown>);
       pushJob({
         id: `sup-${t.id}`,
         customerId: t.customerId,
@@ -6239,34 +6197,31 @@ async function buildTechnicalJobsForUser(
         scheduledTime: t.preferredVisitTime || null,
         status: t.status || "Assigned",
         assignedTechnician: t.assignedTechnician || user.name,
-        assignedUserId: user.id,
+        assignedUserId: durableAssigneeId || user.id,
         supportTicketId: t.id,
         notes: t.description,
-      });
-    }
-    for (const c of localDb.warrantyClaims || []) {
-      if (!["New", "In Review", "Technician Assigned"].includes(c.status)) continue;
-      pushJob({
-        id: `war-${c.id}`,
-        customerId: c.customerId || c.customer_id,
-        projectId: null,
-        customerName: "Customer",
-        customerPhone: "",
-        siteAddress: "",
-        jobType: "Warranty Claim",
-        priority: "Normal",
-        scheduledDate: today,
-        scheduledTime: null,
-        status: "Assigned",
-        assignedTechnician: user.name,
-        assignedUserId: user.id,
-        warrantyClaimId: c.id,
-        notes: c.issueDescription || c.issue_description,
       });
     }
   }
 
   return jobs;
+}
+
+async function listOwnedTechnicalJobCards(
+  actor: RequestActor,
+  localDb?: Database
+): Promise<TechnicalJobCard[]> {
+  const user = { id: actor.id, name: actor.name, username: actor.username };
+  const candidates = await buildTechnicalJobsForUser(user, actor.role, localDb);
+  const owned = await TechnicianOwnershipResolver.filterOwnedTechnicalJobs(actor, candidates, localDb);
+  const ownedIds = new Set(owned.map((job) => job.id));
+  const updates = (await fetchTechnicalJobUpdates(localDb)).filter((update) =>
+    ownedIds.has(String(update.job_id || update.jobId))
+  );
+  return owned.map((job) => ({
+    ...job,
+    status: overlayTechnicalStatus(job.id, job.status, updates),
+  }));
 }
 
 function buildTechnicalDashboard(jobs: TechnicalJobCard[]): TechnicalJobsDashboard {
@@ -6298,7 +6253,8 @@ export async function listTechnicalJobsForUser(
   localDb?: Database
 ) {
   const { user, role } = await verifyTechnicalStaffUser(userId, username, localDb);
-  const jobs = await buildTechnicalJobsForUser(user, role, localDb);
+  const actor = toTechnicalStaffActor(user, role);
+  const jobs = await listOwnedTechnicalJobCards(actor, localDb);
   return buildTechnicalDashboard(jobs);
 }
 
@@ -6308,8 +6264,9 @@ export async function getTechnicalJobById(
   jobId: string,
   localDb?: Database
 ) {
-  const { user } = await verifyTechnicalStaffUser(userId, username, localDb);
-  const jobs = await buildTechnicalJobsForUser(user, (await verifyTechnicalStaffUser(userId, username, localDb)).role, localDb);
+  const { user, role } = await verifyTechnicalStaffUser(userId, username, localDb);
+  const actor = toTechnicalStaffActor(user, role);
+  const jobs = await listOwnedTechnicalJobCards(actor, localDb);
   const job = jobs.find((j) => j.id === jobId);
   if (!job) throw new TechnicalStaffAuthError("Job not found or not assigned to you.");
 

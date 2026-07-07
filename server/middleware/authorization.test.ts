@@ -18,6 +18,7 @@ import {
   isProtectedApiRoute,
   resolveRouteAccessPolicy,
 } from "./routePolicy.ts";
+import { isCustomerAllowedApiRoute } from "./customerRoutePolicy.ts";
 import { createAuthorizationMiddleware } from "./authorization.ts";
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || "phase-1b1-test-secret-min-32-chars";
@@ -34,6 +35,7 @@ type MockUser = {
   email: string;
   role: string;
   account_status: string;
+  customerId?: string;
 };
 
 const mockDb = {
@@ -53,6 +55,15 @@ const mockDb = {
       email: "suspended@test.com",
       role: "Sales Executive",
       account_status: "Suspended",
+    },
+    {
+      id: "u-customer",
+      username: "portaluser",
+      name: "Portal User",
+      email: "shared@test.com",
+      role: "Customer",
+      account_status: "Approved",
+      customerId: "cust-1",
     },
   ] as MockUser[],
 };
@@ -282,6 +293,59 @@ await test("unknown /api route fails closed without credentials", async () => {
   });
   assert.equal(nextCalled, false);
   assert.equal(res.statusCode, 401);
+});
+
+await test("customer allowed routes include portal and owned invoice PDF", () => {
+  assert.equal(isCustomerAllowedApiRoute("/api/customer-portal/me"), true);
+  assert.equal(isCustomerAllowedApiRoute("/api/auth/me"), true);
+  assert.equal(isCustomerAllowedApiRoute("/api/export/pdf/invoice/inv-1"), true);
+  assert.equal(isCustomerAllowedApiRoute("/api/admin/users"), false);
+});
+
+await test("customer JWT blocked from staff admin routes", async () => {
+  const middleware = createAuthorizationMiddleware({
+    resolveLocalDb: () => mockDb as never,
+  });
+  const token = signAccessToken({
+    userId: "u-customer",
+    username: "portaluser",
+    role: "Customer",
+  });
+  const req = mockReq({
+    path: "/api/admin/users",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const res = mockRes();
+  let nextCalled = false;
+  await middleware(req, res, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 403);
+  assert.deepEqual(res.body, { error: "Not authorized for staff routes." });
+});
+
+await test("customer JWT allowed on customer-portal routes", async () => {
+  const middleware = createAuthorizationMiddleware({
+    resolveLocalDb: () => mockDb as never,
+  });
+  const token = signAccessToken({
+    userId: "u-customer",
+    username: "portaluser",
+    role: "Customer",
+  });
+  const req = mockReq({
+    path: "/api/customer-portal/invoices/me",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const res = mockRes();
+  let nextCalled = false;
+  await middleware(req, res, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, true);
+  assert.equal(req.actor?.role, "Customer");
+  assert.equal(req.actor?.customerId, "cust-1");
 });
 
 console.log(`\nPhase 1B.1 tests: ${passed} passed, ${failed} failed`);

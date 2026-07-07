@@ -7,6 +7,7 @@ import {
   isLegacyHeaderAuthEnabled,
 } from "./actor.ts";
 import { isPublicApiRoute } from "./publicRoutes.ts";
+import { isCustomerAllowedApiRoute } from "./customerRoutePolicy.ts";
 import { isProtectedApiRoute, resolveRouteAccessPolicy } from "./routePolicy.ts";
 
 declare global {
@@ -66,6 +67,10 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
       const hydrated = await hydrateActorFromJwt(token, localDb);
       if (hydrated.ok) {
         req.actor = hydrated.actor;
+        if (req.actor.role === "Customer" && !isCustomerAllowedApiRoute(path)) {
+          sendAuthFailure(res, 403, "Not authorized for staff routes.");
+          return;
+        }
         next();
         return;
       }
@@ -93,6 +98,10 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
     }
 
     req.actor = legacy.actor;
+    if (req.actor.role === "Customer" && !isCustomerAllowedApiRoute(path)) {
+      sendAuthFailure(res, 403, "Not authorized for staff routes.");
+      return;
+    }
     next();
   };
 }
