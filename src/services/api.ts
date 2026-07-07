@@ -57,7 +57,7 @@ export function clearAuthSession(): void {
   localStorage.removeItem(AUTH_USER_KEY);
 }
 
-function withAuthHeaders(init?: RequestInit): RequestInit {
+export function withAuthHeaders(init?: RequestInit): RequestInit {
   const headers = new Headers(init?.headers || undefined);
   if (!headers.has("Content-Type") && init?.body) {
     headers.set("Content-Type", "application/json");
@@ -71,6 +71,11 @@ function withAuthHeaders(init?: RequestInit): RequestInit {
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
+  return fetch(url, withAuthHeaders(init));
+}
+
+export async function authorizedFetch(pathOrUrl: string, init?: RequestInit): Promise<Response> {
+  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${API_BASE_URL}${pathOrUrl}`;
   return fetch(url, withAuthHeaders(init));
 }
 
@@ -206,11 +211,7 @@ export async function fetchCustomerPortalMe(
   try {
     const res = await fetchWithTimeout("/api/customer-portal/me", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Sunchaser-User-Id": userId,
-        "X-Sunchaser-Username": username,
-      },
+      headers: portalAuthHeaders(userId, username),
       body: JSON.stringify({ userId, username }),
     });
     if (!res.ok) {
@@ -226,18 +227,15 @@ export async function fetchCustomerPortalMe(
   }
 }
 
-function portalAuthHeaders(userId: string, username: string) {
+function portalAuthHeaders(_userId: string, _username: string) {
   return {
     "Content-Type": "application/json",
-    "X-Sunchaser-User-Id": userId,
-    "X-Sunchaser-Username": username,
   };
 }
 
-function staffPortalHeaders(userId: string, username: string, role: string) {
+function staffPortalHeaders(userId: string, username: string, _role: string) {
   return {
     ...portalAuthHeaders(userId, username),
-    "X-Sunchaser-Role": role,
   };
 }
 
@@ -1157,9 +1155,10 @@ export function uploadAdminCustomerDocumentWithProgress(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
     xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.setRequestHeader("X-Sunchaser-User-Id", staff.id);
-    xhr.setRequestHeader("X-Sunchaser-Username", staff.username);
-    xhr.setRequestHeader("X-Sunchaser-Role", staff.role);
+    const token = getStoredAuthToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
@@ -1673,11 +1672,7 @@ export async function deleteLead(id: string): Promise<any> {
 
 export async function fetchDeletedLeads(userId: string, username: string, role: string): Promise<{ leads: any[] }> {
   const res = await apiFetch("/api/leads/deleted", {
-    headers: {
-      "X-Sunchaser-User-Id": userId,
-      "X-Sunchaser-Username": username,
-      "X-Sunchaser-Role": role,
-    },
+    headers: portalAuthHeaders(userId, username),
   });
   if (!res.ok) throw new Error("Failed to fetch deleted leads.");
   return res.json();
@@ -1686,12 +1681,7 @@ export async function fetchDeletedLeads(userId: string, username: string, role: 
 export async function restoreLead(id: string, userId: string, username: string, role: string): Promise<any> {
   const res = await apiFetch(`/api/leads/${id}/restore`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Sunchaser-User-Id": userId,
-      "X-Sunchaser-Username": username,
-      "X-Sunchaser-Role": role,
-    },
+    headers: portalAuthHeaders(userId, username),
     body: JSON.stringify({ role }),
   });
   if (!res.ok) throw new Error("Failed to restore lead.");

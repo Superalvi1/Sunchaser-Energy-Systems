@@ -11,7 +11,7 @@ import {
   type AuthoringPageType,
   type ContentLibraryBlock,
 } from "../../lib/quoteAuthoring";
-import { API_BASE_URL } from "../../services/api";
+import { API_BASE_URL, authorizedFetch } from "../../services/api";
 import type { QuoteImageSection } from "../../lib/quotePdfLayout";
 
 export type PageAuthoringState = {
@@ -57,7 +57,7 @@ async function uploadSignatureImage(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("Read failed"));
     reader.readAsDataURL(file);
   });
-  const response = await fetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
+  const response = await authorizedFetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ base64Data, settingsId: "signature" }),

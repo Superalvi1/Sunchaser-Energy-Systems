@@ -24,7 +24,7 @@ import {
   type BoqPackageStructureType,
 } from "../lib/boqPackageLibrary";
 import { Lead, Ticket, InventoryItem, Product, User } from "../types";
-import { currencySymbol, API_BASE_URL, fetchDeletedLeads, restoreLead } from "../services/api";
+import { currencySymbol, API_BASE_URL, authorizedFetch, fetchDeletedLeads, restoreLead } from "../services/api";
 import { isSuperAdmin } from "../lib/roles";
 import WhatsAppModule from "./WhatsAppModule";
 import CustomerLinkingStaff from "./CustomerLinkingStaff";
@@ -89,7 +89,7 @@ export default function ManualAdminControl({
   const saveDbChange = async (action: "add" | "edit" | "delete" | "update_raw", table: string, data: any, id?: string) => {
     setSyncing(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/db/update`, {
+      const res = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, table, data, id })
@@ -1516,7 +1516,7 @@ export default function ManualAdminControl({
                       onPhonePersist={(p) => {
                         const lead = leads.find((l) => l.id === drilldownCust.id);
                         if (lead) {
-                          fetch(`${API_BASE_URL}/api/leads/${lead.id}`, {
+                          authorizedFetch(`${API_BASE_URL}/api/leads/${lead.id}`, {
                             method: "PUT",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ ...lead, phone: p }),

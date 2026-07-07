@@ -4,7 +4,7 @@ import {
   MapPin, Loader2, Sparkles, Inbox, RefreshCw, Layers, DollarSign, CloudSun, Eye, Trash2, ShieldCheck, Plus, CheckCircle, Info
 } from "lucide-react";
 import { Lead, Installation, InstallationTask } from "../types";
-import { currencySymbol, API_BASE_URL } from "../services/api";
+import { currencySymbol, API_BASE_URL, authorizedFetch } from "../services/api";
 
 interface InstallationTeamAppProps {
   leads: Lead[];
@@ -126,7 +126,7 @@ export default function InstallationTeamApp({
     };
 
     // Perform state update fetch 
-    const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/survey-report`, {
+    const res = await authorizedFetch(`${API_BASE_URL}/api/leads/${activeLead.id}/survey-report`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(surveyReport)

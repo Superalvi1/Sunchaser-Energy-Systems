@@ -6,6 +6,26 @@ This document records **completed** engineering phases only. Future phases are n
 
 ## Completed
 
+### Phase 1B.1 — Authorization Foundation
+
+**Commit:** _Pending (release prep in progress)_  
+**Documentation:** [PHASE-1B1-Authorization-Foundation.md](../phases/PHASE-1B1-Authorization-Foundation.md)
+
+**Delivered:**
+
+- Centralized `/api/*` authorization middleware with explicit public allowlist
+- Fail-closed default route protection model
+- Route policy split: `public`, `jwt_only`, and `protected`
+- JWT actor hydration (`req.actor`) with account-status checks
+- Phase 1A routes preserved as JWT-only (`/api/state`, `/api/backup/export`, `/api/db/update`, `/api/diagnostics/*`, `/api/debug/*`)
+- Frontend migration of legacy non-Bearer callers to Bearer-aware transport
+- Frontend removal of `X-Sunchaser-*` identity headers from migrated callers
+- Phase-specific automated middleware tests (`test:phase-1b1`)
+
+**Deployment note:** Keep `LEGACY_HEADER_AUTH=false` for strict enforcement after frontend migration.
+
+---
+
 ### Phase 1A — Security Foundation
 
 **Commit:** `39ad363`  

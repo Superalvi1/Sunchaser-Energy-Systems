@@ -10,7 +10,17 @@ import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import InventoryStaff from "./InventoryStaff";
 import AppModal from "./ui/AppModal";
 import { useToast } from "../lib/toast";
-import { generateProposalDocument, sendWhatsAppReminder, generateSizingRecommendations, currencySymbol, API_BASE_URL, deleteCatalogProduct, updateCatalogProduct, resolveCustomerForLead } from "../services/api";
+import {
+  generateProposalDocument,
+  sendWhatsAppReminder,
+  generateSizingRecommendations,
+  currencySymbol,
+  API_BASE_URL,
+  authorizedFetch,
+  deleteCatalogProduct,
+  updateCatalogProduct,
+  resolveCustomerForLead,
+} from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import CustomerInvitationPanel from "./CustomerInvitationPanel";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
@@ -304,7 +314,7 @@ export default function SalesTeamApp({
   });
 
   const persistPackageToLibrary = async (action: "add" | "edit", data: BoqPackageRecord, id?: string) => {
-    const res = await fetch(`${API_BASE_URL}/api/db/update`, {
+    const res = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, table: "solarPackages", data, id: id || data.id }),
@@ -647,7 +657,7 @@ export default function SalesTeamApp({
         },
       };
 
-      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+      const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -698,7 +708,7 @@ export default function SalesTeamApp({
     try {
       const base64Data = await readFileAsDataUrl(file);
       const settingsId = quotePdfSettings?.[0]?.id || "settings-1";
-      const response = await fetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
+      const response = await authorizedFetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ base64Data, settingsId }),
@@ -719,7 +729,7 @@ export default function SalesTeamApp({
         position: globalWatermarkPosition,
         repeat: "no-repeat" as const,
       };
-      await fetch(`${API_BASE_URL}/api/db/update`, {
+      await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -747,7 +757,7 @@ export default function SalesTeamApp({
   const handleRemoveGlobalWatermark = async () => {
     if (globalWatermarkFile) {
       try {
-        await fetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
+        await authorizedFetch(`${API_BASE_URL}/api/quote-assets/watermark`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ globalWatermarkFile }),
@@ -833,7 +843,7 @@ export default function SalesTeamApp({
       reader.readAsDataURL(file);
     });
 
-    const response = await fetch(`${API_BASE_URL}/api/upload`, {
+    const response = await authorizedFetch(`${API_BASE_URL}/api/upload`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base64Data: dataUrl, filename: file.name })
@@ -1753,7 +1763,7 @@ export default function SalesTeamApp({
       };
 
       if (sizerEditingQuoteId) {
-        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
+        const res = await authorizedFetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ quoteId: sizerEditingQuoteId, ...quoteData }),
@@ -1763,7 +1773,7 @@ export default function SalesTeamApp({
           throw new Error(errData.error || "Failed to update auto sizer quote.");
         }
       } else {
-        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/create-quote`, {
+        const res = await authorizedFetch(`${API_BASE_URL}/api/leads/${activeLead.id}/create-quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(quoteData),
@@ -1924,7 +1934,7 @@ export default function SalesTeamApp({
       let savedQuoteId = editingQuoteId;
 
       if (editingQuoteId) {
-        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
+        const res = await authorizedFetch(`${API_BASE_URL}/api/leads/${activeLead.id}/update-quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ quoteId: editingQuoteId, ...quoteData })
@@ -1935,7 +1945,7 @@ export default function SalesTeamApp({
         }
         savedQuoteId = editingQuoteId;
       } else {
-        const res = await fetch(`${API_BASE_URL}/api/leads/${activeLead.id}/create-quote`, {
+        const res = await authorizedFetch(`${API_BASE_URL}/api/leads/${activeLead.id}/create-quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(quoteData)
@@ -2052,7 +2062,7 @@ export default function SalesTeamApp({
     try {
       setLoadingPreview(true);
       setShowProposalPreview(true);
-      const response = await fetch(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${targetManualQuote.id}`);
+      const response = await authorizedFetch(`${API_BASE_URL}/api/export/pdf/manual-quote/${activeLead.id}?quoteId=${targetManualQuote.id}`);
       if (!response.ok) {
         throw new Error(`Failed to compile proposal preview layout: ${response.statusText}`);
       }
@@ -2376,7 +2386,7 @@ export default function SalesTeamApp({
     const templateMeta = getAuthoringTemplateMeta(resolveAuthoringPageType(state.authoringPageType));
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+      const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2549,7 +2559,7 @@ export default function SalesTeamApp({
         }
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/upload`, {
+      const response = await authorizedFetch(`${API_BASE_URL}/api/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2595,12 +2605,12 @@ export default function SalesTeamApp({
 
     try {
       // Save both pages updates
-      await fetch(`${API_BASE_URL}/api/db/update`, {
+      await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "edit", table: "quoteTemplatePages", id: list[idx].id, data: { sort_order: list[idx].sort_order } })
       });
-      await fetch(`${API_BASE_URL}/api/db/update`, {
+      await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "edit", table: "quoteTemplatePages", id: list[targetIdx].id, data: { sort_order: list[targetIdx].sort_order } })
@@ -2618,7 +2628,7 @@ export default function SalesTeamApp({
     const maxOrder = Math.max(0, ...quoteTemplatePages.map((p) => Number(p.sort_order || p.sortOrder || 0)));
     const newId = `tmpl-p-${Date.now()}`;
     try {
-      const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+      const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2696,7 +2706,7 @@ export default function SalesTeamApp({
       if (editingProduct) {
         await updateCatalogProduct(payload);
       } else {
-        const response = await fetch(`${API_BASE_URL}/api/db/update`, {
+        const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

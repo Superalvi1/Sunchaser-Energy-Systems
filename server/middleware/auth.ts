@@ -1,5 +1,12 @@
 import type { NextFunction, Request, Response } from "express";
-import { verifyAccessToken } from "../auth/jwt.ts";
+import type { Database } from "../../dbManager";
+import {
+  actorToLegacyUser,
+  hydrateActorFromJwt,
+  readBearerToken,
+  type RequestActor,
+} from "./actor.ts";
+import { isMigratedProtectedRoute, isProtectedApiPath } from "./routePolicy.ts";
 
 export type AuthenticatedUser = {
   id: string;
@@ -11,51 +18,80 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthenticatedUser;
+      actor?: RequestActor;
     }
   }
 }
 
-function readBearerToken(req: Request): string | null {
-  const header = String(req.headers.authorization || "").trim();
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  return match?.[1]?.trim() || null;
+type RequireAuthDeps = {
+  resolveLocalDb: () => Database;
+};
+
+function applyActorToRequest(req: Request, actor: RequestActor): void {
+  req.actor = actor;
+  req.user = actorToLegacyUser(actor);
 }
 
+function sendUnauthorized(res: Response): void {
+  res.status(401).json({ error: "Unauthorized" });
+}
+
+export function createRequireAuth(deps: RequireAuthDeps) {
+  return async function requireAuth(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    if (req.actor) {
+      req.user = actorToLegacyUser(req.actor);
+      next();
+      return;
+    }
+
+    const token = readBearerToken(req);
+    if (!token) {
+      sendUnauthorized(res);
+      return;
+    }
+
+    try {
+      const hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
+      if (!hydrated.ok) {
+        res.status(hydrated.status).json({ error: hydrated.error });
+        return;
+      }
+      applyActorToRequest(req, hydrated.actor);
+      next();
+    } catch {
+      sendUnauthorized(res);
+    }
+  };
+}
+
+/** @deprecated Phase 1A sync guard — prefer createRequireAuth with DB hydration. */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const token = readBearerToken(req);
   if (!token) {
-    res.status(401).json({ error: "Unauthorized" });
+    sendUnauthorized(res);
     return;
   }
-  try {
-    const claims = verifyAccessToken(token);
-    req.user = {
-      id: claims.userId,
-      username: claims.username,
-      role: claims.role,
-    };
+  if (req.actor) {
+    req.user = actorToLegacyUser(req.actor);
     next();
-  } catch {
-    res.status(401).json({ error: "Unauthorized" });
+    return;
   }
+  sendUnauthorized(res);
 }
 
-const PROTECTED_EXACT = new Set(["/api/state", "/api/backup/export", "/api/db/update"]);
+export { isMigratedProtectedRoute, isProtectedApiPath };
 
-export function isProtectedApiPath(pathname: string): boolean {
-  if (PROTECTED_EXACT.has(pathname)) return true;
-  if (pathname.startsWith("/api/diagnostics/")) return true;
-  if (pathname.startsWith("/api/debug/")) return true;
-  return false;
-}
-
-/** Apply JWT auth only to Phase 1A protected routes. */
+/** @deprecated Replaced by createAuthorizationMiddleware in Phase 1B.1. */
 export function protectSelectedApiRoutes(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  if (!isProtectedApiPath(req.path)) {
+  if (!isMigratedProtectedRoute(req.path)) {
     next();
     return;
   }

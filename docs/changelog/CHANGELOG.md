@@ -8,7 +8,44 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_No unreleased application changes documented._
+## [Phase 1B.1] — 2026-07-07
+
+**Commit:** _Pending (release prep in progress)_
+
+### Added
+
+- `server/middleware/actor.ts` — actor hydration from JWT/legacy headers with account-status guardrails
+- `server/middleware/publicRoutes.ts` — explicit public route allowlist
+- `server/middleware/routePolicy.ts` — route policy classification for centralized auth
+- `server/middleware/authorization.ts` — fail-closed `/api/*` authorization middleware
+- `server/middleware/authorization.test.ts` — automated tests for policy and fallback behavior
+- `docs/phases/PHASE-1B1-Authorization-Foundation.md` — detailed phase documentation
+
+### Changed
+
+- `server.ts` wires centralized authorization middleware and actor-aware auth flow
+- `server/middleware/auth.ts` aligned with `req.actor` hydration flow
+- `.env.example` documents `LEGACY_HEADER_AUTH` default/bridge behavior
+- `package.json` adds `test:phase-1b1`
+- Frontend non-`apiFetch` callers migrated to Bearer-aware transport:
+  - `src/components/SalesTeamApp.tsx`
+  - `src/components/AdminApp.tsx`
+  - `src/components/ManualAdminControl.tsx`
+  - `src/components/InstallationTeamApp.tsx`
+  - `src/components/quoteAuthoring/QuotePageAuthoringFields.tsx`
+  - `src/lib/quotePdfExport.ts`
+  - `src/lib/quotePdfRender.ts`
+  - `src/services/api.ts`
+
+### Security
+
+- Public routes are explicit; all other `/api/*` routes are protected by default.
+- Phase 1A JWT routes (`/api/state`, `/api/backup/export`, `/api/db/update`, `/api/diagnostics/*`, `/api/debug/*`) remain JWT-only.
+- Frontend migrated callers now attach `Authorization: Bearer <token>` instead of relying on `X-Sunchaser-*` identity headers.
+
+### Breaking
+
+- Requests to protected `/api/*` routes without valid Bearer JWT now fail closed (`401`) when `LEGACY_HEADER_AUTH=false` (default).
 
 ---
 

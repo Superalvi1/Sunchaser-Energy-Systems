@@ -281,7 +281,9 @@ import {
   findUserByUsername,
 } from "./userAuthDb.js";
 import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
-import { protectSelectedApiRoutes, requireAuth } from "./server/middleware/auth.ts";
+import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
+import { createRequireAuth } from "./server/middleware/auth.ts";
+import { actorToApiUser } from "./server/middleware/actor.ts";
 import { loginRateLimit } from "./server/middleware/rateLimit.ts";
 import {
   listManagedRoles,
@@ -424,7 +426,14 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(protectSelectedApiRoutes);
+const resolveAuthLocalDb = () => {
+  loadDb();
+  return db;
+};
+
+app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+
+const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
 // Production database requirement check
 if (process.env.NODE_ENV === "production") {
@@ -866,20 +875,10 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
 
 app.get("/api/auth/me", requireAuth, async (req, res) => {
   try {
-    loadDb();
-    const actor = req.user;
-    if (!actor?.username) {
+    if (!req.actor) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    const row = await findUserByUsername(actor.username, db);
-    if (!row) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    const status = row.account_status || row.accountStatus || "Approved";
-    if (status === "Suspended" || status === "Rejected") {
-      return res.status(403).json({ error: "Account is not active." });
-    }
-    return res.json({ success: true, user: mapUserRow(row) });
+    return res.json({ success: true, user: actorToApiUser(req.actor) });
   } catch (err: any) {
     console.error("[Auth Me Error]:", err);
     return res.status(500).json({ error: err.message || "Failed to load session." });

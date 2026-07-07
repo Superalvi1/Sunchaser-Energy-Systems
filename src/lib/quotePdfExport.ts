@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../services/api";
+import { API_BASE_URL, authorizedFetch } from "../services/api";
 import { PDF_ENGINE_MISSING_MESSAGE } from "./quotePdfErrors";
 
 function friendlyPdfError(status: number, text: string): string {
@@ -28,7 +28,7 @@ function parseContentDispositionFilename(header: string | null): string | null {
 
 /** Direct PDF file download — no new tab, no print dialog. */
 export async function downloadManualQuotePdf(leadId: string, quoteId?: string): Promise<void> {
-  const res = await fetch(manualQuotePdfDownloadUrl(leadId, quoteId));
+  const res = await authorizedFetch(manualQuotePdfDownloadUrl(leadId, quoteId));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(friendlyPdfError(res.status, text));
@@ -61,7 +61,7 @@ export async function downloadTemplateTestPdf(
   templateId: string,
   options?: { pageId?: string; scope?: "page" | "full" }
 ): Promise<void> {
-  const res = await fetch(templateTestPdfDownloadUrl(templateId, options));
+  const res = await authorizedFetch(templateTestPdfDownloadUrl(templateId, options));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(friendlyPdfError(res.status, text));
@@ -86,7 +86,7 @@ async function triggerBlobDownload(res: Response): Promise<void> {
 
 /** Open printable HTML preview in a new window and trigger print after fonts load. */
 export async function openManualQuotePrintPreview(leadId: string, quoteId?: string): Promise<void> {
-  const res = await fetch(manualQuotePdfPreviewUrl(leadId, quoteId));
+  const res = await authorizedFetch(manualQuotePdfPreviewUrl(leadId, quoteId));
   if (!res.ok) {
     throw new Error(`Print preview failed (${res.status})`);
   }

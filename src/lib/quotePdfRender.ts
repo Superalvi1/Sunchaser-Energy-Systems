@@ -278,7 +278,10 @@ export function quotePdfDeckPreviewScripts(): string {
           try {
             var path = window.location.pathname.replace(/\\/$/, '');
             var url = path + '/download' + window.location.search;
-            var res = await fetch(url);
+            var token = null;
+            try { token = localStorage.getItem('sunchaser_auth_token'); } catch (_err) {}
+            var headers = token ? { Authorization: 'Bearer ' + token } : {};
+            var res = await fetch(url, { headers: headers });
             if (!res.ok) {
               var errText = await res.text();
               throw new Error(errText || ('Download failed (' + res.status + ')'));

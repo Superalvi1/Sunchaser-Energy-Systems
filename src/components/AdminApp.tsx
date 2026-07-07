@@ -44,7 +44,13 @@ import {
 import ManualAdminControl from "./ManualAdminControl";
 import AdminModuleNav, { type AdminSegmentId, type AdminQuickAction } from "./AdminModuleNav";
 import InventoryStaff from "./InventoryStaff";
-import { currencySymbol, API_BASE_URL, fetchProjectProfitabilitySummary, fetchDeliveryDashboardSummary } from "../services/api";
+import {
+  currencySymbol,
+  API_BASE_URL,
+  authorizedFetch,
+  fetchProjectProfitabilitySummary,
+  fetchDeliveryDashboardSummary,
+} from "../services/api";
 import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
 
 interface AdminAppProps {
@@ -197,7 +203,7 @@ export default function AdminApp({
   const saveDbChange = async (action: "add" | "edit" | "delete", table: string, data: any, id?: string) => {
     setSyncing(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/db/update`, {
+      const res = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, table, data, id })
