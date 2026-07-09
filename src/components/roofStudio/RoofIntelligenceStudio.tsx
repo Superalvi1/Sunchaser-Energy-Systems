@@ -1,0 +1,1136 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Circle,
+  Compass,
+  Eye,
+  EyeOff,
+  Grid3X3,
+  Hand,
+  ImageIcon,
+  Layers,
+  Lock,
+  Magnet,
+  MousePointer2,
+  Pentagon,
+  Redo2,
+  Ruler,
+  Slash,
+  Spline,
+  Square,
+  Sun,
+  Trash2,
+  Triangle,
+  Undo2,
+  Unlock,
+  X,
+} from "lucide-react";
+import {
+  LAYER_ORDER,
+  addPlane,
+  analyzeStudio,
+  canRedo,
+  canUndo,
+  circleVertices,
+  clearLayer,
+  commit,
+  createHistory,
+  createInitialRoofStudioState,
+  createRoofBackgroundImageManager,
+  deleteVertex,
+  getSelectedPlane,
+  insertVertex,
+  isLayerLocked,
+  isLayerVisible,
+  layerForTool,
+  measureAngleDeg,
+  measureAreaM2,
+  measureDistanceM,
+  moveVertex,
+  nearestEdgeIndex,
+  planeGeometryLocked,
+  nextStudioId,
+  obstacleClearancePreview,
+  planeSelfIntersects,
+  rectVertices,
+  isSupportedRoofImageType,
+  redo as redoHistory,
+  removePlane,
+  renameLayer,
+  resolveSnappedPoint,
+  toggleLayerLock,
+  toggleLayerVisibility,
+  undo as undoHistory,
+  updatePlane,
+  type LayerType,
+  type Point2D,
+  type RoofPlaneMetrics,
+  type RoofStudioHistory,
+  type RoofStudioState,
+  type StudioLine,
+  type StudioObstacle,
+  type StudioPlane,
+  type ToolMode,
+} from "../../lib/roofStudioClient";
+
+const CANVAS_HEIGHT = 640;
+const VERTEX_HIT_UNITS = 10;
+
+type Viewport = { scale: number; offsetX: number; offsetY: number };
+
+interface Tool {
+  id: ToolMode;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  group: "nav" | "roof" | "features" | "measure";
+}
+
+const TOOLS: Tool[] = [
+  { id: "select", label: "Select / Edit", icon: MousePointer2, group: "nav" },
+  { id: "pan", label: "Pan", icon: Hand, group: "nav" },
+  { id: "plane", label: "Roof Plane", icon: Pentagon, group: "roof" },
+  { id: "obstacle-rect", label: "Obstacle (Rect)", icon: Square, group: "features" },
+  { id: "obstacle-circle", label: "Obstacle (Circle)", icon: Circle, group: "features" },
+  { id: "obstacle-polygon", label: "Obstacle (Polygon)", icon: Pentagon, group: "features" },
+  { id: "walkway", label: "Walkway", icon: Spline, group: "features" },
+  { id: "parapet", label: "Parapet", icon: Square, group: "features" },
+  { id: "ridge", label: "Ridge", icon: Slash, group: "features" },
+  { id: "valley", label: "Valley", icon: Slash, group: "features" },
+  { id: "measure-distance", label: "Distance", icon: Ruler, group: "measure" },
+  { id: "measure-area", label: "Area", icon: Pentagon, group: "measure" },
+  { id: "measure-angle", label: "Angle", icon: Triangle, group: "measure" },
+];
+
+const POLYGON_TOOLS: ToolMode[] = ["plane", "obstacle-polygon", "walkway", "parapet", "measure-area"];
+const SEGMENT_TOOLS: ToolMode[] = ["ridge", "valley", "measure-distance"];
+
+const LAYER_FOR_TOOL: Record<string, LayerType> = {
+  "obstacle-rect": "obstacle",
+  "obstacle-circle": "obstacle",
+  "obstacle-polygon": "obstacle",
+  walkway: "walkway",
+  parapet: "parapet",
+  ridge: "ridge",
+  valley: "valley",
+};
+
+function fmt(n: number, digits = 1): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+export default function RoofIntelligenceStudio() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [history, setHistory] = useState<RoofStudioHistory>(() => createHistory(createInitialRoofStudioState()));
+  const state = history.present;
+
+  const [tool, setTool] = useState<ToolMode>("plane");
+  const [viewport, setViewport] = useState<Viewport>({ scale: 1, offsetX: 80, offsetY: 80 });
+  const [showGrid, setShowGrid] = useState(true);
+  const [snapGrid, setSnapGrid] = useState(true);
+  const [snapVertices, setSnapVertices] = useState(true);
+
+  const [draftPoints, setDraftPoints] = useState<Point2D[]>([]);
+  const [dragShape, setDragShape] = useState<{ start: Point2D; end: Point2D } | null>(null);
+  const [measureResult, setMeasureResult] = useState<string | null>(null);
+
+  const [cursorWorld, setCursorWorld] = useState<Point2D>({ x: 0, y: 0 });
+  const [spaceDown, setSpaceDown] = useState(false);
+  const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const vertexDragRef = useRef<{ planeId: string; index: number } | null>(null);
+  const [canvasSize, setCanvasSize] = useState({ w: 900, h: CANVAS_HEIGHT });
+
+  /* ---------------- local background image (never leaves the browser) ---------------- */
+  const imageManagerRef = useRef(createRoofBackgroundImageManager());
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bgImage, setBgImage] = useState<{ el: HTMLImageElement; fileName: string } | null>(null);
+  const [bgOpacity, setBgOpacity] = useState(0.7);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  const clearBackgroundImage = useCallback(() => {
+    imageManagerRef.current.clear();
+    setBgImage(null);
+    setImageError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!isSupportedRoofImageType(file.type)) {
+      setImageError("Unsupported image type. Use PNG, JPEG, WEBP, or GIF.");
+      return;
+    }
+    const meta = imageManagerRef.current.set(file, file.name);
+    if (!meta) {
+      setImageError("Could not load image in this browser.");
+      return;
+    }
+    setImageError(null);
+    const img = new Image();
+    img.onload = () => setBgImage({ el: img, fileName: meta.fileName });
+    img.onerror = () => {
+      setImageError("Failed to decode image.");
+      clearBackgroundImage();
+    };
+    img.src = meta.url;
+  }, [clearBackgroundImage]);
+
+  useEffect(() => {
+    const manager = imageManagerRef.current;
+    return () => manager.clear();
+  }, []);
+
+  const analysis = useMemo(() => analyzeStudio(state), [state]);
+  const planeMetrics = useMemo(() => {
+    const map = new Map<string, RoofPlaneMetrics>();
+    analysis.metrics?.planes.forEach((p) => map.set(p.planeId, p));
+    return map;
+  }, [analysis]);
+
+  const selectedPlane = getSelectedPlane(state);
+
+  /* ---------------- history helpers ---------------- */
+  const apply = useCallback((next: RoofStudioState) => {
+    setHistory((h) => commit(h, next));
+  }, []);
+  const setPresentTransient = useCallback((next: RoofStudioState) => {
+    setHistory((h) => ({ ...h, present: next }));
+  }, []);
+  const doUndo = useCallback(() => setHistory((h) => undoHistory(h)), []);
+  const doRedo = useCallback(() => setHistory((h) => redoHistory(h)), []);
+
+  /* ---------------- lock guards (UI-level enforcement) ---------------- */
+  const warnLocked = useCallback((layerLabel: string) => {
+    setMeasureResult(`Layer is locked: ${layerLabel}`);
+  }, []);
+  const isToolLayerLocked = useCallback(
+    (t: ToolMode): boolean => {
+      const layer = layerForTool(t);
+      if (!layer) return false;
+      if (isLayerLocked(state, layer)) {
+        warnLocked(state.layers[layer].name);
+        return true;
+      }
+      return false;
+    },
+    [state, warnLocked]
+  );
+  const isPlaneGeoLocked = useCallback((): boolean => {
+    if (planeGeometryLocked(state)) {
+      warnLocked(isLayerLocked(state, "plane") ? state.layers.plane.name : state.layers.boundary.name);
+      return true;
+    }
+    return false;
+  }, [state, warnLocked]);
+
+  /* ---------------- coordinate transforms ---------------- */
+  const worldToScreen = useCallback(
+    (p: Point2D): Point2D => ({ x: p.x * viewport.scale + viewport.offsetX, y: p.y * viewport.scale + viewport.offsetY }),
+    [viewport]
+  );
+  const screenToWorld = useCallback(
+    (sx: number, sy: number): Point2D => ({ x: (sx - viewport.offsetX) / viewport.scale, y: (sy - viewport.offsetY) / viewport.scale }),
+    [viewport]
+  );
+
+  const snap = useCallback(
+    (p: Point2D) => resolveSnappedPoint(p, state, { snapGrid, snapVertices, vertexThresholdUnits: VERTEX_HIT_UNITS }),
+    [state, snapGrid, snapVertices]
+  );
+
+  /* ---------------- resize ---------------- */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => setCanvasSize({ w: el.clientWidth, h: CANVAS_HEIGHT });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  /* ---------------- keyboard ---------------- */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (e.code === "Space") {
+        setSpaceDown(true);
+        e.preventDefault();
+        return;
+      }
+      const meta = e.ctrlKey || e.metaKey;
+      if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        doUndo();
+      } else if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) {
+        e.preventDefault();
+        doRedo();
+      } else if (e.key === "Escape") {
+        setDraftPoints([]);
+        setDragShape(null);
+      } else if (e.key === "Enter" && POLYGON_TOOLS.includes(tool)) {
+        e.preventDefault();
+        finishPolygon();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpaceDown(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, draftPoints, doUndo, doRedo]);
+
+  /* ---------------- polygon completion ---------------- */
+  const finishPolygon = useCallback(() => {
+    if (draftPoints.length < 3) {
+      setDraftPoints([]);
+      return;
+    }
+    const pts = draftPoints.slice();
+    setDraftPoints([]);
+
+    if (tool === "plane") {
+      apply(addPlane(state, pts));
+      return;
+    }
+    if (tool === "measure-area") {
+      setMeasureResult(`Area: ${fmt(measureAreaM2(pts, state.metersPerUnit), 2)} m²`);
+      return;
+    }
+    const targetPlane = selectedPlane ?? state.planes[state.planes.length - 1];
+    if (!targetPlane) {
+      setMeasureResult("Draw a roof plane first.");
+      return;
+    }
+    if (tool === "obstacle-polygon") {
+      const obstacle: StudioObstacle = {
+        id: nextStudioId("obs"),
+        name: `Obstacle ${targetPlane.obstacles.length + 1}`,
+        shape: "polygon",
+        vertices: pts,
+        rotationDeg: 0,
+        heightM: 1,
+        clearanceM: 0.3,
+      };
+      apply(updatePlane(state, targetPlane.id, { obstacles: [...targetPlane.obstacles, obstacle] }));
+    } else if (tool === "walkway") {
+      apply(
+        updatePlane(state, targetPlane.id, {
+          walkways: [
+            ...targetPlane.walkways,
+            { id: nextStudioId("walk"), name: `Walkway ${targetPlane.walkways.length + 1}`, vertices: pts, widthM: 0.6 },
+          ],
+        })
+      );
+    } else if (tool === "parapet") {
+      apply(
+        updatePlane(state, targetPlane.id, {
+          parapets: [
+            ...targetPlane.parapets,
+            { id: nextStudioId("parapet"), name: `Parapet ${targetPlane.parapets.length + 1}`, vertices: pts, heightM: 1, thicknessM: 0.3 },
+          ],
+        })
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftPoints, tool, state, selectedPlane, apply]);
+
+  /* ---------------- pointer handlers ---------------- */
+  const getPointer = (e: React.PointerEvent<HTMLCanvasElement>): { sx: number; sy: number } => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    return { sx: e.clientX - rect.left, sy: e.clientY - rect.top };
+  };
+
+  const isPanMode = spaceDown || tool === "pan";
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const { sx, sy } = getPointer(e);
+    const world = screenToWorld(sx, sy);
+    canvasRef.current?.setPointerCapture(e.pointerId);
+
+    if (isPanMode) {
+      panRef.current = { sx, sy, ox: viewport.offsetX, oy: viewport.offsetY };
+      return;
+    }
+
+    const snapped = snap(world);
+
+    if (tool === "select") {
+      const hit = hitTestVertex(world);
+      if (hit) {
+        apply(state); // push pre-drag baseline so one undo reverts the whole drag
+        vertexDragRef.current = hit;
+        return;
+      }
+      const planeHit = hitTestPlane(world);
+      apply({ ...state, selectedPlaneId: planeHit?.id ?? null });
+      return;
+    }
+
+    // Drawing tools: block if their target layer is locked (measurement tools have no layer).
+    if (isToolLayerLocked(tool)) return;
+
+    if (POLYGON_TOOLS.includes(tool)) {
+      if (draftPoints.length >= 3) {
+        const first = draftPoints[0];
+        const d = Math.hypot(first.x - snapped.x, first.y - snapped.y);
+        if (d <= VERTEX_HIT_UNITS) {
+          finishPolygon();
+          return;
+        }
+      }
+      setDraftPoints((prev) => [...prev, snapped]);
+      return;
+    }
+
+    if (SEGMENT_TOOLS.includes(tool) || tool === "obstacle-rect" || tool === "obstacle-circle") {
+      setDragShape({ start: snapped, end: snapped });
+      return;
+    }
+
+    if (tool === "measure-angle") {
+      setDraftPoints((prev) => {
+        const next = [...prev, snapped];
+        if (next.length === 3) {
+          setMeasureResult(`Angle: ${fmt(measureAngleDeg(next[0], next[1], next[2]), 1)}°`);
+          return [];
+        }
+        return next;
+      });
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const { sx, sy } = getPointer(e);
+    const world = screenToWorld(sx, sy);
+    setCursorWorld(world);
+
+    if (panRef.current) {
+      const p = panRef.current;
+      setViewport((v) => ({ ...v, offsetX: p.ox + (sx - p.sx), offsetY: p.oy + (sy - p.sy) }));
+      return;
+    }
+
+    if (vertexDragRef.current) {
+      const { planeId, index } = vertexDragRef.current;
+      const snapped = snap(world);
+      const plane = state.planes.find((pl) => pl.id === planeId);
+      if (plane) {
+        setPresentTransient(updatePlane(state, planeId, { boundary: moveVertex(plane.boundary, index, snapped) }));
+      }
+      return;
+    }
+
+    if (dragShape) {
+      setDragShape({ start: dragShape.start, end: snap(world) });
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    canvasRef.current?.releasePointerCapture(e.pointerId);
+    if (panRef.current) {
+      panRef.current = null;
+      return;
+    }
+    if (vertexDragRef.current) {
+      vertexDragRef.current = null;
+      apply(state); // commit final position
+      return;
+    }
+    if (dragShape) {
+      commitDragShape(dragShape);
+      setDragShape(null);
+    }
+  };
+
+  const commitDragShape = (shape: { start: Point2D; end: Point2D }) => {
+    const { start, end } = shape;
+    if (tool === "ridge" || tool === "valley") {
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 2) return;
+      const targetPlane = selectedPlane ?? state.planes[state.planes.length - 1];
+      if (!targetPlane) {
+        setMeasureResult("Draw a roof plane first.");
+        return;
+      }
+      const line: StudioLine = { id: nextStudioId(tool), name: `${tool} ${Date.now() % 1000}`, start, end };
+      if (tool === "ridge") apply(updatePlane(state, targetPlane.id, { ridges: [...targetPlane.ridges, line] }));
+      else apply(updatePlane(state, targetPlane.id, { valleys: [...targetPlane.valleys, line] }));
+      return;
+    }
+    if (tool === "measure-distance") {
+      setMeasureResult(`Distance: ${fmt(measureDistanceM(start, end, state.metersPerUnit), 2)} m`);
+      return;
+    }
+    if (tool === "obstacle-rect" || tool === "obstacle-circle") {
+      const targetPlane = selectedPlane ?? state.planes[state.planes.length - 1];
+      if (!targetPlane) {
+        setMeasureResult("Draw a roof plane first.");
+        return;
+      }
+      let vertices: Point2D[];
+      if (tool === "obstacle-rect") {
+        const x = Math.min(start.x, end.x);
+        const y = Math.min(start.y, end.y);
+        const w = Math.abs(end.x - start.x);
+        const h = Math.abs(end.y - start.y);
+        if (w < 2 || h < 2) return;
+        vertices = rectVertices(x, y, w, h);
+      } else {
+        const radius = Math.hypot(end.x - start.x, end.y - start.y);
+        if (radius < 2) return;
+        vertices = circleVertices(start.x, start.y, radius);
+      }
+      const obstacle: StudioObstacle = {
+        id: nextStudioId("obs"),
+        name: `Obstacle ${targetPlane.obstacles.length + 1}`,
+        shape: tool === "obstacle-rect" ? "rect" : "circle",
+        vertices,
+        rotationDeg: 0,
+        heightM: 1,
+        clearanceM: 0.3,
+      };
+      apply(updatePlane(state, targetPlane.id, { obstacles: [...targetPlane.obstacles, obstacle] }));
+    }
+  };
+
+  const handleDoubleClick = () => {
+    if (POLYGON_TOOLS.includes(tool)) finishPolygon();
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    setViewport((v) => {
+      const newScale = Math.max(0.15, Math.min(12, v.scale * factor));
+      const wx = (sx - v.offsetX) / v.scale;
+      const wy = (sy - v.offsetY) / v.scale;
+      return { scale: newScale, offsetX: sx - wx * newScale, offsetY: sy - wy * newScale };
+    });
+  };
+
+  /* ---------------- hit testing ---------------- */
+  const hitTestVertex = (world: Point2D): { planeId: string; index: number } | null => {
+    // Vertex editing is disabled when the plane geometry (plane OR boundary layer) is locked/hidden.
+    if (!isLayerVisible(state, "plane") || planeGeometryLocked(state)) return null;
+    for (const plane of state.planes) {
+      for (let i = 0; i < plane.boundary.length; i += 1) {
+        const v = plane.boundary[i];
+        if (Math.hypot(v.x - world.x, v.y - world.y) <= VERTEX_HIT_UNITS) return { planeId: plane.id, index: i };
+      }
+    }
+    return null;
+  };
+
+  const hitTestPlane = (world: Point2D): StudioPlane | null => {
+    for (const plane of state.planes) {
+      const b = plane.boundary;
+      if (b.length < 3) continue;
+      let inside = false;
+      for (let i = 0, j = b.length - 1; i < b.length; j = i, i += 1) {
+        const intersect =
+          b[i].y > world.y !== b[j].y > world.y &&
+          world.x < ((b[j].x - b[i].x) * (world.y - b[i].y)) / (b[j].y - b[i].y + 1e-9) + b[i].x;
+        if (intersect) inside = !inside;
+      }
+      if (inside) return plane;
+    }
+    return null;
+  };
+
+  const insertVertexAtCursor = () => {
+    if (!selectedPlane) return;
+    if (isPlaneGeoLocked()) return;
+    const idx = nearestEdgeIndex(selectedPlane.boundary, cursorWorld);
+    if (idx < 0) return;
+    apply(updatePlane(state, selectedPlane.id, { boundary: insertVertex(selectedPlane.boundary, idx, snap(cursorWorld)) }));
+  };
+
+  /* ---------------- rendering ---------------- */
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const { w, h } = canvasSize;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0a0f1a";
+    ctx.fillRect(0, 0, w, h);
+
+    // local background image (world origin, natural px = world units)
+    if (bgImage) {
+      const origin = worldToScreen({ x: 0, y: 0 });
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, bgOpacity));
+      ctx.drawImage(
+        bgImage.el,
+        origin.x,
+        origin.y,
+        bgImage.el.naturalWidth * viewport.scale,
+        bgImage.el.naturalHeight * viewport.scale
+      );
+      ctx.restore();
+    }
+
+    // grid
+    if (showGrid) {
+      const step = state.gridSizeUnits * viewport.scale;
+      if (step > 6) {
+        ctx.strokeStyle = "rgba(148,163,184,0.10)";
+        ctx.lineWidth = 1;
+        const startX = viewport.offsetX % step;
+        const startY = viewport.offsetY % step;
+        ctx.beginPath();
+        for (let x = startX; x < w; x += step) {
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, h);
+        }
+        for (let y = startY; y < h; y += step) {
+          ctx.moveTo(0, y);
+          ctx.lineTo(w, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    const S = (p: Point2D) => worldToScreen(p);
+
+    // planes
+    if (isLayerVisible(state, "plane")) {
+      for (const plane of state.planes) {
+        const b = plane.boundary;
+        if (b.length === 0) continue;
+        const selfInt = planeSelfIntersects(plane);
+        const isSel = plane.id === state.selectedPlaneId;
+        ctx.beginPath();
+        const s0 = S(b[0]);
+        ctx.moveTo(s0.x, s0.y);
+        for (let i = 1; i < b.length; i += 1) {
+          const s = S(b[i]);
+          ctx.lineTo(s.x, s.y);
+        }
+        if (b.length >= 3) ctx.closePath();
+        ctx.fillStyle = selfInt ? "rgba(244,63,94,0.14)" : isSel ? "rgba(245,158,11,0.18)" : "rgba(56,189,248,0.10)";
+        ctx.strokeStyle = selfInt ? "rgba(248,113,113,0.95)" : isSel ? "rgba(251,191,36,0.95)" : "rgba(56,189,248,0.7)";
+        ctx.lineWidth = isSel ? 2.5 : 1.8;
+        if (b.length >= 3) ctx.fill();
+        ctx.stroke();
+
+        // panels layer: shade usable area + estimate label from engine metrics
+        const metrics = planeMetrics.get(plane.id);
+        if (isLayerVisible(state, "panels") && metrics && metrics.netUsableAreaM2 > 0 && b.length >= 3) {
+          const c = centroidScreen(b, S);
+          const panels = Math.floor(metrics.netUsableAreaM2 / 2.58);
+          ctx.fillStyle = "rgba(56,189,248,0.85)";
+          ctx.font = "bold 12px ui-sans-serif, system-ui";
+          ctx.textAlign = "center";
+          ctx.fillText(`${panels} panels · ${fmt(metrics.netUsableAreaM2, 1)} m²`, c.x, c.y);
+          ctx.textAlign = "start";
+        }
+
+        // vertices
+        if (isSel && isLayerVisible(state, "plane")) {
+          for (const v of b) {
+            const s = S(v);
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = "#fde68a";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(15,23,42,0.9)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+
+        // obstacles + clearance
+        if (isLayerVisible(state, "obstacle")) {
+          for (const o of plane.obstacles) {
+            drawPolygon(ctx, o.vertices, S, "rgba(244,63,94,0.28)", "rgba(251,113,133,0.95)");
+            const clearance = obstacleClearancePreview(plane, o, state.metersPerUnit);
+            drawPolygonDashed(ctx, clearance, S, "rgba(251,146,60,0.8)");
+          }
+        }
+        if (isLayerVisible(state, "walkway")) {
+          for (const wk of plane.walkways) drawPolygon(ctx, wk.vertices, S, "rgba(250,204,21,0.18)", "rgba(250,204,21,0.85)");
+        }
+        if (isLayerVisible(state, "parapet")) {
+          for (const pp of plane.parapets) drawPolygon(ctx, pp.vertices, S, "rgba(168,85,247,0.18)", "rgba(192,132,252,0.9)");
+        }
+        if (isLayerVisible(state, "ridge")) {
+          for (const r of plane.ridges) drawSegment(ctx, r, S, "rgba(34,197,94,0.95)");
+        }
+        if (isLayerVisible(state, "valley")) {
+          for (const v of plane.valleys) drawSegment(ctx, v, S, "rgba(59,130,246,0.95)");
+        }
+      }
+    }
+
+    // draft polygon
+    if (draftPoints.length > 0) {
+      ctx.beginPath();
+      const s0 = S(draftPoints[0]);
+      ctx.moveTo(s0.x, s0.y);
+      for (let i = 1; i < draftPoints.length; i += 1) {
+        const s = S(draftPoints[i]);
+        ctx.lineTo(s.x, s.y);
+      }
+      const cursorS = S(snap(cursorWorld));
+      ctx.lineTo(cursorS.x, cursorS.y);
+      ctx.strokeStyle = "rgba(251,191,36,0.9)";
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const p of draftPoints) {
+        const s = S(p);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = "#fbbf24";
+        ctx.fill();
+      }
+    }
+
+    // drag shape preview
+    if (dragShape) {
+      if (tool === "obstacle-rect" || tool === "parapet") {
+        const x = Math.min(dragShape.start.x, dragShape.end.x);
+        const y = Math.min(dragShape.start.y, dragShape.end.y);
+        drawPolygonDashed(ctx, rectVertices(x, y, Math.abs(dragShape.end.x - dragShape.start.x), Math.abs(dragShape.end.y - dragShape.start.y)), S, "rgba(251,113,133,0.9)");
+      } else if (tool === "obstacle-circle") {
+        const radius = Math.hypot(dragShape.end.x - dragShape.start.x, dragShape.end.y - dragShape.start.y);
+        drawPolygonDashed(ctx, circleVertices(dragShape.start.x, dragShape.start.y, radius), S, "rgba(251,113,133,0.9)");
+      } else {
+        drawSegment(ctx, { id: "draft", name: "", start: dragShape.start, end: dragShape.end }, S, "rgba(226,232,240,0.9)");
+      }
+    }
+
+    // north arrow + compass
+    if (isLayerVisible(state, "north")) drawNorthArrow(ctx, w, state.northAzimuthDeg);
+    // scale ruler
+    drawScaleRuler(ctx, h, viewport.scale, state.metersPerUnit);
+  }, [canvasSize, showGrid, state, viewport, worldToScreen, draftPoints, dragShape, tool, cursorWorld, snap, planeMetrics, bgImage, bgOpacity]);
+
+  useEffect(() => {
+    draw();
+  }, [draw]);
+
+  /* ---------------- layer + plane editing UI handlers ---------------- */
+  const deleteSelectedPlane = () => {
+    if (!selectedPlane) return;
+    if (isPlaneGeoLocked()) return;
+    apply(removePlane(state, selectedPlane.id));
+  };
+
+  const statistics = analysis.statistics;
+  const planeLocked = planeGeometryLocked(state);
+
+  return (
+    <div className="space-y-4 text-left fade-in-entry">
+      <div className="relative overflow-hidden rounded-3xl border border-cyan-500/20 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/30 p-5 shadow-xl">
+        <div className="flex items-start gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/25 to-cyan-600/10 border border-cyan-500/30">
+            <Sun className="h-6 w-6 text-cyan-400" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-extrabold text-white tracking-tight">Roof Intelligence Studio</h2>
+              <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-300">
+                CAD Editor
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-400 max-w-2xl">
+              Professional rooftop CAD. All areas, pitch, azimuth, orientation and capacity are computed live by the RoofGeometryEngine. Uploaded imagery stays on your device. No save, API, AI, or PDF.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* toolbar */}
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 p-2">
+        {(["nav", "roof", "features", "measure"] as const).map((group) => (
+          <div key={group} className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+            {TOOLS.filter((t) => t.group === group).map((t) => {
+              const Icon = t.icon;
+              const active = tool === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  title={t.label}
+                  onClick={() => {
+                    setTool(t.id);
+                    setDraftPoints([]);
+                    setDragShape(null);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold transition ${
+                    active ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-slate-800"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span className="hidden lg:inline">{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+
+        <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={handleImageUpload}
+            className="hidden"
+          />
+          <button
+            type="button"
+            title="Upload rooftop / Google Earth image (stays on your device)"
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold text-slate-300 hover:bg-slate-800"
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+            <span className="hidden lg:inline">{bgImage ? "Replace image" : "Upload image"}</span>
+          </button>
+          {bgImage && (
+            <>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={bgOpacity}
+                onChange={(e) => setBgOpacity(Number(e.target.value))}
+                title="Image opacity"
+                className="h-1 w-16 accent-cyan-500"
+              />
+              <button
+                type="button"
+                title="Remove image"
+                onClick={clearBackgroundImage}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+
+        <div className="ml-auto flex items-center gap-1">
+          <button type="button" title="Undo (Ctrl+Z)" disabled={!canUndo(history)} onClick={doUndo} className="rounded-lg border border-slate-800 p-1.5 text-slate-300 disabled:opacity-30 hover:bg-slate-800">
+            <Undo2 className="h-4 w-4" />
+          </button>
+          <button type="button" title="Redo (Ctrl+Y)" disabled={!canRedo(history)} onClick={doRedo} className="rounded-lg border border-slate-800 p-1.5 text-slate-300 disabled:opacity-30 hover:bg-slate-800">
+            <Redo2 className="h-4 w-4" />
+          </button>
+          <button type="button" title="Toggle grid" onClick={() => setShowGrid((v) => !v)} className={`rounded-lg border border-slate-800 p-1.5 ${showGrid ? "bg-slate-800 text-cyan-300" : "text-slate-400"}`}>
+            <Grid3X3 className="h-4 w-4" />
+          </button>
+          <button type="button" title="Snap to grid" onClick={() => setSnapGrid((v) => !v)} className={`rounded-lg border border-slate-800 p-1.5 ${snapGrid ? "bg-slate-800 text-cyan-300" : "text-slate-400"}`}>
+            <Grid3X3 className="h-4 w-4" />
+          </button>
+          <button type="button" title="Snap to vertices" onClick={() => setSnapVertices((v) => !v)} className={`rounded-lg border border-slate-800 p-1.5 ${snapVertices ? "bg-slate-800 text-cyan-300" : "text-slate-400"}`}>
+            <Magnet className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        {/* layers */}
+        <div className="xl:col-span-2 space-y-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+              <Layers className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Layers</h3>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {LAYER_ORDER.map((type) => {
+                const layer = state.layers[type];
+                return (
+                  <li key={type} className="flex items-center gap-1 rounded-lg px-1 py-1 hover:bg-slate-800/50">
+                    <button
+                      type="button"
+                      title={layer.locked ? "Layer is locked" : "Toggle visibility"}
+                      disabled={layer.locked}
+                      onClick={() => {
+                        if (layer.locked) {
+                          warnLocked(layer.name);
+                          return;
+                        }
+                        apply(toggleLayerVisibility(state, type));
+                      }}
+                      className="text-slate-400 hover:text-white disabled:opacity-30"
+                    >
+                      {layer.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 text-slate-600" />}
+                    </button>
+                    <button type="button" title="Toggle lock" onClick={() => apply(toggleLayerLock(state, type))} className="text-slate-400 hover:text-white">
+                      {layer.locked ? <Lock className="h-3.5 w-3.5 text-amber-400" /> : <Unlock className="h-3.5 w-3.5" />}
+                    </button>
+                    <input
+                      value={layer.name}
+                      disabled={layer.locked}
+                      readOnly={layer.locked}
+                      title={layer.locked ? "Layer is locked" : "Rename layer"}
+                      onChange={(e) => setPresentTransient(renameLayer(state, type, e.target.value))}
+                      onBlur={(e) => apply(renameLayer(state, type, e.target.value))}
+                      className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-200 outline-none disabled:opacity-40"
+                    />
+                    <button
+                      type="button"
+                      title={layer.locked ? "Layer is locked" : "Delete layer contents"}
+                      disabled={type === "plane" || type === "boundary" ? planeGeometryLocked(state) : isLayerLocked(state, type)}
+                      onClick={() => {
+                        const planeLike = type === "plane" || type === "boundary";
+                        const blocked = planeLike ? planeGeometryLocked(state) : isLayerLocked(state, type);
+                        if (blocked) {
+                          warnLocked(layer.name);
+                          return;
+                        }
+                        apply(clearLayer(state, type));
+                      }}
+                      className="text-slate-500 hover:text-rose-400 disabled:opacity-30 disabled:hover:text-slate-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+
+        {/* canvas */}
+        <div className="xl:col-span-7 space-y-2">
+          <div ref={containerRef} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 ring-1 ring-white/5">
+            <canvas
+              ref={canvasRef}
+              width={canvasSize.w}
+              height={canvasSize.h}
+              className={`w-full touch-none ${isPanMode ? "cursor-grab" : "cursor-crosshair"}`}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onDoubleClick={handleDoubleClick}
+              onWheel={handleWheel}
+            />
+          </div>
+
+          {/* status bar */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-[10px] font-mono text-slate-400">
+            <span>Zoom {Math.round(viewport.scale * 100)}%</span>
+            <span>x {fmt(cursorWorld.x, 0)} · y {fmt(cursorWorld.y, 0)}</span>
+            <span>Selected: {selectedPlane ? selectedPlane.name : "none"}</span>
+            <span>Area: {statistics ? `${fmt(statistics.grossAreaM2, 1)} m²` : "—"}</span>
+            <span>Scale: 1u = {fmt(state.metersPerUnit, 3)} m</span>
+            <span>North: {fmt(state.northAzimuthDeg, 0)}°</span>
+            {bgImage && <span className="text-cyan-300/80">img: {bgImage.fileName}</span>}
+            {measureResult && <span className="text-cyan-300">{measureResult}</span>}
+            {imageError && <span className="text-rose-400">{imageError}</span>}
+          </div>
+        </div>
+
+        {/* right sidebar */}
+        <div className="xl:col-span-3 space-y-3">
+          {selectedPlane && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Selected Plane</h3>
+                {planeLocked && <span className="text-[9px] font-bold uppercase text-amber-400">Locked</span>}
+              </div>
+              <label className="block text-[10px] text-slate-500">Name
+                <input disabled={planeLocked} value={selectedPlane.name} onChange={(e) => setPresentTransient(updatePlane(state, selectedPlane.id, { name: e.target.value }))} onBlur={(e) => apply(updatePlane(state, selectedPlane.id, { name: e.target.value }))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white disabled:opacity-40" />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block text-[10px] text-slate-500">Pitch°
+                  <input type="number" min={0} max={60} disabled={planeLocked} value={selectedPlane.pitchDeg} onChange={(e) => apply(updatePlane(state, selectedPlane.id, { pitchDeg: Number(e.target.value) }))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white disabled:opacity-40" />
+                </label>
+                <label className="block text-[10px] text-slate-500">Azimuth°
+                  <input type="number" min={0} max={360} disabled={planeLocked} value={selectedPlane.azimuthDeg} onChange={(e) => apply(updatePlane(state, selectedPlane.id, { azimuthDeg: Number(e.target.value) }))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white disabled:opacity-40" />
+                </label>
+              </div>
+              {(() => {
+                const m = planeMetrics.get(selectedPlane.id);
+                if (!m) return null;
+                return (
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                    <Stat label="Orientation" value={m.orientation} />
+                    <Stat label="Slope" value={`${fmt(m.pitchDeg, 0)}°`} />
+                    <Stat label="Usable" value={`${fmt(m.netUsableAreaM2, 1)} m²`} />
+                    <Stat label="True area" value={`${fmt(m.trueAreaM2, 1)} m²`} />
+                  </div>
+                );
+              })()}
+              <div className="flex gap-1.5">
+                <button type="button" disabled={planeLocked} onClick={insertVertexAtCursor} className="flex-1 rounded-lg border border-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40">Insert point</button>
+                <button type="button" disabled={planeLocked} onClick={deleteSelectedPlane} className="flex-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] font-bold text-rose-300 disabled:opacity-40">Delete plane</button>
+              </div>
+              <p className="text-[9px] text-slate-500">In Select mode: drag vertices to move; select a vertex and press Delete to remove.</p>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Roof Statistics</h3>
+            {analysis.error ? (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-2 text-[11px] text-rose-300">
+                <p className="font-bold">Validation error: {analysis.error.errorCode}</p>
+                <p>{analysis.error.message}</p>
+                {analysis.error.edgeIndexes && <p className="mt-1 font-mono">edges {analysis.error.edgeIndexes.join(" ↔ ")}</p>}
+              </div>
+            ) : statistics ? (
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <Stat label="Gross area" value={`${fmt(statistics.grossAreaM2, 1)} m²`} big />
+                <Stat label="Usable area" value={`${fmt(statistics.usableAreaM2, 1)} m²`} big />
+                <Stat label="True area" value={`${fmt(statistics.trueAreaM2, 1)} m²`} />
+                <Stat label="Obstacle %" value={`${fmt(statistics.obstaclePercent, 1)}%`} />
+                <Stat label="Panel estimate" value={`${statistics.panelEstimate}`} />
+                <Stat label="Capacity" value={`${fmt(statistics.capacityKw, 2)} kW`} />
+                <Stat label="Planes" value={`${statistics.planeCount}`} />
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500">Draw a closed roof plane (≥3 points) to see live statistics.</p>
+            )}
+
+            {statistics && statistics.warnings.length > 0 && (
+              <ul className="space-y-1 border-t border-slate-800 pt-2">
+                {statistics.warnings.map((w) => (
+                  <li key={w} className="text-[10px] text-amber-400/90">• {w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Compass className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Project</h3>
+            </div>
+            <label className="block text-[10px] text-slate-500">North azimuth°
+              <input type="number" value={state.northAzimuthDeg} onChange={(e) => apply({ ...state, northAzimuthDeg: Number(e.target.value) || 0 })} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white" />
+            </label>
+            <label className="block text-[10px] text-slate-500">Scale (meters per unit)
+              <input type="number" step={0.005} value={state.metersPerUnit} onChange={(e) => apply({ ...state, metersPerUnit: Number(e.target.value) || 0.05 })} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white" />
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, big }: { label: string; value: string; big?: boolean }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5">
+      <div className="text-[9px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`font-bold text-white ${big ? "text-base" : "text-xs"}`}>{value}</div>
+    </div>
+  );
+}
+
+/* ---------------- canvas draw helpers ---------------- */
+function drawPolygon(ctx: CanvasRenderingContext2D, verts: Point2D[], S: (p: Point2D) => Point2D, fill: string, stroke: string) {
+  if (verts.length < 2) return;
+  ctx.beginPath();
+  const s0 = S(verts[0]);
+  ctx.moveTo(s0.x, s0.y);
+  for (let i = 1; i < verts.length; i += 1) {
+    const s = S(verts[i]);
+    ctx.lineTo(s.x, s.y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawPolygonDashed(ctx: CanvasRenderingContext2D, verts: Point2D[], S: (p: Point2D) => Point2D, stroke: string) {
+  if (verts.length < 2) return;
+  ctx.beginPath();
+  const s0 = S(verts[0]);
+  ctx.moveTo(s0.x, s0.y);
+  for (let i = 1; i < verts.length; i += 1) {
+    const s = S(verts[i]);
+    ctx.lineTo(s.x, s.y);
+  }
+  ctx.closePath();
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.3;
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawSegment(ctx: CanvasRenderingContext2D, line: StudioLine, S: (p: Point2D) => Point2D, stroke: string) {
+  const a = S(line.start);
+  const b = S(line.end);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+}
+
+function centroidScreen(verts: Point2D[], S: (p: Point2D) => Point2D): Point2D {
+  let x = 0;
+  let y = 0;
+  for (const v of verts) {
+    const s = S(v);
+    x += s.x;
+    y += s.y;
+  }
+  return { x: x / verts.length, y: y / verts.length };
+}
+
+function drawNorthArrow(ctx: CanvasRenderingContext2D, canvasWidth: number, northAzimuthDeg: number) {
+  const cx = canvasWidth - 46;
+  const cy = 46;
+  const rad = (northAzimuthDeg * Math.PI) / 180;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rad);
+  ctx.beginPath();
+  ctx.moveTo(0, -22);
+  ctx.lineTo(7, 8);
+  ctx.lineTo(0, 2);
+  ctx.lineTo(-7, 8);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(56,189,248,0.95)";
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "rgba(226,232,240,0.9)";
+  ctx.font = "bold 11px ui-sans-serif, system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("N", cx, cy + 24);
+  ctx.textAlign = "start";
+}
+
+function drawScaleRuler(ctx: CanvasRenderingContext2D, canvasHeight: number, scale: number, metersPerUnit: number) {
+  const targetPx = 120;
+  const worldUnits = targetPx / scale;
+  const meters = worldUnits * metersPerUnit;
+  const y = canvasHeight - 24;
+  const x = 20;
+  ctx.strokeStyle = "rgba(226,232,240,0.7)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + targetPx, y);
+  ctx.moveTo(x, y - 4);
+  ctx.lineTo(x, y + 4);
+  ctx.moveTo(x + targetPx, y - 4);
+  ctx.lineTo(x + targetPx, y + 4);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(226,232,240,0.8)";
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.fillText(`${meters.toLocaleString(undefined, { maximumFractionDigits: 1 })} m`, x + targetPx / 2 - 12, y - 8);
+}
