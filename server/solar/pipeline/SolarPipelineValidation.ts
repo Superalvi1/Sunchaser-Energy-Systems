@@ -44,10 +44,11 @@ export function validateSolarDesignPipelineInput(input: SolarDesignPipelineInput
     throw new SolarPipelineValidationError("INVALID_INPUT", `Pipeline input must be an object; received ${describe(input)}.`);
   }
 
-  if (typeof input.systemSizeKw !== "number" || !Number.isFinite(input.systemSizeKw)) {
-    throw new SolarPipelineValidationError("INVALID_SIZE", `systemSizeKw must be finite; received ${describe(input.systemSizeKw)}.`);
-  }
-  if (!(SUPPORTED_SYSTEM_SIZES_KW as readonly number[]).includes(input.systemSizeKw)) {
+  if (input.systemSizeKw === "auto") {
+    // Resolved inside runSolarDesignPipeline after roof geometry is known.
+  } else if (typeof input.systemSizeKw !== "number" || !Number.isFinite(input.systemSizeKw)) {
+    throw new SolarPipelineValidationError("INVALID_SIZE", `systemSizeKw must be finite or "auto"; received ${describe(input.systemSizeKw)}.`);
+  } else if (!(SUPPORTED_SYSTEM_SIZES_KW as readonly number[]).includes(input.systemSizeKw)) {
     throw new SolarPipelineValidationError("UNSUPPORTED_SIZE", `Unsupported system size: ${input.systemSizeKw} kW.`);
   }
   if (!EQUIPMENT_TIERS.includes(input.tier)) {

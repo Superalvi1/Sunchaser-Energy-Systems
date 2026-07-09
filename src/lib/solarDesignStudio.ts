@@ -1,6 +1,6 @@
 /**
  * Solar Proposal Studio — canvas geometry and UI constants.
- * Pricing/BOQ uses server/solar/proposal via solarProposalStudioClient.ts.
+ * Pricing/BOQ uses server/solar/pipeline via solarPipelineClient.ts.
  */
 
 import type { EquipmentTier, StructureType, SystemType } from "../../server/solar/proposal/SolarProposalModels.ts";

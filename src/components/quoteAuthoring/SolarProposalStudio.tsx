@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
   Battery,
   BoxSelect,
   Cable,
@@ -25,7 +27,6 @@ import {
   STRUCTURE_OPTIONS,
   SYSTEM_SIZE_PRESETS,
   SYSTEM_TYPE_OPTIONS,
-  isDesignComplete,
   normalizeObstacles,
   type DesignObstacle,
   type DesignPackageTier,
@@ -35,7 +36,7 @@ import {
   type DesignSystemType,
   type DesignToolMode,
 } from "../../lib/solarDesignStudio";
-import { buildStudioProposalViewModel } from "../../lib/solarProposalStudioClient";
+import { buildPipelineStudioViewModel } from "../../lib/solarPipelineClient";
 
 const CANVAS_W = 800;
 const CANVAS_H = 500;
@@ -68,7 +69,7 @@ export default function SolarProposalStudio() {
 
   const studio = useMemo(
     () =>
-      buildStudioProposalViewModel({
+      buildPipelineStudioViewModel({
         roofBoundary,
         obstacles,
         structureType,
@@ -95,10 +96,11 @@ export default function SolarProposalStudio() {
     ]
   );
 
-  const designComplete = studio.designComplete;
-  const boqLines = studio.boqPreviewLines;
-  const boqTotal = studio.grandTotal;
-  const proposalPages = studio.proposalPages;
+  const designComplete = studio.designComplete && studio.pipelineSuccess;
+  const boqLines = designComplete ? studio.boqPreviewLines : [];
+  const boqTotal = designComplete ? studio.grandTotal : 0;
+  const proposalPages = studio.pipelineSuccess ? studio.proposalPages : studio.proposalPages.filter((p) => p.id === "incomplete");
+  const showPricedProposal = designComplete;
 
   const activePreview = proposalPages[previewPageIndex] ?? proposalPages[0];
 
@@ -306,12 +308,12 @@ export default function SolarProposalStudio() {
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg font-extrabold text-white tracking-tight">Solar Proposal Studio</h2>
                 <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
-                  Phase 1.1 · Engine Draft
+                  Phase 2A · Pipeline Draft
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-400 max-w-2xl">
-                Design rooftop layouts and preview BOQ using the same deterministic rules as{" "}
-                <code className="text-amber-300/80">server/solar/proposal</code>. Draft only — no save, quotation, PDF, API, or AI.
+                Design rooftop layouts and preview BOQ using the unified deterministic pipeline at{" "}
+                <code className="text-amber-300/80">server/solar/pipeline</code>. Draft only — no save, quotation, PDF, API, or AI.
               </p>
             </div>
           </div>
@@ -481,6 +483,63 @@ export default function SolarProposalStudio() {
         </div>
 
         <div className="xl:col-span-5 space-y-4">
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white">Pipeline status</h3>
+              </div>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+                  studio.pipelineSuccess
+                    ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                    : studio.pipelineStage
+                      ? "bg-rose-500/15 text-rose-300 border border-rose-500/30"
+                      : "bg-slate-800 text-slate-400 border border-slate-700"
+                }`}
+              >
+                {studio.pipelineSuccess ? "Complete" : studio.pipelineStage ? `Failed · ${studio.pipelineStage}` : "Pending"}
+              </span>
+            </div>
+            <dl className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                <dt className="text-slate-500">Roof validation</dt>
+                <dd className={`font-semibold ${studio.roofValidationOk ? "text-emerald-400" : "text-rose-400"}`}>
+                  {studio.roofValidationOk ? "OK" : "Needs fix"}
+                </dd>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                <dt className="text-slate-500">Stages completed</dt>
+                <dd className="font-semibold text-white">{studio.stagesCompleted.length}</dd>
+              </div>
+            </dl>
+            {studio.stagesCompleted.length > 0 && (
+              <p className="text-[10px] text-slate-500">
+                {studio.stagesCompleted.join(" → ")}
+              </p>
+            )}
+            {studio.pipelineCode && (
+              <p className="text-[10px] font-mono text-rose-300/90">
+                {studio.pipelineCode}: {studio.pipelineMessage}
+              </p>
+            )}
+            {studio.fixGuidance.length > 0 && !studio.pipelineSuccess && (
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2 space-y-1">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  What to fix
+                </p>
+                <ul className="space-y-0.5">
+                  {studio.fixGuidance.map((line) => (
+                    <li key={line} className="text-[10px] text-amber-100/90 leading-relaxed">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
           <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 space-y-4">
             <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
               <Ruler className="h-4 w-4 text-amber-400" />
@@ -660,8 +719,30 @@ export default function SolarProposalStudio() {
             {studio.validationMessage && !designComplete && (
               <p className="text-[10px] text-amber-400/90">{studio.validationMessage}</p>
             )}
-            {studio.warnings.length > 0 && designComplete && (
+            {studio.warnings.length > 0 && (
               <p className="text-[10px] text-slate-500">{studio.warnings.join(" ")}</p>
+            )}
+            {designComplete && (
+              <>
+                <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800 pt-3">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                    <dt className="text-slate-500">Annual production</dt>
+                    <dd className="text-lg font-bold text-white">{studio.annualProductionKwh.toLocaleString()} kWh</dd>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                    <dt className="text-slate-500">Performance ratio</dt>
+                    <dd className="text-lg font-bold text-white">{(studio.performanceRatio * 100).toFixed(1)}%</dd>
+                  </div>
+                </div>
+                {studio.monthlyProduction.length > 0 && (
+                  <div className="text-[10px] text-slate-500">
+                    Monthly peak:{" "}
+                    {studio.monthlyProduction.reduce((best, row) => (row.acKwh > best.acKwh ? row : best)).label}{" "}
+                    ({studio.monthlyProduction.reduce((best, row) => (row.acKwh > best.acKwh ? row : best)).acKwh.toLocaleString()}{" "}
+                    kWh)
+                  </div>
+                )}
+              </>
             )}
             {systemType !== "on-grid" && designComplete && (
               <p className="flex items-center gap-1.5 text-[10px] text-cyan-400/90">
@@ -671,18 +752,76 @@ export default function SolarProposalStudio() {
             )}
           </div>
 
+          {designComplete && studio.stringSizing && (
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 space-y-3">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                <Zap className="h-4 w-4 text-cyan-400" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white">String sizing & losses</h3>
+              </div>
+              <dl className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                  <dt className="text-slate-500">Modules / string</dt>
+                  <dd className="font-bold text-white">{studio.stringSizing.modulesPerString}</dd>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                  <dt className="text-slate-500">String count</dt>
+                  <dd className="font-bold text-white">{studio.stringSizing.stringCount}</dd>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                  <dt className="text-slate-500">Cable loss</dt>
+                  <dd className="font-bold text-white">{studio.cableLossKwh.toLocaleString()} kWh/yr</dd>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                  <dt className="text-slate-500">Inverter clipping</dt>
+                  <dd className="font-bold text-white">{studio.clippingLossKwh.toLocaleString()} kWh/yr</dd>
+                </div>
+              </dl>
+              {studio.lossBreakdown && (
+                <ul className="space-y-1 text-[10px] text-slate-500">
+                  <li>Shading loss: {studio.lossBreakdown.shadingKwh.toLocaleString()} kWh/yr</li>
+                  <li>Temperature loss: {studio.lossBreakdown.temperatureKwh.toLocaleString()} kWh/yr</li>
+                  <li>Availability loss: {studio.lossBreakdown.systemAvailabilityKwh.toLocaleString()} kWh/yr</li>
+                </ul>
+              )}
+              {studio.stringSizing.warnings.length > 0 && (
+                <p className="text-[10px] text-amber-400/90">{studio.stringSizing.warnings.join(" ")}</p>
+              )}
+            </div>
+          )}
+
+          {(studio.assumptions.length > 0 || studio.engineeringAssumptions.length > 0) && (
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white border-b border-slate-800 pb-3">
+                Assumptions
+              </h3>
+              <ul className="max-h-32 space-y-1 overflow-y-auto text-[10px] text-slate-400">
+                {studio.assumptions.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+                {studio.engineeringAssumptions.slice(0, 6).map((a) => (
+                  <li key={a.id}>
+                    {a.label}: {String(a.value)}{a.unit ? ` ${a.unit}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-emerald-400" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-white">BOQ preview</h3>
               </div>
-              <span className="text-[10px] font-mono text-slate-500">engine draft</span>
+              <span className="text-[10px] font-mono text-slate-500">pipeline draft</span>
             </div>
-            {boqLines.length === 0 ? (
+            {!showPricedProposal ? (
               <div className="text-xs text-slate-500 space-y-1">
-                <p className="font-semibold text-amber-400/90">{DESIGN_INCOMPLETE_BOQ_LABEL}</p>
-                <p>{DESIGN_INCOMPLETE_MESSAGE}</p>
+                <p className="font-semibold text-amber-400/90">
+                  {studio.pipelineStage ? `Pipeline failed at ${studio.pipelineStage}` : DESIGN_INCOMPLETE_BOQ_LABEL}
+                </p>
+                <p>{studio.validationMessage ?? DESIGN_INCOMPLETE_MESSAGE}</p>
+                <p className="text-[10px] text-slate-600">Priced BOQ hidden until pipeline completes successfully.</p>
               </div>
             ) : (
               <ul className="max-h-52 space-y-2 overflow-y-auto">
@@ -709,9 +848,7 @@ export default function SolarProposalStudio() {
             <div className="flex items-center justify-between border-t border-slate-800 pt-3 text-sm">
               <span className="text-slate-400">Indicative total</span>
               <span className="font-bold text-emerald-400">
-                {designComplete && isDesignComplete(studio.panelCount, studio.systemSizeKw)
-                  ? `Rs. ${boqTotal.toLocaleString()}`
-                  : "Rs. 0"}
+                {showPricedProposal ? `Rs. ${boqTotal.toLocaleString()}` : "Rs. 0"}
               </span>
             </div>
           </div>

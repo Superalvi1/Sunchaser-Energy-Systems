@@ -6,9 +6,8 @@ import {
   assertStudioProposalDraftSafe,
   buildStudioProposalViewModel,
   flattenBoqSections,
-  snapToSupportedSystemSizeKw,
 } from "./solarProposalStudioClient.ts";
-import { generateSolarProposal } from "../../server/solar/proposal/SolarProposalEngine.ts";
+import { runSolarDesignPipeline } from "../../server/solar/pipeline/SolarDesignPipeline.ts";
 import { DESIGN_INCOMPLETE_MESSAGE } from "./solarDesignStudio.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,13 +40,11 @@ function check(name: string, condition: boolean) {
   console.log(`PASS: ${name}`);
 }
 
-check("snapToSupportedSystemSizeKw picks nearest supported size", snapToSupportedSystemSizeKw(7) === 6 || snapToSupportedSystemSizeKw(7) === 8);
-
 check(
-  "studio view model uses engine grand total and 7 BOQ sections",
+  "studio view model uses pipeline grand total and 7 BOQ sections",
   (() => {
     const vm = buildStudioProposalViewModel(baseStudio);
-    const engine = generateSolarProposal({
+    const pipeline = runSolarDesignPipeline({
       systemSizeKw: 5,
       tier: "budget",
       systemType: "on-grid",
@@ -56,13 +53,17 @@ check(
       roofBoundary: rectangle,
       roofWidthMeters: 12,
       canvasWidth: 800,
+      canvasHeight: 500,
     });
     return (
       vm.draftOnly === true &&
+      vm.pipelineSuccess &&
       vm.designComplete &&
-      vm.grandTotal === engine.draft.pricing.grandTotal &&
+      pipeline.success &&
+      vm.grandTotal === pipeline.result.draft.pricing.grandTotal &&
       vm.boqSections.length === 7 &&
-      vm.panelCount === engine.draft.panelCount
+      vm.panelCount === pipeline.result.draft.panelCount &&
+      vm.annualProductionKwh > 0
     );
   })()
 );
@@ -123,7 +124,15 @@ check(
   (() => {
     const source = readFileSync(join(__dirname, "../components/quoteAuthoring/SolarProposalStudio.tsx"), "utf8");
     const forbidden = /apiFetch|authorizedFetch|handleSaveQuote|create-quote|generatePdf|\/api\//i;
-    return !forbidden.test(source) && source.includes("buildStudioProposalViewModel");
+    return !forbidden.test(source) && source.includes("buildPipelineStudioViewModel");
+  })()
+);
+
+check(
+  "proposal studio client has no local layout sizing helpers",
+  (() => {
+    const source = readFileSync(join(__dirname, "solarProposalStudioClient.ts"), "utf8");
+    return !/layoutPanels\s*\(|panelCountForSystem\s*\(|resolveStudioSystemSizeKw\s*\(/.test(source);
   })()
 );
 

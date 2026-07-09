@@ -28,7 +28,9 @@ export {
   PIPELINE_STAGES,
   SolarPipelineStageError,
   SolarPipelineValidationError,
+  isPipelineSuccess,
   type ElectricalSizingResult,
+  type PipelineSystemSizeSelection,
   type SolarDesignPipelineDraft,
   type SolarDesignPipelineFailure,
   type SolarDesignPipelineInput,
@@ -36,5 +38,4 @@ export {
   type SolarDesignPipelineResult,
   type SolarDesignPipelineSuccess,
   type SolarPipelineStage,
-  isPipelineSuccess,
 } from "./SolarPipelineModels.ts";

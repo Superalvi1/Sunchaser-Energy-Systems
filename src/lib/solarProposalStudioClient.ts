@@ -1,12 +1,17 @@
 /**
- * Client adapter — Solar Proposal Studio UI uses the same deterministic engine as server/solar/proposal.
+ * Client adapter — shared studio types and page builders.
+ * View model assembly uses server/solar/pipeline via solarPipelineClient.ts.
  * Draft-only. No routes, save, PDF, AI, or CRM mutation.
  */
 
-import { layoutPanels, type PanelPlacement } from "../../server/solar/proposal/PanelLayoutEngine.ts";
-import { generateSolarProposal } from "../../server/solar/proposal/SolarProposalEngine.ts";
-import { panelCountForSystem } from "../../server/solar/proposal/SolarDesignRules.ts";
-import { polygonArea, type DesignObstacle, type DesignPoint } from "./solarDesignStudio.ts";
+import type { SolarPipelineStage } from "../../server/solar/pipeline/SolarPipelineModels.ts";
+import type {
+  SimulationAssumption,
+  StringSizingResult,
+  MonthlyProductionRow,
+  LossBreakdown,
+} from "../../server/solar/simulation/SolarSimulationModels.ts";
+import { type DesignObstacle, type DesignPoint } from "./solarDesignStudio.ts";
 import {
   DESIGN_INCOMPLETE_BOQ_LABEL,
   DESIGN_INCOMPLETE_MESSAGE,
@@ -19,20 +24,14 @@ import type {
   ProposalDraft,
   ProposalInputSummary,
   ProposalTemplateDraft,
-  SolarProposalInput,
   StructureType,
   SupportedSystemSizeKw,
   SystemType,
 } from "../../server/solar/proposal/SolarProposalModels.ts";
-import {
-  SUPPORTED_SYSTEM_SIZES_KW,
-  SolarProposalValidationError,
-  validateAndNormalizeSolarProposalInput,
-} from "../../server/solar/proposal/SolarProposalModels.ts";
-import { DEFAULT_PANEL_WATTAGE } from "../../server/solar/proposal/SolarDesignRules.ts";
+import { SUPPORTED_SYSTEM_SIZES_KW } from "../../server/solar/proposal/SolarProposalModels.ts";
 
 export type { BoqSection, EquipmentTier, ProposalDraft, ProposalInputSummary, ProposalTemplateDraft, StructureType, SupportedSystemSizeKw, SystemType };
-export { SUPPORTED_SYSTEM_SIZES_KW, generateSolarProposal };
+export { SUPPORTED_SYSTEM_SIZES_KW };
 
 export type StudioTargetSystemKw = SupportedSystemSizeKw | "auto";
 
@@ -74,13 +73,27 @@ export interface StudioBoqPreviewLine {
 
 export interface StudioProposalViewModel {
   draftOnly: true;
+  pipelineSuccess: boolean;
+  pipelineStage: SolarPipelineStage | null;
+  pipelineCode: string | null;
+  pipelineMessage: string | null;
+  stagesCompleted: SolarPipelineStage[];
   designComplete: boolean;
   validationMessage: string | null;
+  roofValidationOk: boolean;
+  fixGuidance: string[];
   roofAreaM2: number;
   usableAreaM2: number;
   panelCells: StudioPanelCell[];
   panelCount: number;
   systemSizeKw: number;
+  monthlyProduction: MonthlyProductionRow[];
+  annualProductionKwh: number;
+  performanceRatio: number;
+  lossBreakdown: LossBreakdown | null;
+  stringSizing: StringSizingResult | null;
+  cableLossKwh: number;
+  clippingLossKwh: number;
   cableDistanceM: number;
   cableRolls: number;
   structureCost: number;
@@ -91,6 +104,7 @@ export interface StudioProposalViewModel {
   proposalPages: ProposalPreviewPage[];
   warnings: string[];
   assumptions: string[];
+  engineeringAssumptions: SimulationAssumption[];
   template: ProposalTemplateDraft | null;
   inputSummary: ProposalInputSummary | null;
 }
@@ -103,84 +117,6 @@ const ALLOWED_INPUT_SUMMARY_KEYS = new Set([
   "panelWattage",
   "siteComplexityScore",
 ]);
-
-function panelCountForSystemSafe(sizeKw: SupportedSystemSizeKw, panelWattage: number): number {
-  if (!Number.isFinite(panelWattage) || panelWattage <= 0) return Number.POSITIVE_INFINITY;
-  return panelCountForSystem(sizeKw, panelWattage);
-}
-
-export function snapToSupportedSystemSizeKw(kw: number): SupportedSystemSizeKw {
-  const sizes = [...SUPPORTED_SYSTEM_SIZES_KW];
-  let best: SupportedSystemSizeKw = sizes[0];
-  let bestDist = Infinity;
-  for (const size of sizes) {
-    const dist = Math.abs(size - kw);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = size;
-    }
-  }
-  return best;
-}
-
-export function resolveStudioSystemSizeKw(input: StudioCanvasInput): SupportedSystemSizeKw | null {
-  if (input.roofBoundary.length < 3) return null;
-
-  const layoutInput = toEngineLayoutInput(input, 15);
-  const maxLayout = layoutPanels(layoutInput);
-  if (maxLayout.placedPanels.length === 0) return null;
-
-  if (input.targetSystemKw !== "auto") {
-    const snapped = snapToSupportedSystemSizeKw(input.targetSystemKw);
-    const needed = panelCountForSystemSafe(snapped, input.panelWattage);
-    if (needed > maxLayout.placedPanels.length) return null;
-    return snapped;
-  }
-
-  for (let i = sizesDescending().length - 1; i >= 0; i -= 1) {
-    const size = sizesDescending()[i];
-    const needed = panelCountForSystemSafe(size, input.panelWattage);
-    if (needed <= maxLayout.placedPanels.length) return size;
-  }
-  return 3;
-}
-
-function sizesDescending(): SupportedSystemSizeKw[] {
-  return [...SUPPORTED_SYSTEM_SIZES_KW].sort((a, b) => b - a) as SupportedSystemSizeKw[];
-}
-
-function toEngineLayoutInput(input: StudioCanvasInput, systemSizeKw: SupportedSystemSizeKw): SolarProposalInput {
-  return {
-    systemSizeKw,
-    tier: input.packageTier,
-    systemType: input.systemType,
-    structureType: input.structureType,
-    panelWattage: input.panelWattage,
-    roofBoundary: input.roofBoundary,
-    obstacles: input.obstacles,
-    roofWidthMeters: input.roofWidthMeters,
-    canvasWidth: input.canvasWidth,
-    siteComplexityScore: input.siteComplexityScore ?? 0,
-  };
-}
-
-function roofAreaM2FromBoundary(boundary: DesignPoint[], roofWidthMeters: number, canvasWidth: number): number {
-  if (boundary.length < 3 || roofWidthMeters <= 0 || canvasWidth <= 0) return 0;
-  const metersPerPixel = roofWidthMeters / canvasWidth;
-  return Math.round(polygonArea(boundary) * metersPerPixel * metersPerPixel * 10) / 10;
-}
-
-function mapPanelCells(placements: PanelPlacement[]): StudioPanelCell[] {
-  return placements.map((p) => ({
-    id: `panel-${p.row}-${p.col}`,
-    x: p.x,
-    y: p.y,
-    width: p.width,
-    height: p.height,
-    row: p.row,
-    col: p.col,
-  }));
-}
 
 export function flattenBoqSections(sections: BoqSection[]): StudioBoqPreviewLine[] {
   const lines: StudioBoqPreviewLine[] = [];
@@ -323,7 +259,7 @@ export function buildStudioProposalPages(
         {
           heading: "Draft notice",
           lines: [
-            "Calculated locally using server/solar/proposal engine rules.",
+            "Calculated locally using server/solar/pipeline (unified design pipeline).",
             "No data is saved, exported as PDF, or written to CRM.",
           ],
         },
@@ -343,114 +279,4 @@ export function assertStudioProposalDraftSafe(
   return forbiddenFragments.every((f) => !blob.includes(f));
 }
 
-export function buildStudioProposalViewModel(input: StudioCanvasInput): StudioProposalViewModel {
-  const roofAreaM2 = roofAreaM2FromBoundary(input.roofBoundary, input.roofWidthMeters, input.canvasWidth);
-  const empty: StudioProposalViewModel = {
-    draftOnly: true,
-    designComplete: false,
-    validationMessage: null,
-    roofAreaM2,
-    usableAreaM2: 0,
-    panelCells: [],
-    panelCount: 0,
-    systemSizeKw: 0,
-    cableDistanceM: 0,
-    cableRolls: 0,
-    structureCost: 0,
-    marginPercent: 0,
-    grandTotal: 0,
-    boqSections: [],
-    boqPreviewLines: [],
-    proposalPages: buildIncompleteStudioPages(),
-    warnings: [],
-    assumptions: [],
-    template: null,
-    inputSummary: null,
-  };
-
-  if (input.roofBoundary.length < 3) {
-    return { ...empty, validationMessage: DESIGN_INCOMPLETE_MESSAGE };
-  }
-
-  try {
-    validateAndNormalizeSolarProposalInput(
-      {
-        systemSizeKw: 3,
-        tier: input.packageTier,
-        systemType: input.systemType,
-        structureType: input.structureType,
-        panelWattage: input.panelWattage,
-        siteComplexityScore: input.siteComplexityScore ?? 0,
-        roofWidthMeters: input.roofWidthMeters,
-        canvasWidth: input.canvasWidth,
-      },
-      DEFAULT_PANEL_WATTAGE
-    );
-  } catch (e) {
-    const message =
-      e instanceof SolarProposalValidationError
-        ? e.message
-        : e instanceof Error
-          ? e.message
-          : "Invalid proposal inputs.";
-    return { ...empty, validationMessage: message };
-  }
-
-  const resolvedSize = resolveStudioSystemSizeKw(input);
-  if (!resolvedSize) {
-    return {
-      ...empty,
-      validationMessage: "Roof layout cannot support the selected system size.",
-    };
-  }
-
-  try {
-    const engineInput = toEngineLayoutInput(input, resolvedSize);
-    const layout = layoutPanels(engineInput);
-    const { draft, template } = generateSolarProposal(engineInput);
-
-    if (!assertStudioProposalDraftSafe(draft)) {
-      return { ...empty, validationMessage: "Proposal draft failed safety checks." };
-    }
-
-    const proposalPages = buildStudioProposalPages(
-      draft,
-      template,
-      input.roofWidthMeters,
-      input.roofDepthMeters,
-      layout.usableAreaM2,
-      roofAreaM2
-    );
-
-    return {
-      draftOnly: true,
-      designComplete: true,
-      validationMessage: null,
-      roofAreaM2,
-      usableAreaM2: layout.usableAreaM2,
-      panelCells: mapPanelCells(layout.placedPanels),
-      panelCount: draft.panelCount,
-      systemSizeKw: draft.systemSizeKw,
-      cableDistanceM: draft.cableDistanceM,
-      cableRolls: draft.cableRolls,
-      structureCost: draft.structureCost,
-      marginPercent: draft.pricing.marginPercent,
-      grandTotal: draft.pricing.grandTotal,
-      boqSections: draft.sections,
-      boqPreviewLines: flattenBoqSections(draft.sections),
-      proposalPages,
-      warnings: [...layout.warnings, ...draft.warnings],
-      assumptions: draft.assumptions,
-      template,
-      inputSummary: draft.inputSummary,
-    };
-  } catch (e) {
-    const message =
-      e instanceof SolarProposalValidationError
-        ? e.message
-        : e instanceof Error
-          ? e.message
-          : "Unable to generate proposal draft.";
-    return { ...empty, validationMessage: message };
-  }
-}
+export { buildPipelineStudioViewModel as buildStudioProposalViewModel } from "./solarPipelineClient.ts";

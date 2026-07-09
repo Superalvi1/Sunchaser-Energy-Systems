@@ -41,8 +41,10 @@ import {
   roofStageWarnings,
   simulationStageWarnings,
 } from "./SolarPipelineWarnings.ts";
+import { resolvePipelineSystemSizeKw } from "./SolarPipelineAutoSize.ts";
 import { validateSolarDesignPipelineInput } from "./SolarPipelineValidation.ts";
-import { SolarPipelineValidationError } from "./SolarPipelineModels.ts";
+import { SolarPipelineStageError, SolarPipelineValidationError } from "./SolarPipelineModels.ts";
+import type { SupportedSystemSizeKw } from "../proposal/SolarProposalModels.ts";
 
 function primaryRoofPlane(planes: RoofPlaneInput[]): RoofPlaneInput {
   if (planes.length === 1) return planes[0];
@@ -81,10 +83,13 @@ function roofPlaneToCanvas(plane: RoofPlaneInput): { boundary: RoofPoint[]; obst
   };
 }
 
-function buildProposalInputFromPipeline(input: SolarDesignPipelineInput): SolarProposalInput {
+function buildProposalInputFromPipeline(
+  input: SolarDesignPipelineInput,
+  resolvedSystemSizeKw: SupportedSystemSizeKw
+): SolarProposalInput {
   const { input: normalized } = validateAndNormalizeSolarProposalInput(
     {
-      systemSizeKw: input.systemSizeKw,
+      systemSizeKw: resolvedSystemSizeKw,
       tier: input.tier,
       systemType: input.systemType,
       structureType: input.structureType,
@@ -158,12 +163,8 @@ export function runSolarDesignPipeline(input: SolarDesignPipelineInput): SolarDe
   }
   stagesCompleted.push("validation");
 
-  const proposalInput = buildProposalInputFromPipeline(validated);
-  const bundle = resolveEquipmentBundle(validated.systemSizeKw, validated.tier, validated.systemType);
-  const panelWattage = validated.panelWattage ?? bundle.panelWattage;
-
   let roof = null;
-  let roofBoundary = validated.roofBoundary;
+  let roofBoundary = validated.roofBoundary ?? [];
   let obstacles = validated.obstacles ?? [];
   let layoutTiltDeg: number | undefined;
   let layoutAzimuthDeg: number | undefined;
@@ -190,8 +191,32 @@ export function runSolarDesignPipeline(input: SolarDesignPipelineInput): SolarDe
     warnings = mergePipelineWarnings([warnings, roofStageWarnings(null)]);
   }
 
+  const bundleProbe = resolveEquipmentBundle(5, validated.tier, validated.systemType);
+  const panelWattage = validated.panelWattage ?? bundleProbe.panelWattage;
+
+  let resolvedSystemSizeKw: SupportedSystemSizeKw;
+  try {
+    resolvedSystemSizeKw = resolvePipelineSystemSizeKw(validated, panelWattage, {
+      roofBoundary,
+      obstacles,
+      roofWidthMeters: validated.roofWidthMeters,
+      canvasWidth: validated.canvasWidth,
+      canvasHeight: validated.canvasHeight,
+    });
+  } catch (e) {
+    if (e instanceof SolarPipelineStageError) {
+      return pipelineFailure(e.stage, e.code, e.message, stagesCompleted, warnings, validationMessages);
+    }
+    const message = e instanceof Error ? e.message : "System size resolution failed.";
+    return pipelineFailure("layout", "AUTO_SIZE_FAILED", message, stagesCompleted, warnings, validationMessages);
+  }
+
+  const validatedResolved: SolarDesignPipelineInput = { ...validated, systemSizeKw: resolvedSystemSizeKw };
+  const proposalInput = buildProposalInputFromPipeline(validatedResolved, resolvedSystemSizeKw);
+  const bundle = resolveEquipmentBundle(resolvedSystemSizeKw, validated.tier, validated.systemType);
+
   const layout = layoutPanels({
-    systemSizeKw: validated.systemSizeKw,
+    systemSizeKw: resolvedSystemSizeKw,
     panelWattage,
     roofBoundary,
     obstacles,
@@ -228,7 +253,7 @@ export function runSolarDesignPipeline(input: SolarDesignPipelineInput): SolarDe
   let simulation;
   try {
     simulation = runSolarSimulation({
-      systemSizeKw: validated.systemSizeKw,
+      systemSizeKw: resolvedSystemSizeKw,
       systemType: validated.systemType,
       site: validated.simulation?.site,
       ...(Object.keys(arrayInput).length > 0 ? { array: arrayInput } : {}),
@@ -245,7 +270,7 @@ export function runSolarDesignPipeline(input: SolarDesignPipelineInput): SolarDe
   stagesCompleted.push("simulation");
   warnings = mergePipelineWarnings([warnings, simulationStageWarnings(simulation)]);
 
-  const electrical = buildElectricalSizing(validated, proposalInput, simulation.stringSizing);
+  const electrical = buildElectricalSizing(validatedResolved, proposalInput, simulation.stringSizing);
   stagesCompleted.push("electrical");
 
   if (!Number.isFinite(electrical.protection.subtotalPrice) || electrical.protection.subtotalPrice < 0) {
@@ -280,11 +305,11 @@ export function runSolarDesignPipeline(input: SolarDesignPipelineInput): SolarDe
     );
   }
 
-  const structureEstimate = calculateStructure(boq.panelCount, validated.structureType);
+  const structureEstimate = calculateStructure(boq.panelCount, validatedResolved.structureType);
 
   let pricing;
   try {
-    pricing = buildPricingSummary(boq.sections, validated.tier, validated.systemType);
+    pricing = buildPricingSummary(boq.sections, validatedResolved.tier, validatedResolved.systemType);
   } catch (e) {
     const message = e instanceof Error ? e.message : "Pricing aggregation failed.";
     return pipelineFailure("pricing", "PRICING_FAILED", message, stagesCompleted, warnings, validationMessages);
@@ -309,7 +334,7 @@ export function runSolarDesignPipeline(input: SolarDesignPipelineInput): SolarDe
     generatedAt: PIPELINE_ENGINE_TIMESTAMP,
     inputSummary: summary,
     panelCount: boq.panelCount,
-    systemSizeKw: validated.systemSizeKw,
+    systemSizeKw: resolvedSystemSizeKw,
     cableDistanceM: boq.cableDistanceM,
     cableRolls: boq.cableRolls,
     structureCost: boq.structureCost,

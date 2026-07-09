@@ -63,8 +63,10 @@ export class SolarPipelineStageError extends Error {
   }
 }
 
+export type PipelineSystemSizeSelection = SupportedSystemSizeKw | "auto";
+
 export interface SolarDesignPipelineInput {
-  systemSizeKw: SupportedSystemSizeKw;
+  systemSizeKw: PipelineSystemSizeSelection;
   tier: EquipmentTier;
   systemType: SystemType;
   structureType: StructureType;

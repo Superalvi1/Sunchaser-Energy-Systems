@@ -562,4 +562,28 @@ check("shape validation failure stops all later stages", () => {
   return !o.success && o.stagesCompleted.length === 0;
 });
 
+check("auto systemSizeKw resolves to largest fitting supported size", () => {
+  const o = runSolarDesignPipeline({ ...BASE, systemSizeKw: "auto" });
+  return o.success && o.result.draft.systemSizeKw >= 3;
+});
+
+check("auto systemSizeKw on impossibly small roof fails at layout", () => {
+  const o = runSolarDesignPipeline({
+    ...BASE,
+    systemSizeKw: "auto",
+    roofBoundary: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+    ],
+    roofWidthMeters: 0.5,
+  });
+  return !o.success && o.stage === "layout" && o.code === "AUTO_SIZE_IMPOSSIBLE";
+});
+
+check("validation accepts systemSizeKw auto", () => {
+  const v = validateSolarDesignPipelineInput({ ...BASE, systemSizeKw: "auto" });
+  return v.systemSizeKw === "auto";
+});
+
 console.log(`\nSolar pipeline unit tests: ${pass} passed`);
