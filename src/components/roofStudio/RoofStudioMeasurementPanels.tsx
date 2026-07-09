@@ -7,6 +7,18 @@ import { boqGrandTotal, lineTotal, updateBoqLine, type BoqUpdateResult } from ".
 import type { ReportPage } from "../../lib/roofStudioReport.ts";
 import type { PanelModuleSpec } from "../../lib/roofStudioPanels.ts";
 import type { StructureLayout } from "../../lib/roofStudioStructure.ts";
+import type { SiteGeoReference } from "../../lib/roofStudioGeoReference.ts";
+import {
+  deriveWizardProgress,
+  gpsAnchorLatText,
+  gpsAnchorLngText,
+  parseOptionalMapZoomText,
+  tryApplyGpsAnchorTexts,
+  validateSiteGeoReference,
+  WIZARD_STEP_LABELS,
+  type WizardStep,
+} from "../../lib/roofStudioGeoReference.ts";
+import { MapPin, CheckCircle2, Circle } from "lucide-react";
 
 export function CalibrationBanner({
   calibrated,
@@ -85,6 +97,199 @@ export function CalibrationDialog({
     </div>
   );
 }
+
+export function CalibrationWizard({
+  hasImage,
+  calibrated,
+  hasCompletePlane,
+  hasPanels,
+  hasBoq = false,
+  onGoToStep,
+  title = "Project design steps",
+}: {
+  hasImage: boolean;
+  calibrated: boolean;
+  hasCompletePlane: boolean;
+  hasPanels: boolean;
+  hasBoq?: boolean;
+  onGoToStep?: (step: WizardStep) => void;
+  title?: string;
+}) {
+  const progressOpts = { hasImage, calibrated, hasCompletePlane, hasPanels, hasBoq };
+  const { currentStep, completedThrough } = deriveWizardProgress(progressOpts);
+  const steps = [1, 2, 3, 4, 5, 6] as const;
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-3">
+      <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">{title}</h3>
+      <ol className="space-y-2">
+        {steps.map((step) => {
+          const done = step <= completedThrough;
+          const active = step === currentStep;
+          const Icon = done ? CheckCircle2 : Circle;
+          return (
+            <li key={step}>
+              <button
+                type="button"
+                onClick={() => onGoToStep?.(step)}
+                className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition ${
+                  active ? "bg-cyan-500/15 border border-cyan-500/30" : "hover:bg-slate-800/60"
+                }`}
+              >
+                <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${done ? "text-emerald-400" : active ? "text-cyan-300" : "text-slate-600"}`} />
+                <div>
+                  <p className={`text-[10px] font-bold ${active ? "text-cyan-100" : "text-slate-300"}`}>
+                    Step {step}: {WIZARD_STEP_LABELS[step]}
+                  </p>
+                  {active && (
+                    <p className="text-[9px] text-slate-500 mt-0.5">
+                      {step === 1 && "Upload a Google Earth or map screenshot (stays on device)."}
+                      {step === 2 && "Draw a known-distance line and enter ft/in or meters."}
+                      {step === 3 && "Trace the roof boundary (≥3 points)."}
+                      {step === 4 && "Auto-fill or place panels after the roof is drawn."}
+                      {step === 5 && "Review the draft BOQ generated from panels and structure."}
+                      {step === 6 && "Review the layout report / proposal draft pages."}
+                    </p>
+                  )}
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+export function GeoReferenceEditor({
+  geo,
+  northAzimuthDeg,
+  geoError,
+  onChange,
+  onNorthChange,
+  onValidationError,
+}: {
+  geo: SiteGeoReference;
+  northAzimuthDeg: number;
+  geoError: string | null;
+  onChange: (geo: SiteGeoReference) => void;
+  onNorthChange: (deg: number) => void;
+  onValidationError?: (error: string) => void;
+}) {
+  const [latText, setLatText] = React.useState(() => gpsAnchorLatText(geo));
+  const [lngText, setLngText] = React.useState(() => gpsAnchorLngText(geo));
+  const [mapZoomText, setMapZoomText] = React.useState(() => (geo.mapZoom === null ? "" : String(geo.mapZoom)));
+  const [fieldError, setFieldError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setLatText(gpsAnchorLatText(geo));
+    setLngText(gpsAnchorLngText(geo));
+    setMapZoomText(geo.mapZoom === null ? "" : String(geo.mapZoom));
+  }, [geo.latitude, geo.longitude, geo.mapZoom]);
+
+  const commitGpsFields = (nextLat: string, nextLng: string) => {
+    const result = tryApplyGpsAnchorTexts(geo, nextLat, nextLng);
+    if (!result.ok) {
+      setFieldError(result.error);
+      onValidationError?.(result.error);
+      return;
+    }
+    setFieldError(null);
+    onChange(result.geo);
+  };
+
+  const displayError = fieldError ?? geoError;
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
+      <h3 className="text-[11px] font-bold uppercase tracking-wider text-white flex items-center gap-2">
+        <MapPin className="h-4 w-4 text-cyan-400" />
+        Site coordinates
+      </h3>
+      <p className="text-[9px] text-slate-500">Optional GPS anchor for map/Earth reference. Leave blank if unknown.</p>
+      {displayError && <p className="text-[10px] text-rose-400">{displayError}</p>}
+      <label className="block text-[10px] text-slate-500">
+        Site / address label
+        <input
+          value={geo.siteLabel}
+          onChange={(e) => onChange({ ...geo, siteLabel: e.target.value })}
+          placeholder="e.g. Lahore warehouse roof"
+          className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[10px] text-slate-500">
+          Latitude°
+          <input
+            type="text"
+            inputMode="decimal"
+            value={latText}
+            onChange={(e) => {
+              const next = e.target.value;
+              setLatText(next);
+              commitGpsFields(next, lngText);
+            }}
+            placeholder="31.5204"
+            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+          />
+        </label>
+        <label className="block text-[10px] text-slate-500">
+          Longitude°
+          <input
+            type="text"
+            inputMode="decimal"
+            value={lngText}
+            onChange={(e) => {
+              const next = e.target.value;
+              setLngText(next);
+              commitGpsFields(latText, next);
+            }}
+            placeholder="74.3587"
+            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+          />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[10px] text-slate-500">
+          North orientation°
+          <input
+            type="number"
+            step={1}
+            value={northAzimuthDeg}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              onNorthChange(Number.isFinite(v) ? v : 0);
+            }}
+            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+          />
+        </label>
+        <label className="block text-[10px] text-slate-500">
+          Map zoom (optional)
+          <input
+            type="text"
+            inputMode="numeric"
+            value={mapZoomText}
+            onChange={(e) => {
+              const next = e.target.value;
+              setMapZoomText(next);
+              const parsed = parseOptionalMapZoomText(next);
+              if (!parsed.ok) {
+                setFieldError(parsed.error);
+                onValidationError?.(parsed.error);
+                return;
+              }
+              setFieldError(null);
+              onChange({ ...geo, mapZoom: parsed.value });
+            }}
+            placeholder="18"
+            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+export { validateSiteGeoReference };
 
 export function PanelSpecEditor({
   spec,

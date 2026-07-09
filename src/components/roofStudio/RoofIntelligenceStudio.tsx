@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   BoxSelect,
   Circle,
-  Compass,
   Eye,
   EyeOff,
   Grid3X3,
@@ -90,13 +89,71 @@ import {
   BoqEditor,
   CalibrationBanner,
   CalibrationDialog,
+  CalibrationWizard,
+  GeoReferenceEditor,
   PanelSpecEditor,
   ReportPreview,
   StructureEditor,
+  validateSiteGeoReference,
 } from "./RoofStudioMeasurementPanels.tsx";
+import { mergeSegmentDimensions, planeBoundarySegmentDimensions } from "../../lib/roofStudioDimensions.ts";
+import {
+  canEnterWizardStep,
+  COMPLETE_PREVIOUS_STEP_MESSAGE,
+  isDesignWorkspaceUnlocked,
+  type SiteGeoReference,
+  type WizardStep,
+} from "../../lib/roofStudioGeoReference.ts";
 
 const CANVAS_HEIGHT = 640;
 const VERTEX_HIT_UNITS = 10;
+
+/** CRM / Project Design Workspace context seeded into Roof Studio. */
+export interface ProjectDesignContext {
+  leadId: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  sanctionedLoad: string;
+  geoSeed: SiteGeoReference;
+}
+
+export interface RoofIntelligenceStudioProps {
+  /** When set, studio is embedded in Project Design Workspace. */
+  project?: ProjectDesignContext;
+  /** Hide standalone hero; gate panels/BOQ/proposal until image + scale. */
+  workspaceMode?: boolean;
+  /**
+   * `full` — default CAD chrome (layers + right stats).
+   * `canvas` — toolbar + canvas + status only (HelioScope center pane).
+   */
+  chromeMode?: "full" | "canvas";
+  /** Notify parent when studio state changes (Design Studio live results). */
+  onStudioStateChange?: (snapshot: {
+    state: RoofStudioState;
+    hasImage: boolean;
+    calibrated: boolean;
+  }) => void;
+  /** Optional overlay panels drawn on canvas (Panel Layout Engine V2 placements). */
+  overlayPanels?: Array<{
+    id: string;
+    x: number;
+    y: number;
+    widthUnits: number;
+    heightUnits: number;
+  }>;
+  /** Imperative bridge for Design Studio Auto Layout / tool selection. */
+  studioApiRef?: React.MutableRefObject<RoofStudioApi | null>;
+}
+
+export interface RoofStudioApi {
+  getState: () => RoofStudioState;
+  hasImage: () => boolean;
+  isCalibrated: () => boolean;
+  setTool: (tool: ToolMode) => void;
+  openImagePicker: () => void;
+  applyState: (next: RoofStudioState) => void;
+}
 
 type Viewport = { scale: number; offsetX: number; offsetY: number };
 
@@ -157,11 +214,38 @@ function fmt(n: number, digits = 1): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-export default function RoofIntelligenceStudio() {
+export default function RoofIntelligenceStudio({
+  project,
+  workspaceMode = false,
+  chromeMode = "full",
+  onStudioStateChange,
+  overlayPanels,
+  studioApiRef,
+}: RoofIntelligenceStudioProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [history, setHistory] = useState<RoofStudioHistory>(() => createHistory(createInitialRoofStudioState()));
+  const [history, setHistory] = useState<RoofStudioHistory>(() => {
+    const initial = createInitialRoofStudioState(project?.leadId ? `lead-${project.leadId}` : "roof-site");
+    if (project?.geoSeed) {
+      initial.geoReference = { ...project.geoSeed };
+    }
+    return createHistory(initial);
+  });
   const state = history.present;
+
+  useEffect(() => {
+    if (!project?.geoSeed) return;
+    setHistory((h) => {
+      const next = {
+        ...h.present,
+        geoReference: {
+          ...project.geoSeed,
+          siteLabel: project.geoSeed.siteLabel || project.address || project.customerName || h.present.geoReference.siteLabel,
+        },
+      };
+      return { ...h, present: next };
+    });
+  }, [project?.leadId, project?.geoSeed.latitude, project?.geoSeed.longitude, project?.geoSeed.siteLabel, project?.address, project?.customerName]);
 
   const [tool, setTool] = useState<ToolMode>("plane");
   const [viewport, setViewport] = useState<Viewport>({ scale: 1, offsetX: 80, offsetY: 80 });
@@ -239,6 +323,8 @@ export default function RoofIntelligenceStudio() {
       planes: state.planes,
       metersPerUnit: state.metersPerUnit,
       calibration: state.scaleCalibration,
+      geoReference: state.geoReference,
+      northAzimuthDeg: state.northAzimuthDeg,
       dimensions: state.dimensionAnnotations,
       panelPlacements: state.panelPlacements,
       panelSpec: state.panelSpec,
@@ -246,6 +332,67 @@ export default function RoofIntelligenceStudio() {
       boqLines: state.boqLines,
     });
   }, [state, calibrated]);
+
+  const geoError = validateSiteGeoReference(state.geoReference);
+  const hasCompletePlane = state.planes.some((p) => p.boundary.length >= 3);
+  const hasPanels = state.panelPlacements.length > 0;
+  const hasBoq = state.boqLines.length > 0;
+  const hasImage = Boolean(bgImage);
+  const designUnlocked = isDesignWorkspaceUnlocked(hasImage, calibrated);
+  const canvasOnly = chromeMode === "canvas";
+
+  useEffect(() => {
+    onStudioStateChange?.({ state, hasImage, calibrated });
+  }, [state, hasImage, calibrated, onStudioStateChange]);
+
+  useEffect(() => {
+    if (!studioApiRef) return;
+    studioApiRef.current = {
+      getState: () => state,
+      hasImage: () => Boolean(bgImage),
+      isCalibrated: () => isScaleCalibrated(state.scaleCalibration, state.metersPerUnit),
+      setTool: (t) => {
+        setTool(t);
+        setDraftPoints([]);
+        setDragShape(null);
+      },
+      openImagePicker: () => fileInputRef.current?.click(),
+      applyState: (next) => apply(next),
+    };
+    return () => {
+      studioApiRef.current = null;
+    };
+  }, [studioApiRef, state, bgImage, apply]);
+
+  const handleWizardStep = useCallback(
+    (step: WizardStep) => {
+      const opts = {
+        hasImage: Boolean(bgImage),
+        calibrated: isScaleCalibrated(state.scaleCalibration, state.metersPerUnit),
+        hasCompletePlane: state.planes.some((p) => p.boundary.length >= 3),
+        hasPanels: state.panelPlacements.length > 0,
+        hasBoq: state.boqLines.length > 0,
+      };
+      if (!canEnterWizardStep(step, opts)) {
+        setMeasureResult(COMPLETE_PREVIOUS_STEP_MESSAGE);
+        return;
+      }
+      if (step === 1) fileInputRef.current?.click();
+      else if (step === 2) {
+        setTool("calibrate-scale");
+        setMeasureResult("Draw a line over a known roof distance, then enter the real length.");
+      } else if (step === 3) setTool("plane");
+      else if (step === 4) {
+        setTool("panel-place");
+        setMeasureResult("Place panels or use Auto-fill on the selected roof plane.");
+      } else if (step === 5) {
+        setMeasureResult("Review the draft BOQ below. Edit rates only after panels exist.");
+      } else {
+        setMeasureResult("Review the layout report / proposal draft pages below.");
+      }
+    },
+    [bgImage, state.scaleCalibration, state.metersPerUnit, state.planes, state.panelPlacements.length, state.boqLines.length]
+  );
 
   const panelCount = state.panelPlacements.length;
   const systemKw = panelSystemKw(state.panelPlacements, state.panelSpec.wattage);
@@ -892,6 +1039,13 @@ export default function RoofIntelligenceStudio() {
         const verts = rectVertices(placement.x, placement.y, w, h);
         drawPolygon(ctx, verts, S, "rgba(34,211,238,0.35)", "rgba(34,211,238,0.95)");
       }
+      // Panel Layout Engine V2 overlay (Design Studio Auto Layout)
+      if (overlayPanels?.length) {
+        for (const p of overlayPanels) {
+          const verts = rectVertices(p.x, p.y, p.widthUnits, p.heightUnits);
+          drawPolygon(ctx, verts, S, "rgba(251,191,36,0.28)", "rgba(251,191,36,0.95)");
+        }
+      }
     }
 
     // dimension annotations
@@ -1021,6 +1175,7 @@ export default function RoofIntelligenceStudio() {
     bgOpacity,
     calibrated,
     pendingCalibrationLine,
+    overlayPanels,
   ]);
 
   useEffect(() => {
@@ -1039,6 +1194,7 @@ export default function RoofIntelligenceStudio() {
 
   return (
     <div className="space-y-4 text-left fade-in-entry">
+      {!workspaceMode && (
       <div className="relative overflow-hidden rounded-3xl border border-cyan-500/20 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/30 p-5 shadow-xl">
         <div className="flex items-start gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/25 to-cyan-600/10 border border-cyan-500/30">
@@ -1046,17 +1202,24 @@ export default function RoofIntelligenceStudio() {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-extrabold text-white tracking-tight">Roof Intelligence Studio</h2>
+              <h2 className="text-lg font-extrabold text-white tracking-tight">Geo-Calibrated Roof Studio</h2>
               <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-300">
-                CAD Editor
+                V1
               </span>
             </div>
             <p className="mt-1 text-xs text-slate-400 max-w-2xl">
-              Measurement-calibrated rooftop CAD. Draw a known-distance line to set scale (Google Earth ruler style), then dimension, place panels, and build elevated structure. No AI guessing. Draft only — no save or PDF export.
+              Real measurements from Google Earth / map imagery. Enter site coordinates, calibrate scale with a ruler line, then draw, dimension, and place panels. No AI guessing. Draft only — no save, API, or PDF export.
             </p>
           </div>
         </div>
       </div>
+      )}
+
+      {workspaceMode && !designUnlocked && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-200">
+          Complete Step 1 (upload image) and Step 2 (calibrate scale) before panels, BOQ, and proposal draft are shown.
+        </div>
+      )}
 
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 p-2">
@@ -1066,16 +1229,16 @@ export default function RoofIntelligenceStudio() {
               const Icon = t.icon;
               const active = tool === t.id;
               const scaleRequired = t.group === "panels" || t.group === "structure";
-              const disabled = scaleRequired && !calibrated;
+              const disabled = scaleRequired && !designUnlocked;
               return (
                 <button
                   key={t.id}
                   type="button"
-                  title={disabled ? "Calibrate scale before placing panels." : t.label}
+                  title={disabled ? COMPLETE_PREVIOUS_STEP_MESSAGE : t.label}
                   disabled={disabled}
                   onClick={() => {
                     if (disabled) {
-                      setMeasureResult("Calibrate scale before placing panels.");
+                      setMeasureResult(COMPLETE_PREVIOUS_STEP_MESSAGE);
                       return;
                     }
                     setTool(t.id);
@@ -1154,8 +1317,9 @@ export default function RoofIntelligenceStudio() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <div className={`grid grid-cols-1 gap-4 ${canvasOnly ? "" : "xl:grid-cols-12"}`}>
         {/* layers */}
+        {!canvasOnly && (
         <div className="xl:col-span-2 space-y-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
             <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
@@ -1217,9 +1381,10 @@ export default function RoofIntelligenceStudio() {
             </ul>
           </div>
         </div>
+        )}
 
         {/* canvas */}
-        <div className="xl:col-span-7 space-y-2">
+        <div className={`${canvasOnly ? "" : "xl:col-span-7"} space-y-2`}>
           <div ref={containerRef} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 ring-1 ring-white/5">
             <canvas
               ref={canvasRef}
@@ -1249,7 +1414,27 @@ export default function RoofIntelligenceStudio() {
         </div>
 
         {/* right sidebar */}
+        {!canvasOnly && (
         <div className="xl:col-span-3 space-y-3">
+          <CalibrationWizard
+            hasImage={hasImage}
+            calibrated={calibrated}
+            hasCompletePlane={hasCompletePlane}
+            hasPanels={hasPanels}
+            hasBoq={hasBoq}
+            onGoToStep={handleWizardStep}
+            title={workspaceMode ? "Project design steps" : "Geo-calibration wizard"}
+          />
+
+          <GeoReferenceEditor
+            geo={state.geoReference}
+            northAzimuthDeg={state.northAzimuthDeg}
+            geoError={geoError}
+            onChange={(geoReference) => apply({ ...state, geoReference })}
+            onNorthChange={(northAzimuthDeg) => apply({ ...state, northAzimuthDeg })}
+            onValidationError={(error) => setMeasureResult(error)}
+          />
+
           <CalibrationBanner
             calibrated={calibrated}
             calibration={state.scaleCalibration}
@@ -1363,48 +1548,84 @@ export default function RoofIntelligenceStudio() {
             </div>
           )}
 
+          {calibrated && selectedPlane && (
+            <button
+              type="button"
+              onClick={() => {
+                const segments = planeBoundarySegmentDimensions(selectedPlane.boundary, selectedPlane.name);
+                apply({
+                  ...state,
+                  dimensionAnnotations: mergeSegmentDimensions(state.dimensionAnnotations, segments),
+                });
+                setMeasureResult(`Added ${segments.length} roof segment labels.`);
+              }}
+              className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] font-bold text-amber-200"
+            >
+              Label roof segments (layout PDF style)
+            </button>
+          )}
+
           <PanelSpecEditor
             spec={state.panelSpec}
-            calibrated={calibrated}
+            calibrated={designUnlocked}
             onChange={(panelSpec) => apply({ ...state, panelSpec })}
             onAutoFill={handleAutoFillPanels}
             panelCount={panelCount}
             systemKw={systemKw}
           />
 
-          <StructureEditor
-            structure={state.structure}
-            calibrated={calibrated}
-            onChange={(structure) => {
-              const boqLines =
-                state.panelPlacements.length > 0
-                  ? boqFromPlacements(state.panelPlacements, structure, state.panelSpec.wattage)
-                  : state.boqLines;
-              apply({ ...state, structure, boqLines });
-            }}
-          />
+          {designUnlocked ? (
+            <>
+              <StructureEditor
+                structure={state.structure}
+                calibrated={calibrated}
+                onChange={(structure) => {
+                  const boqLines =
+                    state.panelPlacements.length > 0
+                      ? boqFromPlacements(state.panelPlacements, structure, state.panelSpec.wattage)
+                      : state.boqLines;
+                  apply({ ...state, structure, boqLines });
+                }}
+              />
 
-          <BoqEditor
-            lines={state.boqLines}
-            calibrated={calibrated}
-            onUpdate={(result) => {
-              if (result.warning) setMeasureResult(result.warning);
-              apply({ ...state, boqLines: result.lines });
-            }}
-          />
+              {hasPanels ? (
+                <BoqEditor
+                  lines={state.boqLines}
+                  calibrated={calibrated}
+                  onUpdate={(result) => {
+                    if (result.warning) setMeasureResult(result.warning);
+                    apply({ ...state, boqLines: result.lines });
+                  }}
+                />
+              ) : (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">BOQ Preview</h3>
+                  <p className="mt-2 text-[10px] text-amber-400/90">{COMPLETE_PREVIOUS_STEP_MESSAGE}</p>
+                  <p className="mt-1 text-[9px] text-slate-500">Complete Step 4 (auto layout panels) first.</p>
+                </div>
+              )}
 
-          <ReportPreview pages={reportPages} calibrated={calibrated} />
-
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <Compass className="h-4 w-4 text-cyan-400" />
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Project</h3>
+              {hasBoq ? (
+                <ReportPreview pages={reportPages} calibrated={calibrated} />
+              ) : (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Proposal Draft</h3>
+                  <p className="mt-2 text-[10px] text-amber-400/90">{COMPLETE_PREVIOUS_STEP_MESSAGE}</p>
+                  <p className="mt-1 text-[9px] text-slate-500">Complete Step 5 (BOQ preview) first. Layout report uses existing BOQ/report engine only.</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Panels / BOQ / Proposal</h3>
+              <p className="text-[10px] text-amber-400/90">{COMPLETE_PREVIOUS_STEP_MESSAGE}</p>
+              <p className="text-[9px] text-slate-500">
+                Upload an image and calibrate scale to unlock auto layout, BOQ preview, and proposal draft.
+              </p>
             </div>
-            <label className="block text-[10px] text-slate-500">North azimuth°
-              <input type="number" value={state.northAzimuthDeg} onChange={(e) => apply({ ...state, northAzimuthDeg: Number(e.target.value) || 0 })} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white" />
-            </label>
-          </div>
+          )}
         </div>
+        )}
       </div>
 
       <CalibrationDialog

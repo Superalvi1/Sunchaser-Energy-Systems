@@ -3,7 +3,7 @@ import {
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
-  Printer, Save, Headphones, Package, LayoutGrid, Pentagon
+  Printer, Save, Headphones, Package, LayoutGrid, DraftingCompass
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
@@ -66,8 +66,9 @@ import {
 import QuoteTemplateWorkspace from "./quoteAuthoring/QuoteTemplateWorkspace";
 import AIQuoteBuilderModal from "./quoteAuthoring/AIQuoteBuilderModal";
 import SolarProposalStudio from "./quoteAuthoring/SolarProposalStudio";
-import RoofIntelligenceStudio from "./roofStudio/RoofIntelligenceStudio";
-import { isProposalStudioEnabled, isRoofStudioEnabled } from "../lib/studioFeatureFlags";
+import ProjectDesignWorkspace from "./roofStudio/ProjectDesignWorkspace";
+import SunchaserDesignStudio from "./roofStudio/SunchaserDesignStudio";
+import { isProposalStudioEnabled, isRoofStudioEnabled, isSunchaserDesignStudioEnabled } from "../lib/studioFeatureFlags";
 import { buildDraftApplyPayload } from "../lib/solarQuotePlannerClient";
 import type { SolarQuoteDraft } from "../lib/solarQuotePlannerClient";
 import {
@@ -134,6 +135,9 @@ interface SalesTeamAppProps {
 
 const PROPOSAL_STUDIO_ENABLED = isProposalStudioEnabled();
 const ROOF_STUDIO_ENABLED = isRoofStudioEnabled();
+const SUNCHASER_DESIGN_STUDIO_ENABLED = isSunchaserDesignStudioEnabled();
+/** Design Project entry: Design Studio flag takes priority over legacy Roof Studio. */
+const DESIGN_PROJECT_ENABLED = SUNCHASER_DESIGN_STUDIO_ENABLED || ROOF_STUDIO_ENABLED;
 
 export default function SalesTeamApp({
   staffUser,
@@ -209,7 +213,7 @@ export default function SalesTeamApp({
     if (activeModule === "proposal_studio" && !PROPOSAL_STUDIO_ENABLED) {
       setActiveModule("boq_builder");
     }
-    if (activeModule === "roof_studio" && !ROOF_STUDIO_ENABLED) {
+    if (activeModule === "roof_studio" && !DESIGN_PROJECT_ENABLED) {
       setActiveModule("boq_builder");
     }
   }, [activeModule]);
@@ -2992,6 +2996,15 @@ export default function SalesTeamApp({
                   compact
                 />
                 <div className="flex gap-2 flex-wrap">
+                  {DESIGN_PROJECT_ENABLED && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveModule("roof_studio")}
+                    className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <DraftingCompass className="h-3.5 w-3.5" /> Design Project
+                  </button>
+                  )}
                   {REQUIRE_EXPLICIT_QUOTE_SAVE && (
                   <button
                     type="button"
@@ -3041,8 +3054,8 @@ export default function SalesTeamApp({
                   ...(PROPOSAL_STUDIO_ENABLED
                     ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
                     : []),
-                  ...(ROOF_STUDIO_ENABLED
-                    ? [{ id: 'roof_studio' as const, label: 'Roof Studio', icon: Pentagon }]
+                  ...(DESIGN_PROJECT_ENABLED
+                    ? [{ id: 'roof_studio' as const, label: 'Design Project', icon: DraftingCompass }]
                     : []),
                   { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
                   { id: 'templates', label: 'Quote Templates', icon: Layers },
@@ -3101,7 +3114,18 @@ export default function SalesTeamApp({
 
               {/* MODULE 1B: SOLAR DESIGN STUDIO */}
               {activeModule === "proposal_studio" && PROPOSAL_STUDIO_ENABLED && <SolarProposalStudio />}
-              {activeModule === "roof_studio" && ROOF_STUDIO_ENABLED && <RoofIntelligenceStudio />}
+              {activeModule === "roof_studio" && SUNCHASER_DESIGN_STUDIO_ENABLED && activeLead && (
+                <SunchaserDesignStudio
+                  lead={activeLead}
+                  sanctionedLoad={lescoSanctionedLoad || activeLead.sanctionedLoad}
+                />
+              )}
+              {activeModule === "roof_studio" && !SUNCHASER_DESIGN_STUDIO_ENABLED && ROOF_STUDIO_ENABLED && activeLead && (
+                <ProjectDesignWorkspace
+                  lead={activeLead}
+                  sanctionedLoad={lescoSanctionedLoad || activeLead.sanctionedLoad}
+                />
+              )}
 
               {/* MODULE 1: AUTO SIZER VIEW */}
               {activeModule === 'sizer' && (
