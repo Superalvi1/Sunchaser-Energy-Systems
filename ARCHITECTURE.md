@@ -1,138 +1,253 @@
-# SUNCHASER ENTERPRISE ERP SYSTEM ARCHITECTURE
-This document serves as the official enterprise system architecture blueprint for the upgraded **Sunchaser** Multi-Business mobile application and manual Admin administration ERP portal.
+# Sunchaser OS — Architecture
+
+**Source of truth for all AI agents working on this repository.**
+
+Sunchaser OS is an integrated operating system for solar energy businesses: sales, projects, finance, field operations, inventory, knowledge, and executive intelligence — delivered as a multi-tenant-ready platform with a clear separation between **platform core** and **industry modules**.
+
+Related docs: [`docs/vision/VISION.md`](docs/vision/VISION.md) · [`ROADMAP.md`](ROADMAP.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ---
 
-## 1. Database Entity Relationship Diagram (ERD) & Schema
-Sunchaser's persistent layer uses a robust, scalable structure compatible with local file-backed structures (`database.json`) as well as production cloud architectures (Supabase PostgreSQL, Firestore). 
+## Vision
+
+Sunchaser OS replaces fragmented spreadsheets, ad-hoc tools, and unsafe shortcuts with a single system where:
+
+1. **Every action is authenticated, authorized, and auditable.**
+2. **Business data is scoped by role and ownership** — never exposed wholesale to staff, customers, or AI.
+3. **Domain logic lives in explicit modules** with tests, not in routes, UI, or prompt hacks.
+4. **AI assists; it does not own business truth.** Deterministic engines produce insights; models explain and recommend.
+5. **The platform scales to multi-tenant SaaS** — `companyId` on new modules, tenant isolation designed in from day one.
+
+Deployment today: backend on Render, web client on Vercel, Capacitor path for mobile.
+
+---
+
+## Platform vs Industry Modules
+
+| Layer | What it is | Examples |
+|-------|------------|----------|
+| **Platform core** | Reusable infrastructure any tenant/industry can use | Security, auth, ownership, AI engine, workflow engine, documents pipeline, permissions |
+| **Industry modules** | Solar/CRM domain logic built on the platform | Leads, quotes, projects, invoices, deliveries, inventory SKUs, solar-specific dashboards |
+| **Presentation** | UI that consumes APIs — no hidden business rules | `src/components/*`, admin portals, customer portal |
+
+**Rule:** Platform modules must not import industry-specific UI. Industry modules must not bypass platform security or ownership.
+
+---
+
+## Core Modules
+
+### Security (`server/middleware/`, `server/auth/`)
+
+- JWT Bearer authentication (Phase 1A)
+- Route policy: public / jwt_only / protected (Phase 1B.1)
+- `req.actor` hydration — server is source of truth for role; never trust client-supplied role headers
+- Finance route lockdown (Phase 1B.3A)
+- Fail closed by default
+
+### Ownership (`server/ownership/`)
+
+- **Customer** — `OwnershipResolver` (Phase 1B.2A)
+- **Technician** — `TechnicianOwnershipResolver` (Phase 1B.2B)
+- **Sales** — `SalesOwnershipResolver` (Phase 1B.2C)
+- **Finance** — `FinanceOwnershipResolver` (Phase 1B.3B)
+
+**Principle:** Ownership resolvers are the only approved way to scope CRM rows. New modules either delegate to them (e.g. Knowledge) or stay standalone with their own deny-by-default permissions (e.g. Inventory).
+
+### AI (`server/ai/`)
+
+| Layer | Path | Status |
+|-------|------|--------|
+| V1 Chat | `chatRoute.ts`, `chatV1.ts`, providers | Wired to `/api/ai/chat` |
+| V2 Safe context | `context/SafeBusinessContext.ts` | Bounded summaries only |
+| V3 Prompt builder | `context/BusinessInsightPromptBuilder.ts` | Role-safe prompts |
+| V4 Intelligence | `intelligence/BusinessIntelligenceEngine.ts` | Deterministic insights, no LLM |
+| Agents & tools | `agents/`, `tools/` | Declarative; permissions enforced |
+
+See [`server/ai/README.md`](server/ai/README.md).
+
+### CRM (application layer)
+
+- Leads, customers, quotations, projects, tickets, deliveries — `dbManager.ts`, route handlers in `server.ts`
+- Ownership enforced at route and state-filter level
+- Not a separate `server/crm/` package yet; CRM logic lives in DB + routes + ownership resolvers
+
+### Finance (application + ownership)
+
+- Invoices, party ledger, project finance, costing — `*Db.ts` modules
+- `FinanceOwnershipResolver` + finance route lockdown
+- AI and dashboards receive **aggregated** finance summaries only
+
+### Inventory (`server/inventory/`)
+
+- Pure backend architecture: warehouses, bins, SKUs, ledger, valuation, serial/batch, PO/GRN
+- In-memory repository; **no routes wired yet**
+- Standalone permissions — does not import ownership resolvers
+- `npm run test:inventory-engine`
+
+### Workflow (`server/workflow/`)
+
+- Deterministic workflow engine: triggers, conditions, approvals, delays, escalations, audit log
+- `npm run test:workflow-engine`
+- Not wired to production CRM events yet
+
+### Knowledge (`server/knowledge/`)
+
+- Document taxonomy, permissions (delegates to ownership), in-memory repository
+- Indexer/search are stubs — architecture only
+- Mock UI behind `VITE_ENABLE_KNOWLEDGE_MOCK_UI` (default off)
+- See [`server/knowledge/README.md`](server/knowledge/README.md)
+
+### Documents (`server/documents/`)
+
+- Upload, versioning, checksum, virus scan stub, OCR/embedding queues, event bus
+- Pipeline stage toward Knowledge Platform
+- `npm run test:documents-pipeline`
+
+### Automation (`server/automation/`)
+
+- CRM event-driven rules: triggers, conditions, actions, queue, history
+- Pure engine; **no routes wired yet**
+- `npm run test:automation-engine`
+
+---
+
+## Ownership & Security Principles
+
+1. **Deny by default** — Every new permission module starts with explicit allow lists.
+2. **No ownership bypass** — Admin/Director/Super Admin bypass is intentional and documented per resolver; do not add silent bypasses elsewhere.
+3. **Staff vs customer** — Customers never receive staff APIs; staff never impersonate customers without audit.
+4. **Actor from JWT only** — `req.actor` is hydrated server-side; reject `body.role`, `X-Sunchaser-*` spoofing on protected routes.
+5. **Finance is locked down** — Accounts roles, invoice PDFs, and finance dashboards use dedicated resolvers and lockdown middleware.
+6. **Module-local permissions** — Inventory and Automation use standalone permission modules when ownership resolvers do not apply.
+
+---
+
+## Module Boundaries
 
 ```
-                                  [ Users ]
-                                      | (1)
-                                      |
-                                      | (N)
-                                  [ Leads/Customers ] (Profile Records)
-                                      |
-         +----------------------------+----------------------------+
-         | (1)                        | (1)                        | (1)
-         |                            |                            |
-         | (N)                        | (N)                        | (N)
-    [ Quotations ]               [ Orders ]                   [ Support Tickets ]
-    - Equipment configuration    - Multi-category checkout    - Field complaints
-    - Prices & gross margins     - Delivery/Status tracking   - Technician diagnostic notes
-    - Tax incentives             - Milestone payment plans    - File/Image proof attachments
-         |                            |                            |
-         | (N)                        | (N)                        | (N)
-         +----------------------------+----------------------------+
-                                      |
-                                      | (Matching SKUs)
-                                  [ Catalog hardware/Stock ]
-                                  - Categories list
-                                  - Low-stock alerts
-                                  - Wholesale costs & profit metrics
+┌─────────────────────────────────────────────────────────────┐
+│  Presentation (src/) — UI only, calls APIs                  │
+├─────────────────────────────────────────────────────────────┤
+│  Routes (server.ts) — auth middleware, delegate to modules  │
+├──────────────┬──────────────┬──────────────┬──────────────┤
+│  Ownership   │  AI Engine   │  Workflow    │  Documents   │
+│  resolvers   │  (no CRM     │  Engine      │  Pipeline    │
+│              │   logic)     │              │              │
+├──────────────┴──────────────┴──────────────┴──────────────┤
+│  Industry: CRM DB modules · Finance DB · Inventory Engine   │
+│            · Automation Engine · Knowledge Repository       │
+├─────────────────────────────────────────────────────────────┤
+│  Data: PostgreSQL/Supabase · local JSON fallback (dev)      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Allowed dependencies:**
+- Routes → middleware → ownership / domain modules
+- Knowledge → ownership resolvers
+- AI context → `SafeBusinessContext` (bounded summaries)
+- Documents → Knowledge (stage)
+
+**Forbidden:**
+- `server/inventory/` → `server/ownership/` (unless explicitly redesigned)
+- AI providers → raw `dbManager` queries
+- UI → direct DB access
+- Platform modules → `src/` components
+
+---
+
+## No Raw Data Leakage Rule
+
+Applies to **AI**, **dashboards**, **logs**, **activity feeds**, and **API responses**.
+
+| Do | Don't |
+|----|-------|
+| Pass `SafeBusinessSummary` / aggregated counts to AI | Pass raw lead rows, invoice line items, or `activityLogs.details` |
+| Sanitize enterprise dashboard activity (`sanitizeEnterpriseActivityLog`) | Render PII in overview widgets |
+| Use ownership-filtered state (`filterAppStateForActor`) | Return full `GET /api/state` to sales staff |
+| Log action types and entity IDs | Log customer emails, phone numbers, or free-text notes in telemetry |
+
+**AI context path:** `SafeBusinessContext` → optional `BusinessInsightPromptBuilder` → provider. Tools disabled in V1 chat unless explicitly enabled in future gated releases.
+
+---
+
+## Multi-Tenant SaaS Direction
+
+Current state: single-company deployment with `companyId` fields on new architecture modules.
+
+Future requirements (design for now, implement when wiring routes):
+
+- `companyId` on all tenant-scoped entities
+- Repository queries always filter by `companyId`
+- Actor carries `companyId` when multi-tenant auth ships
+- No cross-tenant serial numbers, events, or ledger keys
+- Per-tenant feature flags and billing hooks at platform layer
+
+---
+
+## Extension Points
+
+| Extension | How to extend |
+|-----------|----------------|
+| AI agent | Add `server/ai/agents/*.ts` + prompt + `ToolSchemas` |
+| AI tool | Register in `AIToolRegistry` with `requiredRoles` |
+| Workflow step | `WorkflowDefinition` steps + `ActionHandlerRegistry` |
+| Automation trigger/action | Add to `AutomationTrigger.ts` / `AutomationAction.ts` + tests |
+| Knowledge collection | `KnowledgeCollections.ts` + permission domain mapping |
+| Ownership domain | New resolver in `server/ownership/` + phase tests |
+| Inventory movement | `StockMovement.ts` + ledger append + engine method |
+
+New architecture modules follow the pattern: **pure TypeScript → in-memory repo → 100+ tests → npm script → routes last**.
+
+---
+
+## AI Engine Principles
+
+1. **Provider-agnostic** — Anthropic, OpenAI, Gemini via `AIProvider` interface.
+2. **Permissions before prompts** — `canAccess(actor, agent)` runs before any model call.
+3. **Deterministic intelligence** — `BusinessIntelligenceEngine` uses `SafeBusinessSummary` only; fixed `generatedAt` when `options.now` omitted.
+4. **No training on customer data** — Context is ephemeral per request unless explicitly stored in conversation memory.
+5. **Tools are opt-in** — V1 chat ships with tools disabled; tool execution goes through `ToolExecutor` + permission checks.
+6. **Cost and audit** — `AILogger` records provider, model, usage; no prompt content in production logs by default.
+
+---
+
+## Testing Rules
+
+| Suite | Command | When required |
+|-------|---------|---------------|
+| Build | `npm run build` | Every change touching `server.ts`, `src/`, or modules |
+| Phase 1B.1 | `npm run test:phase-1b1` | Auth, AI, knowledge, dashboard changes |
+| Phase 1B.2A–2C | `npm run test:phase-1b2a` … `2c` | Ownership changes |
+| Phase 1B.3A–3B | `npm run test:phase-1b3a` … `3b` | Finance changes |
+| Inventory | `npm run test:inventory-engine` | `server/inventory/` |
+| Automation | `npm run test:automation-engine` | `server/automation/` |
+| Workflow | `npm run test:workflow-engine` | `server/workflow/` |
+| Documents | `npm run test:documents-pipeline` | `server/documents/` |
+
+**Test quality:**
+- Deterministic — no `Date.now()` or `Math.random()` without injection/fixture
+- Behavior-focused — not trivial type assertions
+- Permission denial cases required for every new permission module
+- Regression before merge — all applicable suites green
+
+---
+
+## Directory Quick Reference
+
+```
+server/
+  middleware/     Auth, route policy, finance lockdown
+  ownership/      Customer, sales, technician, finance resolvers
+  ai/             AI engine, agents, intelligence, safe context
+  knowledge/      Knowledge platform backend (V5)
+  documents/      Document processing pipeline
+  workflow/       Workflow engine
+  inventory/      Inventory engine
+  automation/     CRM automation engine
+src/              React UI (Vite)
+docs/             Phase specs, security, changelog (human-oriented detail)
 ```
 
 ---
 
-## 2. Structured Data Definitions & Relationships
-Sunchaser represents transaction objects through strict TypeScript interfaces. Relationships are linked via deterministic parent-child IDs:
-
-### A. Customers & Leads (`Leads` collection)
-Holds customer identity, address, utility metrics, and assigned advisor.
-*   **Fields**: `id` (PK), `name`, `email`, `phone`, `address`, `status`, `roofSpace`, `shading`, `assignedSalesperson`, `createdAt`, `notes`.
-*   **Relationships**: Primary profile identifier linked into `orders`, `tickets`, and `quotations` via `leadId` or direct email.
-
-### B. Catalog Products (`Products` collection)
-A multi-category inventory item table supporting solar hardware as well as other diverse appliances.
-*   **Fields**: `id` (PK), `name`, `category` (Panels/Inverters/Batteries/EV Chargers/Appliances), `brand`, `model`, `sku`, `price`, `discount`, `stock`, `images`, `warrantyPeriod`, `specifications`.
-*   **Relationships**: Linked to order line items and quotations.
-
-### C. Solar Packages (`SolarPackages` collection)
-Manages pre-integrated equipment configurations.
-*   **Fields**: `id` (PK), `name`, `panelBrand`, `inverterBrand`, `batteryOption`, `price`, `structureType`, `profitMargin`, `enabled`.
-
-### D. Quotations (`Quotations` collection)
-Pre-sales sizing estimates dynamically calculated for solar and equipment setups.
-*   **Fields**: `id` (PK), `customer` (Lead), `lines` (Sub-Items list), `discount`, `totalCost`, `federalTaxCredit`, `netCost`, `paybackPeriodYears`, `status`.
-
-### E. Orders & Shipments (`Orders` collection)
-Direct multi-category checkouts mapping deliverables, status trackers, and milestones.
-*   **Fields**: `id` (PK), `customerName`, `email`, `phone`, `address`, `status` (Pending/Processing/Dispatched/Delivered/Installed), `items` (Product SKUs list), `totalCost`.
-
-### F. Maintenance Diagnostic Tickets (`Tickets` collection)
-Supports photo/video upload, field technician allocation, and internal notes.
-*   **Fields**: `id` (PK), `customerName`, `email`, `subject`, `description`, `status` (Open/In Progress/Closed), `priority`, `assignedTechnician`, `internalNotes`, `messages`.
-
----
-
-## 3. User Roles, Access & Permissions Matrix
-Sunchaser implements Role-Based Access Control (RBAC) across 11 specific user roles to guarantee data compliance and operational partitioning:
-
-| Role | Operational Scope | Authorized Actions |
-| :--- | :--- | :--- |
-| **Super Admin** | Unlimited global configuration | Manage products, staff permissions, download CSV files, alter pricing models, override system variables. |
-| **Sales Advisor**| Client engagement tracking | Access Leads tab, design bespoke quotations, trigger WhatsApp proposals, log engagement scores. |
-| **Inventory Head**| Hardware procurement operations| Authorize stock purchase orders, configure wholesale costs, track supplier catalogs, audit low-stock warnings. |
-| **Technician** | Field installation & diagnostic | Access technician case notes, upload proof images of finished diagnostic repairs, update diagnostic ticket statuses. |
-| **Customer** | Mobile portal experience | View live shipping timelines, upload electric utility Bills, track active warranties coverage, submit support issues. |
-
----
-
-## 4. Mobile App Screens & Flows (Customer Portal)
-1.  **Sizing Wizard tab**: 
-    -   *Input screen*: Enter roof space and current monthly electricity bills.
-    -   *Bill AI OCR loader*: Drag-and-drop or select PDF bill files; triggers standard simulated parsing.
-    -   *Equations Engine screen*: Staggers immediate calculations for upfront initial investments, federal savings ratios, and investment payback schedules.
-2.  **Product Store tab**:
-    -   *Home catalog grid*: Modular card items filterable by category (Panels, Inverters, EV Chargers, Appliances, Electronics).
-    -   *Hardware specification screen*: Displays model details, warranty spans, price overrides, and "Process order" buttons.
-3.  **Active project track screen**:
-    -   *Milestone tracking meter*: Continuous progress visual bar covering site stages: "Proposed", "Surveyed", "Contracted", "Installed".
-4.  **Complaints submit screen**:
-    -   *Diagnostic submission form*: Input description, title, select priority level. Includes upload inputs for diagnostic photos/videos.
-    -   *Dynamic chat panel*: Real-time conversation thread with designated tech support agents.
-
----
-
-## 5. Manual Admin Control Panel Screens (Admin ERP)
-Direct database modification screen including 11 distinct management interfaces:
-1.  **Catalog Products Manager**: Real-time CRUD form to update, add, or prune hardware entries.
-2.  **Solar Packages Configurator**: Alter panel/inverter details, modify standard gross margins, or toggle packages.
-3.  **Manual Quotation Panel**: Input client profiles, build multi-line equipment bundles with live cost calculations, configure localized terms, download quotes, or dispatch WhatsApp notices.
-4.  **Customer Base Directory**: List leads. Focus on user history timeline covering past invoices, service warranties, and milestone logs.
-5.  **Manual Order Pipeline**: Input manual client checkouts, delegate shipping status tiers, or modify products.
-6.  **Complaints Center**: Oversee active claims, schedule technician visits, and save technical case logs.
-7.  **Stocks & Inventory**: Track gross value statistics, trigger restock purchase triggers, and manage margins.
-8.  **CMS Content Manager**: Edit landing promotion labels, banner slideshow items, and FAQs.
-9.  **Credentials & Roles**: Audit team users login properties and assign access credentials.
-10. **Global Settings**: Configure banking specifications, terms and conditions clauses, taxes, and phone contacts.
-11. **CSV Spreadsheet Utility**: Single-click bulk spreadsheet loaders and CSV template exports.
-
----
-
-## 6. API Architecture & Routing
-Sunchaser uses a high-performance, stateless RESTful API powered by Express. Built with defensive middleware and clean endpoints mapping:
-
-### A. Core State API
-*   `GET /api/state`
-    *   *Payload*: Dynamic assembly of leads, tickets, products, orders, categories, settings, content, and quotations. Handles fallback synchronization with Supabase.
-
-### B. Manual ERP CRUD Engine
-*   `POST /api/db/update`
-    *   *Parameters*: `{ action, table, data, id }`
-    *   *Behavior*: Performs localized CRUD operations on target database collections using memory locks and commits updates synchronously into `database.json`.
-
-### C. Operation Handlers
-*   `POST /api/leads` (Creates pre-sale advisor profile)
-*   `POST /api/procure` (Initiates supplier stock increments)
-*   `POST /api/tickets/advanced` (Dispatches site complaint cases)
-*   `GET /api/export/leads` (Gathers customer sheets CSV)
-*   `GET /api/export/tickets` (Gathers maintenance CSV)
-
----
-
-## 7. Future Multi-Expansion Roadmap
-Sunchaser's modular, decoupled system design is primed for immediate multi-business expansion:
-1.  **Category Insertion**: Inject new categories like "Electric Vehicles" or "Smart Home Electronics" directly into `categories` array. No code edits required; the UI dynamically adapts and renders categories.
-2.  **IoT Grid Telemetry**: Register physical smart energy variables directly using serial numbers tracked in the Customer Portal.
-3.  **Localized Tax Matrices**: Extend global settings to define zip-code level tax and rebate structures.
+*Last updated: 2026-07-08. When this document conflicts with code, code wins until this document is updated — agents must flag drift.*
