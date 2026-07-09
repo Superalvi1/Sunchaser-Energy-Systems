@@ -1,40 +1,27 @@
 /**
  * Sunchaser Design Studio V1 — HelioScope-style solar design workflow.
- * Left controls · Center canvas (Roof Studio) · Right live engine results.
+ * Left controls · Center canvas · Right live engine results.
  * Draft only. No CRM mutation / save. Feature-flagged.
  */
 
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import {
-  CheckCircle2,
-  Compass,
-  DraftingCompass,
-  Layers,
-  MapPin,
-  Phone,
-  Ruler,
-  Sparkles,
-  Square,
-  Sun,
-  Zap,
-} from "lucide-react";
+import { CheckCircle2, DraftingCompass, MapPin, Phone, Sun, Zap } from "lucide-react";
 import type { Lead } from "../../types";
 import {
   DEFAULT_DESIGN_CONTROLS,
   DESIGN_STUDIO_GUIDED_STEPS,
-  DESIGN_WORKSPACE_DRAFT_ONLY_LABEL,
-  MODULE_OPTIONS,
   buildDesignStudioLiveResults,
-  canRunAutoLayout,
+  canRunDesignStudioAutoLayout,
   designStudioWizardProgress,
   displayCustomerPhone,
   prefillAddressFromLead,
   primaryPlane,
   runDesignStudioAutoLayout,
+  validateDesignStudioLayoutSettings,
   type DesignStudioControls,
   type DesignStudioLiveResults,
+  type LayoutAlignment,
 } from "../../lib/sunchaserDesignStudioClient";
-import { STRUCTURE_TYPES, SYSTEM_TYPES, EQUIPMENT_TIERS } from "../../../server/solar/proposal/SolarProposalModels.ts";
 import type { RoofStudioState } from "../../lib/roofStudioClient";
 import { createInitialRoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
@@ -42,6 +29,7 @@ import RoofIntelligenceStudio, {
   type RoofStudioApi,
 } from "./RoofIntelligenceStudio";
 import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
+import DesignStudioLeftControlPanel from "./DesignStudioLeftControlPanel";
 import { DEFAULT_SITE_GEO, type SiteGeoReference } from "../../lib/roofStudioGeoReference";
 import { formatLeadLocation, sanitizeLeadLocationInput } from "../../lib/leadDisplay";
 
@@ -76,6 +64,8 @@ export default function SunchaserDesignStudio({
   const [controls, setControls] = useState<DesignStudioControls>(() => ({
     ...DEFAULT_DESIGN_CONTROLS,
   }));
+  const [alignment, setAlignment] = useState<LayoutAlignment>("center");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [layoutResult, setLayoutResult] = useState<DesignStudioLiveResults["layout"]>(null);
   const [autoLayoutMessage, setAutoLayoutMessage] = useState<string | null>(null);
   const [studioSnap, setStudioSnap] = useState<{
@@ -86,6 +76,7 @@ export default function SunchaserDesignStudio({
 
   const studioApiRef = useRef<RoofStudioApi | null>(null);
   const customerPhone = displayCustomerPhone(lead.phone);
+  const sanctionedDisplay = resolveSanctionedLoad(lead, sanctionedLoad);
 
   const geoSeed: SiteGeoReference = useMemo(
     () => ({
@@ -101,10 +92,10 @@ export default function SunchaserDesignStudio({
       customerName: lead.name || "Customer",
       phone: lead.phone || "",
       address,
-      sanctionedLoad: resolveSanctionedLoad(lead, sanctionedLoad),
+      sanctionedLoad: sanctionedDisplay,
       geoSeed,
     }),
-    [lead, address, sanctionedLoad, geoSeed]
+    [lead, address, sanctionedDisplay, geoSeed]
   );
 
   const hasCompletePlane = Boolean(studioSnap.state && primaryPlane(studioSnap.state));
@@ -144,7 +135,20 @@ export default function SunchaserDesignStudio({
   );
 
   const patchControls = <K extends keyof DesignStudioControls>(key: K, value: DesignStudioControls[K]) => {
-    setControls((c) => ({ ...c, [key]: value }));
+    setControls((c) => {
+      const next = { ...c, [key]: value };
+      const check = validateDesignStudioLayoutSettings({ ...next, alignment });
+      setSettingsError(check.ok ? null : check.message);
+      return next;
+    });
+    setLayoutResult(null);
+    setAutoLayoutMessage(null);
+  };
+
+  const handleAlignmentChange = (value: LayoutAlignment) => {
+    setAlignment(value);
+    const check = validateDesignStudioLayoutSettings({ ...controls, alignment: value });
+    setSettingsError(check.ok ? null : check.message);
     setLayoutResult(null);
     setAutoLayoutMessage(null);
   };
@@ -156,7 +160,12 @@ export default function SunchaserDesignStudio({
       return;
     }
     const state = api.getState();
-    const gate = canRunAutoLayout(api.hasImage(), api.isCalibrated(), Boolean(primaryPlane(state)));
+    const gate = canRunDesignStudioAutoLayout({
+      hasImage: api.hasImage(),
+      calibrated: api.isCalibrated(),
+      hasCompletePlane: Boolean(primaryPlane(state)),
+      controls: { ...controls, alignment },
+    });
     if (!gate.ok) {
       setAutoLayoutMessage(gate.reason);
       setLayoutResult(null);
@@ -169,6 +178,7 @@ export default function SunchaserDesignStudio({
       return;
     }
     setLayoutResult(result.layout);
+    setSettingsError(null);
     setAutoLayoutMessage(
       result.layout.panelCount > 0
         ? `Auto Layout placed ${result.layout.panelCount} panels (${result.layout.dcCapacityKw.toFixed(2)} kW DC).`
@@ -208,7 +218,7 @@ export default function SunchaserDesignStudio({
               </span>
             </div>
             <p className="mt-1 text-xs text-slate-400">
-              Customer → image → calibrate → boundary → keepouts → module → Auto Layout → BOQ. Existing engines only. No AI guessing.
+              Left controls → canvas → live results. Existing engines only. No AI guessing.
             </p>
           </div>
         </div>
@@ -236,7 +246,7 @@ export default function SunchaserDesignStudio({
             <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1">
               <Zap className="h-3 w-3" /> Sanctioned load
             </p>
-            <p className="mt-0.5 text-sm font-mono text-amber-200">{resolveSanctionedLoad(lead, sanctionedLoad)}</p>
+            <p className="mt-0.5 text-sm font-mono text-amber-200">{sanctionedDisplay}</p>
           </div>
         </div>
 
@@ -264,209 +274,39 @@ export default function SunchaserDesignStudio({
       </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
-        <aside className="xl:col-span-3 space-y-2 max-h-[780px] overflow-y-auto pr-1">
-          <Section title="Project / Address" icon={MapPin}>
-            <p className="text-[10px] text-slate-400 truncate">{lead.name || "Customer"}</p>
-            <p className="mt-1 text-[10px] font-mono text-slate-300 truncate" data-testid="design-studio-sidebar-phone">
-              {customerPhone}
-            </p>
-            <label className="mt-2 block text-[10px] text-slate-500">
-              Site address
-              <input
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Street, area, city"
-                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white"
-              />
-            </label>
-            <p className="mt-1 text-[9px] text-amber-300/90" data-testid="design-workspace-draft-only">
-              {DESIGN_WORKSPACE_DRAFT_ONLY_LABEL}
-            </p>
-            <p className="mt-1 text-[9px] text-slate-500">
-              Sanctioned load: {resolveSanctionedLoad(lead, sanctionedLoad)}
-            </p>
-          </Section>
+        <div className="xl:col-span-3">
+          <DesignStudioLeftControlPanel
+            customerName={lead.name || "Customer"}
+            address={address}
+            onAddressChange={setAddress}
+            phone={customerPhone}
+            sanctionedLoad={sanctionedDisplay}
+            controls={controls}
+            alignment={alignment}
+            onControlsChange={patchControls}
+            onAlignmentChange={handleAlignmentChange}
+            studioState={studioSnap.state}
+            hasImage={studioSnap.hasImage}
+            calibrated={studioSnap.calibrated}
+            live={live}
+            autoLayoutMessage={autoLayoutMessage}
+            settingsError={settingsError}
+            onUploadImage={() => studioApiRef.current?.openImagePicker()}
+            onCalibrate={() => studioApiRef.current?.setTool("calibrate-scale")}
+            onResetCalibration={() => {
+              studioApiRef.current?.resetCalibration();
+              setLayoutResult(null);
+              setAutoLayoutMessage("Calibration reset.");
+            }}
+            onDrawRoof={() => studioApiRef.current?.setTool("plane")}
+            onEditRoof={() => studioApiRef.current?.setTool("select")}
+            onSelectRoof={(planeId) => studioApiRef.current?.selectPlane(planeId)}
+            onAddKeepout={(tool) => studioApiRef.current?.setTool(tool)}
+            onAutoLayout={handleAutoLayout}
+          />
+        </div>
 
-          <Section title="Roof Area" icon={Layers}>
-            <p className="text-[10px] text-slate-400">
-              Draw roof boundary on the canvas after calibration. Gross / usable area come from Roof Geometry Engine.
-            </p>
-            <button
-              type="button"
-              onClick={() => studioApiRef.current?.setTool("plane")}
-              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[10px] font-bold text-slate-200 hover:bg-slate-800"
-            >
-              Draw roof plane
-            </button>
-          </Section>
-
-          <Section title="Keepouts / Obstacles" icon={Square}>
-            <div className="flex flex-wrap gap-1">
-              {(
-                [
-                  ["obstacle-rect", "Rect"],
-                  ["obstacle-polygon", "Polygon"],
-                  ["walkway", "Walkway"],
-                  ["parapet", "Parapet"],
-                ] as const
-              ).map(([tool, label]) => (
-                <button
-                  key={tool}
-                  type="button"
-                  onClick={() => studioApiRef.current?.setTool(tool)}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[9px] font-bold text-slate-300 hover:bg-slate-800"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </Section>
-
-          <Section title="Module selection" icon={Sun}>
-            <select
-              value={controls.moduleId}
-              onChange={(e) => patchControls("moduleId", e.target.value)}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white"
-            >
-              {MODULE_OPTIONS.map((m) => (
-                <option key={m.moduleId} value={m.moduleId}>
-                  {m.name} ({m.wattage}W · {m.widthM}×{m.heightM}m)
-                </option>
-              ))}
-            </select>
-          </Section>
-
-          <Section title="Racking / Structure" icon={Layers}>
-            <select
-              value={controls.structureType}
-              onChange={(e) => patchControls("structureType", e.target.value as DesignStudioControls["structureType"])}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white"
-            >
-              {STRUCTURE_TYPES.map((s) => (
-                <option key={s} value={s}>
-                  {s === "elevated_hbeam" ? "Elevated H-Beam / C-Channel" : "Standard roof mount"}
-                </option>
-              ))}
-            </select>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <label className="text-[9px] text-slate-500">
-                System
-                <select
-                  value={controls.systemType}
-                  onChange={(e) => patchControls("systemType", e.target.value as DesignStudioControls["systemType"])}
-                  className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-[10px] text-white"
-                >
-                  {SYSTEM_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[9px] text-slate-500">
-                Package
-                <select
-                  value={controls.tier}
-                  onChange={(e) => patchControls("tier", e.target.value as DesignStudioControls["tier"])}
-                  className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-[10px] text-white"
-                >
-                  {EQUIPMENT_TIERS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </Section>
-
-          <Section title="Tilt / Azimuth" icon={Compass}>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-[9px] text-slate-500">
-                Tilt °
-                <input
-                  type="number"
-                  min={0}
-                  max={60}
-                  value={controls.tiltDeg}
-                  onChange={(e) => patchControls("tiltDeg", Number(e.target.value) || 0)}
-                  className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
-                />
-              </label>
-              <label className="text-[9px] text-slate-500">
-                Azimuth °
-                <input
-                  type="number"
-                  min={0}
-                  max={360}
-                  value={controls.azimuthDeg}
-                  onChange={(e) => patchControls("azimuthDeg", Number(e.target.value) || 0)}
-                  className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
-                />
-              </label>
-            </div>
-          </Section>
-
-          <Section title="Row / Module spacing" icon={Ruler}>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-[9px] text-slate-500">
-                Row spacing (m)
-                <input
-                  type="number"
-                  step={0.01}
-                  min={0}
-                  value={controls.rowSpacingM}
-                  onChange={(e) => patchControls("rowSpacingM", Number(e.target.value) || 0)}
-                  className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
-                />
-              </label>
-              <label className="text-[9px] text-slate-500">
-                Module gap (m)
-                <input
-                  type="number"
-                  step={0.01}
-                  min={0}
-                  value={controls.moduleGapM}
-                  onChange={(e) => patchControls("moduleGapM", Number(e.target.value) || 0)}
-                  className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
-                />
-              </label>
-            </div>
-          </Section>
-
-          <Section title="Setback" icon={Ruler}>
-            <label className="text-[9px] text-slate-500">
-              Edge setback (m)
-              <input
-                type="number"
-                step={0.05}
-                min={0}
-                value={controls.edgeSetbackM}
-                onChange={(e) => patchControls("edgeSetbackM", Number(e.target.value) || 0)}
-                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
-              />
-            </label>
-          </Section>
-
-          <button
-            type="button"
-            onClick={handleAutoLayout}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-3 py-2.5 text-xs font-extrabold text-slate-950 hover:bg-amber-400"
-          >
-            <Sparkles className="h-4 w-4" />
-            Auto Layout
-          </button>
-          {autoLayoutMessage && (
-            <p className="text-[10px] text-amber-200/90 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
-              {autoLayoutMessage}
-            </p>
-          )}
-          <p className="text-[9px] text-slate-500">
-            Uses Panel Layout Engine V2. Requires image + calibrated scale + roof boundary. No panels before calibration.
-          </p>
-        </aside>
-
-        <div className="xl:col-span-6 space-y-2">
+        <div className="xl:col-span-5 space-y-2">
           {showGuidedEmpty && (
             <div className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center">
               <Sun className="mx-auto h-8 w-8 text-amber-400/80" />
@@ -494,36 +334,10 @@ export default function SunchaserDesignStudio({
           />
         </div>
 
-        <aside className="xl:col-span-3 space-y-2 max-h-[780px] overflow-y-auto">
-          <DesignStudioResultsPanel
-            live={live}
-            onAutoLayout={handleAutoLayout}
-            autoLayoutDisabled={!studioSnap.hasImage || !studioSnap.calibrated || !hasCompletePlane}
-            autoLayoutMessage={autoLayoutMessage}
-          />
+        <aside className="xl:col-span-4 space-y-2 max-h-[780px] overflow-y-auto">
+          <DesignStudioResultsPanel live={live} />
         </aside>
       </div>
     </div>
   );
 }
-
-function Section({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2 mb-2">
-        <Icon className="h-3.5 w-3.5 text-amber-400" />
-        <h3 className="text-[10px] font-bold uppercase tracking-wider text-white">{title}</h3>
-      </div>
-      {children}
-    </div>
-  );
-}
-

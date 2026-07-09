@@ -1,10 +1,11 @@
 /**
- * Project Design Workspace V1 — CRM-connected workflow shell.
- * Uses existing Roof Studio + design engines only. No CRM mutation / save / API / AI.
+ * Project Design Workspace V1 — CRM-connected HelioScope-style workflow.
+ * Left controls · Center canvas · Right live engine results.
+ * Draft only. No CRM mutation / save / network / AI / PDF export.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MapPin, Phone, Sun, Zap } from "lucide-react";
+import { Sun } from "lucide-react";
 import type { Lead } from "../../types";
 import { formatLeadLocation, sanitizeLeadLocationInput } from "../../lib/leadDisplay";
 import {
@@ -14,14 +15,15 @@ import {
 } from "../../lib/roofStudioGeoReference";
 import {
   DEFAULT_DESIGN_CONTROLS,
-  DESIGN_WORKSPACE_DRAFT_ONLY_LABEL,
   buildDesignStudioLiveResults,
-  canRunAutoLayout,
+  canRunDesignStudioAutoLayout,
   displayCustomerPhone,
   primaryPlane,
   runDesignStudioAutoLayout,
+  validateDesignStudioLayoutSettings,
   type DesignStudioControls,
   type DesignStudioLiveResults,
+  type LayoutAlignment,
 } from "../../lib/sunchaserDesignStudioClient";
 import { createInitialRoofStudioState, type RoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
@@ -29,6 +31,7 @@ import RoofIntelligenceStudio, {
   type RoofStudioApi,
 } from "./RoofIntelligenceStudio";
 import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
+import DesignStudioLeftControlPanel from "./DesignStudioLeftControlPanel";
 
 export interface ProjectDesignWorkspaceProps {
   lead: Lead;
@@ -72,7 +75,11 @@ export default function ProjectDesignWorkspace({
     ...DEFAULT_SITE_GEO,
     siteLabel: lead.name || "",
   }));
-  const [controls] = useState<DesignStudioControls>(() => ({ ...DEFAULT_DESIGN_CONTROLS }));
+  const [controls, setControls] = useState<DesignStudioControls>(() => ({
+    ...DEFAULT_DESIGN_CONTROLS,
+  }));
+  const [alignment, setAlignment] = useState<LayoutAlignment>("center");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [layoutResult, setLayoutResult] = useState<DesignStudioLiveResults["layout"]>(null);
   const [autoLayoutMessage, setAutoLayoutMessage] = useState<string | null>(null);
   const [studioSnap, setStudioSnap] = useState<{
@@ -93,6 +100,9 @@ export default function ProjectDesignWorkspace({
     });
     setLayoutResult(null);
     setAutoLayoutMessage(null);
+    setSettingsError(null);
+    setControls({ ...DEFAULT_DESIGN_CONTROLS });
+    setAlignment("center");
   }, [lead.id]);
 
   const sanctionedDisplay = useMemo(
@@ -132,8 +142,6 @@ export default function ProjectDesignWorkspace({
     [lead.id, lead.name, lead.phone, address, sanctionedDisplay, geoSeed]
   );
 
-  const hasCompletePlane = Boolean(studioSnap.state && primaryPlane(studioSnap.state));
-
   const live = useMemo(() => {
     if (!studioSnap.state) {
       return buildDesignStudioLiveResults(createInitialRoofStudioState(`lead-${lead.id}`), controls, null, {
@@ -155,6 +163,25 @@ export default function ProjectDesignWorkspace({
     []
   );
 
+  const patchControls = <K extends keyof DesignStudioControls>(key: K, value: DesignStudioControls[K]) => {
+    setControls((c) => {
+      const next = { ...c, [key]: value };
+      const check = validateDesignStudioLayoutSettings({ ...next, alignment });
+      setSettingsError(check.ok ? null : check.message);
+      return next;
+    });
+    setLayoutResult(null);
+    setAutoLayoutMessage(null);
+  };
+
+  const handleAlignmentChange = (value: LayoutAlignment) => {
+    setAlignment(value);
+    const check = validateDesignStudioLayoutSettings({ ...controls, alignment: value });
+    setSettingsError(check.ok ? null : check.message);
+    setLayoutResult(null);
+    setAutoLayoutMessage(null);
+  };
+
   const handleAutoLayout = () => {
     const api = studioApiRef.current;
     if (!api) {
@@ -162,9 +189,15 @@ export default function ProjectDesignWorkspace({
       return;
     }
     const state = api.getState();
-    const gate = canRunAutoLayout(api.hasImage(), api.isCalibrated(), Boolean(primaryPlane(state)));
+    const gate = canRunDesignStudioAutoLayout({
+      hasImage: api.hasImage(),
+      calibrated: api.isCalibrated(),
+      hasCompletePlane: Boolean(primaryPlane(state)),
+      controls: { ...controls, alignment },
+    });
     if (!gate.ok) {
       setAutoLayoutMessage(gate.reason);
+      setSettingsError(gate.code && gate.code !== "GATED" ? gate.reason : null);
       setLayoutResult(null);
       return;
     }
@@ -175,6 +208,7 @@ export default function ProjectDesignWorkspace({
       return;
     }
     setLayoutResult(result.layout);
+    setSettingsError(null);
     setAutoLayoutMessage(
       result.layout.panelCount > 0
         ? `Auto Layout placed ${result.layout.panelCount} panels (${result.layout.dcCapacityKw.toFixed(2)} kW DC).`
@@ -196,108 +230,95 @@ export default function ProjectDesignWorkspace({
 
   return (
     <div className="space-y-4 text-left fade-in-entry">
-      <div className="relative overflow-hidden rounded-3xl border border-amber-500/25 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/20 p-5 shadow-xl">
+      <div className="relative overflow-hidden rounded-3xl border border-amber-500/25 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/20 p-4 shadow-xl">
         <div className="flex items-start gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/25 to-amber-600/10 border border-amber-500/30">
-            <Sun className="h-6 w-6 text-amber-400" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/25 to-amber-600/10 border border-amber-500/30">
+            <Sun className="h-5 w-5 text-amber-400" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-extrabold text-white tracking-tight">Project Design Workspace</h2>
               <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
-                V1
+                V1 · HelioScope controls
               </span>
               <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[9px] font-bold uppercase text-slate-400">
                 Draft only
               </span>
             </div>
             <p className="mt-1 text-xs text-slate-400 max-w-2xl">
-              Customer → Address → Upload &amp; calibrate → Draw roof → Auto layout → BOQ → Proposal draft.
-              Existing engines only. No AI guessing. No fake map or output.
+              Left controls → canvas → live results. Existing engines only. No AI guessing. No fake output.
             </p>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2">
-            <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Customer</p>
-            <p className="mt-0.5 text-sm font-bold text-white truncate">{lead.name || "—"}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2">
-            <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1">
-              <Phone className="h-3 w-3" /> Phone
-            </p>
-            <p className="mt-0.5 text-sm font-mono text-slate-200 truncate" data-testid="project-workspace-customer-phone">
-              {customerPhone}
-            </p>
-          </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2 sm:col-span-2 lg:col-span-1">
-            <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1">
-              <MapPin className="h-3 w-3" /> Address
-            </p>
-            <p className="mt-0.5 text-sm text-slate-200 truncate">{address || "Not set"}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2">
-            <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1">
-              <Zap className="h-3 w-3" /> Sanctioned load
-            </p>
-            <p className="mt-0.5 text-sm font-mono text-amber-200">{sanctionedDisplay}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="text-[11px] font-bold uppercase tracking-wider text-white flex items-center gap-2">
-            <MapPin className="h-4 w-4 text-amber-400" />
-            Address / GPS
-          </h3>
-          <p className="text-[9px] text-slate-500">Map preview not available — enter coordinates manually.</p>
-        </div>
-
-        <label className="block text-[10px] text-slate-500">
-          Site address
-          <input
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="Street, area, city"
-            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white"
-          />
-        </label>
-        <p className="text-[9px] text-amber-300/90" data-testid="design-workspace-draft-only">
-          {DESIGN_WORKSPACE_DRAFT_ONLY_LABEL}
-        </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <label className="block text-[10px] text-slate-500">
-            Latitude
+            Latitude (optional)
             <input
               value={latText}
               onChange={(e) => setLatText(e.target.value)}
               onBlur={() => commitGps(latText, lngText)}
               placeholder="e.g. 31.5204"
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm font-mono text-white"
+              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm font-mono text-white"
             />
           </label>
           <label className="block text-[10px] text-slate-500">
-            Longitude
+            Longitude (optional)
             <input
               value={lngText}
               onChange={(e) => setLngText(e.target.value)}
               onBlur={() => commitGps(latText, lngText)}
               placeholder="e.g. 74.3587"
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm font-mono text-white"
+              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm font-mono text-white"
             />
           </label>
         </div>
-        {gpsError && <p className="text-[10px] text-rose-400">{gpsError}</p>}
-        <p className="text-[9px] text-slate-500">
-          GPS is optional. Leave blank if unknown. Invalid values are rejected (fail closed).
-        </p>
+        {gpsError && <p className="mt-1 text-[10px] text-rose-400">{gpsError}</p>}
       </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
-        <div className="xl:col-span-8 space-y-2">
+        <div className="xl:col-span-3">
+          <DesignStudioLeftControlPanel
+            customerName={lead.name || "Customer"}
+            address={address}
+            onAddressChange={setAddress}
+            phone={customerPhone}
+            sanctionedLoad={sanctionedDisplay}
+            controls={controls}
+            alignment={alignment}
+            onControlsChange={patchControls}
+            onAlignmentChange={handleAlignmentChange}
+            studioState={studioSnap.state}
+            hasImage={studioSnap.hasImage}
+            calibrated={studioSnap.calibrated}
+            live={live}
+            autoLayoutMessage={autoLayoutMessage}
+            settingsError={settingsError}
+            onUploadImage={() => studioApiRef.current?.openImagePicker()}
+            onCalibrate={() => studioApiRef.current?.setTool("calibrate-scale")}
+            onResetCalibration={() => {
+              studioApiRef.current?.resetCalibration();
+              setLayoutResult(null);
+              setAutoLayoutMessage("Calibration reset.");
+            }}
+            onDrawRoof={() => studioApiRef.current?.setTool("plane")}
+            onEditRoof={() => studioApiRef.current?.setTool("select")}
+            onSelectRoof={(planeId) => studioApiRef.current?.selectPlane(planeId)}
+            onAddKeepout={(tool) => studioApiRef.current?.setTool(tool)}
+            onAutoLayout={handleAutoLayout}
+          />
+        </div>
+
+        <div className="xl:col-span-5 space-y-2">
+          {!studioSnap.hasImage && (
+            <div className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center">
+              <Sun className="mx-auto h-8 w-8 text-amber-400/80" />
+              <h3 className="mt-2 text-sm font-bold text-white">Start with a roof image</h3>
+              <p className="mt-1 text-[11px] text-slate-400 max-w-md mx-auto">
+                Upload a Google Earth / satellite rooftop image from the left panel, calibrate scale, then draw the roof.
+              </p>
+            </div>
+          )}
           <RoofIntelligenceStudio
             key={lead.id}
             project={project}
@@ -308,13 +329,9 @@ export default function ProjectDesignWorkspace({
             overlayPanels={overlayPanels}
           />
         </div>
+
         <aside className="xl:col-span-4 space-y-2 max-h-[780px] overflow-y-auto">
-          <DesignStudioResultsPanel
-            live={live}
-            onAutoLayout={handleAutoLayout}
-            autoLayoutDisabled={!studioSnap.hasImage || !studioSnap.calibrated || !hasCompletePlane}
-            autoLayoutMessage={autoLayoutMessage}
-          />
+          <DesignStudioResultsPanel live={live} />
         </aside>
       </div>
     </div>

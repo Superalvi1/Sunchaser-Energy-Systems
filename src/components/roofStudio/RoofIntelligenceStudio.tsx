@@ -153,6 +153,8 @@ export interface RoofStudioApi {
   setTool: (tool: ToolMode) => void;
   openImagePicker: () => void;
   applyState: (next: RoofStudioState) => void;
+  resetCalibration: () => void;
+  selectPlane: (planeId: string) => void;
 }
 
 type Viewport = { scale: number; offsetX: number; offsetY: number };
@@ -358,6 +360,20 @@ export default function RoofIntelligenceStudio({
       },
       openImagePicker: () => fileInputRef.current?.click(),
       applyState: (next) => apply(next),
+      resetCalibration: () => {
+        apply({
+          ...state,
+          metersPerUnit: 0,
+          scaleCalibration: null,
+          panelPlacements: [],
+          boqLines: [],
+        });
+        setMeasureResult("Calibration reset — recalibrate scale before layout.");
+      },
+      selectPlane: (planeId) => {
+        apply({ ...state, selectedPlaneId: planeId });
+        setTool("select");
+      },
     };
     return () => {
       studioApiRef.current = null;

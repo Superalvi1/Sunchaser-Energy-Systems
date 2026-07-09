@@ -20,7 +20,9 @@ import {
   resolveCatalogModule,
   runDesignStudioAutoLayout,
   snapToSupportedSystemSizeKw,
+  validateDesignStudioLayoutSettings,
   validateEdgeSetbackM,
+  canRunDesignStudioAutoLayout,
 } from "./sunchaserDesignStudioClient.ts";
 import {
   SUNCHASER_DESIGN_STUDIO_ENV_KEY,
@@ -160,13 +162,14 @@ check("no API/save/AI/PDF in Design Studio sources", () => {
 check("address blur does not call onUpdateLead (no CRM mutation path)", () => {
   const studio = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
   const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
   const sales = readFileSync(resolve(here, "../components/SalesTeamApp.tsx"), "utf8");
   const noPersist =
     !studio.includes("persistAddress") &&
     !studio.includes("onUpdateLead") &&
     !workspace.includes("persistAddress") &&
-    !workspace.includes("onUpdateLead");
-  // JSX mount sites only (avoid the earlier activeModule redirect effect).
+    !workspace.includes("onUpdateLead") &&
+    !left.includes("onUpdateLead");
   const studioMount = sales.match(/<SunchaserDesignStudio[\s\S]*?\/>/)?.[0] ?? "";
   const workspaceMount = sales.match(/<ProjectDesignWorkspace[\s\S]*?\/>/)?.[0] ?? "";
   const salesDoesNotPassMutation =
@@ -175,8 +178,7 @@ check("address blur does not call onUpdateLead (no CRM mutation path)", () => {
     !studioMount.includes("onUpdateLead") &&
     !workspaceMount.includes("onUpdateLead");
   const draftLabel =
-    studio.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
-    workspace.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
+    left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
     DESIGN_WORKSPACE_DRAFT_ONLY_LABEL === "Draft only — not saved to CRM.";
   return noPersist && salesDoesNotPassMutation && draftLabel;
 });
@@ -186,11 +188,13 @@ check("workspace renders customer phone from lead context", () => {
   assert.equal(displayCustomerPhone(phone), phone);
   const studio = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
   const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
   return (
     studio.includes("displayCustomerPhone(lead.phone)") &&
     studio.includes("design-studio-customer-phone") &&
     workspace.includes("displayCustomerPhone(lead.phone)") &&
-    workspace.includes("project-workspace-customer-phone")
+    left.includes("project-workspace-customer-phone") &&
+    left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL")
   );
 });
 
@@ -206,6 +210,7 @@ check("missing phone shows safe fallback", () => {
 check("no CRM mutation/save path in prototype workspace sources", () => {
   const studio = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
   const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
   const forbidden = [
     "onUpdateLead",
     "persistAddress",
@@ -215,7 +220,7 @@ check("no CRM mutation/save path in prototype workspace sources", () => {
     "localStorage.setItem",
     "/api/",
   ];
-  return forbidden.every((t) => !studio.includes(t) && !workspace.includes(t));
+  return forbidden.every((t) => !studio.includes(t) && !workspace.includes(t) && !left.includes(t));
 });
 
 check("snapToSupportedSystemSizeKw is deterministic", () => {
@@ -481,6 +486,95 @@ check("source scan forbids module and edgeSetback silent fallbacks", () => {
     /Number\.isFinite\([^)]*edgeSetback[^)]*\)\s*\?[^:]+:\s*(?!null)/,
   ];
   return forbidden.every((re) => !re.test(adapter));
+});
+
+check("left panel renders inside Project Design Workspace", () => {
+  const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
+  return (
+    workspace.includes("DesignStudioLeftControlPanel") &&
+    left.includes("design-studio-left-control-panel") &&
+    left.includes("Auto Layout") &&
+    left.includes("Output Status") &&
+    left.includes("Keepouts") &&
+    left.includes("Layout Settings")
+  );
+});
+
+check("Auto Layout disabled before prerequisites", () => {
+  const gateImage = canRunDesignStudioAutoLayout({
+    hasImage: false,
+    calibrated: true,
+    hasCompletePlane: true,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  const gateCal = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: false,
+    hasCompletePlane: true,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  const gateRoof = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    hasCompletePlane: false,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  const gateOk = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    hasCompletePlane: true,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return !gateImage.ok && !gateCal.ok && !gateRoof.ok && gateOk.ok;
+});
+
+check("invalid spacing / tilt / azimuth fails closed", () => {
+  const badSpacing = validateDesignStudioLayoutSettings({
+    ...DEFAULT_DESIGN_CONTROLS,
+    rowSpacingM: Infinity,
+  });
+  const badGap = validateDesignStudioLayoutSettings({
+    ...DEFAULT_DESIGN_CONTROLS,
+    moduleGapM: Number.NaN,
+  });
+  const badTilt = validateDesignStudioLayoutSettings({
+    ...DEFAULT_DESIGN_CONTROLS,
+    tiltDeg: -5,
+  });
+  const badAz = validateDesignStudioLayoutSettings({
+    ...DEFAULT_DESIGN_CONTROLS,
+    azimuthDeg: 400,
+  });
+  const good = validateDesignStudioLayoutSettings(DEFAULT_DESIGN_CONTROLS);
+  return (
+    !badSpacing.ok &&
+    badSpacing.code === "INVALID_ROW_SPACING" &&
+    !badGap.ok &&
+    !badTilt.ok &&
+    !badAz.ok &&
+    good.ok === true
+  );
+});
+
+check("right panel updates after valid auto layout via shared live results", () => {
+  const state = calibratedStateWithPlane();
+  const run = runDesignStudioAutoLayout(state, DEFAULT_DESIGN_CONTROLS, { hasImage: true });
+  assert.ok(run.ok);
+  const live = buildDesignStudioLiveResults(state, DEFAULT_DESIGN_CONTROLS, run.layout, { hasImage: true });
+  const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  return (
+    workspace.includes("DesignStudioResultsPanel") &&
+    workspace.includes("buildDesignStudioLiveResults") &&
+    (run.layout.panelCount === 0 || live.status.panelLayoutReady) &&
+    (run.layout.panelCount === 0 || live.panelCount === run.layout.panelCount)
+  );
+});
+
+check("left panel has no save/API/AI/PDF/localStorage calls", () => {
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
+  const forbidden = ["fetch(", "axios", "/api/", "openai", "anthropic", "localStorage.setItem", "saveQuote", "createQuote", "jspdf"];
+  return forbidden.every((t) => !left.includes(t));
 });
 
 console.log(`\nsunchaserDesignStudioClient tests: ${pass} passed`);

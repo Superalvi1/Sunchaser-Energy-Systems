@@ -362,6 +362,53 @@ const EMPTY_RESULTS: DesignStudioLiveResults = {
 
 export const EDGE_SETBACK_MIN_M = 0;
 export const EDGE_SETBACK_MAX_M = 5;
+export const ROW_SPACING_MIN_M = 0;
+export const ROW_SPACING_MAX_M = 5;
+export const MODULE_GAP_MIN_M = 0;
+export const MODULE_GAP_MAX_M = 2;
+export const TILT_MIN_DEG = 0;
+export const TILT_MAX_DEG = 60;
+export const AZIMUTH_MIN_DEG = 0;
+export const AZIMUTH_MAX_DEG = 360;
+
+export type FiniteRangeValidationResult =
+  | { ok: true; value: number }
+  | { ok: false; code: string; message: string };
+
+function validateFiniteInRange(
+  value: unknown,
+  opts: { code: string; label: string; min: number; max: number; allowMaxExclusive?: boolean }
+): FiniteRangeValidationResult {
+  if (value === null || value === undefined) {
+    return {
+      ok: false,
+      code: opts.code,
+      message: `${opts.label} is required and must be a finite number between ${opts.min} and ${opts.max}.`,
+    };
+  }
+  if (typeof value !== "number") {
+    return {
+      ok: false,
+      code: opts.code,
+      message: `${opts.label} must be a finite number between ${opts.min} and ${opts.max}.`,
+    };
+  }
+  if (!Number.isFinite(value)) {
+    return {
+      ok: false,
+      code: opts.code,
+      message: `${opts.label} must be a finite number (NaN/Infinity rejected).`,
+    };
+  }
+  if (value < opts.min || (opts.allowMaxExclusive ? value >= opts.max : value > opts.max)) {
+    return {
+      ok: false,
+      code: opts.code,
+      message: `${opts.label} must be between ${opts.min} and ${opts.max}.`,
+    };
+  }
+  return { ok: true, value };
+}
 
 export type EdgeSetbackValidationResult =
   | { ok: true; value: number }
@@ -371,35 +418,103 @@ export type EdgeSetbackValidationResult =
  * Fail-closed edge setback gate. No silent defaults for NaN / Infinity / out-of-range.
  */
 export function validateEdgeSetbackM(value: unknown): EdgeSetbackValidationResult {
+  const r = validateFiniteInRange(value, {
+    code: "INVALID_EDGE_SETBACK",
+    label: "edgeSetbackM",
+    min: EDGE_SETBACK_MIN_M,
+    max: EDGE_SETBACK_MAX_M,
+  });
+  return r.ok
+    ? { ok: true, value: r.value }
+    : { ok: false, code: "INVALID_EDGE_SETBACK", message: r.message };
+}
+
+export function validateRowSpacingM(value: unknown): FiniteRangeValidationResult {
+  return validateFiniteInRange(value, {
+    code: "INVALID_ROW_SPACING",
+    label: "rowSpacingM",
+    min: ROW_SPACING_MIN_M,
+    max: ROW_SPACING_MAX_M,
+  });
+}
+
+export function validateModuleGapM(value: unknown): FiniteRangeValidationResult {
+  return validateFiniteInRange(value, {
+    code: "INVALID_MODULE_GAP",
+    label: "moduleGapM",
+    min: MODULE_GAP_MIN_M,
+    max: MODULE_GAP_MAX_M,
+  });
+}
+
+export function validateTiltDeg(value: unknown): FiniteRangeValidationResult {
+  return validateFiniteInRange(value, {
+    code: "INVALID_TILT",
+    label: "tiltDeg",
+    min: TILT_MIN_DEG,
+    max: TILT_MAX_DEG,
+  });
+}
+
+export function validateAzimuthDeg(value: unknown): FiniteRangeValidationResult {
+  return validateFiniteInRange(value, {
+    code: "INVALID_AZIMUTH",
+    label: "azimuthDeg",
+    min: AZIMUTH_MIN_DEG,
+    max: AZIMUTH_MAX_DEG,
+  });
+}
+
+export type LayoutAlignment = "left" | "center" | "right";
+
+export const LAYOUT_ALIGNMENTS: readonly LayoutAlignment[] = ["left", "center", "right"];
+
+export function validateLayoutAlignment(
+  value: unknown
+): { ok: true; value: LayoutAlignment } | { ok: false; code: "INVALID_ALIGNMENT"; message: string } {
   if (value === null || value === undefined) {
+    return { ok: false, code: "INVALID_ALIGNMENT", message: "alignment is required." };
+  }
+  if (typeof value !== "string" || !(LAYOUT_ALIGNMENTS as readonly string[]).includes(value)) {
     return {
       ok: false,
-      code: "INVALID_EDGE_SETBACK",
-      message: "edgeSetbackM is required and must be a finite number between 0 and 5 m.",
+      code: "INVALID_ALIGNMENT",
+      message: "alignment must be left, center, or right.",
     };
   }
-  if (typeof value !== "number") {
-    return {
-      ok: false,
-      code: "INVALID_EDGE_SETBACK",
-      message: "edgeSetbackM must be a finite number between 0 and 5 m.",
-    };
+  return { ok: true, value: value as LayoutAlignment };
+}
+
+export type DesignStudioControlsValidation =
+  | { ok: true }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Fail-closed gate for all left-panel layout settings before engines run.
+ */
+export function validateDesignStudioLayoutSettings(
+  controls: Pick<
+    DesignStudioControls,
+    "edgeSetbackM" | "rowSpacingM" | "moduleGapM" | "tiltDeg" | "azimuthDeg" | "moduleId"
+  > & { alignment?: LayoutAlignment }
+): DesignStudioControlsValidation {
+  const setback = validateEdgeSetbackM(controls.edgeSetbackM);
+  if (!setback.ok) return setback;
+  const row = validateRowSpacingM(controls.rowSpacingM);
+  if (!row.ok) return { ok: false, code: row.code, message: row.message };
+  const gap = validateModuleGapM(controls.moduleGapM);
+  if (!gap.ok) return { ok: false, code: gap.code, message: gap.message };
+  const tilt = validateTiltDeg(controls.tiltDeg);
+  if (!tilt.ok) return { ok: false, code: tilt.code, message: tilt.message };
+  const az = validateAzimuthDeg(controls.azimuthDeg);
+  if (!az.ok) return { ok: false, code: az.code, message: az.message };
+  if (controls.alignment !== undefined) {
+    const align = validateLayoutAlignment(controls.alignment);
+    if (!align.ok) return align;
   }
-  if (!Number.isFinite(value)) {
-    return {
-      ok: false,
-      code: "INVALID_EDGE_SETBACK",
-      message: "edgeSetbackM must be a finite number between 0 and 5 m (NaN/Infinity rejected).",
-    };
-  }
-  if (value < EDGE_SETBACK_MIN_M || value > EDGE_SETBACK_MAX_M) {
-    return {
-      ok: false,
-      code: "INVALID_EDGE_SETBACK",
-      message: `edgeSetbackM must be between ${EDGE_SETBACK_MIN_M} and ${EDGE_SETBACK_MAX_M} m.`,
-    };
-  }
-  return { ok: true, value };
+  const mod = resolveCatalogModule(controls.moduleId);
+  if (!mod.ok) return { ok: false, code: mod.code, message: mod.message };
+  return { ok: true };
 }
 
 export type ModuleResolveResult =
@@ -536,6 +651,19 @@ export function canRunAutoLayout(hasImage: boolean, calibrated: boolean, hasComp
   return { ok: true, reason: null };
 }
 
+export function canRunDesignStudioAutoLayout(opts: {
+  hasImage: boolean;
+  calibrated: boolean;
+  hasCompletePlane: boolean;
+  controls: DesignStudioControls & { alignment?: LayoutAlignment };
+}): { ok: boolean; reason: string | null; code: string | null } {
+  const gate = canRunAutoLayout(opts.hasImage, opts.calibrated, opts.hasCompletePlane);
+  if (!gate.ok) return { ok: false, reason: gate.reason, code: "GATED" };
+  const settings = validateDesignStudioLayoutSettings(opts.controls);
+  if (!settings.ok) return { ok: false, reason: settings.message, code: settings.code };
+  return { ok: true, reason: null, code: null };
+}
+
 /**
  * Auto Layout via Panel Layout Engine V2 only.
  * Never invents panels when scale is uncalibrated.
@@ -554,6 +682,11 @@ export function runDesignStudioAutoLayout(
   }
   if (!plane) {
     return { ok: false, code: "NO_PLANE", message: "Draw a closed roof boundary first." };
+  }
+
+  const settings = validateDesignStudioLayoutSettings(controls);
+  if (!settings.ok) {
+    return { ok: false, code: settings.code, message: settings.message };
   }
 
   const setback = validateEdgeSetbackM(controls.edgeSetbackM);
@@ -711,6 +844,14 @@ export function buildDesignStudioLiveResults(
       !opts.hasImage ? "Upload a roof image to begin." : "Calibrate scale before panels, production, or BOQ.",
       { uploadComplete: opts.hasImage, scaleCalibrated: calibrated }
     );
+  }
+
+  const settings = validateDesignStudioLayoutSettings(controls);
+  if (!settings.ok) {
+    return validationStageFailure(settings.code, settings.message, {
+      uploadComplete: opts.hasImage,
+      scaleCalibrated: calibrated,
+    });
   }
 
   const setback = validateEdgeSetbackM(controls.edgeSetbackM);
