@@ -3,7 +3,7 @@ import {
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
-  Printer, Save, Headphones, Package
+  Printer, Save, Headphones, Package, LayoutGrid, Pentagon
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
@@ -64,6 +64,12 @@ import {
   sanitizeLeadLocationInput,
 } from "../lib/leadDisplay";
 import QuoteTemplateWorkspace from "./quoteAuthoring/QuoteTemplateWorkspace";
+import AIQuoteBuilderModal from "./quoteAuthoring/AIQuoteBuilderModal";
+import SolarProposalStudio from "./quoteAuthoring/SolarProposalStudio";
+import RoofIntelligenceStudio from "./roofStudio/RoofIntelligenceStudio";
+import { isProposalStudioEnabled, isRoofStudioEnabled } from "../lib/studioFeatureFlags";
+import { buildDraftApplyPayload } from "../lib/solarQuotePlannerClient";
+import type { SolarQuoteDraft } from "../lib/solarQuotePlannerClient";
 import {
   mergeContentLibrary,
   type ContentLibraryBlock,
@@ -125,6 +131,9 @@ interface SalesTeamAppProps {
   onDeleteQuote?: (leadId: string, quoteId: string) => Promise<void>;
   onDeleteLead?: (id: string) => void;
 }
+
+const PROPOSAL_STUDIO_ENABLED = isProposalStudioEnabled();
+const ROOF_STUDIO_ENABLED = isRoofStudioEnabled();
 
 export default function SalesTeamApp({
   staffUser,
@@ -191,10 +200,19 @@ export default function SalesTeamApp({
 
   // Modular routing tab selector
   const [activeModule, setActiveModule] = useState<
-    "sizer" | "boq_builder" | "templates" | "quotes" | "products" | "inventory" | "after_sales"
+    "sizer" | "proposal_studio" | "roof_studio" | "boq_builder" | "templates" | "quotes" | "products" | "inventory" | "after_sales"
   >("boq_builder");
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
   const [sizerEditingQuoteId, setSizerEditingQuoteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeModule === "proposal_studio" && !PROPOSAL_STUDIO_ENABLED) {
+      setActiveModule("boq_builder");
+    }
+    if (activeModule === "roof_studio" && !ROOF_STUDIO_ENABLED) {
+      setActiveModule("boq_builder");
+    }
+  }, [activeModule]);
 
   // Quote formulator local state
   const [systemSizekW, setSystemSizekW] = useState<number>(8.5);
@@ -294,6 +312,24 @@ export default function SalesTeamApp({
     setLoadedPackageName(null);
     setLoadedPackageSize(null);
     setLoadedPackageSnapshot(null);
+  };
+
+  const handleApplyAiQuoteDraft = (draft: SolarQuoteDraft) => {
+    const payload = buildDraftApplyPayload(draft);
+    if (!payload) return;
+    clearLoadedPackage();
+    setEditingQuoteId(null);
+    setSystemSizekW(payload.systemSizekW);
+    setSystemType(payload.systemType);
+    setPanelBrand(payload.panelBrand);
+    setPanelWattage(payload.panelWattage);
+    setInverterBrand(payload.inverterBrand);
+    setInverterCapacity(payload.inverterCapacity);
+    setBatteryOption(payload.batteryOption);
+    setBoqRows(payload.boqRows);
+    setManualBoqItems(payload.boqRows);
+    setActiveModule("boq_builder");
+    toast.success("AI draft applied to BOQ builder — review and save manually.");
   };
 
   const hasUnsavedPackageChanges = useMemo(() => {
@@ -887,6 +923,7 @@ export default function SalesTeamApp({
   const [proposalMarkdown, setProposalMarkdown] = useState<string | null>(null);
   const [proposalLoading, setProposalLoading] = useState(false);
   const [quoteCreatedConfirm, setQuoteCreatedConfirm] = useState(false);
+  const [aiQuoteBuilderOpen, setAiQuoteBuilderOpen] = useState(false);
   const [whatsappNotice, setWhatsappNotice] = useState<string | null>(null);
   const [whatsappLoading, setWhatsappLoading] = useState(false);
 
@@ -2813,6 +2850,7 @@ export default function SalesTeamApp({
   });
 
   return (
+    <>
     <div id="sales-team-workspace" className="space-y-6 text-xs text-slate-200">
       
       {/* Information Header Banner Card */}
@@ -3000,6 +3038,12 @@ export default function SalesTeamApp({
               <div className="flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5">
                 {[
                   { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
+                  ...(PROPOSAL_STUDIO_ENABLED
+                    ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
+                    : []),
+                  ...(ROOF_STUDIO_ENABLED
+                    ? [{ id: 'roof_studio' as const, label: 'Roof Studio', icon: Pentagon }]
+                    : []),
                   { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
                   { id: 'templates', label: 'Quote Templates', icon: Layers },
                   { id: 'quotes', label: 'Generated Quotes', icon: FileText },
@@ -3054,6 +3098,10 @@ export default function SalesTeamApp({
                   </button>
                 </div>
               )}
+
+              {/* MODULE 1B: SOLAR DESIGN STUDIO */}
+              {activeModule === "proposal_studio" && PROPOSAL_STUDIO_ENABLED && <SolarProposalStudio />}
+              {activeModule === "roof_studio" && ROOF_STUDIO_ENABLED && <RoofIntelligenceStudio />}
 
               {/* MODULE 1: AUTO SIZER VIEW */}
               {activeModule === 'sizer' && (
@@ -3487,6 +3535,13 @@ export default function SalesTeamApp({
                     </div>
                     
                     <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAiQuoteBuilderOpen(true)}
+                        className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans inline-flex items-center gap-1.5"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" /> AI Quote Builder
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -5134,5 +5189,11 @@ export default function SalesTeamApp({
       </div>
 
     </div>
+    <AIQuoteBuilderModal
+      open={aiQuoteBuilderOpen}
+      onClose={() => setAiQuoteBuilderOpen(false)}
+      onApplyDraft={handleApplyAiQuoteDraft}
+    />
+    </>
   );
 }
