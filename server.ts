@@ -287,9 +287,21 @@ import {
 import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
-import { actorToApiUser } from "./server/middleware/actor.ts";
-import { resolveStaffActor, staffIdentityFromActor } from "./server/middleware/staffActor.ts";
+import { actorToApiUser, type RequestActor } from "./server/middleware/actor.ts";
+import {
+  assertSuperAdminCleanup,
+  resolveStaffActor,
+} from "./server/middleware/staffActor.ts";
+import {
+  assertDbUpdateAllowed,
+  assertExportTableAccess,
+  assertPaymentMilestoneAccess,
+  assertSuperAdminOnly,
+  filterExportStateForSales,
+  financeRouteLockdownErrorResponse,
+} from "./server/middleware/financeRouteLockdown.ts";
 import { loginRateLimit } from "./server/middleware/rateLimit.ts";
+import { handleAiChatPost, configureAiChatRoute } from "./server/ai/chatRoute.ts";
 import {
   OwnershipError,
   OwnershipResolver,
@@ -304,6 +316,10 @@ import {
   SalesOwnershipResolver,
   type SalesOwnedResourceType,
 } from "./server/ownership/SalesOwnershipResolver.ts";
+import {
+  FinanceOwnershipResolver,
+  financeOwnershipErrorResponse,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
 import {
   listManagedRoles,
   createManagedRole,
@@ -335,6 +351,7 @@ import { ALL_PERMISSION_KEYS, PERMISSION_LABELS } from "./src/lib/roles.js";
 import {
   listAdminInvoices,
   getAdminInvoiceById,
+  loadInvoiceRecordById,
   createAdminInvoice,
   updateAdminInvoice,
   recordInvoicePayment,
@@ -435,7 +452,7 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Sunchaser-User-Id, X-Sunchaser-Username, X-Sunchaser-Role"
+    "Content-Type, Authorization, Accept, Origin, X-Requested-With"
   );
   res.setHeader("Access-Control-Allow-Credentials", "true");
 
@@ -449,6 +466,8 @@ const resolveAuthLocalDb = () => {
   loadDb();
   return db;
 };
+
+configureAiChatRoute({ resolveLocalDb: resolveAuthLocalDb });
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
 
@@ -679,13 +698,9 @@ async function getLeadsForInvoiceOps() {
   return filterActiveLeads(db.leads || []);
 }
 
-function resolveDeletedBy(req: { headers: Record<string, string | string[] | undefined> }): string {
-  const userId = String(req.headers["x-sunchaser-user-id"] || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || "").trim();
-  const role = String(req.headers["x-sunchaser-role"] || "").trim();
-  if (username && userId) return `${username} (${userId})`;
-  if (username) return username;
-  if (role) return role;
+function resolveDeletedBy(req: { actor?: { id: string; username: string } }): string {
+  if (req.actor?.username && req.actor?.id) return `${req.actor.username} (${req.actor.id})`;
+  if (req.actor?.username) return req.actor.username;
   return "system";
 }
 
@@ -968,32 +983,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
   }
 });
 
-function readStaffAuth(req: express.Request) {
-  if (req.actor) {
-    return staffIdentityFromActor(req.actor);
-  }
-  return {
-    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
-    role: String(req.headers["x-sunchaser-role"] || req.body?.role || "").trim(),
-  };
-}
-
-/** Staff auth for user-management writes: never treat new-user fields in body as actor identity. */
-function readStaffAuthHeadersOnly(req: express.Request) {
-  if (req.actor) {
-    return staffIdentityFromActor(req.actor);
-  }
-  return {
-    userId: String(req.headers["x-sunchaser-user-id"] || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || "").trim(),
-    role: String(req.headers["x-sunchaser-role"] || "").trim(),
-  };
-}
-
 function activityActorFromStaff(req: express.Request, fallback = "Staff") {
-  const { username } = readStaffAuth(req);
-  return username || fallback;
+  return req.actor?.username || fallback;
 }
 
 function leadAdvisorLabel(advisor?: string | null) {
@@ -1001,7 +992,9 @@ function leadAdvisorLabel(advisor?: string | null) {
 }
 
 app.get("/api/admin/users", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const users = await listUsersForAdmin(userId, username, db);
@@ -1013,7 +1006,9 @@ app.get("/api/admin/users", async (req, res) => {
 });
 
 app.get("/api/admin/users/pending", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const users = await listPendingUsers(userId, username, db);
@@ -1025,8 +1020,9 @@ app.get("/api/admin/users/pending", async (req, res) => {
 });
 
 app.post("/api/admin/users", async (req, res) => {
-  const { userId, username } = readStaffAuthHeadersOnly(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const user = await createUserByAdmin(userId, username, req.body || {}, db);
@@ -1039,8 +1035,9 @@ app.post("/api/admin/users", async (req, res) => {
 });
 
 app.patch("/api/admin/users/:id", async (req, res) => {
-  const { userId, username } = readStaffAuthHeadersOnly(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const user = await updateUserByAdmin(userId, username, req.params.id, req.body || {}, db);
@@ -1053,8 +1050,9 @@ app.patch("/api/admin/users/:id", async (req, res) => {
 });
 
 app.delete("/api/admin/users/:id", async (req, res) => {
-  const { userId, username } = readStaffAuthHeadersOnly(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await deleteUserByAdmin(
@@ -1076,7 +1074,9 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 });
 
 app.get("/api/admin/users/demo-seeds", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const users = await listDemoSeedUsersForCleanup(userId, username, db);
@@ -1088,8 +1088,9 @@ app.get("/api/admin/users/demo-seeds", async (req, res) => {
 });
 
 app.post("/api/admin/users/demo-seeds/delete", async (req, res) => {
-  const { userId, username } = readStaffAuthHeadersOnly(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await deleteDemoSeedUsersByAdmin(userId, username, req.body || {}, db);
@@ -1102,7 +1103,9 @@ app.post("/api/admin/users/demo-seeds/delete", async (req, res) => {
 });
 
 app.post("/api/admin/users/:id/approve", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await approveUser(userId, username, req.params.id, db);
@@ -1115,7 +1118,9 @@ app.post("/api/admin/users/:id/approve", async (req, res) => {
 });
 
 app.post("/api/admin/users/:id/reject", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await rejectUser(
@@ -1134,8 +1139,9 @@ app.post("/api/admin/users/:id/reject", async (req, res) => {
 });
 
 app.get("/api/auth/roles-matrix", async (req, res) => {
-  const userId = String(req.headers["x-sunchaser-user-id"] || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || "").trim();
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const payload = await getRolesMatrixFromDb(userId || null, username || null, db);
@@ -1150,7 +1156,9 @@ app.get("/api/auth/roles-matrix", async (req, res) => {
 });
 
 app.get("/api/admin/roles", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const roles = await listManagedRoles(userId, username, db);
@@ -1164,7 +1172,9 @@ app.get("/api/admin/roles", async (req, res) => {
 });
 
 app.post("/api/admin/roles", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const role = await createManagedRole(userId, username, req.body || {}, db);
@@ -1179,7 +1189,9 @@ app.post("/api/admin/roles", async (req, res) => {
 });
 
 app.patch("/api/admin/roles/:id", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const role = await updateManagedRole(userId, username, req.params.id, req.body || {}, db);
@@ -1194,7 +1206,9 @@ app.patch("/api/admin/roles/:id", async (req, res) => {
 });
 
 app.post("/api/admin/roles/:id/clone", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const role = await cloneManagedRole(userId, username, req.params.id, req.body || {}, db);
@@ -1209,7 +1223,9 @@ app.post("/api/admin/roles/:id/clone", async (req, res) => {
 });
 
 app.delete("/api/admin/roles/:id", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await deleteManagedRole(userId, username, req.params.id, db);
@@ -1224,7 +1240,9 @@ app.delete("/api/admin/roles/:id", async (req, res) => {
 });
 
 app.get("/api/admin/customer-accounts", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const accounts = await listCustomerPortalAccounts(userId, username, role, db);
@@ -1236,7 +1254,9 @@ app.get("/api/admin/customer-accounts", async (req, res) => {
 });
 
 app.get("/api/admin/customer-linking/customers", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const customers = await searchCustomersForLinking(
@@ -1254,7 +1274,9 @@ app.get("/api/admin/customer-linking/customers", async (req, res) => {
 });
 
 app.get("/api/admin/customer-linking/users", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const users = await searchPortalUsersForLinking(
@@ -1272,7 +1294,9 @@ app.get("/api/admin/customer-linking/users", async (req, res) => {
 });
 
 app.get("/api/admin/customer-linking/duplicates", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const duplicates = await detectDuplicateCustomers(userId, username, role, db);
@@ -1284,7 +1308,9 @@ app.get("/api/admin/customer-linking/duplicates", async (req, res) => {
 });
 
 app.get("/api/admin/customer-linking/resolve", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const customer = await resolveCustomerForLeadContact(
@@ -1306,7 +1332,9 @@ app.get("/api/admin/customer-linking/resolve", async (req, res) => {
 });
 
 app.post("/api/admin/customer-linking/link", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const result = await linkCustomerPortalAccounts(
@@ -1327,7 +1355,9 @@ app.post("/api/admin/customer-linking/link", async (req, res) => {
 });
 
 app.get("/api/admin/customer-systems/:customerId", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   if (!(await guardSalesOwnedResource(req, res, "customer", req.params.customerId))) return;
   try {
     loadDb();
@@ -1340,7 +1370,9 @@ app.get("/api/admin/customer-systems/:customerId", async (req, res) => {
 });
 
 app.put("/api/admin/customer-systems", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const system = await upsertCustomerSystemProfile(userId, username, role, req.body || {}, db);
@@ -1353,7 +1385,9 @@ app.put("/api/admin/customer-systems", async (req, res) => {
 });
 
 app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   if (!(await guardSalesOwnedResource(req, res, "customer", req.params.customerId))) return;
   try {
     loadDb();
@@ -1372,7 +1406,9 @@ app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
 });
 
 app.post("/api/admin/customer-documents/assign", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const doc = await assignCustomerDocument(userId, username, role, req.body || {}, db);
@@ -1385,10 +1421,11 @@ app.post("/api/admin/customer-documents/assign", async (req, res) => {
 });
 
 app.post("/api/admin/customer-documents/upload", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   const { customerId, base64Data, fileName, mimeType, documentType, title, visibleToCustomer, internalOnly, notes } =
     req.body || {};
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
   try {
     loadDb();
     const { url, storagePath } = await uploadFileToCustomerStorage(
@@ -1397,7 +1434,6 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
       String(fileName || "document"),
       mimeType
     );
-    const role = String(req.body?.role || "");
     const doc = await assignCustomerDocument(userId, username, role, {
       customerId: String(customerId),
       documentType: documentType || "other",
@@ -1450,27 +1486,6 @@ async function handleCustomerPortalMe(req: any, res: any) {
 
 app.get("/api/customer-portal/me", handleCustomerPortalMe);
 app.post("/api/customer-portal/me", handleCustomerPortalMe);
-
-function readPortalAuth(req: any) {
-  if (req.actor) {
-    return {
-      userId: req.actor.id,
-      username: req.actor.username,
-    };
-  }
-  return {
-    userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || "").trim(),
-  };
-}
-
-/** Customer portal service routes: identity must come from headers only (no body/query override). */
-function readCustomerPortalAuth(req: any) {
-  return {
-    userId: String(req.headers["x-sunchaser-user-id"] || "").trim(),
-    username: String(req.headers["x-sunchaser-username"] || "").trim(),
-  };
-}
 
 /** Phase 1B.2A — customer portal identity from req.actor only; customerId never from request. */
 function readCustomerPortalActor(req: any) {
@@ -1699,8 +1714,9 @@ app.get("/api/customer-portal/savings/me", async (req, res) => {
 });
 
 app.get("/api/admin/customer-savings/:customerId", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   if (!(await guardSalesOwnedResource(req, res, "customer", req.params.customerId))) return;
   try {
     loadDb();
@@ -1713,8 +1729,9 @@ app.get("/api/admin/customer-savings/:customerId", async (req, res) => {
 });
 
 app.post("/api/admin/customer-savings", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await upsertAdminCustomerSavings(userId, username, req.body || {}, db);
@@ -1771,8 +1788,9 @@ app.post("/api/customer-portal/care/service-request", async (req, res) => {
 });
 
 app.get("/api/admin/care/subscriptions", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await listAdminCareSubscriptions(userId, username, { segment: String(req.query.segment || "active") }, db);
@@ -1784,8 +1802,9 @@ app.get("/api/admin/care/subscriptions", async (req, res) => {
 });
 
 app.get("/api/admin/care/revenue-summary", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await fetchAdminCareRevenueSummary(userId, username, db);
@@ -1797,8 +1816,9 @@ app.get("/api/admin/care/revenue-summary", async (req, res) => {
 });
 
 app.post("/api/admin/care/visit-reports", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const report = await upsertAdminServiceVisitReport(userId, username, req.body || {}, db);
@@ -1811,8 +1831,9 @@ app.post("/api/admin/care/visit-reports", async (req, res) => {
 });
 
 app.post("/api/admin/customer-portal-profile", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const profile = await upsertAdminCustomerPortalProfile(userId, username, req.body || {}, db);
@@ -1825,8 +1846,9 @@ app.post("/api/admin/customer-portal-profile", async (req, res) => {
 });
 
 app.post("/api/admin/customer-equipment", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const row = await createAdminCustomerEquipment(userId, username, req.body || {}, db);
@@ -1839,8 +1861,9 @@ app.post("/api/admin/customer-equipment", async (req, res) => {
 });
 
 app.patch("/api/admin/customer-equipment/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const row = await patchAdminCustomerEquipment(userId, username, req.params.id, req.body || {}, db);
@@ -1853,8 +1876,9 @@ app.patch("/api/admin/customer-equipment/:id", async (req, res) => {
 });
 
 app.post("/api/admin/installation-photos", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const photo = await createAdminInstallationPhoto(userId, username, req.body || {}, db);
@@ -1867,8 +1891,9 @@ app.post("/api/admin/installation-photos", async (req, res) => {
 });
 
 app.post("/api/admin/after-sales-service-log", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const log = await createAdminAfterSalesServiceLog(userId, username, req.body || {}, db);
@@ -1881,8 +1906,9 @@ app.post("/api/admin/after-sales-service-log", async (req, res) => {
 });
 
 app.post("/api/admin/maintenance-records", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const record = await createAdminMaintenanceRecord(userId, username, req.body || {}, db);
@@ -1910,8 +1936,9 @@ app.get("/api/customer-portal/energy/me", async (req, res) => {
 });
 
 app.post("/api/admin/energy/devices", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const device = await upsertAdminEnergyDevice(userId, username, req.body || {}, db);
@@ -1924,8 +1951,9 @@ app.post("/api/admin/energy/devices", async (req, res) => {
 });
 
 app.get("/api/admin/energy/monitoring", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await fetchAdminEnergyMonitoring(userId, username, db);
@@ -1937,8 +1965,9 @@ app.get("/api/admin/energy/monitoring", async (req, res) => {
 });
 
 app.get("/api/admin/after-sales-service-logs", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await listAdminAfterSalesServiceLogs(userId, username, {
@@ -2043,8 +2072,9 @@ app.get("/api/customer-portal/service-requests/:id", async (req, res) => {
 });
 
 app.get("/api/admin/service-requests", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const requests = await listAdminServiceRequests(userId, username, {
@@ -2058,8 +2088,9 @@ app.get("/api/admin/service-requests", async (req, res) => {
 });
 
 app.patch("/api/admin/service-requests/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const request = await updateAdminServiceRequest(userId, username, req.params.id, req.body || {}, db);
@@ -2072,8 +2103,9 @@ app.patch("/api/admin/service-requests/:id", async (req, res) => {
 });
 
 app.post("/api/admin/service-requests/:id/update", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const request = await updateAdminServiceRequest(userId, username, req.params.id, req.body || {}, db);
@@ -2129,8 +2161,9 @@ app.get("/api/customer-portal/support-tickets/:id", async (req, res) => {
 });
 
 app.get("/api/admin/support-tickets", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const tickets = await listAdminSupportTickets(
@@ -2151,8 +2184,9 @@ app.get("/api/admin/support-tickets", async (req, res) => {
 });
 
 app.patch("/api/admin/support-tickets/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const ticket = await updateAdminSupportTicket(userId, username, req.params.id, req.body || {}, db);
@@ -2165,8 +2199,9 @@ app.patch("/api/admin/support-tickets/:id", async (req, res) => {
 });
 
 app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const ticket = await updateAdminSupportTicket(userId, username, req.params.id, req.body || {}, db);
@@ -2179,8 +2214,9 @@ app.post("/api/admin/support-tickets/:id/update", async (req, res) => {
 });
 
 app.delete("/api/admin/support-tickets/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const result = await deleteAdminSupportTicket(userId, username, req.params.id, db);
@@ -2196,8 +2232,9 @@ app.delete("/api/admin/support-tickets/:id", async (req, res) => {
 });
 
 app.get("/api/technical/jobs/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await listTechnicalJobsForUser(userId, username, db);
@@ -2210,8 +2247,9 @@ app.get("/api/technical/jobs/me", async (req, res) => {
 });
 
 app.get("/api/technical/jobs/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2230,9 +2268,10 @@ app.get("/api/technical/jobs/:id", async (req, res) => {
 });
 
 app.patch("/api/technical/jobs/:id/status", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   const status = String(req.body?.status || "").trim();
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   if (!status) return res.status(400).json({ error: "status is required." });
   try {
     loadDb();
@@ -2252,8 +2291,9 @@ app.patch("/api/technical/jobs/:id/status", async (req, res) => {
 });
 
 app.post("/api/technical/jobs/:id/update", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2272,8 +2312,9 @@ app.post("/api/technical/jobs/:id/update", async (req, res) => {
 });
 
 app.post("/api/technical/equipment", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await postTechnicalEquipment(userId, username, req.body || {}, db);
@@ -2286,8 +2327,9 @@ app.post("/api/technical/equipment", async (req, res) => {
 });
 
 app.get("/api/onboarding/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await fetchOnboardingMe(userId, username, db);
@@ -2299,8 +2341,9 @@ app.get("/api/onboarding/me", async (req, res) => {
 });
 
 app.post("/api/onboarding/complete", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await completeOnboarding(userId, username, db);
@@ -2313,8 +2356,9 @@ app.post("/api/onboarding/complete", async (req, res) => {
 });
 
 app.post("/api/onboarding/reset", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await resetOnboarding(userId, username, db);
@@ -2327,8 +2371,9 @@ app.post("/api/onboarding/reset", async (req, res) => {
 });
 
 app.get("/api/admin/project-deliveries", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const list = await listAdminProjectDeliveries(userId, username, db);
@@ -2340,8 +2385,9 @@ app.get("/api/admin/project-deliveries", async (req, res) => {
 });
 
 app.post("/api/admin/project-deliveries", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const row = await createAdminProjectDelivery(userId, username, req.body || {}, db);
@@ -2354,8 +2400,9 @@ app.post("/api/admin/project-deliveries", async (req, res) => {
 });
 
 app.patch("/api/admin/project-deliveries/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const row = await patchAdminProjectDelivery(userId, username, req.params.id, req.body || {}, db);
@@ -2368,8 +2415,9 @@ app.patch("/api/admin/project-deliveries/:id", async (req, res) => {
 });
 
 app.post("/api/admin/project-deliveries/:id/items", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const items = await addAdminProjectDeliveryItems(userId, username, req.params.id, req.body || {}, db);
@@ -2382,8 +2430,9 @@ app.post("/api/admin/project-deliveries/:id/items", async (req, res) => {
 });
 
 app.get("/api/technical/project-deliveries/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const list = await listTechnicalProjectDeliveriesForUser(userId, username, db);
@@ -2395,8 +2444,9 @@ app.get("/api/technical/project-deliveries/me", async (req, res) => {
 });
 
 app.get("/api/technical/project-deliveries/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2414,8 +2464,9 @@ app.get("/api/technical/project-deliveries/:id", async (req, res) => {
 });
 
 app.post("/api/technical/project-deliveries/:id/installed-equipment", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2434,8 +2485,9 @@ app.post("/api/technical/project-deliveries/:id/installed-equipment", async (req
 });
 
 app.post("/api/technical/project-deliveries/:id/photos", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2454,8 +2506,9 @@ app.post("/api/technical/project-deliveries/:id/photos", async (req, res) => {
 });
 
 app.patch("/api/technical/project-deliveries/:id/status", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2488,8 +2541,9 @@ app.get("/api/customer-portal/project-delivery/me", async (req, res) => {
 });
 
 app.get("/api/technical/project-deliveries/:id/completion-status", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2508,8 +2562,9 @@ app.get("/api/technical/project-deliveries/:id/completion-status", async (req, r
 });
 
 app.post("/api/technical/project-deliveries/:id/completion-media", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2529,8 +2584,9 @@ app.post("/api/technical/project-deliveries/:id/completion-media", async (req, r
 });
 
 app.patch("/api/technical/project-deliveries/:id/completion-stage", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     await TechnicianOwnershipResolver.assertResourceOwnedByActor(
@@ -2550,8 +2606,9 @@ app.patch("/api/technical/project-deliveries/:id/completion-stage", async (req, 
 });
 
 app.get("/api/admin/project-completion/gaps", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await listAdminCompletionGaps(userId, username, db);
@@ -2605,8 +2662,9 @@ function readCustomerPortalAuthForDownload(req: any, res: any) {
 }
 
 app.get("/api/admin/customers/:customerId/warranty-certificate", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const html = await fetchAdminWarrantyCertificateHtml(userId, username, req.params.customerId, db);
@@ -2637,72 +2695,77 @@ app.get("/api/customer-portal/warranty-certificate/me", async (req, res) => {
 });
 
 app.get("/api/admin/finance/summary", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await fetchAdminFinanceSummary(userId, username, db);
+    const data = await fetchAdminFinanceSummary(staff.id, staff.username, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (financeOwnershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
     if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/admin/finance/projects", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const list = await listAdminFinanceProjects(userId, username, db);
+    const list = await listAdminFinanceProjects(staff.id, staff.username, db);
     return res.json(list);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (financeOwnershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
     if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/admin/finance/projects/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const row = await getAdminFinanceProjectById(userId, username, req.params.id, db);
+    const row = await getAdminFinanceProjectById(staff.id, staff.username, req.params.id, db);
     return res.json(row);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (financeOwnershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
     if (err instanceof ProjectFinanceDbError) return res.status(404).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.post("/api/admin/finance/projects", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const row = await createAdminFinanceProject(userId, username, req.body || {}, db);
+    const row = await createAdminFinanceProject(staff.id, staff.username, req.body || {}, db);
     saveDb();
     return res.status(201).json(row);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (financeOwnershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
     if (err instanceof ProjectFinanceDbError) return res.status(400).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.patch("/api/admin/finance/projects/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const row = await patchAdminFinanceProject(userId, username, req.params.id, req.body || {}, db);
+    const row = await patchAdminFinanceProject(staff.id, staff.username, req.params.id, req.body || {}, db);
     saveDb();
     return res.json(row);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (financeOwnershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
     if (err instanceof ProjectFinanceDbError) return res.status(404).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
@@ -2713,7 +2776,8 @@ app.patch("/api/admin/finance/projects/:id", async (req, res) => {
 // ---------------------------------------------------------------------------
 
 function handleCostingError(res: any, err: any) {
-  if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+  if (financeOwnershipErrorResponse(err, res)) return;
+  if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
   if (err instanceof InternalCostingDbError)
     return res.status(err.statusCode || 400).json({ error: err.message });
   return res.status(500).json({ error: err.message });
@@ -2723,11 +2787,11 @@ type CostingHandler = (userId: string, username: string, req: any) => Promise<un
 
 function costingRoute(handler: CostingHandler, options?: { save?: boolean; status?: number }) {
   return async (req: any, res: any) => {
-    const { userId, username } = readStaffAuth(req);
-    if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+    const staff = resolveStaffActor(req, res);
+    if (!staff) return;
     try {
       loadDb();
-      const data = await handler(userId, username, req);
+      const data = await handler(staff.id, staff.username, req);
       if (options?.save !== false) saveDb();
       return res.status(options?.status || 200).json(data);
     } catch (err: any) {
@@ -2803,7 +2867,9 @@ app.get(
 // ---------------------------------------------------------------------------
 
 function handleDeliveryError(res: any, err: any) {
-  if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+  if (financeOwnershipErrorResponse(err, res)) return;
+  if (err instanceof StaffPortalAuthError)
+    return res.status((err as any).statusCode || 403).json({ error: err.message });
   if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
   if (err instanceof DeliveryManagementDbError)
     return res.status(err.statusCode || 400).json({ error: err.message });
@@ -2815,8 +2881,14 @@ async function logDeliveryAudit(
   action: string,
   details: string
 ) {
-  const { userId, username, role } = readStaffAuth(req);
-  await appendActivityLog(userId || "system", username || "staff", role || "Admin", action, details);
+  const staff = req.actor;
+  await appendActivityLog(
+    staff?.id || "system",
+    staff?.username || "staff",
+    staff?.role || "Admin",
+    action,
+    details
+  );
 }
 
 function publicRequestMeta(req: express.Request) {
@@ -2831,8 +2903,9 @@ async function logDeliveryPublicAudit(action: string, details: string, meta?: { 
 }
 
 app.get("/api/admin/delivery-dashboard/contracted-customers", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const leads = await getLeadsForInvoiceOps();
@@ -2844,11 +2917,11 @@ app.get("/api/admin/delivery-dashboard/contracted-customers", async (req, res) =
 });
 
 app.get("/api/admin/invoices/:invoiceId/deliveries", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await listAdminDeliveriesForInvoice(userId, username, role, req.params.invoiceId, db);
+    const data = await listAdminDeliveriesForInvoice(staff.id, staff.username, staff.role, req.params.invoiceId, db);
     if (!isSupabaseActive()) saveDb();
     return res.json(data);
   } catch (err: any) {
@@ -2857,11 +2930,11 @@ app.get("/api/admin/invoices/:invoiceId/deliveries", async (req, res) => {
 });
 
 app.get("/api/admin/invoices/:invoiceId/delivery-summary", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await getInvoiceDeliverySummaryAdmin(userId, username, role, req.params.invoiceId, db);
+    const data = await getInvoiceDeliverySummaryAdmin(staff.id, staff.username, staff.role, req.params.invoiceId, db);
     return res.json(data);
   } catch (err: any) {
     return handleDeliveryError(res, err);
@@ -2869,11 +2942,11 @@ app.get("/api/admin/invoices/:invoiceId/delivery-summary", async (req, res) => {
 });
 
 app.get("/api/admin/deliveries/:challanId", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await getAdminDeliveryChallan(userId, username, role, req.params.challanId, db);
+    const data = await getAdminDeliveryChallan(staff.id, staff.username, staff.role, req.params.challanId, db);
     return res.json(data);
   } catch (err: any) {
     return handleDeliveryError(res, err);
@@ -2881,11 +2954,11 @@ app.get("/api/admin/deliveries/:challanId", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await createAdminDeliveryChallan(userId, username, role, req.body || {}, db);
+    const data = await createAdminDeliveryChallan(staff.id, staff.username, staff.role, req.body || {}, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Challan Created", `${data.challan.challanNumber} for invoice ${data.challan.invoiceId}`);
     return res.status(201).json(data);
@@ -2895,11 +2968,11 @@ app.post("/api/admin/deliveries", async (req, res) => {
 });
 
 app.patch("/api/admin/deliveries/:challanId", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await updateAdminDeliveryChallan(userId, username, role, req.params.challanId, req.body || {}, db);
+    const data = await updateAdminDeliveryChallan(staff.id, staff.username, staff.role, req.params.challanId, req.body || {}, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Challan Updated", data.challan.challanNumber);
     return res.json(data);
@@ -2909,11 +2982,11 @@ app.patch("/api/admin/deliveries/:challanId", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/status", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await updateAdminDeliveryChallanStatus(userId, username, role, req.params.challanId, String(req.body?.status || ""), db);
+    const data = await updateAdminDeliveryChallanStatus(staff.id, staff.username, staff.role, req.params.challanId, String(req.body?.status || ""), db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Status Changed", `${data.challan.challanNumber} → ${data.status}`);
     return res.json(data);
@@ -2923,11 +2996,11 @@ app.post("/api/admin/deliveries/:challanId/status", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/send-otp", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await sendAdminDeliveryOtp(userId, username, role, req.params.challanId, db);
+    const data = await sendAdminDeliveryOtp(staff.id, staff.username, staff.role, req.params.challanId, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery OTP Sent", data.challan.challanNumber);
     return res.json(data);
@@ -2937,11 +3010,11 @@ app.post("/api/admin/deliveries/:challanId/send-otp", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/verify-otp", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await verifyAdminDeliveryOtp(userId, username, role, req.params.challanId, req.body || {}, db);
+    const data = await verifyAdminDeliveryOtp(staff.id, staff.username, staff.role, req.params.challanId, req.body || {}, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery OTP Verified", data.challan.challanNumber);
     return res.json(data);
@@ -2951,11 +3024,11 @@ app.post("/api/admin/deliveries/:challanId/verify-otp", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/signature", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await captureAdminDeliverySignature(userId, username, role, req.params.challanId, req.body || {}, db);
+    const data = await captureAdminDeliverySignature(staff.id, staff.username, staff.role, req.params.challanId, req.body || {}, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Signature Captured", data.challan.challanNumber);
     return res.json(data);
@@ -2965,11 +3038,11 @@ app.post("/api/admin/deliveries/:challanId/signature", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/photos", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await uploadAdminDeliveryPhoto(userId, username, role, req.params.challanId, req.body || {}, db);
+    const data = await uploadAdminDeliveryPhoto(staff.id, staff.username, staff.role, req.params.challanId, req.body || {}, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Photo Uploaded", `${data.challan.challanNumber} (${data.photoType})`);
     return res.json(data);
@@ -2979,11 +3052,11 @@ app.post("/api/admin/deliveries/:challanId/photos", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/verify", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await verifyAdminDeliveryChallan(userId, username, role, req.params.challanId, req.body || {}, db);
+    const data = await verifyAdminDeliveryChallan(staff.id, staff.username, staff.role, req.params.challanId, req.body || {}, db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Verified", data.challan.challanNumber);
     return res.json(data);
@@ -2993,11 +3066,11 @@ app.post("/api/admin/deliveries/:challanId/verify", async (req, res) => {
 });
 
 app.post("/api/admin/deliveries/:challanId/dispute", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await disputeAdminDeliveryChallan(userId, username, role, req.params.challanId, String(req.body?.reason || ""), db);
+    const data = await disputeAdminDeliveryChallan(staff.id, staff.username, staff.role, req.params.challanId, String(req.body?.reason || ""), db);
     saveDb();
     await logDeliveryAudit(req, "Delivery Disputed", `${data.challan.challanNumber}: ${data.reason}`);
     return res.json(data);
@@ -3011,6 +3084,7 @@ app.get("/api/admin/deliveries/:challanId/certificate", async (req, res) => {
   if (!staff) return;
   try {
     loadDb();
+    await FinanceOwnershipResolver.assertDeliveryChallanOwnedByActor(staff, req.params.challanId, db);
     const branding = await getCompanyBranding(db);
     const html = await renderDeliveryCertificateHtml(req.params.challanId, db, branding);
     await logDeliveryAudit(req, "Delivery Certificate Generated", req.params.challanId);
@@ -3022,11 +3096,11 @@ app.get("/api/admin/deliveries/:challanId/certificate", async (req, res) => {
 });
 
 app.get("/api/admin/deliveries/dashboard/summary", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await fetchDeliveryDashboardSummary(userId, username, db);
+    const data = await fetchDeliveryDashboardSummary(staff.id, staff.username, db);
     return res.json(data);
   } catch (err: any) {
     return handleDeliveryError(res, err);
@@ -3065,6 +3139,7 @@ app.get("/api/admin/deliveries/:challanId/challan-pdf", async (req, res) => {
   if (!staff) return;
   try {
     loadDb();
+    await FinanceOwnershipResolver.assertDeliveryChallanOwnedByActor(staff, req.params.challanId, db);
     const branding = await getCompanyBranding(db);
     const html = await renderDeliveryChallanHtml(req.params.challanId, db, branding);
     await logDeliveryAudit(req, "Delivery Challan PDF Generated", req.params.challanId);
@@ -3076,11 +3151,11 @@ app.get("/api/admin/deliveries/:challanId/challan-pdf", async (req, res) => {
 });
 
 app.get("/api/admin/deliveries/:challanId/verification-info", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await getAdminDeliveryVerificationInfo(userId, username, role, req.params.challanId, db);
+    const data = await getAdminDeliveryVerificationInfo(staff.id, staff.username, staff.role, req.params.challanId, db);
     if (!isSupabaseActive()) saveDb();
     return res.json(data);
   } catch (err: any) {
@@ -3201,7 +3276,9 @@ app.get("/api/branding", async (_req, res) => {
 });
 
 app.get("/api/admin/branding", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const branding = await getCompanyBranding(db);
@@ -3212,8 +3289,9 @@ app.get("/api/admin/branding", async (req, res) => {
 });
 
 app.patch("/api/admin/branding", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const branding = await saveCompanyBranding(userId, username, req.body || {}, db);
@@ -3232,8 +3310,9 @@ function handleInventoryDbError(err: any, res: express.Response) {
 }
 
 app.get("/api/admin/inventory/items", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const data = await listAdminInventoryFoundationItems(userId, username, role, db);
@@ -3244,8 +3323,9 @@ app.get("/api/admin/inventory/items", async (req, res) => {
 });
 
 app.get("/api/admin/inventory/low-stock", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const data = await listAdminLowStockItems(userId, username, role, db);
@@ -3256,8 +3336,9 @@ app.get("/api/admin/inventory/low-stock", async (req, res) => {
 });
 
 app.post("/api/admin/inventory/items", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const item = await createAdminInventoryFoundationItem(userId, username, req.body || {}, db);
@@ -3269,8 +3350,9 @@ app.post("/api/admin/inventory/items", async (req, res) => {
 });
 
 app.post("/api/admin/inventory/items/:id/stock-in", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await stockInAdminInventoryItem(userId, username, req.params.id, req.body || {}, db);
@@ -3282,8 +3364,9 @@ app.post("/api/admin/inventory/items/:id/stock-in", async (req, res) => {
 });
 
 app.post("/api/admin/inventory/items/:id/stock-out", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await stockOutAdminInventoryItem(userId, username, req.params.id, req.body || {}, db);
@@ -3295,8 +3378,9 @@ app.post("/api/admin/inventory/items/:id/stock-out", async (req, res) => {
 });
 
 app.post("/api/admin/inventory/items/:id/adjust", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await adjustAdminInventoryItem(userId, username, req.params.id, req.body || {}, db);
@@ -3308,8 +3392,9 @@ app.post("/api/admin/inventory/items/:id/adjust", async (req, res) => {
 });
 
 app.post("/api/admin/inventory/reservations", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await reserveAdminInventoryForProject(userId, username, req.body || {}, db);
@@ -3321,8 +3406,9 @@ app.post("/api/admin/inventory/reservations", async (req, res) => {
 });
 
 app.post("/api/admin/inventory/reservations/:id/release", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await releaseAdminInventoryReservation(userId, username, req.params.id, req.body || {}, db);
@@ -3334,8 +3420,9 @@ app.post("/api/admin/inventory/reservations/:id/release", async (req, res) => {
 });
 
 app.get("/api/admin/inventory/movements", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await listAdminInventoryMovements(userId, username, {
@@ -3349,8 +3436,9 @@ app.get("/api/admin/inventory/movements", async (req, res) => {
 });
 
 app.get("/api/admin/inventory/reservations", async (req, res) => {
-  const { userId, username } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const data = await listAdminInventoryReservations(userId, username, {
@@ -3364,14 +3452,14 @@ app.get("/api/admin/inventory/reservations", async (req, res) => {
 });
 
 app.get("/api/admin/parties", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const visibilityRaw = String(req.query.visibility || "active").toLowerCase();
     const visibility =
       visibilityRaw === "archived" || visibilityRaw === "all" ? visibilityRaw : "active";
-    const parties = await listPartyLedgers(userId, username, role, db, { visibility });
+    const parties = await listPartyLedgers(staff.id, staff.username, staff.role, db, { visibility });
     return res.json({ parties });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -3380,14 +3468,14 @@ app.get("/api/admin/parties", async (req, res) => {
 });
 
 app.post("/api/admin/parties/:partyKey/archive", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const archived = await archivePartyLedger(
-      userId,
-      username,
-      role,
+      staff.id,
+      staff.username,
+      staff.role,
       decodeURIComponent(req.params.partyKey),
       db
     );
@@ -3402,14 +3490,14 @@ app.post("/api/admin/parties/:partyKey/archive", async (req, res) => {
 });
 
 app.post("/api/admin/parties/:partyKey/restore", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const result = await restorePartyLedger(
-      userId,
-      username,
-      role,
+      staff.id,
+      staff.username,
+      staff.role,
       decodeURIComponent(req.params.partyKey),
       db
     );
@@ -3424,14 +3512,14 @@ app.post("/api/admin/parties/:partyKey/restore", async (req, res) => {
 });
 
 app.delete("/api/admin/parties/:partyKey", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const result = await hardDeletePartyLedger(
-      userId,
-      username,
-      role,
+      staff.id,
+      staff.username,
+      staff.role,
       decodeURIComponent(req.params.partyKey),
       db
     );
@@ -3446,14 +3534,14 @@ app.delete("/api/admin/parties/:partyKey", async (req, res) => {
 });
 
 app.get("/api/admin/parties/:partyKey", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const data = await getPartyLedgerDetail(
-      userId,
-      username,
-      role,
+      staff.id,
+      staff.username,
+      staff.role,
       decodeURIComponent(req.params.partyKey),
       db
     );
@@ -3465,11 +3553,11 @@ app.get("/api/admin/parties/:partyKey", async (req, res) => {
 });
 
 app.get("/api/admin/finance/dashboard", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await fetchFinanceDashboard(userId, username, role, db);
+    const data = await fetchFinanceDashboard(staff.id, staff.username, staff.role, db);
     return res.json(data);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -3478,8 +3566,9 @@ app.get("/api/admin/finance/dashboard", async (req, res) => {
 });
 
 app.get("/api/admin/operations/dashboard", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const data = await fetchProjectOperationsDashboard(userId, username, role, db);
@@ -3491,8 +3580,9 @@ app.get("/api/admin/operations/dashboard", async (req, res) => {
 });
 
 app.get("/api/admin/operations/projects/:id", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
     const data = await fetchProjectOperationsDetail(userId, username, role, req.params.id, db);
@@ -3504,14 +3594,15 @@ app.get("/api/admin/operations/projects/:id", async (req, res) => {
 });
 
 app.get("/api/admin/invoices", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const includeArchived = String(req.query.includeArchived || "") === "true";
-    const invoices = await listAdminInvoices(userId, username, role, db, { includeArchived });
+    const invoices = await listAdminInvoices(staff, db, { includeArchived });
     return res.json({ invoices });
   } catch (err: any) {
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3519,12 +3610,12 @@ app.get("/api/admin/invoices", async (req, res) => {
 });
 
 app.get("/api/admin/invoices/contracted-ready", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const leads = await getLeadsForInvoiceOps();
-    const rows = await listContractedLeadsReadyForInvoice(userId, username, role, leads, db);
+    const rows = await listContractedLeadsReadyForInvoice(staff.id, staff.username, staff.role, leads, db);
     return res.json({ leads: rows });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -3534,22 +3625,16 @@ app.get("/api/admin/invoices/contracted-ready", async (req, res) => {
 });
 
 app.post("/api/admin/invoices/from-lead", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const leads = await getLeadsForInvoiceOps();
-    const result = await createInvoiceFromContractedLead(
-      userId,
-      username,
-      role,
-      req.body || {},
-      leads,
-      db
-    );
+    const result = await createInvoiceFromContractedLead(staff, req.body || {}, leads, db);
     saveDb();
     return res.status(result.existing ? 200 : 201).json(result);
   } catch (err: any) {
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3557,13 +3642,14 @@ app.post("/api/admin/invoices/from-lead", async (req, res) => {
 });
 
 app.get("/api/admin/invoices/:id", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const invoice = await getAdminInvoiceById(userId, username, role, req.params.id, db);
+    const invoice = await getAdminInvoiceById(staff, req.params.id, db);
     return res.json({ invoice });
   } catch (err: any) {
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3571,14 +3657,15 @@ app.get("/api/admin/invoices/:id", async (req, res) => {
 });
 
 app.post("/api/admin/invoices", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const invoice = await createAdminInvoice(userId, username, role, req.body || {}, db);
+    const invoice = await createAdminInvoice(staff, req.body || {}, db);
     saveDb();
     return res.status(201).json({ invoice });
   } catch (err: any) {
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3586,14 +3673,15 @@ app.post("/api/admin/invoices", async (req, res) => {
 });
 
 app.patch("/api/admin/invoices/:id", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const invoice = await updateAdminInvoice(userId, username, role, req.params.id, req.body || {}, db);
+    const invoice = await updateAdminInvoice(staff, req.params.id, req.body || {}, db);
     saveDb();
     return res.json({ invoice });
   } catch (err: any) {
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3601,14 +3689,15 @@ app.patch("/api/admin/invoices/:id", async (req, res) => {
 });
 
 app.post("/api/admin/invoices/:id/payments", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const result = await recordInvoicePayment(userId, username, role, req.params.id, req.body || {}, db);
+    const result = await recordInvoicePayment(staff, req.params.id, req.body || {}, db);
     saveDb();
     return res.status(201).json(result);
   } catch (err: any) {
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3616,11 +3705,11 @@ app.post("/api/admin/invoices/:id/payments", async (req, res) => {
 });
 
 app.post("/api/admin/invoices/:id/archive", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const invoice = await archiveAdminInvoice(userId, username, role, req.params.id, db);
+    const invoice = await archiveAdminInvoice(staff, req.params.id, db);
     saveDb();
     return res.json({ invoice, ok: true, message: "Invoice archived." });
   } catch (err: any) {
@@ -3631,18 +3720,11 @@ app.post("/api/admin/invoices/:id/archive", async (req, res) => {
 });
 
 app.delete("/api/admin/invoices/:id", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const result = await deleteAdminInvoice(
-      userId,
-      username,
-      role,
-      req.params.id,
-      req.body || {},
-      db
-    );
+    const result = await deleteAdminInvoice(staff, req.params.id, req.body || {}, db);
     saveDb();
     return res.json(result);
   } catch (err: any) {
@@ -3653,11 +3735,11 @@ app.delete("/api/admin/invoices/:id", async (req, res) => {
 });
 
 app.post("/api/admin/invoices/bulk-delete", async (req, res) => {
-  const { userId, username, role } = readStaffAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const result = await bulkDeleteAdminInvoices(userId, username, role, req.body || {}, db);
+    const result = await bulkDeleteAdminInvoices(staff.id, staff.username, staff.role, req.body || {}, db);
     saveDb();
     return res.json(result);
   } catch (err: any) {
@@ -3681,8 +3763,8 @@ app.get("/api/export/pdf/invoice/:id", async (req, res) => {
     } else {
       const staff = resolveStaffActor(req, res);
       if (!staff) return;
-      const { userId, username, role } = staffIdentityFromActor(staff);
-      invoice = await getAdminInvoiceById(userId, username, role, req.params.id, db);
+      await FinanceOwnershipResolver.assertInvoicePdfOwnedByActor(staff, req.params.id, db);
+      invoice = await loadInvoiceRecordById(req.params.id, db);
     }
     const { invoice: inv, branding, options } = await buildInvoicePdfPayload(invoice, db);
     const html = compileInvoicePDFHtml(inv, branding, options);
@@ -3690,6 +3772,7 @@ app.get("/api/export/pdf/invoice/:id", async (req, res) => {
     return res.send(html);
   } catch (err: any) {
     if (ownershipErrorResponse(err, res)) return;
+    if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -3711,14 +3794,15 @@ app.get("/api/customer-portal/invoices/me", async (req, res) => {
 });
 
 app.get("/api/staff/payments/projects/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
-    const data = await getStaffProjectPayments(userId, username, req.params.id, db);
+    const data = await getStaffProjectPayments(staff.id, staff.username, req.params.id, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
+    if (financeOwnershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(err.statusCode || 403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
@@ -3738,8 +3822,9 @@ app.get("/api/customer-portal/payments/me", async (req, res) => {
 });
 
 app.post("/api/whatsapp/log-opened", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const log = await logWhatsAppMessageOpened(userId, username, req.body || {}, db);
@@ -3753,8 +3838,9 @@ app.post("/api/whatsapp/log-opened", async (req, res) => {
 });
 
 app.get("/api/admin/whatsapp/logs", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const logs = await listAdminWhatsAppLogs(userId, username, db);
@@ -4070,8 +4156,9 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
 });
 
 app.post("/api/admin/customer-documents", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const doc = await createAdminCustomerDocument(userId, username, req.body || {}, db);
@@ -4084,8 +4171,9 @@ app.post("/api/admin/customer-documents", async (req, res) => {
 });
 
 app.post("/api/admin/customer-warranties", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const row = await upsertAdminCustomerWarranty(userId, username, req.body || {}, db);
@@ -4099,8 +4187,9 @@ app.post("/api/admin/customer-warranties", async (req, res) => {
 });
 
 app.get("/api/admin/warranty-claims", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   try {
     loadDb();
     const claims = await listAdminWarrantyClaims(userId, username, db);
@@ -4112,7 +4201,9 @@ app.get("/api/admin/warranty-claims", async (req, res) => {
 });
 
 app.patch("/api/admin/warranty-claims/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const { id: userId, username } = staff;
   const { status } = req.body || {};
   if (!userId || !username) return res.status(400).json({ error: "Staff userId and username are required." });
   try {
@@ -4127,6 +4218,19 @@ app.patch("/api/admin/warranty-claims/:id", async (req, res) => {
 });
 
 // 2. Fetch ERP system state
+function applyCrmBootStateOwnershipFilters(
+  actor: RequestActor | undefined,
+  state: Record<string, unknown>
+): Record<string, unknown> {
+  let scoped = SalesOwnershipResolver.shouldEnforceForActor(actor)
+    ? SalesOwnershipResolver.filterAppStateForActor(actor!, state)
+    : state;
+  if (actor) {
+    scoped = FinanceOwnershipResolver.filterAppStateForActor(actor, scoped);
+  }
+  return scoped;
+}
+
 app.get("/api/state", async (req, res) => {
   if (isSupabaseActive()) {
     try {
@@ -4142,10 +4246,10 @@ app.get("/api/state", async (req, res) => {
         db.settings = packageResolved.settings;
         saveDb();
       }
-      const scopedState =
-        SalesOwnershipResolver.shouldEnforceForActor(req.actor)
-          ? SalesOwnershipResolver.filterAppStateForActor(req.actor!, stateObj)
-          : stateObj;
+      const scopedState = applyCrmBootStateOwnershipFilters(
+        req.actor,
+        stateObj as Record<string, unknown>
+      );
       return res.json({
         ...scopedState,
         stats: getDashboardStats(scopedState),
@@ -4190,10 +4294,10 @@ app.get("/api/state", async (req, res) => {
     structureDescriptions: db.structureDescriptions || [],
     quotePdfSettings: db.quotePdfSettings || []
   };
-  const scopedState =
-    SalesOwnershipResolver.shouldEnforceForActor(req.actor)
-      ? SalesOwnershipResolver.filterAppStateForActor(req.actor!, localState)
-      : localState;
+  const scopedState = applyCrmBootStateOwnershipFilters(
+    req.actor,
+    localState as Record<string, unknown>
+  );
   res.json({
     ...scopedState,
     stats: getDashboardStats(scopedState),
@@ -4267,14 +4371,6 @@ app.get("/api/diagnostics/db", async (req, res) => {
     nodeEnv: process.env.NODE_ENV,
   });
 });
-
-function assertSuperAdminCleanup(req: express.Request) {
-  const role = String(req.headers["x-sunchaser-role"] || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || "").trim();
-  if (role !== "Super Admin" && username.toLowerCase() !== "allauddin") {
-    throw new StaffPortalAuthError("Super Admin access required.", 403);
-  }
-}
 
 app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) => {
   try {
@@ -4594,11 +4690,11 @@ app.put("/api/leads/:id", async (req, res) => {
 
     let contractProvision: Awaited<ReturnType<typeof provisionContractToInvoiceWorkflow>> | null = null;
     if (becomingContracted && priorStatus !== "Contracted") {
-      const staff = readStaffAuth(req);
+      const staff = req.actor;
       contractProvision = await provisionContractToInvoiceWorkflow(updatedLead, db, {
         supabase: ctx.supabase,
-        actor: staff.userId && staff.username
-          ? { userId: staff.userId, username: staff.username, role: staff.role || "Super Admin" }
+        actor: staff
+          ? { userId: staff.id, username: staff.username, role: staff.role }
           : undefined,
       });
       if (contractProvision.customerId) {
@@ -5633,12 +5729,12 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
     }
   }
 
-  const staff = readStaffAuth(req);
+  const staff = req.actor;
   const contractProvision = await provisionContractToInvoiceWorkflow(lead, db, {
     quotationId: quoteId,
     supabase,
-    actor: staff.userId && staff.username
-      ? { userId: staff.userId, username: staff.username, role: staff.role || "Super Admin" }
+    actor: staff
+      ? { userId: staff.id, username: staff.username, role: staff.role }
       : undefined,
   });
   if (!supabase) saveDb();
@@ -6169,18 +6265,17 @@ app.post("/api/projects/:id/update-stage", async (req, res) => {
     "Material Procurement",
   ]);
   if (installStages.has(String(stage || ""))) {
-    const actor = readStaffAuth(req);
-    const actorId = actor.userId || "u-allauddin";
-    const actorName = actor.username || "allauddin";
-    try {
-      await maybeConsumeCostingInventoryForProject(
-        project.id,
-        { userId: actorId, username: actorName, role: actor.role || "Super Admin" },
-        db
-      );
-      if (!leadCtx?.supabase) saveDb();
-    } catch (err: any) {
-      console.warn("[CostingInventoryConsume]", err?.message || err);
+    if (req.actor) {
+      try {
+        await maybeConsumeCostingInventoryForProject(
+          project.id,
+          { userId: req.actor.id, username: req.actor.username, role: req.actor.role },
+          db
+        );
+        if (!leadCtx?.supabase) saveDb();
+      } catch (err: any) {
+        console.warn("[CostingInventoryConsume]", err?.message || err);
+      }
     }
   }
 
@@ -6227,6 +6322,12 @@ app.post("/api/projects/:leadId/net-metering/update", async (req, res) => {
 app.post("/api/payments/:leadId/milestone", async (req, res) => {
   loadDb();
   const { leadId } = req.params;
+  try {
+    await assertPaymentMilestoneAccess(req.actor, leadId, db);
+  } catch (err) {
+    if (financeRouteLockdownErrorResponse(err, res)) return;
+    throw err;
+  }
   const { milestoneName, status } = req.body;
   const payTrack = db.paymentTracks[leadId];
   if (!payTrack) return res.status(404).json({ error: "Payments profile not found" });
@@ -6405,9 +6506,15 @@ app.delete("/api/admin/products/:id", async (req, res) => {
 
 // Generic Manual Admin CRUD Database manager endpoint
 app.post("/api/db/update", async (req, res) => {
-  loadDb();
   const { action, table, data, id } = req.body;
-  
+  try {
+    assertDbUpdateAllowed(req.actor, action, table, data);
+  } catch (err) {
+    if (financeRouteLockdownErrorResponse(err, res)) return;
+    throw err;
+  }
+  loadDb();
+
   if (table === "settings" || table === "websiteContent") {
     db[table] = data;
   } else {
@@ -6747,6 +6854,15 @@ app.post("/api/db/update", async (req, res) => {
 
 // 16. EXCEL / CSV Export endpoint
 app.get("/api/export/:table", async (req, res) => {
+  const { table } = req.params;
+  let exportAccessMode: "full" | "sales_scoped";
+  try {
+    exportAccessMode = assertExportTableAccess(req.actor, table);
+  } catch (err) {
+    if (financeRouteLockdownErrorResponse(err, res)) return;
+    throw err;
+  }
+
   let activeState: Database = db;
 
   if (isSupabaseActive()) {
@@ -6757,7 +6873,9 @@ app.get("/api/export/:table", async (req, res) => {
     }
   }
 
-  const { table } = req.params;
+  if (exportAccessMode === "sales_scoped" && req.actor) {
+    activeState = filterExportStateForSales(req.actor, activeState);
+  }
   let headers: string[] = [];
   let rows: any[] = [];
 
@@ -6818,12 +6936,14 @@ app.get("/api/export/:table", async (req, res) => {
 // 17. BACKUP & ARCHIVING EXPORT (Daily and Manual triggers)
 app.get("/api/backup/export", async (req, res) => {
   try {
+    assertSuperAdminOnly(req.actor);
     let backupState: Database = db;
     if (isSupabaseActive()) {
       backupState = await fetchAppStateFromSupabase();
     }
     res.json(backupState);
   } catch (err: any) {
+    if (financeRouteLockdownErrorResponse(err, res)) return;
     res.status(500).json({ error: "Failed to generate system backup", details: err.message });
   }
 });
@@ -9111,6 +9231,9 @@ app.get("/api/export/pdf/:leadId", async (req, res) => {
     res.status(500).send("Error compiling Legacy PDF wrapper: " + err.message);
   }
 });
+
+/* --- AI CHAT V1 (read-only; tools disabled) --- */
+app.post("/api/ai/chat", handleAiChatPost);
 
 /* --- GEMINI CHATBOT INTEGRATION --- */
 app.post("/api/gemini/chat", async (req, res) => {

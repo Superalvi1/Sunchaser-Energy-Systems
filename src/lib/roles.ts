@@ -33,8 +33,8 @@ export function selfRegisterRequiresApproval(role: string): boolean {
   return (SELF_REGISTER_APPROVAL_ROLES as readonly string[]).includes(role);
 }
 
-export function isSuperAdmin(username: string, role: string): boolean {
-  return role === "Super Admin" || String(username || "").toLowerCase() === "allauddin";
+export function isSuperAdmin(_username: string, role: string): boolean {
+  return role === "Super Admin";
 }
 
 export function canManageCustomers(username: string, role: string): boolean {

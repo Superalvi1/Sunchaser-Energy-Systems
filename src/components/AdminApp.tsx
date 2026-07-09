@@ -14,7 +14,7 @@ import {
 import UserManagementStaff from "./UserManagementStaff";
 import { useToast } from "../lib/toast";
 import { isSuperAdmin } from "../lib/roles";
-import { Lead, Ticket, InventoryItem, DashboardStats, Product, User } from "../types";
+import { Lead, Ticket, InventoryItem, DashboardStats, Product, User, ActivityLog } from "../types";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
 import SupportDeskStaff from "./SupportDeskStaff";
 import ServiceDeskStaff from "./ServiceDeskStaff";
@@ -43,7 +43,11 @@ import {
 } from "recharts";
 import ManualAdminControl from "./ManualAdminControl";
 import AdminModuleNav, { type AdminSegmentId, type AdminQuickAction } from "./AdminModuleNav";
+import EnterpriseDashboard from "./EnterpriseDashboard";
 import InventoryStaff from "./InventoryStaff";
+import AdminProductsPanel from "./AdminProductsPanel";
+import KnowledgeStaff from "./KnowledgeStaff";
+import { isKnowledgeMockUiEnabled } from "../lib/knowledgeFeatureFlag";
 import {
   currencySymbol,
   API_BASE_URL,
@@ -81,6 +85,7 @@ interface AdminAppProps {
   onDeleteLead?: (id: string) => void;
   staffUser: User;
   onQuickAction?: (action: AdminQuickAction) => void;
+  activityLogs?: ActivityLog[];
 }
 
 export default function AdminApp({
@@ -111,6 +116,7 @@ export default function AdminApp({
   onDeleteLead,
   staffUser,
   onQuickAction,
+  activityLogs = [],
 }: AdminAppProps) {
   const toast = useToast();
   const [activeSegment, setActiveSegment] = useState<AdminSegmentId>("overview");
@@ -122,6 +128,12 @@ export default function AdminApp({
     if (options?.settingsSubTab) setSelectedSubTab("settings");
     else if (id === "pdf-templates") setSelectedSubTab("pages");
   };
+
+  useEffect(() => {
+    if (activeSegment === "knowledge" && !isKnowledgeMockUiEnabled()) {
+      setActiveSegment("overview");
+    }
+  }, [activeSegment]);
 
   const showFinanceAdmin = canViewProjectProfit(staffUser.role, staffUser.username);
   const showFinanceDashboard = canViewFinanceDashboard(staffUser.username, staffUser.role);
@@ -242,8 +254,9 @@ export default function AdminApp({
   const COLORS = ["#F59E0B", "#10B981", "#3B82F6", "#6366F1", "#EC4899", "#EF4444"];
 
   return (
-    <div id="admin-view" className="space-y-8 animate-fade-in">
-      {/* Upper overview stat cards grids */}
+    <div id="admin-view" className="relative space-y-8 animate-fade-in">
+      {/* Legacy KPI strip — hidden on overview (replaced by EnterpriseDashboard) */}
+      {activeSegment !== "overview" && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 font-mono">
         {/* Card 1 */}
         <div className="bg-neutral-900 rounded-3xl border border-neutral-808 p-5 shadow-sm flex items-center gap-4">
@@ -289,6 +302,7 @@ export default function AdminApp({
           </div>
         </div>
       </div>
+      )}
 
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <AdminModuleNav
@@ -306,91 +320,103 @@ export default function AdminApp({
         />
 
         <div className="flex-1 min-w-0 w-full space-y-6">
-          {showInternalCosting && activeSegment === "overview" && profitabilitySummary && (
-            <button
-              type="button"
-              onClick={() => selectSegment("internal-costing")}
-              className="w-full text-left bg-neutral-900 border border-amber-500/30 rounded-3xl p-6 shadow-sm hover:border-amber-500/50 transition group"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 font-mono mb-1">
-                    Project Profitability
-                  </h3>
-                  <p className="text-[11px] text-neutral-500">{profitabilitySummary.monthLabel} · {profitabilitySummary.sheetCount} sheet(s)</p>
-                </div>
-                <span className="text-[10px] font-bold text-amber-400 group-hover:text-amber-300">
-                  View Internal Costing Reports →
-                </span>
-              </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Total Revenue</div>
-                  <div className="text-lg font-black text-neutral-100">
-                    Rs. {profitabilitySummary.totalRevenue.toLocaleString()}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Total Cost</div>
-                  <div className="text-lg font-black text-neutral-100">
-                    Rs. {profitabilitySummary.totalCost.toLocaleString()}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Gross Profit</div>
-                  <div className={`text-lg font-black ${profitabilitySummary.grossProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    Rs. {profitabilitySummary.grossProfit.toLocaleString()}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Margin</div>
-                  <div className="text-lg font-black text-amber-300">{profitabilitySummary.marginPercent}%</div>
-                </div>
-              </div>
-            </button>
+          {activeSegment === "overview" && (
+            <EnterpriseDashboard
+              stats={stats}
+              leads={leads}
+              tickets={tickets}
+              inventory={inventory}
+              activityLogs={activityLogs}
+              profitabilityBanner={
+                showInternalCosting && profitabilitySummary ? (
+                  <button
+                    type="button"
+                    onClick={() => selectSegment("internal-costing")}
+                    className="w-full text-left rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] backdrop-blur-xl p-6 shadow-sm hover:border-amber-500/40 transition group"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-1">
+                          Project Profitability
+                        </h3>
+                        <p className="text-[11px] text-neutral-500">{profitabilitySummary.monthLabel} · {profitabilitySummary.sheetCount} sheet(s)</p>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-400 group-hover:text-amber-300">
+                        View Internal Costing Reports →
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Total Revenue</div>
+                        <div className="text-lg font-black text-neutral-100">
+                          Rs. {profitabilitySummary.totalRevenue.toLocaleString()}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Total Cost</div>
+                        <div className="text-lg font-black text-neutral-100">
+                          Rs. {profitabilitySummary.totalCost.toLocaleString()}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Gross Profit</div>
+                        <div className={`text-lg font-black ${profitabilitySummary.grossProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          Rs. {profitabilitySummary.grossProfit.toLocaleString()}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Margin</div>
+                        <div className="text-lg font-black text-amber-300">{profitabilitySummary.marginPercent}%</div>
+                      </div>
+                    </div>
+                  </button>
+                ) : undefined
+              }
+              deliveryBanner={
+                showUserManagement && deliverySummary ? (
+                  <button
+                    type="button"
+                    onClick={() => selectSegment("invoices")}
+                    className="w-full text-left rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] backdrop-blur-xl p-6 shadow-sm hover:border-sky-500/40 transition group"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-sky-400 mb-1 flex items-center gap-2">
+                          <Truck className="h-4 w-4" /> Material Deliveries
+                        </h3>
+                        <p className="text-[11px] text-neutral-500">Invoice-linked partial delivery challans</p>
+                      </div>
+                      <span className="text-[10px] font-bold text-sky-400 group-hover:text-sky-300">
+                        Open Invoices →
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Deliveries Today</div>
+                        <div className="text-lg font-black text-neutral-100">{deliverySummary.deliveriesToday}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Pending</div>
+                        <div className="text-lg font-black text-amber-400">{deliverySummary.pendingDeliveries}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Verified</div>
+                        <div className="text-lg font-black text-emerald-400">{deliverySummary.verifiedDeliveries}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Materials Pending Value</div>
+                        <div className="text-lg font-black text-neutral-100">
+                          Rs. {deliverySummary.materialsPendingValue.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ) : undefined
+              }
+            />
           )}
 
-          {showUserManagement && activeSegment === "overview" && deliverySummary && (
-            <button
-              type="button"
-              onClick={() => selectSegment("invoices")}
-              className="w-full text-left bg-neutral-900 border border-sky-500/30 rounded-3xl p-6 shadow-sm hover:border-sky-500/50 transition group"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-sky-400 font-mono mb-1 flex items-center gap-2">
-                    <Truck className="h-4 w-4" /> Material Deliveries
-                  </h3>
-                  <p className="text-[11px] text-neutral-500">Invoice-linked partial delivery challans</p>
-                </div>
-                <span className="text-[10px] font-bold text-sky-400 group-hover:text-sky-300">
-                  Open Invoices →
-                </span>
-              </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Deliveries Today</div>
-                  <div className="text-lg font-black text-neutral-100">{deliverySummary.deliveriesToday}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Pending</div>
-                  <div className="text-lg font-black text-amber-400">{deliverySummary.pendingDeliveries}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Verified</div>
-                  <div className="text-lg font-black text-emerald-400">{deliverySummary.verifiedDeliveries}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Materials Pending Value</div>
-                  <div className="text-lg font-black text-neutral-100">
-                    Rs. {deliverySummary.materialsPendingValue.toLocaleString()}
-                  </div>
-                </div>
-              </div>
-            </button>
-          )}
-
-          {(activeSegment === "overview" || activeSegment === "reports") && (
+          {activeSegment === "reports" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Leads status tracker Recharts */}
             <div className="lg:col-span-8 bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-sm space-y-4">
@@ -1654,6 +1680,9 @@ export default function AdminApp({
         )}
         {activeSegment === "products" && (
           <AdminProductsPanel products={products} onRefreshState={onRefreshState} />
+        )}
+        {activeSegment === "knowledge" && isKnowledgeMockUiEnabled() && (
+          <KnowledgeStaff staffUser={staffUser} />
         )}
         </div>
       </div>

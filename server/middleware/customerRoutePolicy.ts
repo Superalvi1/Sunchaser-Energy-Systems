@@ -7,7 +7,11 @@ export function normalizeApiPathname(pathname: string): string {
   return pathname.split("?")[0] || pathname;
 }
 
-const CUSTOMER_ALLOWED_EXACT = new Set(["/api/auth/me", "/api/customer-portal"]);
+const CUSTOMER_ALLOWED_EXACT = new Set([
+  "/api/auth/me",
+  "/api/customer-portal",
+  "/api/ai/chat",
+]);
 
 const CUSTOMER_ALLOWED_PREFIXES = ["/api/customer-portal/"];
 

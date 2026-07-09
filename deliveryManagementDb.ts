@@ -40,7 +40,11 @@ import {
 import { buildDeliveryVerificationUrl } from "./src/lib/deliveryQr.ts";
 import { compileDeliveryCertificateHtml } from "./deliveryCertificatePdf.ts";
 import { compileDeliveryChallanHtml } from "./deliveryChallanPdf.ts";
-import { isSuperAdmin } from "./src/lib/roles.ts";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import {
+  FinanceOwnershipError,
+  FinanceOwnershipResolver,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
 
 export class DeliveryManagementDbError extends Error {
   statusCode: number;
@@ -66,6 +70,57 @@ const TABLES_NOT_READY =
 async function assertDeliveryStaff(userId: string, username: string, localDb?: Database) {
   const { user, role } = await verifyStaffPortalUser(userId, username, localDb);
   return { user, role };
+}
+
+function toRequestActor(userId: string, username: string, role: string): RequestActor {
+  return {
+    id: userId,
+    username,
+    name: username,
+    email: "",
+    role,
+    accountStatus: "Approved",
+    emailVerified: true,
+    onboardingCompleted: true,
+    authMethod: "jwt",
+  };
+}
+
+function mapFinanceOwnershipError(err: unknown): never {
+  if (err instanceof FinanceOwnershipError) {
+    throw new StaffPortalAuthError(err.message, err.statusCode);
+  }
+  throw err;
+}
+
+async function assertDeliveryChallanAccess(
+  userId: string,
+  username: string,
+  role: string,
+  challanId: string,
+  localDb?: Database
+) {
+  const actor = toRequestActor(userId, username, role);
+  try {
+    await FinanceOwnershipResolver.assertDeliveryChallanOwnedByActor(actor, challanId, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+}
+
+async function assertDeliveryInvoiceAccess(
+  userId: string,
+  username: string,
+  role: string,
+  invoiceId: string,
+  localDb?: Database
+) {
+  const actor = toRequestActor(userId, username, role);
+  try {
+    await FinanceOwnershipResolver.assertDeliveryInvoiceOwnedByActor(actor, invoiceId, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
 }
 
 function parseChecklist(raw: unknown): VerificationChecklist {
@@ -317,7 +372,8 @@ export async function getInvoiceDeliverySummaryAdmin(
   invoiceId: string,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryInvoiceAccess(userId, username, staffRole, invoiceId, localDb);
   const invoice = await loadInvoiceRecordById(invoiceId, localDb);
   const challans = await loadInvoiceChallans(invoiceId, localDb);
   const allItems = await loadTable(ITEMS_TABLE, "deliveryChallanItems", localDb);
@@ -349,7 +405,8 @@ export async function getAdminDeliveryChallan(
   challanId: string,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   return { challan: await loadChallanBundle(challanId, localDb) };
 }
 
@@ -360,9 +417,10 @@ export async function createAdminDeliveryChallan(
   body: Record<string, unknown>,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
   const invoiceId = String(body.invoiceId ?? body.invoice_id ?? "");
   if (!invoiceId) throw new DeliveryManagementDbError("invoiceId is required.");
+  await assertDeliveryInvoiceAccess(userId, username, staffRole, invoiceId, localDb);
   const invoice = await loadInvoiceRecordById(invoiceId, localDb);
 
   const existingChallans = await loadInvoiceChallans(invoiceId, localDb);
@@ -422,6 +480,7 @@ export async function createAdminDeliveryChallan(
     receiver_relation: String(body.receiverRelation ?? body.receiver_relation ?? ""),
     notes: String(body.notes ?? ""),
     created_by: username,
+    created_by_user_id: userId,
     created_at: now,
     updated_at: now,
     ...verificationTokenFields(now),
@@ -443,7 +502,8 @@ export async function updateAdminDeliveryChallan(
   body: Record<string, unknown>,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
   if (isChallanLocked(existing.status)) {
     throw new DeliveryManagementDbError("Verified/disputed challans cannot be edited.", 409);
@@ -531,7 +591,8 @@ export async function updateAdminDeliveryChallanStatus(
   status: string,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
   if (isChallanLocked(existing.status) && status !== "disputed") {
     throw new DeliveryManagementDbError("Challan is locked.", 409);
@@ -550,7 +611,8 @@ export async function sendAdminDeliveryOtp(
   challanId: string,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
   if (isChallanLocked(existing.status)) throw new DeliveryManagementDbError("Challan is locked.", 409);
   const otp = generateOtpCode();
@@ -574,7 +636,8 @@ export async function verifyAdminDeliveryOtp(
   body: { code?: string; verifiedByPhone?: string },
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
   if (isChallanLocked(existing.status)) throw new DeliveryManagementDbError("Challan is locked.", 409);
   const code = String(body.code || "").trim();
@@ -604,7 +667,8 @@ export async function captureAdminDeliverySignature(
   body: { signatureDataUrl?: string; signatureImageUrl?: string },
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
   if (isChallanLocked(existing.status)) throw new DeliveryManagementDbError("Challan is locked.", 409);
 
@@ -641,7 +705,8 @@ export async function uploadAdminDeliveryPhoto(
   body: Record<string, unknown>,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const existing = await loadChallanBundle(challanId, localDb);
   if (isChallanLocked(existing.status)) throw new DeliveryManagementDbError("Challan is locked.", 409);
 
@@ -683,9 +748,7 @@ export async function uploadAdminDeliveryPhoto(
 
 function resolveDeliveryAutomationActor(localDb?: Database) {
   const users = ((localDb as any)?.users || []) as any[];
-  const hit =
-    users.find((u) => String(u.username || "").toLowerCase() === "allauddin") ||
-    users.find((u) => u.role === "Super Admin");
+  const hit = users.find((u) => u.role === "Super Admin");
   if (hit) return { userId: hit.id, username: hit.username };
   return { userId: "u-system", username: "system" };
 }
@@ -793,7 +856,8 @@ export async function verifyAdminDeliveryChallan(
   body: Record<string, unknown>,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   return finalizeDeliveryVerification(
     challanId,
     body,
@@ -812,7 +876,8 @@ export async function disputeAdminDeliveryChallan(
   localDb?: Database
 ) {
   const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
-  if (!isSuperAdmin(username, staffRole)) {
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
+  if (staffRole !== "Super Admin") {
     throw new StaffPortalAuthError("Only Super Admin can mark a delivery as disputed.");
   }
   const reasonText = String(reason || "").trim();
@@ -943,7 +1008,8 @@ export async function fetchDeliveryDashboardSummary(
   username: string,
   localDb?: Database
 ): Promise<{ summary: DeliveryDashboardSummary }> {
-  if (!isSuperAdmin(username, (await assertDeliveryStaff(userId, username, localDb)).role)) {
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  if (staffRole !== "Super Admin") {
     throw new StaffPortalAuthError("Delivery dashboard is restricted to Super Admin.");
   }
   const rows = await loadTable(CHALLANS_TABLE, "deliveryChallans", localDb);
@@ -1263,7 +1329,8 @@ export async function getAdminDeliveryVerificationInfo(
   challanId: string,
   localDb?: Database
 ) {
-  await assertDeliveryStaff(userId, username, localDb);
+  const { role: staffRole } = await assertDeliveryStaff(userId, username, localDb);
+  await assertDeliveryChallanAccess(userId, username, staffRole, challanId, localDb);
   const challan = await ensureChallanVerificationToken(challanId, localDb);
   const { invoice } = await buildDeliveryCertificatePayload(challanId, localDb);
   const verificationUrl = buildDeliveryVerificationUrl(challan.verificationToken || "");

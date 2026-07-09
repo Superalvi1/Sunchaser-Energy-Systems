@@ -18,6 +18,10 @@ body {
   animation: fadeIn 0.4s ease-out forwards;
 }
 
+.dashboard-glow {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.12), transparent);
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }

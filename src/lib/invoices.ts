@@ -147,14 +147,6 @@ export type InvoicePaymentRow = {
 
 export const INVOICES_PERMISSION: PermissionKey = "invoices";
 
-export function canViewAllInvoices(username: string, role: string): boolean {
-  if (isSuperAdmin(username, role)) return true;
-  if (roleHasPermission(role, INVOICES_PERMISSION)) {
-    return ["Director", "Accounts Manager", "Super Admin"].includes(role);
-  }
-  return false;
-}
-
 export function canCreateInvoice(username: string, role: string): boolean {
   if (isSuperAdmin(username, role)) return true;
   if (!roleHasPermission(role, INVOICES_PERMISSION)) return false;

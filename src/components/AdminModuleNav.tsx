@@ -26,6 +26,7 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
+import { isKnowledgeMockUiEnabled } from "../lib/knowledgeFeatureFlag";
 
 export type AdminSegmentId =
   | "overview"
@@ -51,7 +52,8 @@ export type AdminSegmentId =
   | "control-panel"
   | "savings-desk"
   | "subscription-desk"
-  | "energy-monitoring";
+  | "energy-monitoring"
+  | "knowledge";
 
 export type AdminQuickAction = "lead" | "quotation" | "invoice" | "customer";
 
@@ -315,6 +317,22 @@ export function buildAdminNavGroups(opts: {
         },
       ],
     },
+    ...(isKnowledgeMockUiEnabled()
+      ? [
+          {
+            id: "knowledge",
+            label: "Knowledge",
+            modules: [
+              {
+                id: "knowledge" as const,
+                title: "Knowledge Center",
+                description: "Mock prototype — documents, SOPs, folders (dev only)",
+                icon: BookOpen,
+              },
+            ],
+          },
+        ]
+      : []),
     {
       id: "customer",
       label: "Customer",

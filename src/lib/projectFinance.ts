@@ -32,6 +32,10 @@ export type ProjectFinanceRecord = {
   updatedAt: string;
 };
 
+/**
+ * CEO-only project profit visibility — intentionally restricted to the primary Super Admin account.
+ * This is a business visibility rule, not an authorization bypass.
+ */
 export function canViewProjectProfit(role: string, username: string): boolean {
   return role === "Super Admin" && String(username || "").trim().toLowerCase() === "allauddin";
 }

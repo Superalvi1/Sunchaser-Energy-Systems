@@ -2765,10 +2765,12 @@ export class StaffPortalAuthError extends Error {
 const STAFF_PORTAL_ROLES = new Set([
   "Super Admin",
   "Technical CEO",
+  "Director",
   "Sales Manager",
   "Sales Advisor",
   "Sales Executive",
   "Admin",
+  "Accounts Manager",
   "Inventory Manager",
   "Support Agent",
 ]);

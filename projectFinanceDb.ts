@@ -17,6 +17,11 @@ import {
 } from "./src/lib/projectFinance.ts";
 import { buildWhatsAppMessageBody, type WhatsAppMessageType } from "./src/lib/whatsapp.ts";
 import { fetchCustomerPortalInvoicesMe } from "./invoiceDb.js";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import {
+  FinanceOwnershipError,
+  FinanceOwnershipResolver,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
 
 export class ProjectFinanceDbError extends Error {
   constructor(message: string) {
@@ -80,10 +85,71 @@ function serializeFinance(record: ProjectFinanceRecord, role: string, username: 
   return toStaffSafeFinance(record);
 }
 
+function toRequestActor(userId: string, username: string, role: string): RequestActor {
+  return {
+    id: userId,
+    username,
+    name: username,
+    email: "",
+    role,
+    accountStatus: "Approved",
+    emailVerified: true,
+    onboardingCompleted: true,
+    authMethod: "jwt",
+  };
+}
+
+function mapFinanceOwnershipError(err: unknown): never {
+  if (err instanceof FinanceOwnershipError) {
+    throw new StaffPortalAuthError(err.message, err.statusCode);
+  }
+  throw err;
+}
+
+function scrubFinanceSummaryForRole(
+  summary: Record<string, unknown>,
+  role: string,
+  username: string
+) {
+  if (canViewProjectProfit(role, username)) return summary;
+  const {
+    totalSupplierCost,
+    totalInstallationCost,
+    totalExpenses,
+    totalProfit,
+    profitMarginPercent,
+    ...safe
+  } = summary;
+  return safe;
+}
+
+async function assertProjectFinanceStaffAccess(userId: string, username: string, localDb?: Database) {
+  const { user, role } = await verifyStaffPortalUser(userId, username, localDb);
+  const actor = toRequestActor(userId, username, role);
+  try {
+    FinanceOwnershipResolver.assertFinanceResourceRouteAccess(actor);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+  return { user, role, actor };
+}
+
+async function assertProjectFinanceRecordAccess(
+  actor: RequestActor,
+  recordId: string,
+  localDb?: Database
+) {
+  try {
+    await FinanceOwnershipResolver.assertProjectFinanceRecordOwnedByActor(actor, recordId, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+}
+
 async function assertSuperAdminFinanceUser(userId: string, username: string, localDb?: Database) {
   const { user, role } = await verifyStaffPortalUser(userId, username, localDb);
   if (!canViewProjectProfit(role, user.username || username)) {
-    throw new StaffPortalAuthError("Project finance admin access is restricted to Super Admin allauddin.");
+    throw new StaffPortalAuthError("Project finance admin access is restricted to Super Admin with profit visibility.");
   }
   return { user, role };
 }
@@ -125,6 +191,7 @@ function buildDbPayload(
     payment_status: computed.paymentStatus,
     notes: body.notes != null ? String(body.notes) : null,
     created_by: isCreate ? userId : undefined,
+    created_by_user_id: isCreate ? userId : undefined,
     updated_by: userId,
     created_at: isCreate ? now : undefined,
     updated_at: now,
@@ -136,8 +203,8 @@ export async function fetchAdminFinanceSummary(
   username: string,
   localDb?: Database
 ) {
-  const { role } = await assertSuperAdminFinanceUser(userId, username, localDb);
-  const records = await loadAllFinanceRecords(localDb);
+  const { role, actor } = await assertProjectFinanceStaffAccess(userId, username, localDb);
+  const records = await loadVisibleFinanceRecords(actor, localDb);
   const summary = {
     totalSales: 0,
     totalAdvanceReceived: 0,
@@ -163,10 +230,10 @@ export async function fetchAdminFinanceSummary(
       ((summary.totalProfit / summary.totalSales) * 100).toFixed(2)
     );
   }
-  return { summary, role };
+  return { summary: scrubFinanceSummaryForRole(summary, role, username), role };
 }
 
-async function loadAllFinanceRecords(localDb?: Database): Promise<ProjectFinanceRecord[]> {
+async function loadAllFinanceRawRows(localDb?: Database): Promise<Record<string, unknown>[]> {
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const { data, error } = await supabase
@@ -177,9 +244,23 @@ async function loadAllFinanceRecords(localDb?: Database): Promise<ProjectFinance
       if (isPhase11TableMissing(error)) throw new ProjectFinanceDbError("Finance tables not ready.");
       throw error;
     }
-    return (data || []).map(mapFinanceRow);
+    return (data || []) as Record<string, unknown>[];
   }
-  return (localDb?.projectFinanceRecords || []).map(mapFinanceRow);
+  return (localDb?.projectFinanceRecords || []) as Record<string, unknown>[];
+}
+
+async function loadVisibleFinanceRecords(
+  actor: RequestActor,
+  localDb?: Database
+): Promise<ProjectFinanceRecord[]> {
+  const rows = await loadAllFinanceRawRows(localDb);
+  const visible = FinanceOwnershipResolver.filterFinanceResourceRowsForActor(actor, rows);
+  return visible.map(mapFinanceRow);
+}
+
+async function loadAllFinanceRecords(localDb?: Database): Promise<ProjectFinanceRecord[]> {
+  const rows = await loadAllFinanceRawRows(localDb);
+  return rows.map(mapFinanceRow);
 }
 
 export async function listAdminFinanceProjects(
@@ -187,8 +268,8 @@ export async function listAdminFinanceProjects(
   username: string,
   localDb?: Database
 ) {
-  const { role } = await assertSuperAdminFinanceUser(userId, username, localDb);
-  const records = await loadAllFinanceRecords(localDb);
+  const { role, actor } = await assertProjectFinanceStaffAccess(userId, username, localDb);
+  const records = await loadVisibleFinanceRecords(actor, localDb);
   return records.map((r) => serializeFinance(r, role, username));
 }
 
@@ -198,7 +279,8 @@ export async function getAdminFinanceProjectById(
   id: string,
   localDb?: Database
 ) {
-  const { role } = await assertSuperAdminFinanceUser(userId, username, localDb);
+  const { role, actor } = await assertProjectFinanceStaffAccess(userId, username, localDb);
+  await assertProjectFinanceRecordAccess(actor, id, localDb);
   const record = await loadFinanceById(id, localDb);
   return serializeFinance(record, role, username);
 }
@@ -225,7 +307,7 @@ export async function createAdminFinanceProject(
   body: Record<string, unknown>,
   localDb?: Database
 ) {
-  await assertSuperAdminFinanceUser(userId, username, localDb);
+  const { role } = await assertProjectFinanceStaffAccess(userId, username, localDb);
   const id = String(body.id || `fin-${Date.now()}`);
   const payload = buildDbPayload(body, userId, id, true);
   if (!payload.customer_id) throw new ProjectFinanceDbError("customerId is required.");
@@ -241,7 +323,7 @@ export async function createAdminFinanceProject(
       if (isPhase11TableMissing(error)) throw new ProjectFinanceDbError("Finance tables not ready.");
       throw error;
     }
-    return mapFinanceRow(data);
+    return serializeFinance(mapFinanceRow(data), role, username);
   }
 
   if (!localDb) throw new ProjectFinanceDbError("Database unavailable.");
@@ -252,7 +334,7 @@ export async function createAdminFinanceProject(
     projectDeliveryId: payload.project_delivery_id,
   };
   localDb.projectFinanceRecords.push(row);
-  return mapFinanceRow(row);
+  return serializeFinance(mapFinanceRow(row), role, username);
 }
 
 export async function patchAdminFinanceProject(
@@ -262,7 +344,8 @@ export async function patchAdminFinanceProject(
   body: Record<string, unknown>,
   localDb?: Database
 ) {
-  await assertSuperAdminFinanceUser(userId, username, localDb);
+  const { role, actor } = await assertProjectFinanceStaffAccess(userId, username, localDb);
+  await assertProjectFinanceRecordAccess(actor, id, localDb);
   const existing = await loadFinanceById(id, localDb);
   const merged = {
     ...existing,
@@ -297,14 +380,14 @@ export async function patchAdminFinanceProject(
       .select("*")
       .single();
     if (error) throw error;
-    return mapFinanceRow(data);
+    return serializeFinance(mapFinanceRow(data), role, username);
   }
 
   if (!localDb?.projectFinanceRecords) throw new ProjectFinanceDbError("Database unavailable.");
   const idx = localDb.projectFinanceRecords.findIndex((r: any) => r.id === id);
   if (idx < 0) throw new ProjectFinanceDbError("Finance record not found.");
   localDb.projectFinanceRecords[idx] = { ...localDb.projectFinanceRecords[idx], ...payload };
-  return mapFinanceRow(localDb.projectFinanceRecords[idx]);
+  return serializeFinance(mapFinanceRow(localDb.projectFinanceRecords[idx]), role, username);
 }
 
 export async function getStaffProjectPayments(
@@ -313,11 +396,12 @@ export async function getStaffProjectPayments(
   projectDeliveryId: string,
   localDb?: Database
 ) {
-  const { role, user } = await verifyStaffPortalUser(userId, username, localDb);
+  const { role, user, actor } = await assertProjectFinanceStaffAccess(userId, username, localDb);
   const record = await findFinanceByDeliveryId(projectDeliveryId, localDb);
   if (!record) {
     return { projectDeliveryId, finance: null };
   }
+  await assertProjectFinanceRecordAccess(actor, record.id, localDb);
   return {
     projectDeliveryId,
     finance: serializeFinance(record, role, user.username || username),

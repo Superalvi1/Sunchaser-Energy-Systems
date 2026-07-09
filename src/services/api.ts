@@ -1542,6 +1542,68 @@ export async function payMilestone(leadId: string, milestoneName: string, status
 
 /* --- GEMINI AI SERVICES --- */
 
+import { buildAiChatRequestPayload, type AiChatRequest } from "./aiChatRequest.ts";
+
+export type { AiChatAgentId, AiChatRequest } from "./aiChatRequest.ts";
+export { buildAiChatRequestPayload } from "./aiChatRequest.ts";
+
+export interface AiChatResponse {
+  id: string;
+  conversationId: string;
+  agentId: string;
+  response: string;
+  reasoning: string | null;
+  toolCalls: unknown[];
+  actions: unknown[];
+  citations: unknown[];
+  usage: {
+    provider: string;
+    model: string;
+    latencyMs: number;
+    tokens: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+    };
+    costUsd: number;
+    iterations: number;
+    retries: number;
+  };
+  model: string;
+  latencyMs: number;
+  tokens: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
+  costUsd: number;
+  stopReason: string;
+  createdAt: string;
+}
+
+/** POST /api/ai/chat — read-only AI assistant (Bearer JWT via apiFetch). */
+export async function postAiChat(body: AiChatRequest): Promise<AiChatResponse> {
+  const res = await apiFetch("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify(buildAiChatRequestPayload(body)),
+  });
+  if (!res.ok) {
+    const errBody = await readApiErrorBody(res);
+    const message =
+      errBody.error ||
+      errBody.message ||
+      (res.status === 503
+        ? "AI provider is not configured"
+        : `AI chat failed (${res.status})`);
+    throw new Error(message);
+  }
+  return res.json() as Promise<AiChatResponse>;
+}
+
 export async function askGeminiAssistant(message: string, history: Array<{ sender: string; text: string }>) {
   const res = await apiFetch("/api/gemini/chat", {
     method: "POST",

@@ -6,8 +6,8 @@ import {
   StaffPortalAuthError,
 } from "./dbManager.js";
 import {
-  canCreateInvoice,
   isExcludedFromLedgerTotals,
+  type InvoiceRecord,
   type PartyLedgerPayment,
   type PartyLedgerSummary,
   type PartyLedgerTransaction,
@@ -16,17 +16,64 @@ import {
   resolveInvoiceBalanceDue,
   resolveInvoiceReceivedAmount,
 } from "./src/lib/invoicePayments.ts";
-import { listAdminInvoices } from "./invoiceDb.js";
+import { loadInvoiceRecordById } from "./invoiceDb.js";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import {
+  FinanceOwnershipError,
+  FinanceOwnershipResolver,
+  partyKeyFromInvoiceRow,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
 
 export function partyKeyFromInvoice(inv: {
   customerId?: string | null;
   customerName?: string;
   customerPhone?: string | null;
 }) {
-  if (inv.customerId) return `cid:${inv.customerId}`;
-  const name = String(inv.customerName || "").trim().toLowerCase();
-  const phone = String(inv.customerPhone || "").trim();
-  return `name:${name}|${phone}`;
+  return partyKeyFromInvoiceRow({
+    customer_id: inv.customerId,
+    customer_name: inv.customerName,
+    customer_phone: inv.customerPhone,
+  });
+}
+
+function toRequestActor(userId: string, username: string, role: string): RequestActor {
+  return {
+    id: userId,
+    username,
+    name: username,
+    email: "",
+    role,
+    accountStatus: "Approved",
+    emailVerified: true,
+    onboardingCompleted: true,
+    authMethod: "jwt",
+  };
+}
+
+function mapFinanceOwnershipError(err: unknown): never {
+  if (err instanceof FinanceOwnershipError) {
+    throw new StaffPortalAuthError(err.message, err.statusCode);
+  }
+  throw err;
+}
+
+async function loadVisibleInvoicesForStaff(
+  userId: string,
+  username: string,
+  role: string,
+  localDb?: Database
+): Promise<{ actor: RequestActor; invoices: InvoiceRecord[]; visibleRows: Record<string, unknown>[] }> {
+  const actor = toRequestActor(userId, username, role);
+  try {
+    const visibleRows = await FinanceOwnershipResolver.getVisibleInvoiceRowsForActor(actor, localDb);
+    const invoices: InvoiceRecord[] = [];
+    for (const row of visibleRows) {
+      invoices.push(await loadInvoiceRecordById(String(row.id), localDb));
+    }
+    return { actor, invoices, visibleRows };
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
 }
 
 const ARCHIVE_TABLE = "party_ledger_archives";
@@ -157,7 +204,7 @@ async function buildPartySummaries(
   role: string,
   localDb?: Database
 ): Promise<PartyLedgerSummary[]> {
-  const invoices = await listAdminInvoices(userId, username, role, localDb);
+  const { invoices } = await loadVisibleInvoicesForStaff(userId, username, role, localDb);
   const map = new Map<string, PartyLedgerSummary>();
 
   for (const inv of invoices) {
@@ -205,6 +252,17 @@ async function buildPartySummaries(
   );
 }
 
+async function assertPartyLedgerStaffAccess(userId: string, username: string, role: string, localDb?: Database) {
+  await verifyStaffPortalUser(userId, username, localDb);
+  const actor = toRequestActor(userId, username, role);
+  try {
+    FinanceOwnershipResolver.assertInvoiceStaffRouteAccess(actor);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+  return actor;
+}
+
 export async function listPartyLedgers(
   userId: string,
   username: string,
@@ -212,23 +270,23 @@ export async function listPartyLedgers(
   localDb?: Database,
   options?: PartyLedgerListOptions
 ): Promise<PartyLedgerSummary[]> {
-  await verifyStaffPortalUser(userId, username, localDb);
-  if (!canCreateInvoice(username, role)) {
-    throw new StaffPortalAuthError("You do not have permission to view party ledgers.", 403);
-  }
+  const actor = await assertPartyLedgerStaffAccess(userId, username, role, localDb);
 
   const visibility = options?.visibility ?? "active";
-  const [parties, archiveMap] = await Promise.all([
+  const [parties, archiveMap, allInvoiceRows] = await Promise.all([
     buildPartySummaries(userId, username, role, localDb),
     loadArchiveMap(localDb),
+    FinanceOwnershipResolver.loadAllInvoiceRows(localDb),
   ]);
 
   const enriched = applyArchiveMeta(parties, archiveMap);
 
-  // Archived-only rows with no remaining invoices (snapshot from archive table)
   if (visibility === "archived" || visibility === "all") {
     for (const arch of archiveMap.values()) {
       if (enriched.some((p) => p.partyKey === arch.partyKey)) continue;
+      if (!FinanceOwnershipResolver.shouldIncludeArchiveSnapshot(actor, arch.partyKey, allInvoiceRows)) {
+        continue;
+      }
       enriched.push({
         partyKey: arch.partyKey,
         customerId: arch.customerId,
@@ -263,14 +321,22 @@ export async function getPartyLedgerDetail(
   transactions: PartyLedgerTransaction[];
   payments: PartyLedgerPayment[];
 }> {
-  const parties = await listPartyLedgers(userId, username, role, localDb, { visibility: "all" });
-  const party = parties.find((p) => p.partyKey === partyKey);
+  const { actor, invoices, visibleRows } = await loadVisibleInvoicesForStaff(
+    userId,
+    username,
+    role,
+    localDb
+  );
+  FinanceOwnershipResolver.assertPartyDetailVisible(actor, partyKey, visibleRows);
+
+  const partyInvoices = invoices.filter((inv) => partyKeyFromInvoice(inv) === partyKey);
+  const parties = await buildPartySummaries(userId, username, role, localDb);
+  const archiveMap = await loadArchiveMap(localDb);
+  const enriched = applyArchiveMeta(parties, archiveMap);
+  let party = enriched.find((p) => p.partyKey === partyKey);
   if (!party) {
     throw new StaffPortalAuthError("Party not found.", 404);
   }
-
-  const invoices = await listAdminInvoices(userId, username, role, localDb);
-  const partyInvoices = invoices.filter((inv) => partyKeyFromInvoice(inv) === partyKey);
 
   const transactions: PartyLedgerTransaction[] = partyInvoices
     .map((inv) => ({
@@ -320,13 +386,25 @@ export async function archivePartyLedger(
   partyKey: string,
   localDb?: Database
 ): Promise<PartyLedgerArchiveRecord> {
-  await verifyStaffPortalUser(userId, username, localDb);
-  if (!canCreateInvoice(username, role)) {
-    throw new StaffPortalAuthError("You do not have permission to archive parties.", 403);
+  const actor = await assertPartyLedgerStaffAccess(userId, username, role, localDb);
+
+  try {
+    await FinanceOwnershipResolver.assertPartyMutationAllowed(actor, partyKey, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
   }
 
-  const parties = await listPartyLedgers(userId, username, role, localDb, { visibility: "all" });
-  const party = parties.find((p) => p.partyKey === partyKey);
+  const { visibleRows } = await loadVisibleInvoicesForStaff(userId, username, role, localDb);
+  try {
+    FinanceOwnershipResolver.assertPartyDetailVisible(actor, partyKey, visibleRows);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+
+  const parties = await buildPartySummaries(userId, username, role, localDb);
+  const archiveMap = await loadArchiveMap(localDb);
+  const enriched = applyArchiveMeta(parties, archiveMap);
+  const party = enriched.find((p) => p.partyKey === partyKey);
   if (!party) {
     throw new StaffPortalAuthError("Party not found.", 404);
   }
@@ -353,9 +431,11 @@ export async function restorePartyLedger(
   partyKey: string,
   localDb?: Database
 ): Promise<{ restored: true; partyKey: string }> {
-  await verifyStaffPortalUser(userId, username, localDb);
-  if (!canCreateInvoice(username, role)) {
-    throw new StaffPortalAuthError("You do not have permission to restore parties.", 403);
+  const actor = await assertPartyLedgerStaffAccess(userId, username, role, localDb);
+  try {
+    await FinanceOwnershipResolver.assertPartyMutationAllowed(actor, partyKey, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
   }
 
   const archiveMap = await loadArchiveMap(localDb);
@@ -374,9 +454,11 @@ export async function hardDeletePartyLedger(
   partyKey: string,
   localDb?: Database
 ): Promise<{ deleted: true; partyKey: string }> {
-  await verifyStaffPortalUser(userId, username, localDb);
-  if (!canCreateInvoice(username, role)) {
-    throw new StaffPortalAuthError("You do not have permission to delete parties.", 403);
+  const actor = await assertPartyLedgerStaffAccess(userId, username, role, localDb);
+  try {
+    await FinanceOwnershipResolver.assertPartyMutationAllowed(actor, partyKey, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
   }
 
   const { transactions, payments } = await getPartyLedgerDetail(

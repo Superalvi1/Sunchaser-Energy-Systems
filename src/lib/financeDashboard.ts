@@ -81,6 +81,7 @@ export const AGING_BUCKET_META: Record<
   d90p: { label: "90+ Days", color: "text-red-300", bg: "bg-red-500/10", border: "border-red-500/30" },
 };
 
+/** CEO finance dashboard ops panel — primary Super Admin account retains extended ops metrics. */
 export function isFinanceCeoMode(username: string, role: string): boolean {
   const r = String(role || "");
   return r === "Director" || r === "Super Admin" || String(username || "").toLowerCase() === "allauddin";

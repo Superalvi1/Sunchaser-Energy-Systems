@@ -28,6 +28,11 @@ import {
   stockOutAdminInventoryItem,
   reserveAdminInventoryForProject,
 } from "./inventoryFoundationDb.ts";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import {
+  FinanceOwnershipError,
+  FinanceOwnershipResolver,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
 
 export class InternalCostingDbError extends Error {
   statusCode: number;
@@ -65,6 +70,57 @@ async function assertInternalCostingAdmin(
     throw new StaffPortalAuthError("Internal costing is restricted to Super Admin.");
   }
   return { user, role };
+}
+
+function toRequestActor(userId: string, username: string, role: string): RequestActor {
+  return {
+    id: userId,
+    username,
+    name: username,
+    email: "",
+    role,
+    accountStatus: "Approved",
+    emailVerified: true,
+    onboardingCompleted: true,
+    authMethod: "jwt",
+  };
+}
+
+function mapFinanceOwnershipError(err: unknown): never {
+  if (err instanceof FinanceOwnershipError) {
+    throw new StaffPortalAuthError(err.message, err.statusCode);
+  }
+  throw err;
+}
+
+async function assertCostingSheetOwnership(
+  userId: string,
+  username: string,
+  role: string,
+  sheetId: string,
+  localDb?: Database
+) {
+  const actor = toRequestActor(userId, username, role);
+  try {
+    await FinanceOwnershipResolver.assertInternalCostingSheetOwnedByActor(actor, sheetId, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+}
+
+async function assertInventoryPurchaseOwnership(
+  userId: string,
+  username: string,
+  role: string,
+  purchaseId: string,
+  localDb?: Database
+) {
+  const actor = toRequestActor(userId, username, role);
+  try {
+    await FinanceOwnershipResolver.assertInventoryPurchaseOwnedByActor(actor, purchaseId, localDb);
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +339,7 @@ function buildSheetDbRow(
   };
   if (isCreate) {
     row.created_by = userId;
+    row.created_by_user_id = userId;
     row.created_at = now;
   }
   return row;
@@ -540,9 +597,11 @@ export async function listAdminCostingSheets(
   username: string,
   localDb?: Database
 ) {
-  await assertInternalCostingAdmin(userId, username, localDb);
+  const { role } = await assertInternalCostingAdmin(userId, username, localDb);
+  const actor = toRequestActor(userId, username, role);
   const rows = await loadRows(SHEETS_TABLE, "internalCostingSheets", localDb);
-  const sheets = rows
+  const visible = FinanceOwnershipResolver.filterFinanceResourceRowsForActor(actor, rows);
+  const sheets = visible
     .map(mapSheetRow)
     .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
   return { sheets };
@@ -554,10 +613,11 @@ export async function getAdminCostingSheet(
   id: string,
   localDb?: Database
 ) {
-  await assertInternalCostingAdmin(userId, username, localDb);
+  const { role } = await assertInternalCostingAdmin(userId, username, localDb);
   const rows = await loadRows(SHEETS_TABLE, "internalCostingSheets", localDb);
   const row = rows.find((r: any) => r.id === id);
   if (!row) throw new InternalCostingDbError("Costing sheet not found.", 404);
+  await assertCostingSheetOwnership(userId, username, role, id, localDb);
   return { sheet: mapSheetRow(row) };
 }
 
@@ -741,9 +801,11 @@ export async function listAdminInventoryPurchases(
   username: string,
   localDb?: Database
 ) {
-  await assertInternalCostingAdmin(userId, username, localDb);
+  const { role } = await assertInternalCostingAdmin(userId, username, localDb);
+  const actor = toRequestActor(userId, username, role);
   const rows = await loadRows(PURCHASES_TABLE, "inventoryPurchases", localDb);
-  const purchases = rows
+  const visible = FinanceOwnershipResolver.filterFinanceResourceRowsForActor(actor, rows);
+  const purchases = visible
     .map(mapPurchaseRow)
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   return { purchases };
@@ -799,6 +861,7 @@ export async function createAdminInventoryPurchase(
     bill_url: body.billUrl ?? body.bill_url ?? null,
     notes: body.notes != null ? String(body.notes) : "",
     created_by: userId,
+    created_by_user_id: userId,
     created_at: now,
   };
 
@@ -838,10 +901,11 @@ export async function deleteAdminInventoryPurchase(
   id: string,
   localDb?: Database
 ) {
-  await assertInternalCostingAdmin(userId, username, localDb);
+  const { role } = await assertInternalCostingAdmin(userId, username, localDb);
   const rows = await loadRows(PURCHASES_TABLE, "inventoryPurchases", localDb);
   const row = rows.find((r: any) => r.id === id);
   if (!row) throw new InternalCostingDbError("Purchase not found.", 404);
+  await assertInventoryPurchaseOwnership(userId, username, role, id, localDb);
   const purchase = mapPurchaseRow(row);
 
   // Reverse the stock-in so inventory stays consistent.

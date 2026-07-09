@@ -1,16 +1,10 @@
 /**
- * API route access policy (Phase 1B.1).
+ * API route access policy (Phase 1B.1 / 1B.3B Wave 7C).
  *
  * Model:
  * - PUBLIC allowlist only → no authorization required
- * - Every other /api/* route is PROTECTED by default (fail closed without actor)
- * - JWT-only routes (Phase 1A migrated list) accept Bearer JWT only — never legacy headers
- * - Other protected routes accept JWT, or legacy X-Sunchaser-* headers when LEGACY_HEADER_AUTH=true
- *
- * LEGACY_HEADER_AUTH=false:
- * - Middleware never hydrates req.actor from headers
- * - Legacy route handlers still read headers directly until migrated (not middleware-secured)
- * - Clients must send Bearer JWT to pass centralized authorization
+ * - Every other /api/* route is PROTECTED — valid Bearer JWT required (req.actor)
+ * - jwt_only routes are a documented subset with identical auth behavior
  */
 
 import { isPublicApiRoute } from "./publicRoutes.ts";
@@ -35,7 +29,7 @@ export function isJwtOnlyRoute(pathname: string): boolean {
   return JWT_ONLY_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-/** Phase 1A migrated routes — JWT Bearer required; legacy headers rejected. */
+/** Phase 1A migrated routes — documented JWT-only list. */
 export function isMigratedProtectedRoute(pathname: string): boolean {
   return isJwtOnlyRoute(pathname);
 }

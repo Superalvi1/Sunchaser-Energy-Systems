@@ -9,13 +9,16 @@ import {
 } from "./dbManager.js";
 import {
   canCreateInvoice,
-  canViewAllInvoices,
   computeInvoiceTotals,
   derivePaymentStatus,
   type InvoiceLineItem,
   type InvoicePaymentMethod,
   type InvoiceRecord,
 } from "./src/lib/invoices.ts";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import {
+  FinanceOwnershipResolver,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
 import { uploadFileToCustomerStorage } from "./customerProfileDb.js";
 import { amountInWordsPkr } from "./src/lib/amountInWords.ts";
 import {
@@ -33,7 +36,6 @@ import {
   type InvoiceDraftFromLead,
 } from "./src/lib/invoiceFromLead.ts";
 import { isInvoiceArchived } from "./src/lib/invoices.ts";
-import { isSuperAdmin } from "./src/lib/roles.ts";
 import { syncCostingSheetFromInvoice } from "./internalCostingDb.js";
 
 export class InvoiceDbError extends Error {
@@ -118,12 +120,23 @@ function mapItemRow(row: any): InvoiceLineItem {
   };
 }
 
-async function assertInvoiceStaff(userId: string, username: string, localDb?: Database) {
-  const { user, role } = await verifyStaffPortalUser(userId, username, localDb);
-  if (!canCreateInvoice(user.username || username, role)) {
-    throw new StaffPortalAuthError("You do not have permission to manage invoices.", 403);
-  }
-  return { user, role };
+async function assertInvoiceStaff(actor: RequestActor, localDb?: Database) {
+  await verifyStaffPortalUser(actor.id, actor.username, localDb);
+  FinanceOwnershipResolver.assertInvoiceStaffRouteAccess(actor);
+}
+
+function toRequestActor(userId: string, username: string, role: string): RequestActor {
+  return {
+    id: userId,
+    username,
+    name: username,
+    email: "",
+    role,
+    accountStatus: "Approved",
+    emailVerified: true,
+    onboardingCompleted: true,
+    authMethod: "jwt",
+  };
 }
 
 async function nextInvoiceNumber(localDb?: Database): Promise<string> {
@@ -244,14 +257,39 @@ async function ensureInitialPaymentRow(
 }
 
 export async function listAdminInvoices(
+  actor: RequestActor,
+  localDb?: Database,
+  options?: { includeArchived?: boolean }
+): Promise<InvoiceRecord[]>;
+export async function listAdminInvoices(
   userId: string,
   username: string,
   role: string,
   localDb?: Database,
   options?: { includeArchived?: boolean }
+): Promise<InvoiceRecord[]>;
+export async function listAdminInvoices(
+  actorOrUserId: RequestActor | string,
+  localDbOrUsername?: Database | string,
+  roleOrOptions?: string | { includeArchived?: boolean },
+  localDbMaybe?: Database,
+  optionsMaybe?: { includeArchived?: boolean }
 ): Promise<InvoiceRecord[]> {
-  await assertInvoiceStaff(userId, username, localDb);
-  const viewAll = canViewAllInvoices(username, role);
+  let actor: RequestActor;
+  let localDb: Database | undefined;
+  let options: { includeArchived?: boolean } | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, String(localDbOrUsername || ""), String(roleOrOptions || ""));
+    localDb = localDbMaybe;
+    options = optionsMaybe;
+  } else {
+    actor = actorOrUserId;
+    localDb = localDbOrUsername as Database | undefined;
+    options = roleOrOptions as { includeArchived?: boolean } | undefined;
+  }
+
+  await assertInvoiceStaff(actor, localDb);
   const includeArchived = options?.includeArchived === true;
 
   const filterArchived = (inv: InvoiceRecord) =>
@@ -259,18 +297,14 @@ export async function listAdminInvoices(
 
   if (isSupabaseActive()) {
     try {
-      let q = getSupabase()!.from("invoices").select("*").order("invoice_date", { ascending: false });
-      const { data, error } = await q;
+      const { data, error } = await getSupabase()!.from("invoices").select("*").order("invoice_date", { ascending: false });
       if (error) throw error;
-      const rows = data || [];
+      const rows = FinanceOwnershipResolver.filterInvoiceRowsForActor(actor, (data || []) as Record<string, unknown>[]);
       const out: InvoiceRecord[] = [];
       for (const row of rows) {
-        const items = await loadItems(row.id, localDb);
-        const payments = await loadPayments(row.id, localDb);
+        const items = await loadItems(String(row.id), localDb);
+        const payments = await loadPayments(String(row.id), localDb);
         out.push(mapInvoiceRow(row, items, payments));
-      }
-      if (!viewAll) {
-        return out.filter((inv) => inv.createdBy === username).filter(filterArchived);
       }
       return out.filter(filterArchived);
     } catch (err: any) {
@@ -279,13 +313,15 @@ export async function listAdminInvoices(
     }
   }
 
-  const rows = ((localDb as any)?.invoices || []).slice().reverse();
+  const rows = FinanceOwnershipResolver.filterInvoiceRowsForActor(
+    actor,
+    (((localDb as any)?.invoices || []) as Record<string, unknown>[]).slice().reverse()
+  );
   const out: InvoiceRecord[] = [];
   for (const row of rows) {
-    const items = await loadItems(row.id, localDb);
-    const payments = await loadPayments(row.id, localDb);
-    const inv = mapInvoiceRow(row, items, payments);
-    if (viewAll || inv.createdBy === username) out.push(inv);
+    const items = await loadItems(String(row.id), localDb);
+    const payments = await loadPayments(String(row.id), localDb);
+    out.push(mapInvoiceRow(row, items, payments));
   }
   return out.filter(filterArchived);
 }
@@ -312,27 +348,78 @@ export async function loadInvoiceRecordById(
 }
 
 export async function getAdminInvoiceById(
+  actor: RequestActor,
+  invoiceId: string,
+  localDb?: Database
+): Promise<InvoiceRecord>;
+export async function getAdminInvoiceById(
   userId: string,
   username: string,
   role: string,
   invoiceId: string,
   localDb?: Database
+): Promise<InvoiceRecord>;
+export async function getAdminInvoiceById(
+  actorOrUserId: RequestActor | string,
+  invoiceIdOrUsername: string,
+  localDbOrRole?: Database | string,
+  invoiceIdMaybe?: string,
+  localDbMaybe?: Database
 ): Promise<InvoiceRecord> {
-  await assertInvoiceStaff(userId, username, localDb);
-  const viewAll = canViewAllInvoices(username, role);
-  const inv = await loadInvoiceRecordById(invoiceId, localDb);
-  if (!viewAll && inv.createdBy !== username) throw new StaffPortalAuthError("Access denied.", 403);
-  return inv;
+  let actor: RequestActor;
+  let invoiceId: string;
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, invoiceIdOrUsername, String(localDbOrRole || ""));
+    invoiceId = String(invoiceIdMaybe || "");
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    invoiceId = invoiceIdOrUsername;
+    localDb = localDbOrRole as Database | undefined;
+  }
+
+  await assertInvoiceStaff(actor, localDb);
+  await FinanceOwnershipResolver.assertInvoiceModuleOwnedByActor(actor, invoiceId, localDb);
+  return loadInvoiceRecordById(invoiceId, localDb);
 }
 
+export async function createAdminInvoice(
+  actor: RequestActor,
+  body: Record<string, unknown>,
+  localDb?: Database
+): Promise<InvoiceRecord>;
 export async function createAdminInvoice(
   userId: string,
   username: string,
   role: string,
   body: Record<string, unknown>,
   localDb?: Database
+): Promise<InvoiceRecord>;
+export async function createAdminInvoice(
+  actorOrUserId: RequestActor | string,
+  bodyOrUsername: Record<string, unknown> | string,
+  roleOrLocalDb?: string | Database,
+  bodyMaybe?: Record<string, unknown>,
+  localDbMaybe?: Database
 ): Promise<InvoiceRecord> {
-  await assertInvoiceStaff(userId, username, localDb);
+  let actor: RequestActor;
+  let body: Record<string, unknown>;
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, String(bodyOrUsername), String(roleOrLocalDb || ""));
+    body = bodyMaybe || {};
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    body = bodyOrUsername as Record<string, unknown>;
+    localDb = roleOrLocalDb as Database | undefined;
+  }
+
+  await assertInvoiceStaff(actor, localDb);
+  const username = actor.username;
   const id = `inv-${Date.now()}`;
   const invoiceNumber = String(body.invoiceNumber || "") || (await nextInvoiceNumber(localDb));
   const rawItems = (body.items as InvoiceLineItem[]) || [];
@@ -408,6 +495,7 @@ export async function createAdminInvoice(
     terms: body.terms || null,
     pdf_url: null,
     created_by: username,
+    created_by_user_id: actor.id,
     updated_by: username,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -455,7 +543,7 @@ export async function createAdminInvoice(
     localDb
   );
 
-  const created = await getAdminInvoiceById(userId, username, role, id, localDb);
+  const created = await getAdminInvoiceById(actor, id, localDb);
   try {
     await syncInvoiceDocumentVault(created, localDb);
   } catch (err: any) {
@@ -465,14 +553,46 @@ export async function createAdminInvoice(
 }
 
 export async function updateAdminInvoice(
+  actor: RequestActor,
+  invoiceId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+): Promise<InvoiceRecord>;
+export async function updateAdminInvoice(
   userId: string,
   username: string,
   role: string,
   invoiceId: string,
   body: Record<string, unknown>,
   localDb?: Database
+): Promise<InvoiceRecord>;
+export async function updateAdminInvoice(
+  actorOrUserId: RequestActor | string,
+  invoiceIdOrUsername: string,
+  bodyOrRole?: Record<string, unknown> | string,
+  localDbOrInvoiceId?: Database | string,
+  bodyMaybe?: Record<string, unknown>,
+  localDbMaybe?: Database
 ): Promise<InvoiceRecord> {
-  const existing = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  let actor: RequestActor;
+  let invoiceId: string;
+  let body: Record<string, unknown>;
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, invoiceIdOrUsername, String(bodyOrRole || ""));
+    invoiceId = String(localDbOrInvoiceId || "");
+    body = bodyMaybe || {};
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    invoiceId = invoiceIdOrUsername;
+    body = bodyOrRole as Record<string, unknown>;
+    localDb = localDbOrInvoiceId as Database | undefined;
+  }
+
+  const username = actor.username;
+  const existing = await getAdminInvoiceById(actor, invoiceId, localDb);
 
   const rawItems = body.items as InvoiceLineItem[] | undefined;
   let patch: Record<string, unknown> = {
@@ -649,7 +769,7 @@ export async function updateAdminInvoice(
     localDb
   );
 
-  const updated = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const updated = await getAdminInvoiceById(actor, invoiceId, localDb);
   try {
     await syncInvoiceDocumentVault(updated, localDb);
   } catch (err: any) {
@@ -659,21 +779,54 @@ export async function updateAdminInvoice(
 }
 
 export async function recordInvoicePayment(
+  actor: RequestActor,
+  invoiceId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord }>;
+export async function recordInvoicePayment(
   userId: string,
   username: string,
   role: string,
   invoiceId: string,
   body: Record<string, unknown>,
   localDb?: Database
+): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord }>;
+export async function recordInvoicePayment(
+  actorOrUserId: RequestActor | string,
+  invoiceIdOrUsername: string,
+  bodyOrRole?: Record<string, unknown> | string,
+  localDbOrInvoiceId?: Database | string,
+  bodyMaybe?: Record<string, unknown>,
+  localDbMaybe?: Database
 ) {
-  await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  let actor: RequestActor;
+  let invoiceId: string;
+  let body: Record<string, unknown>;
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, invoiceIdOrUsername, String(bodyOrRole || ""));
+    invoiceId = String(localDbOrInvoiceId || "");
+    body = bodyMaybe || {};
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    invoiceId = invoiceIdOrUsername;
+    body = bodyOrRole as Record<string, unknown>;
+    localDb = localDbOrInvoiceId as Database | undefined;
+  }
+
+  const username = actor.username;
+  await FinanceOwnershipResolver.assertInvoiceModuleOwnedByActor(actor, invoiceId, localDb);
+  await getAdminInvoiceById(actor, invoiceId, localDb);
   const amount = Number(body.amount || 0);
   if (amount <= 0) throw new InvoiceDbError("Payment amount must be positive.");
 
   let receiptUrl = body.receiptUrl || body.receipt_url || null;
   let receiptStoragePath = body.receiptStoragePath || body.receipt_storage_path || null;
   if (body.base64Receipt && body.fileName) {
-    const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+    const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
     const cid = inv.customerId || "general";
     const up = await uploadFileToCustomerStorage(
       cid,
@@ -707,7 +860,7 @@ export async function recordInvoicePayment(
   await insertPaymentRow(payRow, localDb);
 
   const paidTotal = await recalcPaidTotals(invoiceId, localDb);
-  const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
   const balanceDue = Math.max(0, inv.grandTotal - paidTotal);
   const paymentStatus = derivePaymentStatus(inv.grandTotal, paidTotal, inv.dueDate);
 
@@ -733,7 +886,7 @@ export async function recordInvoicePayment(
     console.warn("[CostingPaymentSync]", err?.message || err);
   }
 
-  return { payment: payRow, invoice: await getAdminInvoiceById(userId, username, role, invoiceId, localDb) };
+  return { payment: payRow, invoice: await getAdminInvoiceById(actor, invoiceId, localDb) };
 }
 
 export async function fetchCustomerPortalInvoicesMe(
@@ -855,14 +1008,12 @@ export async function findInvoiceByLeadAndQuote(
 }
 
 export async function listContractedLeadsReadyForInvoice(
-  userId: string,
-  username: string,
-  role: string,
+  actor: RequestActor,
   leads: any[],
   localDb?: Database
 ): Promise<ContractedLeadReadyRow[]> {
-  await assertInvoiceStaff(userId, username, localDb);
-  const allInvoices = await listAdminInvoices(userId, username, role, localDb, { includeArchived: false });
+  await assertInvoiceStaff(actor, localDb);
+  const allInvoices = await listAdminInvoices(actor, localDb, { includeArchived: false });
 
   const rows: ContractedLeadReadyRow[] = [];
   for (const lead of leads || []) {
@@ -920,13 +1071,44 @@ function draftToCreateBody(draft: InvoiceDraftFromLead) {
 }
 
 export async function createInvoiceFromContractedLead(
+  actor: RequestActor,
+  body: { leadId: string; quotationId?: string; projectId?: string },
+  leads: any[],
+  localDb?: Database
+): Promise<{ invoice: InvoiceRecord; existing: boolean }>;
+export async function createInvoiceFromContractedLead(
   userId: string,
   username: string,
   role: string,
   body: { leadId: string; quotationId?: string; projectId?: string },
   leads: any[],
   localDb?: Database
+): Promise<{ invoice: InvoiceRecord; existing: boolean }>;
+export async function createInvoiceFromContractedLead(
+  actorOrUserId: RequestActor | string,
+  bodyOrUsername: { leadId: string; quotationId?: string; projectId?: string } | string,
+  leadsOrRole?: any[] | string,
+  localDbOrBody?: Database | { leadId: string; quotationId?: string; projectId?: string },
+  leadsMaybe?: any[],
+  localDbMaybe?: Database
 ): Promise<{ invoice: InvoiceRecord; existing: boolean }> {
+  let actor: RequestActor;
+  let body: { leadId: string; quotationId?: string; projectId?: string };
+  let leads: any[];
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, String(bodyOrUsername), String(leadsOrRole || ""));
+    body = (localDbOrBody || { leadId: "" }) as { leadId: string; quotationId?: string; projectId?: string };
+    leads = leadsMaybe || [];
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    body = bodyOrUsername as { leadId: string; quotationId?: string; projectId?: string };
+    leads = (leadsOrRole || []) as any[];
+    localDb = localDbOrBody as Database | undefined;
+  }
+
   const lead = (leads || []).find((l: any) => l.id === body.leadId);
   if (!lead) throw new InvoiceDbError("Lead not found.", 404);
   if (!["Contracted", "Installed"].includes(String(lead.status || ""))) {
@@ -944,7 +1126,7 @@ export async function createInvoiceFromContractedLead(
   }
 
   const draft = buildInvoiceDraftFromLead(lead, quote, { projectId: body.projectId });
-  const invoice = await createAdminInvoice(userId, username, role, draftToCreateBody(draft), localDb);
+  const invoice = await createAdminInvoice(actor, draftToCreateBody(draft), localDb);
   return { invoice, existing: false };
 }
 
@@ -955,9 +1137,10 @@ export async function bulkDeleteAdminInvoices(
   body: { ids?: string[]; confirmText?: string },
   localDb?: Database
 ): Promise<{ deleted: string[]; failed: Array<{ id: string; error: string }> }> {
-  if (!isSuperAdmin(username, role)) {
+  if (actor.role !== "Super Admin") {
     throw new StaffPortalAuthError("Only Super Admin can bulk delete invoices.", 403);
   }
+  const actor = toRequestActor(userId, username, role);
   if (String(body.confirmText || "").trim() !== "DELETE") {
     throw new InvoiceDbError('Type DELETE to confirm bulk deletion.', 400);
   }
@@ -968,7 +1151,7 @@ export async function bulkDeleteAdminInvoices(
   const failed: Array<{ id: string; error: string }> = [];
   for (const id of ids) {
     try {
-      await deleteAdminInvoice(userId, username, role, id, { confirmText: "DELETE" }, localDb);
+      await deleteAdminInvoice(actor, id, { confirmText: "DELETE" }, localDb);
       deleted.push(id);
     } catch (err: any) {
       failed.push({ id, error: err?.message || "Delete failed." });
@@ -978,16 +1161,43 @@ export async function bulkDeleteAdminInvoices(
 }
 
 export async function archiveAdminInvoice(
+  actor: RequestActor,
+  invoiceId: string,
+  localDb?: Database
+): Promise<InvoiceRecord>;
+export async function archiveAdminInvoice(
   userId: string,
   username: string,
   role: string,
   invoiceId: string,
   localDb?: Database
+): Promise<InvoiceRecord>;
+export async function archiveAdminInvoice(
+  actorOrUserId: RequestActor | string,
+  invoiceIdOrUsername: string,
+  localDbOrRole?: Database | string,
+  invoiceIdMaybe?: string,
+  localDbMaybe?: Database
 ): Promise<InvoiceRecord> {
-  if (!isSuperAdmin(username, role)) {
+  let actor: RequestActor;
+  let invoiceId: string;
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, invoiceIdOrUsername, String(localDbOrRole || ""));
+    invoiceId = String(invoiceIdMaybe || "");
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    invoiceId = invoiceIdOrUsername;
+    localDb = localDbOrRole as Database | undefined;
+  }
+
+  if (actor.role !== "Super Admin") {
     throw new StaffPortalAuthError("Only Super Admin can archive invoices.", 403);
   }
-  await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  await getAdminInvoiceById(actor, invoiceId, localDb);
+  const username = actor.username;
   const patch = {
     archived_at: new Date().toISOString(),
     archived_by: username,
@@ -1005,7 +1215,7 @@ export async function archiveAdminInvoice(
     if (idx >= 0) Object.assign(db.invoices[idx], patch);
   }
 
-  const archived = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const archived = await getAdminInvoiceById(actor, invoiceId, localDb);
   try {
     await hideInvoiceDocumentVault(archived, localDb);
   } catch (err: any) {
@@ -1015,21 +1225,52 @@ export async function archiveAdminInvoice(
 }
 
 export async function deleteAdminInvoice(
+  actor: RequestActor,
+  invoiceId: string,
+  body: { confirmText?: string },
+  localDb?: Database
+): Promise<{ ok: boolean; message: string }>;
+export async function deleteAdminInvoice(
   userId: string,
   username: string,
   role: string,
   invoiceId: string,
   body: { confirmText?: string },
   localDb?: Database
+): Promise<{ ok: boolean; message: string }>;
+export async function deleteAdminInvoice(
+  actorOrUserId: RequestActor | string,
+  invoiceIdOrUsername: string,
+  bodyOrRole?: { confirmText?: string } | string,
+  localDbOrInvoiceId?: Database | string,
+  bodyMaybe?: { confirmText?: string },
+  localDbMaybe?: Database
 ): Promise<{ ok: boolean; message: string }> {
-  if (!isSuperAdmin(username, role)) {
+  let actor: RequestActor;
+  let invoiceId: string;
+  let body: { confirmText?: string };
+  let localDb: Database | undefined;
+
+  if (typeof actorOrUserId === "string") {
+    actor = toRequestActor(actorOrUserId, invoiceIdOrUsername, String(bodyOrRole || ""));
+    invoiceId = String(localDbOrInvoiceId || "");
+    body = bodyMaybe || {};
+    localDb = localDbMaybe;
+  } else {
+    actor = actorOrUserId;
+    invoiceId = invoiceIdOrUsername;
+    body = (bodyOrRole || {}) as { confirmText?: string };
+    localDb = localDbOrInvoiceId as Database | undefined;
+  }
+
+  if (actor.role !== "Super Admin") {
     throw new StaffPortalAuthError("Only Super Admin can permanently delete invoices.", 403);
   }
   if (String(body.confirmText || "").trim() !== "DELETE") {
     throw new InvoiceDbError('Type DELETE to confirm permanent deletion.', 400);
   }
 
-  const inv = await getAdminInvoiceById(userId, username, role, invoiceId, localDb);
+  const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
   const payments = await loadPayments(invoiceId, localDb);
   if (payments.length > 0) {
     throw new InvoiceDbError("Cannot delete an invoice that has payment records.", 409);

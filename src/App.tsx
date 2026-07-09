@@ -51,6 +51,9 @@ import InstallationTeamApp from "./components/InstallationTeamApp";
 import TechnicalStaffApp from "./components/TechnicalStaffApp";
 import WelcomeWizard from "./components/WelcomeWizard";
 import AIAssistant from "./components/AIAssistant";
+import AICommandCenter from "./components/AICommandCenter";
+import GlobalSearch from "./components/GlobalSearch";
+import { isGlobalSearchAllowedForUser } from "./lib/globalSearch";
 import AdminApp from "./components/AdminApp";
 import AppLogo from "./components/AppLogo";
 import { isTechnicalStaffRole } from "./lib/technicalStaff";
@@ -492,15 +495,18 @@ export default function App() {
 
   if (currentUser?.role === "Customer") {
     return (
-      <ClientPortalApp
-        user={currentUser}
-        data={portalData}
-        loading={portalLoading}
-        error={portalError}
-        onRefresh={() => loadCustomerPortal(currentUser)}
-        onLogout={handleLogout}
-        onShowWelcomeGuide={() => setShowOnboarding(true)}
-      />
+      <>
+        <ClientPortalApp
+          user={currentUser}
+          data={portalData}
+          loading={portalLoading}
+          error={portalError}
+          onRefresh={() => loadCustomerPortal(currentUser)}
+          onLogout={handleLogout}
+          onShowWelcomeGuide={() => setShowOnboarding(true)}
+        />
+        <AICommandCenter layout="customer" />
+      </>
     );
   }
 
@@ -524,6 +530,15 @@ export default function App() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(true)}
         />
+        <AICommandCenter />
+        {isGlobalSearchAllowedForUser(currentUser) ? (
+          <GlobalSearch
+            appState={null}
+            currentUser={currentUser}
+            allowedTabIds={getAllowedTabs().map((t) => t.id)}
+            onNavigate={setActiveTab}
+          />
+        ) : null}
       </>
     );
   }
@@ -543,6 +558,7 @@ export default function App() {
   );
 
   return (
+    <>
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
       {/* Top Floating App Header */}
       <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 shadow-md">
@@ -794,6 +810,7 @@ export default function App() {
                   if (action === "lead" || action === "customer") setActiveTab("CRM Database");
                   else if (action === "quotation") setActiveTab("Sales Advisor");
                 }}
+                activityLogs={appState.activityLogs || []}
               />
             )}
 
@@ -891,5 +908,15 @@ export default function App() {
         </div>
       </footer>
     </div>
+    {currentUser ? <AICommandCenter /> : null}
+    {currentUser && isGlobalSearchAllowedForUser(currentUser) ? (
+      <GlobalSearch
+        appState={appState}
+        currentUser={currentUser}
+        allowedTabIds={getAllowedTabs().map((t) => t.id)}
+        onNavigate={setActiveTab}
+      />
+    ) : null}
+    </>
   );
 }

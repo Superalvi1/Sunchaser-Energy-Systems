@@ -3,7 +3,7 @@ import type { Database } from "../../dbManager";
 import { findUserByUsername, mapUserRow } from "../../userAuthDb.js";
 import { verifyAccessToken } from "../auth/jwt.ts";
 
-export type ActorAuthMethod = "jwt" | "legacy_header";
+export type ActorAuthMethod = "jwt";
 
 export type RequestActor = {
   id: string;
@@ -23,53 +23,16 @@ export type RequestActor = {
   authMethod: ActorAuthMethod;
 };
 
-export type LegacyHeaderIdentity = {
-  userId: string;
-  username: string;
-  headerRole: string;
-};
-
 export type ActorHydrationResult =
   | { ok: true; actor: RequestActor }
   | { ok: false; status: 401 | 403; error: string; reason: string };
 
-export function isLegacyHeaderAuthEnabled(): boolean {
-  return process.env.LEGACY_HEADER_AUTH === "true";
-}
-
-/**
- * When false (default), authorization middleware never calls hydrateActorFromLegacyHeaders.
- * Route handlers that still read X-Sunchaser-* directly are NOT secured by middleware —
- * they require per-route migration to JWT / req.actor.
- */
+/** Protected /api/* routes require Bearer JWT — middleware hydrates req.actor only. */
 
 export function readBearerToken(req: Request): string | null {
   const header = String(req.headers.authorization || "").trim();
   const match = /^Bearer\s+(.+)$/i.exec(header);
   return match?.[1]?.trim() || null;
-}
-
-export function readLegacyHeaderIdentity(req: Request): LegacyHeaderIdentity | null {
-  const userId = String(req.headers["x-sunchaser-user-id"] || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || "").trim();
-  const headerRole = String(req.headers["x-sunchaser-role"] || "").trim();
-  if (!userId || !username) return null;
-  return { userId, username, headerRole };
-}
-
-export function auditLegacyHeaderUse(req: Request, identity: LegacyHeaderIdentity): void {
-  console.warn("[Auth Audit] Legacy X-Sunchaser headers used", {
-    method: req.method,
-    path: req.path,
-    userId: identity.userId,
-    username: identity.username,
-    headerRoleClaimed: identity.headerRole || null,
-    ip:
-      (typeof req.headers["x-forwarded-for"] === "string"
-        ? req.headers["x-forwarded-for"].split(",")[0]?.trim()
-        : null) || req.socket?.remoteAddress || "unknown",
-    timestamp: new Date().toISOString(),
-  });
 }
 
 function rowToActor(row: Record<string, unknown>, authMethod: ActorAuthMethod): RequestActor {
@@ -132,27 +95,6 @@ export async function hydrateActorFromJwt(
 
   if (hydrated.actor.id !== claims.userId) {
     return { ok: false, status: 401, error: "Unauthorized", reason: "token_user_mismatch" };
-  }
-
-  return hydrated;
-}
-
-export async function hydrateActorFromLegacyHeaders(
-  req: Request,
-  localDb: Database | undefined
-): Promise<ActorHydrationResult> {
-  const identity = readLegacyHeaderIdentity(req);
-  if (!identity) {
-    return { ok: false, status: 401, error: "Unauthorized", reason: "legacy_headers_missing" };
-  }
-
-  auditLegacyHeaderUse(req, identity);
-
-  const hydrated = await hydrateActorFromUsername(identity.username, localDb, "legacy_header");
-  if (!hydrated.ok) return hydrated;
-
-  if (hydrated.actor.id !== identity.userId) {
-    return { ok: false, status: 401, error: "Unauthorized", reason: "legacy_header_user_mismatch" };
   }
 
   return hydrated;

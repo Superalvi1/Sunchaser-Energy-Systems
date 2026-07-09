@@ -6,7 +6,7 @@ import {
   StaffPortalAuthError,
 } from "./dbManager.js";
 import { listPartyLedgers } from "./partyLedgerDb.js";
-import { listAdminInvoices } from "./invoiceDb.js";
+import { loadInvoiceRecordById } from "./invoiceDb.js";
 import {
   canViewFinanceDashboard,
   type AgingBucket,
@@ -16,21 +16,68 @@ import {
   type FinanceOverdueInvoice,
   type FinanceTopCustomer,
 } from "./src/lib/financeDashboard.ts";
-import { isExcludedFromLedgerTotals } from "./src/lib/invoices.ts";
+import { isExcludedFromLedgerTotals, type InvoiceRecord } from "./src/lib/invoices.ts";
 import {
   resolveInvoiceBalanceDue,
   resolveInvoiceReceivedAmount,
 } from "./src/lib/invoicePayments.ts";
+import type { RequestActor } from "./server/middleware/actor.ts";
+import {
+  FinanceOwnershipError,
+  FinanceOwnershipResolver,
+  partyKeyFromInvoiceRow,
+} from "./server/ownership/FinanceOwnershipResolver.ts";
+
+function toRequestActor(userId: string, username: string, role: string): RequestActor {
+  return {
+    id: userId,
+    username,
+    name: username,
+    email: "",
+    role,
+    accountStatus: "Approved",
+    emailVerified: true,
+    onboardingCompleted: true,
+    authMethod: "jwt",
+  };
+}
+
+function mapFinanceOwnershipError(err: unknown): never {
+  if (err instanceof FinanceOwnershipError) {
+    throw new StaffPortalAuthError(err.message, err.statusCode);
+  }
+  throw err;
+}
+
+async function loadVisibleInvoicesForStaff(
+  userId: string,
+  username: string,
+  role: string,
+  localDb?: Database
+): Promise<InvoiceRecord[]> {
+  const actor = toRequestActor(userId, username, role);
+  try {
+    const visibleRows = await FinanceOwnershipResolver.getVisibleInvoiceRowsForActor(actor, localDb);
+    const invoices: InvoiceRecord[] = [];
+    for (const row of visibleRows) {
+      invoices.push(await loadInvoiceRecordById(String(row.id), localDb));
+    }
+    return invoices;
+  } catch (err) {
+    mapFinanceOwnershipError(err);
+  }
+}
 
 function partyKeyFromInvoice(inv: {
   customerId?: string | null;
   customerName?: string;
   customerPhone?: string | null;
 }) {
-  if (inv.customerId) return `cid:${inv.customerId}`;
-  const name = String(inv.customerName || "").trim().toLowerCase();
-  const phone = String(inv.customerPhone || "").trim();
-  return `name:${name}|${phone}`;
+  return partyKeyFromInvoiceRow({
+    customer_id: inv.customerId,
+    customer_name: inv.customerName,
+    customer_phone: inv.customerPhone,
+  });
 }
 
 function daysBetween(fromDate: string, toDate: string): number {
@@ -57,7 +104,7 @@ function monthRange(year: number, monthIndex: number) {
 }
 
 function computeMonthPerformance(
-  invoices: Awaited<ReturnType<typeof listAdminInvoices>>,
+  invoices: InvoiceRecord[],
   range: { start: string; end: string }
 ): FinanceMonthPerformance {
   let invoicesIssued = 0;
@@ -117,7 +164,7 @@ export async function fetchFinanceDashboard(
   }
 
   const parties = await listPartyLedgers(userId, username, role, localDb);
-  const invoices = await listAdminInvoices(userId, username, role, localDb);
+  const invoices = await loadVisibleInvoicesForStaff(userId, username, role, localDb);
   const activeInvoices = invoices.filter(
     (inv) => !isExcludedFromLedgerTotals(inv.invoiceStatus, inv.archivedAt)
   );

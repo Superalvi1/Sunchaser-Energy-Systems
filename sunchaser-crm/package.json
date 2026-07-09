@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
     "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.106.2",
     "@tailwindcss/vite": "^4.1.14",
@@ -19,6 +20,7 @@
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "openai": "^5.0.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.8.1",

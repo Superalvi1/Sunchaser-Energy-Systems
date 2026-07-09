@@ -1,16 +1,11 @@
 /**
- * Phase 1B.1 authorization tests — run: npm run test:phase-1b1
+ * Phase 1B.1 / 1B.3B Wave 7C authorization tests — run: npm run test:phase-1b1
  */
 import assert from "node:assert/strict";
 import jwt from "jsonwebtoken";
 import type { Request, Response } from "express";
 import { signAccessToken } from "../auth/jwt.ts";
-import {
-  hydrateActorFromJwt,
-  hydrateActorFromLegacyHeaders,
-  isLegacyHeaderAuthEnabled,
-  readLegacyHeaderIdentity,
-} from "./actor.ts";
+import { hydrateActorFromJwt } from "./actor.ts";
 import { isPublicApiRoute } from "./publicRoutes.ts";
 import {
   isJwtOnlyRoute,
@@ -164,10 +159,7 @@ await test("invalid JWT is rejected", async () => {
   if (!result.ok) assert.equal(result.reason, "invalid_jwt");
 });
 
-await test("LEGACY_HEADER_AUTH=false: protected route rejects header-only access", async () => {
-  delete process.env.LEGACY_HEADER_AUTH;
-  assert.equal(isLegacyHeaderAuthEnabled(), false);
-
+await test("X-Sunchaser headers cannot authenticate protected routes", async () => {
   const middleware = createAuthorizationMiddleware({
     resolveLocalDb: () => mockDb as never,
   });
@@ -189,35 +181,18 @@ await test("LEGACY_HEADER_AUTH=false: protected route rejects header-only access
   assert.equal(req.actor, undefined);
 });
 
-await test("LEGACY_HEADER_AUTH=true: protected route accepts audited legacy headers", async () => {
-  process.env.LEGACY_HEADER_AUTH = "true";
-  const req = mockReq({
-    path: "/api/leads",
-    headers: {
-      "x-sunchaser-user-id": "u-active",
-      "x-sunchaser-username": "activeuser",
-      "x-sunchaser-role": "Spoofed Role",
-    },
-  });
-  assert.ok(readLegacyHeaderIdentity(req));
-  const result = await hydrateActorFromLegacyHeaders(req, mockDb as never);
-  assert.equal(result.ok, true);
-  if (result.ok) {
-    assert.equal(result.actor.role, "Super Admin");
-    assert.equal(result.actor.authMethod, "legacy_header");
-  }
-
+await test("protected route returns 401 without Bearer token", async () => {
   const middleware = createAuthorizationMiddleware({
     resolveLocalDb: () => mockDb as never,
   });
+  const req = mockReq({ path: "/api/leads", headers: {} });
   const res = mockRes();
   let nextCalled = false;
   await middleware(req, res, () => {
     nextCalled = true;
   });
-  assert.equal(nextCalled, true);
-  assert.equal(req.actor?.username, "activeuser");
-  delete process.env.LEGACY_HEADER_AUTH;
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 401);
 });
 
 await test("jwt-only route returns 401 without token", async () => {
@@ -234,8 +209,7 @@ await test("jwt-only route returns 401 without token", async () => {
   assert.equal(res.statusCode, 401);
 });
 
-await test("jwt-only route rejects legacy headers even when LEGACY_HEADER_AUTH=true", async () => {
-  process.env.LEGACY_HEADER_AUTH = "true";
+await test("jwt-only route rejects legacy headers without Bearer token", async () => {
   const middleware = createAuthorizationMiddleware({
     resolveLocalDb: () => mockDb as never,
   });
@@ -254,7 +228,29 @@ await test("jwt-only route rejects legacy headers even when LEGACY_HEADER_AUTH=t
   });
   assert.equal(nextCalled, false);
   assert.equal(res.statusCode, 401);
-  delete process.env.LEGACY_HEADER_AUTH;
+});
+
+await test("protected route sets req.actor with valid JWT", async () => {
+  const middleware = createAuthorizationMiddleware({
+    resolveLocalDb: () => mockDb as never,
+  });
+  const token = signAccessToken({
+    userId: "u-active",
+    username: "activeuser",
+    role: "ignored",
+  });
+  const req = mockReq({
+    path: "/api/leads",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const res = mockRes();
+  let nextCalled = false;
+  await middleware(req, res, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, true);
+  assert.equal(req.actor?.username, "activeuser");
+  assert.equal(req.actor?.role, "Super Admin");
 });
 
 await test("jwt-only route sets req.actor with valid JWT", async () => {
@@ -281,7 +277,6 @@ await test("jwt-only route sets req.actor with valid JWT", async () => {
 });
 
 await test("unknown /api route fails closed without credentials", async () => {
-  delete process.env.LEGACY_HEADER_AUTH;
   const middleware = createAuthorizationMiddleware({
     resolveLocalDb: () => mockDb as never,
   });
