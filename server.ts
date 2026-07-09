@@ -1,6 +1,10 @@
 import express from "express";
 import path from "path";
+import { fileURLToPath } from "url";
 import fs from "fs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -284,7 +288,22 @@ import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
 import { actorToApiUser } from "./server/middleware/actor.ts";
+import { resolveStaffActor, staffIdentityFromActor } from "./server/middleware/staffActor.ts";
 import { loginRateLimit } from "./server/middleware/rateLimit.ts";
+import {
+  OwnershipError,
+  OwnershipResolver,
+  portalIdentityFromActor,
+} from "./server/ownership/OwnershipResolver.ts";
+import {
+  TechnicianOwnershipError,
+  TechnicianOwnershipResolver,
+} from "./server/ownership/TechnicianOwnershipResolver.ts";
+import {
+  SalesOwnershipError,
+  SalesOwnershipResolver,
+  type SalesOwnedResourceType,
+} from "./server/ownership/SalesOwnershipResolver.ts";
 import {
   listManagedRoles,
   createManagedRole,
@@ -950,6 +969,9 @@ app.post("/api/auth/reset-password", async (req, res) => {
 });
 
 function readStaffAuth(req: express.Request) {
+  if (req.actor) {
+    return staffIdentityFromActor(req.actor);
+  }
   return {
     userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || "").trim(),
     username: String(req.headers["x-sunchaser-username"] || req.body?.username || "").trim(),
@@ -959,6 +981,9 @@ function readStaffAuth(req: express.Request) {
 
 /** Staff auth for user-management writes: never treat new-user fields in body as actor identity. */
 function readStaffAuthHeadersOnly(req: express.Request) {
+  if (req.actor) {
+    return staffIdentityFromActor(req.actor);
+  }
   return {
     userId: String(req.headers["x-sunchaser-user-id"] || "").trim(),
     username: String(req.headers["x-sunchaser-username"] || "").trim(),
@@ -1303,6 +1328,7 @@ app.post("/api/admin/customer-linking/link", async (req, res) => {
 
 app.get("/api/admin/customer-systems/:customerId", async (req, res) => {
   const { userId, username, role } = readStaffAuth(req);
+  if (!(await guardSalesOwnedResource(req, res, "customer", req.params.customerId))) return;
   try {
     loadDb();
     const system = await getCustomerSystemProfile(userId, username, role, req.params.customerId, db);
@@ -1328,6 +1354,7 @@ app.put("/api/admin/customer-systems", async (req, res) => {
 
 app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
   const { userId, username, role } = readStaffAuth(req);
+  if (!(await guardSalesOwnedResource(req, res, "customer", req.params.customerId))) return;
   try {
     loadDb();
     const documents = await listAdminCustomerDocuments(
@@ -1393,39 +1420,29 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
 });
 
 app.get("/api/customer-portal/system/me", async (req, res) => {
-  const userId = String(req.query.userId || "").trim();
-  const username = String(req.query.username || "").trim();
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
   try {
     loadDb();
-    const data = await fetchCustomerPortalSystemMe(userId, username, db);
+    const data = await fetchCustomerPortalSystemMe(identity.userId, identity.username, db);
     return res.json(data);
   } catch (err: any) {
+    if (ownershipErrorResponse(err, res)) return;
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 async function handleCustomerPortalMe(req: any, res: any) {
-  const userId = String(
-    req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || ""
-  ).trim();
-  const username = String(
-    req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || ""
-  ).trim();
-
-  if (!userId || !username) {
-    return res.status(400).json({ error: "userId and username are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
 
   try {
     loadDb();
-    const data = await fetchCustomerPortalData(userId, username, db);
+    const data = await fetchCustomerPortalData(identity.userId, identity.username, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) {
-      return res.status(403).json({ error: err.message });
-    }
+    if (ownershipErrorResponse(err, res)) return;
     console.error("[Customer Portal Error]:", err.message);
     return res.status(500).json({ error: err.message || "Failed to load customer portal." });
   }
@@ -1435,6 +1452,12 @@ app.get("/api/customer-portal/me", handleCustomerPortalMe);
 app.post("/api/customer-portal/me", handleCustomerPortalMe);
 
 function readPortalAuth(req: any) {
+  if (req.actor) {
+    return {
+      userId: req.actor.id,
+      username: req.actor.username,
+    };
+  }
   return {
     userId: String(req.headers["x-sunchaser-user-id"] || req.body?.userId || req.query?.userId || "").trim(),
     username: String(req.headers["x-sunchaser-username"] || req.body?.username || req.query?.username || "").trim(),
@@ -1447,6 +1470,149 @@ function readCustomerPortalAuth(req: any) {
     userId: String(req.headers["x-sunchaser-user-id"] || "").trim(),
     username: String(req.headers["x-sunchaser-username"] || "").trim(),
   };
+}
+
+/** Phase 1B.2A — customer portal identity from req.actor only; customerId never from request. */
+function readCustomerPortalActor(req: any) {
+  OwnershipResolver.assertCustomerActor(req.actor);
+  return portalIdentityFromActor(req.actor!);
+}
+
+/** Returns null after sending 401/403 when actor is missing or not a linked customer. */
+function resolveCustomerPortalActor(
+  req: any,
+  res: any
+): { userId: string; username: string } | null {
+  try {
+    return readCustomerPortalActor(req);
+  } catch (err: any) {
+    if (ownershipErrorResponse(err, res)) return null;
+    throw err;
+  }
+}
+
+function ownershipErrorResponse(err: any, res: any): boolean {
+  if (err instanceof OwnershipError) {
+    res.status(err.statusCode).json({ error: err.message });
+    return true;
+  }
+  if (err instanceof CustomerPortalAuthError) {
+    res.status(403).json({ error: err.message });
+    return true;
+  }
+  return false;
+}
+
+function technicianOwnershipErrorResponse(err: any, res: any): boolean {
+  if (err instanceof TechnicianOwnershipError) {
+    res.status(err.statusCode).json({ error: err.message });
+    return true;
+  }
+  if (err instanceof TechnicalStaffAuthError) {
+    res.status(403).json({ error: err.message });
+    return true;
+  }
+  return false;
+}
+
+function salesOwnershipErrorResponse(err: any, res: any): boolean {
+  if (err instanceof SalesOwnershipError) {
+    res.status(err.statusCode).json({ error: err.message });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve a salesperson display name / username to a durable user record.
+ * Exact match only (case-insensitive): username first, then display name. No fuzzy matching.
+ */
+async function resolveSalesUserByNameOrUsername(nameOrUsername: unknown): Promise<any | null> {
+  const token = String(nameOrUsername || "").trim();
+  if (!token) return null;
+  loadDb();
+  const byUsername = await findUserByUsername(token, db);
+  if (byUsername) return byUsername;
+  const normalized = token.toLowerCase();
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data } = await supabase.from("users").select("*").ilike("name", token).maybeSingle();
+    return data || null;
+  }
+  return (
+    (db.users || []).find(
+      (u: any) => String(u.name || "").trim().toLowerCase() === normalized
+    ) || null
+  );
+}
+
+/**
+ * Access decision for sales-owned resources. Only Admin/Director/Super Admin bypass ownership.
+ * Sales roles enforce ownership. All other authenticated roles are denied — never silently allowed.
+ */
+function salesAccessPrecheck(
+  actor: express.Request["actor"]
+):
+  | { decision: "allow" }
+  | { decision: "enforce" }
+  | { decision: "deny"; status: 401 | 403; message: string } {
+  if (!actor) {
+    return { decision: "deny", status: 401, message: "Authentication required." };
+  }
+  if (SalesOwnershipResolver.isSalesOwnershipBypassRole(actor.role)) {
+    return { decision: "allow" };
+  }
+  if (SalesOwnershipResolver.isSalesStaffRole(actor.role)) {
+    return { decision: "enforce" };
+  }
+  return { decision: "deny", status: 403, message: "Not authorized for this sales resource." };
+}
+
+async function guardSalesOwnedResource(
+  req: express.Request,
+  res: express.Response,
+  resourceType: SalesOwnedResourceType,
+  resourceId: string
+): Promise<boolean> {
+  const precheck = salesAccessPrecheck(req.actor);
+  if (precheck.decision === "allow") return true;
+  if (precheck.decision === "deny") {
+    res.status(precheck.status).json({ error: precheck.message });
+    return false;
+  }
+  try {
+    loadDb();
+    await SalesOwnershipResolver.assertResourceOwnedByActor(req.actor, resourceType, resourceId, db);
+    return true;
+  } catch (err) {
+    if (salesOwnershipErrorResponse(err, res)) return false;
+    throw err;
+  }
+}
+
+async function guardSalesOwnedResourceText(
+  req: express.Request,
+  res: express.Response,
+  resourceType: SalesOwnedResourceType,
+  resourceId: string
+): Promise<boolean> {
+  const precheck = salesAccessPrecheck(req.actor);
+  if (precheck.decision === "allow") return true;
+  if (precheck.decision === "deny") {
+    res.status(precheck.status).send(precheck.message);
+    return false;
+  }
+  try {
+    loadDb();
+    await SalesOwnershipResolver.assertResourceOwnedByActor(req.actor, resourceType, resourceId, db);
+    return true;
+  } catch (err) {
+    if (err instanceof SalesOwnershipError) {
+      res.status(err.statusCode).send(err.message);
+      return false;
+    }
+    throw err;
+  }
 }
 
 function formatPortalApiError(err: any, context: { endpoint: string; query: string }) {
@@ -1470,8 +1636,9 @@ function formatPortalApiError(err: any, context: { endpoint: string; query: stri
 }
 
 app.get("/api/customer-portal/documents/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   const query =
     'supabase.from("customer_documents").select("*").eq("customer_id", <resolvedCustomerId>).order("uploaded_at", { ascending: false })';
   try {
@@ -1485,8 +1652,9 @@ app.get("/api/customer-portal/documents/me", async (req, res) => {
 });
 
 app.get("/api/customer-portal/warranties/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   const query =
     'supabase.from("customer_warranties").select("*").eq("customer_id", <resolvedCustomerId>)';
   try {
@@ -1500,8 +1668,9 @@ app.get("/api/customer-portal/warranties/me", async (req, res) => {
 });
 
 app.post("/api/customer-portal/warranty-claim", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   const query =
     'supabase.from("support_tickets").insert(...); supabase.from("warranty_claims").insert(...)';
   try {
@@ -1516,10 +1685,9 @@ app.post("/api/customer-portal/warranty-claim", async (req, res) => {
 });
 
 app.get("/api/customer-portal/savings/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerSavings(userId, username, db);
@@ -1533,6 +1701,7 @@ app.get("/api/customer-portal/savings/me", async (req, res) => {
 app.get("/api/admin/customer-savings/:customerId", async (req, res) => {
   const { userId, username } = readPortalAuth(req);
   if (!userId || !username) return res.status(400).json({ error: "Staff credentials required." });
+  if (!(await guardSalesOwnedResource(req, res, "customer", req.params.customerId))) return;
   try {
     loadDb();
     const data = await fetchAdminCustomerSavings(userId, username, req.params.customerId, db);
@@ -1558,10 +1727,9 @@ app.post("/api/admin/customer-savings", async (req, res) => {
 });
 
 app.get("/api/customer-portal/care/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerCarePortal(userId, username, db);
@@ -1573,10 +1741,9 @@ app.get("/api/customer-portal/care/me", async (req, res) => {
 });
 
 app.post("/api/customer-portal/care/subscribe", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const subscription = await subscribeCustomerToCarePlan(userId, username, req.body || {}, db);
@@ -1589,10 +1756,9 @@ app.post("/api/customer-portal/care/subscribe", async (req, res) => {
 });
 
 app.post("/api/customer-portal/care/service-request", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const result = await createCarePortalServiceRequest(userId, username, req.body || {}, db);
@@ -1729,10 +1895,9 @@ app.post("/api/admin/maintenance-records", async (req, res) => {
 });
 
 app.get("/api/customer-portal/energy/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerEnergyMonitor(userId, username, db);
@@ -1787,10 +1952,9 @@ app.get("/api/admin/after-sales-service-logs", async (req, res) => {
 });
 
 app.get("/api/customer-portal/equipment/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerEquipment(userId, username, db);
@@ -1802,10 +1966,9 @@ app.get("/api/customer-portal/equipment/me", async (req, res) => {
 });
 
 app.get("/api/customer-portal/installation-photos/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerInstallationPhotos(userId, username, db);
@@ -1817,10 +1980,9 @@ app.get("/api/customer-portal/installation-photos/me", async (req, res) => {
 });
 
 app.get("/api/customer-portal/service-history/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerServiceHistory(userId, username, db);
@@ -1832,10 +1994,9 @@ app.get("/api/customer-portal/service-history/me", async (req, res) => {
 });
 
 app.get("/api/customer-portal/service/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerServicePortal(userId, username, db);
@@ -1847,10 +2008,9 @@ app.get("/api/customer-portal/service/me", async (req, res) => {
 });
 
 app.post("/api/customer-portal/service-requests", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   const { serviceType, preferredDate, preferredTime, notes } = req.body || {};
   try {
     loadDb();
@@ -1869,16 +2029,15 @@ app.post("/api/customer-portal/service-requests", async (req, res) => {
 });
 
 app.get("/api/customer-portal/service-requests/:id", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) {
-    return res.status(400).json({ error: "X-Sunchaser-User-Id and X-Sunchaser-Username headers are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
   try {
     loadDb();
-    const data = await fetchCustomerServiceRequestById(userId, username, req.params.id, db);
+    await OwnershipResolver.assertResourceOwnedByActor(req.actor, "service_request", req.params.id, db);
+    const data = await fetchCustomerServiceRequestById(identity.userId, identity.username, req.params.id, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    if (ownershipErrorResponse(err, res)) return;
     return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/service-requests/:id", query: "service_requests single" }));
   }
 });
@@ -1927,8 +2086,9 @@ app.post("/api/admin/service-requests/:id/update", async (req, res) => {
 });
 
 app.get("/api/customer-portal/support-tickets/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerSupportTickets(userId, username, db);
@@ -1940,8 +2100,9 @@ app.get("/api/customer-portal/support-tickets/me", async (req, res) => {
 });
 
 app.post("/api/customer-portal/support-tickets", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const ticket = await createCustomerSupportTicket(userId, username, req.body || {}, db);
@@ -1954,14 +2115,15 @@ app.post("/api/customer-portal/support-tickets", async (req, res) => {
 });
 
 app.get("/api/customer-portal/support-tickets/:id", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username are required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
   try {
     loadDb();
-    const data = await fetchCustomerSupportTicketById(userId, username, req.params.id, db);
+    await OwnershipResolver.assertResourceOwnedByActor(req.actor, "support_ticket", req.params.id, db);
+    const data = await fetchCustomerSupportTicketById(identity.userId, identity.username, req.params.id, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    if (ownershipErrorResponse(err, res)) return;
     return res.status(500).json(formatPortalApiError(err, { endpoint: "GET /api/customer-portal/support-tickets/:id", query: "support_tickets single" }));
   }
 });
@@ -2052,11 +2214,17 @@ app.get("/api/technical/jobs/:id", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "technical_job",
+      req.params.id,
+      db
+    );
     const data = await getTechnicalJobById(userId, username, req.params.id, db);
     saveDb();
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
@@ -2068,11 +2236,17 @@ app.patch("/api/technical/jobs/:id/status", async (req, res) => {
   if (!status) return res.status(400).json({ error: "status is required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "technical_job",
+      req.params.id,
+      db
+    );
     const data = await patchTechnicalJobStatus(userId, username, req.params.id, status, db);
     saveDb();
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
@@ -2082,11 +2256,17 @@ app.post("/api/technical/jobs/:id/update", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "technical_job",
+      req.params.id,
+      db
+    );
     const data = await postTechnicalJobUpdate(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
@@ -2219,10 +2399,16 @@ app.get("/api/technical/project-deliveries/:id", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const data = await getTechnicalProjectDeliveryById(userId, username, req.params.id, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
@@ -2232,11 +2418,17 @@ app.post("/api/technical/project-deliveries/:id/installed-equipment", async (req
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const data = await postTechnicalInstalledEquipment(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.status(201).json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
@@ -2246,11 +2438,17 @@ app.post("/api/technical/project-deliveries/:id/photos", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const data = await postTechnicalProjectDeliveryPhotos(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.status(201).json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
@@ -2260,18 +2458,25 @@ app.patch("/api/technical/project-deliveries/:id/status", async (req, res) => {
   if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const data = await patchTechnicalProjectDeliveryStatus(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/customer-portal/project-delivery/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerProjectDeliveryMe(userId, username, db);
@@ -2287,9 +2492,16 @@ app.get("/api/technical/project-deliveries/:id/completion-status", async (req, r
   if (!userId || !username) return res.status(400).json({ error: "Auth required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const status = await getCompletionStatusBundle(req.params.id, db);
     return res.json(status);
   } catch (err: any) {
+    if (technicianOwnershipErrorResponse(err, res)) return;
     if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
@@ -2300,11 +2512,17 @@ app.post("/api/technical/project-deliveries/:id/completion-media", async (req, r
   if (!userId || !username) return res.status(400).json({ error: "Auth required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const media = await postTechnicalCompletionMedia(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.status(201).json({ media });
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
@@ -2315,11 +2533,17 @@ app.patch("/api/technical/project-deliveries/:id/completion-stage", async (req, 
   if (!userId || !username) return res.status(400).json({ error: "Auth required." });
   try {
     loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "delivery_record",
+      req.params.id,
+      db
+    );
     const result = await patchTechnicalCompletionStage(userId, username, req.params.id, req.body || {}, db);
     saveDb();
     return res.json(result);
   } catch (err: any) {
-    if (err instanceof TechnicalStaffAuthError) return res.status(403).json({ error: err.message });
+    if (technicianOwnershipErrorResponse(err, res)) return;
     if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
@@ -2339,31 +2563,33 @@ app.get("/api/admin/project-completion/gaps", async (req, res) => {
 });
 
 app.get("/api/export/pdf/warranty-handover/:deliveryId", async (req, res) => {
-  const staffId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
-  const staffUsername = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
-  const portalUserId = String(req.query.portalUserId || "").trim();
-  const portalUsername = String(req.query.portalUsername || "").trim();
   try {
     loadDb();
-    if (portalUserId && portalUsername) {
-      const portal = await fetchCustomerWarrantyHandoverMe(portalUserId, portalUsername, db);
+    if (req.actor?.role === "Customer") {
+      const identity = resolveCustomerPortalActor(req, res);
+      if (!identity) return;
+      const portal = await fetchCustomerWarrantyHandoverMe(identity.userId, identity.username, db);
       if (!portal.deliveryId || portal.deliveryId !== req.params.deliveryId) {
         return res.status(403).json({ error: "Access denied." });
       }
+    } else {
+      const staff = resolveStaffActor(req, res);
+      if (!staff) return;
     }
     const html = await compileWarrantyHandoverHtmlForDelivery(req.params.deliveryId, db);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    if (ownershipErrorResponse(err, res)) return;
     if (err instanceof ProjectCompletionDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/customer-portal/warranty-handover/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerWarrantyHandoverMe(userId, username, db);
@@ -2374,13 +2600,8 @@ app.get("/api/customer-portal/warranty-handover/me", async (req, res) => {
   }
 });
 
-function readCustomerPortalAuthForDownload(req: any) {
-  const fromHeaders = readCustomerPortalAuth(req);
-  if (fromHeaders.userId && fromHeaders.username) return fromHeaders;
-  return {
-    userId: String(req.query.portalUserId || "").trim(),
-    username: String(req.query.portalUsername || "").trim(),
-  };
+function readCustomerPortalAuthForDownload(req: any, res: any) {
+  return resolveCustomerPortalActor(req, res);
 }
 
 app.get("/api/admin/customers/:customerId/warranty-certificate", async (req, res) => {
@@ -2400,16 +2621,16 @@ app.get("/api/admin/customers/:customerId/warranty-certificate", async (req, res
 });
 
 app.get("/api/customer-portal/warranty-certificate/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuthForDownload(req);
-  if (!userId || !username) return res.status(400).json({ error: "Auth required." });
+  const identity = readCustomerPortalAuthForDownload(req, res);
+  if (!identity) return;
   try {
     loadDb();
-    const html = await fetchPortalWarrantyCertificateHtml(userId, username, db);
+    const html = await fetchPortalWarrantyCertificateHtml(identity.userId, identity.username, db);
     if (!isSupabaseActive()) saveDb();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) return res.status(403).json({ error: err.message });
+    if (ownershipErrorResponse(err, res)) return;
     if (err instanceof WarrantyCertificateDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
@@ -2786,10 +3007,8 @@ app.post("/api/admin/deliveries/:challanId/dispute", async (req, res) => {
 });
 
 app.get("/api/admin/deliveries/:challanId/certificate", async (req, res) => {
-  const userId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
-  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const branding = await getCompanyBranding(db);
@@ -2815,8 +3034,9 @@ app.get("/api/admin/deliveries/dashboard/summary", async (req, res) => {
 });
 
 app.get("/api/customer-portal/deliveries/me", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerPortalDeliveriesMe(userId, username, db);
@@ -2827,8 +3047,9 @@ app.get("/api/customer-portal/deliveries/me", async (req, res) => {
 });
 
 app.get("/api/customer-portal/deliveries/:challanId/certificate", async (req, res) => {
-  const { userId, username } = readPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const html = await getCustomerPortalDeliveryCertificate(userId, username, req.params.challanId, db);
@@ -2840,10 +3061,8 @@ app.get("/api/customer-portal/deliveries/:challanId/certificate", async (req, re
 });
 
 app.get("/api/admin/deliveries/:challanId/challan-pdf", async (req, res) => {
-  const userId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
-  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
-  if (!userId || !username) return res.status(400).json({ error: "Staff auth required." });
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     const branding = await getCompanyBranding(db);
@@ -3449,39 +3668,38 @@ app.post("/api/admin/invoices/bulk-delete", async (req, res) => {
 });
 
 app.get("/api/export/pdf/invoice/:id", async (req, res) => {
-  const staffId = String(req.headers["x-sunchaser-user-id"] || req.query.userId || "").trim();
-  const staffUsername = String(req.headers["x-sunchaser-username"] || req.query.username || "").trim();
-  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
-  const customerUserId = String(req.query.portalUserId || "").trim();
-  const customerUsername = String(req.query.portalUsername || "").trim();
   try {
     loadDb();
     let invoice;
-    if (staffId && staffUsername && !customerUserId) {
-      invoice = await getAdminInvoiceById(staffId, staffUsername, role, req.params.id, db);
-    } else if (customerUserId && customerUsername) {
-      const portal = await fetchCustomerPortalInvoicesMe(customerUserId, customerUsername, db);
+    if (req.actor?.role === "Customer") {
+      const identity = resolveCustomerPortalActor(req, res);
+      if (!identity) return;
+      await OwnershipResolver.assertResourceOwnedByActor(req.actor, "invoice", req.params.id, db);
+      const portal = await fetchCustomerPortalInvoicesMe(identity.userId, identity.username, db);
       invoice = portal.invoices.find((i) => i.id === req.params.id);
       if (!invoice) return res.status(404).json({ error: "Invoice not found." });
     } else {
-      return res.status(400).json({ error: "Auth required." });
+      const staff = resolveStaffActor(req, res);
+      if (!staff) return;
+      const { userId, username, role } = staffIdentityFromActor(staff);
+      invoice = await getAdminInvoiceById(userId, username, role, req.params.id, db);
     }
     const { invoice: inv, branding, options } = await buildInvoicePdfPayload(invoice, db);
     const html = compileInvoicePDFHtml(inv, branding, options);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
-    if (err instanceof StaffPortalAuthError || err instanceof CustomerPortalAuthError) {
-      return res.status(403).json({ error: err.message });
-    }
+    if (ownershipErrorResponse(err, res)) return;
+    if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/customer-portal/invoices/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerPortalInvoicesMe(userId, username, db);
@@ -3506,8 +3724,9 @@ app.get("/api/staff/payments/projects/:id", async (req, res) => {
 });
 
 app.get("/api/customer-portal/payments/me", async (req, res) => {
-  const { userId, username } = readCustomerPortalAuth(req);
-  if (!userId || !username) return res.status(400).json({ error: "userId and username required." });
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  const { userId, username } = identity;
   try {
     loadDb();
     const data = await fetchCustomerPortalPaymentsMe(userId, username, db);
@@ -3830,29 +4049,22 @@ app.get("/api/diagnostics/phase2-tables", async (_req, res) => {
 });
 
 app.get("/api/customer-portal/:customerId", async (req, res) => {
-  const userId = String(req.headers["x-sunchaser-user-id"] || req.query?.userId || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || req.query?.username || "").trim();
   const requestedCustomerId = String(req.params.customerId || "").trim();
 
   if (["service", "documents", "warranties", "support-tickets", "savings", "care", "equipment", "installation-photos", "service-history"].includes(requestedCustomerId)) {
     return res.status(404).json({ error: "Not found." });
   }
 
-  if (!userId || !username) {
-    return res.status(400).json({ error: "userId and username are required." });
-  }
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
 
   try {
+    OwnershipResolver.assertRouteCustomerId(req.actor, requestedCustomerId);
     loadDb();
-    const data = await fetchCustomerPortalData(userId, username, db);
-    if (requestedCustomerId && data.customer?.id && data.customer.id !== requestedCustomerId) {
-      return res.status(403).json({ error: "You cannot access another customer's data." });
-    }
+    const data = await fetchCustomerPortalData(identity.userId, identity.username, db);
     return res.json(data);
   } catch (err: any) {
-    if (err instanceof CustomerPortalAuthError) {
-      return res.status(403).json({ error: err.message });
-    }
+    if (ownershipErrorResponse(err, res)) return;
     return res.status(500).json({ error: err.message || "Failed to load customer portal." });
   }
 });
@@ -3930,9 +4142,13 @@ app.get("/api/state", async (req, res) => {
         db.settings = packageResolved.settings;
         saveDb();
       }
+      const scopedState =
+        SalesOwnershipResolver.shouldEnforceForActor(req.actor)
+          ? SalesOwnershipResolver.filterAppStateForActor(req.actor!, stateObj)
+          : stateObj;
       return res.json({
-        ...stateObj,
-        stats: getDashboardStats(stateObj),
+        ...scopedState,
+        stats: getDashboardStats(scopedState),
         currentUser: null
       });
     } catch (err: any) {
@@ -3943,7 +4159,7 @@ app.get("/api/state", async (req, res) => {
 
   // Local fallback (runs only if Supabase is NOT active)
   loadDb();
-  res.json({
+  const localState = {
     leads: filterActiveLeads(db.leads),
     tickets: db.tickets,
     netMeteringHistory: db.netMeteringHistory,
@@ -3973,6 +4189,14 @@ app.get("/api/state", async (req, res) => {
     socialLinks: db.socialLinks || [],
     structureDescriptions: db.structureDescriptions || [],
     quotePdfSettings: db.quotePdfSettings || []
+  };
+  const scopedState =
+    SalesOwnershipResolver.shouldEnforceForActor(req.actor)
+      ? SalesOwnershipResolver.filterAppStateForActor(req.actor!, localState)
+      : localState;
+  res.json({
+    ...scopedState,
+    stats: getDashboardStats(scopedState),
   });
 });
 
@@ -4350,6 +4574,7 @@ app.post("/api/leads", async (req, res) => {
 // 4. Update lead fields and re-compute score
 app.put("/api/leads/:id", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { quotes: _ignoredQuotes, ...leadPatch } = req.body || {};
   const becomingContracted = leadPatch.status === "Contracted";
 
@@ -4434,6 +4659,7 @@ app.put("/api/leads/:id", async (req, res) => {
 // Soft-delete lead (sets deleted_at; row retained for recovery)
 app.delete("/api/leads/:id", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const deletedBy = resolveDeletedBy(req);
   console.log(`[DELETE TRACE] before soft delete lead=${id} deletedBy=${deletedBy}`);
 
@@ -4468,9 +4694,9 @@ app.delete("/api/leads/:id", async (req, res) => {
 
 // Super Admin: list soft-deleted leads
 app.get("/api/leads/deleted", async (req, res) => {
-  const role = String(req.headers["x-sunchaser-role"] || req.query.role || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || "").trim();
-  if (role !== "Super Admin" && username.toLowerCase() !== "allauddin") {
+  const actor = resolveStaffActor(req, res);
+  if (!actor) return;
+  if (actor.role !== "Super Admin") {
     return res.status(403).json({ error: "Super Admin access required." });
   }
 
@@ -4513,9 +4739,9 @@ app.get("/api/leads/deleted", async (req, res) => {
 // Super Admin: restore soft-deleted lead
 app.post("/api/leads/:id/restore", async (req, res) => {
   const { id } = req.params;
-  const role = String(req.headers["x-sunchaser-role"] || req.body?.role || "").trim();
-  const username = String(req.headers["x-sunchaser-username"] || "").trim();
-  if (role !== "Super Admin" && username.toLowerCase() !== "allauddin") {
+  const actor = resolveStaffActor(req, res);
+  if (!actor) return;
+  if (actor.role !== "Super Admin") {
     return res.status(403).json({ error: "Super Admin access required." });
   }
 
@@ -4536,6 +4762,7 @@ app.post("/api/leads/:id/restore", async (req, res) => {
 // Delete specific quote for a lead
 app.delete("/api/leads/:leadId/quotes/:quoteId", async (req, res) => {
   const { leadId, quoteId } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "quotation", quoteId))) return;
   const ctx = await resolveLeadForMutation(leadId, { includeQuotes: true });
   if (!ctx) {
     return res.status(404).json({ error: "Lead not found" });
@@ -4573,17 +4800,37 @@ app.delete("/api/leads/:leadId/quotes/:quoteId", async (req, res) => {
 // 5. Delegate salesperson assignment
 app.put("/api/leads/:id/assign", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { salespersonName } = req.body;
   const ctx = await resolveLeadForMutation(id);
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
   const { lead, supabase } = ctx;
 
+  // Resolve the durable owner user id; legacy name is retained for display only.
+  const resolvedSalesUser = await resolveSalesUserByNameOrUsername(salespersonName);
+  const salesUserId = resolvedSalesUser?.id ? String(resolvedSalesUser.id) : "";
+
   lead.assignedSalesperson = salespersonName;
+  if (salesUserId) {
+    lead.assignedSalesUserId = salesUserId;
+    lead.assigned_sales_user_id = salesUserId;
+  }
   persistLeadLocally(id, lead, supabase);
 
   if (supabase) {
     try {
-      await supabase.from("leads").update({ assigned_salesperson: salespersonName }).eq("id", id);
+      const updateRow: Record<string, any> = { assigned_salesperson: salespersonName };
+      if (salesUserId) updateRow.assigned_sales_user_id = salesUserId;
+      const { error } = await supabase.from("leads").update(updateRow).eq("id", id);
+      if (error) {
+        // Durable column may not be migrated yet — persist legacy name so reassignment still succeeds.
+        console.warn("[Supabase Reassign] durable owner column unavailable, persisting legacy name only:", error.message);
+        const { error: legacyErr } = await supabase
+          .from("leads")
+          .update({ assigned_salesperson: salespersonName })
+          .eq("id", id);
+        if (legacyErr) return res.status(500).json({ error: legacyErr.message });
+      }
     } catch (err: any) {
       console.error("[Supabase Reassign Error]:", err.message);
       return res.status(500).json({ error: err.message });
@@ -4597,6 +4844,7 @@ app.put("/api/leads/:id/assign", async (req, res) => {
 // 6. Gemini AI Lead Scoring manual assessment
 app.post("/api/leads/:id/ai-score", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const ctx = await resolveLeadForMutation(id);
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
   const { lead } = ctx;
@@ -4637,6 +4885,7 @@ Keep your answer under 100 words in concise professional clean markdown text.`;
 // 7. Schedule site structural survey
 app.post("/api/leads/:id/schedule-survey", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { scheduledDate } = req.body;
   const ctx = await resolveLeadForMutation(id);
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
@@ -4678,6 +4927,7 @@ app.post("/api/leads/:id/schedule-survey", async (req, res) => {
 // 7b. Send WhatsApp Follow-up Reminder
 app.post("/api/leads/:id/whatsapp-reminder", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const ctx = await resolveLeadForMutation(id);
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
   const { lead } = ctx;
@@ -4754,6 +5004,7 @@ app.post("/api/inventory/procure", async (req, res) => {
 // 8. Submit surveyor audit notes
 app.post("/api/leads/:id/survey-report", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const {
     shadingPercent,
     optimalPlacement,
@@ -4821,6 +5072,7 @@ app.post("/api/leads/:id/survey-report", async (req, res) => {
 // 9. Generate and write Quotation terms
 app.post("/api/leads/:id/create-quote", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const {
     systemSizekW,
     panelCount,
@@ -5074,6 +5326,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
 // 9b. Duplicate Quote endpoint
 app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { quoteId } = req.body;
   const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
@@ -5109,6 +5362,7 @@ app.post("/api/leads/:id/duplicate-quote", async (req, res) => {
 // 9c. Update/Overwrite Quote endpoint
 app.post("/api/leads/:id/update-quote", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { quoteId, quoteData, ...quotePayload } = req.body;
   const payload = quoteData && typeof quoteData === "object" ? quoteData : quotePayload;
   const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
@@ -5251,6 +5505,7 @@ app.delete("/api/quote-assets/watermark", async (req, res) => {
 // 10. Accept Quote & Auto-Provision trackers
 app.post("/api/leads/:id/accept-quote", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { quoteId } = req.body;
   const ctx = await resolveLeadForMutation(id, { includeQuotes: true });
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
@@ -5398,6 +5653,7 @@ app.post("/api/leads/:id/accept-quote", async (req, res) => {
 // 11. Update installer progress log tasks
 app.post("/api/leads/:id/update-installation", async (req, res) => {
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
   const { progress, tasks, status, completionPhotos, report } = req.body;
   const ctx = await resolveLeadForMutation(id);
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
@@ -5707,50 +5963,72 @@ app.post("/api/tickets/advanced", async (req, res) => {
 
 // D. Assign technician to ticket
 app.post("/api/tickets/:id/tech-assign", async (req, res) => {
-  loadDb();
-  const { id } = req.params;
-  const { technicianName, internalNotes } = req.body;
-  const ticket = db.tickets.find((t: any) => t.id === id);
-  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+  try {
+    loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "support_ticket",
+      req.params.id,
+      db
+    );
+    const { id } = req.params;
+    const { technicianName, internalNotes } = req.body;
+    const ticket = db.tickets.find((t: any) => t.id === id);
+    if (!ticket) return res.status(404).json({ error: "Ticket not found." });
 
-  ticket.assignedTechnician = technicianName;
-  ticket.status = "Technician Assigned";
-  if (internalNotes) ticket.internalNotes = internalNotes;
+    ticket.assignedTechnician = technicianName;
+    ticket.status = "Technician Assigned";
+    if (internalNotes) ticket.internalNotes = internalNotes;
 
-  const newNotif = {
-    id: `NT-${Date.now().toString().slice(-6)}`,
-    customerName: ticket.customerName,
-    message: `Technician assigned to concern ${ticket.id}: ${technicianName}`,
-    type: "technician_assigned" as const,
-    createdAt: new Date().toISOString(),
-    read: false
-  };
-  db.notifications.unshift(newNotif);
+    const newNotif = {
+      id: `NT-${Date.now().toString().slice(-6)}`,
+      customerName: ticket.customerName,
+      message: `Technician assigned to concern ${ticket.id}: ${technicianName}`,
+      type: "technician_assigned" as const,
+      createdAt: new Date().toISOString(),
+      read: false
+    };
+    db.notifications.unshift(newNotif);
 
-  saveDb();
-  await appendActivityLog("admin", "Sam Support", "Support Agent", "Technician Assigned", `Delegated technician "${technicianName}" to ticket ${id}`);
-  res.json(ticket);
+    saveDb();
+    await appendActivityLog("admin", "Sam Support", "Support Agent", "Technician Assigned", `Delegated technician "${technicianName}" to ticket ${id}`);
+    res.json(ticket);
+  } catch (err: any) {
+    if (technicianOwnershipErrorResponse(err, res)) return;
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // E. Technician resolution mark
 app.post("/api/tickets/:id/tech-resolve", async (req, res) => {
-  loadDb();
-  const { id } = req.params;
-  const { resolutionText, resolutionProofUrl } = req.body;
-  const ticket = db.tickets.find((t: any) => t.id === id);
-  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+  try {
+    loadDb();
+    await TechnicianOwnershipResolver.assertResourceOwnedByActor(
+      req.actor,
+      "support_ticket",
+      req.params.id,
+      db
+    );
+    const { id } = req.params;
+    const { resolutionText, resolutionProofUrl } = req.body;
+    const ticket = db.tickets.find((t: any) => t.id === id);
+    if (!ticket) return res.status(404).json({ error: "Ticket not found." });
 
-  ticket.status = "Resolved";
-  ticket.resolutionProofUrl = resolutionProofUrl || "";
-  ticket.messages.push({
-    sender: "Agent",
-    text: `Technician Job Resolution Dispatch: ${resolutionText}. Proof Photo: ${resolutionProofUrl || "None provided"}`,
-    time: new Date().toISOString()
-  });
+    ticket.status = "Resolved";
+    ticket.resolutionProofUrl = resolutionProofUrl || "";
+    ticket.messages.push({
+      sender: "Agent",
+      text: `Technician Job Resolution Dispatch: ${resolutionText}. Proof Photo: ${resolutionProofUrl || "None provided"}`,
+      time: new Date().toISOString()
+    });
 
-  saveDb();
-  await appendActivityLog("technician", ticket.assignedTechnician || activityActorFromStaff(req, "Technician"), "Technician", "Complaint Resolved by Tech", `Dispatched final resolution of concern ${id}`);
-  res.json(ticket);
+    saveDb();
+    await appendActivityLog("technician", ticket.assignedTechnician || activityActorFromStaff(req, "Technician"), "Technician", "Complaint Resolved by Tech", `Dispatched final resolution of concern ${id}`);
+    res.json(ticket);
+  } catch (err: any) {
+    if (technicianOwnershipErrorResponse(err, res)) return;
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // F. Claim warranty coverage
@@ -5821,6 +6099,7 @@ app.post("/api/notifications/:id/read", async (req, res) => {
 app.post("/api/projects/:id/update-stage", async (req, res) => {
   loadDb();
   const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "project", id))) return;
   const { stage } = req.body;
   const project = db.projects.find((p: any) => p.id === id);
   if (!project) return res.status(404).json({ error: "Project not found" });
@@ -5912,6 +6191,7 @@ app.post("/api/projects/:id/update-stage", async (req, res) => {
 app.post("/api/projects/:leadId/net-metering/update", async (req, res) => {
   loadDb();
   const { leadId } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", leadId))) return;
   const tracker = db.netMeteringTrackers[leadId];
   if (!tracker) return res.status(404).json({ error: "Tracker not found" });
 
@@ -8315,6 +8595,9 @@ function compileSunchaserPDFHtml(
 
 // 18. PDF Export Endpoints
 app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "quotation_pdf", req.params.leadId))) return;
   try {
     if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
       return res.status(403).send("Auto Sizer PDF export is temporarily disabled. Use Manual BOQ PDF with quoteId.");
@@ -8367,6 +8650,8 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
 });
 
 app.post("/api/export/pdf/manual-quote", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     loadDb();
     let activeState: Database = db;
@@ -8381,6 +8666,10 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       } catch (e) {
         // ignore
       }
+    }
+
+    if (payload?.leadId) {
+      if (!(await guardSalesOwnedResourceText(req, res, "manual_quote_export", String(payload.leadId)))) return;
     }
     
     // Create a lead object or find one if leadId is provided
@@ -8618,6 +8907,8 @@ function compileManualQuoteExportHtml(
 }
 
 app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     const templateId = req.params.templateId;
     const { html } = await compileTemplatePreviewHtml(templateId, {
@@ -8631,6 +8922,8 @@ app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
 });
 
 app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
   try {
     const templateId = req.params.templateId;
     const { html, filename } = await compileTemplatePreviewHtml(templateId, {
@@ -8645,6 +8938,9 @@ app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId/debug-template-map", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResource(req, res, "manual_quote_export", req.params.leadId))) return;
   try {
     const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
     const resolved = await resolveSavedManualQuoteForExport(req.params.leadId, quoteId || undefined);
@@ -8661,6 +8957,9 @@ app.get("/api/export/pdf/manual-quote/:leadId/debug-template-map", async (req, r
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId/debug-html", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "manual_quote_export", req.params.leadId))) return;
   try {
     const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
     const resolved = await resolveSavedManualQuoteForExport(req.params.leadId, quoteId || undefined);
@@ -8679,6 +8978,9 @@ app.get("/api/export/pdf/manual-quote/:leadId/debug-html", async (req, res) => {
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "manual_quote_export", req.params.leadId))) return;
   try {
     const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
     const resolved = await resolveSavedManualQuoteForExport(req.params.leadId, quoteId || undefined);
@@ -8696,6 +8998,9 @@ app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "manual_quote_export", req.params.leadId))) return;
   try {
     loadDb();
     let activeState: Database = db;
@@ -8773,6 +9078,9 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
 });
 
 app.get("/api/export/pdf/:leadId", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "quotation_pdf", req.params.leadId))) return;
   try {
     loadDb();
     let activeState: Database = db;
