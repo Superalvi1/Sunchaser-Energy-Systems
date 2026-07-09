@@ -4,7 +4,7 @@
 
 import { calculateCables } from "./CableCalculator.ts";
 import { calculateProtection } from "./ProtectionCalculator.ts";
-import { layoutPanels } from "./PanelLayoutEngine.ts";
+import { layoutPanels, type PanelLayoutResult } from "./PanelLayoutEngine.ts";
 import {
   earthingBoreRates,
   freightRates,
@@ -82,7 +82,12 @@ function sectionFromLines(id: BoqSectionId, lines: BoqLineItem[]): BoqSection {
   return { id, label: BOQ_SECTION_LABELS[id], lines, subtotal };
 }
 
-export function buildBoq(input: SolarProposalInput): BoqBuildResult {
+export interface BoqBuildOptions {
+  /** When provided, panel layout is not recalculated inside BOQ generation. */
+  precomputedLayout?: PanelLayoutResult;
+}
+
+export function buildBoq(input: SolarProposalInput, options?: BoqBuildOptions): BoqBuildResult {
   lineCounter = 0;
   const {
     systemSizeKw,
@@ -96,7 +101,9 @@ export function buildBoq(input: SolarProposalInput): BoqBuildResult {
 
   const bundle = resolveEquipmentBundle(systemSizeKw, tier, systemType);
   const panelCount = panelCountForSystem(systemSizeKw, panelWattage ?? bundle.panelWattage);
-  const layout = layoutPanels({ ...input, panelWattage: panelWattage ?? bundle.panelWattage });
+  const layout =
+    options?.precomputedLayout ??
+    layoutPanels({ ...input, panelWattage: panelWattage ?? bundle.panelWattage });
   const cables = calculateCables(systemSizeKw, systemType, structureType, siteComplexityScore);
   const protection = calculateProtection(systemSizeKw, systemType, tier);
   const structure = calculateStructure(panelCount, structureType);
