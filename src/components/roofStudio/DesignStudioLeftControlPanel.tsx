@@ -36,6 +36,10 @@ import {
 } from "../../lib/sunchaserDesignStudioClient";
 import {
   MAP_PROVIDER_NOT_CONNECTED,
+  SATELLITE_PROVIDER_NOT_CONNECTED,
+  hasValidManualCoordinates,
+  isGeocodingProviderConfigured,
+  isSatelliteProviderConfigured,
   locateProperty,
   type LocatePropertyResult,
 } from "../../lib/designStudioMapProviders";
@@ -112,6 +116,8 @@ export interface DesignStudioLeftControlPanelProps {
   gpsError: string | null;
   locateMessage: string | null;
   onLocateResult: (result: LocatePropertyResult) => void;
+  satelliteMessage: string | null;
+  onFetchSatelliteImage: () => void;
   phone: string;
   sanctionedLoad: string;
   controls: DesignStudioControls;
@@ -155,6 +161,8 @@ export default function DesignStudioLeftControlPanel({
   gpsError,
   locateMessage,
   onLocateResult,
+  satelliteMessage,
+  onFetchSatelliteImage,
   phone,
   sanctionedLoad,
   controls,
@@ -205,6 +213,11 @@ export default function DesignStudioLeftControlPanel({
 
   const orientationValue: PanelOrientationPolicy =
     controls.orientationPolicy === "mixed" ? "auto" : controls.orientationPolicy;
+
+  const geocodingConfigured = isGeocodingProviderConfigured();
+  const satelliteConfigured = isSatelliteProviderConfigured();
+  const coordsValid = hasValidManualCoordinates(latText, lngText);
+  const fetchSatelliteDisabled = !coordsValid;
 
   return (
     <aside
@@ -282,11 +295,49 @@ export default function DesignStudioLeftControlPanel({
             {locateMessage}
           </p>
         )}
+        <p
+          className="mt-1 text-[9px] text-slate-500"
+          data-testid="property-location-provider-status"
+        >
+          Provider: {geocodingConfigured ? "connected" : MAP_PROVIDER_NOT_CONNECTED}
+        </p>
         <p className="mt-1 text-[9px] text-slate-500">
           Manual lat/lng allowed. Map geocoding requires a connected provider.
         </p>
         <p className="sr-only" data-testid="map-provider-not-connected-copy">
           {MAP_PROVIDER_NOT_CONNECTED}
+        </p>
+      </Section>
+
+      <Section title="Satellite Image" icon={ImageIcon}>
+        <button
+          type="button"
+          disabled={fetchSatelliteDisabled}
+          onClick={onFetchSatelliteImage}
+          title={
+            fetchSatelliteDisabled
+              ? "Enter valid latitude and longitude first"
+              : satelliteConfigured
+                ? "Fetch satellite image from configured provider"
+                : SATELLITE_PROVIDER_NOT_CONNECTED
+          }
+          className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1.5 text-[10px] font-bold text-emerald-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          data-testid="satellite-fetch-button"
+        >
+          Fetch Satellite Image
+        </button>
+        {!satelliteConfigured && (
+          <p className="mt-1 text-[10px] text-amber-300/90" data-testid="satellite-provider-not-connected">
+            {SATELLITE_PROVIDER_NOT_CONNECTED}
+          </p>
+        )}
+        {satelliteMessage && (
+          <p className="mt-1 text-[10px] text-amber-300/90" data-testid="satellite-fetch-message">
+            {satelliteMessage}
+          </p>
+        )}
+        <p className="mt-1 text-[9px] text-slate-500">
+          Uploaded image remains the primary fallback. Satellite imagery still requires calibration.
         </p>
       </Section>
 

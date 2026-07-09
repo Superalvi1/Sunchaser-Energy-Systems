@@ -27,6 +27,8 @@ import {
 import {
   UPLOAD_OR_CONNECT_MAP_LABEL,
   applyLocatePropertyResultToDraft,
+  fetchSatelliteImage,
+  resolveSatelliteDisplayUrl,
   type LocatePropertyResult,
 } from "../../lib/designStudioMapProviders";
 import { createInitialRoofStudioState, type RoofStudioState } from "../../lib/roofStudioClient";
@@ -76,6 +78,7 @@ export default function ProjectDesignWorkspace({
   const [lngText, setLngText] = useState("");
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [locateMessage, setLocateMessage] = useState<string | null>(null);
+  const [satelliteMessage, setSatelliteMessage] = useState<string | null>(null);
   const [geoSeed, setGeoSeed] = useState<SiteGeoReference>(() => ({
     ...DEFAULT_SITE_GEO,
     siteLabel: lead.name || "",
@@ -100,6 +103,7 @@ export default function ProjectDesignWorkspace({
     setLngText("");
     setGpsError(null);
     setLocateMessage(null);
+    setSatelliteMessage(null);
     setGeoSeed({
       ...DEFAULT_SITE_GEO,
       siteLabel: lead.name || "",
@@ -249,6 +253,44 @@ export default function ProjectDesignWorkspace({
     [latText, lngText, commitGps]
   );
 
+  const handleFetchSatelliteImage = useCallback(() => {
+    const parsed = parseOptionalGpsAnchor(latText, lngText);
+    if (!parsed.ok || !parsed.anchor) {
+      setSatelliteMessage(parsed.ok ? "Enter valid latitude and longitude first." : parsed.error);
+      return;
+    }
+    void fetchSatelliteImage({
+      latitude: parsed.anchor.latitude,
+      longitude: parsed.anchor.longitude,
+    }).then(async (result) => {
+      if (!result.ok) {
+        setSatelliteMessage(result.message);
+        return;
+      }
+      const url = resolveSatelliteDisplayUrl(result.image);
+      if (!url) {
+        setSatelliteMessage("Provider returned an invalid satellite image.");
+        return;
+      }
+      const api = studioApiRef.current;
+      if (!api?.setBackgroundImageFromUrl) {
+        setSatelliteMessage("Canvas not ready.");
+        return;
+      }
+      const applied = await api.setBackgroundImageFromUrl(
+        url,
+        result.image.provider ? `satellite-${result.image.provider}` : "satellite-image"
+      );
+      if (!applied.ok) {
+        setSatelliteMessage(applied.error);
+        return;
+      }
+      setSatelliteMessage(null);
+      setLayoutResult(null);
+      setAutoLayoutMessage("Satellite image loaded — calibrate scale before Auto Layout.");
+    });
+  }, [latText, lngText]);
+
   return (
     <div className="space-y-4 text-left fade-in-entry">
       <div className="relative overflow-hidden rounded-3xl border border-amber-500/25 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/20 p-4 shadow-xl">
@@ -287,6 +329,8 @@ export default function ProjectDesignWorkspace({
             gpsError={gpsError}
             locateMessage={locateMessage}
             onLocateResult={handleLocateResult}
+            satelliteMessage={satelliteMessage}
+            onFetchSatelliteImage={handleFetchSatelliteImage}
             phone={customerPhone}
             sanctionedLoad={sanctionedDisplay}
             controls={controls}

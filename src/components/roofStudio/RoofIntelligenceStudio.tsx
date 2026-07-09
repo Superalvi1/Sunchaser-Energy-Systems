@@ -152,6 +152,8 @@ export interface RoofStudioApi {
   isCalibrated: () => boolean;
   setTool: (tool: ToolMode) => void;
   openImagePicker: () => void;
+  /** Load a validated image URL/data-URL as the roof base layer (draft-only; still requires calibration). */
+  setBackgroundImageFromUrl: (url: string, fileName?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   applyState: (next: RoofStudioState) => void;
   resetCalibration: () => void;
   selectPlane: (planeId: string) => void;
@@ -284,6 +286,42 @@ export default function RoofIntelligenceStudio({
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
+  const setBackgroundImageFromUrl = useCallback(
+    (url: string, fileName = "satellite-image") =>
+      new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
+        const trimmed = String(url ?? "").trim();
+        if (!trimmed) {
+          resolve({ ok: false, error: "Empty image URL." });
+          return;
+        }
+        const lower = trimmed.toLowerCase();
+        if (lower.startsWith("javascript:") || lower.startsWith("data:text/html")) {
+          resolve({ ok: false, error: "Unsafe image URL rejected." });
+          return;
+        }
+        if (lower.startsWith("data:") && !/^data:image\/[a-z0-9.+-]+(;|,)/i.test(trimmed)) {
+          resolve({ ok: false, error: "Only image/* data URLs are allowed." });
+          return;
+        }
+        // Clear prior blob URL if any; do not use image manager blob for remote/data URLs.
+        imageManagerRef.current.clear();
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        const img = new Image();
+        img.onload = () => {
+          setBgImage({ el: img, fileName });
+          setImageError(null);
+          resolve({ ok: true });
+        };
+        img.onerror = () => {
+          setImageError("Failed to decode satellite / remote image.");
+          setBgImage(null);
+          resolve({ ok: false, error: "Failed to decode image." });
+        };
+        img.src = trimmed;
+      }),
+    []
+  );
+
   const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -359,6 +397,7 @@ export default function RoofIntelligenceStudio({
         setDragShape(null);
       },
       openImagePicker: () => fileInputRef.current?.click(),
+      setBackgroundImageFromUrl,
       applyState: (next) => apply(next),
       resetCalibration: () => {
         apply({
@@ -378,7 +417,7 @@ export default function RoofIntelligenceStudio({
     return () => {
       studioApiRef.current = null;
     };
-  }, [studioApiRef, state, bgImage, apply]);
+  }, [studioApiRef, state, bgImage, apply, setBackgroundImageFromUrl]);
 
   const handleWizardStep = useCallback(
     (step: WizardStep) => {

@@ -1,57 +1,92 @@
 /**
- * Design Studio Map / Satellite Input V1 — provider-ready location layer.
+ * Satellite Provider Adapter V1 — provider-ready geocoding + satellite layer.
  *
  * Default providers are unavailable. No fake geocoding or satellite imagery.
- * No network calls unless a future configured adapter is wired.
+ * No network calls unless a future configured adapter is wired via registry.
  * Draft-only. No CRM / save / AI / PDF / localStorage.
- * Provider responses are untrusted — coordinates are validated before success.
+ * Provider responses are untrusted — validated before success.
  */
 
-import { validateLatitude, validateLongitude } from "./roofStudioGeoReference.ts";
+import { parseOptionalGpsAnchor, validateLatitude, validateLongitude } from "./roofStudioGeoReference.ts";
+
+export const PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED";
+export const INVALID_PROVIDER_COORDINATES = "INVALID_PROVIDER_COORDINATES";
+export const INVALID_PROVIDER_IMAGE = "INVALID_PROVIDER_IMAGE";
 
 export const MAP_PROVIDER_NOT_CONNECTED = "Map provider not connected yet";
-export const UPLOAD_OR_CONNECT_MAP_LABEL = "Upload roof image or connect map provider";
-export const INVALID_PROVIDER_COORDINATES = "INVALID_PROVIDER_COORDINATES";
+export const SATELLITE_PROVIDER_NOT_CONNECTED = "Satellite provider not connected yet";
+export const UPLOAD_OR_CONNECT_MAP_LABEL = "Upload roof image or connect satellite provider";
+
 export const INVALID_PROVIDER_COORDINATES_MESSAGE =
   "Provider returned invalid coordinates. Latitude must be a finite number from -90 to 90; longitude from -180 to 180.";
+export const INVALID_PROVIDER_IMAGE_MESSAGE =
+  "Provider returned an invalid satellite image. Rejected unsafe or empty image URL / metersPerPixel.";
 
-export interface GeocodeRequest {
-  address: string;
-}
+export type ProviderResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: string; message: string };
 
-export interface GeocodeResult {
+export interface Location {
   latitude: number;
   longitude: number;
   formattedAddress?: string;
-  provider: string;
+  provider?: string;
+  confidence?: number;
+}
+
+export interface Address {
+  formattedAddress: string;
+  provider?: string;
+}
+
+export interface SatelliteImage {
+  imageUrl?: string;
+  imageDataUrl?: string;
+  latitude: number;
+  longitude: number;
+  zoom: number;
+  metersPerPixel?: number;
+  attribution?: string;
+  provider?: string;
+}
+
+export interface SatelliteImageInput {
+  latitude: number;
+  longitude: number;
+  zoom?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface GeocodingProvider {
   readonly id: string;
   readonly configured: boolean;
-  geocode(request: GeocodeRequest): Promise<GeocodeResult>;
-}
-
-export interface SatelliteImageRequest {
-  latitude: number;
-  longitude: number;
-  zoom?: number;
-}
-
-export interface SatelliteImageResult {
-  imageUrl: string;
-  provider: string;
-  attribution?: string;
+  geocodeAddress(address: string): Promise<ProviderResult<Location>>;
+  reverseGeocode?(lat: number, lng: number): Promise<ProviderResult<Address>>;
 }
 
 export interface SatelliteImageProvider {
   readonly id: string;
   readonly configured: boolean;
-  fetchImage(request: SatelliteImageRequest): Promise<SatelliteImageResult>;
+  getSatelliteImage(input: SatelliteImageInput): Promise<ProviderResult<SatelliteImage>>;
 }
 
+/** @deprecated Prefer GeocodingProvider.geocodeAddress — kept for older call sites. */
+export interface GeocodeRequest {
+  address: string;
+}
+
+/** @deprecated Prefer Location */
+export type GeocodeResult = Location & { provider: string };
+
+/** @deprecated Prefer SatelliteImageInput */
+export type SatelliteImageRequest = SatelliteImageInput;
+
+/** @deprecated Prefer SatelliteImage */
+export type SatelliteImageResult = SatelliteImage & { imageUrl: string; provider: string };
+
 export class MapProviderNotConfiguredError extends Error {
-  readonly code = "MAP_PROVIDER_NOT_CONNECTED" as const;
+  readonly code = PROVIDER_NOT_CONFIGURED;
   constructor(message = MAP_PROVIDER_NOT_CONNECTED) {
     super(message);
     this.name = "MapProviderNotConfiguredError";
@@ -63,6 +98,23 @@ export class UnavailableGeocodingProvider implements GeocodingProvider {
   readonly id = "unavailable-geocoding";
   readonly configured = false;
 
+  async geocodeAddress(_address: string): Promise<ProviderResult<Location>> {
+    return {
+      ok: false,
+      code: PROVIDER_NOT_CONFIGURED,
+      message: MAP_PROVIDER_NOT_CONNECTED,
+    };
+  }
+
+  async reverseGeocode(_lat: number, _lng: number): Promise<ProviderResult<Address>> {
+    return {
+      ok: false,
+      code: PROVIDER_NOT_CONFIGURED,
+      message: MAP_PROVIDER_NOT_CONNECTED,
+    };
+  }
+
+  /** Legacy throw-style API used by older tests — still fail-closed. */
   async geocode(_request: GeocodeRequest): Promise<GeocodeResult> {
     throw new MapProviderNotConfiguredError(MAP_PROVIDER_NOT_CONNECTED);
   }
@@ -73,20 +125,72 @@ export class UnavailableSatelliteImageProvider implements SatelliteImageProvider
   readonly id = "unavailable-satellite";
   readonly configured = false;
 
+  async getSatelliteImage(_input: SatelliteImageInput): Promise<ProviderResult<SatelliteImage>> {
+    return {
+      ok: false,
+      code: PROVIDER_NOT_CONFIGURED,
+      message: SATELLITE_PROVIDER_NOT_CONNECTED,
+    };
+  }
+
+  /** Legacy throw-style API used by older tests — still fail-closed. */
   async fetchImage(_request: SatelliteImageRequest): Promise<SatelliteImageResult> {
-    throw new MapProviderNotConfiguredError(MAP_PROVIDER_NOT_CONNECTED);
+    throw new MapProviderNotConfiguredError(SATELLITE_PROVIDER_NOT_CONNECTED);
+  }
+}
+
+/**
+ * Manual location helper — accepts user-entered lat/lng only after validation.
+ * No API. No fake image.
+ */
+export class ManualLocationProvider {
+  readonly id = "manual-location";
+  readonly configured = true;
+
+  fromLatLngText(latText: string, lngText: string): ProviderResult<Location> {
+    const parsed = parseOptionalGpsAnchor(latText, lngText);
+    if (!parsed.ok) {
+      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: parsed.error };
+    }
+    if (!parsed.anchor) {
+      return {
+        ok: false,
+        code: INVALID_PROVIDER_COORDINATES,
+        message: "Enter both latitude and longitude.",
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        latitude: parsed.anchor.latitude,
+        longitude: parsed.anchor.longitude,
+        provider: this.id,
+      },
+    };
   }
 }
 
 let activeGeocodingProvider: GeocodingProvider = new UnavailableGeocodingProvider();
 let activeSatelliteProvider: SatelliteImageProvider = new UnavailableSatelliteImageProvider();
 
-export function getGeocodingProvider(): GeocodingProvider {
+/**
+ * Registry / factory — default unavailable.
+ * No env-backed real providers are wired yet; returns unavailable unless tests inject one.
+ */
+export function getConfiguredGeocodingProvider(): GeocodingProvider {
   return activeGeocodingProvider;
 }
 
-export function getSatelliteImageProvider(): SatelliteImageProvider {
+export function getConfiguredSatelliteImageProvider(): SatelliteImageProvider {
   return activeSatelliteProvider;
+}
+
+export function getGeocodingProvider(): GeocodingProvider {
+  return getConfiguredGeocodingProvider();
+}
+
+export function getSatelliteImageProvider(): SatelliteImageProvider {
+  return getConfiguredSatelliteImageProvider();
 }
 
 /** Test / future wiring only — production default remains unavailable. */
@@ -103,11 +207,37 @@ export function resetMapProvidersToUnavailable(): void {
   activeSatelliteProvider = new UnavailableSatelliteImageProvider();
 }
 
+export function isGeocodingProviderConfigured(): boolean {
+  return getConfiguredGeocodingProvider().configured;
+}
+
+export function isSatelliteProviderConfigured(): boolean {
+  return getConfiguredSatelliteImageProvider().configured;
+}
+
 export type LocatePropertyResult =
-  | { ok: true; result: GeocodeResult }
+  | { ok: true; result: Location }
   | {
       ok: false;
-      code: "MAP_PROVIDER_NOT_CONNECTED" | "EMPTY_ADDRESS" | "GEOCODE_FAILED" | "INVALID_PROVIDER_COORDINATES";
+      code:
+        | "PROVIDER_NOT_CONFIGURED"
+        | "MAP_PROVIDER_NOT_CONNECTED"
+        | "EMPTY_ADDRESS"
+        | "GEOCODE_FAILED"
+        | "INVALID_PROVIDER_COORDINATES";
+      message: string;
+    };
+
+export type FetchSatelliteImageResult =
+  | { ok: true; image: SatelliteImage }
+  | {
+      ok: false;
+      code:
+        | "PROVIDER_NOT_CONFIGURED"
+        | "INVALID_COORDINATES"
+        | "INVALID_PROVIDER_COORDINATES"
+        | "INVALID_PROVIDER_IMAGE"
+        | "SATELLITE_FETCH_FAILED";
       message: string;
     };
 
@@ -123,7 +253,9 @@ export type DraftLocationCoords = {
 export function validateProviderCoordinates(
   latitude: unknown,
   longitude: unknown
-): { ok: true; latitude: number; longitude: number } | { ok: false; code: "INVALID_PROVIDER_COORDINATES"; message: string } {
+):
+  | { ok: true; latitude: number; longitude: number }
+  | { ok: false; code: "INVALID_PROVIDER_COORDINATES"; message: string } {
   if (typeof latitude !== "number" || typeof longitude !== "number") {
     return {
       ok: false,
@@ -139,6 +271,91 @@ export function validateProviderCoordinates(
     };
   }
   return { ok: true, latitude, longitude };
+}
+
+/**
+ * Validate untrusted satellite image payload.
+ * Rejects javascript:, data:text/html, empty URLs; data: only image/*; metersPerPixel finite > 0.
+ */
+export function validateSatelliteImageResponse(
+  raw: unknown
+):
+  | { ok: true; image: SatelliteImage }
+  | { ok: false; code: "INVALID_PROVIDER_IMAGE" | "INVALID_PROVIDER_COORDINATES"; message: string } {
+  if (!raw || typeof raw !== "object") {
+    return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+  }
+  const obj = raw as Record<string, unknown>;
+  const coords = validateProviderCoordinates(obj.latitude, obj.longitude);
+  if (!coords.ok) {
+    return { ok: false, code: coords.code, message: coords.message };
+  }
+
+  const imageUrl = typeof obj.imageUrl === "string" ? obj.imageUrl.trim() : "";
+  const imageDataUrl = typeof obj.imageDataUrl === "string" ? obj.imageDataUrl.trim() : "";
+  const resolvedUrl = imageUrl || imageDataUrl;
+  if (!resolvedUrl) {
+    return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+  }
+
+  const urlCheck = validateSatelliteImageUrl(resolvedUrl);
+  if (!urlCheck.ok) {
+    return urlCheck;
+  }
+
+  let zoom = 18;
+  if (obj.zoom !== undefined && obj.zoom !== null) {
+    if (typeof obj.zoom !== "number" || !Number.isFinite(obj.zoom) || obj.zoom < 0 || obj.zoom > 24) {
+      return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+    }
+    zoom = obj.zoom;
+  }
+
+  let metersPerPixel: number | undefined;
+  if (obj.metersPerPixel !== undefined && obj.metersPerPixel !== null) {
+    if (typeof obj.metersPerPixel !== "number" || !Number.isFinite(obj.metersPerPixel) || obj.metersPerPixel <= 0) {
+      return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+    }
+    metersPerPixel = obj.metersPerPixel;
+  }
+
+  const image: SatelliteImage = {
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    zoom,
+    metersPerPixel,
+    attribution: typeof obj.attribution === "string" ? obj.attribution : undefined,
+    provider: typeof obj.provider === "string" ? obj.provider : undefined,
+  };
+  if (imageDataUrl && (!imageUrl || imageUrl.startsWith("data:"))) {
+    image.imageDataUrl = resolvedUrl;
+  } else {
+    image.imageUrl = resolvedUrl;
+  }
+  return { ok: true, image };
+}
+
+export function validateSatelliteImageUrl(
+  url: string
+): { ok: true } | { ok: false; code: "INVALID_PROVIDER_IMAGE"; message: string } {
+  const trimmed = String(url ?? "").trim();
+  if (!trimmed) {
+    return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("javascript:")) {
+    return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+  }
+  if (lower.startsWith("data:text/html")) {
+    return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+  }
+  if (lower.startsWith("data:")) {
+    // Only allow image/* data URLs (e.g. data:image/png;base64,...)
+    if (!/^data:image\/[a-z0-9.+-]+(;|,)/i.test(trimmed)) {
+      return { ok: false, code: INVALID_PROVIDER_IMAGE, message: INVALID_PROVIDER_IMAGE_MESSAGE };
+    }
+  }
+  return { ok: true };
 }
 
 /**
@@ -166,13 +383,22 @@ export async function locateProperty(address: string): Promise<LocatePropertyRes
   if (!trimmed) {
     return { ok: false, code: "EMPTY_ADDRESS", message: "Enter an address before locating the property." };
   }
-  const provider = getGeocodingProvider();
+  const provider = getConfiguredGeocodingProvider();
   if (!provider.configured) {
-    return { ok: false, code: "MAP_PROVIDER_NOT_CONNECTED", message: MAP_PROVIDER_NOT_CONNECTED };
+    return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: MAP_PROVIDER_NOT_CONNECTED };
   }
   try {
-    const raw = await provider.geocode({ address: trimmed });
-    const coords = validateProviderCoordinates(raw?.latitude, raw?.longitude);
+    const raw = await provider.geocodeAddress(trimmed);
+    if (!raw.ok) {
+      if (raw.code === PROVIDER_NOT_CONFIGURED || raw.code === "MAP_PROVIDER_NOT_CONNECTED") {
+        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message || MAP_PROVIDER_NOT_CONNECTED };
+      }
+      if (raw.code === INVALID_PROVIDER_COORDINATES) {
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: raw.message };
+      }
+      return { ok: false, code: "GEOCODE_FAILED", message: raw.message || "Geocoding failed." };
+    }
+    const coords = validateProviderCoordinates(raw.value.latitude, raw.value.longitude);
     if (!coords.ok) {
       return { ok: false, code: coords.code, message: coords.message };
     }
@@ -181,13 +407,14 @@ export async function locateProperty(address: string): Promise<LocatePropertyRes
       result: {
         latitude: coords.latitude,
         longitude: coords.longitude,
-        formattedAddress: raw.formattedAddress,
-        provider: raw.provider,
+        formattedAddress: raw.value.formattedAddress,
+        provider: raw.value.provider ?? provider.id,
+        confidence: raw.value.confidence,
       },
     };
   } catch (e) {
     if (e instanceof MapProviderNotConfiguredError) {
-      return { ok: false, code: "MAP_PROVIDER_NOT_CONNECTED", message: e.message };
+      return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: e.message };
     }
     return {
       ok: false,
@@ -197,6 +424,70 @@ export async function locateProperty(address: string): Promise<LocatePropertyRes
   }
 }
 
-export function isSatelliteProviderConfigured(): boolean {
-  return getSatelliteImageProvider().configured;
+/**
+ * Fetch satellite image — fail closed when provider unavailable or response invalid.
+ * Does not invent imagery. Does not unlock calibration by itself.
+ */
+export async function fetchSatelliteImage(input: {
+  latitude: number;
+  longitude: number;
+  zoom?: number;
+  width?: number;
+  height?: number;
+}): Promise<FetchSatelliteImageResult> {
+  const coords = validateProviderCoordinates(input.latitude, input.longitude);
+  if (!coords.ok) {
+    return { ok: false, code: "INVALID_COORDINATES", message: coords.message };
+  }
+  const provider = getConfiguredSatelliteImageProvider();
+  if (!provider.configured) {
+    return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: SATELLITE_PROVIDER_NOT_CONNECTED };
+  }
+  try {
+    const raw = await provider.getSatelliteImage({
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      zoom: input.zoom,
+      width: input.width,
+      height: input.height,
+    });
+    if (!raw.ok) {
+      if (raw.code === PROVIDER_NOT_CONFIGURED) {
+        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message || SATELLITE_PROVIDER_NOT_CONNECTED };
+      }
+      if (raw.code === INVALID_PROVIDER_IMAGE) {
+        return { ok: false, code: INVALID_PROVIDER_IMAGE, message: raw.message };
+      }
+      if (raw.code === INVALID_PROVIDER_COORDINATES) {
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: raw.message };
+      }
+      return { ok: false, code: "SATELLITE_FETCH_FAILED", message: raw.message || "Satellite image fetch failed." };
+    }
+    const validated = validateSatelliteImageResponse(raw.value);
+    if (!validated.ok) {
+      return { ok: false, code: validated.code, message: validated.message };
+    }
+    return { ok: true, image: validated.image };
+  } catch (e) {
+    if (e instanceof MapProviderNotConfiguredError) {
+      return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: e.message };
+    }
+    return {
+      ok: false,
+      code: "SATELLITE_FETCH_FAILED",
+      message: e instanceof Error ? e.message : "Satellite image fetch failed.",
+    };
+  }
+}
+
+/** True when draft lat/lng text parses to a valid GPS anchor (enables Fetch Satellite). */
+export function hasValidManualCoordinates(latText: string, lngText: string): boolean {
+  const parsed = parseOptionalGpsAnchor(latText, lngText);
+  return parsed.ok && Boolean(parsed.anchor);
+}
+
+export function resolveSatelliteDisplayUrl(image: SatelliteImage): string | null {
+  const url = (image.imageUrl || image.imageDataUrl || "").trim();
+  if (!url) return null;
+  return validateSatelliteImageUrl(url).ok ? url : null;
 }
