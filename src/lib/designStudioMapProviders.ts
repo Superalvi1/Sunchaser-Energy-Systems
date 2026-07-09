@@ -8,14 +8,24 @@
  */
 
 import { parseOptionalGpsAnchor, validateLatitude, validateLongitude } from "./roofStudioGeoReference.ts";
+import { getMapProviderEnvResolver, setMapProviderEnvResolver } from "./mapProviderEnvBridge.ts";
+
+export type { MapProviderEnvResolver } from "./mapProviderEnvBridge.ts";
+export { setMapProviderEnvResolver };
 
 export const PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED";
 export const INVALID_PROVIDER_COORDINATES = "INVALID_PROVIDER_COORDINATES";
 export const INVALID_PROVIDER_IMAGE = "INVALID_PROVIDER_IMAGE";
+export const GEOCODING_NO_RESULTS = "GEOCODING_NO_RESULTS";
+export const GEOCODING_PROVIDER_ERROR = "GEOCODING_PROVIDER_ERROR";
 
 export const MAP_PROVIDER_NOT_CONNECTED = "Map provider not connected yet";
 export const SATELLITE_PROVIDER_NOT_CONNECTED = "Satellite provider not connected yet";
 export const UPLOAD_OR_CONNECT_MAP_LABEL = "Upload roof image or connect satellite provider";
+export const GOOGLE_MAPS_CONNECTED_LABEL = "Google Maps connected";
+export const GEOCODING_NO_RESULTS_MESSAGE = "No result found for that address.";
+export const GEOCODING_PROVIDER_ERROR_MESSAGE = "Provider error — geocoding request failed.";
+export const INVALID_PROVIDER_RESPONSE_MESSAGE = "Invalid provider response.";
 
 export const INVALID_PROVIDER_COORDINATES_MESSAGE =
   "Provider returned invalid coordinates. Latitude must be a finite number from -90 to 90; longitude from -180 to 180.";
@@ -170,19 +180,38 @@ export class ManualLocationProvider {
   }
 }
 
-let activeGeocodingProvider: GeocodingProvider = new UnavailableGeocodingProvider();
-let activeSatelliteProvider: SatelliteImageProvider = new UnavailableSatelliteImageProvider();
+let geocodingOverride: GeocodingProvider | null = null;
+let satelliteOverride: SatelliteImageProvider | null = null;
 
 /**
- * Registry / factory — default unavailable.
- * No env-backed real providers are wired yet; returns unavailable unless tests inject one.
+ * Registry / factory — Google when env enabled + key present; otherwise unavailable.
+ * Env resolver is registered by googleMapsProvider (import that module to enable Google).
+ * Test overrides via setGeocodingProviderForTests / setSatelliteImageProviderForTests.
  */
 export function getConfiguredGeocodingProvider(): GeocodingProvider {
-  return activeGeocodingProvider;
+  if (geocodingOverride) return geocodingOverride;
+  try {
+    const fromEnv = getMapProviderEnvResolver()?.geocoding();
+    if (fromEnv && typeof fromEnv === "object" && "geocodeAddress" in (fromEnv as object)) {
+      return fromEnv as GeocodingProvider;
+    }
+  } catch {
+    /* fail closed */
+  }
+  return new UnavailableGeocodingProvider();
 }
 
 export function getConfiguredSatelliteImageProvider(): SatelliteImageProvider {
-  return activeSatelliteProvider;
+  if (satelliteOverride) return satelliteOverride;
+  try {
+    const fromEnv = getMapProviderEnvResolver()?.satellite();
+    if (fromEnv && typeof fromEnv === "object" && "getSatelliteImage" in (fromEnv as object)) {
+      return fromEnv as SatelliteImageProvider;
+    }
+  } catch {
+    /* fail closed */
+  }
+  return new UnavailableSatelliteImageProvider();
 }
 
 export function getGeocodingProvider(): GeocodingProvider {
@@ -193,18 +222,24 @@ export function getSatelliteImageProvider(): SatelliteImageProvider {
   return getConfiguredSatelliteImageProvider();
 }
 
-/** Test / future wiring only — production default remains unavailable. */
+/** Test / future wiring only — production default resolves from env. */
 export function setGeocodingProviderForTests(provider: GeocodingProvider): void {
-  activeGeocodingProvider = provider;
+  geocodingOverride = provider;
 }
 
 export function setSatelliteImageProviderForTests(provider: SatelliteImageProvider): void {
-  activeSatelliteProvider = provider;
+  satelliteOverride = provider;
 }
 
 export function resetMapProvidersToUnavailable(): void {
-  activeGeocodingProvider = new UnavailableGeocodingProvider();
-  activeSatelliteProvider = new UnavailableSatelliteImageProvider();
+  geocodingOverride = new UnavailableGeocodingProvider();
+  satelliteOverride = new UnavailableSatelliteImageProvider();
+}
+
+/** Clear test overrides so registry resolves from env again. */
+export function clearMapProviderOverrides(): void {
+  geocodingOverride = null;
+  satelliteOverride = null;
 }
 
 export function isGeocodingProviderConfigured(): boolean {
@@ -213,6 +248,17 @@ export function isGeocodingProviderConfigured(): boolean {
 
 export function isSatelliteProviderConfigured(): boolean {
   return getConfiguredSatelliteImageProvider().configured;
+}
+
+export function getMapProviderStatusLabel(): string {
+  const provider = getConfiguredGeocodingProvider();
+  if (provider.configured && (provider.id === "google-geocoding" || provider.id.startsWith("google"))) {
+    return GOOGLE_MAPS_CONNECTED_LABEL;
+  }
+  if (provider.configured) {
+    return "Map provider connected";
+  }
+  return MAP_PROVIDER_NOT_CONNECTED;
 }
 
 export type LocatePropertyResult =
@@ -224,6 +270,8 @@ export type LocatePropertyResult =
         | "MAP_PROVIDER_NOT_CONNECTED"
         | "EMPTY_ADDRESS"
         | "GEOCODE_FAILED"
+        | "GEOCODING_NO_RESULTS"
+        | "GEOCODING_PROVIDER_ERROR"
         | "INVALID_PROVIDER_COORDINATES";
       message: string;
     };
@@ -394,7 +442,20 @@ export async function locateProperty(address: string): Promise<LocatePropertyRes
         return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message || MAP_PROVIDER_NOT_CONNECTED };
       }
       if (raw.code === INVALID_PROVIDER_COORDINATES) {
-        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: raw.message };
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: raw.message || INVALID_PROVIDER_RESPONSE_MESSAGE };
+      }
+      if (raw.code === GEOCODING_NO_RESULTS) {
+        return { ok: false, code: GEOCODING_NO_RESULTS, message: raw.message || GEOCODING_NO_RESULTS_MESSAGE };
+      }
+      if (raw.code === GEOCODING_PROVIDER_ERROR || raw.code === "EMPTY_ADDRESS") {
+        if (raw.code === "EMPTY_ADDRESS") {
+          return { ok: false, code: "EMPTY_ADDRESS", message: raw.message };
+        }
+        return {
+          ok: false,
+          code: GEOCODING_PROVIDER_ERROR,
+          message: raw.message || GEOCODING_PROVIDER_ERROR_MESSAGE,
+        };
       }
       return { ok: false, code: "GEOCODE_FAILED", message: raw.message || "Geocoding failed." };
     }

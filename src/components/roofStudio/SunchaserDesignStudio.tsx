@@ -29,6 +29,7 @@ import {
   resolveSatelliteDisplayUrl,
   type LocatePropertyResult,
 } from "../../lib/designStudioMapProviders";
+import "../../lib/googleMapsProvider";
 import type { RoofStudioState } from "../../lib/roofStudioClient";
 import { createInitialRoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {

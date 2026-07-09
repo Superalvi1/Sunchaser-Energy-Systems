@@ -37,12 +37,13 @@ import {
 import {
   MAP_PROVIDER_NOT_CONNECTED,
   SATELLITE_PROVIDER_NOT_CONNECTED,
+  getMapProviderStatusLabel,
   hasValidManualCoordinates,
-  isGeocodingProviderConfigured,
   isSatelliteProviderConfigured,
   locateProperty,
   type LocatePropertyResult,
 } from "../../lib/designStudioMapProviders";
+import "../../lib/googleMapsProvider";
 import { isPlaneComplete, type RoofStudioState, type StudioPlane } from "../../lib/roofStudioClient";
 import { formatMeters } from "../../lib/roofStudioCalibration";
 import type { PanelOrientationPolicy } from "../../../server/solar/panel/PanelLayoutModels.ts";
@@ -214,10 +215,10 @@ export default function DesignStudioLeftControlPanel({
   const orientationValue: PanelOrientationPolicy =
     controls.orientationPolicy === "mixed" ? "auto" : controls.orientationPolicy;
 
-  const geocodingConfigured = isGeocodingProviderConfigured();
   const satelliteConfigured = isSatelliteProviderConfigured();
   const coordsValid = hasValidManualCoordinates(latText, lngText);
   const fetchSatelliteDisabled = !coordsValid;
+  const providerStatusLabel = getMapProviderStatusLabel();
 
   return (
     <aside
@@ -299,7 +300,7 @@ export default function DesignStudioLeftControlPanel({
           className="mt-1 text-[9px] text-slate-500"
           data-testid="property-location-provider-status"
         >
-          Provider: {geocodingConfigured ? "connected" : MAP_PROVIDER_NOT_CONNECTED}
+          Provider: {providerStatusLabel}
         </p>
         <p className="mt-1 text-[9px] text-slate-500">
           Manual lat/lng allowed. Map geocoding requires a connected provider.
@@ -326,6 +327,9 @@ export default function DesignStudioLeftControlPanel({
         >
           Fetch Satellite Image
         </button>
+        <p className="mt-1 text-[9px] text-slate-500" data-testid="satellite-provider-status">
+          {satelliteConfigured ? providerStatusLabel : SATELLITE_PROVIDER_NOT_CONNECTED}
+        </p>
         {!satelliteConfigured && (
           <p className="mt-1 text-[10px] text-amber-300/90" data-testid="satellite-provider-not-connected">
             {SATELLITE_PROVIDER_NOT_CONNECTED}

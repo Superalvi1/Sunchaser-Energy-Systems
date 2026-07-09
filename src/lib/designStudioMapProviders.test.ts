@@ -35,6 +35,7 @@ import {
   type GeocodingProvider,
   type SatelliteImageProvider,
 } from "./designStudioMapProviders.ts";
+import "./googleMapsProvider.ts";
 import { parseOptionalGpsAnchor } from "./roofStudioGeoReference.ts";
 import {
   prefillAddressFromLead,
