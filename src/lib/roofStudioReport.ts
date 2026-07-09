@@ -13,6 +13,7 @@ import { STRUCTURE_TYPE_LABELS, memberLengthM, structureMemberCounts } from "./r
 import type { StudioPlane } from "./roofStudioClient.ts";
 import type { DimensionAnnotation } from "./roofStudioDimensions.ts";
 import { dimensionLabel } from "./roofStudioDimensions.ts";
+import type { SiteGeoReference } from "./roofStudioGeoReference.ts";
 import { polygonBounds } from "../../server/solar/roof/RoofPolygon.ts";
 import { measureDistanceM } from "./roofStudioClient.ts";
 
@@ -26,6 +27,8 @@ export function buildLayoutReportPages(opts: {
   planes: StudioPlane[];
   metersPerUnit: number;
   calibration: ScaleCalibration | null;
+  geoReference: SiteGeoReference;
+  northAzimuthDeg: number;
   dimensions: DimensionAnnotation[];
   panelPlacements: StudioPanelPlacement[];
   panelSpec: PanelModuleSpec;
@@ -41,10 +44,23 @@ export function buildLayoutReportPages(opts: {
   const systemKw = panelSystemKw(opts.panelPlacements, opts.panelSpec.wattage);
   const counts = structureMemberCounts(opts.structure);
 
+  const geoLines: string[] = [];
+  if (opts.geoReference.siteLabel.trim()) geoLines.push(`Site: ${opts.geoReference.siteLabel.trim()}`);
+  if (opts.geoReference.latitude !== null && opts.geoReference.longitude !== null) {
+    geoLines.push(`GPS anchor: ${opts.geoReference.latitude.toFixed(6)}°, ${opts.geoReference.longitude.toFixed(6)}°`);
+  }
+  if (opts.geoReference.mapZoom !== null) geoLines.push(`Map zoom: ${opts.geoReference.mapZoom}`);
+  geoLines.push(`North orientation: ${opts.northAzimuthDeg}°`);
+  if (geoLines.length === 0) geoLines.push("No site coordinates entered.");
+
   const siteDimensions: ReportPage = {
     id: "site-dimensions",
     title: "Site Dimensions",
     sections: [
+      {
+        heading: "Site reference",
+        lines: geoLines,
+      },
       {
         heading: "Scale calibration",
         lines: opts.calibration

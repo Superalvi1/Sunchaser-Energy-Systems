@@ -6,7 +6,6 @@
 
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   CheckCircle2,
   Compass,
   DraftingCompass,
@@ -37,10 +36,12 @@ import {
 } from "../../lib/sunchaserDesignStudioClient";
 import { STRUCTURE_TYPES, SYSTEM_TYPES, EQUIPMENT_TIERS } from "../../../server/solar/proposal/SolarProposalModels.ts";
 import type { RoofStudioState } from "../../lib/roofStudioClient";
+import { createInitialRoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
   type ProjectDesignContext,
   type RoofStudioApi,
 } from "./RoofIntelligenceStudio";
+import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
 import { DEFAULT_SITE_GEO, type SiteGeoReference } from "../../lib/roofStudioGeoReference";
 import { formatLeadLocation, sanitizeLeadLocationInput } from "../../lib/leadDisplay";
 
@@ -65,11 +66,6 @@ function initialAddress(lead: Lead): string {
   const fromFormat = formatLeadLocation(lead);
   if (fromFormat !== "Location not specified") return fromFormat;
   return sanitizeLeadLocationInput(lead.address) || sanitizeLeadLocationInput(lead.location) || "";
-}
-
-function fmt(n: number | null | undefined, digits = 1): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
 export default function SunchaserDesignStudio({
@@ -118,30 +114,14 @@ export default function SunchaserDesignStudio({
   const hasPanels = Boolean(layoutResult && layoutResult.panelCount > 0);
   const live = useMemo(() => {
     if (!studioSnap.state) {
-      return {
-        draftOnly: true as const,
-        ready: false,
-        gatedReason: "Upload a roof image to begin.",
-        panelCount: 0,
-        dcKw: 0,
-        inverterRecommendation: null,
-        stringingStatus: "Not run",
-        annualProductionKwh: null,
-        monthlyProduction: [] as Array<{ label: string; kwh: number }>,
-        cableEstimateM: null,
-        boqTotal: null,
-        proposalStatus: "Draft unavailable",
-        warnings: ["Upload a roof image to begin."],
-        panels: [],
-        layout: null,
-        electrical: null,
-        simulation: null,
-      };
+      return buildDesignStudioLiveResults(createInitialRoofStudioState(`lead-${lead.id}`), controls, null, {
+        hasImage: false,
+      });
     }
     return buildDesignStudioLiveResults(studioSnap.state, controls, layoutResult, {
       hasImage: studioSnap.hasImage,
     });
-  }, [studioSnap, controls, layoutResult]);
+  }, [studioSnap, controls, layoutResult, lead.id]);
 
   const wizard = designStudioWizardProgress({
     hasImage: studioSnap.hasImage,
@@ -515,66 +495,12 @@ export default function SunchaserDesignStudio({
         </div>
 
         <aside className="xl:col-span-3 space-y-2 max-h-[780px] overflow-y-auto">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 space-y-2">
-            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-              <Zap className="h-4 w-4 text-amber-400" />
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Live results</h3>
-            </div>
-            {live.gatedReason && (
-              <p className="text-[10px] text-amber-300/90 flex gap-1.5 items-start">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                {live.gatedReason}
-              </p>
-            )}
-            <ResultRow label="Panel count" value={String(live.panelCount)} />
-            <ResultRow label="DC kW" value={fmt(live.dcKw, 2)} />
-            <ResultRow label="Inverter" value={live.inverterRecommendation ?? "—"} />
-            <ResultRow label="Stringing" value={live.stringingStatus} />
-            <ResultRow
-              label="Annual production"
-              value={live.annualProductionKwh != null ? `${fmt(live.annualProductionKwh, 0)} kWh` : "—"}
-            />
-            <ResultRow
-              label="Cable estimate"
-              value={live.cableEstimateM != null ? `${fmt(live.cableEstimateM, 0)} m` : "—"}
-            />
-            <ResultRow
-              label="BOQ total"
-              value={live.boqTotal != null ? `PKR ${fmt(live.boqTotal, 0)}` : "—"}
-            />
-            <ResultRow label="Proposal" value={live.proposalStatus} />
-          </div>
-
-          {live.monthlyProduction.length > 0 && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3">
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white mb-2">Monthly production</h3>
-              <ul className="grid grid-cols-3 gap-1">
-                {live.monthlyProduction.map((m) => (
-                  <li key={m.label} className="rounded-md bg-slate-950 px-1.5 py-1 text-center">
-                    <div className="text-[8px] uppercase text-slate-500">{m.label}</div>
-                    <div className="text-[10px] font-mono text-slate-200">{fmt(m.kwh, 0)}</div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {live.warnings.length > 0 && (
-            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-3">
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-rose-300 mb-1">Warnings</h3>
-              <ul className="space-y-1">
-                {live.warnings.slice(0, 8).map((w) => (
-                  <li key={w} className="text-[10px] text-rose-200/90">
-                    • {w}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <p className="text-[9px] text-slate-500 px-1">
-            Results from Panel Layout V2, Electrical Design, Solar Simulation, and Proposal/BOQ engines. Not saved.
-          </p>
+          <DesignStudioResultsPanel
+            live={live}
+            onAutoLayout={handleAutoLayout}
+            autoLayoutDisabled={!studioSnap.hasImage || !studioSnap.calibrated || !hasCompletePlane}
+            autoLayoutMessage={autoLayoutMessage}
+          />
         </aside>
       </div>
     </div>
@@ -601,11 +527,3 @@ function Section({
   );
 }
 
-function ResultRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-2 text-[11px]">
-      <span className="text-slate-500 shrink-0">{label}</span>
-      <span className="text-right font-medium text-slate-100 break-words">{value}</span>
-    </div>
-  );
-}

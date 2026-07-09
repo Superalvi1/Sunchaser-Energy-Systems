@@ -1,10 +1,9 @@
 /**
  * Project Design Workspace V1 — CRM-connected workflow shell.
- * Uses existing Roof Studio engines only. No new backend, no AI, no fake map/output.
- * Address edits are local draft state only — no CRM mutation.
+ * Uses existing Roof Studio + design engines only. No CRM mutation / save / API / AI.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapPin, Phone, Sun, Zap } from "lucide-react";
 import type { Lead } from "../../types";
 import { formatLeadLocation, sanitizeLeadLocationInput } from "../../lib/leadDisplay";
@@ -14,12 +13,22 @@ import {
   DEFAULT_SITE_GEO,
 } from "../../lib/roofStudioGeoReference";
 import {
+  DEFAULT_DESIGN_CONTROLS,
   DESIGN_WORKSPACE_DRAFT_ONLY_LABEL,
+  buildDesignStudioLiveResults,
+  canRunAutoLayout,
   displayCustomerPhone,
+  primaryPlane,
+  runDesignStudioAutoLayout,
+  type DesignStudioControls,
+  type DesignStudioLiveResults,
 } from "../../lib/sunchaserDesignStudioClient";
+import { createInitialRoofStudioState, type RoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
   type ProjectDesignContext,
+  type RoofStudioApi,
 } from "./RoofIntelligenceStudio";
+import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
 
 export interface ProjectDesignWorkspaceProps {
   lead: Lead;
@@ -63,6 +72,15 @@ export default function ProjectDesignWorkspace({
     ...DEFAULT_SITE_GEO,
     siteLabel: lead.name || "",
   }));
+  const [controls] = useState<DesignStudioControls>(() => ({ ...DEFAULT_DESIGN_CONTROLS }));
+  const [layoutResult, setLayoutResult] = useState<DesignStudioLiveResults["layout"]>(null);
+  const [autoLayoutMessage, setAutoLayoutMessage] = useState<string | null>(null);
+  const [studioSnap, setStudioSnap] = useState<{
+    state: RoofStudioState | null;
+    hasImage: boolean;
+    calibrated: boolean;
+  }>({ state: null, hasImage: false, calibrated: false });
+  const studioApiRef = useRef<RoofStudioApi | null>(null);
 
   useEffect(() => {
     setAddress(initialAddress(lead));
@@ -73,6 +91,8 @@ export default function ProjectDesignWorkspace({
       ...DEFAULT_SITE_GEO,
       siteLabel: lead.name || "",
     });
+    setLayoutResult(null);
+    setAutoLayoutMessage(null);
   }, [lead.id]);
 
   const sanctionedDisplay = useMemo(
@@ -110,6 +130,68 @@ export default function ProjectDesignWorkspace({
       geoSeed,
     }),
     [lead.id, lead.name, lead.phone, address, sanctionedDisplay, geoSeed]
+  );
+
+  const hasCompletePlane = Boolean(studioSnap.state && primaryPlane(studioSnap.state));
+
+  const live = useMemo(() => {
+    if (!studioSnap.state) {
+      return buildDesignStudioLiveResults(createInitialRoofStudioState(`lead-${lead.id}`), controls, null, {
+        hasImage: false,
+      });
+    }
+    return buildDesignStudioLiveResults(studioSnap.state, controls, layoutResult, {
+      hasImage: studioSnap.hasImage,
+    });
+  }, [studioSnap, controls, layoutResult, lead.id]);
+
+  const onStudioStateChange = useCallback(
+    (snap: { state: RoofStudioState; hasImage: boolean; calibrated: boolean }) => {
+      setStudioSnap(snap);
+      if (!snap.calibrated || !snap.hasImage) {
+        setLayoutResult(null);
+      }
+    },
+    []
+  );
+
+  const handleAutoLayout = () => {
+    const api = studioApiRef.current;
+    if (!api) {
+      setAutoLayoutMessage("Canvas not ready.");
+      return;
+    }
+    const state = api.getState();
+    const gate = canRunAutoLayout(api.hasImage(), api.isCalibrated(), Boolean(primaryPlane(state)));
+    if (!gate.ok) {
+      setAutoLayoutMessage(gate.reason);
+      setLayoutResult(null);
+      return;
+    }
+    const result = runDesignStudioAutoLayout(state, controls, { hasImage: api.hasImage() });
+    if (!result.ok) {
+      setAutoLayoutMessage(result.message);
+      setLayoutResult(null);
+      return;
+    }
+    setLayoutResult(result.layout);
+    setAutoLayoutMessage(
+      result.layout.panelCount > 0
+        ? `Auto Layout placed ${result.layout.panelCount} panels (${result.layout.dcCapacityKw.toFixed(2)} kW DC).`
+        : "Auto Layout ran — no panels fit under current constraints."
+    );
+  };
+
+  const overlayPanels = useMemo(
+    () =>
+      (layoutResult?.panels ?? []).map((p) => ({
+        id: p.panelId,
+        x: p.x,
+        y: p.y,
+        widthUnits: p.widthUnits,
+        heightUnits: p.heightUnits,
+      })),
+    [layoutResult]
   );
 
   return (
@@ -214,7 +296,27 @@ export default function ProjectDesignWorkspace({
         </p>
       </div>
 
-      <RoofIntelligenceStudio key={lead.id} project={project} workspaceMode />
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
+        <div className="xl:col-span-8 space-y-2">
+          <RoofIntelligenceStudio
+            key={lead.id}
+            project={project}
+            workspaceMode
+            chromeMode="canvas"
+            studioApiRef={studioApiRef}
+            onStudioStateChange={onStudioStateChange}
+            overlayPanels={overlayPanels}
+          />
+        </div>
+        <aside className="xl:col-span-4 space-y-2 max-h-[780px] overflow-y-auto">
+          <DesignStudioResultsPanel
+            live={live}
+            onAutoLayout={handleAutoLayout}
+            autoLayoutDisabled={!studioSnap.hasImage || !studioSnap.calibrated || !hasCompletePlane}
+            autoLayoutMessage={autoLayoutMessage}
+          />
+        </aside>
+      </div>
     </div>
   );
 }

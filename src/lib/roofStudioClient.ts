@@ -50,6 +50,9 @@ import type { DimensionAnnotation } from "./roofStudioDimensions.ts";
 import type { EditableBoqLine } from "./roofStudioBoq.ts";
 import { DEFAULT_PANEL_MODULE, type PanelModuleSpec, type StudioPanelPlacement } from "./roofStudioPanels.ts";
 import { DEFAULT_STRUCTURE_LAYOUT, type StructureLayout } from "./roofStudioStructure.ts";
+import { DEFAULT_SITE_GEO, type SiteGeoReference } from "./roofStudioGeoReference.ts";
+
+export type { SiteGeoReference };
 
 export type { Point2D, RoofSiteMetrics, RoofPlaneMetrics };
 export type { ScaleCalibration, DimensionAnnotation, EditableBoqLine, PanelModuleSpec, StudioPanelPlacement, StructureLayout };
@@ -183,6 +186,7 @@ export interface RoofStudioState {
   metersPerUnit: number;
   gridSizeUnits: number;
   northAzimuthDeg: number;
+  geoReference: SiteGeoReference;
   planes: StudioPlane[];
   layers: Record<LayerType, LayerState>;
   selectedPlaneId: string | null;
@@ -249,6 +253,7 @@ export function createInitialRoofStudioState(siteId = "roof-site"): RoofStudioSt
     metersPerUnit: 0,
     gridSizeUnits: 20,
     northAzimuthDeg: 0,
+    geoReference: { ...DEFAULT_SITE_GEO },
     planes: [],
     layers: createDefaultLayers(),
     selectedPlaneId: null,

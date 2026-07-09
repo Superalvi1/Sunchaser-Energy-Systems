@@ -84,6 +84,8 @@ for (const badScale of [0, Number.NaN, Number.POSITIVE_INFINITY]) {
         planes: [plane],
         metersPerUnit: badScale,
         calibration: null,
+        geoReference: { siteLabel: "", latitude: null, longitude: null, mapZoom: null },
+        northAzimuthDeg: 0,
         dimensions: [],
         panelPlacements: [],
         panelSpec: DEFAULT_PANEL_MODULE,

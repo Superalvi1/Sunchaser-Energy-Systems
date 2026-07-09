@@ -44,3 +44,37 @@ export function dimensionLabel(dim: DimensionAnnotation, metersPerUnit: number):
   const m = dimensionLengthM(dim, metersPerUnit);
   return formatDualUnits(m);
 }
+
+/** Auto-label roof boundary segments (layout-report style) when scale is calibrated. */
+export function planeBoundarySegmentDimensions(
+  boundary: Point2D[],
+  planeName: string
+): Array<Omit<DimensionAnnotation, "id"> & { segmentIndex: number }> {
+  if (boundary.length < 3) return [];
+  const segments: Array<Omit<DimensionAnnotation, "id"> & { segmentIndex: number }> = [];
+  for (let i = 0; i < boundary.length; i += 1) {
+    const j = (i + 1) % boundary.length;
+    segments.push({
+      segmentIndex: i,
+      start: { ...boundary[i] },
+      end: { ...boundary[j] },
+      labelOverride: `${planeName} edge ${i + 1}`,
+    });
+  }
+  return segments;
+}
+
+export function mergeSegmentDimensions(
+  existing: DimensionAnnotation[],
+  segments: Array<Omit<DimensionAnnotation, "id"> & { segmentIndex: number }>
+): DimensionAnnotation[] {
+  return [
+    ...existing,
+    ...segments.map((s) => ({
+      id: nextStudioId("dim"),
+      start: s.start,
+      end: s.end,
+      labelOverride: s.labelOverride,
+    })),
+  ];
+}
