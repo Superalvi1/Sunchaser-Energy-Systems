@@ -14,6 +14,7 @@ import {
   assertNoLocalProductionMath,
   buildDesignStudioLiveResults,
   canRunAutoLayout,
+  canRunDesignStudioAutoLayout,
   displayCustomerPhone,
   prefillAddressFromLead,
   primaryPlane,
@@ -22,13 +23,17 @@ import {
   snapToSupportedSystemSizeKw,
   validateDesignStudioLayoutSettings,
   validateEdgeSetbackM,
-  canRunDesignStudioAutoLayout,
 } from "./sunchaserDesignStudioClient.ts";
 import {
   SUNCHASER_DESIGN_STUDIO_ENV_KEY,
   isSunchaserDesignStudioEnabled,
 } from "./studioFeatureFlags.ts";
-import { addPlane, createInitialRoofStudioState } from "./roofStudioClient.ts";
+import {
+  addPlane,
+  createInitialRoofStudioState,
+  evaluateStudioRoofValidity,
+  FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT,
+} from "./roofStudioClient.ts";
 import { applyScaleCalibration } from "./roofStudioCalibration.ts";
 import { CATALOG_MODULE_550W, CATALOG_MODULE_580W } from "../../server/solar/panel/PanelCatalog.ts";
 
@@ -502,16 +507,17 @@ check("left panel renders inside Project Design Workspace", () => {
 });
 
 check("Auto Layout disabled before prerequisites", () => {
+  const validState = calibratedStateWithPlane();
   const gateImage = canRunDesignStudioAutoLayout({
     hasImage: false,
     calibrated: true,
-    hasCompletePlane: true,
+    state: validState,
     controls: DEFAULT_DESIGN_CONTROLS,
   });
   const gateCal = canRunDesignStudioAutoLayout({
     hasImage: true,
     calibrated: false,
-    hasCompletePlane: true,
+    state: validState,
     controls: DEFAULT_DESIGN_CONTROLS,
   });
   const gateRoof = canRunDesignStudioAutoLayout({
@@ -523,10 +529,147 @@ check("Auto Layout disabled before prerequisites", () => {
   const gateOk = canRunDesignStudioAutoLayout({
     hasImage: true,
     calibrated: true,
-    hasCompletePlane: true,
+    state: validState,
     controls: DEFAULT_DESIGN_CONTROLS,
   });
   return !gateImage.ok && !gateCal.ok && !gateRoof.ok && gateOk.ok;
+});
+
+const BOWTIE = [
+  { x: 0, y: 0 },
+  { x: 100, y: 100 },
+  { x: 100, y: 0 },
+  { x: 0, y: 100 },
+];
+
+const COLLINEAR_ZERO_AREA = [
+  { x: 0, y: 0 },
+  { x: 100, y: 0 },
+  { x: 50, y: 0 },
+];
+
+function calibratedStateWithBoundary(boundary: Array<{ x: number; y: number }>) {
+  let state = createInitialRoofStudioState("lead-test");
+  state = addPlane(state, boundary, { pitchDeg: 15, azimuthDeg: 180 });
+  const cal = applyScaleCalibration({ x: 0, y: 0 }, { x: 200, y: 0 }, "10 m");
+  assert.ok(cal);
+  return {
+    ...state,
+    metersPerUnit: cal!.metersPerUnit,
+    scaleCalibration: cal!.calibration,
+  };
+}
+
+check("closed but self-intersecting roof disables Auto Layout", () => {
+  const state = calibratedStateWithBoundary(BOWTIE);
+  assert.ok(state.planes[0].boundary.length >= 3);
+  const roof = evaluateStudioRoofValidity(state);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return !roof.ok && !gate.ok && gate.code === "INVALID_ROOF_GEOMETRY";
+});
+
+check("self-intersecting roof shows blocking reason", () => {
+  const state = calibratedStateWithBoundary(BOWTIE);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return gate.reason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT;
+});
+
+check("self-intersecting roof does not call layout engine", () => {
+  const state = calibratedStateWithBoundary(BOWTIE);
+  const run = runDesignStudioAutoLayout(state, DEFAULT_DESIGN_CONTROLS, { hasImage: true });
+  const live = buildDesignStudioLiveResults(state, DEFAULT_DESIGN_CONTROLS, null, { hasImage: true });
+  // Adapter must gate before layoutPanelsOnPlane — fail closed with geometry code.
+  const adapter = readFileSync(resolve(here, "sunchaserDesignStudioClient.ts"), "utf8");
+  const roofIdx = adapter.indexOf("evaluateStudioRoofValidity");
+  const layoutIdx = adapter.indexOf("layoutPanelsOnPlane({");
+  return (
+    run.ok === false &&
+    run.code === "INVALID_ROOF_GEOMETRY" &&
+    live.panelCount === 0 &&
+    live.boqTotal === null &&
+    live.annualProductionKwh === null &&
+    live.layout === null &&
+    roofIdx >= 0 &&
+    layoutIdx > roofIdx
+  );
+});
+
+check("closed valid roof enables Auto Layout when other prerequisites pass", () => {
+  const state = calibratedStateWithPlane();
+  const roof = evaluateStudioRoofValidity(state);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return roof.ok && gate.ok;
+});
+
+check("non-finite roof vertex disables Auto Layout", () => {
+  const state = calibratedStateWithBoundary([
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: Number.NaN, y: 80 },
+  ]);
+  const roof = evaluateStudioRoofValidity(state);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  const run = runDesignStudioAutoLayout(state, DEFAULT_DESIGN_CONTROLS, { hasImage: true });
+  return (
+    !roof.ok &&
+    !gate.ok &&
+    gate.reason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT &&
+    run.ok === false &&
+    run.code === "INVALID_ROOF_GEOMETRY"
+  );
+});
+
+check("zero/negative area roof disables Auto Layout", () => {
+  const state = calibratedStateWithBoundary(COLLINEAR_ZERO_AREA);
+  const roof = evaluateStudioRoofValidity(state);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return (
+    !roof.ok &&
+    (roof.code === "ZERO_AREA" || roof.code === "INVALID_SELF_INTERSECTION" || roof.code === "INVALID_BOUNDARY") &&
+    !gate.ok &&
+    gate.reason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT
+  );
+});
+
+check("engine failure is surfaced as stage error, not fake results", () => {
+  const state = calibratedStateWithBoundary(BOWTIE);
+  const live = buildDesignStudioLiveResults(state, DEFAULT_DESIGN_CONTROLS, null, { hasImage: true });
+  return (
+    !live.ready &&
+    live.gatedReason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT &&
+    live.roof.stageError != null &&
+    live.panelCount === 0 &&
+    live.boqTotal === null &&
+    live.annualProductionKwh === null &&
+    live.electrical === null &&
+    live.simulation === null &&
+    live.proposal.readyForPreview === false
+  );
 });
 
 check("invalid spacing / tilt / azimuth fails closed", () => {

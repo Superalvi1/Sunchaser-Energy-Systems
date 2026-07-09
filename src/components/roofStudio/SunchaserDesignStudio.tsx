@@ -163,7 +163,7 @@ export default function SunchaserDesignStudio({
     const gate = canRunDesignStudioAutoLayout({
       hasImage: api.hasImage(),
       calibrated: api.isCalibrated(),
-      hasCompletePlane: Boolean(primaryPlane(state)),
+      state,
       controls: { ...controls, alignment },
     });
     if (!gate.ok) {

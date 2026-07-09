@@ -18,7 +18,6 @@ import {
   buildDesignStudioLiveResults,
   canRunDesignStudioAutoLayout,
   displayCustomerPhone,
-  primaryPlane,
   runDesignStudioAutoLayout,
   validateDesignStudioLayoutSettings,
   type DesignStudioControls,
@@ -192,7 +191,7 @@ export default function ProjectDesignWorkspace({
     const gate = canRunDesignStudioAutoLayout({
       hasImage: api.hasImage(),
       calibrated: api.isCalibrated(),
-      hasCompletePlane: Boolean(primaryPlane(state)),
+      state,
       controls: { ...controls, alignment },
     });
     if (!gate.ok) {

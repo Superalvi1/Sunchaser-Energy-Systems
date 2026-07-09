@@ -171,7 +171,7 @@ export default function DesignStudioLeftControlPanel({
   const layoutGate = canRunDesignStudioAutoLayout({
     hasImage,
     calibrated,
-    hasCompletePlane: planes.length > 0,
+    state: studioState,
     controls: { ...controls, alignment },
   });
   const settingsCheck = validateDesignStudioLayoutSettings({ ...controls, alignment });

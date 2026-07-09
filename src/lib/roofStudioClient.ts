@@ -10,7 +10,7 @@
  */
 
 import { analyzeRoofSite } from "../../server/solar/roof/RoofGeometryEngine.ts";
-import { validateRoofSiteStrict } from "../../server/solar/roof/RoofValidation.ts";
+import { validateRoofPlaneStrict, validateRoofSiteStrict } from "../../server/solar/roof/RoofValidation.ts";
 import {
   InvalidRoofBoundaryError,
   RoofGeometryError,
@@ -702,6 +702,92 @@ export function planeToInput(plane: StudioPlane): RoofPlaneInput {
 /** Planes with a closed boundary (>= 3 vertices) are "complete" and analyzable. */
 export function isPlaneComplete(plane: StudioPlane): boolean {
   return plane.boundary.length >= 3;
+}
+
+export const FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT = "Fix roof geometry before auto layout";
+
+export type StudioRoofValidity =
+  | { ok: true; plane: StudioPlane }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      reason: typeof FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT | string;
+      planeId?: string;
+    };
+
+/**
+ * Thin wrapper around Roof Geometry Engine validation for Auto Layout gating.
+ * Complete ≠ valid: self-intersection, non-finite vertices, and non-positive area fail closed.
+ * Does not invent geometry or silently sanitize.
+ */
+export function evaluateStudioRoofValidity(
+  state: RoofStudioState,
+  preferredPlaneId?: string | null
+): StudioRoofValidity {
+  const complete = state.planes.filter(isPlaneComplete);
+  if (complete.length === 0) {
+    return {
+      ok: false,
+      code: "NO_PLANE",
+      message: "Draw a closed roof boundary (≥3 points) first.",
+      reason: "Draw a closed roof boundary (≥3 points) first.",
+    };
+  }
+
+  const plane =
+    (preferredPlaneId ? complete.find((p) => p.id === preferredPlaneId) : undefined) ??
+    (state.selectedPlaneId ? complete.find((p) => p.id === state.selectedPlaneId) : undefined) ??
+    complete[0];
+
+  try {
+    validateRoofPlaneStrict(planeToInput(plane));
+  } catch (e) {
+    if (e instanceof InvalidRoofBoundaryError) {
+      return {
+        ok: false,
+        code: e.errorCode,
+        message: e.message,
+        reason: FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT,
+        planeId: e.planeId ?? plane.id,
+      };
+    }
+    if (e instanceof RoofGeometryError) {
+      return {
+        ok: false,
+        code: e.code,
+        message: e.message,
+        reason: FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT,
+        planeId: plane.id,
+      };
+    }
+    return {
+      ok: false,
+      code: "UNKNOWN",
+      message: e instanceof Error ? e.message : "Unknown roof geometry error.",
+      reason: FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT,
+      planeId: plane.id,
+    };
+  }
+
+  // Engine boundary validation already rejects self-intersection / non-finite verts;
+  // require positive finite plan area explicitly for layout gating.
+  const area = polygonArea(plane.boundary);
+  if (!Number.isFinite(area) || area <= 0) {
+    return {
+      ok: false,
+      code: "ZERO_AREA",
+      message: "Roof plan area must be a positive finite value.",
+      reason: FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT,
+      planeId: plane.id,
+    };
+  }
+
+  return { ok: true, plane };
+}
+
+export function isStudioRoofValidForLayout(state: RoofStudioState): boolean {
+  return evaluateStudioRoofValidity(state).ok;
 }
 
 export function toRoofSiteInput(state: RoofStudioState): RoofSiteInput {

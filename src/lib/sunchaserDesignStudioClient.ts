@@ -64,6 +64,8 @@ import {
 import type { Point2D } from "../../server/solar/roof/RoofModels.ts";
 import {
   analyzeStudio,
+  evaluateStudioRoofValidity,
+  FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT,
   isPlaneComplete,
   type RoofStudioState,
   type StudioPlane,
@@ -654,11 +656,34 @@ export function canRunAutoLayout(hasImage: boolean, calibrated: boolean, hasComp
 export function canRunDesignStudioAutoLayout(opts: {
   hasImage: boolean;
   calibrated: boolean;
-  hasCompletePlane: boolean;
+  hasCompletePlane?: boolean;
+  /** Preferred: full studio state so roof geometry validity can be checked. */
+  state?: RoofStudioState | null;
   controls: DesignStudioControls & { alignment?: LayoutAlignment };
 }): { ok: boolean; reason: string | null; code: string | null } {
-  const gate = canRunAutoLayout(opts.hasImage, opts.calibrated, opts.hasCompletePlane);
+  const hasCompletePlane =
+    opts.state != null
+      ? opts.state.planes.some(isPlaneComplete)
+      : Boolean(opts.hasCompletePlane);
+
+  const gate = canRunAutoLayout(opts.hasImage, opts.calibrated, hasCompletePlane);
   if (!gate.ok) return { ok: false, reason: gate.reason, code: "GATED" };
+
+  if (opts.state) {
+    const roof = evaluateStudioRoofValidity(opts.state);
+    if (!roof.ok) {
+      return {
+        ok: false,
+        reason: roof.reason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT
+          ? FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT
+          : roof.reason,
+        code: roof.code === "NO_PLANE" ? "GATED" : "INVALID_ROOF_GEOMETRY",
+      };
+    }
+  } else if (opts.hasCompletePlane === false) {
+    return { ok: false, reason: "Draw a closed roof boundary (≥3 points) first.", code: "GATED" };
+  }
+
   const settings = validateDesignStudioLayoutSettings(opts.controls);
   if (!settings.ok) return { ok: false, reason: settings.message, code: settings.code };
   return { ok: true, reason: null, code: null };
@@ -675,14 +700,28 @@ export function runDesignStudioAutoLayout(
   opts: { hasImage: boolean }
 ): { ok: true; layout: PanelLayoutResult } | { ok: false; code: string; message: string } {
   const calibrated = isScaleCalibrated(state.scaleCalibration, state.metersPerUnit);
-  const plane = primaryPlane(state);
-  const gate = canRunAutoLayout(opts.hasImage, calibrated, Boolean(plane));
+  const roof = evaluateStudioRoofValidity(state);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: opts.hasImage,
+    calibrated,
+    state,
+    controls,
+  });
   if (!gate.ok) {
-    return { ok: false, code: "GATED", message: gate.reason ?? COMPLETE_PREVIOUS_STEP_MESSAGE };
+    return {
+      ok: false,
+      code: gate.code ?? "GATED",
+      message: gate.reason ?? COMPLETE_PREVIOUS_STEP_MESSAGE,
+    };
   }
-  if (!plane) {
-    return { ok: false, code: "NO_PLANE", message: "Draw a closed roof boundary first." };
+  if (!roof.ok) {
+    return {
+      ok: false,
+      code: roof.code === "NO_PLANE" ? "NO_PLANE" : "INVALID_ROOF_GEOMETRY",
+      message: roof.reason,
+    };
   }
+  const plane = roof.plane;
 
   const settings = validateDesignStudioLayoutSettings(controls);
   if (!settings.ok) {
@@ -871,6 +910,45 @@ export function buildDesignStudioLiveResults(
   }
   const module = moduleResolved.module;
 
+  const roofValidity = evaluateStudioRoofValidity(state);
+  if (!roofValidity.ok) {
+    const stageMsg =
+      roofValidity.code === "NO_PLANE"
+        ? roofValidity.message
+        : FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT;
+    const stage = validationStageFailure(
+      roofValidity.code === "NO_PLANE" ? "NO_PLANE" : "INVALID_ROOF_GEOMETRY",
+      roofValidity.code === "NO_PLANE" ? roofValidity.message : `${FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT} (${roofValidity.code}: ${roofValidity.message})`,
+      {
+        uploadComplete: opts.hasImage,
+        scaleCalibrated: calibrated,
+        roofValid: false,
+      }
+    );
+    // Surface roof analysis when available for the Roof section, but never panel/BOQ/production.
+    const roofAnalysis = analyzeStudio(state);
+    return {
+      ...stage,
+      gatedReason: stageMsg,
+      warnings: [stageMsg, ...(roofAnalysis.error ? [roofAnalysis.error.message] : [])],
+      roof: roofAnalysis.metrics
+        ? {
+            available: false,
+            gatedReason: stageMsg,
+            grossAreaM2: null,
+            usableAreaM2: null,
+            trueAreaM2: null,
+            obstaclePercent: null,
+            warnings: roofAnalysis.statistics?.warnings ?? [],
+            stageError: roofAnalysis.error?.message ?? stageMsg,
+          }
+        : {
+            ...gatedRoof(stageMsg),
+            stageError: roofAnalysis.error?.message ?? stageMsg,
+          },
+    };
+  }
+
   const roofAnalysis = analyzeStudio(state);
   const warnings: string[] = [];
   if (roofAnalysis.error) warnings.push(roofAnalysis.error.message);
@@ -879,7 +957,7 @@ export function buildDesignStudioLiveResults(
     warnings.push(`Assumption: default module ${module.name} (${module.moduleId}) — no moduleId selected.`);
   }
 
-  const roofValid = Boolean(roofAnalysis.metrics && !roofAnalysis.error);
+  const roofValid = roofValidity.ok && Boolean(!roofAnalysis.error);
   const roofSummary: DesignStudioRoofSummary = roofAnalysis.metrics
     ? {
         available: true,
