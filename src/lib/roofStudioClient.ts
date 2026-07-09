@@ -10,6 +10,7 @@
  */
 
 import { analyzeRoofSite } from "../../server/solar/roof/RoofGeometryEngine.ts";
+import { validateRoofSiteStrict } from "../../server/solar/roof/RoofValidation.ts";
 import {
   InvalidRoofBoundaryError,
   RoofGeometryError,
@@ -43,8 +44,16 @@ import {
   normalizeObstacles,
   obstacleFootprintWithClearance,
 } from "../../server/solar/roof/RoofObstacle.ts";
+import type { ScaleCalibration } from "./roofStudioCalibration.ts";
+import { isScaleCalibrated, isValidScale, requireValidScale, RoofCalibrationError } from "./roofStudioCalibration.ts";
+import type { DimensionAnnotation } from "./roofStudioDimensions.ts";
+import type { EditableBoqLine } from "./roofStudioBoq.ts";
+import { DEFAULT_PANEL_MODULE, type PanelModuleSpec, type StudioPanelPlacement } from "./roofStudioPanels.ts";
+import { DEFAULT_STRUCTURE_LAYOUT, type StructureLayout } from "./roofStudioStructure.ts";
 
 export type { Point2D, RoofSiteMetrics, RoofPlaneMetrics };
+export type { ScaleCalibration, DimensionAnnotation, EditableBoqLine, PanelModuleSpec, StudioPanelPlacement, StructureLayout };
+export { isScaleCalibrated, requireValidScale, RoofCalibrationError };
 
 /** Physical area of one PV module (m²) — matches roof engine estimator default. */
 export const PANEL_AREA_M2 = 2.58;
@@ -54,6 +63,13 @@ export const MAX_HISTORY = 60;
 export type ToolMode =
   | "select"
   | "pan"
+  | "calibrate-scale"
+  | "dimension-line"
+  | "panel-place"
+  | "structure-h-beam"
+  | "structure-c-channel"
+  | "structure-column"
+  | "structure-foundation"
   | "plane"
   | "obstacle-rect"
   | "obstacle-circle"
@@ -75,6 +91,7 @@ export type LayerType =
   | "ridge"
   | "valley"
   | "panels"
+  | "structure"
   | "measurements"
   | "north";
 
@@ -87,6 +104,7 @@ export const LAYER_ORDER: LayerType[] = [
   "ridge",
   "valley",
   "panels",
+  "structure",
   "measurements",
   "north",
 ];
@@ -100,6 +118,7 @@ export const LAYER_LABELS: Record<LayerType, string> = {
   ridge: "Ridge",
   valley: "Valley",
   panels: "Panels",
+  structure: "Elevated Structure",
   measurements: "Measurements",
   north: "North Arrow",
 };
@@ -168,6 +187,12 @@ export interface RoofStudioState {
   layers: Record<LayerType, LayerState>;
   selectedPlaneId: string | null;
   selectedObjectId: string | null;
+  scaleCalibration: ScaleCalibration | null;
+  dimensionAnnotations: DimensionAnnotation[];
+  panelSpec: PanelModuleSpec;
+  panelPlacements: StudioPanelPlacement[];
+  structure: StructureLayout;
+  boqLines: EditableBoqLine[];
 }
 
 export interface RoofStudioHistory {
@@ -221,13 +246,19 @@ export function createDefaultLayers(): Record<LayerType, LayerState> {
 export function createInitialRoofStudioState(siteId = "roof-site"): RoofStudioState {
   return {
     siteId,
-    metersPerUnit: 0.05,
+    metersPerUnit: 0,
     gridSizeUnits: 20,
     northAzimuthDeg: 0,
     planes: [],
     layers: createDefaultLayers(),
     selectedPlaneId: null,
     selectedObjectId: null,
+    scaleCalibration: null,
+    dimensionAnnotations: [],
+    panelSpec: { ...DEFAULT_PANEL_MODULE },
+    panelPlacements: [],
+    structure: { ...DEFAULT_STRUCTURE_LAYOUT, members: [], civilLabels: [...DEFAULT_STRUCTURE_LAYOUT.civilLabels] },
+    boqLines: [],
   };
 }
 
@@ -408,22 +439,57 @@ export function nearestEdgeIndex(boundary: Point2D[], point: Point2D): number {
  * ------------------------------------------------------------------------- */
 
 export function measureDistanceM(a: Point2D, b: Point2D, metersPerUnit: number): number {
-  return unitsToMeters(segmentLength(a, b), metersPerUnit);
+  return unitsToMeters(segmentLength(a, b), requireValidScale(metersPerUnit));
 }
 
 export function measurePathLengthM(points: Point2D[], metersPerUnit: number): number {
+  const mpu = requireValidScale(metersPerUnit);
   if (points.length < 2) return 0;
   let total = 0;
   for (let i = 0; i < points.length - 1; i += 1) {
     total += segmentLength(points[i], points[i + 1]);
   }
-  return unitsToMeters(total, metersPerUnit);
+  return unitsToMeters(total, mpu);
+}
+
+/** @deprecated Use RoofCalibrationError */
+export class RoofStudioMeasurementScaleError extends RoofCalibrationError {
+  constructor(message = "Calibrate scale first") {
+    super(message);
+    this.name = "RoofStudioMeasurementScaleError";
+  }
+}
+
+/** @deprecated Use isValidScale from roofStudioCalibration */
+export function isValidMeasurementScale(metersPerUnit: number): boolean {
+  return isValidScale(metersPerUnit);
+}
+
+export function tryMeasureAreaM2(
+  points: Point2D[],
+  metersPerUnit: number
+): { ok: true; areaM2: number } | { ok: false; message: string } {
+  if (!isValidScale(metersPerUnit)) {
+    return { ok: false, message: "Calibrate scale first" };
+  }
+  if (points.length < 3) {
+    return { ok: true, areaM2: 0 };
+  }
+  const areaM2 = Math.round(polygonArea(points) * metersPerUnit * metersPerUnit * 100) / 100;
+  if (!Number.isFinite(areaM2) || areaM2 < 0) {
+    return { ok: false, message: "Calibrate scale first" };
+  }
+  return { ok: true, areaM2 };
 }
 
 export function measureAreaM2(points: Point2D[], metersPerUnit: number): number {
+  const mpu = requireValidScale(metersPerUnit);
   if (points.length < 3) return 0;
-  const mpu = metersPerUnit > 0 ? metersPerUnit : 1;
-  return Math.round(polygonArea(points) * mpu * mpu * 100) / 100;
+  const areaM2 = Math.round(polygonArea(points) * mpu * mpu * 100) / 100;
+  if (!Number.isFinite(areaM2) || areaM2 < 0) {
+    throw new RoofCalibrationError("Scale not calibrated");
+  }
+  return areaM2;
 }
 
 /** Angle tool — delegates entirely to the roof engine's measurement primitive. */
@@ -571,6 +637,15 @@ export function layerForTool(tool: ToolMode): LayerType | null {
       return "ridge";
     case "valley":
       return "valley";
+    case "panel-place":
+      return "panels";
+    case "structure-h-beam":
+    case "structure-c-channel":
+    case "structure-column":
+    case "structure-foundation":
+      return "structure";
+    case "dimension-line":
+      return "measurements";
     default:
       return null;
   }
@@ -633,14 +708,16 @@ export function toRoofSiteInput(state: RoofStudioState): RoofSiteInput {
   };
 }
 
-function statisticsFromMetrics(metrics: RoofSiteMetrics): RoofStudioStatistics {
+function statisticsFromMetrics(metrics: RoofSiteMetrics, scaleCalibrated: boolean): RoofStudioStatistics {
   const obstacleAreaM2 = metrics.planes.reduce((s, p) => s + p.obstacleAreaM2, 0);
   const grossAreaM2 = metrics.totalPlanAreaM2;
   const usableAreaM2 = metrics.totalNetUsableAreaM2;
   const obstaclePercent = grossAreaM2 > 0 ? Math.round((obstacleAreaM2 / grossAreaM2) * 1000) / 10 : 0;
-  const panelEstimate = usableAreaM2 > 0 ? Math.floor(usableAreaM2 / PANEL_AREA_M2) : 0;
-  const capacityKw = panelCapacityEstimateKw(usableAreaM2, PANEL_AREA_M2, PANEL_WATTAGE);
+  const panelEstimate =
+    scaleCalibrated && usableAreaM2 > 0 ? Math.floor(usableAreaM2 / PANEL_AREA_M2) : 0;
+  const capacityKw = scaleCalibrated ? panelCapacityEstimateKw(usableAreaM2, PANEL_AREA_M2, PANEL_WATTAGE) : 0;
   const warnings: string[] = [];
+  if (!scaleCalibrated) warnings.push("Calibrate scale before panel capacity estimates.");
   if (usableAreaM2 <= 0) warnings.push("No usable PV area after setbacks and obstacles.");
   if (obstaclePercent > 40) warnings.push("Obstacles cover more than 40% of roof area.");
   return {
@@ -667,48 +744,63 @@ export function analyzeStudio(state: RoofStudioState): RoofStudioAnalysis {
   }
 
   const input = toRoofSiteInput(state);
+  const scaleOk = isScaleCalibrated(state.scaleCalibration, state.metersPerUnit);
+
+  if (!scaleOk) {
+    try {
+      validateRoofSiteStrict({ ...input, metersPerUnit: undefined });
+      return { ok: true, hasCompletePlane: true, metrics: null, statistics: null, error: null };
+    } catch (e) {
+      return studioGeometryErrorResult(e);
+    }
+  }
+
   try {
     const metrics = analyzeRoofSite(input);
     return {
       ok: true,
       hasCompletePlane: true,
       metrics,
-      statistics: statisticsFromMetrics(metrics),
+      statistics: statisticsFromMetrics(metrics, true),
       error: null,
     };
   } catch (e) {
-    if (e instanceof InvalidRoofBoundaryError) {
-      return {
-        ok: false,
-        hasCompletePlane: true,
-        metrics: null,
-        statistics: null,
-        error: {
-          errorCode: e.errorCode,
-          message: e.message,
-          planeId: e.planeId,
-          edgeIndexes: e.edgeIndexes,
-          intersectionPoint: e.intersectionPoint,
-        },
-      };
-    }
-    if (e instanceof RoofGeometryError) {
-      return {
-        ok: false,
-        hasCompletePlane: true,
-        metrics: null,
-        statistics: null,
-        error: { errorCode: e.code, message: e.message },
-      };
-    }
+    return studioGeometryErrorResult(e);
+  }
+}
+
+function studioGeometryErrorResult(e: unknown): RoofStudioAnalysis {
+  if (e instanceof InvalidRoofBoundaryError) {
     return {
       ok: false,
       hasCompletePlane: true,
       metrics: null,
       statistics: null,
-      error: { errorCode: "UNKNOWN", message: e instanceof Error ? e.message : "Unknown geometry error." },
+      error: {
+        errorCode: e.errorCode,
+        message: e.message,
+        planeId: e.planeId,
+        edgeIndexes: e.edgeIndexes,
+        intersectionPoint: e.intersectionPoint,
+      },
     };
   }
+  if (e instanceof RoofGeometryError) {
+    return {
+      ok: false,
+      hasCompletePlane: true,
+      metrics: null,
+      statistics: null,
+      error: { errorCode: e.code, message: e.message },
+    };
+  }
+  return {
+    ok: false,
+    hasCompletePlane: true,
+    metrics: null,
+    statistics: null,
+    error: { errorCode: "UNKNOWN", message: e instanceof Error ? e.message : "Unknown geometry error." },
+  };
 }
 
 /** Per-plane self-intersection check for live vertex-drag feedback (engine primitive). */
@@ -725,12 +817,12 @@ export function obstacleClearancePreview(
 ): Point2D[] {
   const normalized = normalizeObstacles([obstacleToDef(obstacle)], plane.boundary);
   if (normalized.length === 0) return obstacle.vertices;
-  return obstacleFootprintWithClearance(normalized[0], obstacle.clearanceM, metersPerUnit);
+  return obstacleFootprintWithClearance(normalized[0], obstacle.clearanceM, requireValidScale(metersPerUnit));
 }
 
 /** Plane perimeter in meters, delegated to the engine. */
 export function planePerimeterM(plane: StudioPlane, metersPerUnit: number): number {
-  return lengthM(polygonPerimeter(plane.boundary), metersPerUnit);
+  return lengthM(polygonPerimeter(plane.boundary), requireValidScale(metersPerUnit));
 }
 
 /* ---------------------------------------------------------------------------

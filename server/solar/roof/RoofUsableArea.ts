@@ -16,6 +16,7 @@ import {
   normalizeRidges,
   normalizeValleys,
   planAreaM2,
+  requireValidMetersPerUnit,
   ridgeSetbackAreaUnits,
   totalRidgeLengthUnits,
   totalValleyLengthUnits,
@@ -88,7 +89,7 @@ export function computeUsableArea(
   setbacks?: Partial<RoofSetbackConfig>
 ): UsableAreaBreakdown {
   const config = mergeSetbackConfig(setbacks ?? plane.setbacks);
-  const mpu = metersPerUnit > 0 ? metersPerUnit : 1;
+  const mpu = requireValidMetersPerUnit(metersPerUnit);
   const planM2 = planAreaM2(plane.boundary, mpu);
   const trueM2 = trueAreaFromPlanM2(planM2, plane.pitchDeg);
   const perimeter = lengthM(polygonPerimeter(plane.boundary), mpu);

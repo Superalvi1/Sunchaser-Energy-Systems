@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { applyScaleCalibration } from "./roofStudioCalibration.ts";
 import {
   LAYER_ORDER,
   MAX_HISTORY,
@@ -44,6 +45,8 @@ import {
   layersForPlanePatch,
   measureAngleDeg,
   measureAreaM2,
+  tryMeasureAreaM2,
+  RoofCalibrationError,
   measureDistanceM,
   moveBoundaryVertex,
   moveVertex,
@@ -86,11 +89,23 @@ const rect = [
   { x: 0, y: 120 },
 ];
 
+function calibrateState(state: ReturnType<typeof createInitialRoofStudioState>) {
+  const result = applyScaleCalibration({ x: 0, y: 0 }, { x: 200, y: 0 }, "10 m");
+  if (!result) throw new Error("calibration failed");
+  return { ...state, metersPerUnit: result.metersPerUnit, scaleCalibration: result.calibration };
+}
+
 function stateWithRect() {
-  return addPlane(createInitialRoofStudioState(), rect, { pitchDeg: 15, azimuthDeg: 180 });
+  return calibrateState(addPlane(createInitialRoofStudioState(), rect, { pitchDeg: 15, azimuthDeg: 180 }));
 }
 
 /* -------- geometry rendering: delegated to engine, no duplication -------- */
+check("uncalibrated complete plane returns null metrics (no guessed capacity)", () => {
+  const state = addPlane(createInitialRoofStudioState(), rect, { pitchDeg: 15, azimuthDeg: 180 });
+  const studio = analyzeStudio(state);
+  return studio.ok && studio.hasCompletePlane && studio.metrics === null && studio.statistics === null;
+});
+
 check("analyzeStudio delegates to RoofGeometryEngine (identical totals)", () => {
   const state = stateWithRect();
   const studio = analyzeStudio(state);
@@ -340,6 +355,51 @@ check("measureAreaM2 and measureAngleDeg produce expected values", () => {
   return Math.abs(area - 200 * 120 * 0.0025) < 0.01 && Math.abs(angle - 90) < 1e-6;
 });
 
+check("area measurement before calibration shows warning only", () => {
+  const result = tryMeasureAreaM2(rect, 0);
+  return !result.ok && result.message === "Calibrate scale first";
+});
+
+check("measureAreaM2 throws for scale 0", () => {
+  try {
+    measureAreaM2(rect, 0);
+    return false;
+  } catch (e) {
+    return e instanceof RoofCalibrationError;
+  }
+});
+
+check("measureAreaM2 throws for scale NaN", () => {
+  try {
+    measureAreaM2(rect, Number.NaN);
+    return false;
+  } catch (e) {
+    return e instanceof RoofCalibrationError;
+  }
+});
+
+check("measureAreaM2 throws for scale Infinity", () => {
+  try {
+    measureAreaM2(rect, Number.POSITIVE_INFINITY);
+    return false;
+  } catch (e) {
+    return e instanceof RoofCalibrationError;
+  }
+});
+
+check("measure-area UI uses tryMeasureAreaM2 (no guessed scale fallback)", () => {
+  const src = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../components/roofStudio/RoofIntelligenceStudio.tsx"),
+    "utf8"
+  );
+  const forbidden = [
+    /metersPerUnit\s*>\s*0\s*\?\s*metersPerUnit\s*:\s*1/,
+    /finiteNum\(metersPerUnit,\s*1\)/,
+    /metersPerUnit:\s*0\.01/,
+  ];
+  return src.includes("tryMeasureAreaM2(pts, state.metersPerUnit)") && forbidden.every((re) => !re.test(src));
+});
+
 /* -------- large roof performance -------- */
 check("large roof (many planes + vertices) analyzes under 400ms", () => {
   let state = createInitialRoofStudioState();
@@ -353,6 +413,7 @@ check("large roof (many planes + vertices) analyzes under 400ms", () => {
       { x: ox, y: oy + 140 },
     ]);
   }
+  state = calibrateState(state);
   const t0 = Date.now();
   const studio = analyzeStudio(state);
   const elapsed = Date.now() - t0;

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BoxSelect,
   Circle,
   Compass,
   Eye,
@@ -41,9 +42,10 @@ import {
   insertVertex,
   isLayerLocked,
   isLayerVisible,
+  isScaleCalibrated,
   layerForTool,
   measureAngleDeg,
-  measureAreaM2,
+  tryMeasureAreaM2,
   measureDistanceM,
   moveVertex,
   nearestEdgeIndex,
@@ -71,6 +73,27 @@ import {
   type StudioPlane,
   type ToolMode,
 } from "../../lib/roofStudioClient";
+import { applyScaleCalibration } from "../../lib/roofStudioCalibration.ts";
+import { addDimension, dimensionLabel, updateDimensionLabel } from "../../lib/roofStudioDimensions.ts";
+import {
+  addPanelAt,
+  autoFillPanelsOnPlane,
+  hitTestPanel,
+  movePanelPlacement,
+  panelFootprintUnits,
+  panelSystemKw,
+} from "../../lib/roofStudioPanels.ts";
+import { boqFromPlacements } from "../../lib/roofStudioBoq.ts";
+import { buildLayoutReportPages } from "../../lib/roofStudioReport.ts";
+import { addStructureMember } from "../../lib/roofStudioStructure.ts";
+import {
+  BoqEditor,
+  CalibrationBanner,
+  CalibrationDialog,
+  PanelSpecEditor,
+  ReportPreview,
+  StructureEditor,
+} from "./RoofStudioMeasurementPanels.tsx";
 
 const CANVAS_HEIGHT = 640;
 const VERTEX_HIT_UNITS = 10;
@@ -81,12 +104,14 @@ interface Tool {
   id: ToolMode;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  group: "nav" | "roof" | "features" | "measure";
+  group: "nav" | "roof" | "features" | "measure" | "calibrate" | "panels" | "structure";
 }
 
 const TOOLS: Tool[] = [
   { id: "select", label: "Select / Edit", icon: MousePointer2, group: "nav" },
   { id: "pan", label: "Pan", icon: Hand, group: "nav" },
+  { id: "calibrate-scale", label: "Calibrate Scale", icon: Ruler, group: "calibrate" },
+  { id: "dimension-line", label: "Dimension", icon: Ruler, group: "measure" },
   { id: "plane", label: "Roof Plane", icon: Pentagon, group: "roof" },
   { id: "obstacle-rect", label: "Obstacle (Rect)", icon: Square, group: "features" },
   { id: "obstacle-circle", label: "Obstacle (Circle)", icon: Circle, group: "features" },
@@ -95,13 +120,27 @@ const TOOLS: Tool[] = [
   { id: "parapet", label: "Parapet", icon: Square, group: "features" },
   { id: "ridge", label: "Ridge", icon: Slash, group: "features" },
   { id: "valley", label: "Valley", icon: Slash, group: "features" },
+  { id: "panel-place", label: "Place Panel", icon: BoxSelect, group: "panels" },
+  { id: "structure-h-beam", label: "H-Beam", icon: Slash, group: "structure" },
+  { id: "structure-c-channel", label: "C-Channel", icon: Slash, group: "structure" },
+  { id: "structure-column", label: "Column", icon: Circle, group: "structure" },
+  { id: "structure-foundation", label: "Foundation", icon: Square, group: "structure" },
   { id: "measure-distance", label: "Distance", icon: Ruler, group: "measure" },
   { id: "measure-area", label: "Area", icon: Pentagon, group: "measure" },
   { id: "measure-angle", label: "Angle", icon: Triangle, group: "measure" },
 ];
 
 const POLYGON_TOOLS: ToolMode[] = ["plane", "obstacle-polygon", "walkway", "parapet", "measure-area"];
-const SEGMENT_TOOLS: ToolMode[] = ["ridge", "valley", "measure-distance"];
+const SEGMENT_TOOLS: ToolMode[] = [
+  "ridge",
+  "valley",
+  "measure-distance",
+  "calibrate-scale",
+  "dimension-line",
+  "structure-h-beam",
+  "structure-c-channel",
+  "structure-column",
+];
 
 const LAYER_FOR_TOOL: Record<string, LayerType> = {
   "obstacle-rect": "obstacle",
@@ -133,7 +172,12 @@ export default function RoofIntelligenceStudio() {
   const [draftPoints, setDraftPoints] = useState<Point2D[]>([]);
   const [dragShape, setDragShape] = useState<{ start: Point2D; end: Point2D } | null>(null);
   const [measureResult, setMeasureResult] = useState<string | null>(null);
+  const [calibrationDialogOpen, setCalibrationDialogOpen] = useState(false);
+  const [calibrationDistanceInput, setCalibrationDistanceInput] = useState("51 ft 9 in");
+  const [pendingCalibrationLine, setPendingCalibrationLine] = useState<{ start: Point2D; end: Point2D } | null>(null);
+  const panelDragRef = useRef<{ panelId: string; offsetX: number; offsetY: number } | null>(null);
 
+  const calibrated = isScaleCalibrated(state.scaleCalibration, state.metersPerUnit);
   const [cursorWorld, setCursorWorld] = useState<Point2D>({ x: 0, y: 0 });
   const [spaceDown, setSpaceDown] = useState(false);
   const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
@@ -189,6 +233,22 @@ export default function RoofIntelligenceStudio() {
   }, [analysis]);
 
   const selectedPlane = getSelectedPlane(state);
+  const reportPages = useMemo(() => {
+    if (!calibrated) return [];
+    return buildLayoutReportPages({
+      planes: state.planes,
+      metersPerUnit: state.metersPerUnit,
+      calibration: state.scaleCalibration,
+      dimensions: state.dimensionAnnotations,
+      panelPlacements: state.panelPlacements,
+      panelSpec: state.panelSpec,
+      structure: state.structure,
+      boqLines: state.boqLines,
+    });
+  }, [state, calibrated]);
+
+  const panelCount = state.panelPlacements.length;
+  const systemKw = panelSystemKw(state.panelPlacements, state.panelSpec.wattage);
 
   /* ---------------- history helpers ---------------- */
   const apply = useCallback((next: RoofStudioState) => {
@@ -199,6 +259,42 @@ export default function RoofIntelligenceStudio() {
   }, []);
   const doUndo = useCallback(() => setHistory((h) => undoHistory(h)), []);
   const doRedo = useCallback(() => setHistory((h) => redoHistory(h)), []);
+
+  const handleApplyCalibration = useCallback(() => {
+    if (!pendingCalibrationLine) return;
+    const result = applyScaleCalibration(
+      pendingCalibrationLine.start,
+      pendingCalibrationLine.end,
+      calibrationDistanceInput
+    );
+    if (!result) {
+      setMeasureResult("Could not parse distance. Try: 51 ft 9 in or 15 m");
+      return;
+    }
+    apply({
+      ...state,
+      metersPerUnit: result.metersPerUnit,
+      scaleCalibration: result.calibration,
+    });
+    setCalibrationDialogOpen(false);
+    setPendingCalibrationLine(null);
+    setMeasureResult(`Scale calibrated: ${result.calibration.inputLabel}`);
+  }, [pendingCalibrationLine, calibrationDistanceInput, state, apply]);
+
+  const handleAutoFillPanels = useCallback(() => {
+    if (!calibrated) return;
+    const plane = selectedPlane ?? state.planes[state.planes.length - 1];
+    if (!plane) {
+      setMeasureResult("Draw a roof plane first.");
+      return;
+    }
+    const filled = autoFillPanelsOnPlane(plane, state.panelSpec, state.metersPerUnit, state.panelSpec.orientation);
+    const other = state.panelPlacements.filter((p) => p.planeId !== plane.id);
+    const placements = [...other, ...filled];
+    const boqLines = boqFromPlacements(placements, state.structure, state.panelSpec.wattage);
+    apply({ ...state, panelPlacements: placements, boqLines });
+    setMeasureResult(`Auto-filled ${filled.length} panels on ${plane.name}.`);
+  }, [calibrated, selectedPlane, state, apply]);
 
   /* ---------------- lock guards (UI-level enforcement) ---------------- */
   const warnLocked = useCallback((layerLabel: string) => {
@@ -301,7 +397,12 @@ export default function RoofIntelligenceStudio() {
       return;
     }
     if (tool === "measure-area") {
-      setMeasureResult(`Area: ${fmt(measureAreaM2(pts, state.metersPerUnit), 2)} m²`);
+      const areaResult = tryMeasureAreaM2(pts, state.metersPerUnit);
+      if (!areaResult.ok) {
+        setMeasureResult(areaResult.message);
+        return;
+      }
+      setMeasureResult(`Area: ${fmt(areaResult.areaM2, 2)} m²`);
       return;
     }
     const targetPlane = selectedPlane ?? state.planes[state.planes.length - 1];
@@ -363,6 +464,18 @@ export default function RoofIntelligenceStudio() {
     const snapped = snap(world);
 
     if (tool === "select") {
+      if (calibrated && isLayerVisible(state, "panels")) {
+        const panelHit = hitTestPanel(state.panelPlacements, state.panelSpec, state.metersPerUnit, world);
+        if (panelHit) {
+          apply(state);
+          panelDragRef.current = {
+            panelId: panelHit.id,
+            offsetX: world.x - panelHit.x,
+            offsetY: world.y - panelHit.y,
+          };
+          return;
+        }
+      }
       const hit = hitTestVertex(world);
       if (hit) {
         apply(state); // push pre-drag baseline so one undo reverts the whole drag
@@ -371,6 +484,29 @@ export default function RoofIntelligenceStudio() {
       }
       const planeHit = hitTestPlane(world);
       apply({ ...state, selectedPlaneId: planeHit?.id ?? null });
+      return;
+    }
+
+    if (tool === "panel-place") {
+      if (!calibrated) {
+        setMeasureResult("Calibrate scale before placing panels.");
+        return;
+      }
+      if (isToolLayerLocked(tool)) return;
+      const plane = hitTestPlane(world) ?? selectedPlane;
+      if (!plane) {
+        setMeasureResult("Click on a roof plane to place a panel.");
+        return;
+      }
+      const placements = addPanelAt(
+        state.panelPlacements,
+        plane.id,
+        snapped.x,
+        snapped.y,
+        state.panelSpec.orientation
+      );
+      const boqLines = boqFromPlacements(placements, state.structure, state.panelSpec.wattage);
+      apply({ ...state, panelPlacements: placements, boqLines });
       return;
     }
 
@@ -390,7 +526,7 @@ export default function RoofIntelligenceStudio() {
       return;
     }
 
-    if (SEGMENT_TOOLS.includes(tool) || tool === "obstacle-rect" || tool === "obstacle-circle") {
+    if (SEGMENT_TOOLS.includes(tool) || tool === "obstacle-rect" || tool === "obstacle-circle" || tool === "structure-foundation") {
       setDragShape({ start: snapped, end: snapped });
       return;
     }
@@ -428,6 +564,19 @@ export default function RoofIntelligenceStudio() {
       return;
     }
 
+    if (panelDragRef.current) {
+      const { panelId, offsetX, offsetY } = panelDragRef.current;
+      const snapped = snap(world);
+      const placements = movePanelPlacement(
+        state.panelPlacements,
+        panelId,
+        snapped.x - offsetX,
+        snapped.y - offsetY
+      );
+      setPresentTransient({ ...state, panelPlacements: placements });
+      return;
+    }
+
     if (dragShape) {
       setDragShape({ start: dragShape.start, end: snap(world) });
     }
@@ -444,6 +593,12 @@ export default function RoofIntelligenceStudio() {
       apply(state); // commit final position
       return;
     }
+    if (panelDragRef.current) {
+      panelDragRef.current = null;
+      const boqLines = boqFromPlacements(state.panelPlacements, state.structure, state.panelSpec.wattage);
+      apply({ ...state, boqLines });
+      return;
+    }
     if (dragShape) {
       commitDragShape(dragShape);
       setDragShape(null);
@@ -452,8 +607,70 @@ export default function RoofIntelligenceStudio() {
 
   const commitDragShape = (shape: { start: Point2D; end: Point2D }) => {
     const { start, end } = shape;
+    const len = Math.hypot(end.x - start.x, end.y - start.y);
+
+    if (tool === "calibrate-scale") {
+      if (len < 2) return;
+      setPendingCalibrationLine({ start, end });
+      setCalibrationDialogOpen(true);
+      return;
+    }
+
+    if (tool === "dimension-line") {
+      if (!calibrated) {
+        setMeasureResult("Calibrate scale before adding dimensions.");
+        return;
+      }
+      if (isToolLayerLocked(tool)) return;
+      if (len < 2) return;
+      apply({ ...state, dimensionAnnotations: addDimension(state.dimensionAnnotations, start, end) });
+      return;
+    }
+
+    const structureType =
+      tool === "structure-h-beam"
+        ? "h-beam"
+        : tool === "structure-c-channel"
+          ? "c-channel"
+          : tool === "structure-column"
+            ? "column"
+            : tool === "structure-foundation"
+              ? "foundation"
+              : null;
+
+    if (structureType) {
+      if (!calibrated) {
+        setMeasureResult("Calibrate scale before adding structure members.");
+        return;
+      }
+      if (isToolLayerLocked(tool)) return;
+      let memberStart = start;
+      let memberEnd = end;
+      if (structureType === "column" && len < 2) {
+        memberEnd = { x: start.x + 1, y: start.y };
+      }
+      if (structureType === "foundation") {
+        const x = Math.min(start.x, end.x);
+        const y = Math.min(start.y, end.y);
+        const w = Math.abs(end.x - start.x);
+        const h = Math.abs(end.y - start.y);
+        if (w < 2 || h < 2) return;
+        memberStart = { x, y };
+        memberEnd = { x: x + w, y: y + h };
+      } else if (len < 2) {
+        return;
+      }
+      const structure = addStructureMember(state.structure, structureType, memberStart, memberEnd);
+      const boqLines =
+        state.panelPlacements.length > 0
+          ? boqFromPlacements(state.panelPlacements, structure, state.panelSpec.wattage)
+          : state.boqLines;
+      apply({ ...state, structure, boqLines });
+      return;
+    }
+
     if (tool === "ridge" || tool === "valley") {
-      if (Math.hypot(end.x - start.x, end.y - start.y) < 2) return;
+      if (len < 2) return;
       const targetPlane = selectedPlane ?? state.planes[state.planes.length - 1];
       if (!targetPlane) {
         setMeasureResult("Draw a roof plane first.");
@@ -465,6 +682,10 @@ export default function RoofIntelligenceStudio() {
       return;
     }
     if (tool === "measure-distance") {
+      if (!calibrated) {
+        setMeasureResult("Calibrate scale first for real-world distance.");
+        return;
+      }
       setMeasureResult(`Distance: ${fmt(measureDistanceM(start, end, state.metersPerUnit), 2)} m`);
       return;
     }
@@ -625,18 +846,6 @@ export default function RoofIntelligenceStudio() {
         if (b.length >= 3) ctx.fill();
         ctx.stroke();
 
-        // panels layer: shade usable area + estimate label from engine metrics
-        const metrics = planeMetrics.get(plane.id);
-        if (isLayerVisible(state, "panels") && metrics && metrics.netUsableAreaM2 > 0 && b.length >= 3) {
-          const c = centroidScreen(b, S);
-          const panels = Math.floor(metrics.netUsableAreaM2 / 2.58);
-          ctx.fillStyle = "rgba(56,189,248,0.85)";
-          ctx.font = "bold 12px ui-sans-serif, system-ui";
-          ctx.textAlign = "center";
-          ctx.fillText(`${panels} panels · ${fmt(metrics.netUsableAreaM2, 1)} m²`, c.x, c.y);
-          ctx.textAlign = "start";
-        }
-
         // vertices
         if (isSel && isLayerVisible(state, "plane")) {
           for (const v of b) {
@@ -651,12 +860,14 @@ export default function RoofIntelligenceStudio() {
           }
         }
 
-        // obstacles + clearance
+        // obstacles + clearance (scale required for clearance geometry)
         if (isLayerVisible(state, "obstacle")) {
           for (const o of plane.obstacles) {
             drawPolygon(ctx, o.vertices, S, "rgba(244,63,94,0.28)", "rgba(251,113,133,0.95)");
-            const clearance = obstacleClearancePreview(plane, o, state.metersPerUnit);
-            drawPolygonDashed(ctx, clearance, S, "rgba(251,146,60,0.8)");
+            if (calibrated) {
+              const clearance = obstacleClearancePreview(plane, o, state.metersPerUnit);
+              drawPolygonDashed(ctx, clearance, S, "rgba(251,146,60,0.8)");
+            }
           }
         }
         if (isLayerVisible(state, "walkway")) {
@@ -672,6 +883,68 @@ export default function RoofIntelligenceStudio() {
           for (const v of plane.valleys) drawSegment(ctx, v, S, "rgba(59,130,246,0.95)");
         }
       }
+    }
+
+    // placed panels (exact dimensions, no area guess)
+    if (calibrated && isLayerVisible(state, "panels")) {
+      for (const placement of state.panelPlacements) {
+        const { w, h } = panelFootprintUnits(state.panelSpec, placement.orientation, state.metersPerUnit);
+        const verts = rectVertices(placement.x, placement.y, w, h);
+        drawPolygon(ctx, verts, S, "rgba(34,211,238,0.35)", "rgba(34,211,238,0.95)");
+      }
+    }
+
+    // dimension annotations
+    if (calibrated && isLayerVisible(state, "measurements")) {
+      for (const dim of state.dimensionAnnotations) {
+        drawSegment(ctx, { id: dim.id, name: "", start: dim.start, end: dim.end }, S, "rgba(250,204,21,0.95)");
+        const mid = S({ x: (dim.start.x + dim.end.x) / 2, y: (dim.start.y + dim.end.y) / 2 });
+        ctx.fillStyle = "rgba(253,224,71,0.95)";
+        ctx.font = "bold 11px ui-sans-serif, system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText(dimensionLabel(dim, state.metersPerUnit), mid.x, mid.y - 6);
+        ctx.textAlign = "start";
+      }
+    }
+
+    // elevated structure members
+    if (calibrated && isLayerVisible(state, "structure")) {
+      for (const member of state.structure.members) {
+        if (member.type === "foundation") {
+          const x = Math.min(member.start.x, member.end.x);
+          const y = Math.min(member.start.y, member.end.y);
+          const w = Math.abs(member.end.x - member.start.x);
+          const h = Math.abs(member.end.y - member.start.y);
+          drawPolygon(ctx, rectVertices(x, y, w, h), S, "rgba(168,85,247,0.2)", "rgba(192,132,252,0.9)");
+        } else if (member.type === "column") {
+          const c = S(member.start);
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, 6, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(251,146,60,0.9)";
+          ctx.fill();
+        } else {
+          const color = member.type === "h-beam" ? "rgba(251,146,60,0.95)" : "rgba(167,139,250,0.95)";
+          drawSegment(ctx, member, S, color);
+        }
+      }
+    }
+
+    // scale calibration reference line
+    if (state.scaleCalibration) {
+      drawSegment(
+        ctx,
+        { id: "cal", name: "", start: state.scaleCalibration.lineStart, end: state.scaleCalibration.lineEnd },
+        S,
+        "rgba(52,211,153,0.95)"
+      );
+    }
+    if (pendingCalibrationLine) {
+      drawSegment(
+        ctx,
+        { id: "cal-pending", name: "", start: pendingCalibrationLine.start, end: pendingCalibrationLine.end },
+        S,
+        "rgba(251,191,36,0.9)"
+      );
     }
 
     // draft polygon
@@ -701,23 +974,54 @@ export default function RoofIntelligenceStudio() {
 
     // drag shape preview
     if (dragShape) {
-      if (tool === "obstacle-rect" || tool === "parapet") {
+      if (tool === "obstacle-rect" || tool === "parapet" || tool === "structure-foundation") {
         const x = Math.min(dragShape.start.x, dragShape.end.x);
         const y = Math.min(dragShape.start.y, dragShape.end.y);
-        drawPolygonDashed(ctx, rectVertices(x, y, Math.abs(dragShape.end.x - dragShape.start.x), Math.abs(dragShape.end.y - dragShape.start.y)), S, "rgba(251,113,133,0.9)");
+        const color =
+          tool === "structure-foundation" ? "rgba(192,132,252,0.9)" : "rgba(251,113,133,0.9)";
+        drawPolygonDashed(
+          ctx,
+          rectVertices(x, y, Math.abs(dragShape.end.x - dragShape.start.x), Math.abs(dragShape.end.y - dragShape.start.y)),
+          S,
+          color
+        );
       } else if (tool === "obstacle-circle") {
         const radius = Math.hypot(dragShape.end.x - dragShape.start.x, dragShape.end.y - dragShape.start.y);
         drawPolygonDashed(ctx, circleVertices(dragShape.start.x, dragShape.start.y, radius), S, "rgba(251,113,133,0.9)");
       } else {
-        drawSegment(ctx, { id: "draft", name: "", start: dragShape.start, end: dragShape.end }, S, "rgba(226,232,240,0.9)");
+        const color =
+          tool === "calibrate-scale"
+            ? "rgba(52,211,153,0.95)"
+            : tool === "dimension-line"
+              ? "rgba(250,204,21,0.95)"
+              : tool.startsWith("structure-")
+                ? "rgba(251,146,60,0.95)"
+                : "rgba(226,232,240,0.9)";
+        drawSegment(ctx, { id: "draft", name: "", start: dragShape.start, end: dragShape.end }, S, color);
       }
     }
 
     // north arrow + compass
     if (isLayerVisible(state, "north")) drawNorthArrow(ctx, w, state.northAzimuthDeg);
     // scale ruler
-    drawScaleRuler(ctx, h, viewport.scale, state.metersPerUnit);
-  }, [canvasSize, showGrid, state, viewport, worldToScreen, draftPoints, dragShape, tool, cursorWorld, snap, planeMetrics, bgImage, bgOpacity]);
+    drawScaleRuler(ctx, h, viewport.scale, state.metersPerUnit, calibrated);
+  }, [
+    canvasSize,
+    showGrid,
+    state,
+    viewport,
+    worldToScreen,
+    draftPoints,
+    dragShape,
+    tool,
+    cursorWorld,
+    snap,
+    planeMetrics,
+    bgImage,
+    bgOpacity,
+    calibrated,
+    pendingCalibrationLine,
+  ]);
 
   useEffect(() => {
     draw();
@@ -748,7 +1052,7 @@ export default function RoofIntelligenceStudio() {
               </span>
             </div>
             <p className="mt-1 text-xs text-slate-400 max-w-2xl">
-              Professional rooftop CAD. All areas, pitch, azimuth, orientation and capacity are computed live by the RoofGeometryEngine. Uploaded imagery stays on your device. No save, API, AI, or PDF.
+              Measurement-calibrated rooftop CAD. Draw a known-distance line to set scale (Google Earth ruler style), then dimension, place panels, and build elevated structure. No AI guessing. Draft only — no save or PDF export.
             </p>
           </div>
         </div>
@@ -756,22 +1060,29 @@ export default function RoofIntelligenceStudio() {
 
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 p-2">
-        {(["nav", "roof", "features", "measure"] as const).map((group) => (
+        {(["nav", "calibrate", "roof", "features", "panels", "structure", "measure"] as const).map((group) => (
           <div key={group} className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
             {TOOLS.filter((t) => t.group === group).map((t) => {
               const Icon = t.icon;
               const active = tool === t.id;
+              const scaleRequired = t.group === "panels" || t.group === "structure";
+              const disabled = scaleRequired && !calibrated;
               return (
                 <button
                   key={t.id}
                   type="button"
-                  title={t.label}
+                  title={disabled ? "Calibrate scale before placing panels." : t.label}
+                  disabled={disabled}
                   onClick={() => {
+                    if (disabled) {
+                      setMeasureResult("Calibrate scale before placing panels.");
+                      return;
+                    }
                     setTool(t.id);
                     setDraftPoints([]);
                     setDragShape(null);
                   }}
-                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold transition ${
+                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold transition disabled:opacity-30 disabled:cursor-not-allowed ${
                     active ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-slate-800"
                   }`}
                 >
@@ -928,8 +1239,8 @@ export default function RoofIntelligenceStudio() {
             <span>Zoom {Math.round(viewport.scale * 100)}%</span>
             <span>x {fmt(cursorWorld.x, 0)} · y {fmt(cursorWorld.y, 0)}</span>
             <span>Selected: {selectedPlane ? selectedPlane.name : "none"}</span>
-            <span>Area: {statistics ? `${fmt(statistics.grossAreaM2, 1)} m²` : "—"}</span>
-            <span>Scale: 1u = {fmt(state.metersPerUnit, 3)} m</span>
+            <span>Area: {calibrated && statistics ? `${fmt(statistics.grossAreaM2, 1)} m²` : "—"}</span>
+            <span>Scale: {calibrated ? `1u = ${fmt(state.metersPerUnit, 4)} m` : "not calibrated"}</span>
             <span>North: {fmt(state.northAzimuthDeg, 0)}°</span>
             {bgImage && <span className="text-cyan-300/80">img: {bgImage.fileName}</span>}
             {measureResult && <span className="text-cyan-300">{measureResult}</span>}
@@ -939,6 +1250,16 @@ export default function RoofIntelligenceStudio() {
 
         {/* right sidebar */}
         <div className="xl:col-span-3 space-y-3">
+          <CalibrationBanner
+            calibrated={calibrated}
+            calibration={state.scaleCalibration}
+            metersPerUnit={state.metersPerUnit}
+            onOpenCalibrate={() => {
+              setTool("calibrate-scale");
+              setMeasureResult("Draw a line over a known roof distance, then enter the real length.");
+            }}
+          />
+
           {selectedPlane && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
               <div className="flex items-center justify-between">
@@ -956,18 +1277,19 @@ export default function RoofIntelligenceStudio() {
                   <input type="number" min={0} max={360} disabled={planeLocked} value={selectedPlane.azimuthDeg} onChange={(e) => apply(updatePlane(state, selectedPlane.id, { azimuthDeg: Number(e.target.value) }))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white disabled:opacity-40" />
                 </label>
               </div>
-              {(() => {
-                const m = planeMetrics.get(selectedPlane.id);
-                if (!m) return null;
-                return (
-                  <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                    <Stat label="Orientation" value={m.orientation} />
-                    <Stat label="Slope" value={`${fmt(m.pitchDeg, 0)}°`} />
-                    <Stat label="Usable" value={`${fmt(m.netUsableAreaM2, 1)} m²`} />
-                    <Stat label="True area" value={`${fmt(m.trueAreaM2, 1)} m²`} />
-                  </div>
-                );
-              })()}
+              {calibrated &&
+                (() => {
+                  const m = planeMetrics.get(selectedPlane.id);
+                  if (!m) return null;
+                  return (
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                      <Stat label="Orientation" value={m.orientation} />
+                      <Stat label="Slope" value={`${fmt(m.pitchDeg, 0)}°`} />
+                      <Stat label="Usable" value={`${fmt(m.netUsableAreaM2, 1)} m²`} />
+                      <Stat label="True area" value={`${fmt(m.trueAreaM2, 1)} m²`} />
+                    </div>
+                  );
+                })()}
               <div className="flex gap-1.5">
                 <button type="button" disabled={planeLocked} onClick={insertVertexAtCursor} className="flex-1 rounded-lg border border-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40">Insert point</button>
                 <button type="button" disabled={planeLocked} onClick={deleteSelectedPlane} className="flex-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] font-bold text-rose-300 disabled:opacity-40">Delete plane</button>
@@ -978,7 +1300,11 @@ export default function RoofIntelligenceStudio() {
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
             <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Roof Statistics</h3>
-            {analysis.error ? (
+            {!calibrated ? (
+              <p className="text-[11px] text-amber-400/90">
+                Calibrate scale to unlock area, panel capacity, and BOQ. Draw a roof plane first, then use Calibrate Scale.
+              </p>
+            ) : analysis.error ? (
               <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-2 text-[11px] text-rose-300">
                 <p className="font-bold">Validation error: {analysis.error.errorCode}</p>
                 <p>{analysis.error.message}</p>
@@ -990,15 +1316,15 @@ export default function RoofIntelligenceStudio() {
                 <Stat label="Usable area" value={`${fmt(statistics.usableAreaM2, 1)} m²`} big />
                 <Stat label="True area" value={`${fmt(statistics.trueAreaM2, 1)} m²`} />
                 <Stat label="Obstacle %" value={`${fmt(statistics.obstaclePercent, 1)}%`} />
-                <Stat label="Panel estimate" value={`${statistics.panelEstimate}`} />
-                <Stat label="Capacity" value={`${fmt(statistics.capacityKw, 2)} kW`} />
+                <Stat label="Placed panels" value={`${panelCount}`} />
+                <Stat label="Placed kW" value={`${fmt(systemKw, 2)} kW`} />
                 <Stat label="Planes" value={`${statistics.planeCount}`} />
               </div>
             ) : (
               <p className="text-[11px] text-slate-500">Draw a closed roof plane (≥3 points) to see live statistics.</p>
             )}
 
-            {statistics && statistics.warnings.length > 0 && (
+            {calibrated && statistics && statistics.warnings.length > 0 && (
               <ul className="space-y-1 border-t border-slate-800 pt-2">
                 {statistics.warnings.map((w) => (
                   <li key={w} className="text-[10px] text-amber-400/90">• {w}</li>
@@ -1006,6 +1332,68 @@ export default function RoofIntelligenceStudio() {
               </ul>
             )}
           </div>
+
+          {calibrated && state.dimensionAnnotations.length > 0 && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Dimensions</h3>
+              <ul className="space-y-2">
+                {state.dimensionAnnotations.map((dim) => (
+                  <li key={dim.id} className="text-[10px]">
+                    <div className="text-slate-500">{dimensionLabel(dim, state.metersPerUnit)}</div>
+                    <input
+                      value={dim.labelOverride ?? ""}
+                      placeholder="Manual label override"
+                      onChange={(e) =>
+                        setPresentTransient({
+                          ...state,
+                          dimensionAnnotations: updateDimensionLabel(state.dimensionAnnotations, dim.id, e.target.value),
+                        })
+                      }
+                      onBlur={(e) =>
+                        apply({
+                          ...state,
+                          dimensionAnnotations: updateDimensionLabel(state.dimensionAnnotations, dim.id, e.target.value),
+                        })
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <PanelSpecEditor
+            spec={state.panelSpec}
+            calibrated={calibrated}
+            onChange={(panelSpec) => apply({ ...state, panelSpec })}
+            onAutoFill={handleAutoFillPanels}
+            panelCount={panelCount}
+            systemKw={systemKw}
+          />
+
+          <StructureEditor
+            structure={state.structure}
+            calibrated={calibrated}
+            onChange={(structure) => {
+              const boqLines =
+                state.panelPlacements.length > 0
+                  ? boqFromPlacements(state.panelPlacements, structure, state.panelSpec.wattage)
+                  : state.boqLines;
+              apply({ ...state, structure, boqLines });
+            }}
+          />
+
+          <BoqEditor
+            lines={state.boqLines}
+            calibrated={calibrated}
+            onUpdate={(result) => {
+              if (result.warning) setMeasureResult(result.warning);
+              apply({ ...state, boqLines: result.lines });
+            }}
+          />
+
+          <ReportPreview pages={reportPages} calibrated={calibrated} />
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 space-y-2">
             <div className="flex items-center gap-2">
@@ -1015,12 +1403,20 @@ export default function RoofIntelligenceStudio() {
             <label className="block text-[10px] text-slate-500">North azimuth°
               <input type="number" value={state.northAzimuthDeg} onChange={(e) => apply({ ...state, northAzimuthDeg: Number(e.target.value) || 0 })} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white" />
             </label>
-            <label className="block text-[10px] text-slate-500">Scale (meters per unit)
-              <input type="number" step={0.005} value={state.metersPerUnit} onChange={(e) => apply({ ...state, metersPerUnit: Number(e.target.value) || 0.05 })} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white" />
-            </label>
           </div>
         </div>
       </div>
+
+      <CalibrationDialog
+        open={calibrationDialogOpen}
+        distanceInput={calibrationDistanceInput}
+        onDistanceChange={setCalibrationDistanceInput}
+        onApply={handleApplyCalibration}
+        onCancel={() => {
+          setCalibrationDialogOpen(false);
+          setPendingCalibrationLine(null);
+        }}
+      />
     </div>
   );
 }
@@ -1114,12 +1510,24 @@ function drawNorthArrow(ctx: CanvasRenderingContext2D, canvasWidth: number, nort
   ctx.textAlign = "start";
 }
 
-function drawScaleRuler(ctx: CanvasRenderingContext2D, canvasHeight: number, scale: number, metersPerUnit: number) {
+function drawScaleRuler(
+  ctx: CanvasRenderingContext2D,
+  canvasHeight: number,
+  scale: number,
+  metersPerUnit: number,
+  calibrated: boolean
+) {
+  const y = canvasHeight - 24;
+  const x = 20;
+  if (!calibrated || metersPerUnit <= 0) {
+    ctx.fillStyle = "rgba(251,191,36,0.85)";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("Scale not calibrated", x, y - 8);
+    return;
+  }
   const targetPx = 120;
   const worldUnits = targetPx / scale;
   const meters = worldUnits * metersPerUnit;
-  const y = canvasHeight - 24;
-  const x = 20;
   ctx.strokeStyle = "rgba(226,232,240,0.7)";
   ctx.lineWidth = 2;
   ctx.beginPath();
