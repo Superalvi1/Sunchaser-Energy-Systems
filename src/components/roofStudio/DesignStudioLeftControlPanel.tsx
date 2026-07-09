@@ -34,6 +34,11 @@ import {
   type DesignStudioLiveResults,
   type LayoutAlignment,
 } from "../../lib/sunchaserDesignStudioClient";
+import {
+  MAP_PROVIDER_NOT_CONNECTED,
+  locateProperty,
+  type LocatePropertyResult,
+} from "../../lib/designStudioMapProviders";
 import { isPlaneComplete, type RoofStudioState, type StudioPlane } from "../../lib/roofStudioClient";
 import { formatMeters } from "../../lib/roofStudioCalibration";
 import type { PanelOrientationPolicy } from "../../../server/solar/panel/PanelLayoutModels.ts";
@@ -99,6 +104,14 @@ export interface DesignStudioLeftControlPanelProps {
   customerName: string;
   address: string;
   onAddressChange: (value: string) => void;
+  latText: string;
+  lngText: string;
+  onLatChange: (value: string) => void;
+  onLngChange: (value: string) => void;
+  onGpsCommit: () => void;
+  gpsError: string | null;
+  locateMessage: string | null;
+  onLocateResult: (result: LocatePropertyResult) => void;
   phone: string;
   sanctionedLoad: string;
   controls: DesignStudioControls;
@@ -134,6 +147,14 @@ export default function DesignStudioLeftControlPanel({
   customerName,
   address,
   onAddressChange,
+  latText,
+  lngText,
+  onLatChange,
+  onLngChange,
+  onGpsCommit,
+  gpsError,
+  locateMessage,
+  onLocateResult,
   phone,
   sanctionedLoad,
   controls,
@@ -196,20 +217,76 @@ export default function DesignStudioLeftControlPanel({
           <Phone className="h-3 w-3 inline mr-1 text-slate-500" />
           {phone}
         </p>
-        <label className="mt-2 block text-[10px] text-slate-500">
-          Site address
+        <p className="mt-1 text-[9px] text-slate-500 flex items-center gap-1">
+          <Zap className="h-3 w-3" /> Sanctioned load: {sanctionedLoad}
+        </p>
+      </Section>
+
+      <Section title="Property Location" icon={MapPin}>
+        <label className="block text-[10px] text-slate-500" data-testid="property-location-address">
+          Address
           <input
             value={address}
             onChange={(e) => onAddressChange(e.target.value)}
             placeholder="Street, area, city"
             className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white"
+            data-testid="property-location-address-input"
           />
         </label>
         <p className="mt-1 text-[9px] text-amber-300/90" data-testid="design-workspace-draft-only">
           {DESIGN_WORKSPACE_DRAFT_ONLY_LABEL}
         </p>
-        <p className="mt-1 text-[9px] text-slate-500 flex items-center gap-1">
-          <Zap className="h-3 w-3" /> Sanctioned load: {sanctionedLoad}
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="block text-[9px] text-slate-500">
+            Latitude
+            <input
+              value={latText}
+              onChange={(e) => onLatChange(e.target.value)}
+              onBlur={onGpsCommit}
+              placeholder="-90 to 90"
+              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs font-mono text-white"
+              data-testid="property-location-lat"
+            />
+          </label>
+          <label className="block text-[9px] text-slate-500">
+            Longitude
+            <input
+              value={lngText}
+              onChange={(e) => onLngChange(e.target.value)}
+              onBlur={onGpsCommit}
+              placeholder="-180 to 180"
+              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs font-mono text-white"
+              data-testid="property-location-lng"
+            />
+          </label>
+        </div>
+        {gpsError && (
+          <p className="mt-1 text-[10px] text-rose-400" data-testid="property-location-gps-error">
+            {gpsError}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            void locateProperty(address).then((result) => {
+              onLocateResult(result);
+            });
+          }}
+          className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[10px] font-bold text-slate-200 hover:bg-slate-800"
+          data-testid="property-location-locate"
+        >
+          Locate Property
+        </button>
+        {locateMessage && (
+          <p className="mt-1 text-[10px] text-amber-300/90" data-testid="property-location-locate-message">
+            {locateMessage}
+          </p>
+        )}
+        <p className="mt-1 text-[9px] text-slate-500">
+          Manual lat/lng allowed. Map geocoding requires a connected provider.
+        </p>
+        <p className="sr-only" data-testid="map-provider-not-connected-copy">
+          {MAP_PROVIDER_NOT_CONNECTED}
         </p>
       </Section>
 

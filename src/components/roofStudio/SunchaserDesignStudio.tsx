@@ -4,7 +4,7 @@
  * Draft only. No CRM mutation / save. Feature-flagged.
  */
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, DraftingCompass, MapPin, Phone, Sun, Zap } from "lucide-react";
 import type { Lead } from "../../types";
 import {
@@ -22,6 +22,11 @@ import {
   type DesignStudioLiveResults,
   type LayoutAlignment,
 } from "../../lib/sunchaserDesignStudioClient";
+import {
+  UPLOAD_OR_CONNECT_MAP_LABEL,
+  applyLocatePropertyResultToDraft,
+  type LocatePropertyResult,
+} from "../../lib/designStudioMapProviders";
 import type { RoofStudioState } from "../../lib/roofStudioClient";
 import { createInitialRoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
@@ -30,7 +35,11 @@ import RoofIntelligenceStudio, {
 } from "./RoofIntelligenceStudio";
 import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
 import DesignStudioLeftControlPanel from "./DesignStudioLeftControlPanel";
-import { DEFAULT_SITE_GEO, type SiteGeoReference } from "../../lib/roofStudioGeoReference";
+import {
+  DEFAULT_SITE_GEO,
+  parseOptionalGpsAnchor,
+  type SiteGeoReference,
+} from "../../lib/roofStudioGeoReference";
 import { formatLeadLocation, sanitizeLeadLocationInput } from "../../lib/leadDisplay";
 
 export interface SunchaserDesignStudioProps {
@@ -61,6 +70,14 @@ export default function SunchaserDesignStudio({
   sanctionedLoad,
 }: SunchaserDesignStudioProps) {
   const [address, setAddress] = useState(() => initialAddress(lead));
+  const [latText, setLatText] = useState("");
+  const [lngText, setLngText] = useState("");
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [locateMessage, setLocateMessage] = useState<string | null>(null);
+  const [geoSeed, setGeoSeed] = useState<SiteGeoReference>(() => ({
+    ...DEFAULT_SITE_GEO,
+    siteLabel: lead.name || "",
+  }));
   const [controls, setControls] = useState<DesignStudioControls>(() => ({
     ...DEFAULT_DESIGN_CONTROLS,
   }));
@@ -78,13 +95,30 @@ export default function SunchaserDesignStudio({
   const customerPhone = displayCustomerPhone(lead.phone);
   const sanctionedDisplay = resolveSanctionedLoad(lead, sanctionedLoad);
 
-  const geoSeed: SiteGeoReference = useMemo(
-    () => ({
-      ...DEFAULT_SITE_GEO,
-      siteLabel: address.trim() || lead.name || "",
-    }),
+  const commitGps = useCallback(
+    (nextLat: string, nextLng: string) => {
+      const parsed = parseOptionalGpsAnchor(nextLat, nextLng);
+      if (!parsed.ok) {
+        setGpsError(parsed.error);
+        return;
+      }
+      setGpsError(null);
+      setGeoSeed((prev) => ({
+        ...prev,
+        siteLabel: address.trim() || lead.name || prev.siteLabel,
+        latitude: parsed.anchor?.latitude ?? null,
+        longitude: parsed.anchor?.longitude ?? null,
+      }));
+    },
     [address, lead.name]
   );
+
+  useEffect(() => {
+    setGeoSeed((prev) => ({
+      ...prev,
+      siteLabel: address.trim() || lead.name || prev.siteLabel,
+    }));
+  }, [address, lead.name]);
 
   const project: ProjectDesignContext = useMemo(
     () => ({
@@ -198,6 +232,21 @@ export default function SunchaserDesignStudio({
     [layoutResult]
   );
 
+  const handleLocateResult = useCallback(
+    (result: LocatePropertyResult) => {
+      if (!result.ok) {
+        setLocateMessage(result.message);
+        return;
+      }
+      const next = applyLocatePropertyResultToDraft({ latText, lngText }, result);
+      setLatText(next.latText);
+      setLngText(next.lngText);
+      setLocateMessage(null);
+      commitGps(next.latText, next.lngText);
+    },
+    [latText, lngText, commitGps]
+  );
+
   const showGuidedEmpty = !studioSnap.hasImage;
 
   return (
@@ -279,6 +328,14 @@ export default function SunchaserDesignStudio({
             customerName={lead.name || "Customer"}
             address={address}
             onAddressChange={setAddress}
+            latText={latText}
+            lngText={lngText}
+            onLatChange={setLatText}
+            onLngChange={setLngText}
+            onGpsCommit={() => commitGps(latText, lngText)}
+            gpsError={gpsError}
+            locateMessage={locateMessage}
+            onLocateResult={handleLocateResult}
             phone={customerPhone}
             sanctionedLoad={sanctionedDisplay}
             controls={controls}
@@ -308,18 +365,23 @@ export default function SunchaserDesignStudio({
 
         <div className="xl:col-span-5 space-y-2">
           {showGuidedEmpty && (
-            <div className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center">
+            <div
+              className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center"
+              data-testid="property-location-map-placeholder"
+            >
               <Sun className="mx-auto h-8 w-8 text-amber-400/80" />
-              <h3 className="mt-2 text-sm font-bold text-white">Start with a roof image</h3>
+              <h3 className="mt-2 text-sm font-bold text-white">{UPLOAD_OR_CONNECT_MAP_LABEL}</h3>
               <p className="mt-1 text-[11px] text-slate-400 max-w-md mx-auto">
-                Blank CAD is disabled. Upload a Google Earth / satellite rooftop image, calibrate scale with a known distance, then draw the roof.
+                Blank CAD is disabled. No satellite provider connected. Upload a roof image, calibrate scale with a known
+                distance, then draw the roof.
               </p>
               <button
                 type="button"
                 onClick={() => studioApiRef.current?.openImagePicker()}
                 className="mt-3 inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400"
+                data-testid="use-uploaded-image"
               >
-                Upload roof image
+                Use Uploaded Image
               </button>
             </div>
           )}

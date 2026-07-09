@@ -24,6 +24,11 @@ import {
   type DesignStudioLiveResults,
   type LayoutAlignment,
 } from "../../lib/sunchaserDesignStudioClient";
+import {
+  UPLOAD_OR_CONNECT_MAP_LABEL,
+  applyLocatePropertyResultToDraft,
+  type LocatePropertyResult,
+} from "../../lib/designStudioMapProviders";
 import { createInitialRoofStudioState, type RoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
   type ProjectDesignContext,
@@ -70,6 +75,7 @@ export default function ProjectDesignWorkspace({
   const [latText, setLatText] = useState("");
   const [lngText, setLngText] = useState("");
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [locateMessage, setLocateMessage] = useState<string | null>(null);
   const [geoSeed, setGeoSeed] = useState<SiteGeoReference>(() => ({
     ...DEFAULT_SITE_GEO,
     siteLabel: lead.name || "",
@@ -93,6 +99,7 @@ export default function ProjectDesignWorkspace({
     setLatText("");
     setLngText("");
     setGpsError(null);
+    setLocateMessage(null);
     setGeoSeed({
       ...DEFAULT_SITE_GEO,
       siteLabel: lead.name || "",
@@ -227,6 +234,21 @@ export default function ProjectDesignWorkspace({
     [layoutResult]
   );
 
+  const handleLocateResult = useCallback(
+    (result: LocatePropertyResult) => {
+      if (!result.ok) {
+        setLocateMessage(result.message);
+        return;
+      }
+      const next = applyLocatePropertyResultToDraft({ latText, lngText }, result);
+      setLatText(next.latText);
+      setLngText(next.lngText);
+      setLocateMessage(null);
+      commitGps(next.latText, next.lngText);
+    },
+    [latText, lngText, commitGps]
+  );
+
   return (
     <div className="space-y-4 text-left fade-in-entry">
       <div className="relative overflow-hidden rounded-3xl border border-amber-500/25 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/20 p-4 shadow-xl">
@@ -249,30 +271,6 @@ export default function ProjectDesignWorkspace({
             </p>
           </div>
         </div>
-
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label className="block text-[10px] text-slate-500">
-            Latitude (optional)
-            <input
-              value={latText}
-              onChange={(e) => setLatText(e.target.value)}
-              onBlur={() => commitGps(latText, lngText)}
-              placeholder="e.g. 31.5204"
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm font-mono text-white"
-            />
-          </label>
-          <label className="block text-[10px] text-slate-500">
-            Longitude (optional)
-            <input
-              value={lngText}
-              onChange={(e) => setLngText(e.target.value)}
-              onBlur={() => commitGps(latText, lngText)}
-              placeholder="e.g. 74.3587"
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm font-mono text-white"
-            />
-          </label>
-        </div>
-        {gpsError && <p className="mt-1 text-[10px] text-rose-400">{gpsError}</p>}
       </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
@@ -281,6 +279,14 @@ export default function ProjectDesignWorkspace({
             customerName={lead.name || "Customer"}
             address={address}
             onAddressChange={setAddress}
+            latText={latText}
+            lngText={lngText}
+            onLatChange={setLatText}
+            onLngChange={setLngText}
+            onGpsCommit={() => commitGps(latText, lngText)}
+            gpsError={gpsError}
+            locateMessage={locateMessage}
+            onLocateResult={handleLocateResult}
             phone={customerPhone}
             sanctionedLoad={sanctionedDisplay}
             controls={controls}
@@ -310,12 +316,24 @@ export default function ProjectDesignWorkspace({
 
         <div className="xl:col-span-5 space-y-2">
           {!studioSnap.hasImage && (
-            <div className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center">
+            <div
+              className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center"
+              data-testid="property-location-map-placeholder"
+            >
               <Sun className="mx-auto h-8 w-8 text-amber-400/80" />
-              <h3 className="mt-2 text-sm font-bold text-white">Start with a roof image</h3>
+              <h3 className="mt-2 text-sm font-bold text-white">{UPLOAD_OR_CONNECT_MAP_LABEL}</h3>
               <p className="mt-1 text-[11px] text-slate-400 max-w-md mx-auto">
-                Upload a Google Earth / satellite rooftop image from the left panel, calibrate scale, then draw the roof.
+                No satellite provider connected. Upload a roof image from the left panel, or enter coordinates manually.
+                Calibration is required before layout.
               </p>
+              <button
+                type="button"
+                onClick={() => studioApiRef.current?.openImagePicker()}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400"
+                data-testid="use-uploaded-image"
+              >
+                Use Uploaded Image
+              </button>
             </div>
           )}
           <RoofIntelligenceStudio

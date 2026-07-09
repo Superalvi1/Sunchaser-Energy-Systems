@@ -92,10 +92,11 @@ check("customer address is prefilled from lead.address then location", () => {
 check("blank canvas replaced by guided workflow copy in Design Studio UI", () => {
   const src = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
   return (
-    src.includes("Start with a roof image") &&
+    src.includes("UPLOAD_OR_CONNECT_MAP_LABEL") &&
     src.includes("Blank CAD is disabled") &&
     src.includes("DESIGN_STUDIO_GUIDED_STEPS") &&
-    src.includes("Upload roof image")
+    src.includes("Use Uploaded Image") &&
+    src.includes("property-location-map-placeholder")
   );
 });
 
@@ -711,6 +712,20 @@ check("right panel updates after valid auto layout via shared live results", () 
     workspace.includes("buildDesignStudioLiveResults") &&
     (run.layout.panelCount === 0 || live.status.panelLayoutReady) &&
     (run.layout.panelCount === 0 || live.panelCount === run.layout.panelCount)
+  );
+});
+
+check("left panel has Property Location section with draft-only address", () => {
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
+  const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  return (
+    left.includes('title="Property Location"') &&
+    left.includes("Locate Property") &&
+    left.includes("property-location-address") &&
+    left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
+    workspace.includes("latText") &&
+    workspace.includes("lngText") &&
+    workspace.includes("UPLOAD_OR_CONNECT_MAP_LABEL")
   );
 });
 
