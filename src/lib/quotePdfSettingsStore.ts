@@ -19,8 +19,27 @@ export type GlobalWatermarkValue = {
   repeat?: "no-repeat" | "repeat";
 };
 
+/**
+ * Browser-safe env read for Vite client code.
+ * Never references bare `process` (ReferenceError in browsers).
+ * Uses import.meta.env in Vite; falls back to globalThis.process.env on Node/server only.
+ */
+function readViteEnv(key: string): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+  const fromMeta = String(env[key] ?? "").trim();
+  if (fromMeta) return fromMeta;
+
+  const nodeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
+  if (nodeProcess?.env) {
+    return String(nodeProcess.env[key] ?? "").trim();
+  }
+  return "";
+}
+
 export function getSupabaseProjectUrlFromEnv(): string {
-  let url = process.env.SUPABASE_URL || "";
+  // Server runtime: SUPABASE_URL (dbManager convention). Browser build: VITE_SUPABASE_URL.
+  let url = readViteEnv("SUPABASE_URL") || readViteEnv("VITE_SUPABASE_URL");
+  if (!url) return "";
   if (url.endsWith("/rest/v1/")) url = url.slice(0, -"/rest/v1/".length);
   else if (url.endsWith("/rest/v1")) url = url.slice(0, -"/rest/v1".length);
   return url.replace(/\/$/, "");

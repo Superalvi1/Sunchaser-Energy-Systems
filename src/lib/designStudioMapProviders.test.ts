@@ -451,10 +451,12 @@ async function main() {
     const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
     return (
       left.includes('title="Property Location"') &&
-      left.includes('title="Satellite Image"') &&
+      left.includes('title="Site Image"') &&
+      !left.includes('title="Satellite Image"') &&
       left.includes("property-location-address") &&
       left.includes("property-location-provider-status") &&
       left.includes("Locate Property") &&
+      left.includes("Fetch Satellite Image") &&
       left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
       DESIGN_WORKSPACE_DRAFT_ONLY_LABEL === "Draft only — not saved to CRM."
     );
@@ -485,7 +487,7 @@ async function main() {
     return (
       workspace.includes("UPLOAD_OR_CONNECT_MAP_LABEL") &&
       studio.includes("UPLOAD_OR_CONNECT_MAP_LABEL") &&
-      UPLOAD_OR_CONNECT_MAP_LABEL === "Upload roof image or connect satellite provider" &&
+      UPLOAD_OR_CONNECT_MAP_LABEL === "Map / satellite / uploaded image canvas" &&
       workspace.includes("Use Uploaded Image") &&
       noFakeTiles
     );
@@ -552,6 +554,23 @@ async function main() {
       getGeocodingProvider() instanceof UnavailableGeocodingProvider &&
       getSatelliteImageProvider() instanceof UnavailableSatelliteImageProvider
     );
+  });
+
+  await check("Satellite viewport UX wired in Sunchaser Design Studio", () => {
+    const studio = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
+    const viewport = readFileSync(resolve(here, "../components/roofStudio/DesignStudioSatelliteViewport.tsx"), "utf8");
+    return (
+      studio.includes("DesignStudioSatelliteViewport") &&
+      viewport.includes("satellite-viewport-loading") &&
+      viewport.includes("satellite-viewport-retry") &&
+      viewport.includes("satellite-zoom-in") &&
+      viewport.includes("satellite-recenter")
+    );
+  });
+
+  await check("Places autocomplete wired in left panel", () => {
+    const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
+    return left.includes("PropertyAddressAutocomplete") && left.includes("Locating");
   });
 
   console.log(`\ndesignStudioMapProviders tests: ${pass} passed`);

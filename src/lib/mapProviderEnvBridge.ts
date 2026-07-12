@@ -6,6 +6,8 @@
 export type MapProviderEnvResolver = {
   geocoding: () => unknown;
   satellite: () => unknown;
+  places?: () => unknown;
+  solar?: () => unknown;
 };
 
 let envResolver: MapProviderEnvResolver | null = null;

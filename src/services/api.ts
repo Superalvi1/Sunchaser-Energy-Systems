@@ -13,11 +13,20 @@ import {
 
 const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
 
-export const API_BASE_URL = (
-  (import.meta as any).env.VITE_API_BASE_URL || RENDER_PRODUCTION_API
-).replace(/\/$/, "");
+function resolveApiBaseUrl(): string {
+  const fromEnv = String((import.meta as any).env?.VITE_API_BASE_URL ?? "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  // Local Vite / same-origin: use relative /api paths so Design Studio login hits this server.
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") return "";
+  }
+  return RENDER_PRODUCTION_API;
+}
 
-console.log("API URL:", API_BASE_URL);
+export const API_BASE_URL = resolveApiBaseUrl();
+
+console.log("API URL:", API_BASE_URL || "(same-origin)");
 
 const AUTH_TOKEN_KEY = "sunchaser_auth_token";
 const AUTH_USER_KEY = "sunchaser_user";
