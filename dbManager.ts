@@ -104,6 +104,32 @@ if (typeof globalThis.WebSocket === "undefined") {
 let clientInstance: SupabaseClient | null = null;
 let isConfigured = false;
 
+export type SupabaseBackendConfig = {
+  host: string;
+  configured: boolean;
+  /** Backend reads SUPABASE_URL only — never VITE_SUPABASE_URL. */
+  source: "SUPABASE_URL";
+};
+
+/** Safe startup diagnostics — hostname only, no keys or full URLs. */
+export function describeSupabaseBackendConfig(): SupabaseBackendConfig {
+  const raw = String(process.env.SUPABASE_URL || "").trim();
+  if (!raw) {
+    return { host: "unset", configured: false, source: "SUPABASE_URL" };
+  }
+  try {
+    const host = new URL(raw).hostname;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    return {
+      host: host || "invalid-host",
+      configured: Boolean(host && key),
+      source: "SUPABASE_URL",
+    };
+  } catch {
+    return { host: "invalid-url", configured: false, source: "SUPABASE_URL" };
+  }
+}
+
 /** Map legacy Supabase role values to production app roles (until DB constraint includes new roles). */
 const PRODUCTION_APP_ROLE_BY_USERNAME: Record<string, string> = {
   raza: "Director",

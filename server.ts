@@ -163,7 +163,9 @@ import {
   resetOnboarding,
   upsertSolarPackageCatalogToSupabase,
   upsertAppSettingsToSupabase,
+  describeSupabaseBackendConfig,
 } from "./dbManager.js";
+import { isSupabaseConnectivityError, SUPABASE_UNAVAILABLE_CODE } from "./supabaseConnectivity.ts";
 import {
   listAdminProjectDeliveries,
   createAdminProjectDelivery,
@@ -281,6 +283,7 @@ import {
   listDemoSeedUsersForCleanup,
   deleteDemoSeedUsersByAdmin,
   UserAuthError,
+  SupabaseUnavailableError,
   mapUserRow,
   findUserByUsername,
 } from "./userAuthDb.js";
@@ -395,6 +398,11 @@ if (fs.existsSync(".env.local")) {
   dotenv.config({ path: ".env.local" });
 }
 dotenv.config();
+
+const supabaseBackend = describeSupabaseBackendConfig();
+console.log(
+  `[Supabase Config] source=${supabaseBackend.source} host=${supabaseBackend.host} configured=${supabaseBackend.configured}`
+);
 
 // Initialize Gemini SDK with telemetry header
 const ai = new GoogleGenAI({
@@ -901,6 +909,18 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   } catch (err: any) {
     if (err instanceof UserAuthError) {
       return res.status(err.statusCode).json({ error: err.message });
+    }
+    if (err instanceof SupabaseUnavailableError || err?.code === SUPABASE_UNAVAILABLE_CODE) {
+      return res.status(503).json({
+        error: err.message || "Authentication service temporarily unavailable.",
+        code: SUPABASE_UNAVAILABLE_CODE,
+      });
+    }
+    if (isSupabaseConnectivityError(err)) {
+      return res.status(503).json({
+        error: "Authentication service temporarily unavailable.",
+        code: SUPABASE_UNAVAILABLE_CODE,
+      });
     }
     console.error("[Login Error]:", err);
     return res.status(500).json({ error: err.message || "Login failed." });
