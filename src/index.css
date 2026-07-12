@@ -4,6 +4,22 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Studio design tokens */
+  --color-studio-bg: #060608;
+  --color-studio-surface: rgb(15 23 42 / 0.72);
+  --color-studio-surface-raised: rgb(15 23 42 / 0.88);
+  --color-studio-border: rgb(51 65 85 / 0.65);
+  --color-studio-border-subtle: rgb(51 65 85 / 0.35);
+  --color-studio-accent: #f59e0b;
+  --color-studio-accent-muted: rgb(245 158 11 / 0.12);
+  --color-studio-text: #f1f5f9;
+  --color-studio-text-muted: #94a3b8;
+  --color-studio-text-faint: #64748b;
+  --shadow-studio-panel: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 4px 24px rgb(0 0 0 / 0.35);
+  --shadow-studio-toolbar: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 8px 32px rgb(0 0 0 / 0.4);
+  --radius-studio-panel: 1rem;
+  --radius-studio-btn: 0.625rem;
 }
 
 body {
@@ -29,6 +45,234 @@ body {
 
 .minimum-height-pane {
   min-height: 520px;
+}
+
+/* ── Design Studio UI primitives ───────────────────────────────────── */
+
+.studio-page-header {
+  @apply relative overflow-hidden rounded-2xl border border-amber-500/20 p-5;
+  background: linear-gradient(135deg, rgb(2 6 23) 0%, rgb(15 23 42 / 0.95) 55%, rgb(120 53 15 / 0.12) 100%);
+  box-shadow: var(--shadow-studio-panel);
+}
+
+.studio-page-header-icon {
+  @apply flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-amber-500/25;
+  background: linear-gradient(145deg, rgb(245 158 11 / 0.18), rgb(245 158 11 / 0.04));
+}
+
+.studio-page-title {
+  @apply text-xl font-bold tracking-tight text-white;
+}
+
+.studio-page-desc {
+  @apply mt-1.5 text-sm leading-relaxed text-slate-400 max-w-2xl;
+}
+
+.studio-badge {
+  @apply inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide;
+}
+
+.studio-badge-accent {
+  @apply border-amber-500/30 bg-amber-500/10 text-amber-300;
+}
+
+.studio-badge-muted {
+  @apply border-slate-700/80 bg-slate-900/80 text-slate-400;
+}
+
+.studio-panel {
+  @apply rounded-2xl border p-4;
+  border-color: var(--color-studio-border-subtle);
+  background: var(--color-studio-surface);
+  box-shadow: var(--shadow-studio-panel);
+}
+
+.studio-panel-header {
+  @apply flex items-center gap-2.5 border-b pb-3 mb-3;
+  border-color: var(--color-studio-border-subtle);
+}
+
+.studio-panel-icon {
+  @apply h-4 w-4 text-amber-400 shrink-0;
+}
+
+.studio-panel-title {
+  @apply text-xs font-semibold uppercase tracking-wider text-slate-100;
+}
+
+.studio-panel-body {
+  @apply space-y-2.5;
+}
+
+.studio-btn {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-studio-btn)] font-semibold transition-all duration-150;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-950;
+}
+
+.studio-btn-primary {
+  @apply bg-amber-500 px-4 py-2 text-sm text-slate-950 shadow-sm;
+  @apply hover:bg-amber-400 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
+}
+
+.studio-btn-secondary {
+  @apply border border-slate-700/80 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-200;
+  @apply hover:border-slate-600 hover:bg-slate-800/80 disabled:opacity-40 disabled:cursor-not-allowed;
+}
+
+.studio-btn-ghost {
+  @apply px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-800/60 hover:text-slate-200;
+}
+
+.studio-btn-tool {
+  @apply rounded-lg px-2.5 py-2 text-xs font-medium text-slate-300;
+  @apply hover:bg-slate-800/70 disabled:opacity-30 disabled:cursor-not-allowed;
+}
+
+.studio-btn-tool-active {
+  @apply bg-amber-500 text-slate-950 shadow-sm hover:bg-amber-400;
+}
+
+.studio-btn-danger {
+  @apply text-slate-400 hover:bg-rose-500/10 hover:text-rose-400;
+}
+
+.studio-toolbar {
+  @apply flex flex-wrap items-center gap-2 rounded-2xl border p-2;
+  border-color: var(--color-studio-border-subtle);
+  background: var(--color-studio-surface-raised);
+  box-shadow: var(--shadow-studio-toolbar);
+}
+
+.studio-toolbar-group {
+  @apply flex items-center gap-0.5 rounded-xl border p-1;
+  border-color: var(--color-studio-border-subtle);
+  background: rgb(2 6 23 / 0.6);
+}
+
+.studio-toolbar-actions {
+  @apply ml-auto flex items-center gap-1;
+}
+
+.studio-input {
+  @apply mt-1.5 w-full rounded-lg border border-slate-700/60 bg-slate-950/90 px-3 py-2 text-sm text-white;
+  @apply placeholder:text-slate-600 transition-colors;
+  @apply focus:border-amber-500/40 focus:outline-none focus:ring-2 focus:ring-amber-500/20;
+}
+
+.studio-label {
+  @apply block text-xs font-medium text-slate-400;
+}
+
+.studio-empty {
+  @apply rounded-2xl border border-dashed px-6 py-8 text-center;
+  border-color: rgb(245 158 11 / 0.25);
+  background: linear-gradient(180deg, rgb(2 6 23 / 0.9), rgb(15 23 42 / 0.5));
+}
+
+.studio-empty-icon-wrap {
+  @apply mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/20;
+  background: rgb(245 158 11 / 0.08);
+}
+
+.studio-empty-icon {
+  @apply h-7 w-7 text-amber-400/90;
+}
+
+.studio-empty-title {
+  @apply mt-4 text-base font-semibold text-white;
+}
+
+.studio-empty-desc {
+  @apply mt-2 text-sm leading-relaxed text-slate-400 max-w-md mx-auto;
+}
+
+.studio-empty-action {
+  @apply mt-5;
+}
+
+.studio-gate-note {
+  @apply flex gap-2 items-start rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-xs leading-relaxed text-amber-200/90;
+}
+
+.studio-gate-note::before {
+  content: "⚠";
+  @apply shrink-0 text-amber-400;
+}
+
+.studio-status-line {
+  @apply flex items-center gap-2.5 text-sm text-slate-300;
+}
+
+.studio-status-dot {
+  @apply h-2 w-2 shrink-0 rounded-full bg-slate-600;
+}
+
+.studio-status-dot-ok {
+  @apply bg-emerald-400 shadow-[0_0_8px_rgb(52_211_153/0.5)];
+}
+
+.studio-row {
+  @apply flex items-start justify-between gap-3 text-sm py-0.5;
+}
+
+.studio-row-label {
+  @apply text-slate-500 shrink-0;
+}
+
+.studio-row-value {
+  @apply text-right font-medium text-slate-100 break-words;
+}
+
+.studio-status-bar {
+  @apply flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border px-4 py-2.5 text-xs font-mono;
+  border-color: var(--color-studio-border-subtle);
+  background: var(--color-studio-surface);
+  color: var(--color-studio-text-faint);
+}
+
+.studio-status-bar span {
+  @apply whitespace-nowrap;
+}
+
+.studio-status-bar .studio-status-highlight {
+  @apply text-amber-300/90;
+}
+
+.studio-status-bar .studio-status-error {
+  @apply text-rose-400;
+}
+
+.studio-canvas-frame {
+  @apply overflow-hidden rounded-2xl border;
+  border-color: var(--color-studio-border);
+  background: rgb(2 6 23);
+  box-shadow: var(--shadow-studio-panel), 0 0 0 1px rgb(255 255 255 / 0.03) inset;
+}
+
+.studio-spinner {
+  @apply inline-flex items-center gap-2 text-sm text-slate-400;
+}
+
+.studio-spinner-label {
+  @apply text-xs;
+}
+
+.studio-skeleton {
+  @apply animate-pulse rounded-lg bg-slate-800/60;
+}
+
+.studio-fade-in {
+  animation: studioFadeIn 0.35s ease-out forwards;
+}
+
+@keyframes studioFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.studio-range {
+  @apply h-1.5 w-20 cursor-pointer appearance-none rounded-full bg-slate-700;
+  accent-color: var(--color-studio-accent);
 }
 
 /* Print Preview isolation styles */
