@@ -4,12 +4,12 @@
  * Engines run only via parent (Panel Layout V2 + live results adapter).
  */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   CheckCircle2,
-  Circle,
   ImageIcon,
   Layers,
+  Loader2,
   MapPin,
   Phone,
   Ruler,
@@ -39,6 +39,7 @@ import {
   SATELLITE_PROVIDER_NOT_CONNECTED,
   getMapProviderStatusLabel,
   hasValidManualCoordinates,
+  isGeocodingProviderConfigured,
   isSatelliteProviderConfigured,
   locateProperty,
   type LocatePropertyResult,
@@ -47,39 +48,12 @@ import "../../lib/googleMapsProvider";
 import { isPlaneComplete, type RoofStudioState, type StudioPlane } from "../../lib/roofStudioClient";
 import { formatMeters } from "../../lib/roofStudioCalibration";
 import type { PanelOrientationPolicy } from "../../../server/solar/panel/PanelLayoutModels.ts";
-
-function Section({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2 mb-2">
-        <Icon className="h-3.5 w-3.5 text-amber-400" />
-        <h3 className="text-[10px] font-bold uppercase tracking-wider text-white">{title}</h3>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function StatusLine({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] text-slate-300">
-      {ok ? (
-        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-      ) : (
-        <Circle className="h-3.5 w-3.5 text-slate-600 shrink-0" />
-      )}
-      <span>{label}</span>
-    </div>
-  );
-}
+import PropertyAddressAutocomplete from "./PropertyAddressAutocomplete";
+import {
+  StudioButton,
+  StudioPanel,
+  StudioStatusLine,
+} from "../ui/studio";
 
 function ToolBtn({
   label,
@@ -91,17 +65,13 @@ function ToolBtn({
   active?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <StudioButton
+      variant={active ? "tool-active" : "tool"}
       onClick={onClick}
-      className={`rounded-lg border px-2 py-1 text-[9px] font-bold transition ${
-        active
-          ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
-          : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
-      }`}
+      className="!px-2.5 !py-1.5 !text-xs"
     >
       {label}
-    </button>
+    </StudioButton>
   );
 }
 
@@ -216,70 +186,73 @@ export default function DesignStudioLeftControlPanel({
     controls.orientationPolicy === "mixed" ? "auto" : controls.orientationPolicy;
 
   let satelliteConfigured = false;
+  let geocodingConfigured = false;
   let providerStatusLabel = MAP_PROVIDER_NOT_CONNECTED;
   let providerStatusError: string | null = null;
   try {
     satelliteConfigured = isSatelliteProviderConfigured();
+    geocodingConfigured = isGeocodingProviderConfigured();
     providerStatusLabel = getMapProviderStatusLabel();
   } catch (err) {
     providerStatusError =
       err instanceof Error ? err.message : "Map provider status unavailable.";
     satelliteConfigured = false;
+    geocodingConfigured = false;
     providerStatusLabel = MAP_PROVIDER_NOT_CONNECTED;
   }
   const coordsValid = hasValidManualCoordinates(latText, lngText);
   const fetchSatelliteDisabled = !coordsValid;
+  const [locateLoading, setLocateLoading] = useState(false);
+  const locateDisabled = locateLoading || !String(address ?? "").trim();
 
   return (
     <aside
-      className="space-y-2 max-h-[780px] overflow-y-auto pr-1"
+      className="space-y-3 max-h-[780px] overflow-y-auto pr-1 scrollbar-thin"
       data-testid="design-studio-left-control-panel"
     >
-      <Section title="Project" icon={MapPin}>
-        <p className="text-[10px] text-slate-400 truncate">{customerName || "Customer"}</p>
-        <p className="mt-1 text-[10px] font-mono text-slate-300 truncate" data-testid="project-workspace-customer-phone">
-          <Phone className="h-3 w-3 inline mr-1 text-slate-500" />
+      <StudioPanel title="Project" icon={MapPin}>
+        <p className="text-sm font-medium text-slate-200 truncate">{customerName || "Customer"}</p>
+        <p className="text-sm font-mono text-slate-300 truncate" data-testid="project-workspace-customer-phone">
+          <Phone className="h-3.5 w-3.5 inline mr-1.5 text-slate-500" />
           {phone}
         </p>
-        <p className="mt-1 text-[9px] text-slate-500 flex items-center gap-1">
-          <Zap className="h-3 w-3" /> Sanctioned load: {sanctionedLoad}
+        <p className="text-xs text-slate-500 flex items-center gap-1.5">
+          <Zap className="h-3.5 w-3.5" /> Sanctioned load: {sanctionedLoad}
         </p>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Property Location" icon={MapPin}>
-        <label className="block text-[10px] text-slate-500" data-testid="property-location-address">
+      <StudioPanel title="Property Location" icon={MapPin}>
+        <label className="studio-label" data-testid="property-location-address">
           Address
-          <input
+          <PropertyAddressAutocomplete
             value={address}
-            onChange={(e) => onAddressChange(e.target.value)}
-            placeholder="Street, area, city"
-            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white"
-            data-testid="property-location-address-input"
+            onChange={onAddressChange}
+            onPlaceResolved={onLocateResult}
           />
         </label>
-        <p className="mt-1 text-[9px] text-amber-300/90" data-testid="design-workspace-draft-only">
+        <p className="text-xs text-amber-300/90" data-testid="design-workspace-draft-only">
           {DESIGN_WORKSPACE_DRAFT_ONLY_LABEL}
         </p>
         <div className="mt-2 grid grid-cols-2 gap-2">
-          <label className="block text-[9px] text-slate-500">
+          <label className="studio-label">
             Latitude
             <input
               value={latText}
               onChange={(e) => onLatChange(e.target.value)}
               onBlur={onGpsCommit}
               placeholder="-90 to 90"
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs font-mono text-white"
+              className="studio-input font-mono text-xs"
               data-testid="property-location-lat"
             />
           </label>
-          <label className="block text-[9px] text-slate-500">
+          <label className="studio-label">
             Longitude
             <input
               value={lngText}
               onChange={(e) => onLngChange(e.target.value)}
               onBlur={onGpsCommit}
               placeholder="-180 to 180"
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs font-mono text-white"
+              className="studio-input font-mono text-xs"
               data-testid="property-location-lng"
             />
           </label>
@@ -291,18 +264,45 @@ export default function DesignStudioLeftControlPanel({
         )}
         <button
           type="button"
+          disabled={locateDisabled}
+          title={
+            !String(address ?? "").trim()
+              ? "Enter an address first"
+              : !geocodingConfigured
+                ? MAP_PROVIDER_NOT_CONNECTED
+                : "Geocode address to latitude/longitude"
+          }
           onClick={() => {
+            setLocateLoading(true);
             void locateProperty(address).then((result) => {
+              setLocateLoading(false);
               onLocateResult(result);
             });
           }}
-          className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[10px] font-bold text-slate-200 hover:bg-slate-800"
+          className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[10px] font-bold text-slate-200 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
           data-testid="property-location-locate"
         >
-          Locate Property
+          {locateLoading ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              Locating…
+            </>
+          ) : (
+            "Locate Property"
+          )}
         </button>
         {locateMessage && (
-          <p className="mt-1 text-[10px] text-amber-300/90" data-testid="property-location-locate-message">
+          <p
+            className={`mt-1 text-[10px] ${
+              locateMessage.includes("connected") || locateMessage.includes("Enter")
+                ? "text-amber-300/90"
+                : locateMessage.includes("Located") || locateMessage.includes("via")
+                  ? "text-emerald-300/90"
+                  : "text-rose-400"
+            }`}
+            data-testid="property-location-locate-message"
+            role={locateMessage.includes("No result") || locateMessage.includes("error") ? "alert" : undefined}
+          >
             {locateMessage}
           </p>
         )}
@@ -327,9 +327,9 @@ export default function DesignStudioLeftControlPanel({
         <p className="sr-only" data-testid="map-provider-not-connected-copy">
           {MAP_PROVIDER_NOT_CONNECTED}
         </p>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Site Image" icon={ImageIcon}>
+      <StudioPanel title="Site Image" icon={ImageIcon}>
         <button
           type="button"
           onClick={onUploadImage}
@@ -373,16 +373,16 @@ export default function DesignStudioLeftControlPanel({
           Uploaded image remains the primary fallback. Satellite imagery still requires calibration.
         </p>
         <div className="mt-2 space-y-1">
-          <StatusLine ok={calibrated} label={calibrated ? "Scale calibrated" : "Scale not calibrated"} />
+          <StudioStatusLine ok={calibrated} label={calibrated ? "Scale calibrated" : "Scale not calibrated"} />
           <p className="text-[10px] font-mono text-slate-300">Scale: {scaleLabel}</p>
         </div>
         <div className="mt-2 flex flex-wrap gap-1">
           <ToolBtn label="Calibrate" onClick={onCalibrate} />
           <ToolBtn label="Reset calibration" onClick={onResetCalibration} />
         </div>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Roof Areas" icon={Layers}>
+      <StudioPanel title="Roof Areas" icon={Layers}>
         <div className="flex flex-wrap gap-1">
           <ToolBtn label="Draw roof area" onClick={onDrawRoof} />
           <ToolBtn label="Edit roof area" onClick={onEditRoof} />
@@ -415,9 +415,9 @@ export default function DesignStudioLeftControlPanel({
         <p className="mt-2 text-[9px] text-slate-500">
           Selected: {selectedPlane ? selectedPlane.name || selectedPlane.id.slice(0, 8) : "none"}
         </p>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Keepouts" icon={Square}>
+      <StudioPanel title="Keepouts" icon={Square}>
         <div className="flex flex-wrap gap-1">
           <ToolBtn label="Rectangle" onClick={() => onAddKeepout("obstacle-rect")} />
           <ToolBtn label="Polygon" onClick={() => onAddKeepout("obstacle-polygon")} />
@@ -434,15 +434,15 @@ export default function DesignStudioLeftControlPanel({
             ))}
           </ul>
         )}
-      </Section>
+      </StudioPanel>
 
-      <Section title="Module" icon={Sun}>
+      <StudioPanel title="Module" icon={Sun}>
         <label className="block text-[9px] text-slate-500">
           Panel model
           <select
             value={controls.moduleId}
             onChange={(e) => onControlsChange("moduleId", e.target.value)}
-            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white"
+            className="studio-input text-xs"
           >
             {MODULE_OPTIONS.map((m) => (
               <option key={m.moduleId} value={m.moduleId}>
@@ -478,9 +478,9 @@ export default function DesignStudioLeftControlPanel({
             />
           ))}
         </div>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Layout Settings" icon={Ruler}>
+      <StudioPanel title="Layout Settings" icon={Ruler}>
         <div className="grid grid-cols-2 gap-2">
           <label className="text-[9px] text-slate-500">
             Edge setback (m)
@@ -494,7 +494,7 @@ export default function DesignStudioLeftControlPanel({
                 const n = e.target.value === "" ? Number.NaN : Number(e.target.value);
                 onControlsChange("edgeSetbackM", n);
               }}
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+              className="studio-input text-xs"
             />
           </label>
           <label className="text-[9px] text-slate-500">
@@ -509,7 +509,7 @@ export default function DesignStudioLeftControlPanel({
                 const n = e.target.value === "" ? Number.NaN : Number(e.target.value);
                 onControlsChange("rowSpacingM", n);
               }}
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+              className="studio-input text-xs"
             />
           </label>
           <label className="text-[9px] text-slate-500">
@@ -524,7 +524,7 @@ export default function DesignStudioLeftControlPanel({
                 const n = e.target.value === "" ? Number.NaN : Number(e.target.value);
                 onControlsChange("moduleGapM", n);
               }}
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+              className="studio-input text-xs"
             />
           </label>
           <label className="text-[9px] text-slate-500">
@@ -539,7 +539,7 @@ export default function DesignStudioLeftControlPanel({
                 const n = e.target.value === "" ? Number.NaN : Number(e.target.value);
                 onControlsChange("tiltDeg", n);
               }}
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+              className="studio-input text-xs"
             />
           </label>
           <label className="text-[9px] text-slate-500">
@@ -554,7 +554,7 @@ export default function DesignStudioLeftControlPanel({
                 const n = e.target.value === "" ? Number.NaN : Number(e.target.value);
                 onControlsChange("azimuthDeg", n);
               }}
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+              className="studio-input text-xs"
             />
           </label>
           <label className="text-[9px] text-slate-500">
@@ -562,7 +562,7 @@ export default function DesignStudioLeftControlPanel({
             <select
               value={alignment}
               onChange={(e) => onAlignmentChange(e.target.value as LayoutAlignment)}
-              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-white"
+              className="studio-input text-xs"
             >
               {LAYOUT_ALIGNMENTS.map((a) => (
                 <option key={a} value={a}>
@@ -584,20 +584,20 @@ export default function DesignStudioLeftControlPanel({
           {!validateTiltDeg(controls.tiltDeg).ok && <p>Tilt invalid</p>}
           {!validateAzimuthDeg(controls.azimuthDeg).ok && <p>Azimuth invalid</p>}
         </div>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Auto Layout" icon={Sparkles}>
-        <button
-          type="button"
+      <StudioPanel title="Auto Layout" icon={Sparkles}>
+        <StudioButton
+          variant="primary"
+          icon={Sparkles}
           disabled={autoLayoutDisabled}
           onClick={onAutoLayout}
           title={layoutGate.reason ?? "Run Panel Layout Engine V2"}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-3 py-2.5 text-xs font-extrabold text-slate-950 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="w-full"
           data-testid="left-panel-auto-layout"
         >
-          <Sparkles className="h-4 w-4" />
           Auto Layout
-        </button>
+        </StudioButton>
         {autoLayoutDisabled && (
           <p className="mt-1 text-[10px] text-amber-300/90">
             {layoutGate.reason ?? "Complete previous step first."}
@@ -611,15 +611,15 @@ export default function DesignStudioLeftControlPanel({
         <p className="mt-1 text-[9px] text-slate-500">
           Requires image + calibrated scale + valid roof + valid module/settings. No fake panels.
         </p>
-      </Section>
+      </StudioPanel>
 
-      <Section title="Output Status" icon={CheckCircle2}>
-        <StatusLine ok={live.status.panelLayoutReady} label="Layout ready" />
-        <StatusLine ok={live.status.electricalReady} label="Electrical ready" />
-        <StatusLine ok={live.status.simulationReady} label="Simulation ready" />
-        <StatusLine ok={live.status.boqReady} label="BOQ ready" />
-        <StatusLine ok={live.proposal.readyForPreview} label={live.proposal.readyForPreview ? "Proposal ready" : "Proposal not ready"} />
-      </Section>
+      <StudioPanel title="Output Status" icon={CheckCircle2}>
+        <StudioStatusLine ok={live.status.panelLayoutReady} label="Layout ready" />
+        <StudioStatusLine ok={live.status.electricalReady} label="Electrical ready" />
+        <StudioStatusLine ok={live.status.simulationReady} label="Simulation ready" />
+        <StudioStatusLine ok={live.status.boqReady} label="BOQ ready" />
+        <StudioStatusLine ok={live.proposal.readyForPreview} label={live.proposal.readyForPreview ? "Proposal ready" : "Proposal not ready"} />
+      </StudioPanel>
     </aside>
   );
 }

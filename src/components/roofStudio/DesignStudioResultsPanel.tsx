@@ -5,19 +5,26 @@
 
 import React from "react";
 import {
-  AlertTriangle,
   CheckCircle2,
-  Circle,
   FileText,
   Layers,
   Sparkles,
   Sun,
   Zap,
 } from "lucide-react";
+import type { DesignStudioProposalCustomer, DesignStudioProposalRoofPreview } from "../../lib/designStudioProposalIntegration";
 import {
   COMPLETE_PREVIOUS_STEP_MESSAGE,
+  type DesignStudioControls,
   type DesignStudioLiveResults,
 } from "../../lib/sunchaserDesignStudioClient";
+import DesignStudioProposalPreview from "./DesignStudioProposalPreview";
+import {
+  StudioButton,
+  StudioGateNote,
+  StudioPanel,
+  StudioRow,
+} from "../ui/studio";
 
 function fmt(n: number | null | undefined, digits = 1): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
@@ -29,31 +36,12 @@ function fmtMoney(n: number | null | undefined): string {
   return `PKR ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-function StatusDot({ ok }: { ok: boolean }) {
-  return ok ? (
-    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-  ) : (
-    <Circle className="h-3.5 w-3.5 text-slate-600 shrink-0" />
-  );
-}
-
 function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-2 text-[11px]">
-      <span className="text-slate-500 shrink-0">{label}</span>
-      <span className="text-right font-medium text-slate-100 break-words">{value}</span>
-    </div>
-  );
+  return <StudioRow label={label} value={value} />;
 }
 
 function GateNote({ reason }: { reason: string | null | undefined }) {
-  if (!reason) return null;
-  return (
-    <p className="text-[10px] text-amber-300/90 flex gap-1.5 items-start">
-      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-      {reason}
-    </p>
-  );
+  return <StudioGateNote reason={reason} />;
 }
 
 function PanelSection({
@@ -66,18 +54,23 @@ function PanelSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 space-y-2">
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-        <Icon className="h-3.5 w-3.5 text-amber-400" />
-        <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">{title}</h3>
-      </div>
+    <StudioPanel title={title} icon={Icon as import("lucide-react").LucideIcon}>
       {children}
-    </div>
+    </StudioPanel>
+  );
+}
+
+function StatusDot({ ok }: { ok: boolean }) {
+  return (
+    <span className={ok ? "studio-status-dot studio-status-dot-ok" : "studio-status-dot"} />
   );
 }
 
 export interface DesignStudioResultsPanelProps {
   live: DesignStudioLiveResults;
+  controls: DesignStudioControls;
+  customer: DesignStudioProposalCustomer;
+  roofPreview: DesignStudioProposalRoofPreview;
   onAutoLayout?: () => void;
   autoLayoutDisabled?: boolean;
   autoLayoutMessage?: string | null;
@@ -85,6 +78,9 @@ export interface DesignStudioResultsPanelProps {
 
 export default function DesignStudioResultsPanel({
   live,
+  controls,
+  customer,
+  roofPreview,
   onAutoLayout,
   autoLayoutDisabled,
   autoLayoutMessage,
@@ -92,7 +88,7 @@ export default function DesignStudioResultsPanel({
   const { status, roof, panelsSummary, electricalSummary, production, boq, proposal } = live;
 
   return (
-    <div className="space-y-2" data-testid="design-studio-results-panel">
+    <div className="space-y-3 studio-fade-in" data-testid="design-studio-results-panel">
       <PanelSection title="Design Status" icon={CheckCircle2}>
         {(
           [
@@ -105,7 +101,7 @@ export default function DesignStudioResultsPanel({
             ["BOQ ready", status.boqReady],
           ] as const
         ).map(([label, ok]) => (
-          <div key={label} className="flex items-center gap-2 text-[11px] text-slate-300">
+          <div key={label} className="flex items-center gap-2.5 text-sm text-slate-300">
             <StatusDot ok={ok} />
             <span>{label}</span>
           </div>
@@ -143,15 +139,15 @@ export default function DesignStudioResultsPanel({
           <>
             <GateNote reason={panelsSummary.gatedReason ?? COMPLETE_PREVIOUS_STEP_MESSAGE} />
             {onAutoLayout && (
-              <button
-                type="button"
+              <StudioButton
+                variant="secondary"
+                icon={Sparkles}
                 disabled={autoLayoutDisabled}
                 onClick={onAutoLayout}
-                className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] font-bold text-amber-200 disabled:opacity-40"
+                className="w-full mt-1 border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15"
               >
-                <Sparkles className="h-3.5 w-3.5" />
                 Auto Layout
-              </button>
+              </StudioButton>
             )}
           </>
         ) : (
@@ -159,18 +155,18 @@ export default function DesignStudioResultsPanel({
             <Row label="Panel model" value={panelsSummary.panelModel ?? "—"} />
             <Row label="Orientation" value={panelsSummary.orientation ?? "—"} />
             <Row label="Panel count" value={String(panelsSummary.panelCount)} />
-            <Row label="DC kW" value={fmt(panelsSummary.dcKw, 2)} />
+            <Row label="DC size" value={`${fmt(panelsSummary.dcKw, 2)} kW`} />
             <Row label="Layout status" value={panelsSummary.layoutStatus} />
             {!status.panelLayoutReady && onAutoLayout && (
-              <button
-                type="button"
+              <StudioButton
+                variant="secondary"
+                icon={Sparkles}
                 disabled={autoLayoutDisabled}
                 onClick={onAutoLayout}
-                className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] font-bold text-amber-200 disabled:opacity-40"
+                className="w-full mt-1 border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15"
               >
-                <Sparkles className="h-3.5 w-3.5" />
                 Auto Layout
-              </button>
+              </StudioButton>
             )}
           </>
         )}
@@ -188,11 +184,23 @@ export default function DesignStudioResultsPanel({
               <p className="text-[10px] text-rose-300">Stage error: {electricalSummary.stageError}</p>
             )}
             <Row label="Inverter" value={electricalSummary.inverter ?? "—"} />
+            <Row
+              label="AC size"
+              value={electricalSummary.acKw != null ? `${fmt(electricalSummary.acKw, 1)} kW` : "—"}
+            />
+            <Row
+              label="String count"
+              value={electricalSummary.stringCount != null ? String(electricalSummary.stringCount) : "—"}
+            />
             <Row label="Strings" value={electricalSummary.strings ?? "—"} />
             <Row label="MPPT allocation" value={electricalSummary.mpptAllocation ?? "—"} />
             <Row
-              label="Voc max"
+              label="Voc"
               value={electricalSummary.vocMaxV != null ? `${fmt(electricalSummary.vocMaxV, 1)} V` : "—"}
+            />
+            <Row
+              label="Isc"
+              value={electricalSummary.iscA != null ? `${fmt(electricalSummary.iscA, 2)} A` : "—"}
             />
             <Row label="Vmp range" value={electricalSummary.vmpRange ?? "—"} />
             <Row
@@ -291,8 +299,7 @@ export default function DesignStudioResultsPanel({
             <Row label="Services total" value={fmtMoney(boq.servicesTotal)} />
             <Row label="Grand total" value={fmtMoney(boq.grandTotal)} />
             {boq.hasManualOverride && (
-              <p className="text-[10px] text-amber-300 flex gap-1 items-start">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <p className="studio-gate-note text-[11px]">
                 {boq.overrideWarning ?? "Manual override applied — totals may differ from engine draft."}
               </p>
             )}
@@ -301,7 +308,9 @@ export default function DesignStudioResultsPanel({
       </PanelSection>
 
       <PanelSection title="Proposal" icon={FileText}>
-        {!proposal.available && !proposal.readyForPreview ? (
+        <Row label="Draft status" value={proposal.draftStatus} />
+        <Row label="Ready for preview" value={proposal.readyForPreview ? "Yes" : "No"} />
+        {!proposal.available && !proposal.readyForPreview && (
           <>
             <GateNote reason={proposal.gatedReason ?? COMPLETE_PREVIOUS_STEP_MESSAGE} />
             {proposal.missingRequirements.length > 0 && (
@@ -314,21 +323,13 @@ export default function DesignStudioResultsPanel({
               </ul>
             )}
           </>
-        ) : (
-          <>
-            <Row label="Draft status" value={proposal.draftStatus} />
-            <Row label="Ready for preview" value={proposal.readyForPreview ? "Yes" : "No"} />
-            {proposal.missingRequirements.length > 0 && (
-              <ul className="space-y-0.5">
-                {proposal.missingRequirements.map((m) => (
-                  <li key={m} className="text-[9px] text-amber-200/90">
-                    • {m}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
         )}
+        <DesignStudioProposalPreview
+          live={live}
+          controls={controls}
+          customer={customer}
+          roofPreview={roofPreview}
+        />
       </PanelSection>
 
       <p className="text-[9px] text-slate-500 px-1">
