@@ -68,6 +68,7 @@ import AIQuoteBuilderModal from "./quoteAuthoring/AIQuoteBuilderModal";
 import SolarProposalStudio from "./quoteAuthoring/SolarProposalStudio";
 import ProjectDesignWorkspace from "./roofStudio/ProjectDesignWorkspace";
 import RoofStudioErrorBoundary from "./roofStudio/RoofStudioErrorBoundary";
+import { StudioEmptyState } from "./ui/studio";
 import { isProposalStudioEnabled, isRoofStudioEnabled, isSunchaserDesignStudioEnabled } from "../lib/studioFeatureFlags";
 import { buildDraftApplyPayload } from "../lib/solarQuotePlannerClient";
 import type { SolarQuoteDraft } from "../lib/solarQuotePlannerClient";
@@ -3134,12 +3135,12 @@ export default function SalesTeamApp({
                 </RoofStudioErrorBoundary>
               )}
               {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && !activeLead && (
-                <div className="rounded-2xl border border-amber-500/30 bg-slate-950/80 px-4 py-8 text-center">
-                  <p className="text-sm font-bold text-white">Select a lead to open Roof Studio</p>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Choose a customer from the left list, then open Roof Studio for Property Location, satellite, and layout.
-                  </p>
-                </div>
+                <StudioEmptyState
+                  icon={DraftingCompass}
+                  title="Select a lead to open Roof Studio"
+                  description="Choose a customer from the left list, then open Roof Studio for Property Location, satellite imagery, and panel layout."
+                  className="studio-fade-in"
+                />
               )}
 
               {/* MODULE 1: AUTO SIZER VIEW */}

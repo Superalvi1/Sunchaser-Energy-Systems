@@ -95,7 +95,7 @@ check("blank canvas replaced by guided workflow copy in Design Studio UI", () =>
   const src = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
   return (
     src.includes("UPLOAD_OR_CONNECT_MAP_LABEL") &&
-    src.includes("Blank CAD is disabled") &&
+    src.includes("DesignStudioSatelliteViewport") &&
     src.includes("DESIGN_STUDIO_GUIDED_STEPS") &&
     src.includes("Use Uploaded Image") &&
     src.includes("property-location-map-placeholder")
@@ -265,6 +265,40 @@ check("uncalibrated state shows no fake results in Results Panel view-model", ()
     live.proposal.readyForPreview === false &&
     !live.status.panelLayoutReady &&
     (live.gatedReason?.includes("Calibrate") || live.roof.gatedReason != null)
+  );
+});
+
+check("live electrical summary maps engine AC / string count / Isc without local math", () => {
+  const state = calibratedStateWithPlane();
+  const run = runDesignStudioAutoLayout(state, DEFAULT_DESIGN_CONTROLS, { hasImage: true });
+  assert.ok(run.ok);
+  if (run.layout.panelCount <= 0) return true;
+  const live = buildDesignStudioLiveResults(state, DEFAULT_DESIGN_CONTROLS, run.layout, { hasImage: true });
+  if (!live.electrical || !live.electricalSummary.available) return true;
+  const firstStringIsc = live.electrical.stringing.strings[0]?.iscA ?? null;
+  return (
+    live.electricalSummary.acKw != null &&
+    live.electricalSummary.acKw > 0 &&
+    live.electricalSummary.stringCount === live.electrical.stringing.stringCount &&
+    live.electricalSummary.iscA === firstStringIsc &&
+    live.electricalSummary.vocMaxV === live.electrical.stringing.stringVocAtTminV
+  );
+});
+
+check("Results Panel displays sprint live-result fields from view-model only", () => {
+  const panel = readFileSync(resolve(here, "../components/roofStudio/DesignStudioResultsPanel.tsx"), "utf8");
+  return (
+    panel.includes('label="DC size"') &&
+    panel.includes('label="AC size"') &&
+    panel.includes('label="String count"') &&
+    panel.includes('label="Voc"') &&
+    panel.includes('label="Isc"') &&
+    panel.includes("electricalSummary.acKw") &&
+    panel.includes("production.annualKwh") &&
+    panel.includes("production.performanceRatio") &&
+    panel.includes("production.losses") &&
+    !panel.includes("CO2_KG_PER_KWH") &&
+    !panel.includes("clientPortalSavings")
   );
 });
 

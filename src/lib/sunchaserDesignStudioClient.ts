@@ -168,9 +168,12 @@ export interface DesignStudioElectricalSummary {
   available: boolean;
   gatedReason: string | null;
   inverter: string | null;
+  acKw: number | null;
+  stringCount: number | null;
   strings: string | null;
   mpptAllocation: string | null;
   vocMaxV: number | null;
+  iscA: number | null;
   vmpRange: string | null;
   dcCableMm2: number | null;
   acCableMm2: number | null;
@@ -284,9 +287,12 @@ function gatedElectrical(reason: string): DesignStudioElectricalSummary {
     available: false,
     gatedReason: reason,
     inverter: null,
+    acKw: null,
+    stringCount: null,
     strings: null,
     mpptAllocation: null,
     vocMaxV: null,
+    iscA: null,
     vmpRange: null,
     dcCableMm2: null,
     acCableMm2: null,
@@ -1170,14 +1176,19 @@ export function buildDesignStudioLiveResults(
         .join("; ") || "None"
     : null;
 
+  const stringIscA = electrical?.stringing.strings[0]?.iscA ?? null;
+
   const electricalSummary: DesignStudioElectricalSummary = electrical
     ? {
         available: true,
         gatedReason: null,
         inverter: inverterSpec.name,
+        acKw: inverterSpec.acRatingKw,
+        stringCount: electrical.stringing.stringCount,
         strings: `${electrical.stringing.stringCount} × ${electrical.stringing.modulesPerString} modules`,
         mpptAllocation,
         vocMaxV: electrical.stringing.stringVocAtTminV,
+        iscA: stringIscA,
         vmpRange: `${Math.round(electrical.stringing.stringVmpAtTmaxV * 10) / 10} V (hot Vmp string)`,
         dcCableMm2: electrical.cable.dcCableMm2,
         acCableMm2: electrical.cable.acCableMm2,

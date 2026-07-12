@@ -28,6 +28,7 @@ import {
   UPLOAD_OR_CONNECT_MAP_LABEL,
   applyLocatePropertyResultToDraft,
   fetchSatelliteImage,
+  isSatelliteProviderConfigured,
   resolveSatelliteDisplayUrl,
   type LocatePropertyResult,
 } from "../../lib/designStudioMapProviders";
@@ -39,6 +40,12 @@ import RoofIntelligenceStudio, {
 } from "./RoofIntelligenceStudio";
 import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
 import DesignStudioLeftControlPanel from "./DesignStudioLeftControlPanel";
+import {
+  StudioBadge,
+  StudioButton,
+  StudioEmptyState,
+  StudioPageHeader,
+} from "../ui/studio";
 
 export interface ProjectDesignWorkspaceProps {
   lead: Lead | null | undefined;
@@ -112,7 +119,9 @@ export default function ProjectDesignWorkspace({
     state: RoofStudioState | null;
     hasImage: boolean;
     calibrated: boolean;
-  }>({ state: null, hasImage: false, calibrated: false });
+    imageFileName: string | null;
+    imageUrl: string | null;
+  }>({ state: null, hasImage: false, calibrated: false, imageFileName: null, imageUrl: null });
   const studioApiRef = useRef<RoofStudioApi | null>(null);
 
   useEffect(() => {
@@ -182,7 +191,13 @@ export default function ProjectDesignWorkspace({
   }, [studioSnap, controls, layoutResult, leadId]);
 
   const onStudioStateChange = useCallback(
-    (snap: { state: RoofStudioState; hasImage: boolean; calibrated: boolean }) => {
+    (snap: {
+      state: RoofStudioState;
+      hasImage: boolean;
+      calibrated: boolean;
+      imageFileName: string | null;
+      imageUrl: string | null;
+    }) => {
       setStudioSnap(snap);
       if (!snap.calibrated || !snap.hasImage) {
         setLayoutResult(null);
@@ -265,7 +280,13 @@ export default function ProjectDesignWorkspace({
       const next = applyLocatePropertyResultToDraft({ latText, lngText }, result);
       setLatText(next.latText);
       setLngText(next.lngText);
-      setLocateMessage(null);
+      const formatted = String(result.result.formattedAddress ?? "").trim();
+      if (formatted) setAddress(formatted);
+      setLocateMessage(
+        formatted
+          ? `Located via ${result.result.provider ?? "provider"}.`
+          : `Coordinates set via ${result.result.provider ?? "provider"}.`
+      );
       commitGps(next.latText, next.lngText);
     },
     [latText, lngText, commitGps]
@@ -277,9 +298,16 @@ export default function ProjectDesignWorkspace({
       setSatelliteMessage(parsed.ok ? "Enter valid latitude and longitude first." : parsed.error);
       return;
     }
+    const canvasEl = document.querySelector(
+      '[data-testid="roof-intelligence-canvas"], canvas'
+    ) as HTMLCanvasElement | null;
+    const width = canvasEl?.clientWidth && canvasEl.clientWidth > 64 ? Math.min(640, canvasEl.clientWidth) : 640;
+    const height = canvasEl?.clientHeight && canvasEl.clientHeight > 64 ? Math.min(640, canvasEl.clientHeight) : 640;
     void fetchSatelliteImage({
       latitude: parsed.anchor.latitude,
       longitude: parsed.anchor.longitude,
+      width,
+      height,
     }).then(async (result) => {
       if (!result.ok) {
         setSatelliteMessage(result.message);
@@ -303,37 +331,52 @@ export default function ProjectDesignWorkspace({
         setSatelliteMessage(applied.error);
         return;
       }
-      setSatelliteMessage(null);
+      setSatelliteMessage("Satellite image loaded on canvas. Calibrate scale before Auto Layout.");
       setLayoutResult(null);
       setAutoLayoutMessage("Satellite image loaded — calibrate scale before Auto Layout.");
     });
   }, [latText, lngText]);
 
-  return (
-    <div className="space-y-4 text-left fade-in-entry">
-      <div className="relative overflow-hidden rounded-3xl border border-amber-500/25 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/20 p-4 shadow-xl">
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/25 to-amber-600/10 border border-amber-500/30">
-            <Sun className="h-5 w-5 text-amber-400" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-extrabold text-white tracking-tight">Project Design Workspace</h2>
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
-                V1 · HelioScope controls
-              </span>
-              <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[9px] font-bold uppercase text-slate-400">
-                Draft only
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-slate-400 max-w-2xl">
-              Left controls → canvas → live results. Existing engines only. No AI guessing. No fake output.
-            </p>
-          </div>
-        </div>
-      </div>
+  const autoLayoutGate = canRunDesignStudioAutoLayout({
+    hasImage: studioSnap.hasImage,
+    calibrated: studioSnap.calibrated,
+    state: studioSnap.state,
+    controls: { ...controls, alignment },
+  });
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
+  const proposalCustomer = useMemo(
+    () => ({
+      name: customerName,
+      phone: customerPhone,
+      address: address || "Address not provided",
+      sanctionedLoad: sanctionedDisplay,
+    }),
+    [customerName, customerPhone, address, sanctionedDisplay]
+  );
+
+  const roofPreview = useMemo(
+    () => ({
+      imageUrl: studioSnap.imageUrl,
+      imageFileName: studioSnap.imageFileName,
+    }),
+    [studioSnap.imageUrl, studioSnap.imageFileName]
+  );
+
+  return (
+    <div className="space-y-5 text-left studio-fade-in">
+      <StudioPageHeader
+        icon={Sun}
+        title="Project Design Workspace"
+        badges={
+          <>
+            <StudioBadge variant="accent">V1 · HelioScope controls</StudioBadge>
+            <StudioBadge variant="muted">Draft only</StudioBadge>
+          </>
+        }
+        description="Left controls → canvas → live results. Existing engines only. No AI guessing. No fake output."
+      />
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
         <div className="xl:col-span-3">
           <DesignStudioLeftControlPanel
             customerName={customerName}
@@ -358,6 +401,7 @@ export default function ProjectDesignWorkspace({
             studioState={studioSnap.state}
             hasImage={studioSnap.hasImage}
             calibrated={studioSnap.calibrated}
+            imageFileName={studioSnap.imageFileName}
             live={live}
             autoLayoutMessage={autoLayoutMessage}
             settingsError={settingsError}
@@ -376,27 +420,28 @@ export default function ProjectDesignWorkspace({
           />
         </div>
 
-        <div className="xl:col-span-5 space-y-2">
+        <div className="xl:col-span-5 space-y-3">
           {!studioSnap.hasImage && (
-            <div
-              className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center"
+            <StudioEmptyState
+              icon={Sun}
+              title={UPLOAD_OR_CONNECT_MAP_LABEL}
+              description={
+                isSatelliteProviderConfigured()
+                  ? "Locate the property, then Fetch Satellite Image — or upload a roof photo. Calibration is still required before Auto Layout."
+                  : "No satellite provider connected. Upload a roof image from the left panel, or enter coordinates manually. Calibration is required before layout."
+              }
+              className="studio-fade-in"
+              action={
+                <StudioButton
+                  variant="primary"
+                  onClick={() => studioApiRef.current?.openImagePicker()}
+                  data-testid="use-uploaded-image"
+                >
+                  Use Uploaded Image
+                </StudioButton>
+              }
               data-testid="property-location-map-placeholder"
-            >
-              <Sun className="mx-auto h-8 w-8 text-amber-400/80" />
-              <h3 className="mt-2 text-sm font-bold text-white">{UPLOAD_OR_CONNECT_MAP_LABEL}</h3>
-              <p className="mt-1 text-[11px] text-slate-400 max-w-md mx-auto">
-                No satellite provider connected. Upload a roof image from the left panel, or enter coordinates manually.
-                Calibration is required before layout.
-              </p>
-              <button
-                type="button"
-                onClick={() => studioApiRef.current?.openImagePicker()}
-                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400"
-                data-testid="use-uploaded-image"
-              >
-                Use Uploaded Image
-              </button>
-            </div>
+            />
           )}
           <RoofIntelligenceStudio
             key={leadId}
@@ -410,7 +455,15 @@ export default function ProjectDesignWorkspace({
         </div>
 
         <aside className="xl:col-span-4 space-y-2 max-h-[780px] overflow-y-auto">
-          <DesignStudioResultsPanel live={live} />
+          <DesignStudioResultsPanel
+            live={live}
+            controls={controls}
+            customer={proposalCustomer}
+            roofPreview={roofPreview}
+            onAutoLayout={handleAutoLayout}
+            autoLayoutDisabled={!autoLayoutGate.ok}
+            autoLayoutMessage={autoLayoutMessage ?? (!autoLayoutGate.ok ? autoLayoutGate.reason : null)}
+          />
         </aside>
       </div>
     </div>

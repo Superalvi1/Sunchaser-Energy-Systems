@@ -28,8 +28,11 @@ import {
   fetchSatelliteImage,
   resolveSatelliteDisplayUrl,
   type LocatePropertyResult,
+  type SatelliteImage,
 } from "../../lib/designStudioMapProviders";
 import "../../lib/googleMapsProvider";
+import "../../lib/googlePlacesProvider";
+import "../../lib/googleSolarProvider";
 import type { RoofStudioState } from "../../lib/roofStudioClient";
 import { createInitialRoofStudioState } from "../../lib/roofStudioClient";
 import RoofIntelligenceStudio, {
@@ -38,6 +41,7 @@ import RoofIntelligenceStudio, {
 } from "./RoofIntelligenceStudio";
 import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
 import DesignStudioLeftControlPanel from "./DesignStudioLeftControlPanel";
+import DesignStudioSatelliteViewport from "./DesignStudioSatelliteViewport";
 import {
   DEFAULT_SITE_GEO,
   parseOptionalGpsAnchor,
@@ -93,7 +97,9 @@ export default function SunchaserDesignStudio({
     state: RoofStudioState | null;
     hasImage: boolean;
     calibrated: boolean;
-  }>({ state: null, hasImage: false, calibrated: false });
+    imageFileName: string | null;
+    imageUrl: string | null;
+  }>({ state: null, hasImage: false, calibrated: false, imageFileName: null, imageUrl: null });
 
   const studioApiRef = useRef<RoofStudioApi | null>(null);
   const customerPhone = displayCustomerPhone(lead.phone);
@@ -163,8 +169,20 @@ export default function SunchaserDesignStudio({
   });
 
   const onStudioStateChange = useCallback(
-    (snap: { state: RoofStudioState; hasImage: boolean; calibrated: boolean }) => {
-      setStudioSnap(snap);
+    (snap: {
+      state: RoofStudioState;
+      hasImage: boolean;
+      calibrated: boolean;
+      imageFileName?: string | null;
+      imageUrl?: string | null;
+    }) => {
+      setStudioSnap({
+        state: snap.state,
+        hasImage: snap.hasImage,
+        calibrated: snap.calibrated,
+        imageFileName: snap.imageFileName ?? null,
+        imageUrl: snap.imageUrl ?? null,
+      });
       if (!snap.calibrated || !snap.hasImage) {
         setLayoutResult(null);
       }
@@ -245,10 +263,39 @@ export default function SunchaserDesignStudio({
       const next = applyLocatePropertyResultToDraft({ latText, lngText }, result);
       setLatText(next.latText);
       setLngText(next.lngText);
-      setLocateMessage(null);
+      if (result.result.formattedAddress) {
+        setAddress(result.result.formattedAddress);
+      }
+      setLocateMessage(
+        result.result.provider
+          ? `Located via ${result.result.provider}.`
+          : "Property located."
+      );
       commitGps(next.latText, next.lngText);
     },
     [latText, lngText, commitGps]
+  );
+
+  const applySatelliteToCanvas = useCallback(
+    async (image: SatelliteImage, url: string) => {
+      const api = studioApiRef.current;
+      if (!api?.setBackgroundImageFromUrl) {
+        setSatelliteMessage("Canvas not ready.");
+        return;
+      }
+      const applied = await api.setBackgroundImageFromUrl(
+        url,
+        image.provider ? `satellite-${image.provider}` : "satellite-image"
+      );
+      if (!applied.ok) {
+        setSatelliteMessage(applied.error);
+        return;
+      }
+      setSatelliteMessage(null);
+      setLayoutResult(null);
+      setAutoLayoutMessage("Satellite image loaded — calibrate scale before Auto Layout.");
+    },
+    []
   );
 
   const handleFetchSatelliteImage = useCallback(() => {
@@ -289,7 +336,28 @@ export default function SunchaserDesignStudio({
     });
   }, [latText, lngText]);
 
+  const proposalCustomer = useMemo(
+    () => ({
+      name: lead.name || "Customer",
+      phone: customerPhone,
+      address: address || "Address not provided",
+      sanctionedLoad: sanctionedDisplay,
+    }),
+    [lead.name, customerPhone, address, sanctionedDisplay]
+  );
+
+  const roofPreview = useMemo(
+    () => ({
+      imageUrl: studioSnap.imageUrl,
+      imageFileName: studioSnap.imageFileName,
+    }),
+    [studioSnap.imageUrl, studioSnap.imageFileName]
+  );
+
   const showGuidedEmpty = !studioSnap.hasImage;
+  const parsedCoords = parseOptionalGpsAnchor(latText, lngText);
+  const showSatelliteViewport =
+    showGuidedEmpty && parsedCoords.ok && Boolean(parsedCoords.anchor);
 
   return (
     <div className="space-y-3 text-left fade-in-entry">
@@ -408,7 +476,7 @@ export default function SunchaserDesignStudio({
         </div>
 
         <div className="xl:col-span-5 space-y-2">
-          {showGuidedEmpty && (
+          {showGuidedEmpty && !showSatelliteViewport && (
             <div
               className="rounded-2xl border border-dashed border-amber-500/40 bg-slate-950/80 px-4 py-6 text-center"
               data-testid="property-location-map-placeholder"
@@ -416,8 +484,8 @@ export default function SunchaserDesignStudio({
               <Sun className="mx-auto h-8 w-8 text-amber-400/80" />
               <h3 className="mt-2 text-sm font-bold text-white">{UPLOAD_OR_CONNECT_MAP_LABEL}</h3>
               <p className="mt-1 text-[11px] text-slate-400 max-w-md mx-auto">
-                Blank CAD is disabled. No satellite provider connected. Upload a roof image, calibrate scale with a known
-                distance, then draw the roof.
+                Enter an address or coordinates, then locate the property for satellite preview — or upload a roof
+                image. Calibration is still required before Auto Layout.
               </p>
               <button
                 type="button"
@@ -428,6 +496,15 @@ export default function SunchaserDesignStudio({
                 Use Uploaded Image
               </button>
             </div>
+          )}
+          {showSatelliteViewport && parsedCoords.anchor && (
+            <DesignStudioSatelliteViewport
+              latitude={parsedCoords.anchor.latitude}
+              longitude={parsedCoords.anchor.longitude}
+              onApplyToCanvas={(image, url) => {
+                void applySatelliteToCanvas(image, url);
+              }}
+            />
           )}
           <RoofIntelligenceStudio
             key={lead.id}
@@ -441,7 +518,12 @@ export default function SunchaserDesignStudio({
         </div>
 
         <aside className="xl:col-span-4 space-y-2 max-h-[780px] overflow-y-auto">
-          <DesignStudioResultsPanel live={live} />
+          <DesignStudioResultsPanel
+            live={live}
+            controls={controls}
+            customer={proposalCustomer}
+            roofPreview={roofPreview}
+          />
         </aside>
       </div>
     </div>
