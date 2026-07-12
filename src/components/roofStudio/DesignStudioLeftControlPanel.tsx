@@ -215,10 +215,20 @@ export default function DesignStudioLeftControlPanel({
   const orientationValue: PanelOrientationPolicy =
     controls.orientationPolicy === "mixed" ? "auto" : controls.orientationPolicy;
 
-  const satelliteConfigured = isSatelliteProviderConfigured();
+  let satelliteConfigured = false;
+  let providerStatusLabel = MAP_PROVIDER_NOT_CONNECTED;
+  let providerStatusError: string | null = null;
+  try {
+    satelliteConfigured = isSatelliteProviderConfigured();
+    providerStatusLabel = getMapProviderStatusLabel();
+  } catch (err) {
+    providerStatusError =
+      err instanceof Error ? err.message : "Map provider status unavailable.";
+    satelliteConfigured = false;
+    providerStatusLabel = MAP_PROVIDER_NOT_CONNECTED;
+  }
   const coordsValid = hasValidManualCoordinates(latText, lngText);
   const fetchSatelliteDisabled = !coordsValid;
-  const providerStatusLabel = getMapProviderStatusLabel();
 
   return (
     <aside
@@ -302,6 +312,15 @@ export default function DesignStudioLeftControlPanel({
         >
           Provider: {providerStatusLabel}
         </p>
+        {providerStatusError && (
+          <p
+            className="mt-1 text-[10px] text-rose-400"
+            data-testid="property-location-provider-error"
+            role="alert"
+          >
+            Map provider error: {providerStatusError}
+          </p>
+        )}
         <p className="mt-1 text-[9px] text-slate-500">
           Manual lat/lng allowed. Map geocoding requires a connected provider.
         </p>
@@ -310,7 +329,17 @@ export default function DesignStudioLeftControlPanel({
         </p>
       </Section>
 
-      <Section title="Satellite Image" icon={ImageIcon}>
+      <Section title="Site Image" icon={ImageIcon}>
+        <button
+          type="button"
+          onClick={onUploadImage}
+          className="w-full rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1.5 text-[10px] font-bold text-cyan-200"
+        >
+          {hasImage ? "Replace image" : "Upload image"}
+        </button>
+        {imageFileName && (
+          <p className="mt-1 text-[9px] text-slate-500 truncate">File: {imageFileName}</p>
+        )}
         <button
           type="button"
           disabled={fetchSatelliteDisabled}
@@ -343,19 +372,6 @@ export default function DesignStudioLeftControlPanel({
         <p className="mt-1 text-[9px] text-slate-500">
           Uploaded image remains the primary fallback. Satellite imagery still requires calibration.
         </p>
-      </Section>
-
-      <Section title="Site Image" icon={ImageIcon}>
-        <button
-          type="button"
-          onClick={onUploadImage}
-          className="w-full rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1.5 text-[10px] font-bold text-cyan-200"
-        >
-          {hasImage ? "Replace image" : "Upload image"}
-        </button>
-        {imageFileName && (
-          <p className="mt-1 text-[9px] text-slate-500 truncate">File: {imageFileName}</p>
-        )}
         <div className="mt-2 space-y-1">
           <StatusLine ok={calibrated} label={calibrated ? "Scale calibrated" : "Scale not calibrated"} />
           <p className="text-[10px] font-mono text-slate-300">Scale: {scaleLabel}</p>

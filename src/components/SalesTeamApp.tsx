@@ -67,7 +67,7 @@ import QuoteTemplateWorkspace from "./quoteAuthoring/QuoteTemplateWorkspace";
 import AIQuoteBuilderModal from "./quoteAuthoring/AIQuoteBuilderModal";
 import SolarProposalStudio from "./quoteAuthoring/SolarProposalStudio";
 import ProjectDesignWorkspace from "./roofStudio/ProjectDesignWorkspace";
-import SunchaserDesignStudio from "./roofStudio/SunchaserDesignStudio";
+import RoofStudioErrorBoundary from "./roofStudio/RoofStudioErrorBoundary";
 import { isProposalStudioEnabled, isRoofStudioEnabled, isSunchaserDesignStudioEnabled } from "../lib/studioFeatureFlags";
 import { buildDraftApplyPayload } from "../lib/solarQuotePlannerClient";
 import type { SolarQuoteDraft } from "../lib/solarQuotePlannerClient";
@@ -136,8 +136,8 @@ interface SalesTeamAppProps {
 const PROPOSAL_STUDIO_ENABLED = isProposalStudioEnabled();
 const ROOF_STUDIO_ENABLED = isRoofStudioEnabled();
 const SUNCHASER_DESIGN_STUDIO_ENABLED = isSunchaserDesignStudioEnabled();
-/** Design Project entry: Design Studio flag takes priority over legacy Roof Studio. */
-const DESIGN_PROJECT_ENABLED = SUNCHASER_DESIGN_STUDIO_ENABLED || ROOF_STUDIO_ENABLED;
+/** Roof Studio / Design Project tab — Project Design Workspace (HelioScope layout). */
+const DESIGN_PROJECT_ENABLED = ROOF_STUDIO_ENABLED || SUNCHASER_DESIGN_STUDIO_ENABLED;
 
 export default function SalesTeamApp({
   staffUser,
@@ -2908,8 +2908,9 @@ export default function SalesTeamApp({
                       <span className="font-bold text-neutral-100 block max-w-[130px] truncate">{lead.name}</span>
                       <div className="flex items-center gap-1">
                         {onDeleteLead && (
-                          <button
-                            type="button"
+                          <span
+                            role="button"
+                            tabIndex={0}
                             title="Delete lead"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2918,10 +2919,20 @@ export default function SalesTeamApp({
                                 onDeleteLead(lead.id);
                               }
                             }}
-                            className="p-1 rounded-lg text-red-400 hover:bg-red-950/50 border border-transparent hover:border-red-900/40 cursor-pointer"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (window.confirm("Delete this lead?")) {
+                                  if (selectedLeadId === lead.id) setSelectedLeadId(null);
+                                  onDeleteLead(lead.id);
+                                }
+                              }
+                            }}
+                            className="p-1 rounded-lg text-red-400 hover:bg-red-950/50 border border-transparent hover:border-red-900/40 cursor-pointer inline-flex"
                           >
                             <Trash2 className="h-3 w-3" />
-                          </button>
+                          </span>
                         )}
                         <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
                           isSelected ? "bg-amber-400 text-slate-950 font-bold" : "bg-slate-800 text-slate-400"
@@ -3002,7 +3013,7 @@ export default function SalesTeamApp({
                     onClick={() => setActiveModule("roof_studio")}
                     className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
-                    <DraftingCompass className="h-3.5 w-3.5" /> Design Project
+                    <DraftingCompass className="h-3.5 w-3.5" /> Roof Studio
                   </button>
                   )}
                   {REQUIRE_EXPLICIT_QUOTE_SAVE && (
@@ -3055,7 +3066,7 @@ export default function SalesTeamApp({
                     ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
                     : []),
                   ...(DESIGN_PROJECT_ENABLED
-                    ? [{ id: 'roof_studio' as const, label: 'Design Project', icon: DraftingCompass }]
+                    ? [{ id: 'roof_studio' as const, label: 'Roof Studio', icon: DraftingCompass }]
                     : []),
                   { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
                   { id: 'templates', label: 'Quote Templates', icon: Layers },
@@ -3112,19 +3123,23 @@ export default function SalesTeamApp({
                 </div>
               )}
 
-              {/* MODULE 1B: SOLAR DESIGN STUDIO */}
+              {/* MODULE: Project Design Workspace (HelioScope) — RoofIntelligenceStudio is canvas-only inside */}
               {activeModule === "proposal_studio" && PROPOSAL_STUDIO_ENABLED && <SolarProposalStudio />}
-              {activeModule === "roof_studio" && SUNCHASER_DESIGN_STUDIO_ENABLED && activeLead && (
-                <SunchaserDesignStudio
-                  lead={activeLead}
-                  sanctionedLoad={lescoSanctionedLoad || activeLead.sanctionedLoad}
-                />
+              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && activeLead && (
+                <RoofStudioErrorBoundary title="Roof Studio failed to render">
+                  <ProjectDesignWorkspace
+                    lead={activeLead}
+                    sanctionedLoad={lescoSanctionedLoad || activeLead.sanctionedLoad}
+                  />
+                </RoofStudioErrorBoundary>
               )}
-              {activeModule === "roof_studio" && !SUNCHASER_DESIGN_STUDIO_ENABLED && ROOF_STUDIO_ENABLED && activeLead && (
-                <ProjectDesignWorkspace
-                  lead={activeLead}
-                  sanctionedLoad={lescoSanctionedLoad || activeLead.sanctionedLoad}
-                />
+              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && !activeLead && (
+                <div className="rounded-2xl border border-amber-500/30 bg-slate-950/80 px-4 py-8 text-center">
+                  <p className="text-sm font-bold text-white">Select a lead to open Roof Studio</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Choose a customer from the left list, then open Roof Studio for Property Location, satellite, and layout.
+                  </p>
+                </div>
               )}
 
               {/* MODULE 1: AUTO SIZER VIEW */}

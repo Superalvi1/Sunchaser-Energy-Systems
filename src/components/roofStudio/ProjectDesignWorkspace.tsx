@@ -41,21 +41,21 @@ import DesignStudioResultsPanel from "./DesignStudioResultsPanel";
 import DesignStudioLeftControlPanel from "./DesignStudioLeftControlPanel";
 
 export interface ProjectDesignWorkspaceProps {
-  lead: Lead;
+  lead: Lead | null | undefined;
   sanctionedLoad?: string | number | null;
 }
 
 function resolveSanctionedLoad(
-  lead: Lead,
+  lead: Lead | null | undefined,
   override?: string | number | null
 ): string {
   if (override !== undefined && override !== null && String(override).trim() !== "") {
     return String(override).trim();
   }
-  if (lead.sanctionedLoad != null && Number.isFinite(Number(lead.sanctionedLoad))) {
+  if (lead?.sanctionedLoad != null && Number.isFinite(Number(lead.sanctionedLoad))) {
     return `${lead.sanctionedLoad} kW`;
   }
-  const quotes = lead.quotes || [];
+  const quotes = Array.isArray(lead?.quotes) ? lead!.quotes : [];
   for (let i = quotes.length - 1; i >= 0; i--) {
     const q = quotes[i] as { lescoSettings?: { sanctionedLoad?: string } };
     const fromQuote = q?.lescoSettings?.sanctionedLoad;
@@ -64,16 +64,33 @@ function resolveSanctionedLoad(
   return "Not set";
 }
 
-function initialAddress(lead: Lead): string {
-  const fromFormat = formatLeadLocation(lead);
-  if (fromFormat !== "Location not specified") return fromFormat;
+function initialAddress(lead: Lead | null | undefined): string {
+  if (!lead) return "";
+  try {
+    const fromFormat = formatLeadLocation(lead);
+    if (fromFormat !== "Location not specified") return fromFormat;
+  } catch {
+    /* safe fallback below */
+  }
   return sanitizeLeadLocationInput(lead.address) || sanitizeLeadLocationInput(lead.location) || "";
+}
+
+function safeLeadId(lead: Lead | null | undefined): string {
+  const id = lead?.id != null ? String(lead.id).trim() : "";
+  return id || "unknown-lead";
+}
+
+function safeLeadName(lead: Lead | null | undefined): string {
+  const name = lead?.name != null ? String(lead.name).trim() : "";
+  return name || "Customer";
 }
 
 export default function ProjectDesignWorkspace({
   lead,
   sanctionedLoad,
 }: ProjectDesignWorkspaceProps) {
+  const leadId = safeLeadId(lead);
+  const customerName = safeLeadName(lead);
   const [address, setAddress] = useState(() => initialAddress(lead));
   const [latText, setLatText] = useState("");
   const [lngText, setLngText] = useState("");
@@ -82,7 +99,7 @@ export default function ProjectDesignWorkspace({
   const [satelliteMessage, setSatelliteMessage] = useState<string | null>(null);
   const [geoSeed, setGeoSeed] = useState<SiteGeoReference>(() => ({
     ...DEFAULT_SITE_GEO,
-    siteLabel: lead.name || "",
+    siteLabel: customerName === "Customer" ? "" : customerName,
   }));
   const [controls, setControls] = useState<DesignStudioControls>(() => ({
     ...DEFAULT_DESIGN_CONTROLS,
@@ -107,21 +124,21 @@ export default function ProjectDesignWorkspace({
     setSatelliteMessage(null);
     setGeoSeed({
       ...DEFAULT_SITE_GEO,
-      siteLabel: lead.name || "",
+      siteLabel: safeLeadName(lead) === "Customer" ? "" : safeLeadName(lead),
     });
     setLayoutResult(null);
     setAutoLayoutMessage(null);
     setSettingsError(null);
     setControls({ ...DEFAULT_DESIGN_CONTROLS });
     setAlignment("center");
-  }, [lead.id]);
+  }, [leadId]);
 
   const sanctionedDisplay = useMemo(
     () => resolveSanctionedLoad(lead, sanctionedLoad),
     [lead, sanctionedLoad]
   );
 
-  const customerPhone = displayCustomerPhone(lead.phone);
+  const customerPhone = displayCustomerPhone(lead?.phone);
 
   const commitGps = useCallback(
     (nextLat: string, nextLng: string) => {
@@ -133,36 +150,36 @@ export default function ProjectDesignWorkspace({
       setGpsError(null);
       setGeoSeed((prev) => ({
         ...prev,
-        siteLabel: address.trim() || lead.name || prev.siteLabel,
+        siteLabel: address.trim() || customerName || prev.siteLabel,
         latitude: parsed.anchor?.latitude ?? null,
         longitude: parsed.anchor?.longitude ?? null,
       }));
     },
-    [address, lead.name]
+    [address, customerName]
   );
 
   const project: ProjectDesignContext = useMemo(
     () => ({
-      leadId: lead.id,
-      customerName: lead.name || "Customer",
-      phone: lead.phone || "",
+      leadId,
+      customerName,
+      phone: lead?.phone != null ? String(lead.phone) : "",
       address,
       sanctionedLoad: sanctionedDisplay,
       geoSeed,
     }),
-    [lead.id, lead.name, lead.phone, address, sanctionedDisplay, geoSeed]
+    [leadId, customerName, lead?.phone, address, sanctionedDisplay, geoSeed]
   );
 
   const live = useMemo(() => {
     if (!studioSnap.state) {
-      return buildDesignStudioLiveResults(createInitialRoofStudioState(`lead-${lead.id}`), controls, null, {
+      return buildDesignStudioLiveResults(createInitialRoofStudioState(`lead-${leadId}`), controls, null, {
         hasImage: false,
       });
     }
     return buildDesignStudioLiveResults(studioSnap.state, controls, layoutResult, {
       hasImage: studioSnap.hasImage,
     });
-  }, [studioSnap, controls, layoutResult, lead.id]);
+  }, [studioSnap, controls, layoutResult, leadId]);
 
   const onStudioStateChange = useCallback(
     (snap: { state: RoofStudioState; hasImage: boolean; calibrated: boolean }) => {
@@ -319,7 +336,7 @@ export default function ProjectDesignWorkspace({
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
         <div className="xl:col-span-3">
           <DesignStudioLeftControlPanel
-            customerName={lead.name || "Customer"}
+            customerName={customerName}
             address={address}
             onAddressChange={setAddress}
             latText={latText}
@@ -382,7 +399,7 @@ export default function ProjectDesignWorkspace({
             </div>
           )}
           <RoofIntelligenceStudio
-            key={lead.id}
+            key={leadId}
             project={project}
             workspaceMode
             chromeMode="canvas"

@@ -381,6 +381,16 @@ export default function RoofIntelligenceStudio({
   const designUnlocked = isDesignWorkspaceUnlocked(hasImage, calibrated);
   const canvasOnly = chromeMode === "canvas";
 
+  /* ---------------- history helpers (must be above effects that reference apply) ---------------- */
+  const apply = useCallback((next: RoofStudioState) => {
+    setHistory((h) => commit(h, next));
+  }, []);
+  const setPresentTransient = useCallback((next: RoofStudioState) => {
+    setHistory((h) => ({ ...h, present: next }));
+  }, []);
+  const doUndo = useCallback(() => setHistory((h) => undoHistory(h)), []);
+  const doRedo = useCallback(() => setHistory((h) => redoHistory(h)), []);
+
   useEffect(() => {
     onStudioStateChange?.({ state, hasImage, calibrated });
   }, [state, hasImage, calibrated, onStudioStateChange]);
@@ -451,16 +461,6 @@ export default function RoofIntelligenceStudio({
 
   const panelCount = state.panelPlacements.length;
   const systemKw = panelSystemKw(state.panelPlacements, state.panelSpec.wattage);
-
-  /* ---------------- history helpers ---------------- */
-  const apply = useCallback((next: RoofStudioState) => {
-    setHistory((h) => commit(h, next));
-  }, []);
-  const setPresentTransient = useCallback((next: RoofStudioState) => {
-    setHistory((h) => ({ ...h, present: next }));
-  }, []);
-  const doUndo = useCallback(() => setHistory((h) => undoHistory(h)), []);
-  const doRedo = useCallback(() => setHistory((h) => redoHistory(h)), []);
 
   const handleApplyCalibration = useCallback(() => {
     if (!pendingCalibrationLine) return;

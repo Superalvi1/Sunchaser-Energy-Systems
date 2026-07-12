@@ -71,14 +71,16 @@ function calibratedStateWithPlane() {
 
 check("design studio flag disabled by default", () => !isSunchaserDesignStudioEnabled());
 
-check("SalesTeamApp Design Project button opens studio from lead", () => {
+check("SalesTeamApp Roof Studio tab opens Project Design Workspace from lead", () => {
   const src = readFileSync(resolve(here, "../components/SalesTeamApp.tsx"), "utf8");
   return (
-    src.includes("Design Project") &&
+    src.includes("Roof Studio") &&
     src.includes("setActiveModule(\"roof_studio\")") &&
-    src.includes("SUNCHASER_DESIGN_STUDIO_ENABLED") &&
-    src.includes("SunchaserDesignStudio") &&
-    src.includes("activeLead")
+    src.includes("DESIGN_PROJECT_ENABLED") &&
+    src.includes("ProjectDesignWorkspace") &&
+    src.includes("lead={activeLead}") &&
+    !src.includes("<SunchaserDesignStudio") &&
+    !src.includes("<RoofIntelligenceStudio")
   );
 });
 
@@ -176,13 +178,11 @@ check("address blur does not call onUpdateLead (no CRM mutation path)", () => {
     !workspace.includes("persistAddress") &&
     !workspace.includes("onUpdateLead") &&
     !left.includes("onUpdateLead");
-  const studioMount = sales.match(/<SunchaserDesignStudio[\s\S]*?\/>/)?.[0] ?? "";
   const workspaceMount = sales.match(/<ProjectDesignWorkspace[\s\S]*?\/>/)?.[0] ?? "";
   const salesDoesNotPassMutation =
-    studioMount.includes("lead={activeLead}") &&
     workspaceMount.includes("lead={activeLead}") &&
-    !studioMount.includes("onUpdateLead") &&
-    !workspaceMount.includes("onUpdateLead");
+    !workspaceMount.includes("onUpdateLead") &&
+    !sales.includes("<SunchaserDesignStudio");
   const draftLabel =
     left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
     DESIGN_WORKSPACE_DRAFT_ONLY_LABEL === "Draft only — not saved to CRM.";
@@ -198,7 +198,8 @@ check("workspace renders customer phone from lead context", () => {
   return (
     studio.includes("displayCustomerPhone(lead.phone)") &&
     studio.includes("design-studio-customer-phone") &&
-    workspace.includes("displayCustomerPhone(lead.phone)") &&
+    (workspace.includes("displayCustomerPhone(lead.phone)") ||
+      workspace.includes("displayCustomerPhone(lead?.phone)")) &&
     left.includes("project-workspace-customer-phone") &&
     left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL")
   );
@@ -497,13 +498,27 @@ check("source scan forbids module and edgeSetback silent fallbacks", () => {
 check("left panel renders inside Project Design Workspace", () => {
   const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
   const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
+  const sectionOrder = [
+    'title="Project"',
+    'title="Property Location"',
+    'title="Site Image"',
+    'title="Roof Areas"',
+    'title="Keepouts"',
+    'title="Module"',
+    'title="Layout Settings"',
+    'title="Auto Layout"',
+    'title="Output Status"',
+  ];
+  const indexes = sectionOrder.map((token) => left.indexOf(token));
   return (
     workspace.includes("DesignStudioLeftControlPanel") &&
     left.includes("design-studio-left-control-panel") &&
-    left.includes("Auto Layout") &&
-    left.includes("Output Status") &&
-    left.includes("Keepouts") &&
-    left.includes("Layout Settings")
+    indexes.every((idx) => idx >= 0) &&
+    indexes.every((idx, i) => i === 0 || idx > indexes[i - 1]) &&
+    !left.includes('title="Satellite Image"') &&
+    workspace.includes("property-location-map-placeholder") &&
+    workspace.includes("RoofIntelligenceStudio") &&
+    workspace.includes("DesignStudioResultsPanel")
   );
 });
 
@@ -722,6 +737,8 @@ check("left panel has Property Location section with draft-only address", () => 
     left.includes('title="Property Location"') &&
     left.includes("Locate Property") &&
     left.includes("property-location-address") &&
+    left.includes('title="Site Image"') &&
+    !left.includes('title="Satellite Image"') &&
     left.includes("DESIGN_WORKSPACE_DRAFT_ONLY_LABEL") &&
     workspace.includes("latText") &&
     workspace.includes("lngText") &&
