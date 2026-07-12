@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   BoxSelect,
   Circle,
+  Copy,
   Eye,
   EyeOff,
   Grid3X3,
@@ -78,10 +79,24 @@ import {
   addPanelAt,
   autoFillPanelsOnPlane,
   hitTestPanel,
-  movePanelPlacement,
   panelFootprintUnits,
   panelSystemKw,
+  type StudioPanelPlacement,
 } from "../../lib/roofStudioPanels.ts";
+import {
+  beginPanelDragSession,
+  copyPanelsToClipboard,
+  duplicatePanels,
+  normalizeWorldRect,
+  panelIdsInWorldRect,
+  pastePanelsFromClipboard,
+  removePanels,
+  resolvePanelDragPlacements,
+  rotatePanels,
+  togglePanelIdSelection,
+  type PanelClipboardItem,
+  type PanelDragSession,
+} from "../../lib/roofStudioPanelEditing.ts";
 import { boqFromPlacements } from "../../lib/roofStudioBoq.ts";
 import { buildLayoutReportPages } from "../../lib/roofStudioReport.ts";
 import { addStructureMember } from "../../lib/roofStudioStructure.ts";
@@ -133,6 +148,8 @@ export interface RoofIntelligenceStudioProps {
     state: RoofStudioState;
     hasImage: boolean;
     calibrated: boolean;
+    imageFileName: string | null;
+    imageUrl: string | null;
   }) => void;
   /** Optional overlay panels drawn on canvas (Panel Layout Engine V2 placements). */
   overlayPanels?: Array<{
@@ -263,7 +280,13 @@ export default function RoofIntelligenceStudio({
   const [calibrationDialogOpen, setCalibrationDialogOpen] = useState(false);
   const [calibrationDistanceInput, setCalibrationDistanceInput] = useState("51 ft 9 in");
   const [pendingCalibrationLine, setPendingCalibrationLine] = useState<{ start: Point2D; end: Point2D } | null>(null);
-  const panelDragRef = useRef<{ panelId: string; offsetX: number; offsetY: number } | null>(null);
+  const panelDragRef = useRef<PanelDragSession | null>(null);
+  const [selectedPanelIds, setSelectedPanelIds] = useState<string[]>([]);
+  const [hoveredPanelId, setHoveredPanelId] = useState<string | null>(null);
+  const [panelClipboard, setPanelClipboard] = useState<PanelClipboardItem[]>([]);
+  const [marqueeSelect, setMarqueeSelect] = useState<{ start: Point2D; end: Point2D } | null>(null);
+  const [panelDragCollidingIds, setPanelDragCollidingIds] = useState<Set<string>>(new Set());
+  const marqueeSelectRef = useRef<{ start: Point2D; end: Point2D } | null>(null);
 
   const calibrated = isScaleCalibrated(state.scaleCalibration, state.metersPerUnit);
   const [cursorWorld, setCursorWorld] = useState<Point2D>({ x: 0, y: 0 });
@@ -307,6 +330,10 @@ export default function RoofIntelligenceStudio({
         imageManagerRef.current.clear();
         if (fileInputRef.current) fileInputRef.current.value = "";
         const img = new Image();
+        // Allow canvas compositing of HTTPS satellite tiles without tainting where CORS allows.
+        if (/^https?:\/\//i.test(trimmed)) {
+          img.crossOrigin = "anonymous";
+        }
         img.onload = () => {
           setBgImage({ el: img, fileName });
           setImageError(null);
@@ -391,9 +418,24 @@ export default function RoofIntelligenceStudio({
   const doUndo = useCallback(() => setHistory((h) => undoHistory(h)), []);
   const doRedo = useCallback(() => setHistory((h) => redoHistory(h)), []);
 
+  const commitPanelPlacements = useCallback(
+    (placements: StudioPanelPlacement[], nextSelectedIds?: string[]) => {
+      const boqLines = boqFromPlacements(placements, state.structure, state.panelSpec.wattage);
+      apply({ ...state, panelPlacements: placements, boqLines });
+      if (nextSelectedIds) setSelectedPanelIds(nextSelectedIds);
+    },
+    [apply, state]
+  );
+
   useEffect(() => {
-    onStudioStateChange?.({ state, hasImage, calibrated });
-  }, [state, hasImage, calibrated, onStudioStateChange]);
+    onStudioStateChange?.({
+      state,
+      hasImage,
+      calibrated,
+      imageFileName: bgImage?.fileName ?? null,
+      imageUrl: bgImage?.el.src ?? null,
+    });
+  }, [state, hasImage, calibrated, bgImage?.fileName, bgImage?.el.src, onStudioStateChange]);
 
   useEffect(() => {
     if (!studioApiRef) return;
@@ -565,9 +607,48 @@ export default function RoofIntelligenceStudio({
       } else if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) {
         e.preventDefault();
         doRedo();
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        tool === "select" &&
+        selectedPanelIds.length > 0 &&
+        calibrated &&
+        isLayerVisible(state, "panels")
+      ) {
+        e.preventDefault();
+        const next = removePanels(state.panelPlacements, new Set(selectedPanelIds));
+        setSelectedPanelIds([]);
+        commitPanelPlacements(next);
+      } else if (meta && e.key.toLowerCase() === "c" && selectedPanelIds.length > 0) {
+        e.preventDefault();
+        setPanelClipboard(copyPanelsToClipboard(state.panelPlacements, new Set(selectedPanelIds)));
+        setMeasureResult(`Copied ${selectedPanelIds.length} panel(s).`);
+      } else if (meta && e.key.toLowerCase() === "v" && panelClipboard.length > 0) {
+        e.preventDefault();
+        const targetPlane = selectedPlane ?? state.planes.find((p) => p.id === panelClipboard[0]?.planeId) ?? state.planes[0];
+        if (!targetPlane) {
+          setMeasureResult("Draw a roof plane before pasting panels.");
+          return;
+        }
+        const pasted = pastePanelsFromClipboard(panelClipboard, targetPlane.id, cursorWorld);
+        commitPanelPlacements([...state.panelPlacements, ...pasted], pasted.map((p) => p.id));
+        setMeasureResult(`Pasted ${pasted.length} panel(s).`);
+      } else if (meta && e.key.toLowerCase() === "d" && selectedPanelIds.length > 0) {
+        e.preventDefault();
+        const next = duplicatePanels(state.panelPlacements, new Set(selectedPanelIds));
+        const newIds = next.filter((p) => !state.panelPlacements.some((old) => old.id === p.id)).map((p) => p.id);
+        commitPanelPlacements(next, [...selectedPanelIds, ...newIds]);
+        setMeasureResult(`Duplicated ${selectedPanelIds.length} panel(s).`);
+      } else if ((e.key === "r" || e.key === "R") && selectedPanelIds.length > 0 && tool === "select") {
+        e.preventDefault();
+        const next = rotatePanels(state.panelPlacements, new Set(selectedPanelIds), state.panelSpec, state.metersPerUnit);
+        commitPanelPlacements(next);
+        setMeasureResult(`Rotated ${selectedPanelIds.length} panel(s).`);
       } else if (e.key === "Escape") {
         setDraftPoints([]);
         setDragShape(null);
+        setSelectedPanelIds([]);
+        setMarqueeSelect(null);
+        marqueeSelectRef.current = null;
       } else if (e.key === "Enter" && POLYGON_TOOLS.includes(tool)) {
         e.preventDefault();
         finishPolygon();
@@ -583,7 +664,19 @@ export default function RoofIntelligenceStudio({
       window.removeEventListener("keyup", onKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, draftPoints, doUndo, doRedo]);
+  }, [
+    tool,
+    draftPoints,
+    doUndo,
+    doRedo,
+    selectedPanelIds,
+    panelClipboard,
+    cursorWorld,
+    calibrated,
+    state,
+    selectedPlane,
+    commitPanelPlacements,
+  ]);
 
   /* ---------------- polygon completion ---------------- */
   const finishPolygon = useCallback(() => {
@@ -669,23 +762,33 @@ export default function RoofIntelligenceStudio({
       if (calibrated && isLayerVisible(state, "panels")) {
         const panelHit = hitTestPanel(state.panelPlacements, state.panelSpec, state.metersPerUnit, world);
         if (panelHit) {
+          if (e.shiftKey) {
+            setSelectedPanelIds((prev) => togglePanelIdSelection(prev, panelHit.id));
+            return;
+          }
+          const nextSelected = selectedPanelIds.includes(panelHit.id) ? selectedPanelIds : [panelHit.id];
+          setSelectedPanelIds(nextSelected);
           apply(state);
-          panelDragRef.current = {
-            panelId: panelHit.id,
-            offsetX: world.x - panelHit.x,
-            offsetY: world.y - panelHit.y,
-          };
+          const targetPlane = state.planes.find((pl) => pl.id === panelHit.planeId) ?? selectedPlane;
+          if (targetPlane) {
+            panelDragRef.current = beginPanelDragSession(
+              state.panelPlacements,
+              panelHit.id,
+              nextSelected,
+              world
+            );
+          }
           return;
         }
       }
       const hit = hitTestVertex(world);
       if (hit) {
-        apply(state); // push pre-drag baseline so one undo reverts the whole drag
+        apply(state);
         vertexDragRef.current = hit;
         return;
       }
-      const planeHit = hitTestPlane(world);
-      apply({ ...state, selectedPlaneId: planeHit?.id ?? null });
+      marqueeSelectRef.current = { start: world, end: world };
+      setMarqueeSelect({ start: world, end: world });
       return;
     }
 
@@ -767,16 +870,35 @@ export default function RoofIntelligenceStudio({
     }
 
     if (panelDragRef.current) {
-      const { panelId, offsetX, offsetY } = panelDragRef.current;
-      const snapped = snap(world);
-      const placements = movePanelPlacement(
-        state.panelPlacements,
-        panelId,
-        snapped.x - offsetX,
-        snapped.y - offsetY
-      );
-      setPresentTransient({ ...state, panelPlacements: placements });
+      const primary = state.panelPlacements.find((p) => p.id === panelDragRef.current!.panelIds[0]);
+      const plane = primary ? state.planes.find((pl) => pl.id === primary.planeId) : selectedPlane;
+      if (plane) {
+        const { placements, collidingIds } = resolvePanelDragPlacements(
+          panelDragRef.current,
+          state.panelPlacements,
+          snap(world),
+          plane,
+          state.panelSpec,
+          state.metersPerUnit
+        );
+        setPanelDragCollidingIds(collidingIds);
+        setPresentTransient({ ...state, panelPlacements: placements });
+      }
       return;
+    }
+
+    if (marqueeSelectRef.current) {
+      const end = snap(world);
+      marqueeSelectRef.current = { start: marqueeSelectRef.current.start, end };
+      setMarqueeSelect({ start: marqueeSelectRef.current.start, end });
+      return;
+    }
+
+    if (tool === "select" && calibrated && isLayerVisible(state, "panels") && !isPanMode) {
+      const hoverHit = hitTestPanel(state.panelPlacements, state.panelSpec, state.metersPerUnit, world);
+      setHoveredPanelId(hoverHit?.id ?? null);
+    } else if (hoveredPanelId) {
+      setHoveredPanelId(null);
     }
 
     if (dragShape) {
@@ -797,8 +919,24 @@ export default function RoofIntelligenceStudio({
     }
     if (panelDragRef.current) {
       panelDragRef.current = null;
+      setPanelDragCollidingIds(new Set());
       const boqLines = boqFromPlacements(state.panelPlacements, state.structure, state.panelSpec.wattage);
-      apply({ ...state, boqLines });
+      apply({ ...state, panelPlacements: state.panelPlacements, boqLines });
+      return;
+    }
+    if (marqueeSelectRef.current) {
+      const { start, end } = marqueeSelectRef.current;
+      const rect = normalizeWorldRect(start, end);
+      const span = Math.max(rect.maxX - rect.minX, rect.maxY - rect.minY);
+      if (span > 3 && calibrated && isLayerVisible(state, "panels")) {
+        setSelectedPanelIds(panelIdsInWorldRect(state.panelPlacements, state.panelSpec, state.metersPerUnit, rect));
+      } else {
+        const planeHit = hitTestPlane(start);
+        setSelectedPanelIds([]);
+        apply({ ...state, selectedPlaneId: planeHit?.id ?? null });
+      }
+      marqueeSelectRef.current = null;
+      setMarqueeSelect(null);
       return;
     }
     if (dragShape) {
@@ -1092,7 +1230,34 @@ export default function RoofIntelligenceStudio({
       for (const placement of state.panelPlacements) {
         const { w, h } = panelFootprintUnits(state.panelSpec, placement.orientation, state.metersPerUnit);
         const verts = rectVertices(placement.x, placement.y, w, h);
-        drawPolygon(ctx, verts, S, "rgba(34,211,238,0.35)", "rgba(34,211,238,0.95)");
+        const isSelected = selectedPanelIds.includes(placement.id);
+        const isHovered = hoveredPanelId === placement.id;
+        const isColliding = panelDragCollidingIds.has(placement.id);
+        let fill = "rgba(34,211,238,0.35)";
+        let stroke = "rgba(34,211,238,0.95)";
+        if (isColliding) {
+          fill = "rgba(244,63,94,0.38)";
+          stroke = "rgba(248,113,113,0.98)";
+        } else if (isSelected) {
+          fill = "rgba(251,191,36,0.42)";
+          stroke = "rgba(252,211,77,0.98)";
+        } else if (isHovered) {
+          fill = "rgba(56,189,248,0.48)";
+          stroke = "rgba(125,211,252,0.98)";
+        }
+        drawPolygon(ctx, verts, S, fill, stroke);
+        if (isSelected) {
+          for (const v of verts) {
+            const s = S(v);
+            ctx.beginPath();
+            ctx.rect(s.x - 3, s.y - 3, 6, 6);
+            ctx.fillStyle = "rgba(252,211,77,0.95)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(15,23,42,0.9)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
       }
       // Panel Layout Engine V2 overlay (Design Studio Auto Layout)
       if (overlayPanels?.length) {
@@ -1101,6 +1266,21 @@ export default function RoofIntelligenceStudio({
           drawPolygon(ctx, verts, S, "rgba(251,191,36,0.28)", "rgba(251,191,36,0.95)");
         }
       }
+    }
+
+    if (marqueeSelect) {
+      const rect = normalizeWorldRect(marqueeSelect.start, marqueeSelect.end);
+      const tl = S({ x: rect.minX, y: rect.minY });
+      const br = S({ x: rect.maxX, y: rect.maxY });
+      const rw = br.x - tl.x;
+      const rh = br.y - tl.y;
+      ctx.fillStyle = "rgba(56,189,248,0.12)";
+      ctx.strokeStyle = "rgba(125,211,252,0.95)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(tl.x, tl.y, rw, rh);
+      ctx.strokeRect(tl.x, tl.y, rw, rh);
+      ctx.setLineDash([]);
     }
 
     // dimension annotations
@@ -1231,6 +1411,10 @@ export default function RoofIntelligenceStudio({
     calibrated,
     pendingCalibrationLine,
     overlayPanels,
+    selectedPanelIds,
+    hoveredPanelId,
+    panelDragCollidingIds,
+    marqueeSelect,
   ]);
 
   useEffect(() => {
@@ -1271,15 +1455,15 @@ export default function RoofIntelligenceStudio({
       )}
 
       {workspaceMode && !designUnlocked && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-200">
+        <div className="studio-gate-note rounded-xl">
           Complete Step 1 (upload image) and Step 2 (calibrate scale) before panels, BOQ, and proposal draft are shown.
         </div>
       )}
 
       {/* toolbar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 p-2">
+      <div className="studio-toolbar">
         {(["nav", "calibrate", "roof", "features", "panels", "structure", "measure"] as const).map((group) => (
-          <div key={group} className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+          <div key={group} className="studio-toolbar-group">
             {TOOLS.filter((t) => t.group === group).map((t) => {
               const Icon = t.icon;
               const active = tool === t.id;
@@ -1300,11 +1484,9 @@ export default function RoofIntelligenceStudio({
                     setDraftPoints([]);
                     setDragShape(null);
                   }}
-                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold transition disabled:opacity-30 disabled:cursor-not-allowed ${
-                    active ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-slate-800"
-                  }`}
+                  className={`studio-btn studio-btn-tool ${active ? "studio-btn-tool-active" : ""} disabled:opacity-30 disabled:cursor-not-allowed`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span className="hidden lg:inline">{t.label}</span>
                 </button>
               );
@@ -1312,7 +1494,7 @@ export default function RoofIntelligenceStudio({
           </div>
         ))}
 
-        <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+        <div className="studio-toolbar-group">
           <input
             ref={fileInputRef}
             type="file"
@@ -1324,9 +1506,9 @@ export default function RoofIntelligenceStudio({
             type="button"
             title="Upload rooftop / Google Earth image (stays on your device)"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold text-slate-300 hover:bg-slate-800"
+            className="studio-btn studio-btn-tool"
           >
-            <ImageIcon className="h-3.5 w-3.5" />
+            <ImageIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="hidden lg:inline">{bgImage ? "Replace image" : "Upload image"}</span>
           </button>
           {bgImage && (
@@ -1339,35 +1521,64 @@ export default function RoofIntelligenceStudio({
                 value={bgOpacity}
                 onChange={(e) => setBgOpacity(Number(e.target.value))}
                 title="Image opacity"
-                className="h-1 w-16 accent-cyan-500"
+                className="studio-range"
               />
               <button
                 type="button"
                 title="Remove image"
                 onClick={clearBackgroundImage}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
+                className="studio-btn studio-btn-danger rounded-lg p-2"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-3.5 w-3.5" aria-hidden />
               </button>
             </>
           )}
         </div>
 
-        <div className="ml-auto flex items-center gap-1">
-          <button type="button" title="Undo (Ctrl+Z)" disabled={!canUndo(history)} onClick={doUndo} className="rounded-lg border border-slate-800 p-1.5 text-slate-300 disabled:opacity-30 hover:bg-slate-800">
-            <Undo2 className="h-4 w-4" />
+        <div className="studio-toolbar-actions">
+          {selectedPanelIds.length > 0 && (
+            <div className="mr-2 hidden items-center gap-1 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2 py-1 md:flex">
+              <span className="text-[10px] font-bold text-amber-200">{selectedPanelIds.length} selected</span>
+              <button
+                type="button"
+                title="Duplicate (Ctrl+D)"
+                onClick={() => {
+                  const next = duplicatePanels(state.panelPlacements, new Set(selectedPanelIds));
+                  const newIds = next.filter((p) => !state.panelPlacements.some((old) => old.id === p.id)).map((p) => p.id);
+                  commitPanelPlacements(next, [...selectedPanelIds, ...newIds]);
+                }}
+                className="rounded-lg p-1 text-amber-100 hover:bg-amber-500/20"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title="Delete selected panels"
+                onClick={() => {
+                  const next = removePanels(state.panelPlacements, new Set(selectedPanelIds));
+                  setSelectedPanelIds([]);
+                  commitPanelPlacements(next);
+                }}
+                className="rounded-lg p-1 text-amber-100 hover:bg-rose-500/20 hover:text-rose-200"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+          <button type="button" title="Undo (Ctrl+Z)" disabled={!canUndo(history)} onClick={doUndo} className="studio-btn studio-btn-secondary !p-2 disabled:opacity-30">
+            <Undo2 className="h-4 w-4" aria-hidden />
           </button>
-          <button type="button" title="Redo (Ctrl+Y)" disabled={!canRedo(history)} onClick={doRedo} className="rounded-lg border border-slate-800 p-1.5 text-slate-300 disabled:opacity-30 hover:bg-slate-800">
-            <Redo2 className="h-4 w-4" />
+          <button type="button" title="Redo (Ctrl+Y)" disabled={!canRedo(history)} onClick={doRedo} className="studio-btn studio-btn-secondary !p-2 disabled:opacity-30">
+            <Redo2 className="h-4 w-4" aria-hidden />
           </button>
-          <button type="button" title="Toggle grid" onClick={() => setShowGrid((v) => !v)} className={`rounded-lg border border-slate-800 p-1.5 ${showGrid ? "bg-slate-800 text-cyan-300" : "text-slate-400"}`}>
-            <Grid3X3 className="h-4 w-4" />
+          <button type="button" title="Toggle grid" onClick={() => setShowGrid((v) => !v)} className={`studio-btn studio-btn-secondary !p-2 ${showGrid ? "studio-btn-tool-active" : ""}`}>
+            <Grid3X3 className="h-4 w-4" aria-hidden />
           </button>
-          <button type="button" title="Snap to grid" onClick={() => setSnapGrid((v) => !v)} className={`rounded-lg border border-slate-800 p-1.5 ${snapGrid ? "bg-slate-800 text-cyan-300" : "text-slate-400"}`}>
-            <Grid3X3 className="h-4 w-4" />
+          <button type="button" title="Snap to grid" onClick={() => setSnapGrid((v) => !v)} className={`studio-btn studio-btn-secondary !p-2 ${snapGrid ? "studio-btn-tool-active" : ""}`}>
+            <Grid3X3 className="h-4 w-4" aria-hidden />
           </button>
-          <button type="button" title="Snap to vertices" onClick={() => setSnapVertices((v) => !v)} className={`rounded-lg border border-slate-800 p-1.5 ${snapVertices ? "bg-slate-800 text-cyan-300" : "text-slate-400"}`}>
-            <Magnet className="h-4 w-4" />
+          <button type="button" title="Snap to vertices" onClick={() => setSnapVertices((v) => !v)} className={`studio-btn studio-btn-secondary !p-2 ${snapVertices ? "studio-btn-tool-active" : ""}`}>
+            <Magnet className="h-4 w-4" aria-hidden />
           </button>
         </div>
       </div>
@@ -1378,8 +1589,8 @@ export default function RoofIntelligenceStudio({
         <div className="xl:col-span-2 space-y-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
             <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-              <Layers className="h-4 w-4 text-cyan-400" />
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Layers</h3>
+              <Layers className="h-4 w-4 text-amber-400" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-white">Layers</h3>
             </div>
             <ul className="mt-2 space-y-1">
               {LAYER_ORDER.map((type) => {
@@ -1440,7 +1651,7 @@ export default function RoofIntelligenceStudio({
 
         {/* canvas */}
         <div className={`${canvasOnly ? "" : "xl:col-span-7"} space-y-2`}>
-          <div ref={containerRef} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 ring-1 ring-white/5">
+          <div ref={containerRef} className="studio-canvas-frame">
             <canvas
               ref={canvasRef}
               width={canvasSize.w}
@@ -1455,16 +1666,21 @@ export default function RoofIntelligenceStudio({
           </div>
 
           {/* status bar */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-[10px] font-mono text-slate-400">
+          <div className="studio-status-bar">
             <span>Zoom {Math.round(viewport.scale * 100)}%</span>
             <span>x {fmt(cursorWorld.x, 0)} · y {fmt(cursorWorld.y, 0)}</span>
             <span>Selected: {selectedPlane ? selectedPlane.name : "none"}</span>
             <span>Area: {calibrated && statistics ? `${fmt(statistics.grossAreaM2, 1)} m²` : "—"}</span>
             <span>Scale: {calibrated ? `1u = ${fmt(state.metersPerUnit, 4)} m` : "not calibrated"}</span>
             <span>North: {fmt(state.northAzimuthDeg, 0)}°</span>
-            {bgImage && <span className="text-cyan-300/80">img: {bgImage.fileName}</span>}
-            {measureResult && <span className="text-cyan-300">{measureResult}</span>}
-            {imageError && <span className="text-rose-400">{imageError}</span>}
+            {bgImage && <span className="studio-status-highlight">img: {bgImage.fileName}</span>}
+            {measureResult && <span className="studio-status-highlight">{measureResult}</span>}
+            {tool === "select" && selectedPanelIds.length > 0 && (
+              <span className="studio-status-highlight">
+                Panels: drag · Shift-click multi-select · R rotate · Del delete · Ctrl+C/V/D copy/paste/duplicate
+              </span>
+            )}
+            {imageError && <span className="studio-status-error">{imageError}</span>}
           </div>
         </div>
 
