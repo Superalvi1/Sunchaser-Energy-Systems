@@ -21,7 +21,7 @@ export const GEOCODING_PROVIDER_ERROR = "GEOCODING_PROVIDER_ERROR";
 
 export const MAP_PROVIDER_NOT_CONNECTED = "Map provider not connected yet";
 export const SATELLITE_PROVIDER_NOT_CONNECTED = "Satellite provider not connected yet";
-export const UPLOAD_OR_CONNECT_MAP_LABEL = "Upload roof image or connect satellite provider";
+export const UPLOAD_OR_CONNECT_MAP_LABEL = "Map / satellite / uploaded image canvas";
 export const GOOGLE_MAPS_CONNECTED_LABEL = "Google Maps connected";
 export const GEOCODING_NO_RESULTS_MESSAGE = "No result found for that address.";
 export const GEOCODING_PROVIDER_ERROR_MESSAGE = "Provider error — geocoding request failed.";
@@ -81,6 +81,36 @@ export interface SatelliteImageProvider {
   getSatelliteImage(input: SatelliteImageInput): Promise<ProviderResult<SatelliteImage>>;
 }
 
+export interface PlaceSuggestion {
+  placeId: string;
+  description: string;
+  provider?: string;
+}
+
+export interface PlacesAutocompleteProvider {
+  readonly id: string;
+  readonly configured: boolean;
+  getSuggestions(input: string): Promise<ProviderResult<PlaceSuggestion[]>>;
+  resolvePlace(placeId: string): Promise<ProviderResult<Location>>;
+}
+
+/** Future-ready Google Solar API stub — not wired to network in V1. */
+export interface SolarBuildingInsights {
+  latitude: number;
+  longitude: number;
+  provider: string;
+  status: "stub_not_configured";
+}
+
+export interface SolarBuildingInsightsProvider {
+  readonly id: string;
+  readonly configured: boolean;
+  getBuildingInsights(latitude: number, longitude: number): Promise<ProviderResult<SolarBuildingInsights>>;
+}
+
+export const PLACES_PROVIDER_NOT_CONNECTED = "Places autocomplete not connected yet";
+export const SOLAR_PROVIDER_NOT_CONNECTED = "Google Solar API not connected yet";
+
 /** @deprecated Prefer GeocodingProvider.geocodeAddress — kept for older call sites. */
 export interface GeocodeRequest {
   address: string;
@@ -127,6 +157,38 @@ export class UnavailableGeocodingProvider implements GeocodingProvider {
   /** Legacy throw-style API used by older tests — still fail-closed. */
   async geocode(_request: GeocodeRequest): Promise<GeocodeResult> {
     throw new MapProviderNotConfiguredError(MAP_PROVIDER_NOT_CONNECTED);
+  }
+}
+
+/** Default Places adapter — unavailable when Google Maps flag/key off. */
+export class UnavailablePlacesAutocompleteProvider implements PlacesAutocompleteProvider {
+  readonly id = "unavailable-places";
+  readonly configured = false;
+
+  async getSuggestions(_input: string): Promise<ProviderResult<PlaceSuggestion[]>> {
+    return { ok: true, value: [] };
+  }
+
+  async resolvePlace(_placeId: string): Promise<ProviderResult<Location>> {
+    return {
+      ok: false,
+      code: PROVIDER_NOT_CONFIGURED,
+      message: PLACES_PROVIDER_NOT_CONNECTED,
+    };
+  }
+}
+
+/** Default Google Solar stub — always unavailable in V1. */
+export class UnavailableSolarBuildingInsightsProvider implements SolarBuildingInsightsProvider {
+  readonly id = "unavailable-solar";
+  readonly configured = false;
+
+  async getBuildingInsights(_latitude: number, _longitude: number): Promise<ProviderResult<SolarBuildingInsights>> {
+    return {
+      ok: false,
+      code: PROVIDER_NOT_CONFIGURED,
+      message: SOLAR_PROVIDER_NOT_CONNECTED,
+    };
   }
 }
 
@@ -182,6 +244,8 @@ export class ManualLocationProvider {
 
 let geocodingOverride: GeocodingProvider | null = null;
 let satelliteOverride: SatelliteImageProvider | null = null;
+let placesOverride: PlacesAutocompleteProvider | null = null;
+let solarOverride: SolarBuildingInsightsProvider | null = null;
 
 /**
  * Registry / factory — Google when env enabled + key present; otherwise unavailable.
@@ -214,6 +278,32 @@ export function getConfiguredSatelliteImageProvider(): SatelliteImageProvider {
   return new UnavailableSatelliteImageProvider();
 }
 
+export function getConfiguredPlacesAutocompleteProvider(): PlacesAutocompleteProvider {
+  if (placesOverride) return placesOverride;
+  try {
+    const fromEnv = getMapProviderEnvResolver()?.places?.();
+    if (fromEnv && typeof fromEnv === "object" && "getSuggestions" in (fromEnv as object)) {
+      return fromEnv as PlacesAutocompleteProvider;
+    }
+  } catch {
+    /* fail closed */
+  }
+  return new UnavailablePlacesAutocompleteProvider();
+}
+
+export function getConfiguredSolarBuildingInsightsProvider(): SolarBuildingInsightsProvider {
+  if (solarOverride) return solarOverride;
+  try {
+    const fromEnv = getMapProviderEnvResolver()?.solar?.();
+    if (fromEnv && typeof fromEnv === "object" && "getBuildingInsights" in (fromEnv as object)) {
+      return fromEnv as SolarBuildingInsightsProvider;
+    }
+  } catch {
+    /* fail closed */
+  }
+  return new UnavailableSolarBuildingInsightsProvider();
+}
+
 export function getGeocodingProvider(): GeocodingProvider {
   return getConfiguredGeocodingProvider();
 }
@@ -231,15 +321,27 @@ export function setSatelliteImageProviderForTests(provider: SatelliteImageProvid
   satelliteOverride = provider;
 }
 
+export function setPlacesAutocompleteProviderForTests(provider: PlacesAutocompleteProvider): void {
+  placesOverride = provider;
+}
+
+export function setSolarBuildingInsightsProviderForTests(provider: SolarBuildingInsightsProvider): void {
+  solarOverride = provider;
+}
+
 export function resetMapProvidersToUnavailable(): void {
   geocodingOverride = new UnavailableGeocodingProvider();
   satelliteOverride = new UnavailableSatelliteImageProvider();
+  placesOverride = new UnavailablePlacesAutocompleteProvider();
+  solarOverride = new UnavailableSolarBuildingInsightsProvider();
 }
 
 /** Clear test overrides so registry resolves from env again. */
 export function clearMapProviderOverrides(): void {
   geocodingOverride = null;
   satelliteOverride = null;
+  placesOverride = null;
+  solarOverride = null;
 }
 
 export function isGeocodingProviderConfigured(): boolean {
@@ -248,6 +350,14 @@ export function isGeocodingProviderConfigured(): boolean {
 
 export function isSatelliteProviderConfigured(): boolean {
   return getConfiguredSatelliteImageProvider().configured;
+}
+
+export function isPlacesAutocompleteConfigured(): boolean {
+  return getConfiguredPlacesAutocompleteProvider().configured;
+}
+
+export function isSolarProviderConfigured(): boolean {
+  return getConfiguredSolarBuildingInsightsProvider().configured;
 }
 
 export function getMapProviderStatusLabel(): string {
@@ -551,4 +661,74 @@ export function resolveSatelliteDisplayUrl(image: SatelliteImage): string | null
   const url = (image.imageUrl || image.imageDataUrl || "").trim();
   if (!url) return null;
   return validateSatelliteImageUrl(url).ok ? url : null;
+}
+
+export async function fetchAddressSuggestions(input: string): Promise<ProviderResult<PlaceSuggestion[]>> {
+  const provider = getConfiguredPlacesAutocompleteProvider();
+  if (!provider.configured) {
+    return { ok: true, value: [] };
+  }
+  try {
+    return await provider.getSuggestions(input);
+  } catch (e) {
+    return {
+      ok: false,
+      code: GEOCODING_PROVIDER_ERROR,
+      message: e instanceof Error ? e.message : "Autocomplete failed.",
+    };
+  }
+}
+
+export async function resolvePlaceSuggestion(placeId: string): Promise<LocatePropertyResult> {
+  const provider = getConfiguredPlacesAutocompleteProvider();
+  if (!provider.configured) {
+    return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: PLACES_PROVIDER_NOT_CONNECTED };
+  }
+  try {
+    const raw = await provider.resolvePlace(placeId);
+    if (!raw.ok) {
+      if (raw.code === PROVIDER_NOT_CONFIGURED) {
+        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message };
+      }
+      if (raw.code === GEOCODING_NO_RESULTS) {
+        return { ok: false, code: GEOCODING_NO_RESULTS, message: raw.message || GEOCODING_NO_RESULTS_MESSAGE };
+      }
+      return { ok: false, code: GEOCODING_PROVIDER_ERROR, message: raw.message || GEOCODING_PROVIDER_ERROR_MESSAGE };
+    }
+    const coords = validateProviderCoordinates(raw.value.latitude, raw.value.longitude);
+    if (!coords.ok) {
+      return { ok: false, code: coords.code, message: coords.message };
+    }
+    return {
+      ok: true,
+      result: {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        formattedAddress: raw.value.formattedAddress,
+        provider: raw.value.provider ?? provider.id,
+      },
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      code: "GEOCODE_FAILED",
+      message: e instanceof Error ? e.message : "Place resolution failed.",
+    };
+  }
+}
+
+/** Future-ready stub — always fail-closed in V1. */
+export async function fetchSolarBuildingInsightsStub(input: {
+  latitude: number;
+  longitude: number;
+}): Promise<ProviderResult<SolarBuildingInsights>> {
+  const coords = validateProviderCoordinates(input.latitude, input.longitude);
+  if (!coords.ok) {
+    return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: coords.message };
+  }
+  const provider = getConfiguredSolarBuildingInsightsProvider();
+  if (!provider.configured) {
+    return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: SOLAR_PROVIDER_NOT_CONNECTED };
+  }
+  return provider.getBuildingInsights(coords.latitude, coords.longitude);
 }
