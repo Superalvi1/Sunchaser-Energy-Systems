@@ -5098,21 +5098,28 @@ app.get("/api/leads/:id/design-session", async (req, res) => {
         return res.json({ exists: true, session });
       } catch (err: any) {
         const msg = String(err?.message || err);
-        if (
+        const schemaMissing =
           err instanceof DesignSessionsSchemaMissingError ||
-          /relation .* does not exist|Could not find the table|PGRST205|DESIGN_SESSIONS_SCHEMA_MISSING/i.test(msg)
-        ) {
-          return res.status(503).json({
-            error:
-              "Design sessions table is not migrated. Run scripts/design-sessions-schema.sql in Supabase.",
-            code: "DESIGN_SESSIONS_SCHEMA_MISSING",
-          });
+          /relation .* does not exist|Could not find the table|PGRST205|DESIGN_SESSIONS_SCHEMA_MISSING/i.test(msg);
+        if (schemaMissing) {
+          if (!isDesignSessionDevFallbackAllowed()) {
+            return res.status(503).json({
+              error:
+                "Design sessions table is not migrated. Run scripts/design-sessions-schema.sql in Supabase.",
+              code: "DESIGN_SESSIONS_SCHEMA_MISSING",
+            });
+          }
+          console.warn("[design-session] schema missing — using development database.json fallback");
+        } else {
+          console.error("[design-session] Supabase read failed:", msg);
+          if (!isDesignSessionDevFallbackAllowed()) {
+            return res.status(503).json({
+              error: "Design session storage unavailable",
+              code: "DESIGN_SESSIONS_UNAVAILABLE",
+            });
+          }
+          console.warn("[design-session] Supabase read failed — development fallback");
         }
-        console.error("[design-session] Supabase read failed:", msg);
-        return res.status(503).json({
-          error: "Design session storage unavailable",
-          code: "DESIGN_SESSIONS_UNAVAILABLE",
-        });
       }
     }
 
@@ -5166,20 +5173,26 @@ app.put("/api/leads/:id/design-session", async (req, res) => {
         result = await upsertDesignSessionToSupabase(ctx.supabase, input);
       } catch (err: any) {
         const msg = String(err?.message || err);
-        if (
+        const schemaMissing =
           err instanceof DesignSessionsSchemaMissingError ||
-          /relation .* does not exist|Could not find the table|PGRST205|DESIGN_SESSIONS_SCHEMA_MISSING/i.test(msg)
-        ) {
-          return res.status(503).json({
-            error:
-              "Design sessions table is not migrated. Run scripts/design-sessions-schema.sql in Supabase.",
-            code: "DESIGN_SESSIONS_SCHEMA_MISSING",
-          });
+          /relation .* does not exist|Could not find the table|PGRST205|DESIGN_SESSIONS_SCHEMA_MISSING/i.test(msg);
+        if (schemaMissing) {
+          if (!isDesignSessionDevFallbackAllowed()) {
+            return res.status(503).json({
+              error:
+                "Design sessions table is not migrated. Run scripts/design-sessions-schema.sql in Supabase.",
+              code: "DESIGN_SESSIONS_SCHEMA_MISSING",
+            });
+          }
+          console.warn("[design-session] schema missing — saving to development database.json");
+          result = upsertLocalDesignSession(ensureLocalDesignSessions(), input);
+          saveDb();
+        } else {
+          throw err;
         }
-        throw err;
       }
       // Dev-only mirror for local debugging — never in production
-      if (result.ok && isDesignSessionDevFallbackAllowed()) {
+      if (result.ok && isDesignSessionDevFallbackAllowed() && ctx.supabase) {
         const locals = ensureLocalDesignSessions();
         const idx = locals.findIndex((s) => s.leadId === id);
         if (idx >= 0) locals[idx] = result.session;
