@@ -8,16 +8,22 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CheckCircle2, DraftingCompass, MapPin, Phone, Sun, Zap } from "lucide-react";
 import type { Lead } from "../../types";
 import {
+  AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE,
+  AUTO_LAYOUT_RUNNING_MESSAGE,
   DEFAULT_DESIGN_CONTROLS,
   DESIGN_STUDIO_GUIDED_STEPS,
   buildDesignStudioLiveResults,
   canRunDesignStudioAutoLayout,
   designStudioWizardProgress,
   displayCustomerPhone,
+  formatAutoLayoutSuccessMessage,
   prefillAddressFromLead,
   primaryPlane,
+  roofGeometryFingerprint,
   runDesignStudioAutoLayout,
+  shouldCancelAutoLayoutOnStudioChange,
   validateDesignStudioLayoutSettings,
+  type AutoLayoutUxPhase,
   type DesignStudioControls,
   type DesignStudioLiveResults,
   type LayoutAlignment,
@@ -93,6 +99,7 @@ export default function SunchaserDesignStudio({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [layoutResult, setLayoutResult] = useState<DesignStudioLiveResults["layout"]>(null);
   const [autoLayoutMessage, setAutoLayoutMessage] = useState<string | null>(null);
+  const [autoLayoutPhase, setAutoLayoutPhase] = useState<AutoLayoutUxPhase>("idle");
   const [studioSnap, setStudioSnap] = useState<{
     state: RoofStudioState | null;
     hasImage: boolean;
@@ -102,6 +109,10 @@ export default function SunchaserDesignStudio({
   }>({ state: null, hasImage: false, calibrated: false, imageFileName: null, imageUrl: null });
 
   const studioApiRef = useRef<RoofStudioApi | null>(null);
+  const autoLayoutRunIdRef = useRef(0);
+  const autoLayoutStartFingerprintRef = useRef("");
+  const autoLayoutPhaseRef = useRef<AutoLayoutUxPhase>("idle");
+  autoLayoutPhaseRef.current = autoLayoutPhase;
   const customerPhone = displayCustomerPhone(lead.phone);
   const sanctionedDisplay = resolveSanctionedLoad(lead, sanctionedLoad);
 
@@ -176,6 +187,19 @@ export default function SunchaserDesignStudio({
       imageFileName?: string | null;
       imageUrl?: string | null;
     }) => {
+      if (
+        shouldCancelAutoLayoutOnStudioChange({
+          phase: autoLayoutPhaseRef.current,
+          startFingerprint: autoLayoutStartFingerprintRef.current,
+          nextState: snap.state,
+        })
+      ) {
+        autoLayoutRunIdRef.current += 1;
+        autoLayoutPhaseRef.current = "cancelled";
+        setAutoLayoutPhase("cancelled");
+        setAutoLayoutMessage(AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE);
+        setLayoutResult(null);
+      }
       setStudioSnap({
         state: snap.state,
         hasImage: snap.hasImage,
@@ -199,6 +223,7 @@ export default function SunchaserDesignStudio({
     });
     setLayoutResult(null);
     setAutoLayoutMessage(null);
+    setAutoLayoutPhase("idle");
   };
 
   const handleAlignmentChange = (value: LayoutAlignment) => {
@@ -207,40 +232,85 @@ export default function SunchaserDesignStudio({
     setSettingsError(check.ok ? null : check.message);
     setLayoutResult(null);
     setAutoLayoutMessage(null);
+    setAutoLayoutPhase("idle");
   };
 
-  const handleAutoLayout = () => {
+  const handleAutoLayout = useCallback(() => {
+    if (autoLayoutPhaseRef.current === "running") return;
     const api = studioApiRef.current;
     if (!api) {
+      setAutoLayoutPhase("failure");
       setAutoLayoutMessage("Canvas not ready.");
       return;
     }
-    const state = api.getState();
-    const gate = canRunDesignStudioAutoLayout({
-      hasImage: api.hasImage(),
-      calibrated: api.isCalibrated(),
-      state,
-      controls: { ...controls, alignment },
-    });
-    if (!gate.ok) {
-      setAutoLayoutMessage(gate.reason);
+
+    const runId = ++autoLayoutRunIdRef.current;
+    const startState = api.getState();
+    const startFingerprint = roofGeometryFingerprint(startState);
+    autoLayoutStartFingerprintRef.current = startFingerprint;
+    autoLayoutPhaseRef.current = "running";
+    setAutoLayoutPhase("running");
+    setAutoLayoutMessage(AUTO_LAYOUT_RUNNING_MESSAGE);
+    setLayoutResult(null);
+
+    const finishCancelled = () => {
+      if (runId !== autoLayoutRunIdRef.current) return;
+      autoLayoutPhaseRef.current = "cancelled";
+      setAutoLayoutPhase("cancelled");
+      setAutoLayoutMessage(AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE);
       setLayoutResult(null);
-      return;
-    }
-    const result = runDesignStudioAutoLayout(state, controls, { hasImage: api.hasImage() });
-    if (!result.ok) {
-      setAutoLayoutMessage(result.message);
-      setLayoutResult(null);
-      return;
-    }
-    setLayoutResult(result.layout);
-    setSettingsError(null);
-    setAutoLayoutMessage(
-      result.layout.panelCount > 0
-        ? `Auto Layout placed ${result.layout.panelCount} panels (${result.layout.dcCapacityKw.toFixed(2)} kW DC).`
-        : "Auto Layout ran — no panels fit under current constraints."
-    );
-  };
+    };
+
+    void (async () => {
+      // Paint running state before sync engine work (also allows roof-edit cancel).
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+      if (runId !== autoLayoutRunIdRef.current) return;
+
+      const state = api.getState();
+      if (roofGeometryFingerprint(state) !== startFingerprint) {
+        finishCancelled();
+        return;
+      }
+
+      const gate = canRunDesignStudioAutoLayout({
+        hasImage: api.hasImage(),
+        state,
+        controls: { ...controls, alignment },
+      });
+      if (!gate.ok) {
+        if (runId !== autoLayoutRunIdRef.current) return;
+        autoLayoutPhaseRef.current = "failure";
+        setAutoLayoutPhase("failure");
+        setAutoLayoutMessage(gate.reason);
+        setLayoutResult(null);
+        return;
+      }
+
+      const result = runDesignStudioAutoLayout(state, controls, { hasImage: api.hasImage() });
+      if (runId !== autoLayoutRunIdRef.current) return;
+
+      if (roofGeometryFingerprint(api.getState()) !== startFingerprint) {
+        finishCancelled();
+        return;
+      }
+
+      if (!result.ok) {
+        autoLayoutPhaseRef.current = "failure";
+        setAutoLayoutPhase("failure");
+        setAutoLayoutMessage(result.message);
+        setLayoutResult(null);
+        return;
+      }
+
+      autoLayoutPhaseRef.current = "success";
+      setAutoLayoutPhase("success");
+      setLayoutResult(result.layout);
+      setSettingsError(null);
+      setAutoLayoutMessage(formatAutoLayoutSuccessMessage(result.layout));
+    })();
+  }, [controls, alignment]);
 
   const overlayPanels = useMemo(
     () =>
@@ -459,6 +529,7 @@ export default function SunchaserDesignStudio({
             calibrated={studioSnap.calibrated}
             live={live}
             autoLayoutMessage={autoLayoutMessage}
+            autoLayoutPhase={autoLayoutPhase}
             settingsError={settingsError}
             onUploadImage={() => studioApiRef.current?.openImagePicker()}
             onCalibrate={() => studioApiRef.current?.setTool("calibrate-scale")}
@@ -466,6 +537,7 @@ export default function SunchaserDesignStudio({
               studioApiRef.current?.resetCalibration();
               setLayoutResult(null);
               setAutoLayoutMessage("Calibration reset.");
+              setAutoLayoutPhase("idle");
             }}
             onDrawRoof={() => studioApiRef.current?.setTool("plane")}
             onEditRoof={() => studioApiRef.current?.setTool("select")}
