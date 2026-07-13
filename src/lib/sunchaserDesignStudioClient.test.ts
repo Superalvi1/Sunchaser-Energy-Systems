@@ -7,6 +7,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE,
+  AUTO_LAYOUT_RUNNING_MESSAGE,
   DEFAULT_DESIGN_CONTROLS,
   DESIGN_WORKSPACE_DRAFT_ONLY_LABEL,
   PHONE_NOT_PROVIDED_LABEL,
@@ -16,10 +18,13 @@ import {
   canRunAutoLayout,
   canRunDesignStudioAutoLayout,
   displayCustomerPhone,
+  formatAutoLayoutSuccessMessage,
   prefillAddressFromLead,
   primaryPlane,
   resolveCatalogModule,
+  roofGeometryFingerprint,
   runDesignStudioAutoLayout,
+  shouldCancelAutoLayoutOnStudioChange,
   snapToSupportedSystemSizeKw,
   validateDesignStudioLayoutSettings,
   validateEdgeSetbackM,
@@ -69,7 +74,7 @@ function calibratedStateWithPlane() {
   };
 }
 
-check("design studio flag disabled by default", () => !isSunchaserDesignStudioEnabled());
+check("design studio flag enabled by default", () => isSunchaserDesignStudioEnabled());
 
 check("SalesTeamApp Roof Studio tab opens Project Design Workspace from lead", () => {
   const src = readFileSync(resolve(here, "../components/SalesTeamApp.tsx"), "utf8");
@@ -336,9 +341,13 @@ check("invalid / gated design shows stage gate not fake numbers", () => {
   );
 });
 
-check("Results Panel UI has no API/save/AI/localStorage", () => {
+check("Results Panel UI has no API/save/AI/CRM-persist (comments ignored)", () => {
   const panel = readFileSync(resolve(here, "../components/roofStudio/DesignStudioResultsPanel.tsx"), "utf8");
   const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  const stripComments = (s: string) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const panelBody = stripComments(panel);
+  const workspaceBody = stripComments(workspace);
   const forbidden = [
     "fetch(",
     "axios",
@@ -353,10 +362,26 @@ check("Results Panel UI has no API/save/AI/localStorage", () => {
   return (
     panel.includes("design-studio-results-panel") &&
     workspace.includes("DesignStudioResultsPanel") &&
-    forbidden.every((t) => !panel.includes(t) && !workspace.includes(t))
+    forbidden.every((t) => !panelBody.includes(t) && !workspaceBody.includes(t))
   );
 });
 
+check("proposal export is ephemeral PDF only — no CRM save in preview UI", () => {
+  const preview = readFileSync(
+    resolve(here, "../components/roofStudio/DesignStudioProposalPreview.tsx"),
+    "utf8"
+  );
+  return (
+    preview.includes("downloadDesignStudioProposalPdf") &&
+    preview.includes("Generate Proposal") &&
+    preview.includes("Download PDF") &&
+    !preview.includes("saveQuote") &&
+    !preview.includes("createQuote") &&
+    !preview.includes("onUpdateLead") &&
+    !preview.includes("leads.push") &&
+    preview.includes("not saved to CRM")
+  );
+});
 check("no duplicate calculations outside engines in Results Panel path", () => {
   const adapter = readFileSync(resolve(here, "sunchaserDesignStudioClient.ts"), "utf8");
   const panel = readFileSync(resolve(here, "../components/roofStudio/DesignStudioResultsPanel.tsx"), "utf8");
@@ -558,6 +583,8 @@ check("left panel renders inside Project Design Workspace", () => {
 
 check("Auto Layout disabled before prerequisites", () => {
   const validState = calibratedStateWithPlane();
+  let uncalibratedWithPlane = createInitialRoofStudioState("uncal-prereq");
+  uncalibratedWithPlane = addPlane(uncalibratedWithPlane, RECT, { pitchDeg: 15, azimuthDeg: 180 });
   const gateImage = canRunDesignStudioAutoLayout({
     hasImage: false,
     calibrated: true,
@@ -566,8 +593,7 @@ check("Auto Layout disabled before prerequisites", () => {
   });
   const gateCal = canRunDesignStudioAutoLayout({
     hasImage: true,
-    calibrated: false,
-    state: validState,
+    state: uncalibratedWithPlane,
     controls: DEFAULT_DESIGN_CONTROLS,
   });
   const gateRoof = canRunDesignStudioAutoLayout({
@@ -784,6 +810,120 @@ check("left panel has no save/API/AI/PDF/localStorage calls", () => {
   const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
   const forbidden = ["fetch(", "axios", "/api/", "openai", "anthropic", "localStorage.setItem", "saveQuote", "createQuote", "jspdf"];
   return forbidden.every((t) => !left.includes(t));
+});
+
+check("RC-1.1 valid roof enables Auto Layout button gate", () => {
+  const state = calibratedStateWithPlane();
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return gate.ok === true && gate.reason === null;
+});
+
+check("RC-1.1 invalid / incomplete roof disables Auto Layout", () => {
+  const empty = createInitialRoofStudioState("empty");
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true,
+    state: empty,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return gate.ok === false;
+});
+
+check("RC-1.1 self-intersection disables Auto Layout", () => {
+  const state = calibratedStateWithBoundary(BOWTIE);
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return !gate.ok && gate.code === "INVALID_ROOF_GEOMETRY";
+});
+
+check("RC-1.1 missing calibration disables Auto Layout", () => {
+  let state = createInitialRoofStudioState("uncal");
+  state = addPlane(state, RECT, { pitchDeg: 15, azimuthDeg: 180 });
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: true, // stale UI prop — state is not calibrated
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  return !gate.ok && gate.reason === "Calibrate scale before Auto Layout.";
+});
+
+check("RC-1.1 no stale disabled state when state is calibrated", () => {
+  const state = calibratedStateWithPlane();
+  const gate = canRunDesignStudioAutoLayout({
+    hasImage: true,
+    calibrated: false, // stale / lagging UI prop must not keep button disabled
+    state,
+    controls: DEFAULT_DESIGN_CONTROLS,
+  });
+  const run = runDesignStudioAutoLayout(state, DEFAULT_DESIGN_CONTROLS, { hasImage: true });
+  return gate.ok === true && run.ok === true;
+});
+
+check("RC-1.1 successful layout updates UI message", () => {
+  const state = calibratedStateWithPlane();
+  const run = runDesignStudioAutoLayout(state, DEFAULT_DESIGN_CONTROLS, { hasImage: true });
+  assert.ok(run.ok);
+  const msg = formatAutoLayoutSuccessMessage(run.layout);
+  return (
+    (run.layout.panelCount > 0
+      ? msg.includes("Auto Layout placed") && msg.includes("kW DC")
+      : msg.includes("no panels fit")) &&
+    msg.length > 0
+  );
+});
+
+check("RC-1.1 roof edit during layout cancels", () => {
+  const start = calibratedStateWithPlane();
+  const edited = calibratedStateWithBoundary([
+    { x: 0, y: 0 },
+    { x: 300, y: 0 },
+    { x: 300, y: 200 },
+    { x: 0, y: 200 },
+  ]);
+  const fp = roofGeometryFingerprint(start);
+  return (
+    shouldCancelAutoLayoutOnStudioChange({
+      phase: "running",
+      startFingerprint: fp,
+      nextState: edited,
+    }) === true &&
+    shouldCancelAutoLayoutOnStudioChange({
+      phase: "running",
+      startFingerprint: fp,
+      nextState: start,
+    }) === false &&
+    shouldCancelAutoLayoutOnStudioChange({
+      phase: "idle",
+      startFingerprint: fp,
+      nextState: edited,
+    }) === false &&
+    AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE.includes("cancelled") &&
+    AUTO_LAYOUT_RUNNING_MESSAGE.includes("Running")
+  );
+});
+
+check("RC-1.1 Auto Layout UX wiring — loading, reason, race guard", () => {
+  const left = readFileSync(resolve(here, "../components/roofStudio/DesignStudioLeftControlPanel.tsx"), "utf8");
+  const studio = readFileSync(resolve(here, "../components/roofStudio/SunchaserDesignStudio.tsx"), "utf8");
+  const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
+  return (
+    left.includes("auto-layout-disabled-reason") &&
+    left.includes("auto-layout-progress") &&
+    left.includes("loading={layoutRunning}") &&
+    studio.includes("autoLayoutPhase") &&
+    studio.includes("AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE") &&
+    studio.includes("if (autoLayoutPhaseRef.current === \"running\") return") &&
+    workspace.includes("shouldCancelAutoLayoutOnStudioChange") &&
+    workspace.includes("formatAutoLayoutSuccessMessage")
+  );
 });
 
 console.log(`\nsunchaserDesignStudioClient tests: ${pass} passed`);

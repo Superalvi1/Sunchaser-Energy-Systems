@@ -23,6 +23,7 @@ import {
   LAYOUT_ALIGNMENTS,
   MODULE_OPTIONS,
   canRunDesignStudioAutoLayout,
+  AUTO_LAYOUT_IN_PROGRESS_LABEL,
   resolveCatalogModule,
   validateAzimuthDeg,
   validateDesignStudioLayoutSettings,
@@ -101,6 +102,7 @@ export interface DesignStudioLeftControlPanelProps {
   imageFileName?: string | null;
   live: DesignStudioLiveResults;
   autoLayoutMessage: string | null;
+  autoLayoutPhase?: "idle" | "running" | "success" | "failure" | "cancelled";
   settingsError: string | null;
   onUploadImage: () => void;
   onCalibrate: () => void;
@@ -146,6 +148,7 @@ export default function DesignStudioLeftControlPanel({
   imageFileName,
   live,
   autoLayoutMessage,
+  autoLayoutPhase = "idle",
   settingsError,
   onUploadImage,
   onCalibrate,
@@ -175,7 +178,8 @@ export default function DesignStudioLeftControlPanel({
     controls: { ...controls, alignment },
   });
   const settingsCheck = validateDesignStudioLayoutSettings({ ...controls, alignment });
-  const autoLayoutDisabled = !layoutGate.ok;
+  const layoutRunning = autoLayoutPhase === "running";
+  const autoLayoutDisabled = !layoutGate.ok || layoutRunning;
 
   const scaleLabel =
     calibrated && studioState && Number.isFinite(studioState.metersPerUnit) && studioState.metersPerUnit > 0
@@ -590,21 +594,51 @@ export default function DesignStudioLeftControlPanel({
         <StudioButton
           variant="primary"
           icon={Sparkles}
+          loading={layoutRunning}
           disabled={autoLayoutDisabled}
           onClick={onAutoLayout}
-          title={layoutGate.reason ?? "Run Panel Layout Engine V2"}
+          title={
+            layoutRunning
+              ? AUTO_LAYOUT_IN_PROGRESS_LABEL
+              : layoutGate.reason ?? "Run Panel Layout Engine V2"
+          }
           className="w-full"
           data-testid="left-panel-auto-layout"
+          aria-busy={layoutRunning}
         >
-          Auto Layout
+          {layoutRunning ? "Running…" : "Auto Layout"}
         </StudioButton>
-        {autoLayoutDisabled && (
-          <p className="mt-1 text-[10px] text-amber-300/90">
+        {!layoutGate.ok && !layoutRunning && (
+          <p
+            className="mt-1 text-[10px] text-amber-300/90"
+            data-testid="auto-layout-disabled-reason"
+          >
             {layoutGate.reason ?? "Complete previous step first."}
           </p>
         )}
+        {layoutRunning && (
+          <p
+            className="mt-1 inline-flex items-center gap-1.5 text-[10px] text-amber-200/90"
+            data-testid="auto-layout-progress"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            {AUTO_LAYOUT_IN_PROGRESS_LABEL}
+          </p>
+        )}
         {autoLayoutMessage && (
-          <p className="mt-1 text-[10px] text-amber-200/90 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
+          <p
+            className={`mt-1 text-[10px] rounded-lg border px-2 py-1.5 ${
+              autoLayoutPhase === "failure" || autoLayoutPhase === "cancelled"
+                ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
+                : autoLayoutPhase === "success"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                  : "border-amber-500/20 bg-amber-500/5 text-amber-200/90"
+            }`}
+            data-testid="auto-layout-message"
+            role={
+              autoLayoutPhase === "failure" || autoLayoutPhase === "cancelled" ? "alert" : undefined
+            }
+          >
             {autoLayoutMessage}
           </p>
         )}
