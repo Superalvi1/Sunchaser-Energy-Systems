@@ -1,11 +1,12 @@
 /**
  * Project Design Workspace V1 — CRM-connected HelioScope-style workflow.
  * Left controls · Center canvas · Right live engine results.
- * Draft only. No CRM mutation / save / network / AI / PDF export.
+ * Design Session persistence (RC-1.1): one draft session per lead via CRM API.
+ * No localStorage / sessionStorage / IndexedDB. Engines unchanged.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sun } from "lucide-react";
+import { Save, Sun } from "lucide-react";
 import type { Lead } from "../../types";
 import { formatLeadLocation, sanitizeLeadLocationInput } from "../../lib/leadDisplay";
 import {
@@ -14,12 +15,18 @@ import {
   DEFAULT_SITE_GEO,
 } from "../../lib/roofStudioGeoReference";
 import {
+  AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE,
+  AUTO_LAYOUT_RUNNING_MESSAGE,
   DEFAULT_DESIGN_CONTROLS,
   buildDesignStudioLiveResults,
   canRunDesignStudioAutoLayout,
   displayCustomerPhone,
+  formatAutoLayoutSuccessMessage,
+  roofGeometryFingerprint,
   runDesignStudioAutoLayout,
+  shouldCancelAutoLayoutOnStudioChange,
   validateDesignStudioLayoutSettings,
+  type AutoLayoutUxPhase,
   type DesignStudioControls,
   type DesignStudioLiveResults,
   type LayoutAlignment,
@@ -34,6 +41,12 @@ import {
 } from "../../lib/designStudioMapProviders";
 import "../../lib/googleMapsProvider";
 import { createInitialRoofStudioState, type RoofStudioState } from "../../lib/roofStudioClient";
+import {
+  buildDesignSessionPayload,
+  designSessionPayloadFingerprint,
+  parseDesignSessionPayload,
+} from "../../lib/designSessionClient";
+import { fetchDesignSession, saveDesignSession } from "../../services/api";
 import RoofIntelligenceStudio, {
   type ProjectDesignContext,
   type RoofStudioApi,
@@ -47,6 +60,7 @@ import {
   StudioPageHeader,
 } from "../ui/studio";
 
+const AUTOSAVE_MS = 30_000;
 export interface ProjectDesignWorkspaceProps {
   lead: Lead | null | undefined;
   sanctionedLoad?: string | number | null;
@@ -115,6 +129,7 @@ export default function ProjectDesignWorkspace({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [layoutResult, setLayoutResult] = useState<DesignStudioLiveResults["layout"]>(null);
   const [autoLayoutMessage, setAutoLayoutMessage] = useState<string | null>(null);
+  const [autoLayoutPhase, setAutoLayoutPhase] = useState<AutoLayoutUxPhase>("idle");
   const [studioSnap, setStudioSnap] = useState<{
     state: RoofStudioState | null;
     hasImage: boolean;
@@ -123,6 +138,21 @@ export default function ProjectDesignWorkspace({
     imageUrl: string | null;
   }>({ state: null, hasImage: false, calibrated: false, imageFileName: null, imageUrl: null });
   const studioApiRef = useRef<RoofStudioApi | null>(null);
+  const autoLayoutRunIdRef = useRef(0);
+  const autoLayoutStartFingerprintRef = useRef("");
+  const autoLayoutPhaseRef = useRef<AutoLayoutUxPhase>("idle");
+  autoLayoutPhaseRef.current = autoLayoutPhase;
+
+  const [sessionVersion, setSessionVersion] = useState<number | null>(null);
+  const [sessionUpdatedAt, setSessionUpdatedAt] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [concurrentEdit, setConcurrentEdit] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const savedFingerprintRef = useRef<string>("");
+  const restoringRef = useRef(false);
+  const saveInFlightRef = useRef(false);
 
   useEffect(() => {
     setAddress(initialAddress(lead));
@@ -137,9 +167,16 @@ export default function ProjectDesignWorkspace({
     });
     setLayoutResult(null);
     setAutoLayoutMessage(null);
+    setAutoLayoutPhase("idle");
     setSettingsError(null);
     setControls({ ...DEFAULT_DESIGN_CONTROLS });
     setAlignment("center");
+    setSessionVersion(null);
+    setSessionUpdatedAt(null);
+    setDirty(false);
+    setSaveMessage(null);
+    setConcurrentEdit(false);
+    savedFingerprintRef.current = "";
   }, [leadId]);
 
   const sanctionedDisplay = useMemo(
@@ -198,6 +235,19 @@ export default function ProjectDesignWorkspace({
       imageFileName: string | null;
       imageUrl: string | null;
     }) => {
+      if (
+        shouldCancelAutoLayoutOnStudioChange({
+          phase: autoLayoutPhaseRef.current,
+          startFingerprint: autoLayoutStartFingerprintRef.current,
+          nextState: snap.state,
+        })
+      ) {
+        autoLayoutRunIdRef.current += 1;
+        autoLayoutPhaseRef.current = "cancelled";
+        setAutoLayoutPhase("cancelled");
+        setAutoLayoutMessage(AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE);
+        setLayoutResult(null);
+      }
       setStudioSnap(snap);
       if (!snap.calibrated || !snap.hasImage) {
         setLayoutResult(null);
@@ -215,6 +265,7 @@ export default function ProjectDesignWorkspace({
     });
     setLayoutResult(null);
     setAutoLayoutMessage(null);
+    setAutoLayoutPhase("idle");
   };
 
   const handleAlignmentChange = (value: LayoutAlignment) => {
@@ -223,41 +274,85 @@ export default function ProjectDesignWorkspace({
     setSettingsError(check.ok ? null : check.message);
     setLayoutResult(null);
     setAutoLayoutMessage(null);
+    setAutoLayoutPhase("idle");
   };
 
-  const handleAutoLayout = () => {
+  const handleAutoLayout = useCallback(() => {
+    if (autoLayoutPhaseRef.current === "running") return;
     const api = studioApiRef.current;
     if (!api) {
+      setAutoLayoutPhase("failure");
       setAutoLayoutMessage("Canvas not ready.");
       return;
     }
-    const state = api.getState();
-    const gate = canRunDesignStudioAutoLayout({
-      hasImage: api.hasImage(),
-      calibrated: api.isCalibrated(),
-      state,
-      controls: { ...controls, alignment },
-    });
-    if (!gate.ok) {
-      setAutoLayoutMessage(gate.reason);
-      setSettingsError(gate.code && gate.code !== "GATED" ? gate.reason : null);
+
+    const runId = ++autoLayoutRunIdRef.current;
+    const startState = api.getState();
+    const startFingerprint = roofGeometryFingerprint(startState);
+    autoLayoutStartFingerprintRef.current = startFingerprint;
+    autoLayoutPhaseRef.current = "running";
+    setAutoLayoutPhase("running");
+    setAutoLayoutMessage(AUTO_LAYOUT_RUNNING_MESSAGE);
+    setLayoutResult(null);
+
+    const finishCancelled = () => {
+      if (runId !== autoLayoutRunIdRef.current) return;
+      autoLayoutPhaseRef.current = "cancelled";
+      setAutoLayoutPhase("cancelled");
+      setAutoLayoutMessage(AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE);
       setLayoutResult(null);
-      return;
-    }
-    const result = runDesignStudioAutoLayout(state, controls, { hasImage: api.hasImage() });
-    if (!result.ok) {
-      setAutoLayoutMessage(result.message);
-      setLayoutResult(null);
-      return;
-    }
-    setLayoutResult(result.layout);
-    setSettingsError(null);
-    setAutoLayoutMessage(
-      result.layout.panelCount > 0
-        ? `Auto Layout placed ${result.layout.panelCount} panels (${result.layout.dcCapacityKw.toFixed(2)} kW DC).`
-        : "Auto Layout ran — no panels fit under current constraints."
-    );
-  };
+    };
+
+    void (async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+      if (runId !== autoLayoutRunIdRef.current) return;
+
+      const state = api.getState();
+      if (roofGeometryFingerprint(state) !== startFingerprint) {
+        finishCancelled();
+        return;
+      }
+
+      const gate = canRunDesignStudioAutoLayout({
+        hasImage: api.hasImage(),
+        state,
+        controls: { ...controls, alignment },
+      });
+      if (!gate.ok) {
+        if (runId !== autoLayoutRunIdRef.current) return;
+        autoLayoutPhaseRef.current = "failure";
+        setAutoLayoutPhase("failure");
+        setAutoLayoutMessage(gate.reason);
+        setSettingsError(gate.code && gate.code !== "GATED" ? gate.reason : null);
+        setLayoutResult(null);
+        return;
+      }
+
+      const result = runDesignStudioAutoLayout(state, controls, { hasImage: api.hasImage() });
+      if (runId !== autoLayoutRunIdRef.current) return;
+
+      if (roofGeometryFingerprint(api.getState()) !== startFingerprint) {
+        finishCancelled();
+        return;
+      }
+
+      if (!result.ok) {
+        autoLayoutPhaseRef.current = "failure";
+        setAutoLayoutPhase("failure");
+        setAutoLayoutMessage(result.message);
+        setLayoutResult(null);
+        return;
+      }
+
+      autoLayoutPhaseRef.current = "success";
+      setAutoLayoutPhase("success");
+      setLayoutResult(result.layout);
+      setSettingsError(null);
+      setAutoLayoutMessage(formatAutoLayoutSuccessMessage(result.layout));
+    })();
+  }, [controls, alignment]);
 
   const overlayPanels = useMemo(
     () =>
@@ -339,10 +434,10 @@ export default function ProjectDesignWorkspace({
 
   const autoLayoutGate = canRunDesignStudioAutoLayout({
     hasImage: studioSnap.hasImage,
-    calibrated: studioSnap.calibrated,
     state: studioSnap.state,
     controls: { ...controls, alignment },
   });
+  const autoLayoutDisabled = !autoLayoutGate.ok || autoLayoutPhase === "running";
 
   const proposalCustomer = useMemo(
     () => ({
@@ -362,6 +457,221 @@ export default function ProjectDesignWorkspace({
     [studioSnap.imageUrl, studioSnap.imageFileName]
   );
 
+  const buildCurrentPayload = useCallback(() => {
+    const state =
+      studioSnap.state ??
+      studioApiRef.current?.getState() ??
+      createInitialRoofStudioState(`lead-${leadId}`);
+    return buildDesignSessionPayload({
+      roofStudioState: state,
+      controls,
+      alignment,
+      address,
+      latText,
+      lngText,
+      imageUrl: studioSnap.imageUrl,
+      imageFileName: studioSnap.imageFileName,
+      layoutResult,
+      live,
+    });
+  }, [
+    studioSnap,
+    controls,
+    alignment,
+    address,
+    latText,
+    lngText,
+    layoutResult,
+    live,
+    leadId,
+  ]);
+
+  const markSaved = useCallback(
+    (payload: ReturnType<typeof buildDesignSessionPayload>, version: number, updatedAt: string) => {
+      savedFingerprintRef.current = designSessionPayloadFingerprint(payload);
+      setSessionVersion(version);
+      setSessionUpdatedAt(updatedAt);
+      setDirty(false);
+      setConcurrentEdit(false);
+    },
+    []
+  );
+
+  const persistDesignSession = useCallback(
+    async (source: "manual" | "autosave") => {
+      if (leadId === "unknown-lead") return;
+      if (saveInFlightRef.current || restoringRef.current) return;
+      if (source === "autosave" && autoLayoutPhaseRef.current === "running") return;
+      const payload = buildCurrentPayload();
+      const fingerprint = designSessionPayloadFingerprint(payload);
+      if (source === "autosave" && fingerprint === savedFingerprintRef.current) {
+        setDirty(false);
+        return;
+      }
+      saveInFlightRef.current = true;
+      setSaving(true);
+      try {
+        const result = await saveDesignSession(leadId, {
+          payload: payload as unknown as Record<string, unknown>,
+          expectedVersion: sessionVersion,
+          status: "draft",
+        });
+        if (!result.success) {
+          setConcurrentEdit(true);
+          setSaveMessage(result.error);
+          if (result.session?.version != null) {
+            setSessionVersion(result.session.version);
+            setSessionUpdatedAt(result.session.updatedAt);
+          }
+          return;
+        }
+        markSaved(payload, result.session.version, result.session.updatedAt);
+        setSaveMessage(
+          source === "autosave"
+            ? `Auto-saved draft v${result.session.version}`
+            : `Saved design draft v${result.session.version}`
+        );
+      } catch (err: any) {
+        setSaveMessage(err?.message || "Failed to save design session");
+      } finally {
+        saveInFlightRef.current = false;
+        setSaving(false);
+      }
+    },
+    [leadId, buildCurrentPayload, sessionVersion, markSaved]
+  );
+
+  // Dirty tracking
+  useEffect(() => {
+    if (restoringRef.current || restoring) return;
+    if (!studioSnap.state) return;
+    const fp = designSessionPayloadFingerprint(buildCurrentPayload());
+    setDirty(fp !== savedFingerprintRef.current);
+  }, [
+    buildCurrentPayload,
+    studioSnap,
+    controls,
+    alignment,
+    address,
+    latText,
+    lngText,
+    layoutResult,
+    restoring,
+  ]);
+
+  // Auto-save every 30s when dirty (skip while Auto Layout is running)
+  useEffect(() => {
+    if (!dirty || restoring || concurrentEdit || leadId === "unknown-lead") return;
+    if (autoLayoutPhase === "running") return;
+    const timer = setInterval(() => {
+      void persistDesignSession("autosave");
+    }, AUTOSAVE_MS);
+    return () => clearInterval(timer);
+  }, [dirty, restoring, concurrentEdit, leadId, persistDesignSession, autoLayoutPhase]);
+
+  // Restore on open / lead change
+  useEffect(() => {
+    if (leadId === "unknown-lead") return;
+    let cancelled = false;
+    restoringRef.current = true;
+    setRestoring(true);
+    setSaveMessage(null);
+    setConcurrentEdit(false);
+
+    const waitForApi = async (tries = 40): Promise<RoofStudioApi | null> => {
+      for (let i = 0; i < tries; i++) {
+        if (cancelled) return null;
+        if (studioApiRef.current) return studioApiRef.current;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return studioApiRef.current;
+    };
+
+    void (async () => {
+      try {
+        const { exists, session } = await fetchDesignSession(leadId);
+        if (cancelled) return;
+        if (!exists || !session) {
+          const empty = buildDesignSessionPayload({
+            roofStudioState: createInitialRoofStudioState(`lead-${leadId}`),
+            controls: { ...DEFAULT_DESIGN_CONTROLS },
+            alignment: "center",
+            address: initialAddress(lead),
+            latText: "",
+            lngText: "",
+            imageUrl: null,
+            imageFileName: null,
+            layoutResult: null,
+            live: null,
+          });
+          savedFingerprintRef.current = designSessionPayloadFingerprint(empty);
+          setSessionVersion(null);
+          setDirty(false);
+          setSaveMessage("New design draft — save to persist.");
+          return;
+        }
+
+        const payload = parseDesignSessionPayload(session.payload);
+        if (!payload) {
+          setSaveMessage("Saved design payload was invalid — starting fresh.");
+          return;
+        }
+
+        setAddress(payload.address || initialAddress(lead));
+        setLatText(payload.latText || "");
+        setLngText(payload.lngText || "");
+        setControls({ ...DEFAULT_DESIGN_CONTROLS, ...payload.controls });
+        setAlignment(payload.alignment);
+        setLayoutResult(payload.layoutResult);
+        if (payload.latText || payload.lngText) {
+          const parsed = parseOptionalGpsAnchor(payload.latText, payload.lngText);
+          if (parsed.ok) {
+            setGeoSeed((prev) => ({
+              ...prev,
+              siteLabel: payload.address || customerName || prev.siteLabel,
+              latitude: parsed.anchor?.latitude ?? null,
+              longitude: parsed.anchor?.longitude ?? null,
+            }));
+          }
+        }
+
+        const api = await waitForApi();
+        if (cancelled) return;
+        if (api) {
+          api.applyState(payload.roofStudioState);
+          if (payload.backgroundImage.remoteUrl) {
+            await api.setBackgroundImageFromUrl(
+              payload.backgroundImage.remoteUrl,
+              payload.backgroundImage.fileName || "restored-satellite"
+            );
+          }
+        }
+
+        markSaved(payload, session.version, session.updatedAt);
+        if (session.concurrentEditDetected) {
+          setConcurrentEdit(true);
+          setSaveMessage("Previous save detected a concurrent edit — review before overwriting.");
+        } else {
+          setSaveMessage(`Restored draft v${session.version}`);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setSaveMessage(err?.message || "Could not restore design session");
+        }
+      } finally {
+        if (!cancelled) {
+          restoringRef.current = false;
+          setRestoring(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      restoringRef.current = false;
+    };
+  }, [leadId]);
+
   return (
     <div className="space-y-5 text-left studio-fade-in">
       <StudioPageHeader
@@ -370,11 +680,49 @@ export default function ProjectDesignWorkspace({
         badges={
           <>
             <StudioBadge variant="accent">V1 · HelioScope controls</StudioBadge>
-            <StudioBadge variant="muted">Draft only</StudioBadge>
+            <StudioBadge variant={dirty ? "accent" : "muted"}>
+              {restoring ? "Restoring…" : dirty ? "Unsaved draft" : "Draft"}
+            </StudioBadge>
+            {sessionVersion != null ? (
+              <StudioBadge variant="muted">v{sessionVersion}</StudioBadge>
+            ) : null}
           </>
         }
-        description="Left controls → canvas → live results. Existing engines only. No AI guessing. No fake output."
+        description="Left controls → canvas → live results. Design sessions persist per lead. Engines unchanged."
+        actions={
+          <>
+            <StudioButton
+              variant="primary"
+              disabled={saving || restoring || leadId === "unknown-lead"}
+              onClick={() => void persistDesignSession("manual")}
+              data-testid="design-session-save"
+              icon={Save}
+              loading={saving}
+            >
+              Save Design
+            </StudioButton>
+          </>
+        }
       />
+
+      {(saveMessage || concurrentEdit || sessionUpdatedAt) && (
+        <div
+          className={`rounded-md border px-3 py-2 text-sm ${
+            concurrentEdit
+              ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+              : "border-white/10 bg-white/5 text-slate-300"
+          }`}
+          data-testid="design-session-status"
+        >
+          {concurrentEdit ? "Concurrent edit detected. Reload or save carefully. " : null}
+          {saveMessage}
+          {sessionUpdatedAt && !concurrentEdit ? (
+            <span className="ml-2 opacity-70">
+              Last modified {new Date(sessionUpdatedAt).toLocaleString()}
+            </span>
+          ) : null}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
         <div className="xl:col-span-3">
@@ -404,6 +752,7 @@ export default function ProjectDesignWorkspace({
             imageFileName={studioSnap.imageFileName}
             live={live}
             autoLayoutMessage={autoLayoutMessage}
+            autoLayoutPhase={autoLayoutPhase}
             settingsError={settingsError}
             onUploadImage={() => studioApiRef.current?.openImagePicker()}
             onCalibrate={() => studioApiRef.current?.setTool("calibrate-scale")}
@@ -411,6 +760,7 @@ export default function ProjectDesignWorkspace({
               studioApiRef.current?.resetCalibration();
               setLayoutResult(null);
               setAutoLayoutMessage("Calibration reset.");
+              setAutoLayoutPhase("idle");
             }}
             onDrawRoof={() => studioApiRef.current?.setTool("plane")}
             onEditRoof={() => studioApiRef.current?.setTool("select")}
@@ -461,8 +811,10 @@ export default function ProjectDesignWorkspace({
             customer={proposalCustomer}
             roofPreview={roofPreview}
             onAutoLayout={handleAutoLayout}
-            autoLayoutDisabled={!autoLayoutGate.ok}
-            autoLayoutMessage={autoLayoutMessage ?? (!autoLayoutGate.ok ? autoLayoutGate.reason : null)}
+            autoLayoutDisabled={autoLayoutDisabled}
+            autoLayoutMessage={
+              autoLayoutMessage ?? (!autoLayoutGate.ok ? autoLayoutGate.reason : null)
+            }
           />
         </aside>
       </div>

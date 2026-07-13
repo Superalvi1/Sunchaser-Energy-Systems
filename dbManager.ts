@@ -256,6 +256,7 @@ export interface Database {
   deliveryChallans?: any[];
   deliveryChallanItems?: any[];
   deliveryChallanPhotos?: any[];
+  designSessions?: any[];
 }
 
 export const initialSeed: Database = {

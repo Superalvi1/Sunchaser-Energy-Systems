@@ -16,6 +16,19 @@ import {
   runProductionBackupDryRun20260606,
   runProductionCleanup20260606,
 } from "./productionCleanupDb.ts";
+import {
+  DesignSessionsSchemaMissingError,
+  fetchDesignSessionFromSupabase,
+  findLocalDesignSession,
+  upsertDesignSessionToSupabase,
+  upsertLocalDesignSession,
+  type DesignSessionRecord,
+} from "./server/designSessions/designSessionStore.ts";
+import {
+  isDesignSessionDevFallbackAllowed,
+  isSafeRoofImageDataUrl,
+  validateDesignSessionPutBody,
+} from "./server/designSessions/designSessionValidation.ts";
 import { billToMonthlyUnits, resolveMonthlyUnits } from "./src/lib/energyUnits.ts";
 import {
   buildQuotePdfSettingsSupabasePayload,
@@ -66,6 +79,12 @@ import {
   buildTemplateTestPdfFilename,
   diagnosePdfEngine,
 } from "./src/lib/quotePdfRender.ts";
+import {
+  buildProposalExportFilename,
+  compileDesignStudioProposalHtml,
+  DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND,
+  type DesignStudioProposalExportPayload,
+} from "./src/lib/designStudioProposalExport.ts";
 import { hasTemplatePageBodyContent } from "./src/lib/quoteTemplatePageRender.ts";
 import {
   buildManualQuoteTemplateDebugMap,
@@ -5056,6 +5075,154 @@ app.post("/api/leads/:id/whatsapp-reminder", async (req, res) => {
   res.json({ success: true, lead });
 });
 
+function ensureLocalDesignSessions(): DesignSessionRecord[] {
+  loadDb();
+  if (!Array.isArray((db as any).designSessions)) {
+    (db as any).designSessions = [];
+  }
+  return (db as any).designSessions as DesignSessionRecord[];
+}
+
+/** GET — restore Design Session for a lead (one session per lead). */
+app.get("/api/leads/:id/design-session", async (req, res) => {
+  const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+
+  try {
+    if (ctx.supabase) {
+      try {
+        const session = await fetchDesignSessionFromSupabase(ctx.supabase, id);
+        if (!session) return res.json({ exists: false, session: null });
+        return res.json({ exists: true, session });
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        if (
+          err instanceof DesignSessionsSchemaMissingError ||
+          /relation .* does not exist|Could not find the table|PGRST205|DESIGN_SESSIONS_SCHEMA_MISSING/i.test(msg)
+        ) {
+          return res.status(503).json({
+            error:
+              "Design sessions table is not migrated. Run scripts/design-sessions-schema.sql in Supabase.",
+            code: "DESIGN_SESSIONS_SCHEMA_MISSING",
+          });
+        }
+        console.error("[design-session] Supabase read failed:", msg);
+        return res.status(503).json({
+          error: "Design session storage unavailable",
+          code: "DESIGN_SESSIONS_UNAVAILABLE",
+        });
+      }
+    }
+
+    if (!isDesignSessionDevFallbackAllowed()) {
+      return res.status(503).json({
+        error: "Design session storage requires Supabase in production",
+        code: "DESIGN_SESSIONS_SUPABASE_REQUIRED",
+      });
+    }
+
+    const session = findLocalDesignSession(ensureLocalDesignSessions(), id);
+    if (!session) return res.json({ exists: false, session: null });
+    return res.json({ exists: true, session });
+  } catch (err: any) {
+    console.error("[design-session] GET error:", err?.message || err);
+    return res.status(500).json({ error: err?.message || "Failed to load design session" });
+  }
+});
+
+/**
+ * PUT — save Design Session (upsert).
+ * Body: { payload, expectedVersion?, status? }
+ * Concurrent edit: if expectedVersion mismatches server version → 409 + concurrentEditDetected.
+ */
+app.put("/api/leads/:id/design-session", async (req, res) => {
+  const { id } = req.params;
+  if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
+  const ctx = await resolveLeadForMutation(id);
+  if (!ctx) return res.status(404).json({ error: "Lead not found" });
+
+  const validated = validateDesignSessionPutBody(req.body);
+  if (!validated.ok) {
+    return res.status(validated.status).json({ error: validated.error });
+  }
+
+  // Actor identity is always from JWT — never from client body
+  const actorUsername = String(req.actor?.username || "unknown");
+
+  const input = {
+    leadId: id,
+    payload: validated.payload,
+    expectedVersion: validated.expectedVersion,
+    actorUsername,
+    status: validated.status,
+  };
+
+  try {
+    let result;
+    if (ctx.supabase) {
+      try {
+        result = await upsertDesignSessionToSupabase(ctx.supabase, input);
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        if (
+          err instanceof DesignSessionsSchemaMissingError ||
+          /relation .* does not exist|Could not find the table|PGRST205|DESIGN_SESSIONS_SCHEMA_MISSING/i.test(msg)
+        ) {
+          return res.status(503).json({
+            error:
+              "Design sessions table is not migrated. Run scripts/design-sessions-schema.sql in Supabase.",
+            code: "DESIGN_SESSIONS_SCHEMA_MISSING",
+          });
+        }
+        throw err;
+      }
+      // Dev-only mirror for local debugging — never in production
+      if (result.ok && isDesignSessionDevFallbackAllowed()) {
+        const locals = ensureLocalDesignSessions();
+        const idx = locals.findIndex((s) => s.leadId === id);
+        if (idx >= 0) locals[idx] = result.session;
+        else locals.push(result.session);
+        saveDb();
+      }
+    } else if (isDesignSessionDevFallbackAllowed()) {
+      result = upsertLocalDesignSession(ensureLocalDesignSessions(), input);
+      saveDb();
+    } else {
+      return res.status(503).json({
+        error: "Design session storage requires Supabase in production",
+        code: "DESIGN_SESSIONS_SUPABASE_REQUIRED",
+      });
+    }
+
+    if (!result.ok) {
+      return res.status(409).json({
+        error: result.message,
+        concurrentEditDetected: true,
+        session: result.session,
+      });
+    }
+
+    await appendActivityLog(
+      "sales",
+      actorUsername,
+      "Sales Executive",
+      "Design Session Saved",
+      `Saved design session v${result.session.version} for lead ${id}`
+    );
+
+    return res.json({
+      success: true,
+      created: result.created,
+      session: result.session,
+    });
+  } catch (err: any) {
+    console.error("[design-session] PUT error:", err?.message || err);
+    return res.status(500).json({ error: err?.message || "Failed to save design session" });
+  }
+});
+
 // 7.5. Procure inventory stock (Purchase Order creation)
 app.post("/api/inventory/procure", async (req, res) => {
   loadDb();
@@ -8966,10 +9133,11 @@ async function compileTemplatePreviewHtml(
 async function sendQuotationPdfResponse(
   res: express.Response,
   html: string,
-  filename: string
+  filename: string,
+  pdfOptions?: { javaScriptEnabled?: boolean }
 ): Promise<void> {
   try {
-    const pdfBuffer = await renderQuotationHtmlToPdf(html);
+    const pdfBuffer = await renderQuotationHtmlToPdf(html, pdfOptions);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(pdfBuffer);
@@ -8979,6 +9147,76 @@ async function sendQuotationPdfResponse(
     res.status(503).send(message);
   }
 }
+
+/**
+ * RC-1.1 — Design Studio proposal PDF export (ephemeral).
+ * Reuses existing Playwright PDF generator. Does not save to CRM / leads / quotes.
+ * Accepts validated payload only — never raw client HTML.
+ */
+app.post("/api/export/pdf/design-studio-proposal/download", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  try {
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      try {
+        activeState = await fetchAppStateFromSupabase();
+      } catch {
+        /* keep local branding fallback */
+      }
+    }
+
+    const body = req.body || {};
+    if (typeof body.html === "string" && body.html.trim()) {
+      return res.status(400).send(
+        "Raw HTML is not accepted. Send a validated Design Studio proposal payload."
+      );
+    }
+
+    const payload = body.payload as DesignStudioProposalExportPayload | undefined;
+    if (!payload || !Array.isArray(payload.pages) || payload.pages.length === 0) {
+      return res.status(400).send("Generate a proposal before downloading PDF.");
+    }
+    if (!isSafeRoofImageDataUrl(payload.roofImageDataUrl)) {
+      return res.status(400).send("Roof image must be a safe data:image/*;base64 URL (or empty).");
+    }
+
+    const branding = resolveQuotePdfBranding(activeState);
+    const html = compileDesignStudioProposalHtml(payload, {
+      companyName: branding.companyName || DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND.companyName,
+      officeAddress: branding.officeAddress || DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND.officeAddress,
+      phoneNumbers: branding.phoneNumbers || DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND.phoneNumbers,
+      billingEmail: branding.billingEmail || DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND.billingEmail,
+      logoUrl: branding.logoUrl || DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND.logoUrl,
+    });
+
+    if (!html || html.length < 40) {
+      return res.status(400).send("Generate a proposal before downloading PDF.");
+    }
+    if (html.length > 12_000_000) {
+      return res.status(413).send("Proposal HTML is too large to export.");
+    }
+
+    const filename =
+      (typeof body.filename === "string" && body.filename.trim()) ||
+      (payload.customer ? buildProposalExportFilename(payload.customer) : "Sunchaser-Proposal.pdf");
+
+    console.log(`[PDF BACKEND LOG] POST /api/export/pdf/design-studio-proposal/download
+      - actor: ${staff.username}
+      - htmlBytes: ${html.length}
+      - filename: ${filename}
+      - crmSave: false
+    `);
+
+    await sendQuotationPdfResponse(res, html, filename.replace(/[^\w.\-]+/g, "_"), {
+      javaScriptEnabled: false,
+    });
+  } catch (err: any) {
+    console.error("[DESIGN STUDIO PROPOSAL PDF]", err);
+    return res.status(500).send(err?.message || "Proposal PDF export failed.");
+  }
+});
 
 const DEFAULT_AUTO_SIZER_BOQ_ROW_IDS = [
   'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
