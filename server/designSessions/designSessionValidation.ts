@@ -106,7 +106,12 @@ export function validateDesignSessionPutBody(body: unknown): DesignSessionValida
 }
 
 export function isDesignSessionDevFallbackAllowed(): boolean {
-  return process.env.NODE_ENV !== "production";
+  // Production deploys must use Supabase design_sessions. Local/dev (including
+  // NODE_ENV unset under tsx) may fall back to database.json.
+  const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
+  const render = String(process.env.RENDER || "").trim();
+  if (render) return false;
+  return nodeEnv !== "production";
 }
 
 /** Safe roof image for PDF embed: data:image only (no remote http/javascript). */

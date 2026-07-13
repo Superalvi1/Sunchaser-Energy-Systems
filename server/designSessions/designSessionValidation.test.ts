@@ -85,11 +85,19 @@ check("roof image data URL allowlist", () => {
 
 check("dev fallback gate", () => {
   const prev = process.env.NODE_ENV;
+  const prevRender = process.env.RENDER;
+  delete process.env.RENDER;
   process.env.NODE_ENV = "production";
   assert.equal(isDesignSessionDevFallbackAllowed(), false);
   process.env.NODE_ENV = "development";
   assert.equal(isDesignSessionDevFallbackAllowed(), true);
+  process.env.NODE_ENV = "";
+  assert.equal(isDesignSessionDevFallbackAllowed(), true);
+  process.env.RENDER = "true";
+  assert.equal(isDesignSessionDevFallbackAllowed(), false);
   process.env.NODE_ENV = prev;
+  if (prevRender === undefined) delete process.env.RENDER;
+  else process.env.RENDER = prevRender;
 });
 
 console.log(`\ndesignSessionValidation tests: ${pass} passed`);
