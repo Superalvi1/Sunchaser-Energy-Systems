@@ -333,6 +333,108 @@ try {
       .filter(Boolean)
       .join(",")
   );
+
+  // --- RC-1.1 Design Session save / restore / 409 ---
+  const saveBtn = page.getByTestId("design-session-save");
+  if (await saveBtn.count()) {
+    await saveBtn.click();
+    await page.waitForTimeout(1500);
+    const statusText = await page.getByTestId("design-session-status").innerText().catch(() => "");
+    stage("save-design", statusText.slice(0, 160) || "save clicked");
+    await shot(page, "after-save");
+
+    // Resolve lead via request API (page fetch is unreliable in this harness)
+    const stateRes = await context.request.get(`${BASE}/api/state`, {
+      headers: { Authorization: `Bearer ${loginJson.token}` },
+    });
+    const stateJson = await stateRes.json();
+    const leads = stateJson.leads || stateJson.data?.leads || [];
+    const lead =
+      leads.find((l) => /Amer|Afzal|tahir|Garden|pcsir|Lahore/i.test(String(l.name || l.address || ""))) ||
+      leads[0];
+    if (!lead?.id) throw new Error("No lead for design-session conflict check");
+
+    const getRes = await context.request.get(`${BASE}/api/leads/${encodeURIComponent(lead.id)}/design-session`, {
+      headers: { Authorization: `Bearer ${loginJson.token}` },
+    });
+    const getJson = await getRes.json();
+    if (getRes.status() === 503 && getJson.code === "DESIGN_SESSIONS_SCHEMA_MISSING") {
+      stage("concurrent-409", "skipped — production schema missing");
+    } else {
+      let payload = getJson.session?.payload;
+      if (!payload) {
+        payload = await page.evaluate(async () => {
+          const mod = await import("/src/lib/designSessionClient.ts");
+          return mod.emptyDesignSessionPayload("e2e");
+        });
+        // Ensure a session exists at v1 before stale write
+        const createRes = await context.request.put(
+          `${BASE}/api/leads/${encodeURIComponent(lead.id)}/design-session`,
+          {
+            headers: { Authorization: `Bearer ${loginJson.token}` },
+            data: { payload, expectedVersion: null, status: "draft" },
+          }
+        );
+        if (![200, 201].includes(createRes.status()) && createRes.status() !== 200) {
+          const body = await createRes.text();
+          throw new Error(`Failed to seed design session: ${createRes.status()} ${body}`);
+        }
+      }
+      const version = getJson.session?.version ?? 1;
+      const stale = await context.request.put(`${BASE}/api/leads/${encodeURIComponent(lead.id)}/design-session`, {
+        headers: { Authorization: `Bearer ${loginJson.token}` },
+        data: {
+          payload: getJson.session?.payload || payload,
+          expectedVersion: 0,
+          status: "draft",
+        },
+      });
+      const staleJson = await stale.json().catch(() => ({}));
+      stage(
+        "concurrent-409",
+        JSON.stringify({
+          leadId: lead.id,
+          version,
+          conflictStatus: stale.status(),
+          concurrentEditDetected: Boolean(staleJson.concurrentEditDetected),
+        })
+      );
+      // After create, version is >= 1 so expectedVersion 0 must 409
+      if (stale.status() !== 409) {
+        throw new Error(`Expected HTTP 409 for stale expectedVersion, got ${stale.status()}`);
+      }
+    }
+
+    // Second save should increment version when session exists (skip if UI gated by concurrent-edit)
+    const concurrentBanner = await page.getByTestId("design-session-status").innerText().catch(() => "");
+    if (/Concurrent edit/i.test(concurrentBanner)) {
+      stage("save-design-2", "skipped — concurrent edit banner active (expected after 409 probe)");
+    } else if (await saveBtn.isEnabled().catch(() => false)) {
+      await saveBtn.click({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(1200);
+      const status2 = await page.getByTestId("design-session-status").innerText().catch(() => "");
+      stage("save-design-2", status2.slice(0, 160) || "second save");
+    } else {
+      stage("save-design-2", "save disabled");
+    }
+  } else {
+    stage("save-design", "save button not found");
+  }
+
+  // Proposal generate (if ready)
+  const genBtn = page.getByTestId("proposal-generate-btn");
+  if (await genBtn.count()) {
+    const genDisabled = await genBtn.isDisabled().catch(() => true);
+    if (!genDisabled) {
+      await genBtn.click();
+      await page.waitForTimeout(2000);
+      stage("proposal-generate", "clicked");
+      await shot(page, "after-proposal-generate");
+    } else {
+      stage("proposal-generate", "disabled");
+    }
+  }
+
   await shot(page, "final");
 
   const fatal = consoleErrors.filter(

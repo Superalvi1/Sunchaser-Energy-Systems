@@ -47,8 +47,24 @@ export const DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND: DesignStudioProposalBrand = {
   officeAddress: "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
   phoneNumbers: "0309-0236666, 0330-7776444",
   billingEmail: "billing@sunchaser-energy.com",
-  logoUrl: resolveQuotePdfLogoUrl(OFFICIAL_QUOTE_LOGO_PATH, getQuotePdfAppBaseUrl()),
+  logoUrl: OFFICIAL_QUOTE_LOGO_PATH,
 };
+
+export function resolveDesignStudioProposalBrand(
+  override?: Partial<DesignStudioProposalBrand>
+): DesignStudioProposalBrand {
+  let logoUrl = DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND.logoUrl;
+  try {
+    logoUrl = resolveQuotePdfLogoUrl(OFFICIAL_QUOTE_LOGO_PATH, getQuotePdfAppBaseUrl());
+  } catch {
+    logoUrl = OFFICIAL_QUOTE_LOGO_PATH;
+  }
+  return {
+    ...DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND,
+    logoUrl,
+    ...override,
+  };
+}
 
 export function buildProposalExportFilename(customer: DesignStudioProposalCustomer): string {
   const safe = String(customer.name || "Customer")
@@ -154,7 +170,7 @@ function renderPageHtml(
 
 export function compileDesignStudioProposalHtml(
   payload: DesignStudioProposalExportPayload,
-  brand: DesignStudioProposalBrand = DEFAULT_DESIGN_STUDIO_PROPOSAL_BRAND
+  brand: DesignStudioProposalBrand = resolveDesignStudioProposalBrand()
 ): string {
   const pagesHtml = payload.pages.map((p) => renderPageHtml(p, payload)).join("\n");
   const warnings =
