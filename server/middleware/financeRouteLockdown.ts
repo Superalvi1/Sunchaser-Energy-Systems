@@ -24,7 +24,11 @@ export class FinanceRouteLockdownError extends Error {
   }
 }
 
-/** Tables that must only be mutated via /api/db/update by Super Admin. */
+/**
+ * Generic /api/db/update is Super Admin only (deny-by-default).
+ * Other roles must use dedicated ownership-aware routes.
+ * Finance-sensitive table list is retained for documentation / targeted checks.
+ */
 export const FINANCE_SENSITIVE_DB_TABLES = new Set([
   "invoices",
   "invoice_items",
@@ -126,17 +130,13 @@ export function assertLeadOwnershipMutationAllowed(
 
 export function assertDbUpdateAllowed(
   actor: RequestActor | undefined,
-  action: string,
-  table: string,
-  data: unknown
+  _action: string,
+  _table: string,
+  _data: unknown
 ): void {
-  assertFinanceDbUpdateAllowed(actor, table);
-  assertLeadOwnershipMutationAllowed(
-    actor,
-    action,
-    table,
-    (data as Record<string, unknown>) || null
-  );
+  // Deny-by-default: only Super Admin may mutate via the generic /api/db/update endpoint.
+  // Sales, Technician, Accounts Manager, Customer, and other staff must use dedicated routes.
+  assertSuperAdminOnly(actor);
 }
 
 export function resolveExportAccess(

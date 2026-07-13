@@ -2932,12 +2932,36 @@ export async function fetchCustomerPortalDocuments(
         .eq("customer_id", customerId)
         .order("uploaded_at", { ascending: false });
       if (fallback.error) throw error;
-      const documents = (fallback.data || [])
-        .map(mapDocumentRow)
-        .filter((d) => d.visibleToCustomer && !d.internalOnly);
+      const documents = [];
+      for (const row of fallback.data || []) {
+        const mapped = mapDocumentRow(row);
+        if (!(mapped.visibleToCustomer && !mapped.internalOnly)) continue;
+        const storagePath = row.storage_path || row.storagePath;
+        let fileUrl = `/api/customer-documents/${mapped.id}/download`;
+        if (storagePath) {
+          const { data: signed } = await supabase.storage
+            .from("customer-documents")
+            .createSignedUrl(String(storagePath), 300);
+          if (signed?.signedUrl) fileUrl = signed.signedUrl;
+        }
+        documents.push({ ...mapped, fileUrl });
+      }
       return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
     }
-    const documents = (data || []).map(mapDocumentRow).filter((d) => !d.internalOnly);
+    const documents = [];
+    for (const row of data || []) {
+      const mapped = mapDocumentRow(row);
+      if (mapped.internalOnly) continue;
+      const storagePath = row.storage_path || row.storagePath;
+      let fileUrl = `/api/customer-documents/${mapped.id}/download`;
+      if (storagePath) {
+        const { data: signed } = await supabase.storage
+          .from("customer-documents")
+          .createSignedUrl(String(storagePath), 300);
+        if (signed?.signedUrl) fileUrl = signed.signedUrl;
+      }
+      documents.push({ ...mapped, fileUrl });
+    }
     return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
   }
 
@@ -2957,7 +2981,11 @@ export async function fetchCustomerPortalDocuments(
         internal_only: d.internalOnly ?? d.internal_only,
       })
     )
-    .filter((d) => d.visibleToCustomer && !d.internalOnly);
+    .filter((d) => d.visibleToCustomer && !d.internalOnly)
+    .map((d) => ({
+      ...d,
+      fileUrl: `/api/customer-documents/${d.id}/download`,
+    }));
   return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
 }
 

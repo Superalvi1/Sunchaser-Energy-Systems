@@ -62,8 +62,19 @@ export function publicAppUrl(path: string) {
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/**
+ * Send transactional auth email.
+ * Never log HTML bodies, tokens, or complete reset/verification URLs.
+ */
 export async function sendAuthEmail(to: string, subject: string, html: string) {
-  console.log("[Auth Email]", { to, subject, html: html.slice(0, 200) });
+  const recipientDomain = String(to || "").includes("@")
+    ? String(to).split("@").pop()
+    : "unknown";
+  console.log("[Auth Email]", {
+    subject,
+    recipientDomain,
+    hasHtml: Boolean(html && html.length > 0),
+  });
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.AUTH_EMAIL_FROM || "Sunchaser <noreply@sunchaser-energy.com>";
   if (!apiKey) return { sent: false, logged: true };
@@ -78,7 +89,7 @@ export async function sendAuthEmail(to: string, subject: string, html: string) {
     });
     return { sent: res.ok, logged: false };
   } catch (err) {
-    console.error("[Auth Email] send failed", err);
+    console.error("[Auth Email] send failed");
     return { sent: false, logged: true };
   }
 }
@@ -411,9 +422,10 @@ export async function requestPasswordReset(email: string, localDb?: Database) {
   await sendAuthEmail(
     row.email,
     "Reset your Sunchaser password",
-    `<p>Reset password: <a href="${resetUrl}">${resetUrl}</a></p><p>Link expires in 2 hours.</p>`
+    `<p>Reset password: <a href="${resetUrl}">Reset your password</a></p><p>Link expires in 2 hours.</p>`
   );
-  return { ok: true, message: "If that email exists, a reset link was sent.", resetUrl };
+  // Always the same generic response shape — never include resetUrl or token.
+  return { ok: true, message: "If that email exists, a reset link was sent." };
 }
 
 export async function resetPasswordWithToken(

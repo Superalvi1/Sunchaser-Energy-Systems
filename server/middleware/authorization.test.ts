@@ -294,6 +294,7 @@ await test("customer allowed routes include portal and owned invoice PDF", () =>
   assert.equal(isCustomerAllowedApiRoute("/api/customer-portal/me"), true);
   assert.equal(isCustomerAllowedApiRoute("/api/auth/me"), true);
   assert.equal(isCustomerAllowedApiRoute("/api/export/pdf/invoice/inv-1"), true);
+  assert.equal(isCustomerAllowedApiRoute("/api/customer-documents/doc-1/download"), true);
   assert.equal(isCustomerAllowedApiRoute("/api/admin/users"), false);
 });
 

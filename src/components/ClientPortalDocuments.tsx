@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Download, Eye, FileText, Loader2 } from "lucide-react";
 import { User } from "../types";
-import { fetchCustomerPortalDocuments, customerInvoicePdfUrl, customerWarrantyCertificateUrl } from "../services/api";
+import { fetchCustomerPortalDocuments, customerInvoicePdfUrl, customerWarrantyCertificateUrl, openAuthenticatedDocumentUrl } from "../services/api";
 import { portal } from "../lib/clientPortalUi";
 import { DOCUMENT_WALLET_TYPES } from "../lib/clientPortalPhase2";
 
@@ -102,25 +102,22 @@ export default function ClientPortalDocuments({ user }: ClientPortalDocumentsPro
                   )}
                   {url && (
                     <div className="flex flex-wrap gap-2 mt-4">
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void openAuthenticatedDocumentUrl(url)}
                         className={portal.btnSecondary + " !py-2 !px-3 !text-xs"}
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Preview
-                      </a>
-                      <a
-                        href={url}
-                        download
-                        target="_blank"
-                        rel="noreferrer"
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openAuthenticatedDocumentUrl(url)}
                         className={portal.btnPrimary + " !py-2 !px-3 !text-xs"}
                       >
                         <Download className="h-3.5 w-3.5" />
                         Download
-                      </a>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -145,16 +142,18 @@ export default function ClientPortalDocuments({ user }: ClientPortalDocumentsPro
                   </p>
                 </div>
                 {doc.fileUrl && (
-                  <a
-                    href={resolveVaultDocumentUrl(doc.fileUrl, user)}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void openAuthenticatedDocumentUrl(
+                        resolveVaultDocumentUrl(doc.fileUrl, user) || doc.fileUrl
+                      )
+                    }
                     className={portal.btnPrimary + " !py-2 !px-3 !text-xs shrink-0"}
                   >
                     <Download className="h-3.5 w-3.5" />
                     Download
-                  </a>
+                  </button>
                 )}
               </li>
             ))}

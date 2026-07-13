@@ -168,11 +168,119 @@ export async function listAdminCustomerDocuments(
       .eq("customer_id", customerId)
       .order("uploaded_at", { ascending: false });
     if (error) throw error;
-    return (data || []).map(mapDocumentRow);
+    const out = [];
+    for (const row of data || []) {
+      const mapped = secureDocumentRecord(mapDocumentRow(row));
+      const storagePath = row.storage_path || row.storagePath;
+      if (storagePath) {
+        const signed = await createCustomerDocumentSignedUrl(String(storagePath), 300);
+        if (signed) {
+          out.push({ ...mapped, fileUrl: signed });
+          continue;
+        }
+      }
+      out.push(mapped);
+    }
+    return out;
   }
   return (localDb?.customerDocuments || [])
     .filter((d: any) => (d.customerId || d.customer_id) === customerId)
-    .map((d: any) => mapDocumentRow(d));
+    .map((d: any) => secureDocumentRecord(mapDocumentRow(d)));
+}
+
+/** True if URL looks like a permanent public/static document location. */
+export function isPublicDocumentUrl(url: string): boolean {
+  const u = String(url || "").trim().toLowerCase();
+  if (!u) return false;
+  if (u.includes("/storage/v1/object/public/customer-documents/")) return true;
+  if (u.startsWith("/uploads/customer-docs/")) return true;
+  if (u.includes("/uploads/customer-docs/")) return true;
+  return false;
+}
+
+/** Rewrite document records to authenticated download paths (no permanent public URLs). */
+export function secureDocumentRecord<T extends { id: string; fileUrl?: string | null }>(
+  doc: T
+): T {
+  return {
+    ...doc,
+    fileUrl: `/api/customer-documents/${doc.id}/download`,
+  };
+}
+
+export async function getCustomerDocumentById(
+  documentId: string,
+  localDb?: Database
+): Promise<{
+  id: string;
+  customerId: string;
+  fileUrl: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  storagePath: string | null;
+  visibleToCustomer: boolean;
+  internalOnly: boolean;
+} | null> {
+  const id = String(documentId || "").trim();
+  if (!id) return null;
+
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("customer_documents")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    const mapped = mapDocumentRow(data);
+    return {
+      id: mapped.id,
+      customerId: String(mapped.customerId || data.customer_id || ""),
+      fileUrl: mapped.fileUrl || null,
+      fileName: mapped.fileName || null,
+      mimeType: mapped.mimeType || null,
+      storagePath: data.storage_path || data.storagePath || null,
+      visibleToCustomer: !!mapped.visibleToCustomer,
+      internalOnly: !!mapped.internalOnly,
+    };
+  }
+
+  const row = (localDb?.customerDocuments || []).find(
+    (d: any) => String(d.id) === id
+  );
+  if (!row) return null;
+  const mapped = mapDocumentRow(row);
+  return {
+    id: mapped.id,
+    customerId: String(mapped.customerId || row.customer_id || row.customerId || ""),
+    fileUrl: mapped.fileUrl || null,
+    fileName: mapped.fileName || null,
+    mimeType: mapped.mimeType || null,
+    storagePath: row.storage_path || row.storagePath || null,
+    visibleToCustomer: !!mapped.visibleToCustomer,
+    internalOnly: !!mapped.internalOnly,
+  };
+}
+
+/**
+ * Create a short-lived signed URL for a private Supabase object, or null for local files.
+ * Lifetime defaults to 5 minutes.
+ */
+export async function createCustomerDocumentSignedUrl(
+  storagePath: string,
+  expiresInSeconds = 300
+): Promise<string | null> {
+  const path = String(storagePath || "").trim();
+  if (!path || !isSupabaseActive()) return null;
+  // Local filesystem paths are not Supabase objects.
+  if (path.startsWith("/") || path.includes(":\\") || path.includes("storage/customer-docs")) {
+    return null;
+  }
+  const { data, error } = await getSupabase()!
+    .storage.from("customer-documents")
+    .createSignedUrl(path, expiresInSeconds);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl;
 }
 
 export async function assignCustomerDocument(
@@ -197,20 +305,23 @@ export async function assignCustomerDocument(
 ) {
   await assertCustomerAdmin(actorId, actorUsername, actorRole, localDb);
   const customerId = String(body.customerId || "").trim();
-  if (!customerId || !body.fileUrl) {
-    throw new CustomerProfileError("customerId and fileUrl required.");
+  if (!customerId) {
+    throw new CustomerProfileError("customerId required.");
   }
 
   const internalOnly = !!body.internalOnly;
   const visibleToCustomer = body.visibleToCustomer !== false && !internalOnly;
+  const docId = `doc-${Date.now()}`;
+  const downloadPath = `/api/customer-documents/${docId}/download`;
 
   const doc = {
-    id: `doc-${Date.now()}`,
+    id: docId,
     customer_id: customerId,
     project_id: body.projectId || null,
     document_type: body.documentType,
     title: body.title || body.documentType,
-    file_url: body.fileUrl,
+    // Persist authenticated download path — never a permanent public URL.
+    file_url: body.fileUrl && !isPublicDocumentUrl(body.fileUrl) ? body.fileUrl : downloadPath,
     file_name: body.fileName || null,
     mime_type: body.mimeType || null,
     storage_path: body.storagePath || null,
@@ -268,7 +379,7 @@ export async function uploadFileToCustomerStorage(
   base64Data: string,
   fileName: string,
   mimeType?: string
-): Promise<{ url: string; storagePath: string }> {
+): Promise<{ url: string; storagePath: string; bucket?: string | null }> {
   const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
   let buffer: Buffer;
   let contentType = mimeType || "application/octet-stream";
@@ -288,26 +399,36 @@ export async function uploadFileToCustomerStorage(
     const supabase = getSupabase()!;
     const bucket = "customer-documents";
     try {
-      await supabase.storage.createBucket(bucket, { public: true });
+      await supabase.storage.createBucket(bucket, { public: false });
     } catch {
-      /* exists */
+      /* exists — try to ensure private */
+      try {
+        await supabase.storage.updateBucket(bucket, { public: false });
+      } catch {
+        /* best-effort hardening */
+      }
     }
     const { error } = await supabase.storage.from(bucket).upload(storagePath, buffer, {
       contentType,
       upsert: true,
     });
     if (error) throw new CustomerProfileError(error.message);
-    const { data } = supabase.storage.from(bucket).getPublicUrl(storagePath);
-    return { url: data.publicUrl, storagePath };
+    // Never return permanent public URLs. Callers store an authenticated download path.
+    return {
+      url: "",
+      storagePath,
+      bucket,
+    };
   }
 
   const fs = await import("fs");
   const path = await import("path");
-  const uploadsDir = path.join(process.cwd(), "public", "uploads", "customer-docs", customerId);
+  // Store outside public/ so Express static cannot serve these files.
+  const uploadsDir = path.join(process.cwd(), "storage", "customer-docs", customerId);
   fs.mkdirSync(uploadsDir, { recursive: true });
   const fullPath = path.join(uploadsDir, safeName);
   fs.writeFileSync(fullPath, buffer);
-  return { url: `/uploads/customer-docs/${customerId}/${safeName}`, storagePath: fullPath };
+  return { url: "", storagePath: fullPath, bucket: null };
 }
 
 export async function fetchCustomerPortalSystemMe(

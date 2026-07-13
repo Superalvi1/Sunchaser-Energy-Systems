@@ -160,6 +160,22 @@ await test("backup export allows Super Admin only", () => {
   );
 });
 
+await test("db/update deny-by-default: Sales, Technician, Accounts Manager, Customer blocked for any table", () => {
+  for (const table of ["leads", "products", "invoices", "paymentTracks", "settings", "users"]) {
+    for (const actor of [salesActorA, technicianActor, accountsManagerActor, customerActor, directorActor, adminActor]) {
+      assert.throws(
+        () => assertDbUpdateAllowed(actor, "edit", table, { id: "x" }),
+        (err: unknown) => err instanceof FinanceRouteLockdownError && err.statusCode === 403
+      );
+    }
+    assert.doesNotThrow(() => assertDbUpdateAllowed(superAdminActor, "edit", table, { id: "x" }));
+  }
+  assert.throws(
+    () => assertDbUpdateAllowed(undefined, "edit", "leads", { id: "x" }),
+    (err: unknown) => err instanceof FinanceRouteLockdownError && err.statusCode === 401
+  );
+});
+
 await test("db/update finance tables denied for Sales, Technician, and Customer", () => {
   for (const table of ["invoices", "paymentTracks", "projectFinanceRecords", "deliveryChallans", "investors"]) {
     assert.equal(isFinanceSensitiveDbTable(table), true);
@@ -177,7 +193,11 @@ await test("db/update finance tables denied for Sales, Technician, and Customer"
     );
     assert.doesNotThrow(() => assertDbUpdateAllowed(superAdminActor, "edit", table, { id: "x" }));
   }
-  assert.doesNotThrow(() => assertDbUpdateAllowed(salesActorA, "edit", "leads", { id: "lead-1", status: "Open" }));
+  // Ordinary staff must not mutate leads via generic db/update either.
+  assert.throws(
+    () => assertDbUpdateAllowed(salesActorA, "edit", "leads", { id: "lead-1", status: "Open" }),
+    (err: unknown) => err instanceof FinanceRouteLockdownError && err.statusCode === 403
+  );
 });
 
 await test("lead ownership mutation blocked for non-Super Admin via db/update", () => {

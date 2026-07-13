@@ -248,6 +248,31 @@ function staffPortalHeaders(userId: string, username: string, _role: string) {
   };
 }
 
+export async function openAuthenticatedDocumentUrl(url: string): Promise<void> {
+  const resolved = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+  if (resolved.includes("/api/customer-documents/") && resolved.includes("/download")) {
+    const res = await apiFetch(
+      url.startsWith("http") ? url.replace(API_BASE_URL, "") || url : url,
+      withAuthHeaders({ method: "GET" })
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).error || "Unable to open document.");
+    }
+    // Follow redirect body or stream
+    if (res.redirected && res.url && !res.url.includes("/api/customer-documents/")) {
+      window.open(res.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    return;
+  }
+  window.open(resolved, "_blank", "noopener,noreferrer");
+}
+
 export async function fetchCustomerPortalDocuments(userId: string, username: string) {
   const res = await apiFetch(
     `/api/customer-portal/documents/me?userId=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}`,
@@ -921,7 +946,7 @@ export async function requestPasswordReset(email: string) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed.");
-  return data as { ok: boolean; message: string; resetUrl?: string };
+  return data as { ok: boolean; message: string };
 }
 
 export async function resetPasswordWithToken(token: string, password: string) {

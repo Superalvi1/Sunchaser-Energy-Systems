@@ -9,3 +9,16 @@ coverage/
 .env*
 !.env.example
 !.env.production
+
+# Local / sensitive data — keep out of Git (history rewrite is a separate step)
+database.json
+backups/*.json
+backups/
+node-env/
+scratch/
+sunchaser-crm/
+*.zip
+.antigravity/
+storage/
+tmp/
+dist.bak.*/

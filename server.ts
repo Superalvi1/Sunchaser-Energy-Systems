@@ -322,7 +322,9 @@ import {
   filterExportStateForSales,
   financeRouteLockdownErrorResponse,
 } from "./server/middleware/financeRouteLockdown.ts";
-import { loginRateLimit } from "./server/middleware/rateLimit.ts";
+import { loginRateLimit, authSensitiveRateLimit } from "./server/middleware/rateLimit.ts";
+import { resolveCorsAllowOrigin } from "./server/middleware/corsAllowlist.ts";
+import { assertProductionDatabaseReady } from "./server/middleware/productionDatabaseGuard.ts";
 import { handleAiChatPost, configureAiChatRoute } from "./server/ai/chatRoute.ts";
 import {
   OwnershipError,
@@ -359,6 +361,8 @@ import {
   assignCustomerDocument,
   uploadFileToCustomerStorage,
   fetchCustomerPortalSystemMe,
+  getCustomerDocumentById,
+  createCustomerDocumentSignedUrl,
   CustomerProfileError,
 } from "./customerProfileDb.js";
 import {
@@ -466,25 +470,50 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Only trust X-Forwarded-For when explicitly configured (for rate limiting / Express req.ip).
+if (
+  process.env.TRUST_PROXY === "true" ||
+  process.env.TRUST_PROXY === "1" ||
+  process.env.TRUST_PROXY === "yes"
+) {
+  app.set("trust proxy", 1);
+}
+
+// Block unauthenticated direct access to customer document fallback paths.
+app.use("/uploads/customer-docs", (_req, res) => {
+  res.status(401).json({ error: "Authentication required to access customer documents." });
+});
+
 app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
 
-// Custom CORS middleware to allow the frontend domain to call the backend API securely
+// CORS — explicit allowlist only; never reflect arbitrary Origin.
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  } else {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+  const { allowOrigin, allowed } = resolveCorsAllowOrigin(origin);
+
+  if (origin && !allowed) {
+    if (req.method === "OPTIONS") {
+      return res.status(403).json({ error: "Origin not allowed." });
+    }
+    // Still process the request without ACAO so browsers block credentialed cross-origin reads.
+  } else if (allowOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
   }
+
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, Accept, Origin, X-Requested-With"
   );
-  res.setHeader("Access-Control-Allow-Credentials", "true");
 
   if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
+    if (origin && !allowed) {
+      return res.status(403).json({ error: "Origin not allowed." });
+    }
+    return res.sendStatus(204);
   }
   next();
 });
@@ -500,19 +529,16 @@ app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
-// Production database requirement check
-if (process.env.NODE_ENV === "production") {
-  if (!isSupabaseActive()) {
-    console.error(
-      "\x1b[31m%s\x1b[0m",
-      "🚨 [CRITICAL WARNING] Running Sunchaser CRM in PRODUCTION mode but Supabase is NOT active/configured! Falling back to local database.json fallback as emergency measure only. Please ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set."
-    );
-  } else {
-    console.log(
-      "\x1b[32m%s\x1b[0m",
-      "✨ [Production Mode] Supabase production database is active and set as the primary database."
-    );
-  }
+// Production database requirement — fail fast; no database.json fallback in production.
+assertProductionDatabaseReady({
+  nodeEnv: process.env.NODE_ENV,
+  supabaseActive: isSupabaseActive(),
+});
+if (process.env.NODE_ENV === "production" && isSupabaseActive()) {
+  console.log(
+    "\x1b[32m%s\x1b[0m",
+    "✨ [Production Mode] Supabase production database is active and set as the primary database."
+  );
 }
 
 /* --- PERSISTENT FALLBACK FILE ARCHITECTURE --- */
@@ -958,19 +984,23 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", authSensitiveRateLimit, async (req, res) => {
   try {
     loadDb();
     const result = await registerUser(req.body || {}, db);
     saveDb();
-    return res.status(201).json(result);
+    // Never return verification tokens/URLs to the client.
+    const { verificationUrl: _omit, ...safe } = result as typeof result & {
+      verificationUrl?: string | null;
+    };
+    return res.status(201).json(safe);
   } catch (err: any) {
     if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });
 
-app.post("/api/auth/verify-email", async (req, res) => {
+app.post("/api/auth/verify-email", authSensitiveRateLimit, async (req, res) => {
   try {
     loadDb();
     const result = await verifyEmailToken(req.body?.token || req.query?.token, db);
@@ -982,7 +1012,7 @@ app.post("/api/auth/verify-email", async (req, res) => {
   }
 });
 
-app.get("/api/auth/verify-email", async (req, res) => {
+app.get("/api/auth/verify-email", authSensitiveRateLimit, async (req, res) => {
   try {
     loadDb();
     const result = await verifyEmailToken(String(req.query?.token || ""), db);
@@ -994,7 +1024,7 @@ app.get("/api/auth/verify-email", async (req, res) => {
   }
 });
 
-app.post("/api/auth/forgot-password", async (req, res) => {
+app.post("/api/auth/forgot-password", authSensitiveRateLimit, async (req, res) => {
   try {
     loadDb();
     const result = await requestPasswordReset(String(req.body?.email || ""), db);
@@ -1006,7 +1036,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   }
 });
 
-app.post("/api/auth/reset-password", async (req, res) => {
+app.post("/api/auth/reset-password", authSensitiveRateLimit, async (req, res) => {
   try {
     loadDb();
     const result = await resetPasswordWithToken(
@@ -1467,7 +1497,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     req.body || {};
   try {
     loadDb();
-    const { url, storagePath } = await uploadFileToCustomerStorage(
+    const uploaded = await uploadFileToCustomerStorage(
       String(customerId),
       String(base64Data),
       String(fileName || "document"),
@@ -1477,20 +1507,76 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
       customerId: String(customerId),
       documentType: documentType || "other",
       title: title || fileName,
-      fileUrl: url,
+      fileUrl: `/api/customer-documents/pending/download`,
       fileName,
       mimeType,
-      storagePath,
+      storagePath: uploaded.storagePath,
       visibleToCustomer: visibleToCustomer !== false,
       internalOnly: !!internalOnly,
       notes,
       uploadedBy: username,
     }, db);
     saveDb();
-    return res.status(201).json(doc);
+    return res.status(201).json({
+      ...doc,
+      fileUrl: `/api/customer-documents/${doc.id}/download`,
+    });
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
+  }
+});
+
+/** Authenticated ownership-checked customer document download (signed URL or stream). */
+app.get("/api/customer-documents/:documentId/download", async (req, res) => {
+  try {
+    if (!req.actor) {
+      return res.status(401).json({ error: "Authentication required." });
+    }
+    loadDb();
+    const documentId = String(req.params.documentId || "").trim();
+    const doc = await getCustomerDocumentById(documentId, db);
+    if (!doc) {
+      return res.status(404).json({ error: "Document not found." });
+    }
+
+    if (req.actor.role === "Customer") {
+      const linkedCustomerId = String(req.actor.customerId || "").trim();
+      if (!linkedCustomerId || linkedCustomerId !== doc.customerId) {
+        return res.status(403).json({ error: "Not authorized for this document." });
+      }
+      if (doc.internalOnly || !doc.visibleToCustomer) {
+        return res.status(403).json({ error: "Not authorized for this document." });
+      }
+    } else {
+      if (!(await guardSalesOwnedResource(req, res, "customer", doc.customerId))) return;
+    }
+
+    if (doc.storagePath) {
+      const signed = await createCustomerDocumentSignedUrl(doc.storagePath, 300);
+      if (signed) {
+        return res.redirect(302, signed);
+      }
+      // Local private storage stream
+      const abs = path.isAbsolute(doc.storagePath)
+        ? doc.storagePath
+        : path.join(process.cwd(), doc.storagePath);
+      if (fs.existsSync(abs)) {
+        if (doc.mimeType) res.setHeader("Content-Type", doc.mimeType);
+        if (doc.fileName) {
+          res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${String(doc.fileName).replace(/"/g, "")}"`
+          );
+        }
+        return res.sendFile(abs);
+      }
+    }
+
+    return res.status(404).json({ error: "Document file not found." });
+  } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message || "Download failed." });
   }
 });
 

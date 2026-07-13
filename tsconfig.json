@@ -22,5 +22,17 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist.bak.*",
+    "node-env",
+    "scratch",
+    "sunchaser-crm",
+    "backups",
+    ".antigravity",
+    "storage",
+    "tmp"
+  ]
 }
