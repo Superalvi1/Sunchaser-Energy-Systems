@@ -69,7 +69,7 @@ import SolarProposalStudio from "./quoteAuthoring/SolarProposalStudio";
 import ProjectDesignWorkspace from "./roofStudio/ProjectDesignWorkspace";
 import RoofStudioErrorBoundary from "./roofStudio/RoofStudioErrorBoundary";
 import { StudioEmptyState } from "./ui/studio";
-import { isProposalStudioEnabled, isRoofStudioEnabled, isSunchaserDesignStudioEnabled } from "../lib/studioFeatureFlags";
+import { isDesignProjectEnabled, isProposalStudioEnabled } from "../lib/studioFeatureFlags";
 import { buildDraftApplyPayload } from "../lib/solarQuotePlannerClient";
 import type { SolarQuoteDraft } from "../lib/solarQuotePlannerClient";
 import {
@@ -135,10 +135,8 @@ interface SalesTeamAppProps {
 }
 
 const PROPOSAL_STUDIO_ENABLED = isProposalStudioEnabled();
-const ROOF_STUDIO_ENABLED = isRoofStudioEnabled();
-const SUNCHASER_DESIGN_STUDIO_ENABLED = isSunchaserDesignStudioEnabled();
 /** Roof Studio / Design Project tab — Project Design Workspace (HelioScope layout). */
-const DESIGN_PROJECT_ENABLED = ROOF_STUDIO_ENABLED || SUNCHASER_DESIGN_STUDIO_ENABLED;
+const DESIGN_PROJECT_ENABLED = isDesignProjectEnabled();
 
 export default function SalesTeamApp({
   staffUser,
