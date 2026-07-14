@@ -33,6 +33,7 @@ import {
   type DocumentWalletType,
   type WarrantyComponentType,
 } from "./src/lib/clientPortalPhase2.ts";
+import { assertSafeSupabaseCustomerObjectPath } from "./src/lib/customerDocumentPath.ts";
 import {
   mapSupportTicketRow,
   mapSupportTicketUpdateRow,
@@ -2938,10 +2939,13 @@ export async function fetchCustomerPortalDocuments(
         if (!(mapped.visibleToCustomer && !mapped.internalOnly)) continue;
         const storagePath = row.storage_path || row.storagePath;
         let fileUrl = `/api/customer-documents/${mapped.id}/download`;
-        if (storagePath) {
+        const safeKey = storagePath
+          ? assertSafeSupabaseCustomerObjectPath(String(storagePath), customerId)
+          : null;
+        if (safeKey) {
           const { data: signed } = await supabase.storage
             .from("customer-documents")
-            .createSignedUrl(String(storagePath), 300);
+            .createSignedUrl(safeKey, 300);
           if (signed?.signedUrl) fileUrl = signed.signedUrl;
         }
         documents.push({ ...mapped, fileUrl });
@@ -2954,10 +2958,13 @@ export async function fetchCustomerPortalDocuments(
       if (mapped.internalOnly) continue;
       const storagePath = row.storage_path || row.storagePath;
       let fileUrl = `/api/customer-documents/${mapped.id}/download`;
-      if (storagePath) {
+      const safeKey = storagePath
+        ? assertSafeSupabaseCustomerObjectPath(String(storagePath), customerId)
+        : null;
+      if (safeKey) {
         const { data: signed } = await supabase.storage
           .from("customer-documents")
-          .createSignedUrl(String(storagePath), 300);
+          .createSignedUrl(safeKey, 300);
         if (signed?.signedUrl) fileUrl = signed.signedUrl;
       }
       documents.push({ ...mapped, fileUrl });
@@ -3164,7 +3171,7 @@ export async function createAdminCustomerDocument(
     file_url: String(body.fileUrl || "").trim(),
     file_name: (body as any).fileName || null,
     mime_type: (body as any).mimeType || null,
-    storage_path: (body as any).storagePath || null,
+    storage_path: null,
     visible_to_customer: visibleToCustomer,
     internal_only: internalOnly,
     notes: (body as any).notes || null,

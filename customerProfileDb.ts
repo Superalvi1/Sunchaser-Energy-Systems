@@ -7,6 +7,10 @@ import {
 } from "./dbManager";
 import { mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
 import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
+import {
+  assertSafeSupabaseCustomerObjectPath,
+  isServerGeneratedCustomerStoragePath,
+} from "./src/lib/customerDocumentPath";
 
 export class CustomerProfileError extends Error {
   statusCode: number;
@@ -173,7 +177,7 @@ export async function listAdminCustomerDocuments(
       const mapped = secureDocumentRecord(mapDocumentRow(row));
       const storagePath = row.storage_path || row.storagePath;
       if (storagePath) {
-        const signed = await createCustomerDocumentSignedUrl(String(storagePath), 300);
+        const signed = await createCustomerDocumentSignedUrl(String(storagePath), customerId, 300);
         if (signed) {
           out.push({ ...mapped, fileUrl: signed });
           continue;
@@ -263,22 +267,21 @@ export async function getCustomerDocumentById(
 }
 
 /**
- * Create a short-lived signed URL for a private Supabase object, or null for local files.
- * Lifetime defaults to 5 minutes.
+ * Create a short-lived signed URL for a private Supabase object key.
+ * Validates the object path for the given customer; returns null on any failure.
+ * Never falls through to local filesystem reads.
  */
 export async function createCustomerDocumentSignedUrl(
   storagePath: string,
+  customerId: string,
   expiresInSeconds = 300
 ): Promise<string | null> {
-  const path = String(storagePath || "").trim();
-  if (!path || !isSupabaseActive()) return null;
-  // Local filesystem paths are not Supabase objects.
-  if (path.startsWith("/") || path.includes(":\\") || path.includes("storage/customer-docs")) {
-    return null;
-  }
+  if (!isSupabaseActive()) return null;
+  const safe = assertSafeSupabaseCustomerObjectPath(storagePath, customerId);
+  if (!safe) return null;
   const { data, error } = await getSupabase()!
     .storage.from("customer-documents")
-    .createSignedUrl(path, expiresInSeconds);
+    .createSignedUrl(safe, expiresInSeconds);
   if (error || !data?.signedUrl) return null;
   return data.signedUrl;
 }
@@ -294,6 +297,7 @@ export async function assignCustomerDocument(
     fileUrl: string;
     fileName?: string;
     mimeType?: string;
+    /** Ignored from client/admin assignment — only server upload may pass via options. */
     storagePath?: string;
     visibleToCustomer?: boolean;
     internalOnly?: boolean;
@@ -301,7 +305,11 @@ export async function assignCustomerDocument(
     projectId?: string;
     uploadedBy?: string;
   },
-  localDb?: Database
+  localDb?: Database,
+  options?: {
+    /** Only the server-side upload flow may supply a generated path. */
+    serverGeneratedStoragePath?: string | null;
+  }
 ) {
   await assertCustomerAdmin(actorId, actorUsername, actorRole, localDb);
   const customerId = String(body.customerId || "").trim();
@@ -314,6 +322,16 @@ export async function assignCustomerDocument(
   const docId = `doc-${Date.now()}`;
   const downloadPath = `/api/customer-documents/${docId}/download`;
 
+  // Public/admin assignment must never persist an arbitrary client storagePath.
+  let storagePath: string | null = null;
+  const serverPath = options?.serverGeneratedStoragePath;
+  if (serverPath) {
+    if (!isServerGeneratedCustomerStoragePath(serverPath, customerId)) {
+      throw new CustomerProfileError("Invalid document storage path.", 400);
+    }
+    storagePath = serverPath;
+  }
+
   const doc = {
     id: docId,
     customer_id: customerId,
@@ -324,7 +342,7 @@ export async function assignCustomerDocument(
     file_url: body.fileUrl && !isPublicDocumentUrl(body.fileUrl) ? body.fileUrl : downloadPath,
     file_name: body.fileName || null,
     mime_type: body.mimeType || null,
-    storage_path: body.storagePath || null,
+    storage_path: storagePath,
     visible_to_customer: visibleToCustomer,
     internal_only: internalOnly,
     notes: body.notes || null,

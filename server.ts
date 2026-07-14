@@ -1510,12 +1510,13 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
       fileUrl: `/api/customer-documents/pending/download`,
       fileName,
       mimeType,
-      storagePath: uploaded.storagePath,
       visibleToCustomer: visibleToCustomer !== false,
       internalOnly: !!internalOnly,
       notes,
       uploadedBy: username,
-    }, db);
+    }, db, {
+      serverGeneratedStoragePath: uploaded.storagePath,
+    });
     saveDb();
     return res.status(201).json({
       ...doc,
@@ -1553,24 +1554,28 @@ app.get("/api/customer-documents/:documentId/download", async (req, res) => {
     }
 
     if (doc.storagePath) {
-      const signed = await createCustomerDocumentSignedUrl(doc.storagePath, 300);
-      if (signed) {
+      if (isSupabaseActive()) {
+        // Fail closed: never fall through from an invalid/failed Supabase path to a local file read.
+        const signed = await createCustomerDocumentSignedUrl(doc.storagePath, doc.customerId, 300);
+        if (!signed) {
+          return res.status(404).json({ error: "Document file not found." });
+        }
         return res.redirect(302, signed);
       }
-      // Local private storage stream
-      const abs = path.isAbsolute(doc.storagePath)
-        ? doc.storagePath
-        : path.join(process.cwd(), doc.storagePath);
-      if (fs.existsSync(abs)) {
-        if (doc.mimeType) res.setHeader("Content-Type", doc.mimeType);
-        if (doc.fileName) {
-          res.setHeader(
-            "Content-Disposition",
-            `attachment; filename="${String(doc.fileName).replace(/"/g, "")}"`
-          );
-        }
-        return res.sendFile(abs);
+
+      const { resolveSafeLocalCustomerDocumentPath } = await import("./src/lib/customerDocumentPath.ts");
+      const abs = resolveSafeLocalCustomerDocumentPath(doc.storagePath, doc.customerId);
+      if (!abs || !fs.existsSync(abs)) {
+        return res.status(404).json({ error: "Document file not found." });
       }
+      if (doc.mimeType) res.setHeader("Content-Type", doc.mimeType);
+      if (doc.fileName) {
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${String(doc.fileName).replace(/"/g, "")}"`
+        );
+      }
+      return res.sendFile(abs);
     }
 
     return res.status(404).json({ error: "Document file not found." });
