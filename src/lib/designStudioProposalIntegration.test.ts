@@ -139,13 +139,15 @@ check("integration adapter has no localStorage, fetch, or PDF imports", () => {
   return forbidden.every((t) => !src.includes(t));
 });
 
-check("Results Panel mounts DesignStudioProposalPreview", () => {
+check("Results Panel mounts DesignStudioProposalPreview with export actions", () => {
   const panel = readFileSync(resolve(here, "../components/roofStudio/DesignStudioResultsPanel.tsx"), "utf8");
   const preview = readFileSync(resolve(here, "../components/roofStudio/DesignStudioProposalPreview.tsx"), "utf8");
   const workspace = readFileSync(resolve(here, "../components/roofStudio/ProjectDesignWorkspace.tsx"), "utf8");
   return (
     panel.includes("DesignStudioProposalPreview") &&
     preview.includes("design-studio-proposal-preview") &&
+    preview.includes("proposal-generate-btn") &&
+    preview.includes("proposal-download-pdf-btn") &&
     workspace.includes("roofPreview") &&
     workspace.includes("proposalCustomer")
   );

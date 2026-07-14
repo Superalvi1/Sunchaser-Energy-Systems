@@ -659,20 +659,69 @@ export function canRunAutoLayout(hasImage: boolean, calibrated: boolean, hasComp
   return { ok: true, reason: null };
 }
 
+/** Auto Layout UX phase — commercial CAD-style feedback (no engine math). */
+export type AutoLayoutUxPhase = "idle" | "running" | "success" | "failure" | "cancelled";
+
+export const AUTO_LAYOUT_RUNNING_MESSAGE = "Running Auto Layout…";
+export const AUTO_LAYOUT_CANCELLED_ROOF_EDIT_MESSAGE =
+  "Auto Layout cancelled — roof was edited during layout.";
+export const AUTO_LAYOUT_IN_PROGRESS_LABEL = "Layout in progress";
+
+/**
+ * Roof geometry fingerprint for cancel-on-edit races.
+ * Identity only — not a geometry calculation for packing.
+ */
+export function roofGeometryFingerprint(state: RoofStudioState | null | undefined): string {
+  if (!state) return "none";
+  return state.planes
+    .map((p) => {
+      const pts = p.boundary.map((v) => `${v.x},${v.y}`).join(";");
+      const obs = p.obstacles.map((o) => `${o.id}:${o.shape}`).join("|");
+      return `${p.id}#${pts}#${obs}`;
+    })
+    .join("||");
+}
+
+export function formatAutoLayoutSuccessMessage(layout: PanelLayoutResult): string {
+  if (layout.panelCount > 0) {
+    return `Auto Layout placed ${layout.panelCount} panels (${layout.dcCapacityKw.toFixed(2)} kW DC).`;
+  }
+  return "Auto Layout ran — no panels fit under current constraints.";
+}
+
+export function shouldCancelAutoLayoutOnStudioChange(opts: {
+  phase: AutoLayoutUxPhase;
+  startFingerprint: string;
+  nextState: RoofStudioState | null | undefined;
+}): boolean {
+  if (opts.phase !== "running") return false;
+  return roofGeometryFingerprint(opts.nextState) !== opts.startFingerprint;
+}
+
+/**
+ * Single gate for UI + engine entry. When `state` is present, calibration is
+ * derived from engine-scale fields so the button never stays stale vs run().
+ */
 export function canRunDesignStudioAutoLayout(opts: {
   hasImage: boolean;
-  calibrated: boolean;
+  /** Used only when `state` is absent. Ignored when state is provided. */
+  calibrated?: boolean;
   hasCompletePlane?: boolean;
   /** Preferred: full studio state so roof geometry validity can be checked. */
   state?: RoofStudioState | null;
   controls: DesignStudioControls & { alignment?: LayoutAlignment };
 }): { ok: boolean; reason: string | null; code: string | null } {
+  const calibrated =
+    opts.state != null
+      ? isScaleCalibrated(opts.state.scaleCalibration, opts.state.metersPerUnit)
+      : Boolean(opts.calibrated);
+
   const hasCompletePlane =
     opts.state != null
       ? opts.state.planes.some(isPlaneComplete)
       : Boolean(opts.hasCompletePlane);
 
-  const gate = canRunAutoLayout(opts.hasImage, opts.calibrated, hasCompletePlane);
+  const gate = canRunAutoLayout(opts.hasImage, calibrated, hasCompletePlane);
   if (!gate.ok) return { ok: false, reason: gate.reason, code: "GATED" };
 
   if (opts.state) {

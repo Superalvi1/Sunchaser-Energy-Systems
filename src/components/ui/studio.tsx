@@ -175,11 +175,13 @@ export function StudioPageHeader({
   title,
   badges,
   description,
+  actions,
 }: {
   icon: LucideIcon;
   title: string;
   badges?: React.ReactNode;
   description: string;
+  actions?: React.ReactNode;
 }) {
   return (
     <div className="studio-page-header">
@@ -193,6 +195,7 @@ export function StudioPageHeader({
         </div>
         <p className="studio-page-desc">{description}</p>
       </div>
+      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
 }

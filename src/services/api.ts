@@ -1414,6 +1414,65 @@ export async function updateLead(id: string, data: Partial<Lead>): Promise<Lead>
   return res.json();
 }
 
+export type DesignSessionApiRecord = {
+  id: string;
+  leadId: string;
+  version: number;
+  status: "draft" | "archived";
+  payload: Record<string, unknown>;
+  concurrentEditDetected: boolean;
+  lastModifiedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function fetchDesignSession(
+  leadId: string
+): Promise<{ exists: boolean; session: DesignSessionApiRecord | null }> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/design-session`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load design session.");
+  }
+  return res.json();
+}
+
+export async function saveDesignSession(
+  leadId: string,
+  body: {
+    payload: Record<string, unknown>;
+    expectedVersion: number | null;
+    status?: "draft" | "archived";
+  }
+): Promise<
+  | { success: true; created: boolean; session: DesignSessionApiRecord }
+  | {
+      success: false;
+      concurrentEditDetected: true;
+      session: DesignSessionApiRecord;
+      error: string;
+    }
+> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/design-session`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 409 && json.concurrentEditDetected) {
+    return {
+      success: false,
+      concurrentEditDetected: true,
+      session: json.session,
+      error: json.error || "Concurrent edit detected",
+    };
+  }
+  if (!res.ok) {
+    throw new Error(json.error || "Failed to save design session.");
+  }
+  return { success: true, created: Boolean(json.created), session: json.session };
+}
+
 export async function assignLead(id: string, salespersonName: string): Promise<Lead> {
   const res = await apiFetch(`/api/leads/${id}/assign`, {
     method: "PUT",

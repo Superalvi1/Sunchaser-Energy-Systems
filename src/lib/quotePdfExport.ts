@@ -120,3 +120,27 @@ export function printProposalPreviewIframe(iframe: HTMLIFrameElement | null): vo
     setTimeout(() => iframe.contentWindow?.print(), 200);
   });
 }
+
+/** Design Studio ephemeral proposal PDF — no CRM save. */
+export function designStudioProposalPdfDownloadUrl(): string {
+  return `${API_BASE_URL}/api/export/pdf/design-studio-proposal/download`;
+}
+
+export async function downloadDesignStudioProposalPdf(body: {
+  payload: unknown;
+  filename?: string;
+}): Promise<void> {
+  const res = await authorizedFetch(designStudioProposalPdfDownloadUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      payload: body.payload,
+      filename: body.filename || "Sunchaser-Proposal.pdf",
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(friendlyPdfError(res.status, text));
+  }
+  await triggerBlobDownload(res);
+}
