@@ -359,7 +359,7 @@ import {
   upsertCustomerSystemProfile,
   listAdminCustomerDocuments,
   assignCustomerDocument,
-  uploadFileToCustomerStorage,
+  uploadAndAssignAdminCustomerDocument,
   fetchCustomerPortalSystemMe,
   getCustomerDocumentById,
   createCustomerDocumentSignedUrl,
@@ -1497,31 +1497,26 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     req.body || {};
   try {
     loadDb();
-    const uploaded = await uploadFileToCustomerStorage(
-      String(customerId),
-      String(base64Data),
-      String(fileName || "document"),
-      mimeType
+    // Auth + customer existence run inside before any mkdir / bucket / object write.
+    const doc = await uploadAndAssignAdminCustomerDocument(
+      userId,
+      username,
+      role,
+      {
+        customerId: String(customerId || ""),
+        base64Data: String(base64Data || ""),
+        fileName,
+        mimeType,
+        documentType,
+        title,
+        visibleToCustomer,
+        internalOnly,
+        notes,
+      },
+      db
     );
-    const doc = await assignCustomerDocument(userId, username, role, {
-      customerId: String(customerId),
-      documentType: documentType || "other",
-      title: title || fileName,
-      fileUrl: `/api/customer-documents/pending/download`,
-      fileName,
-      mimeType,
-      visibleToCustomer: visibleToCustomer !== false,
-      internalOnly: !!internalOnly,
-      notes,
-      uploadedBy: username,
-    }, db, {
-      serverGeneratedStoragePath: uploaded.storagePath,
-    });
     saveDb();
-    return res.status(201).json({
-      ...doc,
-      fileUrl: `/api/customer-documents/${doc.id}/download`,
-    });
+    return res.status(201).json(doc);
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });

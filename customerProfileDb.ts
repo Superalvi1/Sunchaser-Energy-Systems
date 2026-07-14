@@ -9,8 +9,14 @@ import { mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from
 import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
 import {
   assertSafeSupabaseCustomerObjectPath,
+  assertValidCustomerId,
   isServerGeneratedCustomerStoragePath,
+  resolveSafeCustomerDocsDirectory,
+  resolveSafeLocalCustomerDocumentPath,
 } from "./src/lib/customerDocumentPath";
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
 export class CustomerProfileError extends Error {
   statusCode: number;
@@ -29,6 +35,36 @@ async function assertCustomerAdmin(
   await verifyStaffPortalUser(actorId, actorUsername, localDb);
   if (!canManageCustomers(actorUsername, actorRole) && !isSuperAdmin(actorUsername, actorRole)) {
     throw new CustomerProfileError("Admin access required for customer profiles.", 403);
+  }
+}
+
+/** Require a real customer row before any document write I/O. */
+export async function assertCustomerRecordExists(
+  customerId: string,
+  localDb?: Database
+): Promise<void> {
+  const id = assertValidCustomerId(customerId);
+  if (!id) {
+    throw new CustomerProfileError("Invalid customerId.", 400);
+  }
+
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!
+      .from("customers")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.id) {
+      throw new CustomerProfileError("Customer not found.", 404);
+    }
+    return;
+  }
+
+  const customers = (localDb as any)?.customers || [];
+  const found = customers.some((c: any) => String(c.id || c.customerId || "") === id);
+  if (!found) {
+    throw new CustomerProfileError("Customer not found.", 404);
   }
 }
 
@@ -312,10 +348,11 @@ export async function assignCustomerDocument(
   }
 ) {
   await assertCustomerAdmin(actorId, actorUsername, actorRole, localDb);
-  const customerId = String(body.customerId || "").trim();
+  const customerId = assertValidCustomerId(body.customerId);
   if (!customerId) {
-    throw new CustomerProfileError("customerId required.");
+    throw new CustomerProfileError("Invalid customerId.", 400);
   }
+  await assertCustomerRecordExists(customerId, localDb);
 
   const internalOnly = !!body.internalOnly;
   const visibleToCustomer = body.visibleToCustomer !== false && !internalOnly;
@@ -392,12 +429,70 @@ function assertCustomerDocumentUpload(fileName: string, buffer: Buffer, contentT
   }
 }
 
+/** Build a unique filename shared by local disk and Supabase object keys. */
+export function buildUniqueCustomerDocumentFileName(originalFileName: string): string {
+  const safeName = String(originalFileName || "document").replace(/[^a-zA-Z0-9._-]/g, "_");
+  const extMatch = safeName.match(/(\.[a-zA-Z0-9]+)$/);
+  const ext = extMatch ? extMatch[1] : "";
+  const base = ext ? safeName.slice(0, -ext.length) : safeName;
+  const truncatedBase = (base || "document").slice(0, 80);
+  return `${Date.now()}_${crypto.randomBytes(8).toString("hex")}_${truncatedBase}${ext}`;
+}
+
+/**
+ * Remove a just-uploaded local file or Supabase object. Fail soft (best effort).
+ * Used when DB assignment fails after storage write.
+ */
+export async function removeUploadedCustomerDocument(
+  storagePath: string,
+  customerId: string,
+  options?: { cwd?: string; bucket?: string | null }
+): Promise<void> {
+  const cust = assertValidCustomerId(customerId);
+  if (!cust) return;
+  const key = assertSafeSupabaseCustomerObjectPath(storagePath, cust);
+  const abs = resolveSafeLocalCustomerDocumentPath(
+    storagePath,
+    cust,
+    options?.cwd || process.cwd()
+  );
+
+  if (isSupabaseActive() && key) {
+    try {
+      await getSupabase()!
+        .storage.from(options?.bucket || "customer-documents")
+        .remove([key]);
+    } catch {
+      /* best-effort cleanup */
+    }
+    return;
+  }
+
+  if (abs && fs.existsSync(abs)) {
+    try {
+      fs.unlinkSync(abs);
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
+}
+
+/**
+ * Low-level storage write. Caller MUST authorize and validate customer existence first
+ * for admin document management. Still validates customerId and path containment.
+ */
 export async function uploadFileToCustomerStorage(
   customerId: string,
   base64Data: string,
   fileName: string,
-  mimeType?: string
+  mimeType?: string,
+  options?: { cwd?: string }
 ): Promise<{ url: string; storagePath: string; bucket?: string | null }> {
+  const cust = assertValidCustomerId(customerId);
+  if (!cust) {
+    throw new CustomerProfileError("Invalid customerId.", 400);
+  }
+
   const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
   let buffer: Buffer;
   let contentType = mimeType || "application/octet-stream";
@@ -410,8 +505,11 @@ export async function uploadFileToCustomerStorage(
 
   assertCustomerDocumentUpload(fileName, buffer, contentType);
 
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `${customerId}/${Date.now()}_${safeName}`;
+  const uniqueName = buildUniqueCustomerDocumentFileName(fileName);
+  const storagePath = `${cust}/${uniqueName}`;
+  if (!assertSafeSupabaseCustomerObjectPath(storagePath, cust)) {
+    throw new CustomerProfileError("Invalid document storage path.", 400);
+  }
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
@@ -426,9 +524,10 @@ export async function uploadFileToCustomerStorage(
         /* best-effort hardening */
       }
     }
+    // Never overwrite an existing object with the same key.
     const { error } = await supabase.storage.from(bucket).upload(storagePath, buffer, {
       contentType,
-      upsert: true,
+      upsert: false,
     });
     if (error) throw new CustomerProfileError(error.message);
     // Never return permanent public URLs. Callers store an authenticated download path.
@@ -439,14 +538,100 @@ export async function uploadFileToCustomerStorage(
     };
   }
 
-  const fs = await import("fs");
-  const path = await import("path");
-  // Store outside public/ so Express static cannot serve these files.
-  const uploadsDir = path.join(process.cwd(), "storage", "customer-docs", customerId);
+  const cwd = options?.cwd || process.cwd();
+  const uploadsDir = resolveSafeCustomerDocsDirectory(cust, cwd);
+  if (!uploadsDir) {
+    throw new CustomerProfileError("Invalid customer document directory.", 400);
+  }
   fs.mkdirSync(uploadsDir, { recursive: true });
-  const fullPath = path.join(uploadsDir, safeName);
+  const fullPath = path.resolve(uploadsDir, uniqueName);
+  if (!fullPath.startsWith(uploadsDir + path.sep)) {
+    throw new CustomerProfileError("Invalid customer document path.", 400);
+  }
+  // Do not overwrite an existing file (including same original user filename).
+  if (fs.existsSync(fullPath)) {
+    throw new CustomerProfileError("Document file already exists.", 409);
+  }
   fs.writeFileSync(fullPath, buffer);
-  return { url: "", storagePath: fullPath, bucket: null };
+  // Persist the same relative object key as Supabase for consistent download resolution.
+  return { url: "", storagePath, bucket: null };
+}
+
+/**
+ * Authorized admin customer-document upload:
+ * authorize → validate customerId → confirm customer exists → storage write → DB assign.
+ * On assign failure, removes the newly uploaded local file / Supabase object.
+ */
+export async function uploadAndAssignAdminCustomerDocument(
+  actorId: string,
+  actorUsername: string,
+  actorRole: string,
+  body: {
+    customerId: string;
+    base64Data: string;
+    fileName?: string;
+    mimeType?: string;
+    documentType?: string;
+    title?: string;
+    visibleToCustomer?: boolean;
+    internalOnly?: boolean;
+    notes?: string;
+  },
+  localDb?: Database,
+  options?: { cwd?: string }
+) {
+  // Authorization and customer existence MUST run before any storage I/O.
+  await assertCustomerAdmin(actorId, actorUsername, actorRole, localDb);
+  const customerId = assertValidCustomerId(body.customerId);
+  if (!customerId) {
+    throw new CustomerProfileError("Invalid customerId.", 400);
+  }
+  await assertCustomerRecordExists(customerId, localDb);
+
+  let uploaded: { storagePath: string; bucket?: string | null } | null = null;
+  try {
+    uploaded = await uploadFileToCustomerStorage(
+      customerId,
+      String(body.base64Data || ""),
+      String(body.fileName || "document"),
+      body.mimeType,
+      { cwd: options?.cwd }
+    );
+
+    const doc = await assignCustomerDocument(
+      actorId,
+      actorUsername,
+      actorRole,
+      {
+        customerId,
+        documentType: body.documentType || "other",
+        title: body.title || body.fileName || "document",
+        fileUrl: `/api/customer-documents/pending/download`,
+        fileName: body.fileName,
+        mimeType: body.mimeType,
+        visibleToCustomer: body.visibleToCustomer !== false,
+        internalOnly: !!body.internalOnly,
+        notes: body.notes,
+        uploadedBy: actorUsername,
+      },
+      localDb,
+      { serverGeneratedStoragePath: uploaded.storagePath }
+    );
+
+    return {
+      ...doc,
+      fileUrl: `/api/customer-documents/${(doc as any).id}/download`,
+      storagePath: uploaded.storagePath,
+    };
+  } catch (err) {
+    if (uploaded?.storagePath) {
+      await removeUploadedCustomerDocument(uploaded.storagePath, customerId, {
+        cwd: options?.cwd,
+        bucket: uploaded.bucket,
+      });
+    }
+    throw err;
+  }
 }
 
 export async function fetchCustomerPortalSystemMe(

@@ -117,6 +117,7 @@ await test("admin assign ignores client-supplied storagePath", async () => {
         password: "x",
       },
     ],
+    customers: [{ id: customerId, name: "Safe Customer" }],
     customerDocuments: [],
   };
 
@@ -153,6 +154,7 @@ await test("upload option persists only validated server-generated path", async 
         password: "x",
       },
     ],
+    customers: [{ id: customerId, name: "Safe Customer" }],
     customerDocuments: [],
   };
 
