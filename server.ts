@@ -325,6 +325,10 @@ import {
 import { loginRateLimit } from "./server/middleware/rateLimit.ts";
 import { handleAiChatPost, configureAiChatRoute } from "./server/ai/chatRoute.ts";
 import {
+  createPublicLeadRouter,
+  type PersistedPublicLead,
+} from "./server/publicLeads/index.ts";
+import {
   OwnershipError,
   OwnershipResolver,
   portalIdentityFromActor,
@@ -466,6 +470,15 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof SyntaxError || err?.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Malformed JSON." });
+  }
+  if (err?.type === "entity.too.large") {
+    return res.status(400).json({ error: "Payload too large." });
+  }
+  return next(err);
+});
 app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
 
 // Custom CORS middleware to allow the frontend domain to call the backend API securely
@@ -479,7 +492,7 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+    "Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Public-Lead-Key, Idempotency-Key"
   );
   res.setHeader("Access-Control-Allow-Credentials", "true");
 
@@ -497,6 +510,125 @@ const resolveAuthLocalDb = () => {
 configureAiChatRoute({ resolveLocalDb: resolveAuthLocalDb });
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+
+/** Persist a validated public marketing lead into CRM storage (Supabase or local). */
+async function persistPublicMarketingLead(
+  lead: PersistedPublicLead
+): Promise<{ leadId: string }> {
+  loadDb();
+  const newLead: any = {
+    id: lead.id,
+    name: lead.name,
+    email: lead.email,
+    phone: lead.phone,
+    address: lead.address || "",
+    status: lead.status || "New",
+    monthlyBill: lead.monthlyBill ?? 0,
+    monthlyUnits: resolveMonthlyUnits(lead.monthlyBill ?? 0, lead.monthlyUnits ?? 0),
+    sanctionedLoad: 7,
+    backupRequirement: "None",
+    location: String(lead.location || "").trim(),
+    roofType: "Asphalt Shingle",
+    roofSpace: 800,
+    shading: "Medium",
+    rating: 3,
+    assignedSalesperson: "",
+    createdAt: lead.createdAt || new Date().toISOString(),
+    notes: lead.notes || "Submitted via public marketing lead gateway.",
+    leadSource: lead.leadSource || "Marketing Website",
+    engagementLevel: "Medium",
+    quotes: [],
+  };
+
+  calculateLeadScore(newLead);
+
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const customerId = `cust-${randomUUID()}`;
+    const customerCode = await generateCustomerCode(db);
+
+    const { error: custErr } = await supabase.from("customers").insert({
+      id: customerId,
+      name: newLead.name,
+      email: newLead.email,
+      phone: newLead.phone,
+      address: newLead.address,
+      customer_code: customerCode,
+    });
+    if (custErr) {
+      console.error("[public-leads] customer insert failed:", custErr.message);
+      throw new Error("Failed to persist customer for public lead.");
+    }
+
+    const { error: leadErr } = await supabase.from("leads").insert({
+      id: newLead.id,
+      customer_id: customerId,
+      name: newLead.name,
+      email: newLead.email,
+      phone: newLead.phone,
+      address: newLead.address,
+      status: newLead.status,
+      monthly_bill: newLead.monthlyBill,
+      monthly_units: newLead.monthlyUnits,
+      sanctioned_load: newLead.sanctionedLoad,
+      backup_requirement: newLead.backupRequirement,
+      location: newLead.location,
+      roof_type: newLead.roofType,
+      roof_space: newLead.roofSpace,
+      shading: newLead.shading,
+      rating: newLead.rating,
+      assigned_salesperson: newLead.assignedSalesperson,
+      notes: newLead.notes,
+      lead_source: newLead.leadSource,
+      engagement_level: newLead.engagementLevel,
+      conversion_probability: newLead.conversionProbability,
+      conversion_score: newLead.conversionScore,
+      created_at: newLead.createdAt,
+    });
+    if (leadErr) {
+      console.error("[public-leads] lead insert failed:", leadErr.message);
+      const { error: cleanupErr } = await supabase.from("customers").delete().eq("id", customerId);
+      if (cleanupErr) {
+        console.warn(
+          `[public-leads] orphan customer cleanup failed for ${customerId}:`,
+          cleanupErr.message
+        );
+      }
+      throw new Error("Failed to persist public lead.");
+    }
+  } else {
+    db.leads.push(newLead);
+    saveDb();
+  }
+
+  try {
+    await appendActivityLog(
+      "public-gateway",
+      newLead.name,
+      "Customer",
+      "Lead Created",
+      "Registered via public marketing lead gateway."
+    );
+  } catch (sideErr: any) {
+    console.warn("[public-leads] activity log failed:", sideErr?.message || sideErr);
+  }
+
+  try {
+    const msgText = `☀️ Hi ${newLead.name}! Thanks for contacting Sunchaser Energy. Our team will follow up shortly.`;
+    await triggerWhatsAppNotification(newLead.name, newLead.phone, "survey_confirmation", msgText);
+  } catch (sideErr: any) {
+    console.warn("[public-leads] notification failed:", sideErr?.message || sideErr);
+  }
+
+  return { leadId: newLead.id };
+}
+
+app.use(
+  "/api/public",
+  createPublicLeadRouter({
+    persistLead: persistPublicMarketingLead,
+  })
+);
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
@@ -4582,7 +4714,8 @@ function leadInsertHttpStatus(err: { code?: string; message?: string }): number 
   return 500;
 }
 
-// 3. Create lead route with rating, scores and auto WhatsApp confirmation
+// 3. Create lead (authenticated CRM clients). Prefer POST /api/public/leads for marketing ingestion.
+// Deprecated for anonymous/public use — kept for internal CRM tooling; do not remove.
 app.post("/api/leads", async (req, res) => {
   try {
     loadDb();

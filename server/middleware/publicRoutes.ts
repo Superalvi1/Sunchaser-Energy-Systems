@@ -17,6 +17,8 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   { method: "GET", path: "/api/auth/verify-email" },
   { method: "POST", path: "/api/auth/forgot-password" },
   { method: "POST", path: "/api/auth/reset-password" },
+  // Marketing / public lead ingestion (API-key gated inside the handler — not CRM JWT).
+  { method: "POST", path: "/api/public/leads" },
 ];
 
 export function normalizeHttpMethod(method: string): HttpMethod {

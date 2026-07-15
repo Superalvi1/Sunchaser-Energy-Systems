@@ -11,6 +11,8 @@
     "start": "PLAYWRIGHT_BROWSERS_PATH=0 node dist/server.cjs",
     "clean": "rm -rf dist dist-server server.js",
     "lint": "tsc --noEmit",
+    "test": "npm run test:public-lead-gateway",
+    "test:public-lead-gateway": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts",
     "test:solar-quote-planner": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/quotation/SolarQuotePlanner.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarQuotePlannerClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarDesignStudio.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarPipelineClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",
     "test:solar-proposal-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/proposal/SolarProposalEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/proposal/SolarProposalMatrix.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",
     "test:roof-geometry-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/roof/RoofGeometryEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/roof/RoofGeometryMatrix.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/roofStudioClient.test.ts",

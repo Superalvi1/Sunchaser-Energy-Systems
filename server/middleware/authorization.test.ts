@@ -106,6 +106,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 await test("public route allowlist includes login and health", () => {
   assert.equal(isPublicApiRoute("POST", "/api/auth/login"), true);
   assert.equal(isPublicApiRoute("GET", "/health"), true);
+  assert.equal(isPublicApiRoute("POST", "/api/public/leads"), true);
   assert.equal(isPublicApiRoute("GET", "/api/state"), false);
 });
 
