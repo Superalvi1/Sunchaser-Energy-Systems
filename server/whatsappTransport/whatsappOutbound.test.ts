@@ -16,7 +16,10 @@ import {
 import { buildWhatsAppMessagesUrl } from "./whatsappGraphClient.ts";
 import { InMemoryWhatsAppRepository } from "./whatsappRepository.ts";
 import { createWhatsAppOutboundRouter } from "./whatsappOutboundRoutes.ts";
-import { validateOutboundText } from "./whatsappOutboundService.ts";
+import {
+  sendOutboundPlainText,
+  validateOutboundText,
+} from "./whatsappOutboundService.ts";
 import {
   authorizeOutboundWhatsAppActor,
   canSendOutboundWhatsApp,
@@ -313,17 +316,69 @@ await test("3. Approved staff role succeeds", async () => {
   );
 });
 
-await test("canSendOutboundWhatsApp permission matrix", () => {
+await test("canSendOutboundWhatsApp requires exact Approved accountStatus", () => {
+  assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Sales Executive" })), true);
+  assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Admin" })), true);
   assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Customer" })), false);
   assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Warehouse Clerk" })), false);
   assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Technician" })), false);
-  assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Sales Executive" })), true);
-  assert.equal(canSendOutboundWhatsApp(actorStub({ role: "Admin" })), true);
+  assert.equal(
+    canSendOutboundWhatsApp(
+      actorStub({ role: "Sales Executive", accountStatus: undefined as unknown as string })
+    ),
+    false
+  );
+  assert.equal(
+    canSendOutboundWhatsApp(actorStub({ role: "Sales Executive", accountStatus: "" })),
+    false
+  );
   assert.equal(
     canSendOutboundWhatsApp(actorStub({ role: "Sales Executive", accountStatus: "Suspended" })),
     false
   );
+  assert.equal(
+    canSendOutboundWhatsApp(actorStub({ role: "Sales Executive", accountStatus: "Rejected" })),
+    false
+  );
+  assert.equal(
+    canSendOutboundWhatsApp(actorStub({ role: "Sales Executive", accountStatus: "Inactive" })),
+    false
+  );
+  assert.equal(
+    canSendOutboundWhatsApp(actorStub({ role: "Sales Executive", accountStatus: "Pending" })),
+    false
+  );
+  assert.equal(
+    canSendOutboundWhatsApp(actorStub({ role: "Customer", accountStatus: "Approved" })),
+    false
+  );
+  assert.equal(
+    canSendOutboundWhatsApp(actorStub({ role: "Warehouse Clerk", accountStatus: "Approved" })),
+    false
+  );
   assert.equal(canSendOutboundWhatsApp(null), false);
+});
+
+await test("missing accountStatus denies before conversation lookup / Meta / message insert", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  let lookupCount = 0;
+  const originalLookup = repo.getConversationBundle.bind(repo);
+  repo.getConversationBundle = async (id) => {
+    lookupCount += 1;
+    return originalLookup(id);
+  };
+  const calls = { count: 0 };
+  const result = await sendOutboundPlainText(conversation.id, "hello", {
+    repo,
+    config: enabledConfig(),
+    actor: actorStub({ accountStatus: "" }),
+    fetchImpl: mockGraphFetch({ mode: "success", calls }),
+  });
+  assert.equal(result.httpStatus, 403);
+  assert.equal(lookupCount, 0);
+  assert.equal(calls.count, 0);
+  assert.equal(repo.messages.size, 0);
 });
 
 await test("authorizeOutboundWhatsAppActor returns 404 for missing conversation", async () => {
@@ -684,6 +739,234 @@ await test("Inactive persistence returns 503", async () => {
         { authorization: `Bearer ${tokens.staff}` }
       );
       assert.equal(res.status, 503);
+    }
+  );
+});
+
+await test("provider rejection: failed-state DB update succeeds", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "reject", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 502);
+      assert.equal(res.body.status, MESSAGE_STATUSES.FAILED);
+      assert.equal(res.body.persistenceStatus, undefined);
+      assert.equal(calls.count, 1);
+    }
+  );
+});
+
+await test("provider rejection: failed-state DB update retries then succeeds", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  let failAttempts = 0;
+  const originalUpdate = repo.updateMessageStatus.bind(repo);
+  repo.updateMessageStatus = async (input) => {
+    if (input.status === MESSAGE_STATUSES.FAILED) {
+      failAttempts += 1;
+      if (failAttempts === 1) throw new Error("transient failed-status write");
+    }
+    return originalUpdate(input);
+  };
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "reject", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 502);
+      assert.equal(res.body.status, MESSAGE_STATUSES.FAILED);
+      assert.equal(calls.count, 1);
+      assert.ok(failAttempts >= 2);
+    }
+  );
+});
+
+await test("provider rejection: all failed-state DB updates fail → degraded, Meta once", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  const originalUpdate = repo.updateMessageStatus.bind(repo);
+  repo.updateMessageStatus = async (input) => {
+    if (input.status === MESSAGE_STATUSES.FAILED) {
+      throw new Error("persistent failed-status write failure");
+    }
+    return originalUpdate(input);
+  };
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "reject", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 502);
+      assert.equal(res.body.persistenceStatus, "incomplete");
+      assert.equal(res.body.providerOutcome, "failed");
+      assert.equal(res.body.status, MESSAGE_STATUSES.SENDING);
+      assert.ok(res.body.messageId);
+      assert.equal(calls.count, 1);
+      assert.ok(
+        repo.auditEvents.some((e) => e.eventType === "outbound_persistence_degraded")
+      );
+      const msg = repo.messages.get(res.body.messageId)!;
+      assert.equal(msg.status, MESSAGE_STATUSES.SENDING);
+    }
+  );
+});
+
+await test("timeout: timeout-state DB update succeeds", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "timeout", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 504);
+      assert.equal(res.body.status, MESSAGE_STATUSES.TIMEOUT);
+      assert.equal(res.body.persistenceStatus, undefined);
+      assert.equal(calls.count, 1);
+    }
+  );
+});
+
+await test("timeout: timeout-state DB update retries then succeeds", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  let timeoutAttempts = 0;
+  const originalUpdate = repo.updateMessageStatus.bind(repo);
+  repo.updateMessageStatus = async (input) => {
+    if (input.status === MESSAGE_STATUSES.TIMEOUT) {
+      timeoutAttempts += 1;
+      if (timeoutAttempts === 1) throw new Error("transient timeout-status write");
+    }
+    return originalUpdate(input);
+  };
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "timeout", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 504);
+      assert.equal(res.body.status, MESSAGE_STATUSES.TIMEOUT);
+      assert.equal(calls.count, 1);
+      assert.ok(timeoutAttempts >= 2);
+    }
+  );
+});
+
+await test("timeout: all timeout-state DB updates fail → degraded, Meta once", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  const originalUpdate = repo.updateMessageStatus.bind(repo);
+  repo.updateMessageStatus = async (input) => {
+    if (input.status === MESSAGE_STATUSES.TIMEOUT) {
+      throw new Error("persistent timeout-status write failure");
+    }
+    return originalUpdate(input);
+  };
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "timeout", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 504);
+      assert.equal(res.body.persistenceStatus, "incomplete");
+      assert.equal(res.body.providerOutcome, "timeout");
+      assert.equal(res.body.status, MESSAGE_STATUSES.SENDING);
+      assert.ok(res.body.messageId);
+      assert.equal(calls.count, 1);
+      assert.ok(
+        repo.auditEvents.some((e) => e.eventType === "outbound_persistence_degraded")
+      );
+    }
+  );
+});
+
+await test("degraded audit failure does not retry Meta or crash uncontrolled", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedConversation(repo);
+  const originalUpdate = repo.updateMessageStatus.bind(repo);
+  repo.updateMessageStatus = async (input) => {
+    if (input.status === MESSAGE_STATUSES.FAILED) {
+      throw new Error("status write failed");
+    }
+    return originalUpdate(input);
+  };
+  const originalAudit = repo.insertAuditEvent.bind(repo);
+  repo.insertAuditEvent = async (input) => {
+    if (input.eventType === "outbound_persistence_degraded") {
+      throw new Error("audit unavailable Bearer secret-token-xyz");
+    }
+    return originalAudit(input);
+  };
+  const calls = { count: 0 };
+  await withOutboundServer(
+    repo,
+    enabledConfig(),
+    mockGraphFetch({ mode: "reject", calls }),
+    [staffUser],
+    async (base, tokens) => {
+      const res = await postMessage(
+        base,
+        conversation.id,
+        { text: "Outbound hello" },
+        { authorization: `Bearer ${tokens.staff}` }
+      );
+      assert.equal(res.status, 502);
+      assert.equal(res.body.persistenceStatus, "incomplete");
+      assert.equal(calls.count, 1);
+      const bodyText = JSON.stringify(res.body);
+      assert.equal(bodyText.includes("secret-token-xyz"), false);
+      assert.equal(bodyText.includes("Bearer "), false);
     }
   );
 });

@@ -10,8 +10,8 @@ export type OutboundAuthDecision =
  * PR-1 outbound send policy (fail closed):
  * - Customer always denied
  * - Unknown / unmapped roles denied
- * - Suspended/rejected accounts denied
- * - Only approved internal staff with crm_leads may send
+ * - accountStatus must be exactly "Approved" (missing/blank denied)
+ * - Only internal staff with crm_leads may send
  *   (Super Admin, Director, Admin, Accounts Manager, Sales Manager,
  *    Sales Executive, and Sales Advisor alias)
  *
@@ -22,8 +22,8 @@ export function canSendOutboundWhatsApp(actor: RequestActor | null | undefined):
   if (!actor) return false;
   const role = String(actor.role || "").trim();
   if (!role || role === "Customer") return false;
-  const status = String(actor.accountStatus || "").trim();
-  if (status && status !== "Approved") return false;
+  // Exact approved status required — do not infer approval from role presence.
+  if (actor.accountStatus !== "Approved") return false;
   return roleHasPermission(role, "crm_leads");
 }
 

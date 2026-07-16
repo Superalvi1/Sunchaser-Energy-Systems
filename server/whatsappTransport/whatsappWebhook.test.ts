@@ -856,6 +856,33 @@ await test("23. Migration does not expose WhatsApp tables via using(true)", () =
   );
 });
 
+await test("channel uniqueness repair removes global unique and adds company-aware unique", () => {
+  const sql = readFileSync(
+    join(process.cwd(), "scripts/whatsapp-transport-schema.sql"),
+    "utf8"
+  );
+  assert.match(
+    sql,
+    /drop constraint if exists whatsapp_channels_phone_number_id_unique/i
+  );
+  assert.match(
+    sql,
+    /drop index if exists public\.whatsapp_channels_phone_number_id_unique/i
+  );
+  assert.match(
+    sql,
+    /create unique index if not exists whatsapp_channels_company_phone_uidx/i
+  );
+  assert.match(
+    sql,
+    /whatsapp_channels_company_phone_uidx[\s\S]*\(company_id,\s*phone_number_id\)/i
+  );
+  // Repair comments document single-company / non-tenant scope.
+  assert.match(sql, /NOT yet a true tenant security boundary/i);
+  // Still no unrestricted RLS policies.
+  assert.equal(/create policy[\s\S]*using\s*\(\s*true\s*\)/i.test(sql), false);
+});
+
 if (failed > 0) {
   console.error(`\n${failed} webhook test(s) failed`);
   process.exit(1);

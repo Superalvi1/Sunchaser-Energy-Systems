@@ -49,6 +49,7 @@ export const AUDIT_EVENTS = {
   OUTBOUND_SENT: "outbound_sent",
   OUTBOUND_FAILED: "outbound_failed",
   OUTBOUND_TIMEOUT: "outbound_timeout",
+  OUTBOUND_PERSISTENCE_DEGRADED: "outbound_persistence_degraded",
 } as const;
 
 export type AuditEventType = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

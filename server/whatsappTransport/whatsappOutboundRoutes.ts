@@ -63,6 +63,12 @@ export function createWhatsAppOutboundRouter(
       body.providerMessageId = result.providerMessageId;
     }
     if (result.status) body.status = result.status;
+    if (result.persistenceStatus) {
+      body.persistenceStatus = result.persistenceStatus;
+    }
+    if (result.providerOutcome) {
+      body.providerOutcome = result.providerOutcome;
+    }
     return res.status(result.httpStatus).json(body);
   });
 

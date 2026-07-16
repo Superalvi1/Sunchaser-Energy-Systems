@@ -35,6 +35,10 @@ export type OutboundSendResult =
       messageId?: string;
       providerMessageId?: string;
       status?: string;
+      /** Present when local status persistence did not complete after a provider outcome. */
+      persistenceStatus?: "incomplete";
+      /** Known provider outcome when local persistence is incomplete. */
+      providerOutcome?: "failed" | "timeout" | "accepted";
       error: string;
     };
 
@@ -88,6 +92,32 @@ async function updateStatusWithRetry(
   return { ok: false, error: lastError };
 }
 
+async function recordPersistenceDegraded(
+  deps: OutboundSendDeps,
+  input: {
+    messageId: string;
+    conversationId: string;
+    providerOutcome: "failed" | "timeout" | "accepted";
+    persistError: string;
+    sanitizedProviderError?: string;
+  }
+): Promise<void> {
+  await safeAudit(deps.repo, {
+    eventType: AUDIT_EVENTS.OUTBOUND_PERSISTENCE_DEGRADED,
+    entityType: "message",
+    entityId: input.messageId,
+    metadata: {
+      conversationId: input.conversationId,
+      providerOutcome: input.providerOutcome,
+      persistError: input.persistError.slice(0, 300),
+      // Never include tokens or raw provider payloads.
+      providerError: input.sanitizedProviderError
+        ? input.sanitizedProviderError.slice(0, 300)
+        : undefined,
+    },
+  });
+}
+
 export async function sendOutboundPlainText(
   conversationId: string,
   rawText: unknown,
@@ -123,7 +153,6 @@ export async function sendOutboundPlainText(
   if (auth.ok === false) {
     return { httpStatus: auth.status, error: auth.error };
   }
-  // Narrowed: bundle is non-null after successful auth.
   const conversationBundle = bundle!;
 
   if (conversationBundle.channel.phoneNumberId !== deps.config.phoneNumberId) {
@@ -181,6 +210,7 @@ export async function sendOutboundPlainText(
     metadata: { conversationId },
   });
 
+  // Meta is called at most once for this request. Never retry after response/timeout.
   const graphResult = await sendWhatsAppTextMessage({
     toWaId: conversationBundle.contact.phoneE164,
     text,
@@ -210,6 +240,12 @@ export async function sendOutboundPlainText(
           error: statusUpdate.error,
         }
       );
+      await recordPersistenceDegraded(deps, {
+        messageId: message.id,
+        conversationId,
+        providerOutcome: "accepted",
+        persistError: statusUpdate.error,
+      });
       await safeAudit(deps.repo, {
         eventType: AUDIT_EVENTS.OUTBOUND_SENT,
         entityType: "message",
@@ -226,6 +262,8 @@ export async function sendOutboundPlainText(
         messageId: message.id,
         providerMessageId,
         status: MESSAGE_STATUSES.SENDING,
+        persistenceStatus: "incomplete",
+        providerOutcome: "accepted",
         error: "Message accepted by provider; local status persistence degraded",
       };
     }
@@ -251,11 +289,32 @@ export async function sendOutboundPlainText(
 
   const failure = graphResult;
   if (failure.kind === "timeout") {
-    await updateStatusWithRetry(deps, {
+    const statusUpdate = await updateStatusWithRetry(deps, {
       messageId: message.id,
       status: MESSAGE_STATUSES.TIMEOUT,
       providerError: failure.sanitizedError,
     });
+
+    if (statusUpdate.ok === false) {
+      await recordPersistenceDegraded(deps, {
+        messageId: message.id,
+        conversationId,
+        providerOutcome: "timeout",
+        persistError: statusUpdate.error,
+        sanitizedProviderError: failure.sanitizedError,
+      });
+      // Provider outcome is uncertain (timeout); do not claim local timeout persisted.
+      return {
+        httpStatus: 504,
+        messageId: message.id,
+        status: MESSAGE_STATUSES.SENDING,
+        persistenceStatus: "incomplete",
+        providerOutcome: "timeout",
+        error:
+          "Provider request timed out; local timeout status persistence incomplete",
+      };
+    }
+
     await safeAudit(deps.repo, {
       eventType: AUDIT_EVENTS.OUTBOUND_TIMEOUT,
       entityType: "message",
@@ -270,11 +329,32 @@ export async function sendOutboundPlainText(
     };
   }
 
-  await updateStatusWithRetry(deps, {
+  const statusUpdate = await updateStatusWithRetry(deps, {
     messageId: message.id,
     status: MESSAGE_STATUSES.FAILED,
     providerError: failure.sanitizedError,
   });
+
+  if (statusUpdate.ok === false) {
+    await recordPersistenceDegraded(deps, {
+      messageId: message.id,
+      conversationId,
+      providerOutcome: "failed",
+      persistError: statusUpdate.error,
+      sanitizedProviderError: failure.sanitizedError,
+    });
+    // Provider outcome is known failed; do not claim local failed status persisted.
+    return {
+      httpStatus: 502,
+      messageId: message.id,
+      status: MESSAGE_STATUSES.SENDING,
+      persistenceStatus: "incomplete",
+      providerOutcome: "failed",
+      error:
+        "Provider rejected the message; local failed status persistence incomplete",
+    };
+  }
+
   await safeAudit(deps.repo, {
     eventType: AUDIT_EVENTS.OUTBOUND_FAILED,
     entityType: "message",

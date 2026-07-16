@@ -1134,7 +1134,12 @@ export async function safeAudit(
     await repo.insertAuditEvent(input);
   } catch (err) {
     const message = err instanceof Error ? err.message : "audit failed";
-    console.warn("[whatsapp-transport] audit write failed:", message);
+    const safe = message
+      .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+      .replace(/access_token=[^&\s]+/gi, "access_token=[redacted]")
+      .replace(/secret[-_]?token[-_]?\S*/gi, "[redacted]")
+      .slice(0, 200);
+    console.warn("[whatsapp-transport] audit write failed:", safe);
   }
 }
 

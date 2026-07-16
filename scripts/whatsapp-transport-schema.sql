@@ -34,6 +34,26 @@ create index if not exists whatsapp_channels_company_id_idx
   on public.whatsapp_channels (company_id);
 
 -- -----------------------------------------------------------------------------
+-- 1b. Channel uniqueness repair (idempotent)
+-- Supports re-running this script after an earlier draft schema that used a
+-- global unique(phone_number_id) constraint named
+-- whatsapp_channels_phone_number_id_unique.
+--
+-- Target uniqueness: (company_id, phone_number_id).
+-- PR 1 remains single-company (default company_id='sunchaser').
+-- company_id is NOT yet a true tenant security boundary.
+-- -----------------------------------------------------------------------------
+alter table public.whatsapp_channels
+  drop constraint if exists whatsapp_channels_phone_number_id_unique;
+
+drop index if exists public.whatsapp_channels_phone_number_id_unique;
+
+-- Prefer a named unique index so CREATE IF NOT EXISTS is idempotent even when
+-- the table already existed without the company-aware constraint.
+create unique index if not exists whatsapp_channels_company_phone_uidx
+  on public.whatsapp_channels (company_id, phone_number_id);
+
+-- -----------------------------------------------------------------------------
 -- 2. Contacts
 -- -----------------------------------------------------------------------------
 create table if not exists public.whatsapp_contacts (
