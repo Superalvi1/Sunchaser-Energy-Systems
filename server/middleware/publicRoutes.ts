@@ -19,6 +19,9 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   { method: "POST", path: "/api/auth/reset-password" },
   // Marketing / public lead ingestion (API-key gated inside the handler — not CRM JWT).
   { method: "POST", path: "/api/public/leads" },
+  // WhatsApp Cloud API webhook (HMAC-gated inside the handler — not CRM JWT).
+  { method: "GET", path: "/api/integrations/whatsapp/webhook" },
+  { method: "POST", path: "/api/integrations/whatsapp/webhook" },
 ];
 
 export function normalizeHttpMethod(method: string): HttpMethod {
