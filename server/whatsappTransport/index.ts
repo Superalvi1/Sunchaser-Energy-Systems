@@ -20,6 +20,9 @@ export {
   hasWebhookVerifyConfig,
   hasSignatureConfig,
   hasOutboundSendConfig,
+  isValidGraphApiVersion,
+  isValidPhoneNumberId,
+  resolveGraphApiVersion,
   type WhatsAppConfig,
 } from "./whatsappConfig.ts";
 export {
@@ -34,6 +37,7 @@ export {
   InMemoryWhatsAppRepository,
   SupabaseWhatsAppRepository,
   createDefaultWhatsAppRepository,
+  isUniqueViolation,
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 export {
@@ -47,12 +51,18 @@ export {
 } from "./whatsappOutboundRoutes.ts";
 export {
   sendOutboundPlainText,
+  validateOutboundText,
   type OutboundSendResult,
 } from "./whatsappOutboundService.ts";
 export {
   sendWhatsAppTextMessage,
   sanitizeProviderError,
+  buildWhatsAppMessagesUrl,
 } from "./whatsappGraphClient.ts";
+export {
+  canSendOutboundWhatsApp,
+  authorizeOutboundWhatsAppActor,
+} from "./whatsappPermissions.ts";
 
 /**
  * Path-scoped raw-body middleware for Meta webhook signature verification.

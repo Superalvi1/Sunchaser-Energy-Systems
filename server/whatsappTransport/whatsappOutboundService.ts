@@ -1,3 +1,4 @@
+import type { RequestActor } from "../middleware/actor.ts";
 import {
   AUDIT_EVENTS,
   MESSAGE_STATUSES,
@@ -5,14 +6,19 @@ import {
   WHATSAPP_OUTBOUND_DB_RETRY_ATTEMPTS,
   WHATSAPP_OUTBOUND_DB_RETRY_DELAY_MS,
 } from "./whatsappConstants.ts";
-import type { WhatsAppConfig } from "./whatsappConfig.ts";
+import { hasOutboundSendConfig, type WhatsAppConfig } from "./whatsappConfig.ts";
 import { sendWhatsAppTextMessage } from "./whatsappGraphClient.ts";
+import {
+  authorizeOutboundWhatsAppActor,
+  canSendOutboundWhatsApp,
+} from "./whatsappPermissions.ts";
 import type { WhatsAppRepository } from "./whatsappRepository.ts";
 import { safeAudit } from "./whatsappRepository.ts";
 
 export type OutboundSendDeps = {
   repo: WhatsAppRepository;
   config: WhatsAppConfig;
+  actor: RequestActor | null | undefined;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -25,7 +31,7 @@ export type OutboundSendResult =
       status: "sent";
     }
   | {
-      httpStatus: 400 | 404 | 503 | 500 | 502 | 504 | 202;
+      httpStatus: 400 | 401 | 403 | 404 | 503 | 500 | 502 | 504 | 202;
       messageId?: string;
       providerMessageId?: string;
       status?: string;
@@ -34,6 +40,26 @@ export type OutboundSendResult =
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Strict plain-text validation — rejects non-strings before any coercion. */
+export function validateOutboundText(
+  rawText: unknown
+): { ok: true; text: string } | { ok: false; error: string } {
+  if (typeof rawText !== "string") {
+    return { ok: false, error: "text must be a string" };
+  }
+  const text = rawText.trim();
+  if (!text) {
+    return { ok: false, error: "text is required" };
+  }
+  if (text.length > WHATSAPP_MAX_TEXT_LENGTH) {
+    return {
+      ok: false,
+      error: `text exceeds maximum length of ${WHATSAPP_MAX_TEXT_LENGTH}`,
+    };
+  }
+  return { ok: true, text };
 }
 
 async function updateStatusWithRetry(
@@ -70,34 +96,37 @@ export async function sendOutboundPlainText(
   if (!deps.config.enabled) {
     return { httpStatus: 404, error: "Not found" };
   }
+
+  // Fail closed on role before loading conversation details.
+  if (!deps.actor) {
+    return { httpStatus: 401, error: "Unauthorized" };
+  }
+  if (!canSendOutboundWhatsApp(deps.actor)) {
+    return { httpStatus: 403, error: "Forbidden" };
+  }
+
   if (!deps.repo.isActive()) {
     return { httpStatus: 503, error: "WhatsApp persistence unavailable" };
   }
-  if (
-    !deps.config.accessToken ||
-    !deps.config.phoneNumberId ||
-    !deps.config.graphApiVersion
-  ) {
+  if (!hasOutboundSendConfig(deps.config)) {
     return { httpStatus: 503, error: "WhatsApp send configuration incomplete" };
   }
 
-  const text = String(rawText ?? "").trim();
-  if (!text) {
-    return { httpStatus: 400, error: "text is required" };
+  const textValidation = validateOutboundText(rawText);
+  if (textValidation.ok === false) {
+    return { httpStatus: 400, error: textValidation.error };
   }
-  if (text.length > WHATSAPP_MAX_TEXT_LENGTH) {
-    return {
-      httpStatus: 400,
-      error: `text exceeds maximum length of ${WHATSAPP_MAX_TEXT_LENGTH}`,
-    };
-  }
+  const text = textValidation.text;
 
   const bundle = await deps.repo.getConversationBundle(conversationId);
-  if (!bundle) {
-    return { httpStatus: 404, error: "Conversation not found" };
+  const auth = authorizeOutboundWhatsAppActor(deps.actor, bundle);
+  if (auth.ok === false) {
+    return { httpStatus: auth.status, error: auth.error };
   }
+  // Narrowed: bundle is non-null after successful auth.
+  const conversationBundle = bundle!;
 
-  if (bundle.channel.phoneNumberId !== deps.config.phoneNumberId) {
+  if (conversationBundle.channel.phoneNumberId !== deps.config.phoneNumberId) {
     await safeAudit(deps.repo, {
       eventType: AUDIT_EVENTS.OUTBOUND_FAILED,
       entityType: "conversation",
@@ -124,7 +153,11 @@ export async function sendOutboundPlainText(
     eventType: AUDIT_EVENTS.OUTBOUND_QUEUED,
     entityType: "message",
     entityId: message.id,
-    metadata: { conversationId },
+    metadata: {
+      conversationId,
+      actorId: deps.actor.id,
+      actorRole: deps.actor.role,
+    },
   });
 
   try {
@@ -149,7 +182,7 @@ export async function sendOutboundPlainText(
   });
 
   const graphResult = await sendWhatsAppTextMessage({
-    toWaId: bundle.contact.phoneE164,
+    toWaId: conversationBundle.contact.phoneE164,
     text,
     phoneNumberId: deps.config.phoneNumberId,
     accessToken: deps.config.accessToken,

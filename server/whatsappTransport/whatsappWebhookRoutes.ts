@@ -34,8 +34,8 @@ function resolveConfig(deps: WhatsAppWebhookRouterDeps): WhatsAppConfig {
 }
 
 function readRawBody(req: Request): Buffer | null {
+  // Production webhook POST must use path-scoped express.raw() → Buffer only.
   if (Buffer.isBuffer(req.body)) return req.body;
-  if (typeof req.body === "string") return Buffer.from(req.body, "utf8");
   return null;
 }
 
@@ -99,8 +99,20 @@ async function persistNormalizedEvents(
             waMessageId: event.waMessageId,
             status: event.status,
             created: inserted.created,
+            messageUpdated: inserted.row.messageUpdated === true,
           },
         });
+        if (inserted.row.messageNotFound) {
+          await safeAudit(repo, {
+            eventType: AUDIT_EVENTS.STATUS_MESSAGE_NOT_FOUND,
+            entityType: "status_event",
+            entityId: inserted.row.id,
+            metadata: {
+              waMessageId: event.waMessageId,
+              status: event.status,
+            },
+          });
+        }
         continue;
       }
 
@@ -160,7 +172,9 @@ export function createWhatsAppWebhookRouter(
 
     const rawBody = readRawBody(req);
     if (!rawBody) {
-      return res.status(400).json({ error: "Raw body required" });
+      return res.status(400).json({
+        error: "Webhook raw body must be a Buffer (middleware misconfigured)",
+      });
     }
     if (rawBody.byteLength > WHATSAPP_WEBHOOK_MAX_BODY_BYTES) {
       return res.status(413).json({ error: "Payload too large" });

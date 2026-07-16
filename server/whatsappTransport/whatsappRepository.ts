@@ -120,7 +120,15 @@ export interface WhatsAppRepository {
     occurredAt: string;
     rawPayload: Record<string, unknown>;
   }): Promise<InsertResult<WhatsAppMessage>>;
-  insertStatusEvent(input: NormalizedStatusEvent): Promise<InsertResult<{ id: string }>>;
+  insertStatusEvent(
+    input: NormalizedStatusEvent
+  ): Promise<
+    InsertResult<{
+      id: string;
+      messageUpdated: boolean;
+      messageNotFound?: boolean;
+    }>
+  >;
   updateConversationLastMessageAt(
     conversationId: string,
     at: string
@@ -153,11 +161,11 @@ function newId(prefix: string): string {
   return `${prefix}_${randomUUID()}`;
 }
 
-function isUniqueViolation(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false;
-  if (error.code === "23505") return true;
-  const msg = String(error.message || "").toLowerCase();
-  return msg.includes("duplicate") || msg.includes("unique");
+/** Only PostgreSQL unique_violation is treated as idempotent conflict. */
+export function isUniqueViolation(
+  error: { code?: string; message?: string } | null
+): boolean {
+  return !!error && error.code === "23505";
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +184,8 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
   failNextOutboundInsert = false;
   failStatusUpdatesRemaining = 0;
   failPersistAfterClaim: string | null = null;
+  /** When set, status-event insert succeeds but message status update throws. */
+  failMessageUpdateAfterStatusInsert = false;
 
   isActive(): boolean {
     return this.active;
@@ -346,22 +356,50 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
 
   async insertStatusEvent(
     input: NormalizedStatusEvent
-  ): Promise<InsertResult<{ id: string }>> {
+  ): Promise<
+    InsertResult<{
+      id: string;
+      messageUpdated: boolean;
+      messageNotFound?: boolean;
+    }>
+  > {
     const key = `${DEFAULT_COMPANY_ID}|${input.waMessageId}|${input.status}|${input.statusTimestamp}`;
     const existing = this.statusEvents.get(key);
     if (existing) {
-      return { ok: true, row: { id: existing.id }, created: false };
+      return {
+        ok: true,
+        row: { id: existing.id, messageUpdated: false },
+        created: false,
+      };
     }
     const id = newId("wse");
     this.statusEvents.set(key, { id, key });
 
+    if (this.failMessageUpdateAfterStatusInsert) {
+      this.failMessageUpdateAfterStatusInsert = false;
+      return { ok: false, error: "simulated message status update failure" };
+    }
+
+    let found = false;
     for (const message of this.messages.values()) {
-      if (message.waMessageId === input.waMessageId) {
+      if (
+        message.companyId === DEFAULT_COMPANY_ID &&
+        message.waMessageId === input.waMessageId
+      ) {
         message.status = input.status;
         message.updatedAt = nowIso();
+        found = true;
       }
     }
-    return { ok: true, row: { id }, created: true };
+    return {
+      ok: true,
+      row: {
+        id,
+        messageUpdated: found,
+        messageNotFound: !found,
+      },
+      created: true,
+    };
   }
 
   async updateConversationLastMessageAt(
@@ -575,19 +613,29 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
 
     if (error) {
       if (isUniqueViolation(error)) {
-        const { data: raced } = await supabase
+        const { data: raced, error: reselectError } = await supabase
           .from("whatsapp_webhook_events")
           .select("*")
           .eq("company_id", DEFAULT_COMPANY_ID)
           .eq("payload_hash", payloadHash)
           .maybeSingle();
-        if (raced) {
-          const event = mapWebhookEvent(raced as Record<string, unknown>);
-          if (event.processed) {
-            return { kind: "existing_processed", event };
-          }
-          return { kind: "existing_incomplete", event };
+        if (reselectError) {
+          return {
+            kind: "error",
+            error: `webhook claim conflict reselect failed: ${reselectError.message}`,
+          };
         }
+        if (!raced) {
+          return {
+            kind: "error",
+            error: "webhook claim unique conflict but existing row not found",
+          };
+        }
+        const event = mapWebhookEvent(raced as Record<string, unknown>);
+        if (event.processed) {
+          return { kind: "existing_processed", event };
+        }
+        return { kind: "existing_incomplete", event };
       }
       return { kind: "error", error: error.message };
     }
@@ -631,6 +679,7 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
     const { data: existing } = await supabase
       .from("whatsapp_channels")
       .select("*")
+      .eq("company_id", DEFAULT_COMPANY_ID)
       .eq("phone_number_id", input.phoneNumberId)
       .maybeSingle();
     if (existing) {
@@ -651,12 +700,19 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .single();
     if (error) {
       if (isUniqueViolation(error)) {
-        const { data: raced } = await supabase
+        const { data: raced, error: reselectError } = await supabase
           .from("whatsapp_channels")
           .select("*")
+          .eq("company_id", DEFAULT_COMPANY_ID)
           .eq("phone_number_id", input.phoneNumberId)
-          .single();
-        if (raced) return mapChannel(raced as Record<string, unknown>);
+          .maybeSingle();
+        if (reselectError || !raced) {
+          throw new Error(
+            reselectError?.message ||
+              "channel unique conflict but existing row not found"
+          );
+        }
+        return mapChannel(raced as Record<string, unknown>);
       }
       throw new Error(error.message);
     }
@@ -691,13 +747,19 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .single();
     if (error) {
       if (isUniqueViolation(error)) {
-        const { data: raced } = await supabase
+        const { data: raced, error: reselectError } = await supabase
           .from("whatsapp_contacts")
           .select("*")
           .eq("company_id", DEFAULT_COMPANY_ID)
           .eq("phone_e164", input.phoneE164)
-          .single();
-        if (raced) return mapContact(raced as Record<string, unknown>);
+          .maybeSingle();
+        if (reselectError || !raced) {
+          throw new Error(
+            reselectError?.message ||
+              "contact unique conflict but existing row not found"
+          );
+        }
+        return mapContact(raced as Record<string, unknown>);
       }
       throw new Error(error.message);
     }
@@ -735,14 +797,20 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .single();
     if (error) {
       if (isUniqueViolation(error)) {
-        const { data: raced } = await supabase
+        const { data: raced, error: reselectError } = await supabase
           .from("whatsapp_conversations")
           .select("*")
           .eq("company_id", DEFAULT_COMPANY_ID)
           .eq("channel_id", input.channelId)
           .eq("contact_id", input.contactId)
-          .single();
-        if (raced) return mapConversation(raced as Record<string, unknown>);
+          .maybeSingle();
+        if (reselectError || !raced) {
+          throw new Error(
+            reselectError?.message ||
+              "conversation unique conflict but existing row not found"
+          );
+        }
+        return mapConversation(raced as Record<string, unknown>);
       }
       throw new Error(error.message);
     }
@@ -789,20 +857,31 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .single();
     if (error) {
       if (isUniqueViolation(error)) {
-        const { data: raced } = await supabase
+        const { data: raced, error: reselectError } = await supabase
           .from("whatsapp_messages")
           .select("*")
           .eq("company_id", DEFAULT_COMPANY_ID)
           .eq("wa_message_id", input.waMessageId)
           .maybeSingle();
-        if (raced) {
+        if (reselectError) {
           return {
-            ok: true,
-            row: mapMessage(raced as Record<string, unknown>),
-            created: false,
+            ok: false,
+            error: `unique conflict reselect failed: ${reselectError.message}`,
+            uniqueConflict: true,
           };
         }
-        return { ok: true, row: mapMessage(row as unknown as Record<string, unknown>), created: false };
+        if (!raced) {
+          return {
+            ok: false,
+            error: "unique conflict but existing message row not found",
+            uniqueConflict: true,
+          };
+        }
+        return {
+          ok: true,
+          row: mapMessage(raced as Record<string, unknown>),
+          created: false,
+        };
       }
       return { ok: false, error: error.message };
     }
@@ -815,7 +894,13 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
 
   async insertStatusEvent(
     input: NormalizedStatusEvent
-  ): Promise<InsertResult<{ id: string }>> {
+  ): Promise<
+    InsertResult<{
+      id: string;
+      messageUpdated: boolean;
+      messageNotFound?: boolean;
+    }>
+  > {
     const supabase = this.client();
     const row = {
       id: newId("wse"),
@@ -831,20 +916,85 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .insert(row)
       .select("id")
       .single();
+
     if (error) {
       if (isUniqueViolation(error)) {
-        return { ok: true, row: { id: row.id }, created: false };
+        const { data: raced, error: reselectError } = await supabase
+          .from("whatsapp_message_status_events")
+          .select("id")
+          .eq("company_id", DEFAULT_COMPANY_ID)
+          .eq("wa_message_id", input.waMessageId)
+          .eq("status", input.status)
+          .eq("status_timestamp", input.statusTimestamp)
+          .maybeSingle();
+        if (reselectError) {
+          return {
+            ok: false,
+            error: `status conflict reselect failed: ${reselectError.message}`,
+            uniqueConflict: true,
+          };
+        }
+        if (!raced) {
+          return {
+            ok: false,
+            error: "status unique conflict but existing row not found",
+            uniqueConflict: true,
+          };
+        }
+        return {
+          ok: true,
+          row: { id: String(raced.id), messageUpdated: false },
+          created: false,
+        };
       }
       return { ok: false, error: error.message };
     }
 
-    await supabase
+    const statusEventId = String(data.id);
+
+    const { data: matchingMessages, error: selectMsgError } = await supabase
+      .from("whatsapp_messages")
+      .select("id")
+      .eq("company_id", DEFAULT_COMPANY_ID)
+      .eq("wa_message_id", input.waMessageId);
+
+    if (selectMsgError) {
+      return {
+        ok: false,
+        error: `status event stored but message lookup failed: ${selectMsgError.message}`,
+      };
+    }
+
+    if (!matchingMessages || matchingMessages.length === 0) {
+      return {
+        ok: true,
+        row: {
+          id: statusEventId,
+          messageUpdated: false,
+          messageNotFound: true,
+        },
+        created: true,
+      };
+    }
+
+    const { error: updateError } = await supabase
       .from("whatsapp_messages")
       .update({ status: input.status, updated_at: nowIso() })
       .eq("company_id", DEFAULT_COMPANY_ID)
       .eq("wa_message_id", input.waMessageId);
 
-    return { ok: true, row: { id: String(data.id) }, created: true };
+    if (updateError) {
+      return {
+        ok: false,
+        error: `status event stored but message update failed: ${updateError.message}`,
+      };
+    }
+
+    return {
+      ok: true,
+      row: { id: statusEventId, messageUpdated: true },
+      created: true,
+    };
   }
 
   async updateConversationLastMessageAt(

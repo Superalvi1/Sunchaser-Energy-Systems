@@ -55,7 +55,11 @@ export function digitsOnlyPhone(value: string): string {
   return String(value || "").replace(/\D/g, "");
 }
 
-function toIsoFromUnixSeconds(raw: string | undefined): string {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function toIsoFromUnixSeconds(raw: unknown): string {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
     return new Date().toISOString();
@@ -67,31 +71,59 @@ function isSupportedStatus(value: string): value is SupportedStatusValue {
   return (SUPPORTED_STATUS_VALUES as readonly string[]).includes(value);
 }
 
+function asContactList(
+  contacts: unknown
+): Array<{ wa_id?: string; profile?: { name?: string } }> {
+  if (!Array.isArray(contacts)) return [];
+  const out: Array<{ wa_id?: string; profile?: { name?: string } }> = [];
+  for (const item of contacts) {
+    if (!isPlainObject(item)) continue;
+    const profile = isPlainObject(item.profile)
+      ? { name: typeof item.profile.name === "string" ? item.profile.name : undefined }
+      : undefined;
+    out.push({
+      wa_id: typeof item.wa_id === "string" ? item.wa_id : undefined,
+      profile,
+    });
+  }
+  return out;
+}
+
 function findProfileName(
-  contacts: Array<{ wa_id?: string; profile?: { name?: string } }> | undefined,
+  contacts: Array<{ wa_id?: string; profile?: { name?: string } }>,
   waId: string
 ): string | null {
-  if (!contacts?.length) return null;
+  if (!contacts.length) return null;
   const match = contacts.find((c) => digitsOnlyPhone(c.wa_id || "") === waId);
   const name = match?.profile?.name;
   return name ? String(name) : null;
 }
 
 function normalizeMessage(
-  message: MetaWebhookMessage,
+  message: unknown,
   ctx: {
     phoneNumberId: string;
     displayPhoneNumber: string | null;
     wabaEntryId: string | null;
-    contacts?: Array<{ wa_id?: string; profile?: { name?: string } }>;
+    contacts: Array<{ wa_id?: string; profile?: { name?: string } }>;
   }
 ): NormalizedWebhookEvent | null {
-  const waMessageId = String(message.id || "").trim();
-  const fromWaId = digitsOnlyPhone(message.from || "");
+  if (!isPlainObject(message)) return null;
+  const msg = message as MetaWebhookMessage;
+  const waMessageId = String(msg.id || "").trim();
+  const fromWaId = digitsOnlyPhone(typeof msg.from === "string" ? msg.from : "");
   if (!waMessageId || !fromWaId) return null;
 
-  if (message.type === "text" && message.text?.body != null) {
-    const text = String(message.text.body);
+  if (msg.type === "text" && isPlainObject(msg.text) && msg.text.body != null) {
+    if (typeof msg.text.body !== "string") {
+      return {
+        kind: "unsupported",
+        phoneNumberId: ctx.phoneNumberId,
+        waMessageId,
+        messageType: "text",
+        rawEvent: message as Record<string, unknown>,
+      };
+    }
     return {
       kind: "inbound_text",
       phoneNumberId: ctx.phoneNumberId,
@@ -100,8 +132,8 @@ function normalizeMessage(
       waMessageId,
       fromWaId,
       profileName: findProfileName(ctx.contacts, fromWaId),
-      text,
-      occurredAt: toIsoFromUnixSeconds(message.timestamp),
+      text: msg.text.body,
+      occurredAt: toIsoFromUnixSeconds(msg.timestamp),
       rawEvent: message as Record<string, unknown>,
     };
   }
@@ -110,21 +142,25 @@ function normalizeMessage(
     kind: "unsupported",
     phoneNumberId: ctx.phoneNumberId,
     waMessageId,
-    messageType: message.type ? String(message.type) : null,
+    messageType: msg.type ? String(msg.type) : null,
     rawEvent: message as Record<string, unknown>,
   };
 }
 
 function normalizeStatus(
-  status: MetaWebhookStatus,
+  status: unknown,
   ctx: {
     phoneNumberId: string;
     displayPhoneNumber: string | null;
     wabaEntryId: string | null;
   }
 ): NormalizedStatusEvent | null {
-  const waMessageId = String(status.id || "").trim();
-  const statusValue = String(status.status || "").trim().toLowerCase();
+  if (!isPlainObject(status)) return null;
+  const st = status as MetaWebhookStatus;
+  const waMessageId = String(st.id || "").trim();
+  const statusValue = String(st.status || "")
+    .trim()
+    .toLowerCase();
   if (!waMessageId || !isSupportedStatus(statusValue)) return null;
 
   return {
@@ -134,14 +170,60 @@ function normalizeStatus(
     wabaEntryId: ctx.wabaEntryId,
     waMessageId,
     status: statusValue,
-    statusTimestamp: toIsoFromUnixSeconds(status.timestamp),
-    recipientWaId: status.recipient_id
-      ? digitsOnlyPhone(status.recipient_id)
-      : null,
+    statusTimestamp: toIsoFromUnixSeconds(st.timestamp),
+    recipientWaId:
+      typeof st.recipient_id === "string"
+        ? digitsOnlyPhone(st.recipient_id)
+        : null,
     rawEvent: status as Record<string, unknown>,
   };
 }
 
+function normalizeChangeValue(
+  value: unknown,
+  wabaEntryId: string | null,
+  events: NormalizedWebhookEvent[]
+): void {
+  if (!isPlainObject(value)) return;
+
+  const metadata = isPlainObject(value.metadata) ? value.metadata : null;
+  const phoneNumberId = metadata
+    ? String(metadata.phone_number_id || "").trim()
+    : "";
+  const displayPhoneNumber =
+    metadata && typeof metadata.display_phone_number === "string"
+      ? digitsOnlyPhone(metadata.display_phone_number)
+      : null;
+  const contacts = asContactList(value.contacts);
+
+  if (Array.isArray(value.messages)) {
+    for (const message of value.messages) {
+      const normalized = normalizeMessage(message, {
+        phoneNumberId,
+        displayPhoneNumber,
+        wabaEntryId,
+        contacts,
+      });
+      if (normalized) events.push(normalized);
+    }
+  }
+
+  if (Array.isArray(value.statuses)) {
+    for (const status of value.statuses) {
+      const normalized = normalizeStatus(status, {
+        phoneNumberId,
+        displayPhoneNumber,
+        wabaEntryId,
+      });
+      if (normalized) events.push(normalized);
+    }
+  }
+}
+
+/**
+ * Parse and defensively normalize a Meta webhook envelope.
+ * Never throws on malformed nested collections; skips bad siblings.
+ */
 export function parseWebhookRawBody(rawBody: Buffer): ParseEnvelopeResult {
   let parsed: unknown;
   try {
@@ -150,41 +232,27 @@ export function parseWebhookRawBody(rawBody: Buffer): ParseEnvelopeResult {
     return { ok: false, error: "malformed_json" };
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isPlainObject(parsed)) {
     return { ok: false, error: "invalid_shape" };
   }
 
   const envelope = parsed as MetaWebhookEnvelope;
   const events: NormalizedWebhookEvent[] = [];
 
-  for (const entry of envelope.entry || []) {
-    const wabaEntryId = entry.id ? String(entry.id) : null;
-    for (const change of entry.changes || []) {
-      const value = change.value;
-      if (!value) continue;
-      const phoneNumberId = String(value.metadata?.phone_number_id || "").trim();
-      const displayPhoneNumber = value.metadata?.display_phone_number
-        ? digitsOnlyPhone(value.metadata.display_phone_number)
-        : null;
+  if (!Array.isArray(envelope.entry)) {
+    // Signed but unusable structure — controlled parse failure (route → 400).
+    return { ok: false, error: "invalid_shape" };
+  }
 
-      for (const message of value.messages || []) {
-        const normalized = normalizeMessage(message, {
-          phoneNumberId,
-          displayPhoneNumber,
-          wabaEntryId,
-          contacts: value.contacts,
-        });
-        if (normalized) events.push(normalized);
-      }
+  for (const entry of envelope.entry) {
+    if (!isPlainObject(entry)) continue;
+    const wabaEntryId =
+      typeof entry.id === "string" && entry.id.trim() ? String(entry.id) : null;
+    if (!Array.isArray(entry.changes)) continue;
 
-      for (const status of value.statuses || []) {
-        const normalized = normalizeStatus(status, {
-          phoneNumberId,
-          displayPhoneNumber,
-          wabaEntryId,
-        });
-        if (normalized) events.push(normalized);
-      }
+    for (const change of entry.changes) {
+      if (!isPlainObject(change)) continue;
+      normalizeChangeValue(change.value, wabaEntryId, events);
     }
   }
 

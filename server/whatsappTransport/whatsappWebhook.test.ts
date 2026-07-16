@@ -12,8 +12,11 @@ import {
   WHATSAPP_WEBHOOK_MAX_BODY_BYTES,
   WHATSAPP_WEBHOOK_PATH,
 } from "./whatsappConstants.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { installWhatsAppRawBodyMiddleware } from "./index.ts";
 import { InMemoryWhatsAppRepository } from "./whatsappRepository.ts";
+import { parseWebhookRawBody } from "./whatsappEnvelope.ts";
 import { verifyWhatsAppSignature, sha256Hex } from "./whatsappSignature.ts";
 import { createWhatsAppWebhookRouter } from "./whatsappWebhookRoutes.ts";
 
@@ -551,6 +554,305 @@ await test("POST missing app secret returns 503", async () => {
       const res = await postWebhook(base, inboundTextEnvelope());
       assert.equal(res.status, 503);
     }
+  );
+});
+
+await test("22. Non-Buffer webhook body is rejected", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const config = enabledConfig();
+  const app = express();
+  // Intentionally use JSON parser (no raw Buffer) to simulate misconfiguration.
+  app.use(express.json());
+  app.use(
+    "/api/integrations/whatsapp",
+    createWhatsAppWebhookRouter({ repo, config })
+  );
+  const server = await new Promise<import("http").Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const { port } = server.address() as AddressInfo;
+  try {
+    const payload = inboundTextEnvelope({ waMessageId: "wamid.NOBUF" });
+    const raw = Buffer.from(JSON.stringify(payload), "utf8");
+    const res = await fetch(
+      `http://127.0.0.1:${port}${WHATSAPP_WEBHOOK_PATH}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-hub-signature-256": sign(raw),
+        },
+        body: raw,
+      }
+    );
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(String(body.error), /Buffer/i);
+    assert.equal(repo.messages.size, 0);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+await test("10-14. Envelope hardening: wrong-type collections do not crash", () => {
+  const badEntry = parseWebhookRawBody(
+    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry: {} }), "utf8")
+  );
+  assert.equal(badEntry.ok, false);
+
+  const nullEntry = parseWebhookRawBody(
+    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry: null }), "utf8")
+  );
+  assert.equal(nullEntry.ok, false);
+
+  const badChanges = parseWebhookRawBody(
+    Buffer.from(
+      JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [{ id: "WABA", changes: {} }],
+      }),
+      "utf8"
+    )
+  );
+  assert.equal(badChanges.ok, true);
+  if (badChanges.ok) assert.equal(badChanges.events.length, 0);
+
+  const badMessages = parseWebhookRawBody(
+    Buffer.from(
+      JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: "WABA",
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "1" },
+                  messages: {},
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8"
+    )
+  );
+  assert.equal(badMessages.ok, true);
+  if (badMessages.ok) assert.equal(badMessages.events.length, 0);
+
+  const badStatuses = parseWebhookRawBody(
+    Buffer.from(
+      JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: "WABA",
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "1" },
+                  statuses: {},
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8"
+    )
+  );
+  assert.equal(badStatuses.ok, true);
+});
+
+await test("13. Malformed sibling does not block valid sibling message", () => {
+  const parsed = parseWebhookRawBody(
+    Buffer.from(
+      JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: "WABA",
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "109876543210987" },
+                  contacts: [
+                    { wa_id: "923001111111", profile: { name: "One" } },
+                    { wa_id: "923002222222", profile: { name: "Two" } },
+                  ],
+                  messages: [
+                    "not-an-object",
+                    {
+                      from: "923002222222",
+                      id: "wamid.VALID",
+                      timestamp: "1700000000",
+                      type: "text",
+                      text: { body: "ok" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8"
+    )
+  );
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    const texts = parsed.events.filter((e) => e.kind === "inbound_text");
+    assert.equal(texts.length, 1);
+    assert.equal(texts[0].kind, "inbound_text");
+    if (texts[0].kind === "inbound_text") {
+      assert.equal(texts[0].profileName, "Two");
+      assert.equal(texts[0].text, "ok");
+    }
+  }
+});
+
+await test("malformed first entry plus valid second entry", () => {
+  const parsed = parseWebhookRawBody(
+    Buffer.from(
+      JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [
+          "bad-entry",
+          {
+            id: "WABA2",
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "109876543210987" },
+                  messages: [
+                    {
+                      from: "923001234567",
+                      id: "wamid.E2",
+                      timestamp: "1700000000",
+                      type: "text",
+                      text: { body: "second" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8"
+    )
+  );
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    assert.equal(
+      parsed.events.filter((e) => e.kind === "inbound_text").length,
+      1
+    );
+  }
+});
+
+await test("unsupported media does not block valid text sibling", () => {
+  const parsed = parseWebhookRawBody(
+    Buffer.from(
+      JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: "WABA",
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: "109876543210987" },
+                  messages: [
+                    {
+                      from: "923001234567",
+                      id: "wamid.IMG2",
+                      timestamp: "1700000000",
+                      type: "image",
+                      image: { id: "x" },
+                    },
+                    {
+                      from: "923001234567",
+                      id: "wamid.TXT2",
+                      timestamp: "1700000001",
+                      type: "text",
+                      text: { body: "hello" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8"
+    )
+  );
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    assert.ok(parsed.events.some((e) => e.kind === "unsupported"));
+    assert.ok(parsed.events.some((e) => e.kind === "inbound_text"));
+  }
+});
+
+await test("status event stored; missing related message audited", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = statusEnvelope({
+      waMessageId: "wamid.MISSING_MSG",
+      status: "delivered",
+    });
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.statusEvents.size, 1);
+    assert.ok(
+      repo.auditEvents.some((e) => e.eventType === "status_message_not_found")
+    );
+  });
+});
+
+await test("status event insert succeeds but message update failure leaves incomplete", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await repo.insertOutboundMessage({
+    conversationId: "tmp",
+    textBody: "x",
+  });
+  // Create a message with wa id for update path, then force update failure.
+  const msg = [...repo.messages.values()][0];
+  msg.waMessageId = "wamid.UPDFAIL";
+  repo.failMessageUpdateAfterStatusInsert = true;
+
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = statusEnvelope({
+      waMessageId: "wamid.UPDFAIL",
+      status: "delivered",
+      timestamp: "1700000999",
+    });
+    const raw = Buffer.from(JSON.stringify(payload), "utf8");
+    const res = await postWebhook(base, payload, { raw });
+    assert.equal(res.status, 500);
+    const event = repo.webhookEvents.get(sha256Hex(raw));
+    assert.equal(event?.processed, false);
+  });
+});
+
+await test("23. Migration does not expose WhatsApp tables via using(true)", () => {
+  const sql = readFileSync(
+    join(process.cwd(), "scripts/whatsapp-transport-schema.sql"),
+    "utf8"
+  );
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on table public\.whatsapp_/i);
+  // No permissive create policy for WhatsApp tables.
+  assert.equal(/\ncreate policy[\s\S]*whatsapp_[\s\S]*using\s*\(\s*true\s*\)/i.test(sql), false);
+  assert.equal(/\ncreate policy[\s\S]*whatsapp_[\s\S]*with check\s*\(\s*true\s*\)/i.test(sql), false);
+  // Explicitly ensure the old permissive policy text is not recreated.
+  assert.equal(
+    /create policy\s+"Enable full access for authenticated backend"/i.test(sql),
+    false
   );
 });
 

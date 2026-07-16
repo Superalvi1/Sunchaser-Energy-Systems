@@ -1,5 +1,9 @@
 import { WHATSAPP_GRAPH_TIMEOUT_MS } from "./whatsappConstants.ts";
-import type { WhatsAppConfig } from "./whatsappConfig.ts";
+import {
+  isValidGraphApiVersion,
+  isValidPhoneNumberId,
+  type WhatsAppConfig,
+} from "./whatsappConfig.ts";
 import type { MetaSendTextErrorBody, MetaSendTextSuccess } from "./whatsappProviderTypes.ts";
 
 export type GraphSendTextInput = {
@@ -20,7 +24,7 @@ export type GraphSendResult =
     }
   | {
       ok: false;
-      kind: "provider_error" | "timeout" | "network" | "invalid_response";
+      kind: "provider_error" | "timeout" | "network" | "invalid_response" | "invalid_config";
       httpStatus: number | null;
       sanitizedError: string;
     };
@@ -47,15 +51,31 @@ export function sanitizeProviderError(raw: unknown): string {
   return "Provider error";
 }
 
+/** Build Graph messages URL only from validated components. */
+export function buildWhatsAppMessagesUrl(
+  graphApiVersion: string,
+  phoneNumberId: string
+): string | null {
+  if (!isValidGraphApiVersion(graphApiVersion)) return null;
+  if (!isValidPhoneNumberId(phoneNumberId)) return null;
+  return `https://graph.facebook.com/${graphApiVersion}/${phoneNumberId}/messages`;
+}
+
 export async function sendWhatsAppTextMessage(
   input: GraphSendTextInput
 ): Promise<GraphSendResult> {
+  const url = buildWhatsAppMessagesUrl(input.graphApiVersion, input.phoneNumberId);
+  if (!url) {
+    return {
+      ok: false,
+      kind: "invalid_config",
+      httpStatus: null,
+      sanitizedError: "Invalid Graph API version or phone number id",
+    };
+  }
+
   const fetchImpl = input.fetchImpl ?? fetch;
   const timeoutMs = input.timeoutMs ?? WHATSAPP_GRAPH_TIMEOUT_MS;
-  const version = input.graphApiVersion.replace(/^\/+|\/+$/g, "");
-  const phoneNumberId = encodeURIComponent(input.phoneNumberId);
-  const url = `https://graph.facebook.com/${version}/${phoneNumberId}/messages`;
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 

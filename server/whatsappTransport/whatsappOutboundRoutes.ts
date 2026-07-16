@@ -17,6 +17,7 @@ export type WhatsAppOutboundRouterDeps = {
 /**
  * Protected outbound route: POST /api/conversations/:id/messages
  * Relies on centralized JWT authorization (not on the public allowlist).
+ * Staff outbound permission is enforced in the service (crm_leads roles only).
  */
 export function createWhatsAppOutboundRouter(
   deps: WhatsAppOutboundRouterDeps = {}
@@ -36,12 +37,14 @@ export function createWhatsAppOutboundRouter(
       return res.status(400).json({ error: "conversation id is required" });
     }
 
+    // Recipient/sender/channel/company are never accepted from the browser body.
     const result = await sendOutboundPlainText(
       conversationId,
       (req.body as { text?: unknown } | undefined)?.text,
       {
         repo,
         config,
+        actor: req.actor,
         fetchImpl: deps.fetchImpl,
       }
     );

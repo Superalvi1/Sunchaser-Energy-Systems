@@ -43,6 +43,7 @@ export const AUDIT_EVENTS = {
   INBOUND_MESSAGE_STORED: "inbound_message_stored",
   UNSUPPORTED_MESSAGE_IGNORED: "unsupported_message_ignored",
   STATUS_EVENT_STORED: "status_event_stored",
+  STATUS_MESSAGE_NOT_FOUND: "status_message_not_found",
   OUTBOUND_QUEUED: "outbound_queued",
   OUTBOUND_SENDING: "outbound_sending",
   OUTBOUND_SENT: "outbound_sent",
