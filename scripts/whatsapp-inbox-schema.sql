@@ -53,9 +53,11 @@ create index if not exists whatsapp_conversations_activity_idx
     id
   );
 
--- Delta/reconciliation key for incremental polling.
+-- Delta/reconciliation key for incremental polling (ASC for forward keyset).
+-- Replace any earlier DESC form so the index matches monotonic page traversal.
+drop index if exists public.whatsapp_conversations_delta_idx;
 create index if not exists whatsapp_conversations_delta_idx
-  on public.whatsapp_conversations (company_id, updated_at desc, id);
+  on public.whatsapp_conversations (company_id, updated_at asc, id);
 
 create index if not exists whatsapp_conversations_assigned_idx
   on public.whatsapp_conversations (assigned_user_id)
@@ -272,5 +274,68 @@ grant execute on function public.whatsapp_inbox_list_conversations_by_activity(
 
 comment on function public.whatsapp_inbox_list_conversations_by_activity is
   'PR2 inbox activity keyset page. Ordered by coalesce(last_message_at, created_at) desc, id desc. Backend/service_role only.';
+
+-- -----------------------------------------------------------------------------
+-- 11. Delta list RPC (Revision 3 — monotonic ASC keyset on updated_at, id)
+-- Uses whatsapp_conversations_delta_idx (company_id, updated_at asc, id).
+-- Forward traversal: (updated_at, id) > since cursor. No DESC page loops.
+-- -----------------------------------------------------------------------------
+create or replace function public.whatsapp_inbox_list_conversations_delta(
+  p_company_id text,
+  p_limit integer,
+  p_since_at timestamptz,
+  p_since_id text,
+  p_status text default null,
+  p_assigned_to text default null,
+  p_channel_id text default null,
+  p_has_failed_message boolean default null
+)
+returns setof public.whatsapp_conversations
+language sql
+stable
+as $$
+  select c.*
+  from public.whatsapp_conversations as c
+  where c.company_id = p_company_id
+    and (p_status is null or c.status = p_status)
+    and (p_channel_id is null or c.channel_id = p_channel_id)
+    and (
+      p_has_failed_message is null
+      or c.has_failed_message = p_has_failed_message
+    )
+    and (
+      p_assigned_to is null
+      or (
+        p_assigned_to = 'unassigned'
+        and c.assigned_user_id is null
+      )
+      or (
+        p_assigned_to is distinct from 'unassigned'
+        and c.assigned_user_id = p_assigned_to
+      )
+    )
+    and (
+      c.updated_at > p_since_at
+      or (
+        c.updated_at = p_since_at
+        and c.id > coalesce(p_since_id, '')
+      )
+    )
+  order by
+    c.updated_at asc,
+    c.id asc
+  limit greatest(1, least(coalesce(p_limit, 50), 101));
+$$;
+
+revoke all on function public.whatsapp_inbox_list_conversations_delta(
+  text, integer, timestamptz, text, text, text, text, boolean
+) from public, anon, authenticated;
+
+grant execute on function public.whatsapp_inbox_list_conversations_delta(
+  text, integer, timestamptz, text, text, text, text, boolean
+) to service_role;
+
+comment on function public.whatsapp_inbox_list_conversations_delta is
+  'PR2 inbox delta keyset page. Ordered by updated_at asc, id asc after exclusive since cursor. Backend/service_role only.';
 
 notify pgrst, 'reload schema';

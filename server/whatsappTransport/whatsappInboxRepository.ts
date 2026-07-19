@@ -4,7 +4,7 @@
  * Data-access composition only. No services, routes, permissions, or OCC.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isSupabaseActive } from "../../dbManager.ts";
+import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
 import {
   InMemoryWhatsAppInboxAssignmentRepository,
   SupabaseWhatsAppInboxAssignmentRepository,
@@ -73,14 +73,22 @@ export function createSupabaseWhatsAppInboxRepositories(
   };
 }
 
-/** Prefer Supabase when active; otherwise in-memory (tests / local fail-closed callers). */
+/**
+ * Production factory — Supabase only.
+ * Never falls back to in-memory persistence.
+ * Tests must call createInMemoryWhatsAppInboxRepositories() explicitly.
+ */
 export function createDefaultWhatsAppInboxRepositories(
   clientFactory?: () => SupabaseClient | null
 ): WhatsAppInboxRepositories {
-  if (isSupabaseActive()) {
-    return createSupabaseWhatsAppInboxRepositories(clientFactory);
+  const factory = clientFactory ?? getSupabase;
+  if (!isSupabaseActive() || factory() === null) {
+    throw new Error(
+      "WhatsApp inbox repositories require active Supabase persistence. " +
+        "Use createInMemoryWhatsAppInboxRepositories() for tests."
+    );
   }
-  return createInMemoryWhatsAppInboxRepositories();
+  return createSupabaseWhatsAppInboxRepositories(factory);
 }
 
 export type { WhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";

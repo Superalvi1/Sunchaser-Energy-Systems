@@ -25,9 +25,6 @@ export type ConversationListFilters = {
   assignedTo?: string | "unassigned";
   channelId?: string;
   hasFailedMessage?: boolean;
-  /** Phone/name search fragment (applied by caller-supplied match when using memory;
-   * Supabase applies ilike against joined contact fields when available). */
-  search?: string;
 };
 
 export type ConversationListPage = {
@@ -46,7 +43,10 @@ export interface WhatsAppInboxConversationRepository {
     filters: ConversationListFilters,
     opts?: { cursor?: KeysetCursor | null; limit?: number }
   ): Promise<ConversationListPage>;
-  /** Delta poll: updated_at desc, id desc. */
+  /**
+   * Delta poll keyset: rows with (updated_at, id) > since,
+   * ordered updated_at asc, id asc (monotonic forward traversal).
+   */
   listDelta(
     filters: ConversationListFilters,
     opts: { since: KeysetCursor; limit?: number }
@@ -159,18 +159,19 @@ export class InMemoryWhatsAppInboxConversationRepository
   ): Promise<ConversationListPage> {
     const companyId = this.access.companyId(filters.companyId);
     const limit = clampLimit(opts.limit);
+    const sinceId = opts.since.id ?? "";
     const sorted = [...this.store.conversations.values()]
       .filter((row) => matchesFilters(row, filters, companyId))
       .filter((row) => {
         if (row.updatedAt > opts.since.at) return true;
         if (row.updatedAt < opts.since.at) return false;
-        return row.id > opts.since.id;
+        return row.id > sinceId;
       })
       .sort((a, b) => {
         if (a.updatedAt !== b.updatedAt) {
-          return b.updatedAt < a.updatedAt ? -1 : 1;
+          return a.updatedAt < b.updatedAt ? -1 : 1;
         }
-        return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
       })
       .slice(0, limit + 1);
 
@@ -361,22 +362,27 @@ export class SupabaseWhatsAppInboxConversationRepository
   ): Promise<ConversationListPage> {
     const companyId = this.access.companyId(filters.companyId);
     const limit = clampLimit(opts.limit);
-    let query = this.applyFilters(
-      this.client().from("whatsapp_conversations").select("*"),
-      filters,
-      companyId
-    );
-    // (updated_at, id) > since
-    query = query.or(
-      `updated_at.gt.${opts.since.at},and(updated_at.eq.${opts.since.at},id.gt.${opts.since.id})`
-    );
-    query = query
-      .order("updated_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(limit + 1);
 
-    const { data, error } = await query;
+    // Production path: SQL RPC performs ASC keyset entirely in Postgres.
+    // Avoids PostgREST .or() timestamp encoding issues and DESC page loops.
+    const { data, error } = await this.client().rpc(
+      "whatsapp_inbox_list_conversations_delta",
+      {
+        p_company_id: companyId,
+        p_limit: limit + 1,
+        p_since_at: opts.since.at,
+        p_since_id: opts.since.id ?? "",
+        p_status: filters.status ?? null,
+        p_assigned_to: filters.assignedTo ?? null,
+        p_channel_id: filters.channelId ?? null,
+        p_has_failed_message:
+          filters.hasFailedMessage === undefined
+            ? null
+            : filters.hasFailedMessage,
+      }
+    );
     if (error) throw new Error(error.message);
+
     const rows = ((data ?? []) as Record<string, unknown>[]).map(
       mapConversationInbox
     );

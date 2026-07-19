@@ -113,6 +113,21 @@ assert.match(
   /revoke all on function public\.whatsapp_inbox_list_conversations_by_activity/i,
   "RPC must revoke anon/authenticated"
 );
+assert.match(
+  sql,
+  /create or replace function public\.whatsapp_inbox_list_conversations_delta/i,
+  "missing delta list RPC"
+);
+assert.match(
+  sql,
+  /order by\s+c\.updated_at asc,\s*c\.id asc/i,
+  "delta RPC must order ASC for monotonic keyset"
+);
+assert.match(
+  sql,
+  /whatsapp_conversations_delta_idx[\s\S]*updated_at asc/i,
+  "delta index must be ASC"
+);
 
 // Forward-only: no destructive PR1 drops / no rollback companion expectations.
 assert.equal(/drop table/i.test(sql), false, "must not drop tables");
