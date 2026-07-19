@@ -573,6 +573,27 @@ export type ConversationIdBody = {
   conversationId: string;
 };
 
+export type ListMessagesQuery = {
+  before?: KeysetCursor | null;
+  limit?: number;
+};
+
+export function parseListMessagesQuery(
+  query: Record<string, unknown>
+): DtoResult<ListMessagesQuery> {
+  const unknown = rejectUnknownKeys(query, ["before", "limit"]);
+  if (unknown) return unknown;
+  const before = decodeInboxCursor(query.before);
+  if (!before.ok) return before;
+  let limit: number | undefined;
+  if (query.limit != null && query.limit !== "") {
+    const parsed = requireInt(query.limit, "limit", { min: 1, max: 100 });
+    if (!parsed.ok) return parsed;
+    limit = parsed.value;
+  }
+  return { ok: true, value: { before: before.value, limit } };
+}
+
 export function parseConversationIdBody(
   body: unknown
 ): DtoResult<ConversationIdBody> {

@@ -141,6 +141,10 @@ export function createWhatsAppInboxRouter(
     run((c, req, res) => c.getConversation(req, res))
   );
   router.get(
+    "/conversations/:conversationId/messages",
+    run((c, req, res) => c.listMessages(req, res))
+  );
+  router.get(
     "/delta",
     run((c, req, res) => c.listDelta(req, res))
   );

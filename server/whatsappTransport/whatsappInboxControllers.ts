@@ -13,6 +13,7 @@ import {
   parseCrmLinkBody,
   parseDeltaQuery,
   parseListConversationsQuery,
+  parseListMessagesQuery,
   parseReadWatermarkBody,
   parseSendMessageBody,
   parseStatusBody,
@@ -97,6 +98,37 @@ export function createInboxControllers(
           actorOf(req)
         );
         return inboxOk(res, detail);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async listMessages(req: Request, res: Response) {
+      try {
+        const id = parseConversationIdParam(req.params.conversationId);
+        if (!id.ok) {
+          return inboxFail(res, 400, "validation_error", id.message, {
+            field: id.field,
+          });
+        }
+        const parsed = parseListMessagesQuery(
+          req.query as Record<string, unknown>
+        );
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const page = await services.messages.listByConversation(
+          id.value,
+          actorOf(req),
+          { before: parsed.value.before, limit: parsed.value.limit }
+        );
+        return inboxOk(res, { messages: page.rows }, 200, {
+          nextCursor: page.nextCursor
+            ? encodeInboxCursor(page.nextCursor)
+            : null,
+        });
       } catch (err) {
         return sendInboxError(res, err);
       }

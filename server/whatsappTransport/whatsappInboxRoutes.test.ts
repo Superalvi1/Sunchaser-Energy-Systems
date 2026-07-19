@@ -578,6 +578,33 @@ await test("integration: messages/read + watermark alias", async () => {
   });
 });
 
+await test("integration: list messages for conversation", async () => {
+  await withInboxServer({}, async (baseUrl, tokens, repos) => {
+    seedConversation(repos.store, { id: "c1" });
+    seedMessage(repos.store, {
+      id: "m1",
+      conversationId: "c1",
+      direction: "inbound",
+      textBody: "hello",
+      createdAt: "2026-07-19T10:00:00.000Z",
+    });
+    seedMessage(repos.store, {
+      id: "m2",
+      conversationId: "c1",
+      direction: "outbound",
+      textBody: "hi",
+      createdAt: "2026-07-19T10:01:00.000Z",
+    });
+    const res = await api(baseUrl, "GET", "/conversations/c1/messages", {
+      token: tokens.staff,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.data.messages.length, 2);
+    assert.equal(res.body.data.messages[0].id, "m2");
+  });
+});
+
 await test("integration: messages/send with sendPort + idempotent replay", async () => {
   let sends = 0;
   await withInboxServer(

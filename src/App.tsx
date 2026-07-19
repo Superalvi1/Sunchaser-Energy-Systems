@@ -63,6 +63,11 @@ function needsCrmAppState(role: string) {
   return role !== "Customer" && !isTechnicalStaffRole(role);
 }
 
+function isAdminInboxPath(): boolean {
+  if (typeof window === "undefined") return false;
+  return /^\/admin\/inbox\/?$/.test(window.location.pathname);
+}
+
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
   const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">("landing");
@@ -212,6 +217,10 @@ export default function App() {
   // Set default tab based on logged-in role
   useEffect(() => {
     if (currentUser) {
+      if (isAdminInboxPath()) {
+        setActiveTab("Admin Dashboard");
+        return;
+      }
       if (currentUser.role === "Customer") {
         setActiveTab("home");
       } else if (isTechnicalStaffRole(currentUser.role)) {
@@ -862,6 +871,7 @@ export default function App() {
             {activeTab === "Admin Dashboard" && (
               <AdminApp
                 staffUser={currentUser}
+                initialSegment={isAdminInboxPath() ? "inbox" : "overview"}
                 leads={appState.leads}
                 tickets={appState.tickets}
                 inventory={appState.inventory}
