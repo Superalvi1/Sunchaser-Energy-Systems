@@ -128,6 +128,16 @@ assert.match(
   /whatsapp_conversations_delta_idx[\s\S]*updated_at asc/i,
   "delta index must be ASC"
 );
+assert.match(
+  sql,
+  /create or replace function public\.whatsapp_inbox_apply_status_change/i,
+  "missing atomic status-change RPC"
+);
+assert.match(
+  sql,
+  /create or replace function public\.whatsapp_inbox_apply_assignment_change/i,
+  "missing atomic assignment-change RPC"
+);
 
 // Forward-only: no destructive PR1 drops / no rollback companion expectations.
 assert.equal(/drop table/i.test(sql), false, "must not drop tables");

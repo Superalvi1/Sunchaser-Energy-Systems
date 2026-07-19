@@ -4,7 +4,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  WhatsAppConversationAssignmentEvent,
   WhatsAppConversationInbox,
+  WhatsAppConversationStatusEvent,
   WhatsAppInboxConversationStatus,
 } from "./whatsappInboxDatabaseTypes.ts";
 import {
@@ -13,6 +15,7 @@ import {
   InboxSupabaseAccess,
   isBeforeKeyset,
   mapConversationInbox,
+  newInboxId,
   nowIso,
   type KeysetCursor,
   WhatsAppInboxMemoryStore,
@@ -31,6 +34,23 @@ export type ConversationListPage = {
   rows: WhatsAppConversationInbox[];
   nextCursor: KeysetCursor | null;
 };
+
+export type ConversationCasPatch = {
+  status?: WhatsAppInboxConversationStatus;
+  assignedUserId?: string | null;
+  assignedAt?: string | null;
+  assignedBy?: string | null;
+  hasFailedMessage?: boolean;
+  companyId?: string;
+};
+
+export type ConversationCasResult =
+  | { ok: true; row: WhatsAppConversationInbox }
+  | {
+      ok: false;
+      reason: "not_found" | "conflict";
+      current: WhatsAppConversationInbox | null;
+    };
 
 export interface WhatsAppInboxConversationRepository {
   isActive(): boolean;
@@ -51,6 +71,44 @@ export interface WhatsAppInboxConversationRepository {
     filters: ConversationListFilters,
     opts: { since: KeysetCursor; limit?: number }
   ): Promise<ConversationListPage>;
+  /**
+   * OCC compare-and-set: UPDATE ... WHERE lock_version = expected.
+   * On success increments lock_version by 1 and bumps updated_at.
+   */
+  compareAndSet(
+    conversationId: string,
+    expectedLockVersion: number,
+    patch: ConversationCasPatch
+  ): Promise<ConversationCasResult>;
+  /**
+   * Atomic: CAS status + insert status event in one transaction/unit.
+   * On audit failure the conversation mutation is rolled back.
+   */
+  applyStatusChangeAtomic(input: {
+    conversationId: string;
+    expectedLockVersion: number;
+    toStatus: WhatsAppInboxConversationStatus;
+    fromStatus: WhatsAppInboxConversationStatus | null;
+    changedByUserId: string | null;
+    metadata?: Record<string, unknown>;
+    companyId?: string;
+    eventId?: string;
+    createdAt?: string;
+  }): Promise<ConversationCasResult>;
+  /**
+   * Atomic: CAS assignment columns + insert assignment event in one unit.
+   * On audit failure the conversation mutation is rolled back.
+   */
+  applyAssignmentChangeAtomic(input: {
+    conversationId: string;
+    expectedLockVersion: number;
+    assignedUserId: string | null;
+    assignedAt: string | null;
+    assignedBy: string;
+    companyId?: string;
+    eventId?: string;
+    createdAt?: string;
+  }): Promise<ConversationCasResult>;
   /** Raw assignment column write (no OCC / permission checks). */
   updateAssignmentFields(
     conversationId: string,
@@ -184,6 +242,140 @@ export class InMemoryWhatsAppInboxConversationRepository
           ? { at: last.updatedAt, id: last.id }
           : null,
     };
+  }
+
+  async compareAndSet(
+    conversationId: string,
+    expectedLockVersion: number,
+    patch: ConversationCasPatch
+  ): Promise<ConversationCasResult> {
+    // Synchronous critical section — no await between read and write.
+    const companyId = this.access.companyId(patch.companyId);
+    const current = this.store.conversations.get(conversationId) ?? null;
+    if (!current || current.companyId !== companyId) {
+      return { ok: false, reason: "not_found", current: null };
+    }
+    if (current.lockVersion !== expectedLockVersion) {
+      return { ok: false, reason: "conflict", current };
+    }
+    const next: WhatsAppConversationInbox = {
+      ...current,
+      status: patch.status !== undefined ? patch.status : current.status,
+      assignedUserId:
+        patch.assignedUserId !== undefined
+          ? patch.assignedUserId
+          : current.assignedUserId,
+      assignedAt:
+        patch.assignedAt !== undefined ? patch.assignedAt : current.assignedAt,
+      assignedBy:
+        patch.assignedBy !== undefined ? patch.assignedBy : current.assignedBy,
+      hasFailedMessage:
+        patch.hasFailedMessage !== undefined
+          ? patch.hasFailedMessage
+          : current.hasFailedMessage,
+      lockVersion: current.lockVersion + 1,
+      updatedAt: nowIso(),
+    };
+    this.store.conversations.set(conversationId, next);
+    return { ok: true, row: next };
+  }
+
+  async applyStatusChangeAtomic(input: {
+    conversationId: string;
+    expectedLockVersion: number;
+    toStatus: WhatsAppInboxConversationStatus;
+    fromStatus: WhatsAppInboxConversationStatus | null;
+    changedByUserId: string | null;
+    metadata?: Record<string, unknown>;
+    companyId?: string;
+    eventId?: string;
+    createdAt?: string;
+  }): Promise<ConversationCasResult> {
+    // Entire CAS+audit unit is synchronous so concurrent callers cannot tear.
+    const companyId = this.access.companyId(input.companyId);
+    const previous = this.store.conversations.get(input.conversationId) ?? null;
+    if (!previous || previous.companyId !== companyId) {
+      return { ok: false, reason: "not_found", current: null };
+    }
+    if (previous.lockVersion !== input.expectedLockVersion) {
+      return { ok: false, reason: "conflict", current: previous };
+    }
+
+    const next: WhatsAppConversationInbox = {
+      ...previous,
+      status: input.toStatus,
+      lockVersion: previous.lockVersion + 1,
+      updatedAt: nowIso(),
+    };
+    this.store.conversations.set(input.conversationId, next);
+
+    const eventId = input.eventId ?? newInboxId("wcse");
+    try {
+      this.store.beforeStatusEventInsert?.();
+      const event: WhatsAppConversationStatusEvent = {
+        id: eventId,
+        companyId,
+        conversationId: input.conversationId,
+        fromStatus: input.fromStatus,
+        toStatus: input.toStatus,
+        changedByUserId: input.changedByUserId,
+        metadata: input.metadata ?? {},
+        createdAt: input.createdAt ?? nowIso(),
+      };
+      this.store.statusEvents.set(event.id, event);
+    } catch (err) {
+      this.store.conversations.set(input.conversationId, previous);
+      throw err;
+    }
+    return { ok: true, row: next };
+  }
+
+  async applyAssignmentChangeAtomic(input: {
+    conversationId: string;
+    expectedLockVersion: number;
+    assignedUserId: string | null;
+    assignedAt: string | null;
+    assignedBy: string;
+    companyId?: string;
+    eventId?: string;
+    createdAt?: string;
+  }): Promise<ConversationCasResult> {
+    const companyId = this.access.companyId(input.companyId);
+    const previous = this.store.conversations.get(input.conversationId) ?? null;
+    if (!previous || previous.companyId !== companyId) {
+      return { ok: false, reason: "not_found", current: null };
+    }
+    if (previous.lockVersion !== input.expectedLockVersion) {
+      return { ok: false, reason: "conflict", current: previous };
+    }
+
+    const next: WhatsAppConversationInbox = {
+      ...previous,
+      assignedUserId: input.assignedUserId,
+      assignedAt: input.assignedAt,
+      assignedBy: input.assignedBy,
+      lockVersion: previous.lockVersion + 1,
+      updatedAt: nowIso(),
+    };
+    this.store.conversations.set(input.conversationId, next);
+
+    const eventId = input.eventId ?? newInboxId("waae");
+    try {
+      this.store.beforeAssignmentEventInsert?.();
+      const event: WhatsAppConversationAssignmentEvent = {
+        id: eventId,
+        companyId,
+        conversationId: input.conversationId,
+        assignedUserId: input.assignedUserId,
+        assignedBy: input.assignedBy,
+        createdAt: input.createdAt ?? nowIso(),
+      };
+      this.store.assignmentEvents.set(event.id, event);
+    } catch (err) {
+      this.store.conversations.set(input.conversationId, previous);
+      throw err;
+    }
+    return { ok: true, row: next };
   }
 
   async updateAssignmentFields(
@@ -394,6 +586,120 @@ export class SupabaseWhatsAppInboxConversationRepository
         rows.length > limit && last
           ? { at: last.updatedAt, id: last.id }
           : null,
+    };
+  }
+
+  async compareAndSet(
+    conversationId: string,
+    expectedLockVersion: number,
+    patch: ConversationCasPatch
+  ): Promise<ConversationCasResult> {
+    const companyId = this.access.companyId(patch.companyId);
+    const updateRow: Record<string, unknown> = {
+      lock_version: expectedLockVersion + 1,
+      updated_at: nowIso(),
+    };
+    if (patch.status !== undefined) updateRow.status = patch.status;
+    if (patch.assignedUserId !== undefined) {
+      updateRow.assigned_user_id = patch.assignedUserId;
+    }
+    if (patch.assignedAt !== undefined) updateRow.assigned_at = patch.assignedAt;
+    if (patch.assignedBy !== undefined) updateRow.assigned_by = patch.assignedBy;
+    if (patch.hasFailedMessage !== undefined) {
+      updateRow.has_failed_message = patch.hasFailedMessage;
+    }
+
+    const { data, error } = await this.client()
+      .from("whatsapp_conversations")
+      .update(updateRow)
+      .eq("company_id", companyId)
+      .eq("id", conversationId)
+      .eq("lock_version", expectedLockVersion)
+      .select("*")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (data) {
+      return {
+        ok: true,
+        row: mapConversationInbox(data as Record<string, unknown>),
+      };
+    }
+    const current = await this.getById(conversationId, companyId);
+    if (!current) return { ok: false, reason: "not_found", current: null };
+    return { ok: false, reason: "conflict", current };
+  }
+
+  async applyStatusChangeAtomic(input: {
+    conversationId: string;
+    expectedLockVersion: number;
+    toStatus: WhatsAppInboxConversationStatus;
+    fromStatus: WhatsAppInboxConversationStatus | null;
+    changedByUserId: string | null;
+    metadata?: Record<string, unknown>;
+    companyId?: string;
+    eventId?: string;
+    createdAt?: string;
+  }): Promise<ConversationCasResult> {
+    const companyId = this.access.companyId(input.companyId);
+    const { data, error } = await this.client().rpc(
+      "whatsapp_inbox_apply_status_change",
+      {
+        p_company_id: companyId,
+        p_conversation_id: input.conversationId,
+        p_expected_lock_version: input.expectedLockVersion,
+        p_to_status: input.toStatus,
+        p_from_status: input.fromStatus,
+        p_changed_by_user_id: input.changedByUserId,
+        p_metadata: input.metadata ?? {},
+        p_event_id: input.eventId ?? newInboxId("wcse"),
+        p_created_at: input.createdAt ?? nowIso(),
+      }
+    );
+    if (error) throw new Error(error.message);
+    if (!data) {
+      const current = await this.getById(input.conversationId, companyId);
+      if (!current) return { ok: false, reason: "not_found", current: null };
+      return { ok: false, reason: "conflict", current };
+    }
+    return {
+      ok: true,
+      row: mapConversationInbox(data as Record<string, unknown>),
+    };
+  }
+
+  async applyAssignmentChangeAtomic(input: {
+    conversationId: string;
+    expectedLockVersion: number;
+    assignedUserId: string | null;
+    assignedAt: string | null;
+    assignedBy: string;
+    companyId?: string;
+    eventId?: string;
+    createdAt?: string;
+  }): Promise<ConversationCasResult> {
+    const companyId = this.access.companyId(input.companyId);
+    const { data, error } = await this.client().rpc(
+      "whatsapp_inbox_apply_assignment_change",
+      {
+        p_company_id: companyId,
+        p_conversation_id: input.conversationId,
+        p_expected_lock_version: input.expectedLockVersion,
+        p_assigned_user_id: input.assignedUserId,
+        p_assigned_at: input.assignedAt,
+        p_assigned_by: input.assignedBy,
+        p_event_id: input.eventId ?? newInboxId("waae"),
+        p_created_at: input.createdAt ?? nowIso(),
+      }
+    );
+    if (error) throw new Error(error.message);
+    if (!data) {
+      const current = await this.getById(input.conversationId, companyId);
+      if (!current) return { ok: false, reason: "not_found", current: null };
+      return { ok: false, reason: "conflict", current };
+    }
+    return {
+      ok: true,
+      row: mapConversationInbox(data as Record<string, unknown>),
     };
   }
 

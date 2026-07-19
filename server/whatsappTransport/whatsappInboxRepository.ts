@@ -26,6 +26,11 @@ import {
   type WhatsAppInboxIdempotencyRepository,
 } from "./whatsappInboxIdempotencyRepository.ts";
 import {
+  InMemoryWhatsAppInboxMessageRepository,
+  SupabaseWhatsAppInboxMessageRepository,
+  type WhatsAppInboxMessageRepository,
+} from "./whatsappInboxMessageRepository.ts";
+import {
   InMemoryWhatsAppInboxReadWatermarkRepository,
   SupabaseWhatsAppInboxReadWatermarkRepository,
   type WhatsAppInboxReadWatermarkRepository,
@@ -39,6 +44,7 @@ import {
 
 export type WhatsAppInboxRepositories = {
   conversations: WhatsAppInboxConversationRepository;
+  messages: WhatsAppInboxMessageRepository;
   readWatermarks: WhatsAppInboxReadWatermarkRepository;
   assignments: WhatsAppInboxAssignmentRepository;
   statuses: WhatsAppInboxStatusRepository;
@@ -52,6 +58,7 @@ export function createInMemoryWhatsAppInboxRepositories(
   return {
     store,
     conversations: new InMemoryWhatsAppInboxConversationRepository(store),
+    messages: new InMemoryWhatsAppInboxMessageRepository(store),
     readWatermarks: new InMemoryWhatsAppInboxReadWatermarkRepository(store),
     assignments: new InMemoryWhatsAppInboxAssignmentRepository(store),
     statuses: new InMemoryWhatsAppInboxStatusRepository(store),
@@ -65,6 +72,7 @@ export function createSupabaseWhatsAppInboxRepositories(
 ): WhatsAppInboxRepositories {
   return {
     conversations: new SupabaseWhatsAppInboxConversationRepository(clientFactory),
+    messages: new SupabaseWhatsAppInboxMessageRepository(clientFactory),
     readWatermarks: new SupabaseWhatsAppInboxReadWatermarkRepository(clientFactory),
     assignments: new SupabaseWhatsAppInboxAssignmentRepository(clientFactory),
     statuses: new SupabaseWhatsAppInboxStatusRepository(clientFactory),
@@ -92,12 +100,17 @@ export function createDefaultWhatsAppInboxRepositories(
 }
 
 export type { WhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
+export type { WhatsAppInboxMessageRepository } from "./whatsappInboxMessageRepository.ts";
 export type { WhatsAppInboxReadWatermarkRepository } from "./whatsappInboxReadWatermarkRepository.ts";
 export type { WhatsAppInboxAssignmentRepository } from "./whatsappInboxAssignmentRepository.ts";
 export type { WhatsAppInboxStatusRepository } from "./whatsappInboxStatusRepository.ts";
 export type { WhatsAppInboxCrmLinkRepository } from "./whatsappInboxCrmLinkRepository.ts";
 export type { WhatsAppInboxIdempotencyRepository } from "./whatsappInboxIdempotencyRepository.ts";
-export type { ConversationListFilters, ConversationListPage } from "./whatsappInboxConversationRepository.ts";
+export type {
+  ConversationListFilters,
+  ConversationListPage,
+  ConversationCasResult,
+} from "./whatsappInboxConversationRepository.ts";
 export type { IdempotencyClaimResult } from "./whatsappInboxIdempotencyRepository.ts";
 export { WhatsAppInboxMemoryStore } from "./whatsappInboxRepoSupport.ts";
 export type { KeysetCursor, InboxMessageRef } from "./whatsappInboxRepoSupport.ts";

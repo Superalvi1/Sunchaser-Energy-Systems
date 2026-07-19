@@ -338,4 +338,140 @@ grant execute on function public.whatsapp_inbox_list_conversations_delta(
 comment on function public.whatsapp_inbox_list_conversations_delta is
   'PR2 inbox delta keyset page. Ordered by updated_at asc, id asc after exclusive since cursor. Backend/service_role only.';
 
+-- -----------------------------------------------------------------------------
+-- 12. Atomic status mutation + audit event (OCC + single transaction)
+-- Returns updated conversation row, or NULL on lock conflict / missing row.
+-- -----------------------------------------------------------------------------
+create or replace function public.whatsapp_inbox_apply_status_change(
+  p_company_id text,
+  p_conversation_id text,
+  p_expected_lock_version integer,
+  p_to_status text,
+  p_from_status text,
+  p_changed_by_user_id text,
+  p_metadata jsonb default '{}'::jsonb,
+  p_event_id text default null,
+  p_created_at timestamptz default timezone('utc'::text, now())
+)
+returns public.whatsapp_conversations
+language plpgsql
+as $$
+declare
+  updated public.whatsapp_conversations;
+begin
+  update public.whatsapp_conversations as c
+  set
+    status = p_to_status,
+    lock_version = c.lock_version + 1,
+    updated_at = timezone('utc'::text, now())
+  where c.company_id = p_company_id
+    and c.id = p_conversation_id
+    and c.lock_version = p_expected_lock_version
+  returning c.* into updated;
+
+  if updated is null then
+    return null;
+  end if;
+
+  insert into public.whatsapp_conversation_status_events (
+    id,
+    company_id,
+    conversation_id,
+    from_status,
+    to_status,
+    changed_by_user_id,
+    metadata,
+    created_at
+  ) values (
+    coalesce(p_event_id, 'wcse_' || gen_random_uuid()::text),
+    p_company_id,
+    p_conversation_id,
+    p_from_status,
+    p_to_status,
+    p_changed_by_user_id,
+    coalesce(p_metadata, '{}'::jsonb),
+    coalesce(p_created_at, timezone('utc'::text, now()))
+  );
+
+  return updated;
+end;
+$$;
+
+revoke all on function public.whatsapp_inbox_apply_status_change(
+  text, text, integer, text, text, text, jsonb, text, timestamptz
+) from public, anon, authenticated;
+
+grant execute on function public.whatsapp_inbox_apply_status_change(
+  text, text, integer, text, text, text, jsonb, text, timestamptz
+) to service_role;
+
+comment on function public.whatsapp_inbox_apply_status_change is
+  'PR2 atomic status CAS + status-event insert. NULL means not_found/conflict. Backend/service_role only.';
+
+-- -----------------------------------------------------------------------------
+-- 13. Atomic assignment mutation + audit event (OCC + single transaction)
+-- -----------------------------------------------------------------------------
+create or replace function public.whatsapp_inbox_apply_assignment_change(
+  p_company_id text,
+  p_conversation_id text,
+  p_expected_lock_version integer,
+  p_assigned_user_id text,
+  p_assigned_at timestamptz,
+  p_assigned_by text,
+  p_event_id text default null,
+  p_created_at timestamptz default timezone('utc'::text, now())
+)
+returns public.whatsapp_conversations
+language plpgsql
+as $$
+declare
+  updated public.whatsapp_conversations;
+begin
+  update public.whatsapp_conversations as c
+  set
+    assigned_user_id = p_assigned_user_id,
+    assigned_at = p_assigned_at,
+    assigned_by = p_assigned_by,
+    lock_version = c.lock_version + 1,
+    updated_at = timezone('utc'::text, now())
+  where c.company_id = p_company_id
+    and c.id = p_conversation_id
+    and c.lock_version = p_expected_lock_version
+  returning c.* into updated;
+
+  if updated is null then
+    return null;
+  end if;
+
+  insert into public.whatsapp_conversation_assignment_events (
+    id,
+    company_id,
+    conversation_id,
+    assigned_user_id,
+    assigned_by,
+    created_at
+  ) values (
+    coalesce(p_event_id, 'waae_' || gen_random_uuid()::text),
+    p_company_id,
+    p_conversation_id,
+    p_assigned_user_id,
+    p_assigned_by,
+    coalesce(p_created_at, timezone('utc'::text, now()))
+  );
+
+  return updated;
+end;
+$$;
+
+revoke all on function public.whatsapp_inbox_apply_assignment_change(
+  text, text, integer, text, timestamptz, text, text, timestamptz
+) from public, anon, authenticated;
+
+grant execute on function public.whatsapp_inbox_apply_assignment_change(
+  text, text, integer, text, timestamptz, text, text, timestamptz
+) to service_role;
+
+comment on function public.whatsapp_inbox_apply_assignment_change is
+  'PR2 atomic assignment CAS + assignment-event insert. NULL means not_found/conflict. Backend/service_role only.';
+
 notify pgrst, 'reload schema';

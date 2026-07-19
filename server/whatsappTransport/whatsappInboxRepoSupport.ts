@@ -150,17 +150,25 @@ export function mapIdempotencyKey(
 
 export type InboxMessageRef = {
   id: string;
+  companyId: string;
   conversationId: string;
   direction: string;
+  status: string;
+  textBody: string | null;
   createdAt: string;
+  occurredAt: string | null;
 };
 
 export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
   return {
     id: String(row.id),
+    companyId: String(row.company_id ?? "sunchaser"),
     conversationId: String(row.conversation_id),
     direction: String(row.direction),
+    status: String(row.status ?? ""),
+    textBody: (row.text_body as string) ?? null,
     createdAt: String(row.created_at),
+    occurredAt: (row.occurred_at as string) ?? null,
   };
 }
 
@@ -197,7 +205,23 @@ export class WhatsAppInboxMemoryStore {
   /** Minimal message rows for inbound watermark / unread queries. */
   messages = new Map<string, InboxMessageRef>();
 
+  /**
+   * Test hooks — throw to simulate audit-insert failure inside atomic mutations.
+   * Production code never sets these.
+   */
+  beforeStatusEventInsert: (() => void) | null = null;
+  beforeAssignmentEventInsert: (() => void) | null = null;
+
   watermarkKey(conversationId: string, userId: string): string {
     return `${conversationId}|${userId}`;
   }
+}
+
+/** Sentinel entity id used to claim create-lead exclusivity before CRM callback. */
+export const CREATE_LEAD_PENDING_ENTITY_ID = "__pending_create_lead__";
+
+export function isPendingCreateLeadLink(
+  link: WhatsAppConversationCrmLink | null | undefined
+): boolean {
+  return !!link && link.linkedEntityId === CREATE_LEAD_PENDING_ENTITY_ID;
 }
