@@ -98,6 +98,21 @@ for (const idx of requiredIndexes) {
 
 assert.match(sql, /coalesce\(last_message_at, created_at\)/i);
 assert.match(sql, /where has_failed_message = true/i);
+assert.match(
+  sql,
+  /create or replace function public\.whatsapp_inbox_list_conversations_by_activity/i,
+  "missing activity list RPC"
+);
+assert.match(
+  sql,
+  /order by\s+coalesce\(c\.last_message_at, c\.created_at\) desc,\s*c\.id desc/i,
+  "RPC must order by coalesce activity keyset in SQL"
+);
+assert.match(
+  sql,
+  /revoke all on function public\.whatsapp_inbox_list_conversations_by_activity/i,
+  "RPC must revoke anon/authenticated"
+);
 
 // Forward-only: no destructive PR1 drops / no rollback companion expectations.
 assert.equal(/drop table/i.test(sql), false, "must not drop tables");

@@ -207,4 +207,70 @@ comment on column public.whatsapp_conversations.has_failed_message is
 comment on column public.whatsapp_conversations.lock_version is
   'Optimistic concurrency token for assignment/status mutations.';
 
+-- -----------------------------------------------------------------------------
+-- 10. Activity list RPC (Revision 3 keyset — SQL-only ordering/pagination)
+-- Uses whatsapp_conversations_activity_idx:
+--   (company_id, coalesce(last_message_at, created_at) desc, id)
+-- PostgREST cannot ORDER BY coalesce(); the backend calls this RPC instead.
+-- -----------------------------------------------------------------------------
+create or replace function public.whatsapp_inbox_list_conversations_by_activity(
+  p_company_id text,
+  p_limit integer,
+  p_cursor_at timestamptz default null,
+  p_cursor_id text default null,
+  p_status text default null,
+  p_assigned_to text default null,
+  p_channel_id text default null,
+  p_has_failed_message boolean default null
+)
+returns setof public.whatsapp_conversations
+language sql
+stable
+as $$
+  select c.*
+  from public.whatsapp_conversations as c
+  where c.company_id = p_company_id
+    and (p_status is null or c.status = p_status)
+    and (p_channel_id is null or c.channel_id = p_channel_id)
+    and (
+      p_has_failed_message is null
+      or c.has_failed_message = p_has_failed_message
+    )
+    and (
+      p_assigned_to is null
+      or (
+        p_assigned_to = 'unassigned'
+        and c.assigned_user_id is null
+      )
+      or (
+        p_assigned_to is distinct from 'unassigned'
+        and c.assigned_user_id = p_assigned_to
+      )
+    )
+    and (
+      p_cursor_at is null
+      or coalesce(c.last_message_at, c.created_at) < p_cursor_at
+      or (
+        coalesce(c.last_message_at, c.created_at) = p_cursor_at
+        and p_cursor_id is not null
+        and c.id < p_cursor_id
+      )
+    )
+  order by
+    coalesce(c.last_message_at, c.created_at) desc,
+    c.id desc
+  limit greatest(1, least(coalesce(p_limit, 50), 101));
+$$;
+
+revoke all on function public.whatsapp_inbox_list_conversations_by_activity(
+  text, integer, timestamptz, text, text, text, text, boolean
+) from public, anon, authenticated;
+
+grant execute on function public.whatsapp_inbox_list_conversations_by_activity(
+  text, integer, timestamptz, text, text, text, text, boolean
+) to service_role;
+
+comment on function public.whatsapp_inbox_list_conversations_by_activity is
+  'PR2 inbox activity keyset page. Ordered by coalesce(last_message_at, created_at) desc, id desc. Backend/service_role only.';
+
 notify pgrst, 'reload schema';
