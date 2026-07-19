@@ -1,11 +1,19 @@
 import express from "express";
 import path from "path";
-import { fileURLToPath } from "url";
 import fs from "fs";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 import { randomUUID } from "crypto";
+
+/**
+ * Project root for uploads / static paths.
+ * Avoid import.meta.url: esbuild --format=cjs empties import.meta, and
+ * fileURLToPath(undefined) throws ERR_INVALID_ARG_TYPE on Render
+ * (`PLAYWRIGHT_BROWSERS_PATH=0 node dist/server.cjs`).
+ * npm start / Render always use cwd = service root (package.json directory).
+ */
+const __dirname = process.cwd();
+const __filename = path.resolve(
+  process.argv[1] || path.join(__dirname, "dist", "server.cjs")
+);
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
