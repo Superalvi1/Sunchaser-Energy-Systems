@@ -257,6 +257,7 @@ await test("integration: valid request succeeds with leadId", async () => {
         "x-public-lead-key": TEST_KEY,
       });
       assert.equal(res.status, 201);
+      assert.equal(res.body.ok, true);
       assert.equal(res.body.success, true);
       assert.equal(res.body.message, "Lead created");
       assert.ok(String(res.body.leadId).startsWith("lead-"));
@@ -264,7 +265,21 @@ await test("integration: valid request succeeds with leadId", async () => {
   );
 });
 
-await test("integration: invalid auth returns 401", async () => {
+await test("integration: missing API key returns 401", async () => {
+  await withServer(
+    async (lead) => ({ leadId: lead.id }),
+    new MapIdempotencyStore(),
+    new Map(),
+    async (base) => {
+      const res = await postJson(base, "/api/public/leads", validBody, {});
+      assert.equal(res.status, 401);
+      assert.equal(res.body.ok, false);
+      assert.equal(res.body.error, "Unauthorized");
+    }
+  );
+});
+
+await test("integration: incorrect API key returns 401", async () => {
   await withServer(
     async (lead) => ({ leadId: lead.id }),
     new MapIdempotencyStore(),
@@ -274,7 +289,40 @@ await test("integration: invalid auth returns 401", async () => {
         "x-public-lead-key": "wrong",
       });
       assert.equal(res.status, 401);
+      assert.equal(res.body.ok, false);
       assert.equal(res.body.error, "Unauthorized");
+    }
+  );
+});
+
+await test("integration: Bearer auth succeeds with leadId", async () => {
+  await withServer(
+    async (lead) => ({ leadId: lead.id }),
+    new MapIdempotencyStore(),
+    new Map(),
+    async (base) => {
+      const res = await postJson(base, "/api/public/leads", validBody, {
+        authorization: `Bearer ${TEST_KEY}`,
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.ok, true);
+      assert.ok(String(res.body.leadId).startsWith("lead-"));
+    }
+  );
+});
+
+await test("integration: GET returns 405", async () => {
+  await withServer(
+    async (lead) => ({ leadId: lead.id }),
+    new MapIdempotencyStore(),
+    new Map(),
+    async (base) => {
+      const res = await fetch(`${base}/api/public/leads`, { method: "GET" });
+      assert.equal(res.status, 405);
+      assert.equal(res.headers.get("allow"), "POST");
+      const body = await res.json();
+      assert.equal(body.ok, false);
+      assert.match(String(body.error), /Method not allowed/i);
     }
   );
 });
@@ -292,6 +340,7 @@ await test("integration: invalid payload returns 400", async () => {
         { "x-public-lead-key": TEST_KEY }
       );
       assert.equal(res.status, 400);
+      assert.equal(res.body.ok, false);
       assert.match(String(res.body.error), /email/i);
     }
   );

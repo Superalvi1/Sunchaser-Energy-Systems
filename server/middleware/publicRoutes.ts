@@ -17,8 +17,10 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   { method: "GET", path: "/api/auth/verify-email" },
   { method: "POST", path: "/api/auth/forgot-password" },
   { method: "POST", path: "/api/auth/reset-password" },
-  // Marketing / public lead ingestion (API-key gated inside the handler — not CRM JWT).
+  // Marketing / public lead ingestion (API-key gated inside the POST handler — not CRM JWT).
+  // GET is public so the router can return 405 Method Not Allowed (Allow: POST).
   { method: "POST", path: "/api/public/leads" },
+  { method: "GET", path: "/api/public/leads" },
 ];
 
 export function normalizeHttpMethod(method: string): HttpMethod {

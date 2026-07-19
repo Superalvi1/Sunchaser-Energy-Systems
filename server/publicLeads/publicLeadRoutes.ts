@@ -35,23 +35,32 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
   const rateLimit = deps.rateLimit ?? createPublicLeadRateLimit();
   const env = deps.env ?? process.env;
 
+  router.get("/leads", (_req, res) => {
+    return res
+      .status(405)
+      .set("Allow", "POST")
+      .json({ ok: false, error: "Method not allowed." });
+  });
+
   router.post("/leads", rateLimit, async (req, res) => {
     try {
       const auth = authenticatePublicLeadRequest(req, env);
       if (auth.ok === false) {
-        return res.status(auth.status).json({ error: auth.error });
+        return res.status(auth.status).json({ ok: false, error: auth.error });
       }
 
       const contentLength = Number(req.headers["content-length"] || 0);
       if (Number.isFinite(contentLength) && contentLength > PUBLIC_LEAD_MAX_BODY_BYTES) {
-        return res.status(400).json({ error: "Payload too large." });
+        return res.status(400).json({ ok: false, error: "Payload too large." });
       }
 
       const validation = validatePublicLeadPayload(req.body, {
         rawBodyBytes: estimateJsonBodyBytes(req.body),
       });
       if (validation.ok === false) {
-        return res.status(validation.status).json({ error: validation.error });
+        return res
+          .status(validation.status)
+          .json({ ok: false, error: validation.error });
       }
 
       const idempotencyKey = readIdempotencyKeyFromHeaders(
@@ -64,6 +73,7 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
             `[public-leads] idempotent replay key=${idempotencyKey} leadId=${existing.leadId}`
           );
           return res.status(200).json({
+            ok: true,
             success: true,
             leadId: existing.leadId,
             message: "Lead created",
@@ -82,6 +92,7 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
 
       console.info(`[public-leads] created leadId=${leadId}`);
       return res.status(201).json({
+        ok: true,
         success: true,
         leadId,
         message: "Lead created",
@@ -89,7 +100,7 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to create lead.";
       console.error("[public-leads] persistence failure:", message);
-      return res.status(500).json({ error: "Failed to create lead." });
+      return res.status(500).json({ ok: false, error: "Failed to create lead." });
     }
   });
 

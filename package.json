@@ -11,7 +11,7 @@
     "start": "PLAYWRIGHT_BROWSERS_PATH=0 node dist/server.cjs",
     "clean": "rm -rf dist dist-server server.js",
     "lint": "tsc --noEmit",
-    "test": "npm run test:public-lead-gateway",
+    "test": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts && node scripts/smoke-server-start.mjs",
     "test:public-lead-gateway": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts",
     "test:solar-quote-planner": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/quotation/SolarQuotePlanner.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarQuotePlannerClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarDesignStudio.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarPipelineClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",
     "test:solar-proposal-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/proposal/SolarProposalEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/proposal/SolarProposalMatrix.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",
@@ -32,7 +32,6 @@
     "test:quotation-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/quotationModels.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/productCatalog.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/priceRules.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/marginRules.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/cablePricingRules.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/structurePricingRules.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/siteComplexityScore.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/boqGenerator.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/discountApprovalRules.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/proposalTemplate.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/quotation/quotationEngine.test.ts",
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android",
-    "test": "npm run test:startup-smoke",
     "test:startup-smoke": "node scripts/smoke-server-start.mjs"
   },
   "dependencies": {
