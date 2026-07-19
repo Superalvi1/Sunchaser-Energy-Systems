@@ -1,0 +1,401 @@
+/**
+ * Inbox API controllers (PR2 Step 4A).
+ * Thin adapters: validate DTO → call service → map envelope. No business logic.
+ */
+import type { Request, Response } from "express";
+import type { RequestActor } from "../middleware/actor.ts";
+import {
+  encodeInboxCursor,
+  parseAssignBody,
+  parseConversationIdBody,
+  parseConversationIdParam,
+  parseCreateLeadBody,
+  parseCrmLinkBody,
+  parseDeltaQuery,
+  parseListConversationsQuery,
+  parseReadWatermarkBody,
+  parseSendMessageBody,
+  parseStatusBody,
+  parseUnassignBody,
+} from "./whatsappInboxDtos.ts";
+import { inboxFail, inboxOk, sendInboxError } from "./whatsappInboxHttp.ts";
+import type { WhatsAppInboxServices } from "./whatsappInboxServices.ts";
+
+export type InboxSendPort = (input: {
+  conversationId: string;
+  text: string;
+  actor: RequestActor;
+}) => Promise<
+  | { ok: true; messageId: string }
+  | { ok: false; error: string; permanent?: boolean }
+>;
+
+function actorOf(req: Request): RequestActor {
+  return req.actor as RequestActor;
+}
+
+export type InboxControllerDeps = {
+  /**
+   * Outbound transport. Required when sendEnabled is true.
+   * Checked before any idempotency claim.
+   */
+  sendPort?: InboxSendPort;
+  /**
+   * When false, POST /messages/send rejects with 503 before claiming.
+   * Defaults to true only when a sendPort is provided.
+   */
+  sendEnabled?: boolean;
+};
+
+export function createInboxControllers(
+  services: WhatsAppInboxServices,
+  deps: InboxControllerDeps = {}
+) {
+  const sendEnabled = deps.sendEnabled ?? deps.sendPort != null;
+
+  return {
+    async listConversations(req: Request, res: Response) {
+      try {
+        const parsed = parseListConversationsQuery(
+          req.query as Record<string, unknown>
+        );
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const page = await services.conversations.listByActivity(
+          actorOf(req),
+          {
+            status: parsed.value.status,
+            assignedTo: parsed.value.assignedTo,
+            channelId: parsed.value.channelId,
+            hasFailedMessage: parsed.value.hasFailedMessage,
+          },
+          { cursor: parsed.value.cursor, limit: parsed.value.limit }
+        );
+        return inboxOk(res, { conversations: page.rows }, 200, {
+          nextCursor: page.nextCursor
+            ? encodeInboxCursor(page.nextCursor)
+            : null,
+        });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async getConversation(req: Request, res: Response) {
+      try {
+        const id = parseConversationIdParam(req.params.conversationId);
+        if (!id.ok) {
+          return inboxFail(res, 400, "validation_error", id.message, {
+            field: id.field,
+          });
+        }
+        const detail = await services.conversations.getDetail(
+          id.value,
+          actorOf(req)
+        );
+        return inboxOk(res, detail);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async listDelta(req: Request, res: Response) {
+      try {
+        const parsed = parseDeltaQuery(req.query as Record<string, unknown>);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const page = await services.conversations.listDelta(
+          actorOf(req),
+          {
+            status: parsed.value.status,
+            assignedTo: parsed.value.assignedTo,
+            channelId: parsed.value.channelId,
+            hasFailedMessage: parsed.value.hasFailedMessage,
+          },
+          { since: parsed.value.since, limit: parsed.value.limit }
+        );
+        return inboxOk(res, { conversations: page.rows }, 200, {
+          nextCursor: page.nextCursor
+            ? encodeInboxCursor(page.nextCursor)
+            : null,
+        });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async sendMessage(req: Request, res: Response) {
+      try {
+        const parsed = parseSendMessageBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+
+        // Feature-disabled / unconfigured: reject before any idempotency claim.
+        if (!sendEnabled || !deps.sendPort) {
+          return inboxFail(
+            res,
+            503,
+            "send_unavailable",
+            "Outbound send is not configured"
+          );
+        }
+
+        const actor = actorOf(req);
+        const begin = await services.messages.beginOutboundIdempotency({
+          conversationId: parsed.value.conversationId,
+          idempotencyKey: parsed.value.idempotencyKey,
+          actor,
+        });
+
+        if (begin.kind === "replay_completed") {
+          return inboxOk(res, {
+            state: begin.row.state,
+            messageId: begin.row.messageId,
+            replay: true,
+          });
+        }
+        if (begin.kind === "replay_failed") {
+          return inboxOk(res, {
+            state: begin.row.state,
+            error: begin.row.error,
+            replay: true,
+          });
+        }
+        if (begin.kind === "processing") {
+          return inboxFail(
+            res,
+            409,
+            "idempotency_processing",
+            "Request with this Idempotency-Key is still processing",
+            { state: begin.row.state }
+          );
+        }
+        if (begin.kind === "outcome_unknown") {
+          return inboxFail(
+            res,
+            409,
+            "idempotency_outcome_unknown",
+            "Previous outcome for this Idempotency-Key is unknown",
+            { state: begin.row.state }
+          );
+        }
+
+        // claimed — every successful claim must reach a terminal state.
+        const scope = {
+          conversationId: parsed.value.conversationId,
+          idempotencyKey: parsed.value.idempotencyKey,
+        };
+        let finalized = false;
+        const finalizeFailedKnown = async (error: string) => {
+          if (finalized) return;
+          await services.messages.failOutboundIdempotency({
+            ...scope,
+            error,
+          });
+          finalized = true;
+        };
+
+        try {
+          const sent = await deps.sendPort({
+            conversationId: parsed.value.conversationId,
+            text: parsed.value.text,
+            actor,
+          });
+          if (!sent.ok) {
+            await finalizeFailedKnown(sent.error);
+            return inboxFail(
+              res,
+              sent.permanent === false ? 502 : 400,
+              "send_failed",
+              sent.error
+            );
+          }
+
+          const completed = await services.messages.completeOutboundIdempotency({
+            ...scope,
+            messageId: sent.messageId,
+          });
+          finalized = true;
+          return inboxOk(
+            res,
+            {
+              state: completed.state,
+              messageId: completed.messageId,
+              replay: false,
+            },
+            201
+          );
+        } catch (err) {
+          try {
+            await finalizeFailedKnown(
+              err instanceof Error ? err.message : "send_pipeline_error"
+            );
+          } catch {
+            // Best-effort finalize; original error is reported below.
+          }
+          return sendInboxError(res, err);
+        }
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async markRead(req: Request, res: Response) {
+      try {
+        const parsed = parseReadWatermarkBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const result = await services.readState.resolveAndAdvance(
+          parsed.value.conversationId,
+          {
+            actor: actorOf(req),
+            lastSeenMessageId: parsed.value.lastSeenMessageId,
+            lastSeenMessageCreatedAt: parsed.value.lastSeenMessageCreatedAt,
+          }
+        );
+        return inboxOk(res, result);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async assign(req: Request, res: Response) {
+      try {
+        const parsed = parseAssignBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const row = await services.assignments.setAssignment(
+          parsed.value.conversationId,
+          {
+            assigneeUserId: parsed.value.assigneeUserId,
+            actor: actorOf(req),
+            expectedLockVersion: parsed.value.expectedLockVersion,
+          }
+        );
+        return inboxOk(res, { conversation: row });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async unassign(req: Request, res: Response) {
+      try {
+        const parsed = parseUnassignBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const row = await services.assignments.setAssignment(
+          parsed.value.conversationId,
+          {
+            assigneeUserId: null,
+            actor: actorOf(req),
+            expectedLockVersion: parsed.value.expectedLockVersion,
+          }
+        );
+        return inboxOk(res, { conversation: row });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async updateStatus(req: Request, res: Response) {
+      try {
+        const parsed = parseStatusBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const row = await services.statuses.userTransition(
+          parsed.value.conversationId,
+          {
+            toStatus: parsed.value.status,
+            actor: actorOf(req),
+            expectedLockVersion: parsed.value.expectedLockVersion,
+          }
+        );
+        return inboxOk(res, { conversation: row });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async linkCrm(req: Request, res: Response) {
+      try {
+        const parsed = parseCrmLinkBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const link = await services.crmLinks.link(parsed.value.conversationId, {
+          actor: actorOf(req),
+          linkedEntityType: parsed.value.linkedEntityType,
+          linkedEntityId: parsed.value.linkedEntityId,
+          replaceExisting: parsed.value.replaceExisting,
+        });
+        return inboxOk(res, { link });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async createLead(req: Request, res: Response) {
+      try {
+        const parsed = parseCreateLeadBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const result = await services.crmLinks.createLeadFromConversation(
+          parsed.value.conversationId,
+          {
+            actor: actorOf(req),
+            forceCreate: parsed.value.forceCreate,
+          }
+        );
+        return inboxOk(res, result, result.kind === "created" ? 201 : 200);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async unlinkCrm(req: Request, res: Response) {
+      try {
+        const parsed = parseConversationIdBody(req.body);
+        if (!parsed.ok) {
+          return inboxFail(res, 400, "validation_error", parsed.message, {
+            field: parsed.field,
+          });
+        }
+        const deleted = await services.crmLinks.unlink(
+          parsed.value.conversationId,
+          actorOf(req)
+        );
+        return inboxOk(res, { deleted });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+  };
+}
+
+export type InboxControllers = ReturnType<typeof createInboxControllers>;

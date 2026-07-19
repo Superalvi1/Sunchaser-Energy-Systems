@@ -50,6 +50,16 @@ export {
   type WhatsAppOutboundRouterDeps,
 } from "./whatsappOutboundRoutes.ts";
 export {
+  createWhatsAppInboxRouter,
+  requireInboxRbac,
+  type WhatsAppInboxRouterDeps,
+} from "./whatsappInboxRoutes.ts";
+export {
+  createInboxOutboundSendPort,
+  isInboxSendTransportReady,
+  type InboxSendTransportDeps,
+} from "./whatsappInboxSendTransport.ts";
+export {
   sendOutboundPlainText,
   validateOutboundText,
   type OutboundSendResult,

@@ -329,6 +329,7 @@ import {
   type PersistedPublicLead,
 } from "./server/publicLeads/index.ts";
 import {
+  createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
   createWhatsAppWebhookRouter,
   installWhatsAppRawBodyMiddleware,
@@ -643,6 +644,7 @@ app.use(
 
 app.use("/api/integrations/whatsapp", createWhatsAppWebhookRouter());
 app.use("/api/conversations", createWhatsAppOutboundRouter());
+app.use("/api/inbox", createWhatsAppInboxRouter());
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
