@@ -50,6 +50,7 @@ import CRMApp from "./components/CRMApp";
 import InstallationTeamApp from "./components/InstallationTeamApp";
 import TechnicalStaffApp from "./components/TechnicalStaffApp";
 import WelcomeWizard from "./components/WelcomeWizard";
+import SolarConsultantWizard from "./components/SolarConsultantWizard";
 import AIAssistant from "./components/AIAssistant";
 import AICommandCenter from "./components/AICommandCenter";
 import GlobalSearch from "./components/GlobalSearch";
@@ -62,8 +63,14 @@ function needsCrmAppState(role: string) {
   return role !== "Customer" && !isTechnicalStaffRole(role);
 }
 
+function isAdminInboxPath(): boolean {
+  if (typeof window === "undefined") return false;
+  return /^\/admin\/inbox\/?$/.test(window.location.pathname);
+}
+
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
+  const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">("landing");
   const [loading, setLoading] = useState(false);
   const toast = useToast();
   const [sessionSyncError, setSessionSyncError] = useState<string | null>(null);
@@ -210,6 +217,10 @@ export default function App() {
   // Set default tab based on logged-in role
   useEffect(() => {
     if (currentUser) {
+      if (isAdminInboxPath()) {
+        setActiveTab("Admin Dashboard");
+        return;
+      }
       if (currentUser.role === "Customer") {
         setActiveTab("home");
       } else if (isTechnicalStaffRole(currentUser.role)) {
@@ -610,9 +621,26 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              /* Non authenticated status badge */
-              <div className="text-[11px] bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/60 font-mono text-amber-400 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span> Guest Mode
+              /* Non authenticated status badge & toggler */
+              <div className="flex items-center gap-3">
+                {guestView !== "login" ? (
+                  <button
+                    onClick={() => setGuestView("login")}
+                    className="text-[10px] font-bold text-amber-400 bg-slate-900 border border-slate-800 px-3.5 py-2 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    Client/Staff Sign In
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setGuestView("landing")}
+                    className="text-[10px] font-bold text-slate-350 bg-slate-900 border border-slate-800 px-3.5 py-2 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    Back to Homepage
+                  </button>
+                )}
+                <div className="text-[11px] bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/60 font-mono text-amber-400 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span> Guest Mode
+                </div>
               </div>
             )}
           </div>
@@ -653,7 +681,79 @@ export default function App() {
             <span className="text-sm font-semibold text-slate-400 font-mono">Loading your workspace…</span>
           </div>
         ) : !currentUser ? (
-          <AuthHub onLoginSuccess={handleAuthLoginSuccess} initialUsername={cachedUsername} />
+          guestView === "login" ? (
+            <div className="max-w-md mx-auto space-y-4">
+              <button
+                onClick={() => setGuestView("landing")}
+                className="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-semibold cursor-pointer border border-slate-800 bg-slate-900/65 py-2 px-3.5 rounded-xl self-start transition"
+              >
+                <ChevronLeft className="h-4 w-4" /> Back to Homepage
+              </button>
+              <AuthHub onLoginSuccess={handleAuthLoginSuccess} initialUsername={cachedUsername} />
+            </div>
+          ) : guestView === "wizard" ? (
+            <div className="max-w-xl mx-auto py-4">
+              <SolarConsultantWizard onBackToLanding={() => setGuestView("landing")} />
+            </div>
+          ) : (
+            <div className="space-y-12 py-6 max-w-4xl mx-auto fade-in-entry">
+              {/* Hero Section */}
+              <div className="text-center space-y-4">
+                <div className="inline-flex items-center gap-1.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold">
+                  ⚡ INTRODUCING SUNCHASER 2026 SYSTEMS
+                </div>
+                <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight text-white leading-tight">
+                  Intelligent Clean Energy <br className="hidden sm:inline" />
+                  <span className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">For Your Home & Business</span>
+                </h2>
+                <p className="text-slate-400 text-sm md:text-base max-w-2xl mx-auto leading-relaxed">
+                  Premium monocrystalline solar grids, intelligent Enphase IQ8 microinverters, and high-capacity stackable Sunchaser Core battery storage. Calculate your exact sizing configuration and savings in real time.
+                </p>
+                
+                <div className="pt-4 flex justify-center">
+                  <button
+                    onClick={() => setGuestView("wizard")}
+                    className="py-4 px-8 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-base transition flex items-center gap-2 cursor-pointer shadow-lg shadow-amber-500/20 active:scale-95"
+                  >
+                    Start Solar Consultant Wizard <ChevronRight className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Key Visual Highlights */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
+                  <div className="h-10 w-10 bg-amber-500/10 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/20">
+                    <Sun className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white">Ultra Efficiency Solar</h3>
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    Sunchaser premium modules deliver up to 22.4% module efficiency using premium 400W cell technology, optimizing energy collection even in low-light environments.
+                  </p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
+                  <div className="h-10 w-10 bg-amber-500/10 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/20">
+                    <Battery className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white">Sunchaser Core Backup</h3>
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    High-performance stackable lithium battery units of 13.5kWh. Designed to kick in instantly during load shedding outages, keeping your critical load running.
+                  </p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
+                  <div className="h-10 w-10 bg-amber-500/10 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/20">
+                    <Zap className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white">Grid Net Balancing</h3>
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    Fully integrated smart hybrid inverters and net-metering telemetry export excess generation back to the utility, converting daylight into credit assets.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )
         ) : currentUser && sessionSyncError && needsCrmAppState(currentUser.role) && !appState ? (
           connectionRetryPanel
         ) : appState ? (
@@ -771,6 +871,7 @@ export default function App() {
             {activeTab === "Admin Dashboard" && (
               <AdminApp
                 staffUser={currentUser}
+                initialSegment={isAdminInboxPath() ? "inbox" : "overview"}
                 leads={appState.leads}
                 tickets={appState.tickets}
                 inventory={appState.inventory}

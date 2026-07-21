@@ -3140,3 +3140,36 @@ export function setCurrencySymbol(symbol: string) {
 export function formatPrice(amount: number): string {
   return `${currencySymbol}${amount.toLocaleString()}`;
 }
+
+export async function submitPublicLead(payload: {
+  name: string;
+  email: string;
+  phone: string;
+  address?: string;
+  city?: string;
+  location?: string;
+  monthlyBill?: number;
+  monthlyUnits?: number;
+  notes?: string;
+  message?: string;
+  leadSource?: string;
+}) {
+  const apiKey = String((import.meta as any).env?.VITE_PUBLIC_LEAD_API_KEY ?? "").trim();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    headers["x-public-lead-key"] = apiKey;
+  }
+  const res = await fetch(`${API_BASE_URL}/api/public/leads`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `HTTP ${res.status} submission failed.`);
+  }
+  return res.json() as Promise<{ success: boolean; leadId: string; message: string }>;
+}
+

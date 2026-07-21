@@ -17,6 +17,7 @@ import { isSuperAdmin } from "../lib/roles";
 import { Lead, Ticket, InventoryItem, DashboardStats, Product, User, ActivityLog } from "../types";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
 import SupportDeskStaff from "./SupportDeskStaff";
+import InboxPage from "../inbox/components/InboxPage";
 import ServiceDeskStaff from "./ServiceDeskStaff";
 import CustomerSavingsStaff from "./CustomerSavingsStaff";
 import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
@@ -86,6 +87,8 @@ interface AdminAppProps {
   staffUser: User;
   onQuickAction?: (action: AdminQuickAction) => void;
   activityLogs?: ActivityLog[];
+  /** Deep-link entry (e.g. /admin/inbox → "inbox"). */
+  initialSegment?: AdminSegmentId;
 }
 
 export default function AdminApp({
@@ -117,9 +120,10 @@ export default function AdminApp({
   staffUser,
   onQuickAction,
   activityLogs = [],
+  initialSegment = "overview",
 }: AdminAppProps) {
   const toast = useToast();
-  const [activeSegment, setActiveSegment] = useState<AdminSegmentId>("overview");
+  const [activeSegment, setActiveSegment] = useState<AdminSegmentId>(initialSegment);
   const [invoiceEditId, setInvoiceEditId] = useState<string | null>(null);
   const [partyLedgerKey, setPartyLedgerKey] = useState<string | null>(null);
 
@@ -127,6 +131,13 @@ export default function AdminApp({
     setActiveSegment(id);
     if (options?.settingsSubTab) setSelectedSubTab("settings");
     else if (id === "pdf-templates") setSelectedSubTab("pages");
+    if (typeof window !== "undefined") {
+      if (id === "inbox") {
+        window.history.replaceState(null, "", "/admin/inbox");
+      } else if (window.location.pathname.startsWith("/admin/inbox")) {
+        window.history.replaceState(null, "", "/");
+      }
+    }
   };
 
   useEffect(() => {
@@ -1599,6 +1610,7 @@ export default function AdminApp({
         {activeSegment === 'support-desk' && (
           <SupportDeskStaff staffUser={staffUser} leads={leads} />
         )}
+        {activeSegment === "inbox" && <InboxPage staffUser={staffUser} />}
         {activeSegment === 'service-desk' && (
           <ServiceDeskStaff staffUser={staffUser} leads={leads} />
         )}

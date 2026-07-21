@@ -329,6 +329,13 @@ import {
   type PersistedPublicLead,
 } from "./server/publicLeads/index.ts";
 import {
+  createWhatsAppInboxRouter,
+  createWhatsAppOutboundRouter,
+  createWhatsAppWebhookRouter,
+  installWhatsAppRawBodyMiddleware,
+  whatsappRawBodyErrorHandler,
+} from "./server/whatsappTransport/index.ts";
+import {
   OwnershipError,
   OwnershipResolver,
   portalIdentityFromActor,
@@ -468,14 +475,19 @@ async function syncQuotationVaultForLead(
 const app = express();
 const PORT = 3000;
 
+// Preserve exact Meta webhook POST bytes before global JSON parsing.
+installWhatsAppRawBodyMiddleware(app);
+
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
-app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err instanceof SyntaxError || err?.type === "entity.parse.failed") {
     return res.status(400).json({ error: "Malformed JSON." });
   }
   if (err?.type === "entity.too.large") {
-    return res.status(400).json({ error: "Payload too large." });
+    return whatsappRawBodyErrorHandler(err, req, res, () => {
+      res.status(400).json({ error: "Payload too large." });
+    });
   }
   return next(err);
 });
@@ -629,6 +641,10 @@ app.use(
     persistLead: persistPublicMarketingLead,
   })
 );
+
+app.use("/api/integrations/whatsapp", createWhatsAppWebhookRouter());
+app.use("/api/conversations", createWhatsAppOutboundRouter());
+app.use("/api/inbox", createWhatsAppInboxRouter());
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
