@@ -14,6 +14,11 @@ export type DtoOk<T> = { ok: true; value: T };
 export type DtoErr = { ok: false; message: string; field?: string };
 export type DtoResult<T> = DtoOk<T> | DtoErr;
 
+/** Discriminated-union type guard — enables safe early returns across DtoResult targets. */
+export function isDtoErr(result: DtoResult<unknown>): result is DtoErr {
+  return result.ok === false;
+}
+
 function asRecord(body: unknown): Record<string, unknown> | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   return body as Record<string, unknown>;
@@ -76,7 +81,7 @@ export function requireIsoTimestamp(
   field: string
 ): DtoResult<string> {
   const raw = requireNonEmptyString(value, field);
-  if (!raw.ok) return raw;
+  if (isDtoErr(raw)) return raw;
   const ms = Date.parse(raw.value);
   if (!Number.isFinite(ms)) {
     return {
@@ -123,7 +128,7 @@ export function decodeInboxCursor(raw: unknown): DtoResult<KeysetCursor | null> 
       return { ok: false, message: "cursor is malformed", field: "cursor" };
     }
     const at = requireIsoTimestamp(parsed.at, "cursor.at");
-    if (!at.ok) return at;
+    if (isDtoErr(at)) return at;
     return { ok: true, value: { at: at.value, id: parsed.id } };
   } catch {
     return { ok: false, message: "cursor is malformed", field: "cursor" };
@@ -179,9 +184,9 @@ export function parseListConversationsQuery(
   }
 
   const assignedTo = optionalNonEmptyString(query.assignedTo, "assignedTo");
-  if (!assignedTo.ok) return assignedTo;
+  if (isDtoErr(assignedTo)) return assignedTo;
   const channelId = optionalNonEmptyString(query.channelId, "channelId");
-  if (!channelId.ok) return channelId;
+  if (isDtoErr(channelId)) return channelId;
 
   const hasFailedRaw = parseBool(query.hasFailedMessage);
   if (
@@ -197,12 +202,12 @@ export function parseListConversationsQuery(
   }
 
   const cursor = decodeInboxCursor(query.cursor);
-  if (!cursor.ok) return cursor;
+  if (isDtoErr(cursor)) return cursor;
 
   let limit: number | undefined;
   if (query.limit != null && query.limit !== "") {
     const parsed = requireInt(query.limit, "limit", { min: 1, max: 100 });
-    if (!parsed.ok) return parsed;
+    if (isDtoErr(parsed)) return parsed;
     limit = parsed.value;
   }
 
@@ -238,12 +243,12 @@ export function parseDeltaQuery(
     cursor: query.cursor,
     limit: query.limit,
   });
-  if (!base.ok) return base;
+  if (isDtoErr(base)) return base;
 
   // Accept opaque `since` cursor OR explicit sinceAt/sinceId pair.
   if (query.since != null && query.since !== "") {
     const decoded = decodeInboxCursor(query.since);
-    if (!decoded.ok) return decoded;
+    if (isDtoErr(decoded)) return decoded;
     if (!decoded.value) {
       return { ok: false, message: "since cursor is required", field: "since" };
     }
@@ -251,7 +256,7 @@ export function parseDeltaQuery(
   }
 
   const sinceAt = requireIsoTimestamp(query.sinceAt, "sinceAt");
-  if (!sinceAt.ok) {
+  if (isDtoErr(sinceAt)) {
     if (query.sinceAt == null || query.sinceAt === "") {
       return {
         ok: false,
@@ -265,7 +270,7 @@ export function parseDeltaQuery(
     query.sinceId == null || query.sinceId === ""
       ? { ok: true as const, value: "" }
       : requireNonEmptyString(query.sinceId, "sinceId");
-  if (!sinceId.ok) return sinceId;
+  if (isDtoErr(sinceId)) return sinceId;
 
   return {
     ok: true,
@@ -295,14 +300,14 @@ export function parseSendMessageBody(body: unknown): DtoResult<SendMessageBody> 
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   const text = requireNonEmptyString(rec.text, "text");
-  if (!text.ok) return text;
+  if (isDtoErr(text)) return text;
   const idempotencyKey = requireNonEmptyString(
     rec.idempotencyKey,
     "idempotencyKey"
   );
-  if (!idempotencyKey.ok) return idempotencyKey;
+  if (isDtoErr(idempotencyKey)) return idempotencyKey;
   return {
     ok: true,
     value: {
@@ -334,17 +339,17 @@ export function parseReadWatermarkBody(
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   const lastSeenMessageId = requireNonEmptyString(
     rec.lastSeenMessageId,
     "lastSeenMessageId"
   );
-  if (!lastSeenMessageId.ok) return lastSeenMessageId;
+  if (isDtoErr(lastSeenMessageId)) return lastSeenMessageId;
   const lastSeenMessageCreatedAt = requireIsoTimestamp(
     rec.lastSeenMessageCreatedAt,
     "lastSeenMessageCreatedAt"
   );
-  if (!lastSeenMessageCreatedAt.ok) return lastSeenMessageCreatedAt;
+  if (isDtoErr(lastSeenMessageCreatedAt)) return lastSeenMessageCreatedAt;
   return {
     ok: true,
     value: {
@@ -374,18 +379,18 @@ export function parseAssignBody(body: unknown): DtoResult<AssignBody> {
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   const assigneeUserId = requireNonEmptyString(
     rec.assigneeUserId,
     "assigneeUserId"
   );
-  if (!assigneeUserId.ok) return assigneeUserId;
+  if (isDtoErr(assigneeUserId)) return assigneeUserId;
   const expectedLockVersion = requireInt(
     rec.expectedLockVersion,
     "expectedLockVersion",
     { min: 0 }
   );
-  if (!expectedLockVersion.ok) return expectedLockVersion;
+  if (isDtoErr(expectedLockVersion)) return expectedLockVersion;
   return {
     ok: true,
     value: {
@@ -413,13 +418,13 @@ export function parseUnassignBody(body: unknown): DtoResult<UnassignBody> {
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   const expectedLockVersion = requireInt(
     rec.expectedLockVersion,
     "expectedLockVersion",
     { min: 0 }
   );
-  if (!expectedLockVersion.ok) return expectedLockVersion;
+  if (isDtoErr(expectedLockVersion)) return expectedLockVersion;
   return {
     ok: true,
     value: {
@@ -448,7 +453,7 @@ export function parseStatusBody(body: unknown): DtoResult<StatusBody> {
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   if (
     typeof rec.status !== "string" ||
     !(WHATSAPP_INBOX_CONVERSATION_STATUSES as readonly string[]).includes(
@@ -466,7 +471,7 @@ export function parseStatusBody(body: unknown): DtoResult<StatusBody> {
     "expectedLockVersion",
     { min: 0 }
   );
-  if (!expectedLockVersion.ok) return expectedLockVersion;
+  if (isDtoErr(expectedLockVersion)) return expectedLockVersion;
   return {
     ok: true,
     value: {
@@ -498,7 +503,7 @@ export function parseCrmLinkBody(body: unknown): DtoResult<CrmLinkBody> {
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   if (
     typeof rec.linkedEntityType !== "string" ||
     !(WHATSAPP_CRM_LINK_ENTITY_TYPES as readonly string[]).includes(
@@ -515,7 +520,7 @@ export function parseCrmLinkBody(body: unknown): DtoResult<CrmLinkBody> {
     rec.linkedEntityId,
     "linkedEntityId"
   );
-  if (!linkedEntityId.ok) return linkedEntityId;
+  if (isDtoErr(linkedEntityId)) return linkedEntityId;
   const replace =
     rec.replaceExisting == null ? undefined : parseBool(rec.replaceExisting);
   if (rec.replaceExisting != null && replace === undefined) {
@@ -550,7 +555,7 @@ export function parseCreateLeadBody(body: unknown): DtoResult<CreateLeadBody> {
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   const force =
     rec.forceCreate == null ? undefined : parseBool(rec.forceCreate);
   if (rec.forceCreate != null && force === undefined) {
@@ -584,11 +589,11 @@ export function parseListMessagesQuery(
   const unknown = rejectUnknownKeys(query, ["before", "limit"]);
   if (unknown) return unknown;
   const before = decodeInboxCursor(query.before);
-  if (!before.ok) return before;
+  if (isDtoErr(before)) return before;
   let limit: number | undefined;
   if (query.limit != null && query.limit !== "") {
     const parsed = requireInt(query.limit, "limit", { min: 1, max: 100 });
-    if (!parsed.ok) return parsed;
+    if (isDtoErr(parsed)) return parsed;
     limit = parsed.value;
   }
   return { ok: true, value: { before: before.value, limit } };
@@ -605,7 +610,7 @@ export function parseConversationIdBody(
     rec.conversationId,
     "conversationId"
   );
-  if (!conversationId.ok) return conversationId;
+  if (isDtoErr(conversationId)) return conversationId;
   return { ok: true, value: { conversationId: conversationId.value } };
 }
 

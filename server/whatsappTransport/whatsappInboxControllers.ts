@@ -18,6 +18,7 @@ import {
   parseSendMessageBody,
   parseStatusBody,
   parseUnassignBody,
+  isDtoErr,
 } from "./whatsappInboxDtos.ts";
 import { inboxFail, inboxOk, sendInboxError } from "./whatsappInboxHttp.ts";
 import type { WhatsAppInboxServices } from "./whatsappInboxServices.ts";
@@ -33,6 +34,15 @@ export type InboxSendPort = (input: {
 
 function actorOf(req: Request): RequestActor {
   return req.actor as RequestActor;
+}
+
+function validationFail(
+  res: Response,
+  err: { message: string; field?: string }
+) {
+  return inboxFail(res, 400, "validation_error", err.message, {
+    field: err.field,
+  });
 }
 
 export type InboxControllerDeps = {
@@ -60,10 +70,8 @@ export function createInboxControllers(
         const parsed = parseListConversationsQuery(
           req.query as Record<string, unknown>
         );
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const page = await services.conversations.listByActivity(
           actorOf(req),
@@ -88,10 +96,8 @@ export function createInboxControllers(
     async getConversation(req: Request, res: Response) {
       try {
         const id = parseConversationIdParam(req.params.conversationId);
-        if (!id.ok) {
-          return inboxFail(res, 400, "validation_error", id.message, {
-            field: id.field,
-          });
+        if (isDtoErr(id)) {
+          return validationFail(res, id);
         }
         const detail = await services.conversations.getDetail(
           id.value,
@@ -106,18 +112,14 @@ export function createInboxControllers(
     async listMessages(req: Request, res: Response) {
       try {
         const id = parseConversationIdParam(req.params.conversationId);
-        if (!id.ok) {
-          return inboxFail(res, 400, "validation_error", id.message, {
-            field: id.field,
-          });
+        if (isDtoErr(id)) {
+          return validationFail(res, id);
         }
         const parsed = parseListMessagesQuery(
           req.query as Record<string, unknown>
         );
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const page = await services.messages.listByConversation(
           id.value,
@@ -137,10 +139,8 @@ export function createInboxControllers(
     async listDelta(req: Request, res: Response) {
       try {
         const parsed = parseDeltaQuery(req.query as Record<string, unknown>);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const page = await services.conversations.listDelta(
           actorOf(req),
@@ -165,10 +165,8 @@ export function createInboxControllers(
     async sendMessage(req: Request, res: Response) {
       try {
         const parsed = parseSendMessageBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
 
         // Feature-disabled / unconfigured: reject before any idempotency claim.
@@ -242,7 +240,7 @@ export function createInboxControllers(
             text: parsed.value.text,
             actor,
           });
-          if (!sent.ok) {
+          if (sent.ok === false) {
             await finalizeFailedKnown(sent.error);
             return inboxFail(
               res,
@@ -284,10 +282,8 @@ export function createInboxControllers(
     async markRead(req: Request, res: Response) {
       try {
         const parsed = parseReadWatermarkBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const result = await services.readState.resolveAndAdvance(
           parsed.value.conversationId,
@@ -306,10 +302,8 @@ export function createInboxControllers(
     async assign(req: Request, res: Response) {
       try {
         const parsed = parseAssignBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const row = await services.assignments.setAssignment(
           parsed.value.conversationId,
@@ -328,10 +322,8 @@ export function createInboxControllers(
     async unassign(req: Request, res: Response) {
       try {
         const parsed = parseUnassignBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const row = await services.assignments.setAssignment(
           parsed.value.conversationId,
@@ -350,10 +342,8 @@ export function createInboxControllers(
     async updateStatus(req: Request, res: Response) {
       try {
         const parsed = parseStatusBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const row = await services.statuses.userTransition(
           parsed.value.conversationId,
@@ -372,10 +362,8 @@ export function createInboxControllers(
     async linkCrm(req: Request, res: Response) {
       try {
         const parsed = parseCrmLinkBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const link = await services.crmLinks.link(parsed.value.conversationId, {
           actor: actorOf(req),
@@ -392,10 +380,8 @@ export function createInboxControllers(
     async createLead(req: Request, res: Response) {
       try {
         const parsed = parseCreateLeadBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const result = await services.crmLinks.createLeadFromConversation(
           parsed.value.conversationId,
@@ -413,10 +399,8 @@ export function createInboxControllers(
     async unlinkCrm(req: Request, res: Response) {
       try {
         const parsed = parseConversationIdBody(req.body);
-        if (!parsed.ok) {
-          return inboxFail(res, 400, "validation_error", parsed.message, {
-            field: parsed.field,
-          });
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
         const deleted = await services.crmLinks.unlink(
           parsed.value.conversationId,

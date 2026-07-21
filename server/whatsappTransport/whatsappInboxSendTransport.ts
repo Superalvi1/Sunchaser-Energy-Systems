@@ -10,7 +10,10 @@ import {
   type WhatsAppConfig,
 } from "./whatsappConfig.ts";
 import type { InboxSendPort } from "./whatsappInboxControllers.ts";
-import { sendOutboundPlainText } from "./whatsappOutboundService.ts";
+import {
+  sendOutboundPlainText,
+  type OutboundSendResult,
+} from "./whatsappOutboundService.ts";
 import {
   createDefaultWhatsAppRepository,
   type WhatsAppRepository,
@@ -22,6 +25,12 @@ export type InboxSendTransportDeps = {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 };
+
+function isOutboundSuccess(
+  result: OutboundSendResult
+): result is Extract<OutboundSendResult, { httpStatus: 201 }> {
+  return result.httpStatus === 201;
+}
 
 /**
  * Returns a send port when WhatsApp outbound is enabled and configured;
@@ -52,13 +61,13 @@ export function createInboxOutboundSendPort(
         fetchImpl,
       }
     );
-    if (result.httpStatus === 201 && result.messageId) {
+    if (isOutboundSuccess(result)) {
       return { ok: true, messageId: result.messageId };
     }
-    const permanent =
-      result.httpStatus >= 400 &&
-      result.httpStatus < 500 &&
-      result.httpStatus !== 408;
+    // Treat classic client errors as permanent; keep timeouts/retryables soft.
+    // 408 is not in OutboundSendResult today; guard via numeric status for safety.
+    const status = result.httpStatus as number;
+    const permanent = status >= 400 && status < 500 && status !== 408;
     return {
       ok: false,
       error: result.error || "outbound_send_failed",

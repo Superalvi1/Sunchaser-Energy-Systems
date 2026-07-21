@@ -260,10 +260,11 @@ export function useInboxMutations() {
 
   const createLead = useMutation({
     mutationFn: createInboxLead,
-    onSettled: (_d, _e, input) => {
+    onSuccess: (_data, input) => {
       void queryClient.invalidateQueries({
         queryKey: inboxKeys.detail(input.conversationId),
       });
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.lists() });
     },
   });
 
