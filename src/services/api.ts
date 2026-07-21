@@ -13,11 +13,20 @@ import {
 
 const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
 
-export const API_BASE_URL = (
-  (import.meta as any).env.VITE_API_BASE_URL || RENDER_PRODUCTION_API
-).replace(/\/$/, "");
+function resolveApiBaseUrl(): string {
+  const fromEnv = String((import.meta as any).env?.VITE_API_BASE_URL ?? "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  // Local Vite / same-origin: use relative /api paths so Design Studio login hits this server.
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") return "";
+  }
+  return RENDER_PRODUCTION_API;
+}
 
-console.log("API URL:", API_BASE_URL);
+export const API_BASE_URL = resolveApiBaseUrl();
+
+console.log("API URL:", API_BASE_URL || "(same-origin)");
 
 const AUTH_TOKEN_KEY = "sunchaser_auth_token";
 const AUTH_USER_KEY = "sunchaser_user";
@@ -1403,6 +1412,65 @@ export async function updateLead(id: string, data: Partial<Lead>): Promise<Lead>
     throw new Error(err.error || "Failed to update customer record.");
   }
   return res.json();
+}
+
+export type DesignSessionApiRecord = {
+  id: string;
+  leadId: string;
+  version: number;
+  status: "draft" | "archived";
+  payload: Record<string, unknown>;
+  concurrentEditDetected: boolean;
+  lastModifiedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function fetchDesignSession(
+  leadId: string
+): Promise<{ exists: boolean; session: DesignSessionApiRecord | null }> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/design-session`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load design session.");
+  }
+  return res.json();
+}
+
+export async function saveDesignSession(
+  leadId: string,
+  body: {
+    payload: Record<string, unknown>;
+    expectedVersion: number | null;
+    status?: "draft" | "archived";
+  }
+): Promise<
+  | { success: true; created: boolean; session: DesignSessionApiRecord }
+  | {
+      success: false;
+      concurrentEditDetected: true;
+      session: DesignSessionApiRecord;
+      error: string;
+    }
+> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/design-session`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 409 && json.concurrentEditDetected) {
+    return {
+      success: false,
+      concurrentEditDetected: true,
+      session: json.session,
+      error: json.error || "Concurrent edit detected",
+    };
+  }
+  if (!res.ok) {
+    throw new Error(json.error || "Failed to save design session.");
+  }
+  return { success: true, created: Boolean(json.created), session: json.session };
 }
 
 export async function assignLead(id: string, salespersonName: string): Promise<Lead> {
@@ -3072,3 +3140,36 @@ export function setCurrencySymbol(symbol: string) {
 export function formatPrice(amount: number): string {
   return `${currencySymbol}${amount.toLocaleString()}`;
 }
+
+export async function submitPublicLead(payload: {
+  name: string;
+  email: string;
+  phone: string;
+  address?: string;
+  city?: string;
+  location?: string;
+  monthlyBill?: number;
+  monthlyUnits?: number;
+  notes?: string;
+  message?: string;
+  leadSource?: string;
+}) {
+  const apiKey = String((import.meta as any).env?.VITE_PUBLIC_LEAD_API_KEY ?? "").trim();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    headers["x-public-lead-key"] = apiKey;
+  }
+  const res = await fetch(`${API_BASE_URL}/api/public/leads`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `HTTP ${res.status} submission failed.`);
+  }
+  return res.json() as Promise<{ success: boolean; leadId: string; message: string }>;
+}
+

@@ -1,5 +1,10 @@
 import { randomBytes } from "crypto";
 import { getSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
+import {
+  isLocalDatabaseAuthFallbackEnabled,
+  isSupabaseConnectivityError,
+  SupabaseUnavailableError,
+} from "./supabaseConnectivity";
 import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
 import { findCustomerByCode, generateCustomerCode, normalizeCustomerCode } from "./customerCode.js";
 import { hashPassword, verifyPassword } from "./src/lib/passwordHash";
@@ -80,18 +85,42 @@ export async function sendAuthEmail(to: string, subject: string, html: string) {
 
 export async function findUserByUsername(username: string, localDb?: Database) {
   const normalized = String(username || "").trim().toLowerCase();
-  if (isSupabaseActive()) {
+  const localLookup = () =>
+    (localDb?.users || []).find((u: any) => String(u.username).toLowerCase() === normalized);
+
+  if (!isSupabaseActive()) {
+    return localLookup();
+  }
+
+  try {
     const supabase = getSupabase()!;
     const { data, error } = await supabase.from("users").select("*").eq("username", normalized).maybeSingle();
     if (error) throw error;
     return data;
+  } catch (err) {
+    if (isLocalDatabaseAuthFallbackEnabled() && isSupabaseConnectivityError(err)) {
+      console.warn(
+        "[Auth] Supabase unreachable — using database.json for user lookup (local development only)."
+      );
+      return localLookup();
+    }
+    if (isSupabaseConnectivityError(err)) {
+      throw new SupabaseUnavailableError();
+    }
+    throw err;
   }
-  return (localDb?.users || []).find((u: any) => String(u.username).toLowerCase() === normalized);
 }
 
 async function findUserByEmail(email: string, localDb?: Database) {
   const normalized = String(email || "").trim().toLowerCase();
-  if (isSupabaseActive()) {
+  const localLookup = () =>
+    (localDb?.users || []).find((u: any) => String(u.email).toLowerCase() === normalized);
+
+  if (!isSupabaseActive()) {
+    return localLookup();
+  }
+
+  try {
     const supabase = getSupabase()!;
     const { data, error } = await supabase
       .from("users")
@@ -100,8 +129,18 @@ async function findUserByEmail(email: string, localDb?: Database) {
       .maybeSingle();
     if (error) throw error;
     return data;
+  } catch (err) {
+    if (isLocalDatabaseAuthFallbackEnabled() && isSupabaseConnectivityError(err)) {
+      console.warn(
+        "[Auth] Supabase unreachable — using database.json for email lookup (local development only)."
+      );
+      return localLookup();
+    }
+    if (isSupabaseConnectivityError(err)) {
+      throw new SupabaseUnavailableError();
+    }
+    throw err;
   }
-  return (localDb?.users || []).find((u: any) => String(u.email).toLowerCase() === normalized);
 }
 
 function userValidationSource(): "supabase" | "fallback" {
@@ -836,3 +875,4 @@ export async function deleteDemoSeedUsersByAdmin(
 }
 
 export { ADMIN_ONLY_CREATE_ROLES };
+export { SupabaseUnavailableError } from "./supabaseConnectivity";

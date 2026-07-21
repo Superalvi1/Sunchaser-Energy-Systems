@@ -180,7 +180,10 @@ export async function diagnosePdfEngine(): Promise<PdfEngineDiagnostic> {
   };
 }
 
-export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
+export async function renderQuotationHtmlToPdf(
+  html: string,
+  options?: { javaScriptEnabled?: boolean }
+): Promise<Buffer> {
   let chromium: typeof import("playwright").chromium;
   try {
     ({ chromium } = await import("playwright"));
@@ -208,18 +211,24 @@ export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
   }
 
   try {
-    const page = await browser.newPage();
+    const javaScriptEnabled = options?.javaScriptEnabled !== false;
+    const context = await browser.newContext({ javaScriptEnabled });
+    const page = await context.newPage();
     const pdfBaseUrl = getQuotePdfAppBaseUrl();
     await page.setContent(html, {
-      waitUntil: "networkidle",
+      waitUntil: javaScriptEnabled ? "networkidle" : "load",
       timeout: 120_000,
       baseURL: pdfBaseUrl,
     });
     await page.emulateMedia({ media: "print" });
-    await page.evaluate(async () => {
-      if (document.fonts?.ready) await document.fonts.ready;
-    });
-    await page.waitForTimeout(350);
+    if (javaScriptEnabled) {
+      await page.evaluate(async () => {
+        if (document.fonts?.ready) await document.fonts.ready;
+      });
+      await page.waitForTimeout(350);
+    } else {
+      await page.waitForTimeout(200);
+    }
 
     const pdf = await page.pdf({
       format: "A4",
@@ -229,6 +238,7 @@ export async function renderQuotationHtmlToPdf(html: string): Promise<Buffer> {
       displayHeaderFooter: false,
     });
     await page.close();
+    await context.close();
     return Buffer.from(pdf);
   } finally {
     await browser.close();

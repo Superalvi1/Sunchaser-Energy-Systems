@@ -4,6 +4,7 @@
 
 import type { Point2D } from "./RoofModels.ts";
 import { isFiniteNumber } from "./RoofModels.ts";
+import { requireValidMetersPerUnit } from "./RoofMeasurement.ts";
 
 export interface RoofCoordinateSystem {
   origin: Point2D;
@@ -51,7 +52,7 @@ export function toLocalMeters(point: Point2D, cs: RoofCoordinateSystem): Point2D
 }
 
 export function fromLocalMeters(point: Point2D, cs: RoofCoordinateSystem): Point2D {
-  const mpu = cs.metersPerUnit > 0 ? cs.metersPerUnit : 1;
+  const mpu = requireValidMetersPerUnit(cs.metersPerUnit);
   return {
     x: point.x / mpu + cs.origin.x,
     y: point.y / mpu + cs.origin.y,

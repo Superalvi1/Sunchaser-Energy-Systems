@@ -3,6 +3,7 @@
  */
 
 import type { Point2D, RidgeDef, ValleyDef } from "./RoofModels.ts";
+import { RoofGeometryError } from "./RoofModels.ts";
 import { finiteNum, isFinitePoint, round4 } from "./RoofModels.ts";
 import { distancePointToSegment, polygonArea, polygonPerimeter, scalePolygonAreaToM2 } from "./RoofPolygon.ts";
 
@@ -101,13 +102,19 @@ export function distanceToRidgeM(point: Point2D, ridge: NormalizedRidge, metersP
   return distancePointToSegment(point, ridge.start, ridge.end) * metersPerUnit;
 }
 
+export function requireValidMetersPerUnit(metersPerUnit: number): number {
+  if (!Number.isFinite(metersPerUnit) || metersPerUnit <= 0) {
+    throw new RoofGeometryError("INVALID_SCALE", "metersPerUnit must be a positive finite number.");
+  }
+  return metersPerUnit;
+}
+
 export function unitsToMeters(units: number, metersPerUnit: number): number {
-  return finiteNum(units, 0) * finiteNum(metersPerUnit, 1);
+  return finiteNum(units, 0) * requireValidMetersPerUnit(metersPerUnit);
 }
 
 export function metersToUnits(meters: number, metersPerUnit: number): number {
-  const mpu = finiteNum(metersPerUnit, 1);
-  if (mpu <= 0) return 0;
+  const mpu = requireValidMetersPerUnit(metersPerUnit);
   return finiteNum(meters, 0) / mpu;
 }
 
@@ -124,7 +131,7 @@ export function lengthM(lengthUnits: number, metersPerUnit: number): number {
 }
 
 export function areaUnitsFromM2(areaM2: number, metersPerUnit: number): number {
-  const mpu = metersPerUnit > 0 ? metersPerUnit : 1;
+  const mpu = requireValidMetersPerUnit(metersPerUnit);
   return areaM2 / (mpu * mpu);
 }
 

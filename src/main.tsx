@@ -1,18 +1,22 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import { QueryClientProvider } from '@tanstack/react-query';
 import App from './App.tsx';
 import DeliveryVerifyPage from './components/DeliveryVerifyPage.tsx';
 import './index.css';
 import { ToastProvider } from './lib/toast.tsx';
+import { inboxQueryClient } from './inbox/queryClient.ts';
 
 const verifyMatch = window.location.pathname.match(/^\/delivery\/verify\/([^/]+)\/?$/);
 const verifyToken = verifyMatch?.[1] ? decodeURIComponent(verifyMatch[1]) : null;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ToastProvider>
-      {verifyToken ? <DeliveryVerifyPage token={verifyToken} /> : <App />}
-    </ToastProvider>
+    <QueryClientProvider client={inboxQueryClient}>
+      <ToastProvider>
+        {verifyToken ? <DeliveryVerifyPage token={verifyToken} /> : <App />}
+      </ToastProvider>
+    </QueryClientProvider>
   </StrictMode>,
 );
 

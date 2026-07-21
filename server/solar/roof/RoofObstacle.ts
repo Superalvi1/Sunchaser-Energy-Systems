@@ -12,6 +12,7 @@ import {
   polygonBounds,
   rectFromCenter,
 } from "./RoofPolygon.ts";
+import { requireValidMetersPerUnit } from "./RoofMeasurement.ts";
 
 export interface NormalizedObstacle {
   id: string;
@@ -114,10 +115,11 @@ export function normalizeParapets(raw: unknown, planeBoundary: Point2D[]): Norma
 }
 
 export function obstacleFootprintWithClearance(obstacle: NormalizedObstacle, clearanceM: number, metersPerUnit: number): Point2D[] {
-  if (clearanceM <= 0 || metersPerUnit <= 0) return obstacle.polygon;
+  const mpu = requireValidMetersPerUnit(metersPerUnit);
+  if (clearanceM <= 0) return obstacle.polygon;
   const bounds = polygonBounds(obstacle.polygon);
   if (!bounds) return obstacle.polygon;
-  const pad = clearanceM / metersPerUnit;
+  const pad = clearanceM / mpu;
   return rectFromCenter(
     (bounds.minX + bounds.maxX) / 2,
     (bounds.minY + bounds.maxY) / 2,

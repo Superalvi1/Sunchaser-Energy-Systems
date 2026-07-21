@@ -1,0 +1,95 @@
+/** Client-side inbox types mirroring `/api/inbox` envelopes (Revision 3). */
+
+export type InboxConversationStatus =
+  | "open"
+  | "pending"
+  | "resolved"
+  | "archived";
+
+export type InboxConversation = {
+  id: string;
+  companyId: string;
+  channelId: string;
+  contactId: string;
+  status: InboxConversationStatus;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assignedUserId: string | null;
+  assignedAt: string | null;
+  assignedBy: string | null;
+  lockVersion: number;
+  hasFailedMessage: boolean;
+};
+
+export type InboxCrmLink = {
+  conversationId: string;
+  companyId: string;
+  linkedEntityType: "lead" | "customer";
+  linkedEntityId: string;
+  linkedByUserId: string;
+  linkedAt: string;
+};
+
+export type FreeFormEligibility = {
+  freeFormAllowed: boolean;
+  windowExpiresAt: string | null;
+  latestInboundAt: string | null;
+  latestInboundMessageId: string | null;
+};
+
+export type InboxConversationDetail = {
+  conversation: InboxConversation;
+  crmLink: InboxCrmLink | null;
+  freeForm: FreeFormEligibility;
+  selfHealed: boolean;
+};
+
+export type InboxMessage = {
+  id: string;
+  companyId: string;
+  conversationId: string;
+  direction: string;
+  status: string;
+  textBody: string | null;
+  createdAt: string;
+  occurredAt: string | null;
+};
+
+export type InboxListFilters = {
+  status?: InboxConversationStatus | "";
+  assignedTo?: string;
+  hasFailedMessage?: boolean;
+  unreadOnly?: boolean;
+  search?: string;
+};
+
+export type InboxListPage = {
+  conversations: InboxConversation[];
+  nextCursor: string | null;
+};
+
+export type InboxMessagesPage = {
+  messages: InboxMessage[];
+  nextCursor: string | null;
+};
+
+export type InboxApiError = {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+};
+
+export class InboxClientError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly details?: Record<string, unknown>;
+
+  constructor(status: number, error: InboxApiError) {
+    super(error.message);
+    this.name = "InboxClientError";
+    this.status = status;
+    this.code = error.code;
+    this.details = error.details;
+  }
+}

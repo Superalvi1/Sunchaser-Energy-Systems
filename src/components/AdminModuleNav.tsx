@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Headphones,
   History,
+  Inbox,
   LayoutGrid,
   Lock,
   Package,
@@ -44,6 +45,7 @@ export type AdminSegmentId =
   | "service-desk"
   | "tickets"
   | "support-desk"
+  | "inbox"
   | "inventory"
   | "products"
   | "client-portal"
@@ -348,6 +350,12 @@ export function buildAdminNavGroups(opts: {
           title: "Support Desk",
           description: "Customer support workflows",
           icon: Headphones,
+        },
+        {
+          id: "inbox",
+          title: "WhatsApp Inbox",
+          description: "Shared conversations and replies",
+          icon: Inbox,
         },
         {
           id: "savings-desk",

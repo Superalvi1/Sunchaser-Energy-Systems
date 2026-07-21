@@ -21,6 +21,9 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   // GET is public so the router can return 405 Method Not Allowed (Allow: POST).
   { method: "POST", path: "/api/public/leads" },
   { method: "GET", path: "/api/public/leads" },
+  // WhatsApp Cloud API webhook (HMAC-gated inside the handler — not CRM JWT).
+  { method: "GET", path: "/api/integrations/whatsapp/webhook" },
+  { method: "POST", path: "/api/integrations/whatsapp/webhook" },
 ];
 
 export function normalizeHttpMethod(method: string): HttpMethod {
