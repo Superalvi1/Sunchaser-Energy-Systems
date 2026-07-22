@@ -1,6 +1,11 @@
 /** Placeholder company scope — not an active multi-tenant isolation boundary. */
 export const DEFAULT_COMPANY_ID = "sunchaser";
 
+/** Single source of truth for "use DEFAULT_COMPANY_ID unless a caller explicitly overrides it." */
+export function resolveCompanyId(explicit?: string): string {
+  return explicit ?? DEFAULT_COMPANY_ID;
+}
+
 /**
  * Replaceable development fallback for Graph API version.
  * Always prefer WHATSAPP_GRAPH_API_VERSION in real deployments.

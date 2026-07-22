@@ -53,6 +53,86 @@ export class CRMLinkService {
     private readonly companyId: string = DEFAULT_COMPANY_ID
   ) {}
 
+  /**
+   * Phase 2A: Automatic CRM Lead Linking on inbound message.
+   * If conversation is already linked, keeps existing lead.
+   * Otherwise searches CRM for active lead by normalized phone; links if found,
+   * or creates a new lead, confirms leadId, links conversation, and returns leadId.
+   */
+  async autoLinkInboundLead(
+    conversationId: string
+  ): Promise<{ leadId: string; created: boolean }> {
+    await this.requireConversation(conversationId);
+
+    const existing = await this.crmLinks.getByConversationId(
+      conversationId,
+      this.companyId
+    );
+    if (existing && !isPendingCreateLeadLink(existing)) {
+      return { leadId: existing.linkedEntityId, created: false };
+    }
+
+    const systemActor: RequestActor = {
+      type: "user",
+      id: "system_auto_link",
+      username: "system_auto_link",
+      name: "System Auto Link",
+      role: "Admin",
+      accountStatus: "Approved",
+    };
+
+    if (this.deps.findDuplicate) {
+      const suggestion = await this.deps.findDuplicate({
+        conversationId,
+        companyId: this.companyId,
+        actor: systemActor,
+      });
+      if (suggestion) {
+        const leadId = normalizeLeadId(suggestion.linkedEntityId);
+        if (leadId) {
+          const link = await this.crmLinks.upsert({
+            conversationId,
+            linkedEntityType: suggestion.linkedEntityType,
+            linkedEntityId: leadId,
+            linkedByUserId: systemActor.id,
+            companyId: this.companyId,
+          });
+          await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+          return { leadId: link.linkedEntityId, created: false };
+        }
+      }
+    }
+
+    if (this.deps.createLead) {
+      const result = await this.createLeadFromConversation(conversationId, {
+        actor: systemActor,
+        forceCreate: true,
+      });
+      if (result.kind === "created") {
+        return { leadId: result.leadId, created: true };
+      }
+      if (result.kind === "duplicate_suggestion") {
+        const leadId = normalizeLeadId(result.suggestion.linkedEntityId);
+        if (leadId) {
+          const link = await this.crmLinks.upsert({
+            conversationId,
+            linkedEntityType: result.suggestion.linkedEntityType,
+            linkedEntityId: leadId,
+            linkedByUserId: systemActor.id,
+            companyId: this.companyId,
+          });
+          await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+          return { leadId, created: false };
+        }
+      }
+    }
+
+    throw new InboxServiceError(
+      "service_unavailable",
+      "Unable to auto-link lead: CRM integration not available"
+    );
+  }
+
   async getLink(
     conversationId: string,
     actor: RequestActor

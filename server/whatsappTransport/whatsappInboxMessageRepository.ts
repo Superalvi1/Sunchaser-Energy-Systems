@@ -143,9 +143,7 @@ export class SupabaseWhatsAppInboxMessageRepository
   ): Promise<InboxMessageRef | null> {
     const { data, error } = await this.client()
       .from("whatsapp_messages")
-      .select(
-        "id, company_id, conversation_id, direction, status, text_body, created_at, occurred_at"
-      )
+      .select("*")
       .eq("company_id", this.access.companyId(companyId))
       .eq("id", messageId)
       .maybeSingle();
@@ -160,9 +158,7 @@ export class SupabaseWhatsAppInboxMessageRepository
   ): Promise<InboxMessageRef | null> {
     const { data, error } = await this.client()
       .from("whatsapp_messages")
-      .select(
-        "id, company_id, conversation_id, direction, status, text_body, created_at, occurred_at"
-      )
+      .select("*")
       .eq("company_id", this.access.companyId(companyId))
       .eq("conversation_id", conversationId)
       .eq("direction", "inbound")
@@ -186,9 +182,7 @@ export class SupabaseWhatsAppInboxMessageRepository
     const before = opts?.before ?? null;
     let query = this.client()
       .from("whatsapp_messages")
-      .select(
-        "id, company_id, conversation_id, direction, status, text_body, created_at, occurred_at"
-      )
+      .select("*")
       .eq("company_id", this.access.companyId(opts?.companyId))
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })

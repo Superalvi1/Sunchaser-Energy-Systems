@@ -973,6 +973,89 @@ await test("3A: replay completed idempotency after 24h free-form closed", async 
   assert.equal(replay.row.messageId, "m_out");
 });
 
+await test("Phase 2A: autoLinkInboundLead keeps existing link when conversation already linked", async () => {
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedConversation(repos.store, { id: "c_linked" });
+  await repos.crmLinks.upsert({
+    conversationId: "c_linked",
+    linkedEntityType: "lead",
+    linkedEntityId: "lead_existing_123",
+    linkedByUserId: "user_sales_1",
+    companyId: "sunchaser",
+  });
+
+  let createCalled = false;
+  let duplicateCalled = false;
+
+  const services = createWhatsAppInboxServices(repos, {
+    createLead: async () => {
+      createCalled = true;
+      return { leadId: "lead_new_999" };
+    },
+    findDuplicate: async () => {
+      duplicateCalled = true;
+      return { linkedEntityType: "lead", linkedEntityId: "lead_other" };
+    },
+  });
+
+  const res = await services.crmLinks.autoLinkInboundLead("c_linked");
+  assert.equal(res.leadId, "lead_existing_123");
+  assert.equal(res.created, false);
+  assert.equal(createCalled, false);
+  assert.equal(duplicateCalled, false);
+});
+
+await test("Phase 2A: autoLinkInboundLead links existing CRM lead when duplicate phone found", async () => {
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedConversation(repos.store, { id: "c_dup" });
+
+  let createCalled = false;
+  const services = createWhatsAppInboxServices(repos, {
+    createLead: async () => {
+      createCalled = true;
+      return { leadId: "lead_new_999" };
+    },
+    findDuplicate: async () => {
+      return { linkedEntityType: "lead", linkedEntityId: "lead_crm_existing_456" };
+    },
+  });
+
+  const res = await services.crmLinks.autoLinkInboundLead("c_dup");
+  assert.equal(res.leadId, "lead_crm_existing_456");
+  assert.equal(res.created, false);
+  assert.equal(createCalled, false);
+
+  const link = await services.crmLinks.getLink("c_dup", admin());
+  assert.equal(link?.linkedEntityId, "lead_crm_existing_456");
+});
+
+await test("Phase 2A: autoLinkInboundLead creates new lead when no existing CRM lead found", async () => {
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedConversation(repos.store, { id: "c_new" });
+
+  const services = createWhatsAppInboxServices(repos, {
+    createLead: async () => {
+      return { leadId: "lead_created_777" };
+    },
+    findDuplicate: async () => {
+      return null;
+    },
+  });
+
+  const res = await services.crmLinks.autoLinkInboundLead("c_new");
+  assert.equal(res.leadId, "lead_created_777");
+  assert.equal(res.created, true);
+
+  const link = await services.crmLinks.getLink("c_new", admin());
+  assert.equal(link?.linkedEntityId, "lead_created_777");
+});
+
+await test("AI Prep: conversation default ownership state is AI_SHADOW", async () => {
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  const conv = seedConversation(repos.store, { id: "c_ai_default" });
+  assert.equal(conv.aiOwnershipState ?? "AI_SHADOW", "AI_SHADOW");
+});
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);

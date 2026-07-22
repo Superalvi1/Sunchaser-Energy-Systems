@@ -4,8 +4,9 @@
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
-import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
+import { resolveCompanyId } from "./whatsappConstants.ts";
 import type {
+  WhatsAppAiOwnershipState,
   WhatsAppConversationAssignmentEvent,
   WhatsAppConversationCrmLink,
   WhatsAppConversationInbox,
@@ -74,6 +75,8 @@ export function mapConversationInbox(
     assignedBy: (row.assigned_by as string) ?? null,
     lockVersion: Number(row.lock_version ?? 1),
     hasFailedMessage: Boolean(row.has_failed_message),
+    aiOwnershipState:
+      (row.ai_ownership_state as WhatsAppAiOwnershipState) ?? "AI_SHADOW",
   };
 }
 
@@ -157,6 +160,17 @@ export type InboxMessageRef = {
   textBody: string | null;
   createdAt: string;
   occurredAt: string | null;
+  messageType?: string;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  caption?: string | null;
+  filename?: string | null;
+  sha256?: string | null;
+  voice?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  placeName?: string | null;
 };
 
 export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
@@ -169,6 +183,17 @@ export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
     textBody: (row.text_body as string) ?? null,
     createdAt: String(row.created_at),
     occurredAt: (row.occurred_at as string) ?? null,
+    messageType: (row.message_type as string) ?? "text",
+    metaMediaId: (row.meta_media_id as string) ?? null,
+    mimeType: (row.mime_type as string) ?? null,
+    caption: (row.caption as string) ?? null,
+    filename: (row.filename as string) ?? null,
+    sha256: (row.sha256 as string) ?? null,
+    voice: Boolean(row.voice),
+    latitude: typeof row.latitude === "number" ? row.latitude : null,
+    longitude: typeof row.longitude === "number" ? row.longitude : null,
+    address: (row.address as string) ?? null,
+    placeName: (row.place_name as string) ?? null,
   };
 }
 

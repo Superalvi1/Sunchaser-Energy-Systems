@@ -3,8 +3,10 @@ import {
   CheckCheck,
   FileText,
   Image as ImageIcon,
+  MapPin,
   Mic,
   RefreshCw,
+  Video as VideoIcon,
 } from "lucide-react";
 import type { InboxMessage } from "../types";
 import { formatClock } from "../utils/format";
@@ -63,15 +65,102 @@ function AttachmentChip({
   kind,
   label,
 }: {
-  kind: "image" | "pdf" | "voice";
+  kind: "image" | "pdf" | "voice" | "video" | "location";
   label: string;
 }) {
-  const Icon = kind === "image" ? ImageIcon : kind === "pdf" ? FileText : Mic;
+  const Icon =
+    kind === "image"
+      ? ImageIcon
+      : kind === "pdf"
+      ? FileText
+      : kind === "voice"
+      ? Mic
+      : kind === "video"
+      ? VideoIcon
+      : MapPin;
   return (
     <div className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface)]/60 px-2 py-1 text-[11px] text-[var(--inbox-muted)]">
       <Icon className="h-3.5 w-3.5" aria-hidden />
       {label}
     </div>
+  );
+}
+
+function MessageBody({ message }: { message: InboxMessage }) {
+  const type = (message.messageType || "").toLowerCase();
+  const caption = message.caption || (type !== "text" ? message.textBody : null);
+
+  if (type === "image") {
+    return (
+      <div className="space-y-1">
+        <AttachmentChip kind="image" label="Image received" />
+        {caption ? (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{caption}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (type === "document") {
+    const label = message.filename
+      ? `Document received (${message.filename})`
+      : "Document received";
+    return (
+      <div className="space-y-1">
+        <AttachmentChip kind="pdf" label={label} />
+        {caption ? (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{caption}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (type === "voice" || type === "audio") {
+    return (
+      <div className="space-y-1">
+        <AttachmentChip kind="voice" label="Voice note received" />
+      </div>
+    );
+  }
+
+  if (type === "video") {
+    return (
+      <div className="space-y-1">
+        <AttachmentChip kind="video" label="Video received" />
+        {caption ? (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{caption}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (type === "location") {
+    const locText = message.placeName
+      ? message.placeName + (message.address ? ` (${message.address})` : "")
+      : message.address ||
+        (message.latitude != null ? `${message.latitude}, ${message.longitude}` : null);
+    return (
+      <div className="space-y-1">
+        <AttachmentChip kind="location" label="Location received" />
+        {locText ? (
+          <p className="text-xs text-[var(--inbox-muted)]">{locText}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (message.textBody) {
+    return (
+      <p className="whitespace-pre-wrap text-sm leading-relaxed">
+        {message.textBody}
+      </p>
+    );
+  }
+
+  return (
+    <p className="whitespace-pre-wrap text-sm leading-relaxed opacity-70">
+      Message received
+    </p>
   );
 }
 
@@ -125,17 +214,7 @@ export default function MessageTimeline({
                 : "rounded-tr-md bg-[var(--inbox-bubble-out)] text-[var(--inbox-fg)]"
             }`}
           >
-            {m.textBody ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                {m.textBody}
-              </p>
-            ) : (
-              <div className="space-y-1">
-                <AttachmentChip kind="image" label="Image attachment" />
-                <AttachmentChip kind="pdf" label="PDF document" />
-                <AttachmentChip kind="voice" label="Voice note" />
-              </div>
-            )}
+            <MessageBody message={m} />
             <div
               className={`mt-1 flex items-center gap-1.5 ${inbound ? "justify-start" : "justify-end"}`}
             >
