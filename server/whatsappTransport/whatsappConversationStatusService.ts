@@ -96,7 +96,7 @@ export class StatusService {
       metadata: { trigger: "user_transition" },
       companyId: this.companyId,
     });
-    if (!cas.ok) {
+    if (cas.ok === false) {
       if (cas.reason === "not_found") {
         throw new InboxServiceError("not_found", "Conversation not found");
       }
@@ -167,7 +167,7 @@ export class StatusService {
         metadata: opts.metadata,
         companyId: this.companyId,
       });
-      if (cas.ok) return cas.row;
+      if (cas.ok === true) return cas.row;
 
       if (cas.reason === "not_found") {
         throw new InboxServiceError("not_found", "Conversation not found");
