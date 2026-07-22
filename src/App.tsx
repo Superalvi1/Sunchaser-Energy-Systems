@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { 
   Sun, Users, Wrench, Bot, Shield, FileText, UserCircle, 
   Loader2, Inbox, RefreshCw, LogOut, ClipboardList, Send, FileSpreadsheet, Download,
-  ChevronRight,
+  ChevronRight, ChevronLeft, Battery, Zap,
 } from "lucide-react";
 import AuthHub from "./components/AuthHub";
 import { useToast } from "./lib/toast";

@@ -19,6 +19,7 @@ import {
   Building,
   Check,
   RotateCcw,
+  Home,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { calculateSizingRecommendations, type SizingRecommendation } from "../lib/solarSizingEngine";
