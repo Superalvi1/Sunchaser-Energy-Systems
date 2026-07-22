@@ -8,10 +8,17 @@ import test from "node:test";
 
 import {
   AiContextBuilder,
+  AiIntentClassifier,
+  AiLanguageDetector,
   AiMemoryStore,
+  AiMissingFieldEngine,
+  AiNextQuestionEngine,
   AiPromptBuilder,
+  AiQualificationEngine,
+  AiQualificationScorer,
   AiShadowEngine,
   AiStateMachine,
+  createInitialLeadQualification,
   InMemoryAiShadowRepository,
   MockAiProvider,
   type AiDecision,
@@ -210,4 +217,113 @@ await test("7. Shadow Mode Engine: when enabled, evaluates shadow decision, upda
   assert.equal(logs[0].stateBefore, "GREETING");
   assert.equal(logs[0].stateAfter, "QUALIFYING");
   assert.ok(logs[0].executionTimeMs >= 0);
+});
+
+// ---------------------------------------------------------------------------
+// Sprint 2: Lead Qualification Engine Unit Tests
+// ---------------------------------------------------------------------------
+
+await test("8. Intent Classifier: classifies Residential, Commercial, Industrial, Support, Complaint, Existing Customer, and Unknown", () => {
+  const classifier = new AiIntentClassifier();
+
+  assert.equal(classifier.classify("I want a 10kW residential solar system for my house").intent, "ResidentialSolar");
+  assert.equal(classifier.classify("We need 100kW commercial solar for our plaza office").intent, "CommercialSolar");
+  assert.equal(classifier.classify("Factory requires 1MW industrial solar plant").intent, "IndustrialSolar");
+  assert.equal(classifier.classify("Need maintenance service and panel cleaning support").intent, "Support");
+  assert.equal(classifier.classify("Inverter is not working, kharab hai, filing a complaint").intent, "Complaint");
+  assert.equal(classifier.classify("Warranty claim for my existing inverter").intent, "Warranty");
+  assert.equal(classifier.classify("Hello, checking on my invoice and installation", true).intent, "ExistingCustomer");
+  assert.equal(classifier.classify("xyz abc 123").intent, "Unknown");
+});
+
+await test("9. Language Detector: identifies English, Roman Urdu, Mixed, and Unknown languages", () => {
+  const detector = new AiLanguageDetector();
+
+  assert.equal(detector.detect("Need 10kW solar system quotation for residential roof"), "English");
+  assert.equal(detector.detect("Mera monthly bijli bill kitna hoga agar 5kw lagwana hai ghar mai"), "Roman Urdu");
+  assert.equal(detector.detect("Solar system lagwana hai for my home roof in Lahore"), "Mixed");
+  assert.equal(detector.detect("12345 !!!"), "Unknown");
+});
+
+await test("10. Qualification Scorer & Missing Fields: computes deterministic score and missing fields list", () => {
+  const engine = new AiQualificationEngine();
+  const scorer = new AiQualificationScorer();
+  const missingEngine = new AiMissingFieldEngine();
+
+  const qual = createInitialLeadQualification("c_qual_1", "+923001234567", "Hassan");
+  assert.equal(scorer.calculateScore(qual), 0);
+  assert.ok(missingEngine.getMissingFields(qual).includes("Monthly Bill"));
+  assert.ok(missingEngine.getMissingFields(qual).includes("City"));
+
+  // Update partial fields
+  qual.monthlyBillPkr = { value: 75000, confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+  qual.city = { value: "Lahore", confidence: 0.9, source: "AI", lastUpdated: new Date().toISOString() };
+  qual.customerIntent = { value: "ResidentialSolar", confidence: 0.9, source: "AI", lastUpdated: new Date().toISOString() };
+  qual.preferredLanguage = { value: "English", confidence: 0.9, source: "AI", lastUpdated: new Date().toISOString() };
+
+  const partialScore = scorer.calculateScore(qual);
+  assert.equal(partialScore, 50); // 20 (bill) + 10 (city) + 10 (intent) + 10 (lang) = 50
+
+  // Complete remaining fields
+  qual.propertyType = { value: "House", confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+  qual.electricPhase = { value: "3-Phase", confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+  qual.roofType = { value: "Concrete Slab", confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+  qual.backupRequired = { value: true, confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+  qual.installationTimeline = { value: "Immediate", confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+  qual.budgetPkr = { value: 2000000, confidence: 1.0, source: "HUMAN", lastUpdated: new Date().toISOString() };
+
+  assert.equal(scorer.calculateScore(qual), 100);
+  assert.equal(missingEngine.getMissingFields(qual).length, 0);
+});
+
+await test("11. Next Question Engine: recommends question based on missing fields without sending", () => {
+  const nextQ = new AiNextQuestionEngine();
+  assert.equal(nextQ.recommendNextQuestion(["Monthly Bill", "City"]), "Ask monthly electricity bill in PKR");
+  assert.equal(nextQ.recommendNextQuestion(["City"]), "Ask city or location in Pakistan");
+  assert.equal(nextQ.recommendNextQuestion([]), null);
+});
+
+await test("12. Human Override Protection: AI can NEVER overwrite HUMAN or non-null SYSTEM fields", () => {
+  const engine = new AiQualificationEngine();
+
+  const humanField = { value: "Karachi", confidence: 1.0, source: "HUMAN" as const, lastUpdated: "2026-07-23T00:00:00Z" };
+  const aiAttempt = { value: "Lahore", confidence: 0.9, source: "AI" as const };
+
+  const resultHuman = engine.mergeField(humanField, aiAttempt);
+  assert.equal(resultHuman.value, "Karachi");
+  assert.equal(resultHuman.source, "HUMAN");
+
+  const systemField = { value: "+923009998877", confidence: 1.0, source: "SYSTEM" as const, lastUpdated: "2026-07-23T00:00:00Z" };
+  const resultSystem = engine.mergeField(systemField, aiAttempt);
+  assert.equal(resultSystem.value, "+923009998877");
+  assert.equal(resultSystem.source, "SYSTEM");
+
+  // AI can update an empty/null SYSTEM field or an AI-owned field
+  const emptySystemField = { value: null, confidence: 0.0, source: "SYSTEM" as const, lastUpdated: "2026-07-23T00:00:00Z" };
+  const resultAllowed = engine.mergeField(emptySystemField, aiAttempt);
+  assert.equal(resultAllowed.value, "Lahore");
+  assert.equal(resultAllowed.source, "AI");
+});
+
+await test("13. Shadow Qualification Report: generates comprehensive report and flags human review when needed", () => {
+  const engine = new AiQualificationEngine();
+  const qual = createInitialLeadQualification("c_rep_1", "+923214445566", "Zubair");
+
+  // Normal residential inquiry report
+  const reportRes = engine.generateReport(qual, "Hi, I need 10kW residential solar system in Lahore");
+  assert.equal(reportRes.intent, "ResidentialSolar");
+  assert.equal(reportRes.language, "English");
+  assert.ok(reportRes.missingFields.length > 0);
+  assert.ok(reportRes.recommendedNextQuestion !== null);
+  assert.equal(reportRes.humanReviewRequired, false);
+
+  // Complaint message triggers human review
+  const reportComplaint = engine.generateReport(qual, "Inverter kharab hai, filing a complaint immediately!");
+  assert.equal(reportComplaint.intent, "Complaint");
+  assert.equal(reportComplaint.humanReviewRequired, true);
+
+  // Low confidence / unknown message triggers human review
+  const reportUnknown = engine.generateReport(qual, "xyz 9999");
+  assert.equal(reportUnknown.intent, "Unknown");
+  assert.equal(reportUnknown.humanReviewRequired, true);
 });
