@@ -1087,7 +1087,9 @@ await test("Recovery A: create lead succeeds, link fails once, retry links the s
     forceCreate: true,
   });
   assert.equal(retry.kind, "created");
-  assert.equal(retry.leadId, "lead_created_A");
+  if (retry.kind === "created") {
+    assert.equal(retry.leadId, "lead_created_A");
+  }
   assert.equal(createCalls, 1);
 });
 
@@ -1152,7 +1154,10 @@ await test("Recovery C: another same-phone lead exists, but recovery still links
     actor: admin(),
     forceCreate: true,
   });
-  assert.equal(recovered.leadId, "lead_created_C_exact");
+  assert.equal(recovered.kind, "created");
+  if (recovered.kind === "created") {
+    assert.equal(recovered.leadId, "lead_created_C_exact");
+  }
 });
 
 await test("Recovery D: conversation becomes linked before retry; recovery does not overwrite valid link", async () => {
@@ -1234,7 +1239,9 @@ await test("forceCreate: does not link an existing duplicate and creates new lea
   });
 
   assert.equal(res.kind, "created");
-  assert.equal(res.leadId, "lead_force_created_123");
+  if (res.kind === "created") {
+    assert.equal(res.leadId, "lead_force_created_123");
+  }
   assert.equal(createCalled, true);
 });
 
