@@ -158,3 +158,51 @@ assert.equal(
 );
 
 console.log("whatsapp-inbox-schema.sql static validation passed.");
+
+const migrationSql = readFileSync(
+  join(process.cwd(), "scripts/whatsapp-connect-phase1a-2a-migration.sql"),
+  "utf8"
+);
+
+assert.match(
+  migrationSql,
+  /add column if not exists ai_ownership_state text not null default 'AI_SHADOW'/i,
+  "missing ai_ownership_state column in migration"
+);
+assert.match(
+  migrationSql,
+  /check \(ai_ownership_state in \('AI_SHADOW', 'AI_ACTIVE', 'HUMAN_HANDLING', 'AI_PAUSED'\)\)/i,
+  "missing ai_ownership_state check constraint in migration"
+);
+assert.match(
+  migrationSql,
+  /add column if not exists message_type text not null default 'text'/i,
+  "missing message_type in migration"
+);
+assert.match(
+  migrationSql,
+  /add column if not exists meta_media_id text/i,
+  "missing meta_media_id in migration"
+);
+assert.match(
+  migrationSql,
+  /add column if not exists latitude double precision/i,
+  "missing latitude in migration"
+);
+assert.match(
+  migrationSql,
+  /add column if not exists longitude double precision/i,
+  "missing longitude in migration"
+);
+assert.match(
+  migrationSql,
+  /-- APPLICATION INSTRUCTIONS:/i,
+  "missing application instructions in migration comments"
+);
+assert.match(
+  migrationSql,
+  /-- ROLLBACK INSTRUCTIONS/i,
+  "missing rollback instructions in migration comments"
+);
+
+console.log("whatsapp-connect-phase1a-2a-migration.sql static validation passed.");

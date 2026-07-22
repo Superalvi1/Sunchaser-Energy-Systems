@@ -33,7 +33,15 @@ import type { PersistedPublicLead } from "../publicLeads/publicLeadService.ts";
 import { mapUserRow } from "../../userAuthDb.ts";
 import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
-import type { CreateWhatsAppInboxServicesOptions } from "./whatsappInboxServices.ts";
+import {
+  createDefaultWhatsAppInboxRepositories,
+  type WhatsAppInboxRepositories,
+} from "./whatsappInboxRepository.ts";
+import {
+  createWhatsAppInboxServices,
+  type CreateWhatsAppInboxServicesOptions,
+  type WhatsAppInboxServices,
+} from "./whatsappInboxServices.ts";
 import type {
   InboxAssigneeCandidate,
   InboxAssigneeDirectory,
@@ -316,4 +324,23 @@ export function buildProductionInboxServiceOptions(
   };
 
   return { assignees, createLead, findDuplicate };
+}
+
+export function createProductionWhatsAppServices(
+  deps: ProductionInboxWiringDeps,
+  inboxRepos?: WhatsAppInboxRepositories
+): WhatsAppInboxServices {
+  const repos = inboxRepos ?? createDefaultWhatsAppInboxRepositories();
+  const serviceOptions = buildProductionInboxServiceOptions(deps);
+  return createWhatsAppInboxServices(repos, serviceOptions);
+}
+
+export function buildProductionWebhookAutoLinkLead(
+  deps: ProductionInboxWiringDeps,
+  inboxRepos?: WhatsAppInboxRepositories
+): (conversationId: string) => Promise<{ leadId: string; created: boolean }> {
+  const services = createProductionWhatsAppServices(deps, inboxRepos);
+  return async (conversationId: string) => {
+    return services.crmLinks.autoLinkInboundLead(conversationId);
+  };
 }

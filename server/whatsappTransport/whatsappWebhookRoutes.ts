@@ -13,6 +13,7 @@ import {
   WHATSAPP_WEBHOOK_PATH,
 } from "./whatsappConstants.ts";
 import {
+  buildMinimizedMetadata,
   parseWebhookRawBody,
   type NormalizedWebhookEvent,
 } from "./whatsappEnvelope.ts";
@@ -27,6 +28,7 @@ export type WhatsAppWebhookRouterDeps = {
   repo?: WhatsAppRepository;
   config?: WhatsAppConfig;
   env?: NodeJS.ProcessEnv;
+  autoLinkLead?: (conversationId: string) => Promise<unknown>;
 };
 
 function resolveConfig(deps: WhatsAppWebhookRouterDeps): WhatsAppConfig {
@@ -41,11 +43,12 @@ function readRawBody(req: Request): Buffer | null {
 
 async function persistNormalizedEvents(
   repo: WhatsAppRepository,
-  events: NormalizedWebhookEvent[]
+  events: NormalizedWebhookEvent[],
+  autoLinkLead?: (conversationId: string) => Promise<unknown>
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     for (const event of events) {
-      if (event.kind === "inbound_text") {
+      if (event.kind === "inbound_text" || event.kind === "inbound_message") {
         const channel = await repo.resolveOrCreateChannel({
           phoneNumberId: event.phoneNumberId,
           displayPhoneNumber: event.displayPhoneNumber,
@@ -59,12 +62,47 @@ async function persistNormalizedEvents(
           channelId: channel.id,
           contactId: contact.id,
         });
+
+        const textBody =
+          event.kind === "inbound_text" ? event.text : event.textBody;
+        const messageType =
+          event.kind === "inbound_text"
+            ? "text"
+            : event.messageType || "unknown";
+
+        const minimizedMeta = buildMinimizedMetadata({
+          messageType,
+          waMessageId: event.waMessageId,
+          metaMediaId: event.metaMediaId,
+          mimeType: event.mimeType,
+          sha256: event.sha256,
+          filename: event.filename,
+          caption: event.caption,
+          voice: event.voice,
+          latitude: event.latitude,
+          longitude: event.longitude,
+          placeName: event.placeName,
+          address: event.address,
+        });
+
         const inserted = await repo.insertInboundMessage({
           conversationId: conversation.id,
           waMessageId: event.waMessageId,
-          textBody: event.text,
+          textBody: textBody ?? null,
           occurredAt: event.occurredAt,
-          rawPayload: event.rawEvent,
+          rawPayload: minimizedMeta,
+          messageType,
+          metaMediaId: event.metaMediaId ?? null,
+          mimeType: event.mimeType ?? null,
+          caption: event.caption ?? null,
+          filename: event.filename ?? null,
+          sha256: event.sha256 ?? null,
+          voice: Boolean(event.voice),
+          latitude: event.latitude ?? null,
+          longitude: event.longitude ?? null,
+          address: event.address ?? null,
+          placeName: event.placeName ?? null,
+          rawMetadata: minimizedMeta,
         });
         if (inserted.ok === false) {
           return { ok: false, error: inserted.error };
@@ -73,6 +111,19 @@ async function persistNormalizedEvents(
           conversation.id,
           event.occurredAt
         );
+
+        if (autoLinkLead) {
+          try {
+            await autoLinkLead(conversation.id);
+          } catch (autoLinkErr) {
+            console.error(
+              "Auto lead linking failed for conversation:",
+              conversation.id,
+              autoLinkErr
+            );
+          }
+        }
+
         await safeAudit(repo, {
           eventType: AUDIT_EVENTS.INBOUND_MESSAGE_STORED,
           entityType: "message",
@@ -81,6 +132,7 @@ async function persistNormalizedEvents(
             conversationId: conversation.id,
             waMessageId: event.waMessageId,
             created: inserted.created,
+            messageType,
           },
         });
         continue;
@@ -230,7 +282,11 @@ export function createWhatsAppWebhookRouter(
       return res.status(400).json({ error: "Malformed webhook payload" });
     }
 
-    const persist = await persistNormalizedEvents(repo, parsed.events);
+    const persist = await persistNormalizedEvents(
+      repo,
+      parsed.events,
+      deps.autoLinkLead
+    );
     if (persist.ok === false) {
       await repo.markWebhookEventError(claim.event.id, persist.error);
       if (claim.kind === "existing_incomplete") {

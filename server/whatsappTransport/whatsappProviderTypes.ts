@@ -13,12 +13,34 @@ export type MetaWebhookText = {
   body?: string;
 };
 
+export type MetaWebhookMedia = {
+  id?: string;
+  mime_type?: string;
+  sha256?: string;
+  caption?: string;
+  filename?: string;
+  voice?: boolean;
+};
+
+export type MetaWebhookLocation = {
+  latitude?: number;
+  longitude?: number;
+  name?: string;
+  address?: string;
+};
+
 export type MetaWebhookMessage = {
   id?: string;
   from?: string;
   timestamp?: string;
   type?: string;
   text?: MetaWebhookText;
+  image?: MetaWebhookMedia;
+  document?: MetaWebhookMedia;
+  audio?: MetaWebhookMedia;
+  voice?: MetaWebhookMedia;
+  video?: MetaWebhookMedia;
+  location?: MetaWebhookLocation;
 };
 
 export type MetaWebhookStatus = {

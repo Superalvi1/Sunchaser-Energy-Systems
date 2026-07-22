@@ -343,6 +343,7 @@ import {
   installWhatsAppRawBodyMiddleware,
   whatsappRawBodyErrorHandler,
   buildProductionInboxServiceOptions,
+  buildProductionWebhookAutoLinkLead,
 } from "./server/whatsappTransport/index.ts";
 import {
   OwnershipError,
@@ -651,7 +652,20 @@ app.use(
   })
 );
 
-app.use("/api/integrations/whatsapp", createWhatsAppWebhookRouter());
+const productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
+  resolveLocalDb: resolveAuthLocalDb,
+  persistLead: persistPublicMarketingLead,
+});
+
+app.use(
+  "/api/integrations/whatsapp",
+  createWhatsAppWebhookRouter({
+    autoLinkLead: async (conversationId) => {
+      const result = await productionAutoLinkLead(conversationId);
+      return result.leadId;
+    },
+  })
+);
 app.use("/api/conversations", createWhatsAppOutboundRouter());
 app.use(
   "/api/inbox",

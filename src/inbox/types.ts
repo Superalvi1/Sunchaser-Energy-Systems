@@ -6,6 +6,12 @@ export type InboxConversationStatus =
   | "resolved"
   | "archived";
 
+export type InboxAiOwnershipState =
+  | "AI_SHADOW"
+  | "AI_ACTIVE"
+  | "HUMAN_HANDLING"
+  | "AI_PAUSED";
+
 export type InboxConversation = {
   id: string;
   companyId: string;
@@ -20,6 +26,7 @@ export type InboxConversation = {
   assignedBy: string | null;
   lockVersion: number;
   hasFailedMessage: boolean;
+  aiOwnershipState?: InboxAiOwnershipState;
 };
 
 export type InboxCrmLink = {
@@ -54,6 +61,17 @@ export type InboxMessage = {
   textBody: string | null;
   createdAt: string;
   occurredAt: string | null;
+  messageType?: string | null;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  caption?: string | null;
+  filename?: string | null;
+  sha256?: string | null;
+  voice?: boolean | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  placeName?: string | null;
 };
 
 export type InboxListFilters = {

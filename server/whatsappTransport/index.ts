@@ -56,6 +56,7 @@ export {
 } from "./whatsappInboxRoutes.ts";
 export {
   buildProductionInboxServiceOptions,
+  buildProductionWebhookAutoLinkLead,
   type ProductionInboxWiringDeps,
 } from "./whatsappInboxProductionWiring.ts";
 export {

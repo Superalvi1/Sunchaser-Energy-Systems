@@ -16,6 +16,8 @@ import {
 } from "./whatsappInboxPermissions.ts";
 import {
   CREATE_LEAD_PENDING_ENTITY_ID,
+  PENDING_LEAD_PREFIX,
+  extractPendingLeadId,
   isPendingCreateLeadLink,
 } from "./whatsappInboxRepoSupport.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
@@ -38,7 +40,11 @@ function normalizeLeadId(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (trimmed === CREATE_LEAD_PENDING_ENTITY_ID) return null;
+  if (
+    trimmed === CREATE_LEAD_PENDING_ENTITY_ID ||
+    trimmed.startsWith(PENDING_LEAD_PREFIX)
+  )
+    return null;
   return trimmed;
 }
 
@@ -52,6 +58,89 @@ export class CRMLinkService {
     } = {},
     private readonly companyId: string = DEFAULT_COMPANY_ID
   ) {}
+
+  /**
+   * Phase 2A: Automatic CRM Lead Linking on inbound message.
+   * If conversation is already linked, keeps existing lead.
+   * Otherwise searches CRM for active lead by normalized phone; links if found,
+   * or creates a new lead, confirms leadId, links conversation, and returns leadId.
+   */
+  async autoLinkInboundLead(
+    conversationId: string
+  ): Promise<{ leadId: string; created: boolean }> {
+    await this.requireConversation(conversationId);
+
+    const existing = await this.crmLinks.getByConversationId(
+      conversationId,
+      this.companyId
+    );
+    if (existing && !isPendingCreateLeadLink(existing)) {
+      return { leadId: existing.linkedEntityId, created: false };
+    }
+
+    const systemActor: RequestActor = {
+      id: "system_auto_link",
+      username: "system_auto_link",
+      name: "System Auto Link",
+      email: "system.autolink@sunchaser.internal",
+      role: "Admin",
+      accountStatus: "Approved",
+      emailVerified: true,
+      onboardingCompleted: true,
+      authMethod: "jwt",
+    };
+
+    if (this.deps.findDuplicate) {
+      const suggestion = await this.deps.findDuplicate({
+        conversationId,
+        companyId: this.companyId,
+        actor: systemActor,
+      });
+      if (suggestion) {
+        const leadId = normalizeLeadId(suggestion.linkedEntityId);
+        if (leadId) {
+          const link = await this.crmLinks.upsert({
+            conversationId,
+            linkedEntityType: suggestion.linkedEntityType,
+            linkedEntityId: leadId,
+            linkedByUserId: systemActor.id,
+            companyId: this.companyId,
+          });
+          await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+          return { leadId: link.linkedEntityId, created: false };
+        }
+      }
+    }
+
+    if (this.deps.createLead) {
+      const result = await this.createLeadFromConversation(conversationId, {
+        actor: systemActor,
+        forceCreate: false,
+      });
+      if (result.kind === "created") {
+        return { leadId: result.leadId, created: true };
+      }
+      if (result.kind === "duplicate_suggestion") {
+        const leadId = normalizeLeadId(result.suggestion.linkedEntityId);
+        if (leadId) {
+          const link = await this.crmLinks.upsert({
+            conversationId,
+            linkedEntityType: result.suggestion.linkedEntityType,
+            linkedEntityId: leadId,
+            linkedByUserId: systemActor.id,
+            companyId: this.companyId,
+          });
+          await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+          return { leadId, created: false };
+        }
+      }
+    }
+
+    throw new InboxServiceError(
+      "service_unavailable",
+      "Unable to auto-link lead: CRM integration not available"
+    );
+  }
 
   async getLink(
     conversationId: string,
@@ -161,40 +250,32 @@ export class CRMLinkService {
       );
     }
     if (isPendingCreateLeadLink(existing)) {
+      const correlatedLeadId = extractPendingLeadId(existing);
+      if (correlatedLeadId) {
+        const link = await this.crmLinks.upsert({
+          conversationId,
+          linkedEntityType: "lead",
+          linkedEntityId: correlatedLeadId,
+          linkedByUserId: input.actor.id,
+          companyId: this.companyId,
+        });
+        await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+        return { kind: "created", link, leadId: correlatedLeadId };
+      }
       throw new InboxServiceError(
         "conflict",
         "Lead creation already in progress for this conversation"
       );
     }
 
-    // Recovery always runs first — including when forceCreate is true — so a
-    // retry after a persisted-but-unlinked lead never creates a second CRM lead.
-    if (this.deps.findDuplicate) {
+    if (!input.forceCreate && this.deps.findDuplicate) {
       const suggestion = await this.deps.findDuplicate({
         conversationId,
         companyId: this.companyId,
         actor: input.actor,
       });
       if (suggestion) {
-        if (!input.forceCreate) {
-          return { kind: "duplicate_suggestion", suggestion };
-        }
-        const recoveredLeadId = normalizeLeadId(suggestion.linkedEntityId);
-        if (!recoveredLeadId) {
-          throw new InboxServiceError(
-            "invalid_argument",
-            "Duplicate suggestion returned an invalid linkedEntityId"
-          );
-        }
-        const link = await this.crmLinks.upsert({
-          conversationId,
-          linkedEntityType: suggestion.linkedEntityType,
-          linkedEntityId: recoveredLeadId,
-          linkedByUserId: input.actor.id,
-          companyId: this.companyId,
-        });
-        await this.conversations.touchUpdatedAt(conversationId, this.companyId);
-        return { kind: "created", link, leadId: recoveredLeadId };
+        return { kind: "duplicate_suggestion", suggestion };
       }
     }
 
@@ -214,6 +295,18 @@ export class CRMLinkService {
     });
     if (claim.kind === "existing") {
       if (isPendingCreateLeadLink(claim.row)) {
+        const correlatedLeadId = extractPendingLeadId(claim.row);
+        if (correlatedLeadId) {
+          const link = await this.crmLinks.upsert({
+            conversationId,
+            linkedEntityType: "lead",
+            linkedEntityId: correlatedLeadId,
+            linkedByUserId: input.actor.id,
+            companyId: this.companyId,
+          });
+          await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+          return { kind: "created", link, leadId: correlatedLeadId };
+        }
         throw new InboxServiceError(
           "conflict",
           "Lead creation already in progress for this conversation"
@@ -243,6 +336,22 @@ export class CRMLinkService {
       persistedLeadId = leadId;
 
       try {
+        await this.crmLinks.upsert({
+          conversationId,
+          linkedEntityType: "lead",
+          linkedEntityId: `${PENDING_LEAD_PREFIX}${leadId}`,
+          linkedByUserId: input.actor.id,
+          companyId: this.companyId,
+        });
+      } catch (err) {
+        if (err instanceof InboxServiceError) throw err;
+        throw new InboxServiceError(
+          "service_unavailable",
+          "Failed to persist pending lead correlation after lead creation"
+        );
+      }
+
+      try {
         const link = await this.crmLinks.upsert({
           conversationId,
           linkedEntityType: "lead",
@@ -253,8 +362,6 @@ export class CRMLinkService {
         await this.conversations.touchUpdatedAt(conversationId, this.companyId);
         return { kind: "created", link, leadId };
       } catch (linkErr) {
-        // Lead already exists in CRM. Retry link write once so a transient CRM-link
-        // failure does not strand an unlinked lead or force a second create.
         try {
           const recovered = await this.crmLinks.upsert({
             conversationId,
@@ -269,9 +376,6 @@ export class CRMLinkService {
           );
           return { kind: "created", link: recovered, leadId };
         } catch {
-          // Release pending claim so retry can run duplicate lookup and link the
-          // already-persisted lead instead of creating another.
-          await this.releasePendingCreateLeadClaim(conversationId);
           if (linkErr instanceof InboxServiceError) throw linkErr;
           throw new InboxServiceError(
             "service_unavailable",
@@ -280,8 +384,6 @@ export class CRMLinkService {
         }
       }
     } catch (err) {
-      // Only release the claim when no CRM lead was persisted. If a lead exists,
-      // the inner handler already released the claim for duplicate-lookup recovery.
       if (!persistedLeadId) {
         await this.releasePendingCreateLeadClaim(conversationId);
       }

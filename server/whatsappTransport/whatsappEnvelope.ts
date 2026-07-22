@@ -19,6 +19,42 @@ export type NormalizedInboundText = {
   text: string;
   occurredAt: string;
   rawEvent: Record<string, unknown>;
+  messageType?: string;
+  textBody?: string | null;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  caption?: string | null;
+  filename?: string | null;
+  sha256?: string | null;
+  voice?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  placeName?: string | null;
+};
+
+export type NormalizedInboundMessage = {
+  kind: "inbound_message";
+  phoneNumberId: string;
+  displayPhoneNumber: string | null;
+  wabaEntryId: string | null;
+  waMessageId: string;
+  fromWaId: string;
+  profileName: string | null;
+  messageType: string;
+  textBody: string | null;
+  metaMediaId: string | null;
+  mimeType: string | null;
+  caption: string | null;
+  filename: string | null;
+  sha256: string | null;
+  voice: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  placeName: string | null;
+  occurredAt: string;
+  rawEvent: Record<string, unknown>;
 };
 
 export type NormalizedStatusEvent = {
@@ -43,6 +79,7 @@ export type NormalizedUnsupported = {
 
 export type NormalizedWebhookEvent =
   | NormalizedInboundText
+  | NormalizedInboundMessage
   | NormalizedStatusEvent
   | NormalizedUnsupported;
 
@@ -57,6 +94,55 @@ export function digitsOnlyPhone(value: string): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+export function sanitizeCoordinate(val: unknown, min: number, max: number): number | null {
+  if (val == null) return null;
+  const n = typeof val === "number" ? val : Number(val);
+  if (Number.isFinite(n) && n >= min && n <= max) {
+    return n;
+  }
+  return null;
+}
+
+export function truncateString(str: unknown, maxLen: number): string | null {
+  if (typeof str !== "string") return null;
+  const trimmed = str.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLen);
+}
+
+export function buildMinimizedMetadata(event: {
+  messageType: string;
+  waMessageId: string;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  sha256?: string | null;
+  filename?: string | null;
+  caption?: string | null;
+  voice?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  placeName?: string | null;
+  address?: string | null;
+}): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    messageType: event.messageType,
+    waMessageId: event.waMessageId,
+    parsedOutcome: "success",
+  };
+  if (event.metaMediaId) metadata.metaMediaId = event.metaMediaId;
+  if (event.mimeType) metadata.mimeType = event.mimeType;
+  if (event.sha256) metadata.sha256 = event.sha256;
+  if (event.filename) metadata.filename = truncateString(event.filename, 255);
+  if (event.caption) metadata.caption = truncateString(event.caption, 1024);
+  if (event.voice) metadata.voice = true;
+  if (event.latitude != null) metadata.latitude = event.latitude;
+  if (event.longitude != null) metadata.longitude = event.longitude;
+  if (event.placeName) metadata.placeName = truncateString(event.placeName, 255);
+  if (event.address) metadata.address = truncateString(event.address, 500);
+
+  return metadata;
 }
 
 function toIsoFromUnixSeconds(raw: unknown): string {
@@ -114,7 +200,9 @@ function normalizeMessage(
   const fromWaId = digitsOnlyPhone(typeof msg.from === "string" ? msg.from : "");
   if (!waMessageId || !fromWaId) return null;
 
-  if (msg.type === "text" && isPlainObject(msg.text) && msg.text.body != null) {
+  const type = msg.type ? String(msg.type).toLowerCase() : "unknown";
+
+  if (type === "text" && isPlainObject(msg.text) && msg.text.body != null) {
     if (typeof msg.text.body !== "string") {
       return {
         kind: "unsupported",
@@ -132,17 +220,187 @@ function normalizeMessage(
       waMessageId,
       fromWaId,
       profileName: findProfileName(ctx.contacts, fromWaId),
+      messageType: "text",
       text: msg.text.body,
+      textBody: msg.text.body,
+      metaMediaId: null,
+      mimeType: null,
+      caption: null,
+      filename: null,
+      sha256: null,
+      voice: false,
+      latitude: null,
+      longitude: null,
+      address: null,
+      placeName: null,
       occurredAt: toIsoFromUnixSeconds(msg.timestamp),
       rawEvent: message as Record<string, unknown>,
     };
   }
 
+  if (type === "image" && isPlainObject(msg.image)) {
+    const img = msg.image;
+    const caption = typeof img.caption === "string" ? img.caption : null;
+    return {
+      kind: "inbound_message",
+      phoneNumberId: ctx.phoneNumberId,
+      displayPhoneNumber: ctx.displayPhoneNumber,
+      wabaEntryId: ctx.wabaEntryId,
+      waMessageId,
+      fromWaId,
+      profileName: findProfileName(ctx.contacts, fromWaId),
+      messageType: "image",
+      textBody: caption,
+      metaMediaId: typeof img.id === "string" ? img.id : null,
+      mimeType: typeof img.mime_type === "string" ? img.mime_type : null,
+      caption,
+      filename: null,
+      sha256: typeof img.sha256 === "string" ? img.sha256 : null,
+      voice: false,
+      latitude: null,
+      longitude: null,
+      address: null,
+      placeName: null,
+      occurredAt: toIsoFromUnixSeconds(msg.timestamp),
+      rawEvent: message as Record<string, unknown>,
+    };
+  }
+
+  if (type === "document" && isPlainObject(msg.document)) {
+    const doc = msg.document;
+    const caption = typeof doc.caption === "string" ? doc.caption : null;
+    return {
+      kind: "inbound_message",
+      phoneNumberId: ctx.phoneNumberId,
+      displayPhoneNumber: ctx.displayPhoneNumber,
+      wabaEntryId: ctx.wabaEntryId,
+      waMessageId,
+      fromWaId,
+      profileName: findProfileName(ctx.contacts, fromWaId),
+      messageType: "document",
+      textBody: caption,
+      metaMediaId: typeof doc.id === "string" ? doc.id : null,
+      mimeType: typeof doc.mime_type === "string" ? doc.mime_type : null,
+      caption,
+      filename: typeof doc.filename === "string" ? doc.filename : null,
+      sha256: typeof doc.sha256 === "string" ? doc.sha256 : null,
+      voice: false,
+      latitude: null,
+      longitude: null,
+      address: null,
+      placeName: null,
+      occurredAt: toIsoFromUnixSeconds(msg.timestamp),
+      rawEvent: message as Record<string, unknown>,
+    };
+  }
+
+  if ((type === "audio" || type === "voice") && (isPlainObject(msg.audio) || isPlainObject(msg.voice))) {
+    const aud = (isPlainObject(msg.voice) ? msg.voice : msg.audio) || {};
+    const isVoice = type === "voice" || aud.voice === true;
+    return {
+      kind: "inbound_message",
+      phoneNumberId: ctx.phoneNumberId,
+      displayPhoneNumber: ctx.displayPhoneNumber,
+      wabaEntryId: ctx.wabaEntryId,
+      waMessageId,
+      fromWaId,
+      profileName: findProfileName(ctx.contacts, fromWaId),
+      messageType: isVoice ? "voice" : "audio",
+      textBody: null,
+      metaMediaId: typeof aud.id === "string" ? aud.id : null,
+      mimeType: typeof aud.mime_type === "string" ? aud.mime_type : null,
+      caption: null,
+      filename: null,
+      sha256: typeof aud.sha256 === "string" ? aud.sha256 : null,
+      voice: isVoice,
+      latitude: null,
+      longitude: null,
+      address: null,
+      placeName: null,
+      occurredAt: toIsoFromUnixSeconds(msg.timestamp),
+      rawEvent: message as Record<string, unknown>,
+    };
+  }
+
+  if (type === "video" && isPlainObject(msg.video)) {
+    const vid = msg.video;
+    const caption = typeof vid.caption === "string" ? vid.caption : null;
+    return {
+      kind: "inbound_message",
+      phoneNumberId: ctx.phoneNumberId,
+      displayPhoneNumber: ctx.displayPhoneNumber,
+      wabaEntryId: ctx.wabaEntryId,
+      waMessageId,
+      fromWaId,
+      profileName: findProfileName(ctx.contacts, fromWaId),
+      messageType: "video",
+      textBody: caption,
+      metaMediaId: typeof vid.id === "string" ? vid.id : null,
+      mimeType: typeof vid.mime_type === "string" ? vid.mime_type : null,
+      caption,
+      filename: null,
+      sha256: typeof vid.sha256 === "string" ? vid.sha256 : null,
+      voice: false,
+      latitude: null,
+      longitude: null,
+      address: null,
+      placeName: null,
+      occurredAt: toIsoFromUnixSeconds(msg.timestamp),
+      rawEvent: message as Record<string, unknown>,
+    };
+  }
+
+  if (type === "location" && isPlainObject(msg.location)) {
+    const loc = msg.location;
+    const lat = typeof loc.latitude === "number" ? loc.latitude : Number(loc.latitude);
+    const lng = typeof loc.longitude === "number" ? loc.longitude : Number(loc.longitude);
+    return {
+      kind: "inbound_message",
+      phoneNumberId: ctx.phoneNumberId,
+      displayPhoneNumber: ctx.displayPhoneNumber,
+      wabaEntryId: ctx.wabaEntryId,
+      waMessageId,
+      fromWaId,
+      profileName: findProfileName(ctx.contacts, fromWaId),
+      messageType: "location",
+      textBody: typeof loc.name === "string" ? loc.name : typeof loc.address === "string" ? loc.address : null,
+      metaMediaId: null,
+      mimeType: null,
+      caption: null,
+      filename: null,
+      sha256: null,
+      voice: false,
+      latitude: sanitizeCoordinate(loc.latitude, -90, 90),
+      longitude: sanitizeCoordinate(loc.longitude, -180, 180),
+      address: truncateString(loc.address, 500),
+      placeName: truncateString(loc.name, 255),
+      occurredAt: toIsoFromUnixSeconds(msg.timestamp),
+      rawEvent: message as Record<string, unknown>,
+    };
+  }
+
+  // Unknown message types must never crash the webhook
   return {
-    kind: "unsupported",
+    kind: "inbound_message",
     phoneNumberId: ctx.phoneNumberId,
+    displayPhoneNumber: ctx.displayPhoneNumber,
+    wabaEntryId: ctx.wabaEntryId,
     waMessageId,
-    messageType: msg.type ? String(msg.type) : null,
+    fromWaId,
+    profileName: findProfileName(ctx.contacts, fromWaId),
+    messageType: type || "unknown",
+    textBody: null,
+    metaMediaId: null,
+    mimeType: null,
+    caption: null,
+    filename: null,
+    sha256: null,
+    voice: false,
+    latitude: null,
+    longitude: null,
+    address: null,
+    placeName: null,
+    occurredAt: toIsoFromUnixSeconds(msg.timestamp),
     rawEvent: message as Record<string, unknown>,
   };
 }

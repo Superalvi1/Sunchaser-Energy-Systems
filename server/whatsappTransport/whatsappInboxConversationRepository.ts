@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  WhatsAppAiOwnershipState,
   WhatsAppConversationAssignmentEvent,
   WhatsAppConversationInbox,
   WhatsAppConversationStatusEvent,
@@ -41,6 +42,7 @@ export type ConversationCasPatch = {
   assignedAt?: string | null;
   assignedBy?: string | null;
   hasFailedMessage?: boolean;
+  aiOwnershipState?: WhatsAppAiOwnershipState;
   companyId?: string;
 };
 
@@ -273,6 +275,10 @@ export class InMemoryWhatsAppInboxConversationRepository
         patch.hasFailedMessage !== undefined
           ? patch.hasFailedMessage
           : current.hasFailedMessage,
+      aiOwnershipState:
+        patch.aiOwnershipState !== undefined
+          ? patch.aiOwnershipState
+          : current.aiOwnershipState,
       lockVersion: current.lockVersion + 1,
       updatedAt: nowIso(),
     };
@@ -354,6 +360,8 @@ export class InMemoryWhatsAppInboxConversationRepository
       assignedUserId: input.assignedUserId,
       assignedAt: input.assignedAt,
       assignedBy: input.assignedBy,
+      aiOwnershipState:
+        input.assignedUserId != null ? "HUMAN_HANDLING" : "AI_SHADOW",
       lockVersion: previous.lockVersion + 1,
       updatedAt: nowIso(),
     };

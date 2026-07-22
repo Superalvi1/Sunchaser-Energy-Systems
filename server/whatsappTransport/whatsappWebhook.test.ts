@@ -449,19 +449,253 @@ await test("15. Delivery statuses remain individually idempotent", async () => {
   });
 });
 
-await test("16. Unsupported image event does not crash", async () => {
+await test("16. Inbound image metadata persists without downloading binaries", async () => {
   const repo = new InMemoryWhatsAppRepository();
   await withWebhookServer(repo, enabledConfig(), async (base) => {
-    const payload = inboundTextEnvelope({
-      waMessageId: "wamid.IMG",
-      type: "image",
-    });
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                messaging_product: "whatsapp",
+                metadata: {
+                  display_phone_number: "15550001111",
+                  phone_number_id: "PNID1",
+                },
+                contacts: [{ wa_id: "923001234567", profile: { name: "Ali Customer" } }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.IMG1",
+                    timestamp: "1700000000",
+                    type: "image",
+                    image: {
+                      id: "MEDIA_IMG_123",
+                      mime_type: "image/jpeg",
+                      sha256: "img_hash_123",
+                      caption: "Roof site photo",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
     const res = await postWebhook(base, payload);
     assert.equal(res.status, 200);
-    assert.equal(repo.messages.size, 0);
-    assert.ok(
-      repo.auditEvents.some((e) => e.eventType === "unsupported_message_ignored")
-    );
+    assert.equal(repo.messages.size, 1);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.messageType, "image");
+    assert.equal(msg.metaMediaId, "MEDIA_IMG_123");
+    assert.equal(msg.mimeType, "image/jpeg");
+    assert.equal(msg.sha256, "img_hash_123");
+    assert.equal(msg.caption, "Roof site photo");
+  });
+});
+
+await test("16b. Inbound document metadata persists correctly", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PNID1" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.DOC1",
+                    timestamp: "1700000000",
+                    type: "document",
+                    document: {
+                      id: "MEDIA_DOC_456",
+                      mime_type: "application/pdf",
+                      filename: "solar_proposal.pdf",
+                      caption: "Final Proposal",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.messageType, "document");
+    assert.equal(msg.metaMediaId, "MEDIA_DOC_456");
+    assert.equal(msg.filename, "solar_proposal.pdf");
+  });
+});
+
+await test("16c. Inbound voice note and audio persist with voice flag", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PNID1" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.VOICE1",
+                    timestamp: "1700000000",
+                    type: "audio",
+                    audio: {
+                      id: "MEDIA_AUD_789",
+                      mime_type: "audio/ogg",
+                      voice: true,
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.messageType, "voice");
+    assert.equal(msg.voice, true);
+  });
+});
+
+await test("16d. Inbound video metadata persists correctly", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PNID1" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.VID1",
+                    timestamp: "1700000000",
+                    type: "video",
+                    video: {
+                      id: "MEDIA_VID_999",
+                      mime_type: "video/mp4",
+                      caption: "Roof inspection video",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.messageType, "video");
+    assert.equal(msg.metaMediaId, "MEDIA_VID_999");
+  });
+});
+
+await test("16e. Inbound location metadata persists coordinates and address", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PNID1" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.LOC1",
+                    timestamp: "1700000000",
+                    type: "location",
+                    location: {
+                      latitude: 31.5204,
+                      longitude: 74.3587,
+                      name: "Lahore Office",
+                      address: "Gulberg III, Lahore",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.messageType, "location");
+    assert.equal(msg.latitude, 31.5204);
+    assert.equal(msg.longitude, 74.3587);
+    assert.equal(msg.placeName, "Lahore Office");
+  });
+});
+
+await test("16f. Unknown message type does not crash webhook", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PNID1" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.UNKNOWN1",
+                    timestamp: "1700000000",
+                    type: "sticker",
+                    sticker: { id: "sticker_123" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 1);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.messageType, "sticker");
   });
 });
 
@@ -769,10 +1003,10 @@ await test("unsupported media does not block valid text sibling", () => {
                   messages: [
                     {
                       from: "923001234567",
-                      id: "wamid.IMG2",
+                      id: "wamid.BAD1",
                       timestamp: "1700000000",
-                      type: "image",
-                      image: { id: "x" },
+                      type: "text",
+                      text: { body: 123 as any },
                     },
                     {
                       from: "923001234567",
@@ -881,6 +1115,125 @@ await test("channel uniqueness repair removes global unique and adds company-awa
   assert.match(sql, /NOT yet a true tenant security boundary/i);
   // Still no unrestricted RLS policies.
   assert.equal(/create policy[\s\S]*using\s*\(\s*true\s*\)/i.test(sql), false);
+});
+
+await test("defensive payload: malformed coordinates and oversized text are safely sanitized", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PN123" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.DEF_LOC1",
+                    timestamp: "1700000000",
+                    type: "location",
+                    location: {
+                      latitude: "invalid_lat",
+                      longitude: 200,
+                      name: "A".repeat(500),
+                      address: "B".repeat(1000),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 1);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.latitude, null);
+    assert.equal(msg.longitude, null);
+    assert.equal(msg.placeName?.length, 255);
+    assert.equal(msg.address?.length, 500);
+  });
+});
+
+await test("defensive payload: missing sender does not crash webhook", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PN123" },
+                messages: [
+                  {
+                    id: "wamid.NO_SENDER",
+                    timestamp: "1700000000",
+                    type: "text",
+                    text: { body: "test" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 0);
+  });
+});
+
+await test("defensive payload: mixed status and message in single webhook are handled independently", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PN123" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.MSG_MIXED",
+                    timestamp: "1700000000",
+                    type: "text",
+                    text: { body: "mixed message" },
+                  },
+                ],
+                statuses: [
+                  {
+                    id: "wamid.STAT_MIXED",
+                    status: "delivered",
+                    timestamp: "1700000001",
+                    recipient_id: "923001234567",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 1);
+    assert.equal(repo.statusEvents.size, 1);
+  });
 });
 
 if (failed > 0) {

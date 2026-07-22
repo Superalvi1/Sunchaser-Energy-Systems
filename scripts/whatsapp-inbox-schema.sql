@@ -474,4 +474,56 @@ grant execute on function public.whatsapp_inbox_apply_assignment_change(
 comment on function public.whatsapp_inbox_apply_assignment_change is
   'PR2 atomic assignment CAS + assignment-event insert. NULL means not_found/conflict. Backend/service_role only.';
 
+-- -----------------------------------------------------------------------------
+-- 14. Phase 1A & 2A Additive Columns (Sunchaser Connect)
+-- -----------------------------------------------------------------------------
+alter table public.whatsapp_conversations
+  add column if not exists ai_ownership_state text not null default 'AI_SHADOW';
+
+alter table public.whatsapp_conversations
+  drop constraint if exists whatsapp_conversations_ai_ownership_state_check;
+
+alter table public.whatsapp_conversations
+  add constraint whatsapp_conversations_ai_ownership_state_check
+  check (ai_ownership_state in ('AI_SHADOW', 'AI_ACTIVE', 'HUMAN_HANDLING', 'AI_PAUSED')) not valid;
+
+alter table public.whatsapp_conversations
+  validate constraint whatsapp_conversations_ai_ownership_state_check;
+
+alter table public.whatsapp_messages
+  add column if not exists message_type text not null default 'text';
+
+alter table public.whatsapp_messages
+  add column if not exists meta_media_id text;
+
+alter table public.whatsapp_messages
+  add column if not exists mime_type text;
+
+alter table public.whatsapp_messages
+  add column if not exists caption text;
+
+alter table public.whatsapp_messages
+  add column if not exists filename text;
+
+alter table public.whatsapp_messages
+  add column if not exists sha256 text;
+
+alter table public.whatsapp_messages
+  add column if not exists voice boolean not null default false;
+
+alter table public.whatsapp_messages
+  add column if not exists latitude double precision;
+
+alter table public.whatsapp_messages
+  add column if not exists longitude double precision;
+
+alter table public.whatsapp_messages
+  add column if not exists address text;
+
+alter table public.whatsapp_messages
+  add column if not exists place_name text;
+
+alter table public.whatsapp_messages
+  add column if not exists raw_metadata jsonb;
+
 notify pgrst, 'reload schema';

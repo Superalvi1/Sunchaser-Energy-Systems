@@ -4,17 +4,19 @@
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
-import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
-import type {
-  WhatsAppConversationAssignmentEvent,
-  WhatsAppConversationCrmLink,
-  WhatsAppConversationInbox,
-  WhatsAppConversationStatusEvent,
-  WhatsAppCrmLinkEntityType,
-  WhatsAppInboxConversationStatus,
-  WhatsAppOutboundIdempotencyKey,
-  WhatsAppOutboundIdempotencyState,
-  WhatsAppReadWatermark,
+import { resolveCompanyId } from "./whatsappConstants.ts";
+import {
+  isWhatsAppAiOwnershipState,
+  type WhatsAppAiOwnershipState,
+  type WhatsAppConversationAssignmentEvent,
+  type WhatsAppConversationCrmLink,
+  type WhatsAppConversationInbox,
+  type WhatsAppConversationStatusEvent,
+  type WhatsAppCrmLinkEntityType,
+  type WhatsAppInboxConversationStatus,
+  type WhatsAppOutboundIdempotencyKey,
+  type WhatsAppOutboundIdempotencyState,
+  type WhatsAppReadWatermark,
 } from "./whatsappInboxDatabaseTypes.ts";
 
 export type KeysetCursor = {
@@ -74,6 +76,9 @@ export function mapConversationInbox(
     assignedBy: (row.assigned_by as string) ?? null,
     lockVersion: Number(row.lock_version ?? 1),
     hasFailedMessage: Boolean(row.has_failed_message),
+    aiOwnershipState: isWhatsAppAiOwnershipState(row.ai_ownership_state)
+      ? row.ai_ownership_state
+      : "AI_SHADOW",
   };
 }
 
@@ -157,6 +162,17 @@ export type InboxMessageRef = {
   textBody: string | null;
   createdAt: string;
   occurredAt: string | null;
+  messageType?: string;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  caption?: string | null;
+  filename?: string | null;
+  sha256?: string | null;
+  voice?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  placeName?: string | null;
 };
 
 export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
@@ -169,6 +185,17 @@ export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
     textBody: (row.text_body as string) ?? null,
     createdAt: String(row.created_at),
     occurredAt: (row.occurred_at as string) ?? null,
+    messageType: (row.message_type as string) ?? "text",
+    metaMediaId: (row.meta_media_id as string) ?? null,
+    mimeType: (row.mime_type as string) ?? null,
+    caption: (row.caption as string) ?? null,
+    filename: (row.filename as string) ?? null,
+    sha256: (row.sha256 as string) ?? null,
+    voice: Boolean(row.voice),
+    latitude: typeof row.latitude === "number" ? row.latitude : null,
+    longitude: typeof row.longitude === "number" ? row.longitude : null,
+    address: (row.address as string) ?? null,
+    placeName: (row.place_name as string) ?? null,
   };
 }
 
@@ -190,7 +217,7 @@ export class InboxSupabaseAccess {
   }
 
   companyId(explicit?: string): string {
-    return explicit ?? DEFAULT_COMPANY_ID;
+    return resolveCompanyId(explicit);
   }
 }
 
@@ -219,9 +246,24 @@ export class WhatsAppInboxMemoryStore {
 
 /** Sentinel entity id used to claim create-lead exclusivity before CRM callback. */
 export const CREATE_LEAD_PENDING_ENTITY_ID = "__pending_create_lead__";
+export const PENDING_LEAD_PREFIX = "pending_lead:";
 
 export function isPendingCreateLeadLink(
   link: WhatsAppConversationCrmLink | null | undefined
 ): boolean {
-  return !!link && link.linkedEntityId === CREATE_LEAD_PENDING_ENTITY_ID;
+  if (!link) return false;
+  return (
+    link.linkedEntityId === CREATE_LEAD_PENDING_ENTITY_ID ||
+    link.linkedEntityId.startsWith(PENDING_LEAD_PREFIX)
+  );
+}
+
+export function extractPendingLeadId(
+  link: WhatsAppConversationCrmLink | null | undefined
+): string | null {
+  if (!link) return null;
+  if (link.linkedEntityId.startsWith(PENDING_LEAD_PREFIX)) {
+    return link.linkedEntityId.slice(PENDING_LEAD_PREFIX.length);
+  }
+  return null;
 }

@@ -32,6 +32,25 @@ export const WHATSAPP_CRM_LINK_ENTITY_TYPES = ["lead", "customer"] as const;
 export type WhatsAppCrmLinkEntityType =
   (typeof WHATSAPP_CRM_LINK_ENTITY_TYPES)[number];
 
+export const WHATSAPP_AI_OWNERSHIP_STATES = [
+  "AI_SHADOW",
+  "AI_ACTIVE",
+  "HUMAN_HANDLING",
+  "AI_PAUSED",
+] as const;
+
+export type WhatsAppAiOwnershipState =
+  (typeof WHATSAPP_AI_OWNERSHIP_STATES)[number];
+
+export function isWhatsAppAiOwnershipState(
+  value: unknown
+): value is WhatsAppAiOwnershipState {
+  return (
+    typeof value === "string" &&
+    (WHATSAPP_AI_OWNERSHIP_STATES as readonly string[]).includes(value)
+  );
+}
+
 /** Additive columns on PR 1 `whatsapp_conversations` (plus existing PR 1 fields). */
 export type WhatsAppConversationInboxRow = {
   id: string;
@@ -47,6 +66,7 @@ export type WhatsAppConversationInboxRow = {
   assigned_by: string | null;
   lock_version: number;
   has_failed_message: boolean;
+  ai_ownership_state?: WhatsAppAiOwnershipState;
 };
 
 export type WhatsAppConversationAssignmentEventRow = {
@@ -113,6 +133,7 @@ export type WhatsAppConversationInbox = {
   assignedBy: string | null;
   lockVersion: number;
   hasFailedMessage: boolean;
+  aiOwnershipState?: WhatsAppAiOwnershipState;
 };
 
 export type WhatsAppConversationAssignmentEvent = {

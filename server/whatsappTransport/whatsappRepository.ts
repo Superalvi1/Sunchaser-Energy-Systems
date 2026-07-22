@@ -57,6 +57,18 @@ export type WhatsAppMessage = {
   createdAt: string;
   updatedAt: string;
   rawPayload: Record<string, unknown> | null;
+  messageType?: string;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  caption?: string | null;
+  filename?: string | null;
+  sha256?: string | null;
+  voice?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  placeName?: string | null;
+  rawMetadata?: Record<string, unknown> | null;
 };
 
 export type WhatsAppWebhookEventRow = {
@@ -116,9 +128,21 @@ export interface WhatsAppRepository {
   insertInboundMessage(input: {
     conversationId: string;
     waMessageId: string;
-    textBody: string;
+    textBody?: string | null;
     occurredAt: string;
     rawPayload: Record<string, unknown>;
+    messageType?: string;
+    metaMediaId?: string | null;
+    mimeType?: string | null;
+    caption?: string | null;
+    filename?: string | null;
+    sha256?: string | null;
+    voice?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+    address?: string | null;
+    placeName?: string | null;
+    rawMetadata?: Record<string, unknown> | null;
   }): Promise<InsertResult<WhatsAppMessage>>;
   insertStatusEvent(
     input: NormalizedStatusEvent
@@ -320,9 +344,21 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
   async insertInboundMessage(input: {
     conversationId: string;
     waMessageId: string;
-    textBody: string;
+    textBody?: string | null;
     occurredAt: string;
     rawPayload: Record<string, unknown>;
+    messageType?: string;
+    metaMediaId?: string | null;
+    mimeType?: string | null;
+    caption?: string | null;
+    filename?: string | null;
+    sha256?: string | null;
+    voice?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+    address?: string | null;
+    placeName?: string | null;
+    rawMetadata?: Record<string, unknown> | null;
   }): Promise<InsertResult<WhatsAppMessage>> {
     if (this.failPersistAfterClaim) {
       throw new Error(this.failPersistAfterClaim);
@@ -341,7 +377,7 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       conversationId: input.conversationId,
       direction: MESSAGE_DIRECTIONS.INBOUND,
       status: MESSAGE_STATUSES.RECEIVED,
-      textBody: input.textBody,
+      textBody: input.textBody ?? null,
       waMessageId: input.waMessageId,
       providerError: null,
       occurredAt: input.occurredAt,
@@ -349,6 +385,18 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       createdAt: nowIso(),
       updatedAt: nowIso(),
       rawPayload: input.rawPayload,
+      messageType: input.messageType ?? "text",
+      metaMediaId: input.metaMediaId ?? null,
+      mimeType: input.mimeType ?? null,
+      caption: input.caption ?? null,
+      filename: input.filename ?? null,
+      sha256: input.sha256 ?? null,
+      voice: Boolean(input.voice),
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      address: input.address ?? null,
+      placeName: input.placeName ?? null,
+      rawMetadata: input.rawMetadata ?? input.rawPayload,
     };
     this.messages.set(row.id, row);
     return { ok: true, row, created: true };
@@ -548,6 +596,18 @@ function mapMessage(row: Record<string, unknown>): WhatsAppMessage {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     rawPayload: (row.raw_payload as Record<string, unknown>) ?? null,
+    messageType: (row.message_type as string) ?? "text",
+    metaMediaId: (row.meta_media_id as string) ?? null,
+    mimeType: (row.mime_type as string) ?? null,
+    caption: (row.caption as string) ?? null,
+    filename: (row.filename as string) ?? null,
+    sha256: (row.sha256 as string) ?? null,
+    voice: Boolean(row.voice),
+    latitude: typeof row.latitude === "number" ? row.latitude : null,
+    longitude: typeof row.longitude === "number" ? row.longitude : null,
+    address: (row.address as string) ?? null,
+    placeName: (row.place_name as string) ?? null,
+    rawMetadata: (row.raw_metadata as Record<string, unknown>) ?? null,
   };
 }
 
@@ -820,9 +880,21 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
   async insertInboundMessage(input: {
     conversationId: string;
     waMessageId: string;
-    textBody: string;
+    textBody?: string | null;
     occurredAt: string;
     rawPayload: Record<string, unknown>;
+    messageType?: string;
+    metaMediaId?: string | null;
+    mimeType?: string | null;
+    caption?: string | null;
+    filename?: string | null;
+    sha256?: string | null;
+    voice?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+    address?: string | null;
+    placeName?: string | null;
+    rawMetadata?: Record<string, unknown> | null;
   }): Promise<InsertResult<WhatsAppMessage>> {
     const supabase = this.client();
     const { data: existing } = await supabase
@@ -845,10 +917,22 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       conversation_id: input.conversationId,
       direction: MESSAGE_DIRECTIONS.INBOUND,
       status: MESSAGE_STATUSES.RECEIVED,
-      text_body: input.textBody,
+      text_body: input.textBody ?? null,
       wa_message_id: input.waMessageId,
       occurred_at: input.occurredAt,
       raw_payload: input.rawPayload,
+      message_type: input.messageType ?? "text",
+      meta_media_id: input.metaMediaId ?? null,
+      mime_type: input.mimeType ?? null,
+      caption: input.caption ?? null,
+      filename: input.filename ?? null,
+      sha256: input.sha256 ?? null,
+      voice: Boolean(input.voice),
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      address: input.address ?? null,
+      place_name: input.placeName ?? null,
+      raw_metadata: input.rawMetadata ?? input.rawPayload,
     };
     const { data, error } = await supabase
       .from("whatsapp_messages")
