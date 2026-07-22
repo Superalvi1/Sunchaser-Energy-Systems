@@ -42,6 +42,15 @@ export const WHATSAPP_AI_OWNERSHIP_STATES = [
 export type WhatsAppAiOwnershipState =
   (typeof WHATSAPP_AI_OWNERSHIP_STATES)[number];
 
+export function isWhatsAppAiOwnershipState(
+  value: unknown
+): value is WhatsAppAiOwnershipState {
+  return (
+    typeof value === "string" &&
+    (WHATSAPP_AI_OWNERSHIP_STATES as readonly string[]).includes(value)
+  );
+}
+
 /** Additive columns on PR 1 `whatsapp_conversations` (plus existing PR 1 fields). */
 export type WhatsAppConversationInboxRow = {
   id: string;

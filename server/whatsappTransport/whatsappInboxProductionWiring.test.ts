@@ -952,7 +952,7 @@ await test("createLead: transient link failure recovers without second persist",
   const realUpsert = repos.crmLinks.upsert.bind(repos.crmLinks);
   repos.crmLinks.upsert = async (input) => {
     upsertAttempts += 1;
-    if (upsertAttempts === 1) throw new Error("transient link failure");
+    if (upsertAttempts === 2) throw new Error("transient link failure");
     return realUpsert(input);
   };
 
@@ -963,7 +963,7 @@ await test("createLead: transient link failure recovers without second persist",
   );
   assert.equal(created.kind, "created");
   assert.equal(persistCount, 1);
-  assert.equal(upsertAttempts, 2);
+  assert.equal(upsertAttempts, 3);
   assert.ok(await repos.crmLinks.getByConversationId(seeded.conversation.id));
 });
 

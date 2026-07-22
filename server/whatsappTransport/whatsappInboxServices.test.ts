@@ -1182,6 +1182,36 @@ await test("Recovery D: conversation becomes linked before retry; recovery does 
   );
 });
 
+await test("Lead correlation persistence failure surfaces operational error and retains claim", async () => {
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedConversation(repos.store, { id: "c_corr_fail" });
+
+  const originalUpsert = repos.crmLinks.upsert.bind(repos.crmLinks);
+  repos.crmLinks.upsert = async (input) => {
+    if (input.linkedEntityId.startsWith("pending_lead:")) {
+      throw new Error("DB error persisting pending_lead correlation");
+    }
+    return originalUpsert(input);
+  };
+
+  const services = createWhatsAppInboxServices(repos, {
+    createLead: async () => ({ leadId: "lead_corr_fail_1" }),
+    findDuplicate: async () => null,
+  });
+
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation("c_corr_fail", {
+        actor: admin(),
+        forceCreate: true,
+      }),
+    (err: any) =>
+      err instanceof InboxServiceError &&
+      err.code === "service_unavailable" &&
+      err.message.includes("Failed to persist pending lead correlation")
+  );
+});
+
 await test("forceCreate: does not link an existing duplicate and creates new lead", async () => {
   const repos = createInMemoryWhatsAppInboxRepositories();
   seedConversation(repos.store, { id: "c_fc" });

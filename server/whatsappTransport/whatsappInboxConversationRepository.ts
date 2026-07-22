@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  WhatsAppAiOwnershipState,
   WhatsAppConversationAssignmentEvent,
   WhatsAppConversationInbox,
   WhatsAppConversationStatusEvent,

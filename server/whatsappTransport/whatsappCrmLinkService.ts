@@ -115,7 +115,7 @@ export class CRMLinkService {
     if (this.deps.createLead) {
       const result = await this.createLeadFromConversation(conversationId, {
         actor: systemActor,
-        forceCreate: true,
+        forceCreate: false,
       });
       if (result.kind === "created") {
         return { leadId: result.leadId, created: true };
@@ -343,8 +343,12 @@ export class CRMLinkService {
           linkedByUserId: input.actor.id,
           companyId: this.companyId,
         });
-      } catch {
-        // Ignore failure storing correlation prefix before final link
+      } catch (err) {
+        if (err instanceof InboxServiceError) throw err;
+        throw new InboxServiceError(
+          "service_unavailable",
+          "Failed to persist pending lead correlation after lead creation"
+        );
       }
 
       try {

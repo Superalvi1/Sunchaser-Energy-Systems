@@ -5,17 +5,18 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
 import { resolveCompanyId } from "./whatsappConstants.ts";
-import type {
-  WhatsAppAiOwnershipState,
-  WhatsAppConversationAssignmentEvent,
-  WhatsAppConversationCrmLink,
-  WhatsAppConversationInbox,
-  WhatsAppConversationStatusEvent,
-  WhatsAppCrmLinkEntityType,
-  WhatsAppInboxConversationStatus,
-  WhatsAppOutboundIdempotencyKey,
-  WhatsAppOutboundIdempotencyState,
-  WhatsAppReadWatermark,
+import {
+  isWhatsAppAiOwnershipState,
+  type WhatsAppAiOwnershipState,
+  type WhatsAppConversationAssignmentEvent,
+  type WhatsAppConversationCrmLink,
+  type WhatsAppConversationInbox,
+  type WhatsAppConversationStatusEvent,
+  type WhatsAppCrmLinkEntityType,
+  type WhatsAppInboxConversationStatus,
+  type WhatsAppOutboundIdempotencyKey,
+  type WhatsAppOutboundIdempotencyState,
+  type WhatsAppReadWatermark,
 } from "./whatsappInboxDatabaseTypes.ts";
 
 export type KeysetCursor = {
@@ -75,8 +76,9 @@ export function mapConversationInbox(
     assignedBy: (row.assigned_by as string) ?? null,
     lockVersion: Number(row.lock_version ?? 1),
     hasFailedMessage: Boolean(row.has_failed_message),
-    aiOwnershipState:
-      (row.ai_ownership_state as WhatsAppAiOwnershipState) ?? "AI_SHADOW",
+    aiOwnershipState: isWhatsAppAiOwnershipState(row.ai_ownership_state)
+      ? row.ai_ownership_state
+      : "AI_SHADOW",
   };
 }
 
