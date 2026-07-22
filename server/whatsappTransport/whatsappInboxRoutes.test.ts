@@ -339,6 +339,13 @@ await test("error mapper: InboxServiceError codes", () => {
     mapInboxError(new InboxServiceError("already_linked", "no")).status,
     409
   );
+  const unavailable = mapInboxError(
+    new InboxServiceError("service_unavailable", "db boom", { secret: true })
+  );
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailable.code, "service_unavailable");
+  assert.equal(unavailable.message, "Service temporarily unavailable");
+  assert.equal(unavailable.details, undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -531,6 +538,55 @@ await test("integration: crm link + create-lead + unlink", async () => {
       });
       assert.equal(created.status, 201);
       assert.equal(created.body.data.kind, "created");
+    }
+  );
+});
+
+await test("http: service_unavailable → 503 with generic body only", async () => {
+  const mapped = mapInboxError(
+    new InboxServiceError(
+      "service_unavailable",
+      "Lead persistence failed: connection refused to postgres://internal:5432/crm",
+      { sql: "SELECT * FROM secrets", host: "db.internal" }
+    )
+  );
+  assert.equal(mapped.status, 503);
+  assert.equal(mapped.code, "service_unavailable");
+  assert.equal(mapped.message, "Service temporarily unavailable");
+  assert.equal(mapped.details, undefined);
+
+  await withInboxServer(
+    {
+      createLead: async () => {
+        throw new InboxServiceError(
+          "service_unavailable",
+          "Lead persistence failed: connection refused to postgres://internal:5432/crm",
+          { sql: "SELECT * FROM secrets", host: "db.internal" }
+        );
+      },
+    },
+    async (baseUrl, tokens, repos) => {
+      seedConversation(repos.store, { id: "c1" });
+      const res = await api(baseUrl, "POST", "/crm/create-lead", {
+        token: tokens.staff,
+        body: { conversationId: "c1", forceCreate: true },
+      });
+      assert.equal(res.status, 503);
+      assert.equal(res.body.success, false);
+      assert.equal(res.body.error.code, "service_unavailable");
+      assert.equal(res.body.error.message, "Service temporarily unavailable");
+      assert.equal(res.body.error.details, undefined);
+      const raw = JSON.stringify(res.body);
+      assert.equal(raw.includes("postgres"), false);
+      assert.equal(raw.includes("connection refused"), false);
+      assert.equal(raw.includes("5432"), false);
+      assert.equal(raw.includes("secrets"), false);
+      assert.equal(raw.includes("db.internal"), false);
+      assert.equal(
+        await repos.crmLinks.getByConversationId("c1"),
+        null,
+        "pending claim must be released when create fails before persist"
+      );
     }
   );
 });

@@ -14,10 +14,10 @@ export type InboxAssigneeCandidate = {
 
 export type InboxAssigneeDirectory = {
   /**
-   * Resolve assignee by user id in the context of a conversation company.
-   * Returns null when the user does not exist.
+   * Resolve assignee by user id scoped to the conversation company.
+   * Returns null when the user does not exist in that company.
    * Throws InboxServiceError(service_unavailable) on infrastructure failure.
-   * Caller enforces company match via candidate.companyId.
+   * Caller also enforces company match via candidate.companyId (defence in depth).
    */
   getById(
     userId: string,

@@ -117,10 +117,25 @@ await test("phone: equivalent PK forms normalize identically", () => {
   assert.equal(phonesMatch("03-001234567", "+92 300 1234567"), true);
   assert.deepEqual(pakistanMobileLookupForms("923001234567"), [
     "923001234567",
-    "03001234567",
     "+923001234567",
     "00923001234567",
+    "03001234567",
+    "3001234567",
   ]);
+});
+
+await test("phone: lookup forms include all five accepted exact storage variants", () => {
+  const forms = pakistanMobileLookupForms("03001234567");
+  assert.equal(forms.length, 5);
+  assert.deepEqual(forms, [
+    "923001234567",
+    "+923001234567",
+    "00923001234567",
+    "03001234567",
+    "3001234567",
+  ]);
+  assert.equal(new Set(forms).size, 5);
+  assert.deepEqual(pakistanMobileLookupForms("not-a-phone"), []);
 });
 
 await test("phone: invalid values rejected", () => {
@@ -128,6 +143,37 @@ await test("phone: invalid values rejected", () => {
   assert.equal(normalizePakistanPhone("123"), null);
   assert.equal(normalizePakistanPhone("00000000000"), null);
   assert.equal(normalizePakistanPhone("921111111111"), null); // not mobile 3xx
+  assert.equal(normalizePakistanPhone("abc03001234567xyz"), null);
+  assert.equal(normalizePakistanPhone("0300<script>1234567"), null);
+  assert.equal(normalizePakistanPhone("++923001234567"), null);
+  assert.equal(normalizePakistanPhone("+03001234567"), null);
+  assert.equal(normalizePakistanPhone("92300123456789"), null);
+  assert.equal(normalizePakistanPhone("0092303001234567"), null);
+  // Foreign country codes — never reinterpret as PK mobiles
+  assert.equal(normalizePakistanPhone("+14155552671"), null);
+  assert.equal(normalizePakistanPhone("+447911123456"), null);
+  assert.equal(normalizePakistanPhone("001234567890"), null);
+  assert.equal(normalizePakistanPhone("+971501234567"), null);
+});
+
+await test("phone: structural placeholder patterns rejected", () => {
+  const placeholders = [
+    "00000000000",
+    "03000000000",
+    "03111111111",
+    "03222222222",
+    "03333333333",
+    "03444444444",
+    "03555555555",
+    "923000000000",
+    "+923111111111",
+  ];
+  for (const p of placeholders) {
+    assert.equal(normalizePakistanPhone(p), null, p);
+  }
+  // Legitimate numbers with some repeated digits still accepted
+  assert.equal(normalizePakistanPhone("03001112233"), "923001112233");
+  assert.equal(normalizePakistanPhone("03331234567"), "923331234567");
 });
 
 // ---------------------------------------------------------------------------
@@ -231,6 +277,7 @@ await test("assign: cross-company user rejected", async () => {
     ...opts,
     companyId: "sunchaser",
   });
+  // Company-scoped directory returns null (does not leak other-tenant users).
   await assert.rejects(
     () =>
       services.assignments.setAssignment(seeded.conversation.id, {
@@ -240,8 +287,8 @@ await test("assign: cross-company user rejected", async () => {
       }),
     (err: unknown) =>
       err instanceof InboxServiceError &&
-      err.code === "forbidden" &&
-      /different company/i.test(err.message)
+      err.code === "invalid_argument" &&
+      /not found/i.test(err.message)
   );
 });
 
@@ -376,6 +423,52 @@ await test("createLead: soft-deleted lead is ignored", async () => {
   );
   assert.equal(result.kind, "created");
   assert.ok(createdId);
+});
+
+await test("createLead: duplicate pick is deterministic (oldest created_at, then id)", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const localDb = {
+    users: [staffUser()],
+    leads: [
+      {
+        id: "lead-z",
+        phone: "03001112233",
+        deleted_at: null,
+        created_at: "2026-02-01T00:00:00.000Z",
+      },
+      {
+        id: "lead-a",
+        phone: "+923001112233",
+        deleted_at: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "lead-b",
+        phone: "923001112233",
+        deleted_at: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  } as any;
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async () => {
+      throw new Error("should not persist");
+    },
+  });
+  const suggestion = await opts.findDuplicate!({
+    conversationId: seeded.conversation.id,
+    companyId: "sunchaser",
+    actor,
+  });
+  assert.ok(suggestion);
+  // Same created_at → lexicographically smaller id wins (lead-a before lead-b)
+  assert.equal(suggestion!.linkedEntityId, "lead-a");
 });
 
 await test("createLead: duplicate lookup database failure does not create a lead", async () => {
@@ -598,6 +691,147 @@ await test("createLead: forceCreate does not bypass phone integrity", async () =
     (err: unknown) =>
       err instanceof InboxServiceError && err.code === "invalid_argument"
   );
+});
+
+await test("company: non-default company createLead/findDuplicate fail closed", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  await assert.rejects(
+    () =>
+      opts.createLead!({
+        conversationId: seeded.conversation.id,
+        companyId: "other-company",
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "forbidden"
+  );
+  await assert.rejects(
+    () =>
+      opts.findDuplicate!({
+        conversationId: seeded.conversation.id,
+        companyId: "other-company",
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "forbidden"
+  );
+});
+
+await test("company: assignee directory scopes lookup by companyId", async () => {
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads: [] }) as any,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  const same = await opts.assignees!.getById("u-staff", "sunchaser");
+  assert.ok(same);
+  assert.equal(same!.companyId, "sunchaser");
+  const cross = await opts.assignees!.getById("u-staff", "other-company");
+  assert.equal(cross, null);
+});
+
+await test("createLead: link failure after persist recovers or enables duplicate link", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923009998877");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+
+  const leads: Array<{
+    id: string;
+    phone: string;
+    deleted_at: null;
+    created_at: string;
+  }> = [];
+  let persistCount = 0;
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      persistCount += 1;
+      leads.push({
+        id: lead.id,
+        phone: lead.phone,
+        deleted_at: null,
+        created_at: lead.createdAt,
+      });
+      return { leadId: lead.id };
+    },
+  });
+
+  // Permanent link write failure after lead persistence
+  repos.crmLinks.upsert = async () => {
+    throw new Error("crm link write failed");
+  };
+
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation(seeded.conversation.id, {
+        actor,
+        forceCreate: true,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "service_unavailable"
+  );
+  assert.equal(persistCount, 1);
+  assert.equal(leads.length, 1);
+  assert.equal(
+    await repos.crmLinks.getByConversationId(seeded.conversation.id),
+    null
+  );
+
+  // Restore real upsert; retry without forceCreate must surface existing lead
+  const repos2 = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos2, seeded.conversation);
+  const services2 = createWhatsAppInboxServices(repos2, opts);
+  const result = await services2.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor, forceCreate: false }
+  );
+  assert.equal(result.kind, "duplicate_suggestion");
+  if (result.kind === "duplicate_suggestion") {
+    assert.equal(result.suggestion.linkedEntityId, leads[0]!.id);
+  }
+  assert.equal(persistCount, 1, "must not create a second lead");
+});
+
+await test("createLead: transient link failure recovers without second persist", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923007776655");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+
+  let persistCount = 0;
+  let upsertAttempts = 0;
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      persistCount += 1;
+      return { leadId: lead.id };
+    },
+  });
+  const realUpsert = repos.crmLinks.upsert.bind(repos.crmLinks);
+  repos.crmLinks.upsert = async (input) => {
+    upsertAttempts += 1;
+    if (upsertAttempts === 1) throw new Error("transient link failure");
+    return realUpsert(input);
+  };
+
+  const services = createWhatsAppInboxServices(repos, opts);
+  const created = await services.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor, forceCreate: true }
+  );
+  assert.equal(created.kind, "created");
+  assert.equal(persistCount, 1);
+  assert.equal(upsertAttempts, 2);
+  assert.ok(await repos.crmLinks.getByConversationId(seeded.conversation.id));
 });
 
 // ---------------------------------------------------------------------------

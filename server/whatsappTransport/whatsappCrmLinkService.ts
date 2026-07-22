@@ -206,6 +206,7 @@ export class CRMLinkService {
       );
     }
 
+    let persistedLeadId: string | null = null;
     try {
       const created = await this.deps.createLead({
         conversationId,
@@ -219,22 +220,57 @@ export class CRMLinkService {
           "Create-lead callback returned an invalid leadId"
         );
       }
+      persistedLeadId = leadId;
 
-      const link = await this.crmLinks.upsert({
-        conversationId,
-        linkedEntityType: "lead",
-        linkedEntityId: leadId,
-        linkedByUserId: input.actor.id,
-        companyId: this.companyId,
-      });
-      await this.conversations.touchUpdatedAt(conversationId, this.companyId);
-      return { kind: "created", link, leadId };
+      try {
+        const link = await this.crmLinks.upsert({
+          conversationId,
+          linkedEntityType: "lead",
+          linkedEntityId: leadId,
+          linkedByUserId: input.actor.id,
+          companyId: this.companyId,
+        });
+        await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+        return { kind: "created", link, leadId };
+      } catch (linkErr) {
+        // Lead already exists in CRM. Retry link write once so a transient CRM-link
+        // failure does not strand an unlinked lead or force a second create.
+        try {
+          const recovered = await this.crmLinks.upsert({
+            conversationId,
+            linkedEntityType: "lead",
+            linkedEntityId: leadId,
+            linkedByUserId: input.actor.id,
+            companyId: this.companyId,
+          });
+          await this.conversations.touchUpdatedAt(
+            conversationId,
+            this.companyId
+          );
+          return { kind: "created", link: recovered, leadId };
+        } catch {
+          // Release pending claim so retry can run duplicate lookup and link the
+          // already-persisted lead instead of creating another.
+          await this.crmLinks.deleteByConversationId(
+            conversationId,
+            this.companyId
+          );
+          if (linkErr instanceof InboxServiceError) throw linkErr;
+          throw new InboxServiceError(
+            "service_unavailable",
+            "CRM link persistence failed after lead creation"
+          );
+        }
+      }
     } catch (err) {
-      // Release the exclusivity claim so a later retry can proceed.
-      await this.crmLinks.deleteByConversationId(
-        conversationId,
-        this.companyId
-      );
+      // Only release the claim when no CRM lead was persisted. If a lead exists,
+      // the inner handler already released the claim for duplicate-lookup recovery.
+      if (!persistedLeadId) {
+        await this.crmLinks.deleteByConversationId(
+          conversationId,
+          this.companyId
+        );
+      }
       throw err;
     }
   }

@@ -4,8 +4,13 @@
  *
  * Duplicate phone lookup limitation:
  * Schema has no normalized_phone column. Lookup uses exact match against a bounded
- * set of canonical Pakistan mobile forms (92… / 03… / +92… / 0092…). Leads stored
+ * set of canonical Pakistan mobile forms (92… / +92… / 0092… / 03… / 3…). Leads stored
  * with atypical formatting may not be detected as duplicates.
+ *
+ * Lead company isolation limitation:
+ * Persistent `leads` rows have no company_id column today. Inbox CRM create/duplicate
+ * paths therefore fail closed unless companyId === DEFAULT_COMPANY_ID. Multi-company
+ * lead isolation requires a schema change in a later phase.
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -58,20 +63,37 @@ function infrastructureError(message: string): InboxServiceError {
   return new InboxServiceError("service_unavailable", message);
 }
 
+/**
+ * Leads table has no company_id — contain CRM lead ops to DEFAULT_COMPANY_ID only.
+ * Fail closed for any other company rather than silently querying across tenants.
+ */
+function requireDefaultCompanyLeadScope(companyId: string): void {
+  const id = String(companyId || "").trim();
+  if (id !== DEFAULT_COMPANY_ID) {
+    throw new InboxServiceError(
+      "forbidden",
+      "CRM lead operations are limited to the default company scope"
+    );
+  }
+}
+
 async function lookupAssigneeCandidate(
   userId: string,
-  _companyId: string,
+  companyId: string,
   resolveLocalDb: () => Database,
   defaultUserCompanyId: string
 ): Promise<InboxAssigneeCandidate | null> {
   const id = String(userId || "").trim();
-  if (!id) return null;
+  const scopedCompanyId = String(companyId || "").trim();
+  if (!id || !scopedCompanyId) return null;
 
   if (isSupabaseActive()) {
+    // Company-scoped lookup at the persistence boundary (not global fetch + later compare).
     const { data, error } = await getSupabase()!
       .from("users")
       .select("*")
       .eq("id", id)
+      .eq("company_id", scopedCompanyId)
       .maybeSingle();
     if (error) {
       throw infrastructureError("Assignee lookup failed");
@@ -82,42 +104,79 @@ async function lookupAssigneeCandidate(
       id: mapped.id,
       role: mapped.role,
       accountStatus: mapped.accountStatus,
-      companyId: resolveUserCompanyId(
-        data as Record<string, unknown>,
-        defaultUserCompanyId
-      ),
+      companyId: scopedCompanyId,
     };
   }
 
   try {
-    const row = (resolveLocalDb().users || []).find(
-      (u: { id?: string }) => u.id === id
-    );
+    const row = (resolveLocalDb().users || []).find((u: Record<string, unknown>) => {
+      if (String(u.id || "") !== id) return false;
+      return resolveUserCompanyId(u, defaultUserCompanyId) === scopedCompanyId;
+    });
     if (!row) return null;
     const mapped = mapUserRow(row as Record<string, unknown>);
     return {
       id: mapped.id,
       role: mapped.role,
       accountStatus: mapped.accountStatus,
-      companyId: resolveUserCompanyId(
-        row as Record<string, unknown>,
-        defaultUserCompanyId
-      ),
+      companyId: scopedCompanyId,
     };
   } catch {
     throw infrastructureError("Assignee lookup failed");
   }
 }
 
+type LeadDupRow = {
+  id?: string;
+  phone?: string;
+  deleted_at?: string | null;
+  deletedAt?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
+};
+
+function leadCreatedAtMs(row: LeadDupRow): number {
+  const raw = row.created_at ?? row.createdAt ?? "";
+  const ms = Date.parse(String(raw));
+  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+}
+
+function pickDeterministicLeadId(
+  rows: LeadDupRow[],
+  canonicalPhone: string
+): string | null {
+  const matches: LeadDupRow[] = [];
+  for (const row of rows) {
+    if (!isActiveLead(row)) continue;
+    if (!phonesMatch(String(row.phone || ""), canonicalPhone)) continue;
+    const leadId = String(row.id || "").trim();
+    if (leadId) matches.push(row);
+  }
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => {
+    const byCreated = leadCreatedAtMs(a) - leadCreatedAtMs(b);
+    if (byCreated !== 0) return byCreated;
+    return String(a.id || "").localeCompare(String(b.id || ""));
+  });
+  return String(matches[0]!.id || "").trim() || null;
+}
+
 /**
  * Deterministic duplicate lead lookup by normalized Pakistan mobile.
  * Active leads only (deleted_at / deletedAt null).
  * Throws on database/infrastructure failure — never returns “no duplicate” on error.
+ *
+ * Supabase: company scope enforced via DEFAULT_COMPANY_ID containment (no leads.company_id),
+ * ordered by created_at asc, id asc, limit 1 after phone candidate filter.
+ * Local fallback: full in-memory list (dev/test only — not used when Supabase is active).
  */
 async function findActiveLeadIdByNormalizedPhone(
   canonicalPhone: string,
+  companyId: string,
   resolveLocalDb: () => Database
 ): Promise<string | null> {
+  requireDefaultCompanyLeadScope(companyId);
+
   const forms = pakistanMobileLookupForms(canonicalPhone);
   if (forms.length === 0) {
     throw new InboxServiceError(
@@ -129,43 +188,25 @@ async function findActiveLeadIdByNormalizedPhone(
   if (isSupabaseActive()) {
     const { data, error } = await getSupabase()!
       .from("leads")
-      .select("id, phone, deleted_at")
+      .select("id, phone, deleted_at, created_at")
       .is("deleted_at", null)
       .in("phone", forms)
-      .limit(10);
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(5);
     if (error) {
       throw infrastructureError("Lead duplicate lookup failed");
     }
-    const rows = (data || []) as Array<{
-      id?: string;
-      phone?: string;
-      deleted_at?: string | null;
-    }>;
-    for (const row of rows) {
-      if (!isActiveLead(row)) continue;
-      if (phonesMatch(String(row.phone || ""), canonicalPhone)) {
-        const leadId = String(row.id || "").trim();
-        if (leadId) return leadId;
-      }
-    }
-    return null;
+    return pickDeterministicLeadId(
+      (data || []) as LeadDupRow[],
+      canonicalPhone
+    );
   }
 
   try {
-    const leads = resolveLocalDb().leads || [];
-    for (const lead of leads as Array<{
-      id?: string;
-      phone?: string;
-      deletedAt?: string | null;
-      deleted_at?: string | null;
-    }>) {
-      if (!isActiveLead(lead)) continue;
-      if (phonesMatch(String(lead.phone || ""), canonicalPhone)) {
-        const leadId = String(lead.id || "").trim();
-        if (leadId) return leadId;
-      }
-    }
-    return null;
+    // Local JSON fallback only — full list scan; production uses Supabase path above.
+    const leads = (resolveLocalDb().leads || []) as LeadDupRow[];
+    return pickDeterministicLeadId(leads, canonicalPhone);
   } catch {
     throw infrastructureError("Lead duplicate lookup failed");
   }
@@ -231,8 +272,12 @@ export function buildProductionInboxServiceOptions(
 
   const createLead: InboxCreateLeadCallback = async ({
     conversationId,
+    companyId,
     actor,
   }) => {
+    // Trusted company from conversation/service scope — not from request DTO.
+    requireDefaultCompanyLeadScope(companyId);
+
     const { phone, name } = await requireConversationContactPhone(
       getWhatsAppRepo(),
       conversationId
@@ -263,13 +308,16 @@ export function buildProductionInboxServiceOptions(
 
   const findDuplicate: InboxCrmDuplicateLookup = async ({
     conversationId,
+    companyId,
   }): Promise<InboxCrmDuplicateSuggestion | null> => {
+    requireDefaultCompanyLeadScope(companyId);
     const { phone } = await requireConversationContactPhone(
       getWhatsAppRepo(),
       conversationId
     );
     const leadId = await findActiveLeadIdByNormalizedPhone(
       phone,
+      companyId,
       deps.resolveLocalDb
     );
     if (!leadId) return null;
