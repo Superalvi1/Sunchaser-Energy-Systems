@@ -8,10 +8,21 @@ export type InboxAssigneeCandidate = {
   id: string;
   role: string;
   accountStatus: string;
+  /** Company the user belongs to (single-tenant default when unset on user row). */
+  companyId: string;
 };
 
 export type InboxAssigneeDirectory = {
-  getById(userId: string): Promise<InboxAssigneeCandidate | null>;
+  /**
+   * Resolve assignee by user id in the context of a conversation company.
+   * Returns null when the user does not exist.
+   * Throws InboxServiceError(service_unavailable) on infrastructure failure.
+   * Caller enforces company match via candidate.companyId.
+   */
+  getById(
+    userId: string,
+    companyId: string
+  ): Promise<InboxAssigneeCandidate | null>;
 };
 
 export type InboxCrmDuplicateSuggestion = {

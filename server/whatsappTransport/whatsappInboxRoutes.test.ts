@@ -165,13 +165,14 @@ async function withInboxServer(
   const services = createWhatsAppInboxServices(repos, {
     now: () => Date.parse("2026-07-19T12:00:00.000Z"),
     assignees: {
-      async getById(id) {
+      async getById(id, _companyId) {
         const u = (users as any[]).find((x) => x.id === id);
         if (!u) return null;
         return {
           id: u.id,
           role: u.role,
           accountStatus: u.account_status,
+          companyId: "sunchaser",
         };
       },
     },

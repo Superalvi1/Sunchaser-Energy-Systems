@@ -1,0 +1,623 @@
+/**
+ * Production inbox DI wiring tests (RC-1.2.1 hardening).
+ * Run: npm run test:whatsapp-inbox-production-wiring
+ */
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
+import { createInMemoryWhatsAppInboxRepositories } from "./whatsappInboxRepository.ts";
+import { buildProductionInboxServiceOptions } from "./whatsappInboxProductionWiring.ts";
+import { createWhatsAppInboxServices } from "./whatsappInboxServices.ts";
+import { InMemoryWhatsAppRepository } from "./whatsappRepository.ts";
+import {
+  normalizePakistanPhone,
+  pakistanMobileLookupForms,
+  phonesMatch,
+} from "../../src/lib/phoneNormalize.ts";
+
+let failed = 0;
+
+async function test(name: string, fn: () => void | Promise<void>) {
+  try {
+    await fn();
+    console.log(`PASS: ${name}`);
+  } catch (err) {
+    failed += 1;
+    console.error(`FAIL: ${name}`, err);
+  }
+}
+
+const actor = {
+  id: "u-staff",
+  username: "staff",
+  name: "Staff",
+  email: "staff@test.com",
+  role: "Sales Executive",
+  accountStatus: "Approved",
+  emailVerified: true,
+  onboardingCompleted: true,
+  authMethod: "jwt" as const,
+};
+
+function staffUser(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "u-staff",
+    username: "staff",
+    name: "Staff",
+    email: "staff@test.com",
+    role: "Sales Executive",
+    account_status: "Approved",
+    company_id: "sunchaser",
+    ...overrides,
+  };
+}
+
+async function seedWaConversation(
+  wa: InMemoryWhatsAppRepository,
+  phoneE164: string,
+  profileName = "Inbox Contact"
+) {
+  const channel = await wa.resolveOrCreateChannel({
+    phoneNumberId: "12345678901",
+    displayPhoneNumber: "+1",
+  });
+  const contact = await wa.resolveOrCreateContact({
+    phoneE164,
+    profileName,
+  });
+  const conversation = await wa.resolveOrCreateOpenConversation({
+    channelId: channel.id,
+    contactId: contact.id,
+  });
+  return { channel, contact, conversation };
+}
+
+function seedInboxConversation(
+  repos: ReturnType<typeof createInMemoryWhatsAppInboxRepositories>,
+  conversation: { id: string; channelId: string; contactId: string },
+  overrides: { companyId?: string; lockVersion?: number } = {}
+) {
+  const now = "2026-07-22T10:00:00.000Z";
+  repos.store.conversations.set(conversation.id, {
+    id: conversation.id,
+    companyId: overrides.companyId ?? "sunchaser",
+    channelId: conversation.channelId,
+    contactId: conversation.contactId,
+    status: "open",
+    lastMessageAt: now,
+    createdAt: now,
+    updatedAt: now,
+    assignedUserId: null,
+    assignedAt: null,
+    assignedBy: null,
+    lockVersion: overrides.lockVersion ?? 1,
+    hasFailedMessage: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Phone normalization
+// ---------------------------------------------------------------------------
+
+await test("phone: equivalent PK forms normalize identically", () => {
+  const forms = [
+    "03001234567",
+    "3001234567",
+    "923001234567",
+    "+923001234567",
+    "00923001234567",
+    "0300-123-4567",
+    "+92 300 1234567",
+  ];
+  for (const f of forms) {
+    assert.equal(normalizePakistanPhone(f), "923001234567", f);
+  }
+  assert.equal(phonesMatch("03-001234567", "+92 300 1234567"), true);
+  assert.deepEqual(pakistanMobileLookupForms("923001234567"), [
+    "923001234567",
+    "03001234567",
+    "+923001234567",
+    "00923001234567",
+  ]);
+});
+
+await test("phone: invalid values rejected", () => {
+  assert.equal(normalizePakistanPhone(""), null);
+  assert.equal(normalizePakistanPhone("123"), null);
+  assert.equal(normalizePakistanPhone("00000000000"), null);
+  assert.equal(normalizePakistanPhone("921111111111"), null); // not mobile 3xx
+});
+
+// ---------------------------------------------------------------------------
+// Assignment
+// ---------------------------------------------------------------------------
+
+await test("assign: valid same-company user succeeds", async () => {
+  const localDb = { users: [staffUser()], leads: [] } as any;
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  const row = await services.assignments.setAssignment(seeded.conversation.id, {
+    assigneeUserId: "u-staff",
+    actor,
+    expectedLockVersion: 1,
+  });
+  assert.equal(row.assignedUserId, "u-staff");
+});
+
+await test("assign: unknown user rejected", async () => {
+  const localDb = { users: [staffUser()], leads: [] } as any;
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.assignments.setAssignment(seeded.conversation.id, {
+        assigneeUserId: "missing",
+        actor,
+        expectedLockVersion: 1,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError &&
+      err.code === "invalid_argument" &&
+      /not found/i.test(err.message)
+  );
+});
+
+await test("assign: inactive user rejected", async () => {
+  const localDb = {
+    users: [staffUser({ account_status: "Pending" })],
+    leads: [],
+  } as any;
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.assignments.setAssignment(seeded.conversation.id, {
+        assigneeUserId: "u-staff",
+        actor,
+        expectedLockVersion: 1,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError &&
+      err.code === "invalid_argument" &&
+      /Approved/i.test(err.message)
+  );
+});
+
+await test("assign: cross-company user rejected", async () => {
+  const localDb = {
+    users: [staffUser({ company_id: "other-co" })],
+    leads: [],
+  } as any;
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation, {
+    companyId: "sunchaser",
+  });
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+    defaultUserCompanyId: "sunchaser",
+  });
+  const services = createWhatsAppInboxServices(repos, {
+    ...opts,
+    companyId: "sunchaser",
+  });
+  await assert.rejects(
+    () =>
+      services.assignments.setAssignment(seeded.conversation.id, {
+        assigneeUserId: "u-staff",
+        actor,
+        expectedLockVersion: 1,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError &&
+      err.code === "forbidden" &&
+      /different company/i.test(err.message)
+  );
+});
+
+await test("assign: assignee lookup database failure propagates", async () => {
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => {
+      throw new Error("db down");
+    },
+    whatsappRepo: new InMemoryWhatsAppRepository(),
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  await assert.rejects(
+    () => opts.assignees!.getById("u-staff", "sunchaser"),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "service_unavailable"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Create lead
+// ---------------------------------------------------------------------------
+
+await test("createLead: valid lead creation succeeds", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233", "Ali");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const localDb = { users: [staffUser()], leads: [] } as any;
+  let persisted: { phone: string; name: string } | null = null;
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      persisted = { phone: lead.phone, name: lead.name };
+      localDb.leads.push({ id: lead.id, phone: lead.phone, name: lead.name });
+      return { leadId: lead.id };
+    },
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  const created = await services.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor, forceCreate: true }
+  );
+  assert.equal(created.kind, "created");
+  assert.equal(persisted?.phone, "923001112233");
+  assert.equal(persisted?.name, "Ali");
+});
+
+await test("createLead: duplicate 03... vs +923... detected", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "+923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const localDb = {
+    users: [staffUser()],
+    leads: [{ id: "lead-existing", phone: "03001112233", deleted_at: null }],
+  } as any;
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async () => {
+      throw new Error("should not persist");
+    },
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  const result = await services.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor, forceCreate: false }
+  );
+  assert.equal(result.kind, "duplicate_suggestion");
+  if (result.kind === "duplicate_suggestion") {
+    assert.equal(result.suggestion.linkedEntityId, "lead-existing");
+  }
+});
+
+await test("createLead: duplicate 03... vs 923... detected", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "03001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const localDb = {
+    users: [staffUser()],
+    leads: [{ id: "lead-existing", phone: "923001112233" }],
+  } as any;
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async () => {
+      throw new Error("should not persist");
+    },
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  const result = await services.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor }
+  );
+  assert.equal(result.kind, "duplicate_suggestion");
+});
+
+await test("createLead: soft-deleted lead is ignored", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const localDb = {
+    users: [staffUser()],
+    leads: [
+      {
+        id: "lead-deleted",
+        phone: "03001112233",
+        deleted_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  } as any;
+  let createdId: string | null = null;
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      createdId = lead.id;
+      return { leadId: lead.id };
+    },
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  const result = await services.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor }
+  );
+  assert.equal(result.kind, "created");
+  assert.ok(createdId);
+});
+
+await test("createLead: duplicate lookup database failure does not create a lead", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  let persistCalls = 0;
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => {
+      throw new Error("db boom");
+    },
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      persistCalls += 1;
+      return { leadId: lead.id };
+    },
+  });
+  // Assignees path may also hit resolveLocalDb — use findDuplicate directly
+  await assert.rejects(
+    () =>
+      opts.findDuplicate!({
+        conversationId: seeded.conversation.id,
+        companyId: "sunchaser",
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "service_unavailable"
+  );
+  assert.equal(persistCalls, 0);
+
+  // Service path: duplicate lookup failure before claim → no link row
+  const services = createWhatsAppInboxServices(repos, {
+    ...opts,
+    assignees: {
+      async getById() {
+        return {
+          id: "u-staff",
+          role: "Sales Executive",
+          accountStatus: "Approved",
+          companyId: "sunchaser",
+        };
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation(seeded.conversation.id, {
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "service_unavailable"
+  );
+  assert.equal(
+    await repos.crmLinks.getByConversationId(seeded.conversation.id),
+    null
+  );
+});
+
+await test("createLead: missing conversation/contact bundle fails", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  await assert.rejects(
+    () =>
+      opts.createLead!({
+        conversationId: "missing-conv",
+        companyId: "sunchaser",
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError &&
+      err.code === "invalid_argument" &&
+      /bundle/i.test(err.message)
+  );
+});
+
+await test("createLead: missing/invalid phone fails; no synthetic phone", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  // Seed contact with unusable phone by mutating after create
+  const channel = await wa.resolveOrCreateChannel({
+    phoneNumberId: "12345678901",
+    displayPhoneNumber: "+1",
+  });
+  const contact = await wa.resolveOrCreateContact({
+    phoneE164: "923001112233",
+    profileName: "X",
+  });
+  const conversation = await wa.resolveOrCreateOpenConversation({
+    channelId: channel.id,
+    contactId: contact.id,
+  });
+  // Break phone on in-memory contact
+  (wa as any).contacts.get(contact.id).phoneE164 = "";
+
+  let persisted = false;
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      persisted = true;
+      assert.notEqual(lead.phone, "00000000000");
+      return { leadId: lead.id };
+    },
+  });
+  await assert.rejects(
+    () =>
+      opts.createLead!({
+        conversationId: conversation.id,
+        companyId: "sunchaser",
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError &&
+      err.code === "invalid_argument" &&
+      /phone/i.test(err.message)
+  );
+  assert.equal(persisted, false);
+
+  (wa as any).contacts.get(contact.id).phoneE164 = "00000000000";
+  await assert.rejects(
+    () =>
+      opts.createLead!({
+        conversationId: conversation.id,
+        companyId: "sunchaser",
+        actor,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "invalid_argument"
+  );
+  assert.equal(persisted, false);
+});
+
+await test("createLead: persistence failure leaves workflow retry-safe", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async () => {
+      throw new Error("persist exploded");
+    },
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation(seeded.conversation.id, {
+        actor,
+        forceCreate: true,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "service_unavailable"
+  );
+  // Claim released
+  assert.equal(
+    await repos.crmLinks.getByConversationId(seeded.conversation.id),
+    null
+  );
+
+  // Retry succeeds after fixing persist
+  let ok = false;
+  const opts2 = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      ok = true;
+      return { leadId: lead.id };
+    },
+  });
+  const services2 = createWhatsAppInboxServices(repos, opts2);
+  const created = await services2.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor, forceCreate: true }
+  );
+  assert.equal(created.kind, "created");
+  assert.equal(ok, true);
+});
+
+await test("createLead: forceCreate does not bypass phone integrity", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const channel = await wa.resolveOrCreateChannel({
+    phoneNumberId: "12345678901",
+    displayPhoneNumber: "+1",
+  });
+  const contact = await wa.resolveOrCreateContact({
+    phoneE164: "923001112233",
+    profileName: "X",
+  });
+  const conversation = await wa.resolveOrCreateOpenConversation({
+    channelId: channel.id,
+    contactId: contact.id,
+  });
+  (wa as any).contacts.get(contact.id).phoneE164 = "bad";
+
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, conversation);
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () =>
+      ({
+        users: [staffUser()],
+        leads: [{ id: "dup", phone: "923001112233" }],
+      }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation(conversation.id, {
+        actor,
+        forceCreate: true,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "invalid_argument"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Composition
+// ---------------------------------------------------------------------------
+
+await test("composition: server mounts hardened inbox router once", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const serverPath = path.resolve(here, "../../server.ts");
+  const src = fs.readFileSync(serverPath, "utf8");
+  assert.match(src, /buildProductionInboxServiceOptions/);
+  const mounts = src.match(/createWhatsAppInboxRouter\s*\(/g) || [];
+  assert.equal(mounts.length, 1);
+  assert.match(src, /persistLead:\s*persistPublicMarketingLead/);
+  // Public lead mount remains separate
+  assert.match(src, /createPublicLeadRouter/);
+});
+
+if (failed > 0) {
+  console.error(`\n${failed} test(s) failed`);
+  process.exit(1);
+}
+console.log("\nAll production inbox wiring tests passed.");

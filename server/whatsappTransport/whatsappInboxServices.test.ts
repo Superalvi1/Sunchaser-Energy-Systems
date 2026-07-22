@@ -101,12 +101,24 @@ function seedMessage(
 }
 
 function memoryAssignees(
-  users: Array<{ id: string; role: string; accountStatus: string }>
+  users: Array<{
+    id: string;
+    role: string;
+    accountStatus: string;
+    companyId?: string;
+  }>
 ): InboxAssigneeDirectory {
   const map = new Map(users.map((u) => [u.id, u]));
   return {
-    async getById(id) {
-      return map.get(id) ?? null;
+    async getById(id, _companyId) {
+      const u = map.get(id);
+      if (!u) return null;
+      return {
+        id: u.id,
+        role: u.role,
+        accountStatus: u.accountStatus,
+        companyId: u.companyId ?? "sunchaser",
+      };
     },
   };
 }

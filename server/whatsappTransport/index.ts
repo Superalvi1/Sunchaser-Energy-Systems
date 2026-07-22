@@ -55,6 +55,10 @@ export {
   type WhatsAppInboxRouterDeps,
 } from "./whatsappInboxRoutes.ts";
 export {
+  buildProductionInboxServiceOptions,
+  type ProductionInboxWiringDeps,
+} from "./whatsappInboxProductionWiring.ts";
+export {
   createInboxOutboundSendPort,
   isInboxSendTransportReady,
   type InboxSendTransportDeps,

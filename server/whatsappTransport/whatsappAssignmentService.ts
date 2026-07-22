@@ -50,15 +50,38 @@ export class AssignmentService {
     }
 
     if (input.assigneeUserId != null) {
-      const candidate = await this.assignees.getById(input.assigneeUserId);
-      if (
-        !candidate ||
-        candidate.accountStatus !== "Approved" ||
-        !roleHasPermission(candidate.role, "crm_leads")
-      ) {
+      let candidate;
+      try {
+        candidate = await this.assignees.getById(
+          input.assigneeUserId,
+          current.companyId
+        );
+      } catch (err) {
+        if (err instanceof InboxServiceError) throw err;
+        throw new InboxServiceError(
+          "service_unavailable",
+          "Assignee directory unavailable"
+        );
+      }
+      if (!candidate) {
+        throw new InboxServiceError("invalid_argument", "Assignee not found");
+      }
+      if (candidate.companyId !== current.companyId) {
+        throw new InboxServiceError(
+          "forbidden",
+          "Assignee belongs to a different company"
+        );
+      }
+      if (candidate.accountStatus !== "Approved") {
         throw new InboxServiceError(
           "invalid_argument",
-          "Assignee must be an Approved staff member with crm_leads"
+          "Assignee must be an Approved staff member"
+        );
+      }
+      if (!roleHasPermission(candidate.role, "crm_leads")) {
+        throw new InboxServiceError(
+          "invalid_argument",
+          "Assignee must have crm_leads permission"
         );
       }
     }
@@ -81,7 +104,7 @@ export class AssignmentService {
       assignedBy: input.actor.id,
       companyId: this.companyId,
     });
-    if (!cas.ok) {
+    if (cas.ok === false) {
       if (cas.reason === "not_found") {
         throw new InboxServiceError("not_found", "Conversation not found");
       }

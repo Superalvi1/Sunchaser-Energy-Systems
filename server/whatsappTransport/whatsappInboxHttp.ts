@@ -59,6 +59,7 @@ const CODE_TO_STATUS: Record<InboxServiceErrorCode, number> = {
   idempotency_processing: 409,
   idempotency_outcome_unknown: 409,
   already_linked: 409,
+  service_unavailable: 503,
 };
 
 export function mapInboxError(err: unknown): {
