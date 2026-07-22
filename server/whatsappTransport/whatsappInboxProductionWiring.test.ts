@@ -256,28 +256,25 @@ await test("assign: inactive user rejected", async () => {
   );
 });
 
-await test("assign: cross-company user rejected", async () => {
-  const localDb = {
-    users: [staffUser({ company_id: "other-co" })],
-    leads: [],
-  } as any;
+await test("assign: non-default company scope fails closed (users have no company_id)", async () => {
+  // Schema: public.users has no company_id. Isolation is single-tenant DEFAULT only.
+  const localDb = { users: [staffUser()], leads: [] } as any;
   const wa = new InMemoryWhatsAppRepository();
   const seeded = await seedWaConversation(wa, "923001112233");
   const repos = createInMemoryWhatsAppInboxRepositories();
   seedInboxConversation(repos, seeded.conversation, {
-    companyId: "sunchaser",
+    companyId: "other-company",
   });
   const opts = buildProductionInboxServiceOptions({
     resolveLocalDb: () => localDb,
     whatsappRepo: wa,
     persistLead: async (lead) => ({ leadId: lead.id }),
-    defaultUserCompanyId: "sunchaser",
   });
+  assert.equal(await opts.assignees!.getById("u-staff", "other-company"), null);
   const services = createWhatsAppInboxServices(repos, {
     ...opts,
-    companyId: "sunchaser",
+    companyId: "other-company",
   });
-  // Company-scoped directory returns null (does not leak other-tenant users).
   await assert.rejects(
     () =>
       services.assignments.setAssignment(seeded.conversation.id, {
@@ -290,6 +287,39 @@ await test("assign: cross-company user rejected", async () => {
       err.code === "invalid_argument" &&
       /not found/i.test(err.message)
   );
+});
+
+await test("assign: valid default-company user succeeds without users.company_id", async () => {
+  const localDb = {
+    users: [
+      {
+        id: "u-staff",
+        username: "staff",
+        name: "Staff",
+        email: "staff@test.com",
+        role: "Sales Executive",
+        account_status: "Approved",
+        // intentionally no company_id — matches production schema
+      },
+    ],
+    leads: [],
+  } as any;
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => localDb,
+    whatsappRepo: wa,
+    persistLead: async (lead) => ({ leadId: lead.id }),
+  });
+  const services = createWhatsAppInboxServices(repos, opts);
+  const row = await services.assignments.setAssignment(seeded.conversation.id, {
+    assigneeUserId: "u-staff",
+    actor,
+    expectedLockVersion: 1,
+  });
+  assert.equal(row.assignedUserId, "u-staff");
 });
 
 await test("assign: assignee lookup database failure propagates", async () => {
@@ -785,7 +815,7 @@ await test("createLead: link failure after persist recovers or enables duplicate
     null
   );
 
-  // Restore real upsert; retry without forceCreate must surface existing lead
+  // Restore real upsert; retry WITHOUT forceCreate must surface existing lead
   const repos2 = createInMemoryWhatsAppInboxRepositories();
   seedInboxConversation(repos2, seeded.conversation);
   const services2 = createWhatsAppInboxServices(repos2, opts);
@@ -798,6 +828,101 @@ await test("createLead: link failure after persist recovers or enables duplicate
     assert.equal(result.suggestion.linkedEntityId, leads[0]!.id);
   }
   assert.equal(persistCount, 1, "must not create a second lead");
+});
+
+await test("createLead: forceCreate retry after link failure never creates second lead", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923008887766");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+
+  const leads: Array<{
+    id: string;
+    phone: string;
+    deleted_at: null;
+    created_at: string;
+  }> = [];
+  let persistCount = 0;
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads }) as any,
+    whatsappRepo: wa,
+    persistLead: async (lead) => {
+      persistCount += 1;
+      leads.push({
+        id: lead.id,
+        phone: lead.phone,
+        deleted_at: null,
+        created_at: lead.createdAt,
+      });
+      return { leadId: lead.id };
+    },
+  });
+
+  repos.crmLinks.upsert = async () => {
+    throw new Error("crm link write failed permanently");
+  };
+
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation(seeded.conversation.id, {
+        actor,
+        forceCreate: true,
+      }),
+    (err: unknown) =>
+      err instanceof InboxServiceError && err.code === "service_unavailable"
+  );
+  assert.equal(persistCount, 1);
+
+  // Identical retry including forceCreate=true must recover via existing lead
+  const repos2 = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos2, seeded.conversation);
+  const services2 = createWhatsAppInboxServices(repos2, opts);
+  const recovered = await services2.crmLinks.createLeadFromConversation(
+    seeded.conversation.id,
+    { actor, forceCreate: true }
+  );
+  assert.equal(recovered.kind, "created");
+  if (recovered.kind === "created") {
+    assert.equal(recovered.leadId, leads[0]!.id);
+  }
+  assert.equal(persistCount, 1, "forceCreate must not create a second CRM lead");
+  assert.ok(await repos2.crmLinks.getByConversationId(seeded.conversation.id));
+});
+
+await test("createLead: pending-claim cleanup failure is service_unavailable", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923007778899");
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedInboxConversation(repos, seeded.conversation);
+
+  const opts = buildProductionInboxServiceOptions({
+    resolveLocalDb: () => ({ users: [staffUser()], leads: [] }) as any,
+    whatsappRepo: wa,
+    persistLead: async () => {
+      throw new Error("persist exploded");
+    },
+  });
+  repos.crmLinks.deleteByConversationId = async () => {
+    throw new Error("delete claim: ECONNRESET postgres://internal/db");
+  };
+
+  const services = createWhatsAppInboxServices(repos, opts);
+  await assert.rejects(
+    () =>
+      services.crmLinks.createLeadFromConversation(seeded.conversation.id, {
+        actor,
+        forceCreate: true,
+      }),
+    (err: unknown) => {
+      if (!(err instanceof InboxServiceError)) return false;
+      if (err.code !== "service_unavailable") return false;
+      // Must not leak raw repository/infra exception text
+      assert.equal(/ECONNRESET|postgres:\/\//i.test(err.message), false);
+      assert.match(err.message, /cleanup failed/i);
+      return true;
+    }
+  );
 });
 
 await test("createLead: transient link failure recovers without second persist", async () => {

@@ -461,24 +461,34 @@ await test("crm: link/unlink; createLead 409 when already linked", async () => {
 await test("crm: duplicate suggestion before create", async () => {
   const repos = createInMemoryWhatsAppInboxRepositories();
   seedConversation(repos.store, { id: "c1" });
+  let createCalls = 0;
   const services = createWhatsAppInboxServices(repos, {
     findDuplicate: async () => ({
       linkedEntityType: "lead",
       linkedEntityId: "lead_dup",
     }),
-    createLead: async () => ({ leadId: "lead_new" }),
+    createLead: async () => {
+      createCalls += 1;
+      return { leadId: "lead_new" };
+    },
   });
 
   const suggestion = await services.crmLinks.createLeadFromConversation("c1", {
     actor: actor(),
   });
   assert.equal(suggestion.kind, "duplicate_suggestion");
+  assert.equal(createCalls, 0);
 
+  // forceCreate recovers by linking the existing lead — never creates a second.
   const forced = await services.crmLinks.createLeadFromConversation("c1", {
     actor: actor(),
     forceCreate: true,
   });
   assert.equal(forced.kind, "created");
+  if (forced.kind === "created") {
+    assert.equal(forced.leadId, "lead_dup");
+  }
+  assert.equal(createCalls, 0);
 });
 
 // ---------------------------------------------------------------------------

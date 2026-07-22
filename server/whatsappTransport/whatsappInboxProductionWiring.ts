@@ -11,6 +11,11 @@
  * Persistent `leads` rows have no company_id column today. Inbox CRM create/duplicate
  * paths therefore fail closed unless companyId === DEFAULT_COMPANY_ID. Multi-company
  * lead isolation requires a schema change in a later phase.
+ *
+ * Assignee company isolation limitation (single-tenant):
+ * Persistent `users` rows have no company_id column (see supabase-schema.sql).
+ * Assignee lookup is therefore id-only and fail-closed unless
+ * companyId === DEFAULT_COMPANY_ID. Do not query users.company_id.
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -46,18 +51,7 @@ export type ProductionInboxWiringDeps = {
   persistLead: (lead: PersistedPublicLead) => Promise<{ leadId: string }>;
   /** Optional override for tests; production uses createDefaultWhatsAppRepository(). */
   whatsappRepo?: WhatsAppRepository;
-  /** Override default company for users without an explicit company_id (tests). */
-  defaultUserCompanyId?: string;
 };
-
-function resolveUserCompanyId(
-  row: Record<string, unknown>,
-  fallbackCompanyId: string
-): string {
-  const raw = row.company_id ?? row.companyId;
-  if (typeof raw === "string" && raw.trim()) return raw.trim();
-  return fallbackCompanyId;
-}
 
 function infrastructureError(message: string): InboxServiceError {
   return new InboxServiceError("service_unavailable", message);
@@ -77,23 +71,29 @@ function requireDefaultCompanyLeadScope(companyId: string): void {
   }
 }
 
+/**
+ * Resolve assignee by user id within the supported single-tenant company scope.
+ * `users` has no company_id — never filter on that column.
+ */
 async function lookupAssigneeCandidate(
   userId: string,
   companyId: string,
-  resolveLocalDb: () => Database,
-  defaultUserCompanyId: string
+  resolveLocalDb: () => Database
 ): Promise<InboxAssigneeCandidate | null> {
   const id = String(userId || "").trim();
   const scopedCompanyId = String(companyId || "").trim();
   if (!id || !scopedCompanyId) return null;
 
+  // Fail closed outside the single supported company (users are not multi-tenant).
+  if (scopedCompanyId !== DEFAULT_COMPANY_ID) {
+    return null;
+  }
+
   if (isSupabaseActive()) {
-    // Company-scoped lookup at the persistence boundary (not global fetch + later compare).
     const { data, error } = await getSupabase()!
       .from("users")
       .select("*")
       .eq("id", id)
-      .eq("company_id", scopedCompanyId)
       .maybeSingle();
     if (error) {
       throw infrastructureError("Assignee lookup failed");
@@ -104,22 +104,21 @@ async function lookupAssigneeCandidate(
       id: mapped.id,
       role: mapped.role,
       accountStatus: mapped.accountStatus,
-      companyId: scopedCompanyId,
+      companyId: DEFAULT_COMPANY_ID,
     };
   }
 
   try {
-    const row = (resolveLocalDb().users || []).find((u: Record<string, unknown>) => {
-      if (String(u.id || "") !== id) return false;
-      return resolveUserCompanyId(u, defaultUserCompanyId) === scopedCompanyId;
-    });
+    const row = (resolveLocalDb().users || []).find(
+      (u: Record<string, unknown>) => String(u.id || "") === id
+    );
     if (!row) return null;
     const mapped = mapUserRow(row as Record<string, unknown>);
     return {
       id: mapped.id,
       role: mapped.role,
       accountStatus: mapped.accountStatus,
-      companyId: scopedCompanyId,
+      companyId: DEFAULT_COMPANY_ID,
     };
   } catch {
     throw infrastructureError("Assignee lookup failed");
@@ -248,9 +247,6 @@ async function requireConversationContactPhone(
 export function buildProductionInboxServiceOptions(
   deps: ProductionInboxWiringDeps
 ): CreateWhatsAppInboxServicesOptions {
-  const defaultUserCompanyId =
-    deps.defaultUserCompanyId ?? DEFAULT_COMPANY_ID;
-
   let whatsappRepo: WhatsAppRepository | null = deps.whatsappRepo ?? null;
   const getWhatsAppRepo = (): WhatsAppRepository => {
     if (!whatsappRepo) {
@@ -261,12 +257,7 @@ export function buildProductionInboxServiceOptions(
 
   const assignees: InboxAssigneeDirectory = {
     async getById(userId, companyId) {
-      return lookupAssigneeCandidate(
-        userId,
-        companyId,
-        deps.resolveLocalDb,
-        defaultUserCompanyId
-      );
+      return lookupAssigneeCandidate(userId, companyId, deps.resolveLocalDb);
     },
   };
 

@@ -167,14 +167,34 @@ export class CRMLinkService {
       );
     }
 
-    if (!input.forceCreate && this.deps.findDuplicate) {
+    // Recovery always runs first — including when forceCreate is true — so a
+    // retry after a persisted-but-unlinked lead never creates a second CRM lead.
+    if (this.deps.findDuplicate) {
       const suggestion = await this.deps.findDuplicate({
         conversationId,
         companyId: this.companyId,
         actor: input.actor,
       });
       if (suggestion) {
-        return { kind: "duplicate_suggestion", suggestion };
+        if (!input.forceCreate) {
+          return { kind: "duplicate_suggestion", suggestion };
+        }
+        const recoveredLeadId = normalizeLeadId(suggestion.linkedEntityId);
+        if (!recoveredLeadId) {
+          throw new InboxServiceError(
+            "invalid_argument",
+            "Duplicate suggestion returned an invalid linkedEntityId"
+          );
+        }
+        const link = await this.crmLinks.upsert({
+          conversationId,
+          linkedEntityType: suggestion.linkedEntityType,
+          linkedEntityId: recoveredLeadId,
+          linkedByUserId: input.actor.id,
+          companyId: this.companyId,
+        });
+        await this.conversations.touchUpdatedAt(conversationId, this.companyId);
+        return { kind: "created", link, leadId: recoveredLeadId };
       }
     }
 
@@ -251,10 +271,7 @@ export class CRMLinkService {
         } catch {
           // Release pending claim so retry can run duplicate lookup and link the
           // already-persisted lead instead of creating another.
-          await this.crmLinks.deleteByConversationId(
-            conversationId,
-            this.companyId
-          );
+          await this.releasePendingCreateLeadClaim(conversationId);
           if (linkErr instanceof InboxServiceError) throw linkErr;
           throw new InboxServiceError(
             "service_unavailable",
@@ -266,12 +283,31 @@ export class CRMLinkService {
       // Only release the claim when no CRM lead was persisted. If a lead exists,
       // the inner handler already released the claim for duplicate-lookup recovery.
       if (!persistedLeadId) {
-        await this.crmLinks.deleteByConversationId(
-          conversationId,
-          this.companyId
-        );
+        await this.releasePendingCreateLeadClaim(conversationId);
       }
       throw err;
+    }
+  }
+
+  /**
+   * Best-effort release of a pending create-lead claim.
+   * Repository/infrastructure failures become controlled service_unavailable —
+   * never leak raw repository exceptions to HTTP clients.
+   */
+  private async releasePendingCreateLeadClaim(
+    conversationId: string
+  ): Promise<void> {
+    try {
+      await this.crmLinks.deleteByConversationId(
+        conversationId,
+        this.companyId
+      );
+    } catch (cleanupErr) {
+      if (cleanupErr instanceof InboxServiceError) throw cleanupErr;
+      throw new InboxServiceError(
+        "service_unavailable",
+        "CRM create-lead claim cleanup failed"
+      );
     }
   }
 
