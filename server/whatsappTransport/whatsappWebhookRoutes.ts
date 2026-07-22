@@ -13,6 +13,7 @@ import {
   WHATSAPP_WEBHOOK_PATH,
 } from "./whatsappConstants.ts";
 import {
+  buildMinimizedMetadata,
   parseWebhookRawBody,
   type NormalizedWebhookEvent,
 } from "./whatsappEnvelope.ts";
@@ -69,12 +70,27 @@ async function persistNormalizedEvents(
             ? "text"
             : event.messageType || "unknown";
 
+        const minimizedMeta = buildMinimizedMetadata({
+          messageType,
+          waMessageId: event.waMessageId,
+          metaMediaId: event.metaMediaId,
+          mimeType: event.mimeType,
+          sha256: event.sha256,
+          filename: event.filename,
+          caption: event.caption,
+          voice: event.voice,
+          latitude: event.latitude,
+          longitude: event.longitude,
+          placeName: event.placeName,
+          address: event.address,
+        });
+
         const inserted = await repo.insertInboundMessage({
           conversationId: conversation.id,
           waMessageId: event.waMessageId,
           textBody: textBody ?? null,
           occurredAt: event.occurredAt,
-          rawPayload: event.rawEvent,
+          rawPayload: minimizedMeta,
           messageType,
           metaMediaId: event.metaMediaId ?? null,
           mimeType: event.mimeType ?? null,
@@ -86,7 +102,7 @@ async function persistNormalizedEvents(
           longitude: event.longitude ?? null,
           address: event.address ?? null,
           placeName: event.placeName ?? null,
-          rawMetadata: event.rawEvent,
+          rawMetadata: minimizedMeta,
         });
         if (inserted.ok === false) {
           return { ok: false, error: inserted.error };

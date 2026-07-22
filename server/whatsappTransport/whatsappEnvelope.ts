@@ -96,6 +96,55 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+export function sanitizeCoordinate(val: unknown, min: number, max: number): number | null {
+  if (val == null) return null;
+  const n = typeof val === "number" ? val : Number(val);
+  if (Number.isFinite(n) && n >= min && n <= max) {
+    return n;
+  }
+  return null;
+}
+
+export function truncateString(str: unknown, maxLen: number): string | null {
+  if (typeof str !== "string") return null;
+  const trimmed = str.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLen);
+}
+
+export function buildMinimizedMetadata(event: {
+  messageType: string;
+  waMessageId: string;
+  metaMediaId?: string | null;
+  mimeType?: string | null;
+  sha256?: string | null;
+  filename?: string | null;
+  caption?: string | null;
+  voice?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  placeName?: string | null;
+  address?: string | null;
+}): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    messageType: event.messageType,
+    waMessageId: event.waMessageId,
+    parsedOutcome: "success",
+  };
+  if (event.metaMediaId) metadata.metaMediaId = event.metaMediaId;
+  if (event.mimeType) metadata.mimeType = event.mimeType;
+  if (event.sha256) metadata.sha256 = event.sha256;
+  if (event.filename) metadata.filename = truncateString(event.filename, 255);
+  if (event.caption) metadata.caption = truncateString(event.caption, 1024);
+  if (event.voice) metadata.voice = true;
+  if (event.latitude != null) metadata.latitude = event.latitude;
+  if (event.longitude != null) metadata.longitude = event.longitude;
+  if (event.placeName) metadata.placeName = truncateString(event.placeName, 255);
+  if (event.address) metadata.address = truncateString(event.address, 500);
+
+  return metadata;
+}
+
 function toIsoFromUnixSeconds(raw: unknown): string {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
@@ -321,10 +370,10 @@ function normalizeMessage(
       filename: null,
       sha256: null,
       voice: false,
-      latitude: Number.isFinite(lat) ? lat : null,
-      longitude: Number.isFinite(lng) ? lng : null,
-      address: typeof loc.address === "string" ? loc.address : null,
-      placeName: typeof loc.name === "string" ? loc.name : null,
+      latitude: sanitizeCoordinate(loc.latitude, -90, 90),
+      longitude: sanitizeCoordinate(loc.longitude, -180, 180),
+      address: truncateString(loc.address, 500),
+      placeName: truncateString(loc.name, 255),
       occurredAt: toIsoFromUnixSeconds(msg.timestamp),
       rawEvent: message as Record<string, unknown>,
     };

@@ -115,10 +115,18 @@ function MessageBody({ message }: { message: InboxMessage }) {
     );
   }
 
-  if (type === "voice" || type === "audio") {
+  if (type === "voice" || (type === "audio" && message.voice)) {
     return (
       <div className="space-y-1">
         <AttachmentChip kind="voice" label="Voice note received" />
+      </div>
+    );
+  }
+
+  if (type === "audio") {
+    return (
+      <div className="space-y-1">
+        <AttachmentChip kind="voice" label="Audio received" />
       </div>
     );
   }

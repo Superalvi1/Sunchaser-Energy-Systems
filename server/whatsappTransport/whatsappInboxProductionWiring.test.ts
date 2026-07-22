@@ -8,7 +8,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "./whatsappInboxRepository.ts";
-import { buildProductionInboxServiceOptions } from "./whatsappInboxProductionWiring.ts";
+import {
+  buildProductionInboxServiceOptions,
+  buildProductionWebhookAutoLinkLead,
+} from "./whatsappInboxProductionWiring.ts";
 import { createWhatsAppInboxServices } from "./whatsappInboxServices.ts";
 import { InMemoryWhatsAppRepository } from "./whatsappRepository.ts";
 import {
@@ -793,9 +796,12 @@ await test("createLead: link failure after persist recovers or enables duplicate
     },
   });
 
-  // Permanent link write failure after lead persistence
-  repos.crmLinks.upsert = async () => {
-    throw new Error("crm link write failed");
+  const originalUpsert = repos.crmLinks.upsert.bind(repos.crmLinks);
+  repos.crmLinks.upsert = async (input) => {
+    if (!input.linkedEntityId.startsWith("pending_lead:") && input.linkedEntityId !== "__pending_create_lead__") {
+      throw new Error("crm link write failed");
+    }
+    return originalUpsert(input);
   };
 
   const services = createWhatsAppInboxServices(repos, opts);
@@ -810,22 +816,20 @@ await test("createLead: link failure after persist recovers or enables duplicate
   );
   assert.equal(persistCount, 1);
   assert.equal(leads.length, 1);
-  assert.equal(
-    await repos.crmLinks.getByConversationId(seeded.conversation.id),
-    null
-  );
+  const pendingRow = await repos.crmLinks.getByConversationId(seeded.conversation.id);
+  assert.ok(pendingRow);
+  assert.equal(pendingRow?.linkedEntityId, `pending_lead:${leads[0]!.id}`);
 
-  // Restore real upsert; retry WITHOUT forceCreate must surface existing lead
-  const repos2 = createInMemoryWhatsAppInboxRepositories();
-  seedInboxConversation(repos2, seeded.conversation);
-  const services2 = createWhatsAppInboxServices(repos2, opts);
+  // Restore real upsert; retry WITHOUT forceCreate recovers exact correlated leadId
+  repos.crmLinks.upsert = originalUpsert;
+  const services2 = createWhatsAppInboxServices(repos, opts);
   const result = await services2.crmLinks.createLeadFromConversation(
     seeded.conversation.id,
     { actor, forceCreate: false }
   );
-  assert.equal(result.kind, "duplicate_suggestion");
-  if (result.kind === "duplicate_suggestion") {
-    assert.equal(result.suggestion.linkedEntityId, leads[0]!.id);
+  assert.equal(result.kind, "created");
+  if (result.kind === "created") {
+    assert.equal(result.leadId, leads[0]!.id);
   }
   assert.equal(persistCount, 1, "must not create a second lead");
 });
@@ -858,8 +862,14 @@ await test("createLead: forceCreate retry after link failure never creates secon
     },
   });
 
-  repos.crmLinks.upsert = async () => {
-    throw new Error("crm link write failed permanently");
+  const originalUpsert = repos.crmLinks.upsert.bind(repos.crmLinks);
+  let linkFailed = false;
+  repos.crmLinks.upsert = async (input) => {
+    if (input.linkedEntityId === leads[0]?.id || (!linkFailed && input.linkedEntityId.startsWith("lead-"))) {
+      linkFailed = true;
+      throw new Error("crm link write failed permanently");
+    }
+    return originalUpsert(input);
   };
 
   const services = createWhatsAppInboxServices(repos, opts);
@@ -874,11 +884,9 @@ await test("createLead: forceCreate retry after link failure never creates secon
   );
   assert.equal(persistCount, 1);
 
-  // Identical retry including forceCreate=true must recover via existing lead
-  const repos2 = createInMemoryWhatsAppInboxRepositories();
-  seedInboxConversation(repos2, seeded.conversation);
-  const services2 = createWhatsAppInboxServices(repos2, opts);
-  const recovered = await services2.crmLinks.createLeadFromConversation(
+  // Restore working upsert; identical retry including forceCreate=true recovers exact leadId
+  repos.crmLinks.upsert = originalUpsert;
+  const recovered = await services.crmLinks.createLeadFromConversation(
     seeded.conversation.id,
     { actor, forceCreate: true }
   );
@@ -887,7 +895,7 @@ await test("createLead: forceCreate retry after link failure never creates secon
     assert.equal(recovered.leadId, leads[0]!.id);
   }
   assert.equal(persistCount, 1, "forceCreate must not create a second CRM lead");
-  assert.ok(await repos2.crmLinks.getByConversationId(seeded.conversation.id));
+  assert.ok(await repos.crmLinks.getByConversationId(seeded.conversation.id));
 });
 
 await test("createLead: pending-claim cleanup failure is service_unavailable", async () => {
@@ -973,6 +981,49 @@ await test("composition: server mounts hardened inbox router once", () => {
   assert.match(src, /persistLead:\s*persistPublicMarketingLead/);
   // Public lead mount remains separate
   assert.match(src, /createPublicLeadRouter/);
+});
+
+await test("production wiring: signed inbound customer message auto-links lead and duplicate does not repeat lead creation", async () => {
+  const waRepo = new InMemoryWhatsAppRepository();
+  const persistedLeads: any[] = [];
+
+  const deps = {
+    resolveLocalDb: () => ({}) as any,
+    persistLead: async (lead: any) => {
+      persistedLeads.push(lead);
+      return { leadId: lead.id };
+    },
+    whatsappRepo: waRepo,
+  };
+
+  const inboxRepos = createInMemoryWhatsAppInboxRepositories();
+  const autoLinkLead = buildProductionWebhookAutoLinkLead(deps, inboxRepos);
+
+  const channel = await waRepo.resolveOrCreateChannel({
+    phoneNumberId: "PN123",
+    displayPhoneNumber: "+923001234567",
+  });
+  const contact = await waRepo.resolveOrCreateContact({
+    phoneE164: "923001234567",
+    profileName: "Ali Test",
+  });
+  const conversation = await waRepo.resolveOrCreateOpenConversation({
+    channelId: channel.id,
+    contactId: contact.id,
+  });
+  seedInboxConversation(inboxRepos, conversation);
+
+  // Auto-link lead on message acceptance
+  const linkRes = await autoLinkLead(conversation.id);
+  assert.ok(linkRes.leadId);
+  assert.equal(linkRes.created, true);
+  assert.equal(persistedLeads.length, 1);
+
+  // Duplicate delivery attempt
+  const linkResDuplicate = await autoLinkLead(conversation.id);
+  assert.equal(linkResDuplicate.leadId, linkRes.leadId);
+  assert.equal(linkResDuplicate.created, false);
+  assert.equal(persistedLeads.length, 1);
 });
 
 if (failed > 0) {

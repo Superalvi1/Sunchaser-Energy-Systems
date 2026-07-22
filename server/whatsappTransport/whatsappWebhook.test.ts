@@ -1117,6 +1117,125 @@ await test("channel uniqueness repair removes global unique and adds company-awa
   assert.equal(/create policy[\s\S]*using\s*\(\s*true\s*\)/i.test(sql), false);
 });
 
+await test("defensive payload: malformed coordinates and oversized text are safely sanitized", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PN123" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.DEF_LOC1",
+                    timestamp: "1700000000",
+                    type: "location",
+                    location: {
+                      latitude: "invalid_lat",
+                      longitude: 200,
+                      name: "A".repeat(500),
+                      address: "B".repeat(1000),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 1);
+    const msg = [...repo.messages.values()][0];
+    assert.equal(msg.latitude, null);
+    assert.equal(msg.longitude, null);
+    assert.equal(msg.placeName?.length, 255);
+    assert.equal(msg.address?.length, 500);
+  });
+});
+
+await test("defensive payload: missing sender does not crash webhook", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PN123" },
+                messages: [
+                  {
+                    id: "wamid.NO_SENDER",
+                    timestamp: "1700000000",
+                    type: "text",
+                    text: { body: "test" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 0);
+  });
+});
+
+await test("defensive payload: mixed status and message in single webhook are handled independently", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  await withWebhookServer(repo, enabledConfig(), async (base) => {
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA1",
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: "PN123" },
+                contacts: [{ wa_id: "923001234567" }],
+                messages: [
+                  {
+                    from: "923001234567",
+                    id: "wamid.MSG_MIXED",
+                    timestamp: "1700000000",
+                    type: "text",
+                    text: { body: "mixed message" },
+                  },
+                ],
+                statuses: [
+                  {
+                    id: "wamid.STAT_MIXED",
+                    status: "delivered",
+                    timestamp: "1700000001",
+                    recipient_id: "923001234567",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await postWebhook(base, payload);
+    assert.equal(res.status, 200);
+    assert.equal(repo.messages.size, 1);
+    assert.equal(repo.statusEvents.size, 1);
+  });
+});
+
 if (failed > 0) {
   console.error(`\n${failed} webhook test(s) failed`);
   process.exit(1);

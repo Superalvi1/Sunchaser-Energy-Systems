@@ -238,6 +238,48 @@ await test("loading and error query states", async () => {
   );
 });
 
+await test("UI audio vs voice distinction helper model test", () => {
+  const audioMsg: InboxMessage = {
+    id: "m_aud",
+    companyId: "sunchaser",
+    conversationId: "c1",
+    direction: "inbound",
+    status: "received",
+    textBody: null,
+    createdAt: "2026-07-22T10:00:00.000Z",
+    occurredAt: "2026-07-22T10:00:00.000Z",
+    messageType: "audio",
+    voice: false,
+  };
+
+  const voiceMsg: InboxMessage = {
+    id: "m_voice",
+    companyId: "sunchaser",
+    conversationId: "c1",
+    direction: "inbound",
+    status: "received",
+    textBody: null,
+    createdAt: "2026-07-22T10:00:00.000Z",
+    occurredAt: "2026-07-22T10:00:00.000Z",
+    messageType: "audio",
+    voice: true,
+  };
+
+  function renderLabel(msg: InboxMessage): string {
+    const type = (msg.messageType || "").toLowerCase();
+    if (type === "voice" || (type === "audio" && msg.voice)) {
+      return "Voice note received";
+    }
+    if (type === "audio") {
+      return "Audio received";
+    }
+    return "Message received";
+  }
+
+  assert.equal(renderLabel(audioMsg), "Audio received");
+  assert.equal(renderLabel(voiceMsg), "Voice note received");
+});
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);

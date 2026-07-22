@@ -215,7 +215,7 @@ export class InboxSupabaseAccess {
   }
 
   companyId(explicit?: string): string {
-    return explicit ?? DEFAULT_COMPANY_ID;
+    return resolveCompanyId(explicit);
   }
 }
 
@@ -244,9 +244,24 @@ export class WhatsAppInboxMemoryStore {
 
 /** Sentinel entity id used to claim create-lead exclusivity before CRM callback. */
 export const CREATE_LEAD_PENDING_ENTITY_ID = "__pending_create_lead__";
+export const PENDING_LEAD_PREFIX = "pending_lead:";
 
 export function isPendingCreateLeadLink(
   link: WhatsAppConversationCrmLink | null | undefined
 ): boolean {
-  return !!link && link.linkedEntityId === CREATE_LEAD_PENDING_ENTITY_ID;
+  if (!link) return false;
+  return (
+    link.linkedEntityId === CREATE_LEAD_PENDING_ENTITY_ID ||
+    link.linkedEntityId.startsWith(PENDING_LEAD_PREFIX)
+  );
+}
+
+export function extractPendingLeadId(
+  link: WhatsAppConversationCrmLink | null | undefined
+): string | null {
+  if (!link) return null;
+  if (link.linkedEntityId.startsWith(PENDING_LEAD_PREFIX)) {
+    return link.linkedEntityId.slice(PENDING_LEAD_PREFIX.length);
+  }
+  return null;
 }
