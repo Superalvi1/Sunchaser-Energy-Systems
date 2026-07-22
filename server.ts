@@ -342,6 +342,7 @@ import {
   createWhatsAppWebhookRouter,
   installWhatsAppRawBodyMiddleware,
   whatsappRawBodyErrorHandler,
+  buildProductionInboxServiceOptions,
 } from "./server/whatsappTransport/index.ts";
 import {
   OwnershipError,
@@ -652,7 +653,15 @@ app.use(
 
 app.use("/api/integrations/whatsapp", createWhatsAppWebhookRouter());
 app.use("/api/conversations", createWhatsAppOutboundRouter());
-app.use("/api/inbox", createWhatsAppInboxRouter());
+app.use(
+  "/api/inbox",
+  createWhatsAppInboxRouter({
+    serviceOptions: buildProductionInboxServiceOptions({
+      resolveLocalDb: resolveAuthLocalDb,
+      persistLead: persistPublicMarketingLead,
+    }),
+  })
+);
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 

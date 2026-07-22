@@ -8,7 +8,8 @@ export type InboxServiceErrorCode =
   | "free_form_closed"
   | "idempotency_processing"
   | "idempotency_outcome_unknown"
-  | "already_linked";
+  | "already_linked"
+  | "service_unavailable";
 
 export class InboxServiceError extends Error {
   readonly code: InboxServiceErrorCode;

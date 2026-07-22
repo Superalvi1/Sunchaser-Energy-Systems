@@ -59,6 +59,7 @@ const CODE_TO_STATUS: Record<InboxServiceErrorCode, number> = {
   idempotency_processing: 409,
   idempotency_outcome_unknown: 409,
   already_linked: 409,
+  service_unavailable: 503,
 };
 
 export function mapInboxError(err: unknown): {
@@ -68,6 +69,14 @@ export function mapInboxError(err: unknown): {
   details?: Record<string, unknown>;
 } {
   if (err instanceof InboxServiceError) {
+    // Infrastructure failures must never leak internal messages/details to clients.
+    if (err.code === "service_unavailable") {
+      return {
+        status: 503,
+        code: "service_unavailable",
+        message: "Service temporarily unavailable",
+      };
+    }
     return {
       status: CODE_TO_STATUS[err.code] ?? 500,
       code: err.code,
