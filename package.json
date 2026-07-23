@@ -22,6 +22,7 @@
     "test:ai-shadow-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiEngine/aiEngine.test.ts",
     "test:unified-messaging-baseline": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/unifiedMessagingBaseline.test.ts",
     "test:unified-messaging-contract": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/unifiedMessaging/transportContract.test.ts",
+    "test:unified-messaging-schema": "node scripts/validate-unified-messaging-schema.mjs && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/unifiedMessaging/messagingSchema.test.ts",
     "test:solar-quote-planner": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/quotation/SolarQuotePlanner.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarQuotePlannerClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarDesignStudio.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarPipelineClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",
     "test:solar-proposal-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/proposal/SolarProposalEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/proposal/SolarProposalMatrix.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",
     "test:roof-geometry-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/roof/RoofGeometryEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/roof/RoofGeometryMatrix.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/roofStudioClient.test.ts",
