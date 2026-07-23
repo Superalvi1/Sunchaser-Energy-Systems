@@ -43,7 +43,8 @@
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android",
     "test:startup-smoke": "node scripts/smoke-server-start.mjs",
-    "test:vercel-spa": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/vercelSpaConfig.test.ts"
+    "test:vercel-spa": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/vercelSpaConfig.test.ts",
+    "test:marketplace-ws0": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceConfig.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWs0Schema.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
