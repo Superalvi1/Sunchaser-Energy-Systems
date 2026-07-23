@@ -219,7 +219,9 @@ export async function getWhatsAppOnboardingDiagnostics(
       id: "webhook_url",
       label: "Webhook URL",
       ok: publicBaseUrlConfigured,
-      detail: webhookCallbackUrl,
+      detail: publicBaseUrlConfigured
+        ? webhookCallbackUrl
+        : "Set PUBLIC_BASE_URL to the Render backend origin (not the Vercel frontend)",
     },
     {
       id: "verify_token_configured",

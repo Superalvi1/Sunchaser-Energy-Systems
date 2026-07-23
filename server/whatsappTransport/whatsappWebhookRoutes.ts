@@ -194,9 +194,7 @@ export function createWhatsAppWebhookRouter(
 
   router.get("/webhook", (req, res) => {
     const config = resolveConfig(deps);
-    if (!isWhatsAppEnabled(config)) {
-      return res.status(404).json({ error: "Not found" });
-    }
+    // Allow Meta verification during setup even when conversations are not yet enabled.
     if (!hasWebhookVerifyConfig(config)) {
       return res.status(503).json({ error: "WhatsApp verify token not configured" });
     }
@@ -205,7 +203,10 @@ export function createWhatsAppWebhookRouter(
     const token = String(req.query["hub.verify_token"] ?? "");
     const challenge = String(req.query["hub.challenge"] ?? "");
 
-    if (mode !== "subscribe" || token !== config.webhookVerifyToken) {
+    if (mode !== "subscribe" || !token || token !== config.webhookVerifyToken) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!challenge) {
       return res.status(403).json({ error: "Forbidden" });
     }
     return res.status(200).type("text/plain").send(challenge);
@@ -329,6 +330,7 @@ export function whatsappRawBodyErrorHandler(
   const path = req.path || req.originalUrl || "";
   const isWebhook =
     path === WHATSAPP_WEBHOOK_PATH ||
+    path.endsWith("/whatsapp/webhook") ||
     path.endsWith("/integrations/whatsapp/webhook");
   const typed = err as { type?: string; status?: number; statusCode?: number };
   if (isWebhook && typed?.type === "entity.too.large") {

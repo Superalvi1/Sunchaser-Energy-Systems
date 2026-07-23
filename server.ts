@@ -531,6 +531,22 @@ const resolveAuthLocalDb = () => {
 
 configureAiChatRoute({ resolveLocalDb: resolveAuthLocalDb });
 
+/** Assigned after persistPublicMarketingLead is defined; webhook uses it lazily at request time. */
+let productionAutoLinkLead: ReturnType<
+  typeof buildProductionWebhookAutoLinkLead
+>;
+
+// Meta webhook must be public and mounted before JWT authorization middleware.
+app.use(
+  "/api/whatsapp",
+  createWhatsAppWebhookRouter({
+    autoLinkLead: async (conversationId) => {
+      const result = await productionAutoLinkLead(conversationId);
+      return result.leadId;
+    },
+  })
+);
+
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
 
 /** Persist a validated public marketing lead into CRM storage (Supabase or local). */
@@ -652,20 +668,11 @@ app.use(
   })
 );
 
-const productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
+productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
   persistLead: persistPublicMarketingLead,
 });
 
-app.use(
-  "/api/integrations/whatsapp",
-  createWhatsAppWebhookRouter({
-    autoLinkLead: async (conversationId) => {
-      const result = await productionAutoLinkLead(conversationId);
-      return result.leadId;
-    },
-  })
-);
 app.use("/api/conversations", createWhatsAppOutboundRouter());
 app.use(
   "/api/inbox",

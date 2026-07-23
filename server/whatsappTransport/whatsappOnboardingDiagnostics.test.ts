@@ -33,7 +33,7 @@ await test("webhook callback URL uses PUBLIC_BASE_URL", () => {
     assert.equal(publicBaseUrlConfigured, true);
     assert.equal(
       url,
-      "https://crm.example.com/api/integrations/whatsapp/webhook"
+      "https://crm.example.com/api/whatsapp/webhook"
     );
   } finally {
     if (prev === undefined) delete process.env.PUBLIC_BASE_URL;

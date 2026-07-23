@@ -7,6 +7,8 @@ import { createHmac } from "node:crypto";
 import express from "express";
 import type { AddressInfo } from "net";
 import { isPublicApiRoute } from "../middleware/publicRoutes.ts";
+import { createAuthorizationMiddleware } from "../middleware/authorization.ts";
+import { isProtectedApiRoute } from "../middleware/routePolicy.ts";
 import { readWhatsAppConfig } from "./whatsappConfig.ts";
 import {
   WHATSAPP_WEBHOOK_MAX_BODY_BYTES,
@@ -150,7 +152,7 @@ async function withWebhookServer(
     res.status(200).json({ parsed: req.body, isBuffer: Buffer.isBuffer(req.body) });
   });
   app.use(
-    "/api/integrations/whatsapp",
+    "/api/whatsapp",
     createWhatsAppWebhookRouter({ repo, config })
   );
 
@@ -247,7 +249,7 @@ await test("2. Wrong token returns 403", async () => {
   });
 });
 
-await test("3. Disabled returns 404", async () => {
+await test("3. GET verification works while conversations disabled (setup)", async () => {
   const repo = new InMemoryWhatsAppRepository();
   await withWebhookServer(
     repo,
@@ -256,9 +258,10 @@ await test("3. Disabled returns 404", async () => {
       const res = await getWebhook(base, {
         "hub.mode": "subscribe",
         "hub.verify_token": VERIFY_TOKEN,
-        "hub.challenge": "x",
+        "hub.challenge": "setup-challenge",
       });
-      assert.equal(res.status, 404);
+      assert.equal(res.status, 200);
+      assert.equal(res.text, "setup-challenge");
     }
   );
 });
@@ -798,7 +801,7 @@ await test("22. Non-Buffer webhook body is rejected", async () => {
   // Intentionally use JSON parser (no raw Buffer) to simulate misconfiguration.
   app.use(express.json());
   app.use(
-    "/api/integrations/whatsapp",
+    "/api/whatsapp",
     createWhatsAppWebhookRouter({ repo, config })
   );
   const server = await new Promise<import("http").Server>((resolve) => {
@@ -1234,6 +1237,92 @@ await test("defensive payload: mixed status and message in single webhook are ha
     assert.equal(repo.messages.size, 1);
     assert.equal(repo.statusEvents.size, 1);
   });
+});
+
+await test("GET verification requires no JWT (auth middleware installed)", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const config = enabledConfig();
+  const app = express();
+  installWhatsAppRawBodyMiddleware(app);
+  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    createAuthorizationMiddleware({
+      resolveLocalDb: () => ({ users: [] }) as never,
+    })
+  );
+  app.use("/api/whatsapp", createWhatsAppWebhookRouter({ repo, config }));
+  app.get("/api/inbox/admin/whatsapp/connection-status", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
+
+  const server = await new Promise<import("http").Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const verify = await fetch(
+      `${base}${WHATSAPP_WEBHOOK_PATH}?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(VERIFY_TOKEN)}&hub.challenge=jwt-free`
+    );
+    assert.equal(verify.status, 200);
+    assert.equal(await verify.text(), "jwt-free");
+
+    const protectedRes = await fetch(
+      `${base}/api/inbox/admin/whatsapp/connection-status`
+    );
+    assert.equal(protectedRes.status, 401);
+    const body = await protectedRes.json();
+    assert.equal(body.error, "Unauthorized");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+await test("POST unsigned webhook rejected without JWT requirement", async () => {
+  const repo = new InMemoryWhatsAppRepository();
+  const config = enabledConfig();
+  const app = express();
+  installWhatsAppRawBodyMiddleware(app);
+  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    createAuthorizationMiddleware({
+      resolveLocalDb: () => ({ users: [] }) as never,
+    })
+  );
+  app.use("/api/whatsapp", createWhatsAppWebhookRouter({ repo, config }));
+
+  const server = await new Promise<import("http").Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const payload = inboundTextEnvelope({ waMessageId: "wamid.NOSIG" });
+    const raw = Buffer.from(JSON.stringify(payload), "utf8");
+    const res = await fetch(`${base}${WHATSAPP_WEBHOOK_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new Uint8Array(raw),
+    });
+    // Reaches signature check (not JWT 401)
+    assert.equal(res.status, 401);
+    const body = await res.json();
+    assert.equal(body.error, "Invalid signature");
+    assert.equal(isProtectedApiRoute("POST", WHATSAPP_WEBHOOK_PATH), false);
+    assert.equal(isPublicApiRoute("POST", WHATSAPP_WEBHOOK_PATH), true);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+await test("canonical webhook path is /api/whatsapp/webhook", () => {
+  assert.equal(WHATSAPP_WEBHOOK_PATH, "/api/whatsapp/webhook");
+  assert.equal(isPublicApiRoute("GET", "/api/integrations/whatsapp/webhook"), false);
+  assert.equal(isPublicApiRoute("GET", "/api/whatsapp/webhook"), true);
 });
 
 if (failed > 0) {

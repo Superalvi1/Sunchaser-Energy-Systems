@@ -28,7 +28,14 @@ export const WHATSAPP_GRAPH_TIMEOUT_MS = 15_000;
 export const WHATSAPP_OUTBOUND_DB_RETRY_ATTEMPTS = 3;
 export const WHATSAPP_OUTBOUND_DB_RETRY_DELAY_MS = 50;
 
-export const WHATSAPP_WEBHOOK_PATH = "/api/integrations/whatsapp/webhook";
+/**
+ * Canonical Meta Cloud API webhook callback path (GET verify + POST inbound).
+ * Must stay on the public allowlist and be served by the Render backend (not the Vercel frontend).
+ */
+export const WHATSAPP_WEBHOOK_PATH = "/api/whatsapp/webhook";
+
+/** Express mount prefix for createWhatsAppWebhookRouter (router serves `/webhook`). */
+export const WHATSAPP_WEBHOOK_MOUNT = "/api/whatsapp";
 
 export const SUPPORTED_STATUS_VALUES = [
   "sent",
