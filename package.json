@@ -42,7 +42,8 @@
     "test:solar-electrical-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/electrical/ElectricalDesignEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/electrical/ElectricalDesignMatrix.test.ts",
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android",
-    "test:startup-smoke": "node scripts/smoke-server-start.mjs"
+    "test:startup-smoke": "node scripts/smoke-server-start.mjs",
+    "test:vercel-spa": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/vercelSpaConfig.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
