@@ -9,6 +9,7 @@ import type {
 } from "./whatsappInboxDatabaseTypes.ts";
 import {
   clampLimit,
+  handleSupabaseError,
   InboxSupabaseAccess,
   mapStatusEvent,
   newInboxId,
@@ -144,7 +145,7 @@ export class SupabaseWhatsAppInboxStatusRepository
       .insert(row)
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     return mapStatusEvent(data as Record<string, unknown>);
   }
 
@@ -152,14 +153,15 @@ export class SupabaseWhatsAppInboxStatusRepository
     conversationId: string,
     opts?: { companyId?: string; limit?: number }
   ): Promise<WhatsAppConversationStatusEvent[]> {
+    const limit = clampLimit(opts?.limit, 100, 500);
     const { data, error } = await this.client()
       .from("whatsapp_conversation_status_events")
       .select("*")
       .eq("company_id", this.access.companyId(opts?.companyId))
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(clampLimit(opts?.limit, 100, 500));
-    if (error) throw new Error(error.message);
+      .limit(limit);
+    if (error) handleSupabaseError(error);
     return ((data ?? []) as Record<string, unknown>[]).map(mapStatusEvent);
   }
 
@@ -173,10 +175,9 @@ export class SupabaseWhatsAppInboxStatusRepository
       .eq("company_id", this.access.companyId(companyId))
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!data) return null;
-    return mapStatusEvent(data as Record<string, unknown>);
+      .limit(1);
+    if (error) handleSupabaseError(error);
+    const row = (data ?? [])[0] as Record<string, unknown> | undefined;
+    return row ? mapStatusEvent(row) : null;
   }
 }

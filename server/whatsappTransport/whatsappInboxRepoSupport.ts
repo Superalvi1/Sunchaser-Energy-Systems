@@ -199,6 +199,16 @@ export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
   };
 }
 
+import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
+
+export function handleSupabaseError(error: { message: string; code?: string }): never {
+  throw new InboxServiceError(
+    "service_unavailable",
+    `Database query failed: ${error.message}`,
+    { originalCode: error.code, originalMessage: error.message }
+  );
+}
+
 export class InboxSupabaseAccess {
   constructor(
     private readonly clientFactory: () => SupabaseClient | null = getSupabase
@@ -211,7 +221,10 @@ export class InboxSupabaseAccess {
   client(): SupabaseClient {
     const supabase = this.clientFactory();
     if (!supabase) {
-      throw new Error("Supabase is not active for WhatsApp inbox repositories.");
+      throw new InboxServiceError(
+        "service_unavailable",
+        "Supabase is not active for WhatsApp inbox repositories."
+      );
     }
     return supabase;
   }

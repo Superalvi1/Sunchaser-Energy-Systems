@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { WhatsAppConversationAssignmentEvent } from "./whatsappInboxDatabaseTypes.ts";
 import {
   clampLimit,
+  handleSupabaseError,
   InboxSupabaseAccess,
   mapAssignmentEvent,
   newInboxId,
@@ -115,7 +116,7 @@ export class SupabaseWhatsAppInboxAssignmentRepository
       .insert(row)
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     return mapAssignmentEvent(data as Record<string, unknown>);
   }
 
@@ -123,14 +124,15 @@ export class SupabaseWhatsAppInboxAssignmentRepository
     conversationId: string,
     opts?: { companyId?: string; limit?: number }
   ): Promise<WhatsAppConversationAssignmentEvent[]> {
+    const limit = clampLimit(opts?.limit, 100, 500);
     const { data, error } = await this.client()
       .from("whatsapp_conversation_assignment_events")
       .select("*")
       .eq("company_id", this.access.companyId(opts?.companyId))
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(clampLimit(opts?.limit, 100, 500));
-    if (error) throw new Error(error.message);
+      .limit(limit);
+    if (error) handleSupabaseError(error);
     return ((data ?? []) as Record<string, unknown>[]).map(mapAssignmentEvent);
   }
 }

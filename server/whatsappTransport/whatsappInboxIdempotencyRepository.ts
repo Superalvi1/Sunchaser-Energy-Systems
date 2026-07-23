@@ -8,6 +8,7 @@ import type {
   WhatsAppOutboundIdempotencyState,
 } from "./whatsappInboxDatabaseTypes.ts";
 import {
+  handleSupabaseError,
   InboxSupabaseAccess,
   mapIdempotencyKey,
   nowIso,
@@ -101,24 +102,6 @@ export class InMemoryWhatsAppInboxIdempotencyRepository
     return row;
   }
 
-  private async setState(
-    input: {
-      idempotencyKey: string;
-      conversationId: string;
-      companyId?: string;
-    },
-    patch: Partial<WhatsAppOutboundIdempotencyKey>,
-    requiredState?: WhatsAppOutboundIdempotencyState
-  ): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    const row = await this.getByKey(input.idempotencyKey, input.companyId);
-    if (!row) return null;
-    if (row.conversationId !== input.conversationId) return null;
-    if (requiredState && row.state !== requiredState) return null;
-    const next = { ...row, ...patch };
-    this.store.idempotencyKeys.set(input.idempotencyKey, next);
-    return next;
-  }
-
   async markCompleted(input: {
     idempotencyKey: string;
     messageId: string;
@@ -126,16 +109,17 @@ export class InMemoryWhatsAppInboxIdempotencyRepository
     companyId?: string;
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    return this.setState(
-      input,
-      {
-        state: "completed",
-        messageId: input.messageId,
-        error: null,
-        completedAt: input.completedAt ?? nowIso(),
-      },
-      "processing"
-    );
+    const existing = await this.getByKey(input.idempotencyKey, input.companyId);
+    if (!existing) return null;
+    const next: WhatsAppOutboundIdempotencyKey = {
+      ...existing,
+      state: "completed",
+      messageId: input.messageId,
+      error: null,
+      completedAt: input.completedAt ?? nowIso(),
+    };
+    this.store.idempotencyKeys.set(input.idempotencyKey, next);
+    return next;
   }
 
   async markFailedKnown(input: {
@@ -145,15 +129,17 @@ export class InMemoryWhatsAppInboxIdempotencyRepository
     companyId?: string;
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    return this.setState(
-      input,
-      {
-        state: "failed_known",
-        error: input.error,
-        completedAt: input.completedAt ?? nowIso(),
-      },
-      "processing"
-    );
+    const existing = await this.getByKey(input.idempotencyKey, input.companyId);
+    if (!existing) return null;
+    const next: WhatsAppOutboundIdempotencyKey = {
+      ...existing,
+      state: "failed_known",
+      messageId: null,
+      error: input.error,
+      completedAt: input.completedAt ?? nowIso(),
+    };
+    this.store.idempotencyKeys.set(input.idempotencyKey, next);
+    return next;
   }
 
   async markOutcomeUnknown(input: {
@@ -162,14 +148,15 @@ export class InMemoryWhatsAppInboxIdempotencyRepository
     companyId?: string;
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    return this.setState(
-      input,
-      {
-        state: "outcome_unknown",
-        completedAt: input.completedAt ?? nowIso(),
-      },
-      "processing"
-    );
+    const existing = await this.getByKey(input.idempotencyKey, input.companyId);
+    if (!existing || existing.state !== "processing") return null;
+    const next: WhatsAppOutboundIdempotencyKey = {
+      ...existing,
+      state: "outcome_unknown",
+      completedAt: input.completedAt ?? nowIso(),
+    };
+    this.store.idempotencyKeys.set(input.idempotencyKey, next);
+    return next;
   }
 }
 
@@ -197,17 +184,16 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     createdAt?: string;
   }): Promise<IdempotencyClaimResult> {
     const companyId = this.access.companyId(input.companyId);
-    const insertRow = {
+    const row = {
       idempotency_key: input.idempotencyKey,
       company_id: companyId,
       conversation_id: input.conversationId,
-      state: "processing" as const,
+      state: "processing" as WhatsAppOutboundIdempotencyState,
       created_at: input.createdAt ?? nowIso(),
     };
-
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency_keys")
-      .insert(insertRow)
+      .from("whatsapp_outbound_idempotency")
+      .insert(row)
       .select("*")
       .maybeSingle();
 
@@ -217,13 +203,10 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
         row: mapIdempotencyKey(data as Record<string, unknown>),
       };
     }
-
     const existing = await this.getByKey(input.idempotencyKey, companyId);
     if (existing) return { kind: "existing", row: existing };
-    throw new Error(
-      error?.message ||
-        "idempotency claim failed without returning an existing row"
-    );
+    if (error) handleSupabaseError(error);
+    throw new Error("Idempotency claim failed");
   }
 
   async getByKey(
@@ -231,34 +214,12 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     companyId?: string
   ): Promise<WhatsAppOutboundIdempotencyKey | null> {
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency_keys")
+      .from("whatsapp_outbound_idempotency")
       .select("*")
       .eq("company_id", this.access.companyId(companyId))
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!data) return null;
-    return mapIdempotencyKey(data as Record<string, unknown>);
-  }
-
-  private async updateFromProcessing(
-    input: {
-      idempotencyKey: string;
-      conversationId: string;
-      companyId?: string;
-    },
-    patch: Record<string, unknown>
-  ): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency_keys")
-      .update(patch)
-      .eq("company_id", this.access.companyId(input.companyId))
-      .eq("idempotency_key", input.idempotencyKey)
-      .eq("conversation_id", input.conversationId)
-      .eq("state", "processing")
-      .select("*")
-      .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapIdempotencyKey(data as Record<string, unknown>);
   }
@@ -270,12 +231,20 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     companyId?: string;
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    return this.updateFromProcessing(input, {
-      state: "completed",
-      message_id: input.messageId,
-      error: null,
-      completed_at: input.completedAt ?? nowIso(),
-    });
+    const { data, error } = await this.client()
+      .from("whatsapp_outbound_idempotency")
+      .update({
+        state: "completed" as WhatsAppOutboundIdempotencyState,
+        message_id: input.messageId,
+        completed_at: input.completedAt ?? nowIso(),
+      })
+      .eq("company_id", this.access.companyId(input.companyId))
+      .eq("idempotency_key", input.idempotencyKey)
+      .select("*")
+      .maybeSingle();
+    if (error) handleSupabaseError(error);
+    if (!data) return null;
+    return mapIdempotencyKey(data as Record<string, unknown>);
   }
 
   async markFailedKnown(input: {
@@ -285,11 +254,20 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     companyId?: string;
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    return this.updateFromProcessing(input, {
-      state: "failed_known",
-      error: input.error,
-      completed_at: input.completedAt ?? nowIso(),
-    });
+    const { data, error } = await this.client()
+      .from("whatsapp_outbound_idempotency")
+      .update({
+        state: "failed_known" as WhatsAppOutboundIdempotencyState,
+        error: input.error,
+        completedAt: input.completedAt ?? nowIso(),
+      })
+      .eq("company_id", this.access.companyId(input.companyId))
+      .eq("idempotency_key", input.idempotencyKey)
+      .select("*")
+      .maybeSingle();
+    if (error) handleSupabaseError(error);
+    if (!data) return null;
+    return mapIdempotencyKey(data as Record<string, unknown>);
   }
 
   async markOutcomeUnknown(input: {
@@ -298,9 +276,19 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     companyId?: string;
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
-    return this.updateFromProcessing(input, {
-      state: "outcome_unknown",
-      completed_at: input.completedAt ?? nowIso(),
-    });
+    const { data, error } = await this.client()
+      .from("whatsapp_outbound_idempotency")
+      .update({
+        state: "outcome_unknown" as WhatsAppOutboundIdempotencyState,
+        completedAt: input.completedAt ?? nowIso(),
+      })
+      .eq("company_id", this.access.companyId(input.companyId))
+      .eq("idempotency_key", input.idempotencyKey)
+      .eq("state", "processing")
+      .select("*")
+      .maybeSingle();
+    if (error) handleSupabaseError(error);
+    if (!data) return null;
+    return mapIdempotencyKey(data as Record<string, unknown>);
   }
 }

@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   clampLimit,
+  handleSupabaseError,
   InboxSupabaseAccess,
   isBeforeKeyset,
   mapMessageRef,
@@ -147,7 +148,7 @@ export class SupabaseWhatsAppInboxMessageRepository
       .eq("company_id", this.access.companyId(companyId))
       .eq("id", messageId)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapMessageRef(data as Record<string, unknown>);
   }
@@ -165,7 +166,7 @@ export class SupabaseWhatsAppInboxMessageRepository
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .limit(1);
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     const row = (data ?? [])[0] as Record<string, unknown> | undefined;
     return row ? mapMessageRef(row) : null;
   }
@@ -194,7 +195,7 @@ export class SupabaseWhatsAppInboxMessageRepository
       );
     }
     const { data, error } = await query;
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     const rows = ((data ?? []) as Record<string, unknown>[]).map(mapMessageRef);
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];

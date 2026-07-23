@@ -8,6 +8,7 @@ import type {
   WhatsAppCrmLinkEntityType,
 } from "./whatsappInboxDatabaseTypes.ts";
 import {
+  handleSupabaseError,
   InboxSupabaseAccess,
   mapCrmLink,
   nowIso,
@@ -100,21 +101,9 @@ export class InMemoryWhatsAppInboxCrmLinkRepository
     companyId?: string;
     linkedAt?: string;
   }): Promise<CrmLinkInsertIfAbsentResult> {
-    // Synchronous claim — no await between existence check and insert.
-    const companyId = this.access.companyId(input.companyId);
-    const existing = this.store.crmLinks.get(input.conversationId) ?? null;
-    if (existing && existing.companyId === companyId) {
-      return { kind: "existing", row: existing };
-    }
-    const row: WhatsAppConversationCrmLink = {
-      conversationId: input.conversationId,
-      companyId,
-      linkedEntityType: input.linkedEntityType,
-      linkedEntityId: input.linkedEntityId,
-      linkedByUserId: input.linkedByUserId,
-      linkedAt: input.linkedAt ?? nowIso(),
-    };
-    this.store.crmLinks.set(input.conversationId, row);
+    const existing = this.store.crmLinks.get(input.conversationId);
+    if (existing) return { kind: "existing", row: existing };
+    const row = await this.upsert(input);
     return { kind: "inserted", row };
   }
 
@@ -156,7 +145,7 @@ export class SupabaseWhatsAppInboxCrmLinkRepository
       .eq("company_id", this.access.companyId(companyId))
       .eq("conversation_id", conversationId)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapCrmLink(data as Record<string, unknown>);
   }
@@ -182,7 +171,7 @@ export class SupabaseWhatsAppInboxCrmLinkRepository
       .upsert(row, { onConflict: "conversation_id" })
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     return mapCrmLink(data as Record<string, unknown>);
   }
 
@@ -195,7 +184,7 @@ export class SupabaseWhatsAppInboxCrmLinkRepository
     linkedAt?: string;
   }): Promise<CrmLinkInsertIfAbsentResult> {
     const companyId = this.access.companyId(input.companyId);
-    const insertRow = {
+    const row = {
       conversation_id: input.conversationId,
       company_id: companyId,
       linked_entity_type: input.linkedEntityType,
@@ -205,9 +194,10 @@ export class SupabaseWhatsAppInboxCrmLinkRepository
     };
     const { data, error } = await this.client()
       .from("whatsapp_conversation_crm_links")
-      .insert(insertRow)
+      .insert(row)
       .select("*")
       .maybeSingle();
+
     if (!error && data) {
       return {
         kind: "inserted",
@@ -219,9 +209,8 @@ export class SupabaseWhatsAppInboxCrmLinkRepository
       companyId
     );
     if (existing) return { kind: "existing", row: existing };
-    throw new Error(
-      error?.message || "CRM link insertIfAbsent failed without existing row"
-    );
+    if (error) handleSupabaseError(error);
+    throw new InboxServiceError("conflict", "CRM link insert failed");
   }
 
   async deleteByConversationId(
@@ -234,7 +223,7 @@ export class SupabaseWhatsAppInboxCrmLinkRepository
       .eq("company_id", this.access.companyId(companyId))
       .eq("conversation_id", conversationId)
       .select("conversation_id");
-    if (error) throw new Error(error.message);
-    return (data ?? []).length > 0;
+    if (error) handleSupabaseError(error);
+    return ((data ?? []) as unknown[]).length > 0;
   }
 }

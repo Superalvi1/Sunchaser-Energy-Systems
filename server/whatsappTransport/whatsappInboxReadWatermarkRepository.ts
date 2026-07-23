@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { WhatsAppReadWatermark } from "./whatsappInboxDatabaseTypes.ts";
 import {
+  handleSupabaseError,
   InboxSupabaseAccess,
   mapMessageRef,
   mapReadWatermark,
@@ -183,7 +184,7 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
       .eq("conversation_id", conversationId)
       .eq("user_id", userId)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapReadWatermark(data as Record<string, unknown>);
   }
@@ -208,7 +209,7 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
       .upsert(row, { onConflict: "conversation_id,user_id" })
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     return mapReadWatermark(data as Record<string, unknown>);
   }
 
@@ -229,7 +230,7 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .limit(1);
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     const row = (data ?? [])[0] as Record<string, unknown> | undefined;
     return row ? mapMessageRef(row) : null;
   }
@@ -257,7 +258,7 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
     }
 
     const { count, error } = await query;
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     return count ?? 0;
   }
 
@@ -284,7 +285,7 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
     }
 
     const { data, error } = await query.limit(1);
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     return (data ?? []).length > 0;
   }
 }

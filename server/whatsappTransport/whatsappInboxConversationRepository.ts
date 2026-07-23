@@ -13,6 +13,7 @@ import type {
 import {
   activityAt,
   clampLimit,
+  handleSupabaseError,
   InboxSupabaseAccess,
   isBeforeKeyset,
   mapConversationInbox,
@@ -21,6 +22,7 @@ import {
   type KeysetCursor,
   WhatsAppInboxMemoryStore,
 } from "./whatsappInboxRepoSupport.ts";
+import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 
 export type ConversationListFilters = {
   companyId?: string;
@@ -251,7 +253,6 @@ export class InMemoryWhatsAppInboxConversationRepository
     expectedLockVersion: number,
     patch: ConversationCasPatch
   ): Promise<ConversationCasResult> {
-    // Synchronous critical section — no await between read and write.
     const companyId = this.access.companyId(patch.companyId);
     const current = this.store.conversations.get(conversationId) ?? null;
     if (!current || current.companyId !== companyId) {
@@ -297,7 +298,6 @@ export class InMemoryWhatsAppInboxConversationRepository
     eventId?: string;
     createdAt?: string;
   }): Promise<ConversationCasResult> {
-    // Entire CAS+audit unit is synchronous so concurrent callers cannot tear.
     const companyId = this.access.companyId(input.companyId);
     const previous = this.store.conversations.get(input.conversationId) ?? null;
     if (!previous || previous.companyId !== companyId) {
@@ -484,21 +484,17 @@ export class SupabaseWhatsAppInboxConversationRepository
       .eq("company_id", this.access.companyId(companyId))
       .eq("id", conversationId)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapConversationInbox(data as Record<string, unknown>);
   }
 
   private applyFilters(
-    query: {
-      eq: (column: string, value: unknown) => unknown;
-      is: (column: string, value: null) => unknown;
-    },
+    query: any,
     filters: ConversationListFilters,
     companyId: string
   ) {
-    // Chained PostgREST builders vary by supabase-js version; keep local typing minimal.
-    let q: any = query.eq("company_id", companyId);
+    let q = query.eq("company_id", companyId);
     if (filters.status) q = q.eq("status", filters.status);
     if (filters.channelId) q = q.eq("channel_id", filters.channelId);
     if (filters.hasFailedMessage === true) {
@@ -514,7 +510,7 @@ export class SupabaseWhatsAppInboxConversationRepository
     return q;
   }
 
-  async listByActivity(
+  private async listByActivityTableFallback(
     filters: ConversationListFilters,
     opts?: { cursor?: KeysetCursor | null; limit?: number }
   ): Promise<ConversationListPage> {
@@ -522,25 +518,22 @@ export class SupabaseWhatsAppInboxConversationRepository
     const limit = clampLimit(opts?.limit);
     const cursor = opts?.cursor ?? null;
 
-    // Production path: SQL RPC performs coalesce ordering + keyset entirely in Postgres
-    // (uses whatsapp_conversations_activity_idx). No in-memory sort/trim.
-    const { data, error } = await this.client().rpc(
-      "whatsapp_inbox_list_conversations_by_activity",
-      {
-        p_company_id: companyId,
-        p_limit: limit + 1,
-        p_cursor_at: cursor?.at ?? null,
-        p_cursor_id: cursor?.id ?? null,
-        p_status: filters.status ?? null,
-        p_assigned_to: filters.assignedTo ?? null,
-        p_channel_id: filters.channelId ?? null,
-        p_has_failed_message:
-          filters.hasFailedMessage === undefined
-            ? null
-            : filters.hasFailedMessage,
-      }
-    );
-    if (error) throw new Error(error.message);
+    let query = this.client().from("whatsapp_conversations").select("*");
+    query = this.applyFilters(query, filters, companyId);
+    query = query
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit + 1);
+
+    if (cursor) {
+      query = query.or(
+        `last_message_at.lt.${cursor.at},and(last_message_at.eq.${cursor.at},id.lt.${cursor.id})`
+      );
+    }
+
+    const { data, error } = await query;
+    if (error) handleSupabaseError(error);
 
     const rows = ((data ?? []) as Record<string, unknown>[]).map(
       mapConversationInbox
@@ -556,32 +549,75 @@ export class SupabaseWhatsAppInboxConversationRepository
     };
   }
 
-  async listDelta(
+  async listByActivity(
+    filters: ConversationListFilters,
+    opts?: { cursor?: KeysetCursor | null; limit?: number }
+  ): Promise<ConversationListPage> {
+    const companyId = this.access.companyId(filters.companyId);
+    const limit = clampLimit(opts?.limit);
+    const cursor = opts?.cursor ?? null;
+
+    try {
+      const { data, error } = await this.client().rpc(
+        "whatsapp_inbox_list_conversations_by_activity",
+        {
+          p_company_id: companyId,
+          p_limit: limit + 1,
+          p_cursor_at: cursor?.at ?? null,
+          p_cursor_id: cursor?.id ?? null,
+          p_status: filters.status ?? null,
+          p_assigned_to: filters.assignedTo ?? null,
+          p_channel_id: filters.channelId ?? null,
+          p_has_failed_message:
+            filters.hasFailedMessage === undefined
+              ? null
+              : filters.hasFailedMessage,
+        }
+      );
+      if (error) {
+        if (/Could not find the function|function .* does not exist|PGRST202/i.test(error.message)) {
+          return await this.listByActivityTableFallback(filters, opts);
+        }
+        handleSupabaseError(error);
+      }
+
+      const rows = ((data ?? []) as Record<string, unknown>[]).map(
+        mapConversationInbox
+      );
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      return {
+        rows: page,
+        nextCursor:
+          rows.length > limit && last
+            ? { at: activityAt(last), id: last.id }
+            : null,
+      };
+    } catch (err) {
+      if (err instanceof InboxServiceError) throw err;
+      handleSupabaseError(err instanceof Error ? err : { message: String(err) });
+    }
+  }
+
+  private async listDeltaTableFallback(
     filters: ConversationListFilters,
     opts: { since: KeysetCursor; limit?: number }
   ): Promise<ConversationListPage> {
     const companyId = this.access.companyId(filters.companyId);
     const limit = clampLimit(opts.limit);
 
-    // Production path: SQL RPC performs ASC keyset entirely in Postgres.
-    // Avoids PostgREST .or() timestamp encoding issues and DESC page loops.
-    const { data, error } = await this.client().rpc(
-      "whatsapp_inbox_list_conversations_delta",
-      {
-        p_company_id: companyId,
-        p_limit: limit + 1,
-        p_since_at: opts.since.at,
-        p_since_id: opts.since.id ?? "",
-        p_status: filters.status ?? null,
-        p_assigned_to: filters.assignedTo ?? null,
-        p_channel_id: filters.channelId ?? null,
-        p_has_failed_message:
-          filters.hasFailedMessage === undefined
-            ? null
-            : filters.hasFailedMessage,
-      }
-    );
-    if (error) throw new Error(error.message);
+    let query = this.client().from("whatsapp_conversations").select("*");
+    query = this.applyFilters(query, filters, companyId);
+    query = query
+      .or(
+        `updated_at.gt.${opts.since.at},and(updated_at.eq.${opts.since.at},id.gt.${opts.since.id})`
+      )
+      .order("updated_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(limit + 1);
+
+    const { data, error } = await query;
+    if (error) handleSupabaseError(error);
 
     const rows = ((data ?? []) as Record<string, unknown>[]).map(
       mapConversationInbox
@@ -595,6 +631,55 @@ export class SupabaseWhatsAppInboxConversationRepository
           ? { at: last.updatedAt, id: last.id }
           : null,
     };
+  }
+
+  async listDelta(
+    filters: ConversationListFilters,
+    opts: { since: KeysetCursor; limit?: number }
+  ): Promise<ConversationListPage> {
+    const companyId = this.access.companyId(filters.companyId);
+    const limit = clampLimit(opts.limit);
+
+    try {
+      const { data, error } = await this.client().rpc(
+        "whatsapp_inbox_list_conversations_delta",
+        {
+          p_company_id: companyId,
+          p_limit: limit + 1,
+          p_since_at: opts.since.at,
+          p_since_id: opts.since.id ?? "",
+          p_status: filters.status ?? null,
+          p_assigned_to: filters.assignedTo ?? null,
+          p_channel_id: filters.channelId ?? null,
+          p_has_failed_message:
+            filters.hasFailedMessage === undefined
+              ? null
+              : filters.hasFailedMessage,
+        }
+      );
+      if (error) {
+        if (/Could not find the function|function .* does not exist|PGRST202/i.test(error.message)) {
+          return await this.listDeltaTableFallback(filters, opts);
+        }
+        handleSupabaseError(error);
+      }
+
+      const rows = ((data ?? []) as Record<string, unknown>[]).map(
+        mapConversationInbox
+      );
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      return {
+        rows: page,
+        nextCursor:
+          rows.length > limit && last
+            ? { at: last.updatedAt, id: last.id }
+            : null,
+      };
+    } catch (err) {
+      if (err instanceof InboxServiceError) throw err;
+      handleSupabaseError(err instanceof Error ? err : { message: String(err) });
+    }
   }
 
   async compareAndSet(
@@ -625,7 +710,7 @@ export class SupabaseWhatsAppInboxConversationRepository
       .eq("lock_version", expectedLockVersion)
       .select("*")
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (data) {
       return {
         ok: true,
@@ -663,7 +748,7 @@ export class SupabaseWhatsAppInboxConversationRepository
         p_created_at: input.createdAt ?? nowIso(),
       }
     );
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) {
       const current = await this.getById(input.conversationId, companyId);
       if (!current) return { ok: false, reason: "not_found", current: null };
@@ -699,7 +784,7 @@ export class SupabaseWhatsAppInboxConversationRepository
         p_created_at: input.createdAt ?? nowIso(),
       }
     );
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) {
       const current = await this.getById(input.conversationId, companyId);
       if (!current) return { ok: false, reason: "not_found", current: null };
@@ -732,7 +817,7 @@ export class SupabaseWhatsAppInboxConversationRepository
       .eq("id", conversationId)
       .select("*")
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapConversationInbox(data as Record<string, unknown>);
   }
@@ -757,7 +842,7 @@ export class SupabaseWhatsAppInboxConversationRepository
       .eq("id", conversationId)
       .select("*")
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapConversationInbox(data as Record<string, unknown>);
   }
@@ -777,7 +862,7 @@ export class SupabaseWhatsAppInboxConversationRepository
       .eq("id", conversationId)
       .select("*")
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapConversationInbox(data as Record<string, unknown>);
   }
@@ -793,7 +878,7 @@ export class SupabaseWhatsAppInboxConversationRepository
       .eq("id", conversationId)
       .select("*")
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) handleSupabaseError(error);
     if (!data) return null;
     return mapConversationInbox(data as Record<string, unknown>);
   }
