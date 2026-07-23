@@ -17,7 +17,7 @@
     "test:whatsapp-inbox": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxRepository.test.ts",
     "test:whatsapp-inbox-services": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxServices.test.ts",
     "test:whatsapp-inbox-routes": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxRoutes.test.ts",
-    "test:whatsapp-inbox-ui": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/hooks/inboxMutations.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/lib/metaEmbeddedSignup.test.ts",
+    "test:whatsapp-inbox-ui": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/hooks/inboxMutations.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/lib/metaEmbeddedSignup.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/components/whatsappVerifyTokenBrowserExposure.test.ts",
     "test:whatsapp-inbox-production-wiring": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxProductionWiring.test.ts",
     "test:ai-shadow-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiEngine/aiEngine.test.ts",
     "test:solar-quote-planner": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/solar/quotation/SolarQuotePlanner.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarQuotePlannerClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarDesignStudio.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarPipelineClient.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarProposalStudioClient.test.ts",

@@ -47,7 +47,6 @@ export default function WhatsAppConnectionPanel({
 }: WhatsAppConnectionPanelProps) {
   const [status, setStatus] = useState<WhatsAppConnectionStatusPayload | null>(null);
   const [webhookCallbackUrl, setWebhookCallbackUrl] = useState<string | null>(null);
-  const [verifyToken, setVerifyToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -68,7 +67,6 @@ export default function WhatsAppConnectionPanel({
       setStatus(data);
       if (diagnostics) {
         setWebhookCallbackUrl(diagnostics.webhookCallbackUrl);
-        setVerifyToken(diagnostics.webhookVerifyToken);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load connection status");
@@ -275,22 +273,14 @@ export default function WhatsAppConnectionPanel({
             </div>
           </div>
 
-          {(webhookCallbackUrl || verifyToken) && (
+          {webhookCallbackUrl ? (
             <div className="space-y-2 rounded-lg border border-[var(--inbox-border)] p-2.5 text-[11px]">
-              {webhookCallbackUrl ? (
-                <div>
-                  <div className="text-[var(--inbox-muted)]">Webhook callback URL</div>
-                  <div className="break-all font-mono">{webhookCallbackUrl}</div>
-                </div>
-              ) : null}
-              {verifyToken ? (
-                <div>
-                  <div className="text-[var(--inbox-muted)]">Verify Token</div>
-                  <div className="break-all font-mono">{verifyToken}</div>
-                </div>
-              ) : null}
+              <div>
+                <div className="text-[var(--inbox-muted)]">Webhook callback URL</div>
+                <div className="break-all font-mono">{webhookCallbackUrl}</div>
+              </div>
             </div>
-          )}
+          ) : null}
 
           <div className="flex items-center gap-1.5 text-[11px] text-[var(--inbox-muted)]">
             <Shield className="h-3.5 w-3.5 text-emerald-400" />

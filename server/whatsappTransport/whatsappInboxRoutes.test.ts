@@ -908,6 +908,46 @@ await test("regression: unknown DTO fields → 400", async () => {
   });
 });
 
+await test("rbac: diagnostics requires Admin; never returns verify token", async () => {
+  const prevVerify = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = "secret-verify-token-never-in-browser";
+  try {
+    await withInboxServer({}, async (baseUrl, tokens) => {
+      const unauth = await api(baseUrl, "GET", "/admin/whatsapp/diagnostics");
+      assert.ok(unauth.status === 401 || unauth.status === 403);
+
+      const staff = await api(baseUrl, "GET", "/admin/whatsapp/diagnostics", {
+        token: tokens.staff,
+      });
+      assert.equal(staff.status, 403);
+      assert.equal(staff.body.error.code, "forbidden");
+
+      const admin = await api(baseUrl, "GET", "/admin/whatsapp/diagnostics", {
+        token: tokens.admin,
+      });
+      assert.equal(admin.status, 200);
+      const data = admin.body.data;
+      assert.equal(typeof data.webhookCallbackUrl, "string");
+      assert.ok(data.webhookCallbackUrl.includes("/api/whatsapp/webhook"));
+      assert.equal(typeof data.webhookVerifyTokenConfigured, "boolean");
+      assert.equal(data.webhookVerifyTokenConfigured, true);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(data, "webhookVerifyToken"),
+        false
+      );
+      const serialized = JSON.stringify(data);
+      assert.equal(
+        serialized.includes("secret-verify-token-never-in-browser"),
+        false
+      );
+      assert.equal(serialized.includes('"webhookVerifyToken"'), false);
+    });
+  } finally {
+    if (prevVerify === undefined) delete process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    else process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = prevVerify;
+  }
+});
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);

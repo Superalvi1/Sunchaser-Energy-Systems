@@ -40,8 +40,7 @@ export type WhatsAppOnboardingDiagnostics = {
   checklist: ChecklistItem[];
   connection: WhatsAppConnectionStatusPayload;
   webhookCallbackUrl: string;
-  /** Present for Meta Developer Console copy — Admin-only endpoint. */
-  webhookVerifyToken: string | null;
+  /** Whether WHATSAPP_WEBHOOK_VERIFY_TOKEN is set — never return the value. */
   webhookVerifyTokenConfigured: boolean;
   publicBaseUrlConfigured: boolean;
   graphApi: {
@@ -290,7 +289,6 @@ export async function getWhatsAppOnboardingDiagnostics(
     checklist,
     connection,
     webhookCallbackUrl,
-    webhookVerifyToken: verifyTokenConfigured ? config.webhookVerifyToken : null,
     webhookVerifyTokenConfigured: verifyTokenConfigured,
     publicBaseUrlConfigured,
     graphApi: {

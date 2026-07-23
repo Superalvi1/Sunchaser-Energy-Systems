@@ -146,7 +146,7 @@ export type WhatsAppOnboardingDiagnostics = {
   checklist: WhatsAppSetupChecklistItem[];
   connection: WhatsAppConnectionStatusPayload;
   webhookCallbackUrl: string;
-  webhookVerifyToken: string | null;
+  /** Whether the server has WHATSAPP_WEBHOOK_VERIFY_TOKEN — never includes the value. */
   webhookVerifyTokenConfigured: boolean;
   publicBaseUrlConfigured: boolean;
   graphApi: {

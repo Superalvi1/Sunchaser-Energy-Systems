@@ -227,26 +227,16 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
             </div>
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/80 p-4">
               <div className="text-[11px] uppercase tracking-wider text-neutral-500">
-                Verify Token
+                Verify token configured
               </div>
-              <div className="mt-1 break-all font-mono text-[11px] text-neutral-200">
-                {diagnostics.webhookVerifyToken ||
-                  "(not configured — set WHATSAPP_WEBHOOK_VERIFY_TOKEN)"}
+              <div className="mt-1 text-sm font-semibold text-neutral-100">
+                {diagnostics.webhookVerifyTokenConfigured ? "Yes" : "No"}
               </div>
-              {diagnostics.webhookVerifyToken ? (
-                <button
-                  type="button"
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:text-amber-300"
-                  onClick={() => {
-                    void copyText(diagnostics.webhookVerifyToken!).then(() =>
-                      markCopied("token")
-                    );
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  {copied === "token" ? "Copied" : "Copy token"}
-                </button>
-              ) : null}
+              <p className="mt-2 text-[11px] leading-relaxed text-neutral-400">
+                Copy the value directly from Render environment variable
+                WHATSAPP_WEBHOOK_VERIFY_TOKEN into Meta. Do not paste tokens
+                into this page — the CRM never displays the secret.
+              </p>
             </div>
           </div>
 

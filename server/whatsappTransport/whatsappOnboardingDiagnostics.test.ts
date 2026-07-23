@@ -72,7 +72,14 @@ await test("diagnostics checklist covers required Meta readiness items", async (
     assert.ok(ids.includes("connected_waba"));
     assert.ok(ids.includes("connected_phone"));
     assert.ok(ids.includes("webhook_verified"));
-    assert.equal(diag.webhookVerifyToken, "verify-token-for-meta");
+    assert.equal(diag.webhookVerifyTokenConfigured, true);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(diag, "webhookVerifyToken"),
+      false
+    );
+    const serialized = JSON.stringify(diag);
+    assert.equal(serialized.includes("verify-token-for-meta"), false);
+    assert.equal(serialized.includes('"webhookVerifyToken"'), false);
     assert.equal(diag.connection.status, "DISCONNECTED");
     assert.equal(
       diag.checklist.find((c) => c.id === "encryption_key_present")?.ok,
@@ -95,6 +102,28 @@ await test("diagnostics checklist covers required Meta readiness items", async (
     else process.env.VITE_META_CONFIG_ID = prevConfig;
     if (prevPublic === undefined) delete process.env.PUBLIC_BASE_URL;
     else process.env.PUBLIC_BASE_URL = prevPublic;
+  }
+});
+
+await test("diagnostics never includes webhookVerifyToken key or value", async () => {
+  await resetConnectionStoreForTests();
+  const prevVerify = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = "must-never-appear-in-diagnostics-payload";
+  try {
+    const diag = await getWhatsAppOnboardingDiagnostics({
+      fetchImpl: async () => new Response("forbidden", { status: 403 }),
+    });
+    assert.equal(diag.webhookVerifyTokenConfigured, true);
+    assert.equal("webhookVerifyToken" in diag, false);
+    assert.equal(
+      JSON.stringify(diag).includes("must-never-appear-in-diagnostics-payload"),
+      false
+    );
+    assert.ok(typeof diag.webhookCallbackUrl === "string");
+    assert.match(diag.webhookCallbackUrl, /\/api\/whatsapp\/webhook$/);
+  } finally {
+    if (prevVerify === undefined) delete process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    else process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = prevVerify;
   }
 });
 
