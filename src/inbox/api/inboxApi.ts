@@ -9,6 +9,7 @@ import {
   type InboxMessage,
   type InboxMessagesPage,
   type InboxConversationStatus,
+  type WhatsAppConnectionStatusPayload,
 } from "../types";
 
 type Envelope<T> =
@@ -240,6 +241,26 @@ export async function unlinkInboxCrm(input: {
   const { data } = await inboxRequest<{ deleted: boolean }>(
     "/api/inbox/crm/link",
     { method: "DELETE", body: JSON.stringify(input) }
+  );
+  return data;
+}
+
+export async function fetchWhatsAppConnectionStatus(): Promise<WhatsAppConnectionStatusPayload> {
+  const { data } = await inboxRequest<WhatsAppConnectionStatusPayload>(
+    "/api/inbox/admin/whatsapp/connection-status",
+    { method: "GET" }
+  );
+  return data;
+}
+
+export async function submitEmbeddedSignup(input: {
+  code: string;
+  wabaId?: string;
+  phoneNumberId?: string;
+}): Promise<WhatsAppConnectionStatusPayload> {
+  const { data } = await inboxRequest<WhatsAppConnectionStatusPayload>(
+    "/api/inbox/admin/whatsapp/embedded-signup",
+    { method: "POST", body: JSON.stringify(input) }
   );
   return data;
 }

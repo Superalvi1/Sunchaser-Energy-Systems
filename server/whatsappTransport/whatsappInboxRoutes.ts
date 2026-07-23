@@ -189,5 +189,18 @@ export function createWhatsAppInboxRouter(
     run((c, req, res) => c.unlinkCrm(req, res))
   );
 
+  router.get(
+    "/admin/whatsapp/connection-status",
+    run((c, req, res) => c.getConnectionStatus(req, res))
+  );
+  router.post(
+    "/admin/whatsapp/embedded-signup",
+    run((c, req, res) => c.processEmbeddedSignup(req, res))
+  );
+  router.post(
+    "/admin/whatsapp/disconnect",
+    run((c, req, res) => c.disconnectWhatsApp(req, res))
+  );
+
   return router;
 }

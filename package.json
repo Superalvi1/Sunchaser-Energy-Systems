@@ -13,7 +13,7 @@
     "lint": "tsc --noEmit",
     "test": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts && node scripts/smoke-server-start.mjs",
     "test:public-lead-gateway": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts",
-    "test:whatsapp-transport": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappWebhook.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappOutbound.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappRepository.test.ts",
+    "test:whatsapp-transport": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappWebhook.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappOutbound.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappRepository.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappConnection.test.ts",
     "test:whatsapp-inbox": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxRepository.test.ts",
     "test:whatsapp-inbox-services": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxServices.test.ts",
     "test:whatsapp-inbox-routes": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxRoutes.test.ts",

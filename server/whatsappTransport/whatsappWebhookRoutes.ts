@@ -23,6 +23,7 @@ import {
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 import { sha256Hex, verifyWhatsAppSignature } from "./whatsappSignature.ts";
+import { recordWebhookPing } from "./whatsappConnectionService.ts";
 
 export type WhatsAppWebhookRouterDeps = {
   repo?: WhatsAppRepository;
@@ -251,6 +252,7 @@ export function createWhatsAppWebhookRouter(
     }
 
     const payloadHash = sha256Hex(rawBody);
+    recordWebhookPing();
     await safeAudit(repo, {
       eventType: AUDIT_EVENTS.WEBHOOK_RECEIVED,
       entityType: "webhook",

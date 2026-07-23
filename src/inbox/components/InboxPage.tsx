@@ -1,4 +1,4 @@
-import { Moon, Sun } from "lucide-react";
+import { Moon, Smartphone, Sun } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -16,6 +16,7 @@ import type { InboxListFilters } from "../types";
 import ConversationList from "./ConversationList";
 import ConversationView from "./ConversationView";
 import CRMPanel from "./CRMPanel";
+import WhatsAppConnectionPanel from "./WhatsAppConnectionPanel";
 
 type InboxPageProps = {
   staffUser: User;
@@ -34,6 +35,7 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
   const [mobilePane, setMobilePane] = useState<"list" | "thread">("list");
+  const [showConnectionPanel, setShowConnectionPanel] = useState(false);
 
   const list = useInboxConversations(filters);
   const detail = useInboxConversation(selectedId);
@@ -195,22 +197,43 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
             j/k navigate · Esc back to list · Enter send
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          aria-label={
-            theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-          }
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] px-2.5 py-1.5 text-xs text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)]"
-        >
-          {theme === "dark" ? (
-            <Sun className="h-3.5 w-3.5" aria-hidden />
-          ) : (
-            <Moon className="h-3.5 w-3.5" aria-hidden />
+        <div className="flex items-center gap-2">
+          {(staffUser.role === "Super Admin" || staffUser.role === "Admin") && (
+            <button
+              type="button"
+              onClick={() => setShowConnectionPanel((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+              WhatsApp Coexistence
+            </button>
           )}
-          {theme === "dark" ? "Light" : "Dark"}
-        </button>
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            aria-label={
+              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+            }
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] px-2.5 py-1.5 text-xs text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)]"
+          >
+            {theme === "dark" ? (
+              <Sun className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Moon className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
+        </div>
       </div>
+
+      {showConnectionPanel && (
+        <div className="border-b border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-4">
+          <WhatsAppConnectionPanel
+            isAdmin={staffUser.role === "Super Admin" || staffUser.role === "Admin"}
+            onClose={() => setShowConnectionPanel(false)}
+          />
+        </div>
+      )}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)_300px]">
         <div

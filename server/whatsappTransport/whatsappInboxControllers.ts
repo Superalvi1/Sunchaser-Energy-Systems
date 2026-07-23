@@ -22,6 +22,11 @@ import {
 } from "./whatsappInboxDtos.ts";
 import { inboxFail, inboxOk, sendInboxError } from "./whatsappInboxHttp.ts";
 import type { WhatsAppInboxServices } from "./whatsappInboxServices.ts";
+import {
+  disconnectWhatsApp,
+  getWhatsAppConnectionStatus,
+  processEmbeddedSignupOnboarding,
+} from "./whatsappConnectionService.ts";
 
 export type InboxSendPort = (input: {
   conversationId: string;
@@ -407,6 +412,42 @@ export function createInboxControllers(
           actorOf(req)
         );
         return inboxOk(res, { deleted });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async getConnectionStatus(req: Request, res: Response) {
+      try {
+        const payload = getWhatsAppConnectionStatus();
+        return inboxOk(res, payload);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async processEmbeddedSignup(req: Request, res: Response) {
+      try {
+        const body = (req.body as Record<string, unknown>) || {};
+        const code = String(body.code || "");
+        const wabaId = body.wabaId ? String(body.wabaId) : undefined;
+        const phoneNumberId = body.phoneNumberId ? String(body.phoneNumberId) : undefined;
+        const payload = await processEmbeddedSignupOnboarding({
+          code,
+          wabaId,
+          phoneNumberId,
+          actor: actorOf(req),
+        });
+        return inboxOk(res, payload);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async disconnectWhatsApp(req: Request, res: Response) {
+      try {
+        const payload = disconnectWhatsApp(actorOf(req));
+        return inboxOk(res, payload);
       } catch (err) {
         return sendInboxError(res, err);
       }

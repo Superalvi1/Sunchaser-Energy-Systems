@@ -111,3 +111,16 @@ export class InboxClientError extends Error {
     this.details = error.details;
   }
 }
+
+export type WhatsAppConnectionStatusPayload = {
+  status: "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "REAUTHORIZATION_REQUIRED" | "ERROR";
+  connectionMode: "COEXISTENCE";
+  wabaIdMasked: string | null;
+  phoneNumberMasked: string | null;
+  phoneNumberIdMasked: string | null;
+  lastWebhookAt: string | null;
+  webhookHealth: "healthy" | "degraded" | "failing" | "unknown";
+  tokenHealth: "valid" | "expiring_soon" | "expired" | "reauth_required";
+  connectionErrorSummary: string | null;
+  canReconnect: boolean;
+};
