@@ -151,3 +151,18 @@ export type {
   MessagingRepositoryDeps,
   SafeMessagingRepositoryDeps,
 } from "./messagingRepository.ts";
+
+export {
+  MessagingRepositoryError,
+  isMessagingRepositoryError,
+  MESSAGING_REPOSITORY_ERROR_CODES,
+  type MessagingRepositoryErrorCode,
+} from "./messagingRepositoryErrors.ts";
+
+export type { SqlExecutor, SqlQueryResult, PgPoolLike } from "./messagingSql.ts";
+export { createPgPoolSqlExecutor } from "./messagingSql.ts";
+
+export {
+  createPostgresMessagingRepository,
+  type PostgresMessagingRepositoryDeps,
+} from "./postgresMessagingRepository.ts";

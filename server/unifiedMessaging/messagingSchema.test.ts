@@ -314,11 +314,15 @@ await test(
       path.join(MODULE_ROOT, "messagingSchemaTypes.ts"),
       "utf8"
     );
+    const postgresRepoSrc = fs.readFileSync(
+      path.join(MODULE_ROOT, "postgresMessagingRepository.ts"),
+      "utf8"
+    );
 
-    for (const source of [repoSrc, schemaTypesSrc]) {
+    for (const source of [repoSrc, schemaTypesSrc, postgresRepoSrc]) {
       for (const spec of extractImportSpecifiers(source)) {
         assert.ok(
-          spec.startsWith("./"),
+          spec.startsWith("./") || spec === "node:crypto",
           `unexpected import specifier "${spec}"`
         );
         assert.equal(spec.includes("whatsappTransport"), false);
@@ -327,6 +331,7 @@ await test(
         assert.equal(spec.includes("ai/providers"), false);
         assert.equal(spec.includes("baileys"), false);
         assert.equal(spec.includes("whatsapp-web"), false);
+        assert.equal(spec.includes("dbManager"), false);
       }
     }
 
