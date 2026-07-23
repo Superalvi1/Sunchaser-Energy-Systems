@@ -1046,6 +1046,111 @@ await test(
   }
 );
 
+// ---------------------------------------------------------------------------
+// Task 20 — clear in-flight state after successful load
+// ---------------------------------------------------------------------------
+
+await test(
+  "SDK loader: after successful app-a load, no stale in-flight key remains",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      const pendingA = loadFacebookSdk("app-a", "v25.0", { timeoutMs: 1000 });
+      const fb = createMockFb();
+      browser.window.FB = fb;
+      browser.window.fbAsyncInit?.();
+      await pendingA;
+
+      // Simulate a later navigation/session where FB is not yet visible but
+      // in-flight bookkeeping must not still claim app-a.
+      browser.window.FB = undefined;
+      let conflict = false;
+      const pendingB = loadFacebookSdk("app-b", "v25.0", { timeoutMs: 1000 });
+      pendingB.catch((err) => {
+        if (
+          err instanceof MetaEmbeddedSignupError &&
+          err.code === "sdk_config_conflict"
+        ) {
+          conflict = true;
+        }
+      });
+      await new Promise((r) => setTimeout(r, 15));
+      assert.equal(conflict, false);
+
+      const fbB = createMockFb();
+      browser.window.FB = fbB;
+      const readyB = await pendingB;
+      assert.equal(readyB, fbB);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
+await test(
+  "SDK loader: later app-b is not rejected as conflict after app-a success",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      const fb = createMockFb();
+      const pendingA = loadFacebookSdk("app-a", "v25.0", { timeoutMs: 1000 });
+      browser.window.FB = fb;
+      browser.window.fbAsyncInit?.();
+      await pendingA;
+
+      // FB still ready — app-b must take the ready path, not conflict.
+      const readyB = await loadFacebookSdk("app-b", "v25.0", { timeoutMs: 1000 });
+      assert.equal(readyB, fb);
+      assert.equal(fb.initCalls, 2);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
+await test(
+  "SDK loader: success cleanup does not occur before initFbOnce succeeds",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      let sawConflictDuringInit = false;
+      const pending = loadFacebookSdk("app-a", "v25.0", { timeoutMs: 1000 });
+      const fb = createMockFb();
+      fb.init = () => {
+        fb.initCalls += 1;
+        // Hide FB so the probe hits the in-flight key path (not the ready path).
+        const savedFb = browser.window.FB;
+        browser.window.FB = undefined;
+        try {
+          void loadFacebookSdk("app-b", "v25.0", { timeoutMs: 1000 }).then(
+            () => {
+              sawConflictDuringInit = false;
+            },
+            (err) => {
+              if (
+                err instanceof MetaEmbeddedSignupError &&
+                err.code === "sdk_config_conflict"
+              ) {
+                sawConflictDuringInit = true;
+              }
+            }
+          );
+        } finally {
+          browser.window.FB = savedFb;
+        }
+      };
+      browser.window.FB = fb;
+      browser.window.fbAsyncInit?.();
+      await pending;
+      await new Promise((r) => setTimeout(r, 0));
+      assert.equal(sawConflictDuringInit, true);
+      assert.equal(fb.initCalls, 1);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);

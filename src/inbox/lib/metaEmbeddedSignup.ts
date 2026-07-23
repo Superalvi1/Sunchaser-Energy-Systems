@@ -320,7 +320,12 @@ export function loadFacebookSdk(
       settled = true;
       clearSdkLoadWatchers();
       try {
-        resolve(initFbOnce(fb, appId, graphVersion));
+        const ready = initFbOnce(fb, appId, graphVersion);
+        // Drop in-flight bookkeeping only after successful init so later
+        // configs are not blocked by a stale pending key.
+        sdkLoadPromise = null;
+        sdkLoadKey = null;
+        resolve(ready);
       } catch {
         sdkLoadPromise = null;
         sdkLoadKey = null;
