@@ -4,15 +4,19 @@
  */
 import type { DetectedLanguage } from "./leadQualificationTypes.ts";
 
+// Pure Roman Urdu grammatical markers, pronouns, and verbs (No duplicates, No English loanwords like "panel" or "bill")
 const ROMAN_URDU_KEYWORDS = [
-  "mai", "main", "mera", "meri", "chahiye", "kitna", "kitni", "kitne", "lagwana",
-  "hai", "hein", "kya", "kaise", "kahan", "batao", "bataen", "shukriya", "bhai",
-  "bataen", "karwana", "panel", "bijli", "bill", "ghar", "lagna", "hoga", "apka",
+  "mai", "main", "mera", "meri", "mere", "mujhe", "chahiye", "kitna", "kitni", "kitne",
+  "lagwana", "hai", "hein", "hain", "kya", "kaise", "kahan", "batao", "bataen", "shukriya",
+  "bhai", "karwana", "bijli", "ghar", "lagna", "hoga", "hogay", "hogi", "apka", "apki",
+  "walay", "wale", "wala", "ziyada", "zyada", "kam", "zaroorat", "zarurat", "hum", "agar",
 ];
 
-const ENGLISH_KEYWORDS = [
-  "solar", "system", "quotation", "price", "cost", "kw", "inverter", "panel",
-  "commercial", "industrial", "residential", "roof", "battery", "metering", "support",
+// Distinct conversational English words (used to detect genuine English phrasing vs technical loanwords in Urdu)
+const ENGLISH_CONVERSATIONAL_KEYWORDS = [
+  "need", "want", "for", "my", "the", "with", "please", "thank", "thanks", "quotation",
+  "price", "cost", "commercial", "industrial", "residential", "support", "installation",
+  "quote", "inquiry", "house", "home", "office", "factory",
 ];
 
 export class AiLanguageDetector {
@@ -21,9 +25,11 @@ export class AiLanguageDetector {
       return "Unknown";
     }
 
-    const words = textBody
+    const text = textBody.slice(0, 10000);
+
+    const words = text
       .toLowerCase()
-      .replace(/[^\w\s]/g, "")
+      .replace(/[^\w\s]/g, " ")
       .split(/\s+/)
       .filter(Boolean);
 
@@ -32,14 +38,15 @@ export class AiLanguageDetector {
     }
 
     let urduCount = 0;
-    let englishCount = 0;
+    let englishConversationalCount = 0;
 
     for (const w of words) {
       if (ROMAN_URDU_KEYWORDS.includes(w)) urduCount++;
-      if (ENGLISH_KEYWORDS.includes(w)) englishCount++;
+      if (ENGLISH_CONVERSATIONAL_KEYWORDS.includes(w)) englishConversationalCount++;
     }
 
-    if (urduCount > 0 && englishCount > 0) {
+    // Mixed is triggered only when there are BOTH distinct Roman Urdu words AND distinct English conversational words
+    if (urduCount > 0 && englishConversationalCount > 0) {
       return "Mixed";
     }
 
@@ -48,8 +55,8 @@ export class AiLanguageDetector {
     }
 
     if (
-      englishCount > 0 ||
-      (/[a-zA-Z]/.test(textBody) && /^[a-zA-Z0-9\s.,?!]+$/.test(textBody))
+      englishConversationalCount > 0 ||
+      (/[a-zA-Z]/.test(text) && /^[a-zA-Z0-9\s.,?!'"()-]+$/.test(text))
     ) {
       return "English";
     }

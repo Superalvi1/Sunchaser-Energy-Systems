@@ -1,8 +1,9 @@
 /**
  * Sunchaser Connect Phase 1B Sprint 2: Deterministic Intent Classifier.
  * Rules-based deterministic classification without direct LLM control over routing.
+ * Uses token-based matching to prevent substring false positives (e.g., "hi" inside "this").
  */
-import type { LeadIntent } from "./leadQualificationTypes.ts";
+import { clampConfidence, type LeadIntent } from "./leadQualificationTypes.ts";
 
 export type IntentClassificationResult = {
   intent: LeadIntent;
@@ -20,101 +21,113 @@ export class AiIntentClassifier {
       };
     }
 
-    const text = textBody.toLowerCase().trim();
+    // Limit text length to prevent expensive operations on huge strings
+    const truncatedText = textBody.slice(0, 10000);
+    const text = truncatedText.toLowerCase().trim();
+
+    // Tokenize text into distinct words
+    const tokens = text
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    const tokenSet = new Set(tokens);
+
+    const hasToken = (...kw: string[]): boolean => kw.some((k) => tokenSet.has(k.toLowerCase()));
+    const hasPhrase = (...ph: string[]): boolean => ph.some((p) => text.includes(p.toLowerCase()));
 
     // 1. Complaint (high priority)
-    if (text.includes("complaint") || text.includes("issue") || text.includes("not working") || text.includes("fault") || text.includes("kharab")) {
+    if (hasToken("complaint", "fault", "kharab") || hasPhrase("not working", "bad service", "issue")) {
       return {
         intent: "Complaint",
-        confidence: 0.95,
-        reason: "Matched complaint keywords (complaint/issue/kharab)",
+        confidence: clampConfidence(0.95),
+        reason: "Matched complaint keywords or phrases",
       };
     }
 
     // 2. Warranty
-    if (text.includes("warranty") || text.includes("guarantee") || text.includes("claim")) {
+    if (hasToken("warranty", "guarantee", "claim")) {
       return {
         intent: "Warranty",
-        confidence: 0.95,
+        confidence: clampConfidence(0.95),
         reason: "Matched warranty inquiry keywords",
       };
     }
 
     // 3. Support / Maintenance
-    if (text.includes("support") || text.includes("service") || text.includes("repair") || text.includes("maintenance") || text.includes("cleaning")) {
+    if (hasToken("support", "service", "repair", "maintenance", "cleaning")) {
       return {
         intent: "Support",
-        confidence: 0.9,
+        confidence: clampConfidence(0.9),
         reason: "Matched technical support/service keywords",
       };
     }
 
     // 4. Industrial Solar
-    if (text.includes("industrial") || text.includes("factory") || text.includes("mill") || text.includes("plant") || text.includes("500kw") || text.includes("1mw") || text.includes("megawatt")) {
+    if (hasToken("industrial", "factory", "mill", "plant", "500kw", "1mw", "megawatt")) {
       return {
         intent: "IndustrialSolar",
-        confidence: 0.95,
+        confidence: clampConfidence(0.95),
         reason: "Matched industrial scale solar keywords",
       };
     }
 
     // 5. Commercial Solar
-    if (text.includes("commercial") || text.includes("office") || text.includes("plaza") || text.includes("school") || text.includes("hospital") || text.includes("50kw") || text.includes("100kw")) {
+    if (hasToken("commercial", "office", "plaza", "school", "hospital", "50kw", "100kw")) {
       return {
         intent: "CommercialSolar",
-        confidence: 0.9,
+        confidence: clampConfidence(0.9),
         reason: "Matched commercial solar keywords",
       };
     }
 
     // 6. Net Metering
-    if (text.includes("net metering") || text.includes("green meter") || text.includes("lesco meter") || text.includes("ke meter") || text.includes("grid export")) {
+    if (hasPhrase("net metering", "green meter", "lesco meter", "ke meter", "grid export") || hasToken("netmetering")) {
       return {
         intent: "NetMetering",
-        confidence: 0.92,
+        confidence: clampConfidence(0.92),
         reason: "Matched net metering keywords",
       };
     }
 
     // 7. Battery Upgrade / Backup
-    if (text.includes("battery") || text.includes("backup") || text.includes("lithium") || text.includes("tubular") || text.includes("load shedding")) {
+    if (hasToken("battery", "backup", "lithium", "tubular") || hasPhrase("load shedding")) {
       return {
         intent: "BatteryUpgrade",
-        confidence: 0.88,
+        confidence: clampConfidence(0.88),
         reason: "Matched battery or backup upgrade keywords",
       };
     }
 
     // 8. Existing Customer check
-    if (isExistingCustomer || text.includes("my invoice") || text.includes("my installation") || text.includes("customer id")) {
+    if (isExistingCustomer || hasPhrase("my invoice", "my installation", "customer id")) {
       return {
         intent: "ExistingCustomer",
-        confidence: 0.9,
+        confidence: clampConfidence(0.9),
         reason: "Matched existing customer context or invoice keywords",
       };
     }
 
     // 9. Residential Solar
-    if (text.includes("residential") || text.includes("home") || text.includes("house") || text.includes("ghar") || text.includes("5kw") || text.includes("10kw") || text.includes("15kw") || text.includes("roof")) {
+    if (hasToken("residential", "home", "house", "ghar", "5kw", "10kw", "15kw", "roof")) {
       return {
         intent: "ResidentialSolar",
-        confidence: 0.9,
+        confidence: clampConfidence(0.9),
         reason: "Matched residential solar keywords",
       };
     }
 
-    // 10. General Inquiry
-    if (text.includes("hi") || text.includes("hello") || text.includes("assalam") || text.includes("price") || text.includes("rate") || text.includes("cost") || text.includes("solar")) {
+    // 10. General Inquiry (Uses token matching so "hi" doesn't match inside "this", "white", "machine")
+    if (hasToken("hi", "hello", "assalam", "oa", "aoa", "price", "rate", "cost", "solar")) {
       return {
         intent: "GeneralInquiry",
-        confidence: 0.8,
-        reason: "Matched general greeting or solar inquiry terms",
+        confidence: clampConfidence(0.8),
+        reason: "Matched general greeting or solar inquiry tokens",
       };
     }
 
     return {
       intent: "Unknown",
-      confidence: 0.4,
+      confidence: clampConfidence(0.4),
       reason: "No deterministic keywords matched",
     };
   }

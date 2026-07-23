@@ -52,6 +52,12 @@ export type LeadQualificationV1 = {
   updatedAt: string;
 };
 
+export type FieldAuditMeta = {
+  confidence: number;
+  source: FieldSource;
+  present: boolean;
+};
+
 export type ShadowQualificationReport = {
   conversationId: string;
   qualificationSummary: string;
@@ -61,8 +67,21 @@ export type ShadowQualificationReport = {
   language: DetectedLanguage;
   score: number; // Max 100
   missingFields: string[];
-  extractedFields: Record<string, unknown>;
+  extractedFields: Record<string, FieldAuditMeta>;
   recommendedNextQuestion: string | null;
   humanReviewRequired: boolean;
   generatedAt: string;
 };
+
+/**
+ * Clamps confidence score to valid range [0.0, 1.0].
+ * Rejects NaN, Infinity, -Infinity and non-numbers by falling back to 0.0.
+ */
+export function clampConfidence(val: unknown): number {
+  if (typeof val !== "number" || Number.isNaN(val) || !Number.isFinite(val)) {
+    return 0.0;
+  }
+  if (val < 0.0) return 0.0;
+  if (val > 1.0) return 1.0;
+  return val;
+}
