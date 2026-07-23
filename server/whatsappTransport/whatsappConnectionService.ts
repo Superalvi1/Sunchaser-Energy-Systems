@@ -9,8 +9,8 @@
  *     validated and consumed (single-use) on callback. Callers inject the store.
  *   - Replay protection: one code exchange per state nonce. The code is never
  *     stored; the nonce is burned on first use.
- *   - WABA ownership verification: after token exchange the Graph API /me/businesses
- *     endpoint is called to confirm the token can access the claimed WABA.
+ *   - WABA ownership verification: after token exchange, GET /{wabaId} confirms the
+ *     token can access the claimed WhatsApp Business Account (not Business Portfolio IDs).
  *   - Phone Number ID ownership: /WABA_ID/phone_numbers is queried to confirm the
  *     phone_number_id belongs to the WABA.
  *   - subscribed_apps registration: POST /{wabaId}/subscribed_apps registers
@@ -417,9 +417,11 @@ async function graphDelete(
 // ─── WABA & Phone Number ID ownership verification ─────────────────────────
 
 /**
- * Verifies that the access token grants access to the claimed wabaId.
- * Calls GET /me/businesses and checks the returned list contains the wabaId.
- * Throws InboxServiceError on mismatch or network failure.
+ * Verifies that the access token can access the claimed WhatsApp Business Account.
+ *
+ * Uses GET /{wabaId}?fields=id — success with a matching id proves WABA access.
+ * Do NOT compare Meta Business Portfolio IDs (/me/businesses) to WABA IDs; those
+ * are different identifier namespaces.
  */
 export async function verifyWabaOwnership(
   accessToken: string,
@@ -427,11 +429,9 @@ export async function verifyWabaOwnership(
   version: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
-  const url = `https://graph.facebook.com/${version}/me/businesses?fields=id,name`;
+  const url = `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}?fields=id`;
   const data = await graphGet(url, accessToken, fetchImpl);
-  const businesses = Array.isArray(data.data) ? (data.data as { id?: string }[]) : [];
-  const owned = businesses.some((b) => String(b.id) === String(wabaId));
-  if (!owned) {
+  if (String(data.id ?? "") !== String(wabaId)) {
     throw new InboxServiceError(
       "forbidden",
       "Token does not grant access to the specified WhatsApp Business Account"

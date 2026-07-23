@@ -58,7 +58,7 @@ export default function WhatsAppConnectionPanel({
       }
       activeStateRef.current = state;
 
-      const signup = await launchMetaEmbeddedSignup();
+      const signup = await launchMetaEmbeddedSignup({ state });
 
       const attemptState = activeStateRef.current;
       if (!attemptState) {

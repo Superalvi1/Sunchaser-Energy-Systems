@@ -501,7 +501,7 @@ await test("token health evaluation", () => {
 
 await test("WABA ownership verification rejects mismatched WABA", async () => {
   const mockFetch: typeof fetch = async () =>
-    new Response(JSON.stringify({ data: [{ id: "999999" }] }), { status: 200 });
+    new Response(JSON.stringify({ id: "999999" }), { status: 200 });
 
   await assert.rejects(
     () => verifyWabaOwnership("token", TEST_WABA_ID, "v21.0", mockFetch),
@@ -509,11 +509,36 @@ await test("WABA ownership verification rejects mismatched WABA", async () => {
   );
 });
 
-await test("WABA ownership verification passes on matching WABA", async () => {
-  const mockFetch: typeof fetch = async () =>
-    new Response(JSON.stringify({ data: [{ id: TEST_WABA_ID }] }), { status: 200 });
+await test("WABA ownership verification uses GET /{wabaId} not /me/businesses", async () => {
+  let requestedUrl = "";
+  const mockFetch: typeof fetch = async (input) => {
+    requestedUrl = String(input);
+    return new Response(JSON.stringify({ id: TEST_WABA_ID }), { status: 200 });
+  };
 
   await verifyWabaOwnership("token", TEST_WABA_ID, "v21.0", mockFetch);
+  assert.match(requestedUrl, new RegExp(`/${TEST_WABA_ID}\\?fields=id`));
+  assert.doesNotMatch(requestedUrl, /me\/businesses/);
+});
+
+await test("WABA ownership verification passes when token can access WABA", async () => {
+  const mockFetch: typeof fetch = async () =>
+    new Response(JSON.stringify({ id: TEST_WABA_ID }), { status: 200 });
+
+  await verifyWabaOwnership("token", TEST_WABA_ID, "v21.0", mockFetch);
+});
+
+await test("WABA ownership verification rejects Graph API access denial", async () => {
+  const mockFetch: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({ error: { message: "Unsupported get request", code: 100 } }),
+      { status: 400 }
+    );
+
+  await assert.rejects(
+    () => verifyWabaOwnership("token", TEST_WABA_ID, "v21.0", mockFetch),
+    (err: any) => err.code === "service_unavailable" || err.code === "forbidden"
+  );
 });
 
 await test("Phone Number ID ownership verification rejects mismatched ID", async () => {

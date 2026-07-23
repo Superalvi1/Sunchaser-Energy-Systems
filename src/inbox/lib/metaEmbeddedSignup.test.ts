@@ -100,11 +100,14 @@ await test("SDK success returns code + assets from postMessage", async () => {
     },
   };
 
+  let capturedLoginOpts: Record<string, unknown> | null = null;
   const fb = {
     init() {},
     login(
-      cb: (r: { authResponse?: { code?: string } | null; status?: string }) => void
+      cb: (r: { authResponse?: { code?: string } | null; status?: string }) => void,
+      opts: Record<string, unknown>
     ) {
+      capturedLoginOpts = opts;
       // Assets arrive before login callback completes.
       messageTarget.dispatch("https://www.facebook.com", {
         type: "WA_EMBEDDED_SIGNUP",
@@ -116,6 +119,7 @@ await test("SDK success returns code + assets from postMessage", async () => {
   };
 
   const result = await launchMetaEmbeddedSignup({
+    state: "server-issued-oauth-state",
     config: {
       appId: "app",
       configId: "cfg",
@@ -128,7 +132,30 @@ await test("SDK success returns code + assets from postMessage", async () => {
   assert.equal(result.code, "real-auth-code");
   assert.equal(result.wabaId, "111");
   assert.equal(result.phoneNumberId, "222");
+  assert.equal(capturedLoginOpts?.state, "server-issued-oauth-state");
   assert.equal((listeners.get("message") || new Set()).size, 0);
+});
+
+await test("missing OAuth state fails closed before FB.login", async () => {
+  let loginCalled = false;
+  const fb = {
+    init() {},
+    login() {
+      loginCalled = true;
+    },
+  };
+  await assert.rejects(
+    () =>
+      launchMetaEmbeddedSignup({
+        state: "   ",
+        config: { appId: "a", configId: "c", graphVersion: "v21.0" },
+        fb,
+        timeoutMs: 1000,
+      }),
+    (err: unknown) =>
+      err instanceof MetaEmbeddedSignupError && err.code === "missing_state"
+  );
+  assert.equal(loginCalled, false);
 });
 
 await test("SDK cancel rejects without fabricating IDs", async () => {
@@ -153,6 +180,7 @@ await test("SDK cancel rejects without fabricating IDs", async () => {
   await assert.rejects(
     () =>
       launchMetaEmbeddedSignup({
+        state: "oauth-state-1",
         config: { appId: "a", configId: "c", graphVersion: "v21.0" },
         fb,
         messageTarget: messageTarget as unknown as Window,
@@ -194,6 +222,7 @@ await test("invalid postMessage origin is ignored; timeout fails closed", async 
   await assert.rejects(
     () =>
       launchMetaEmbeddedSignup({
+        state: "oauth-state-2",
         config: { appId: "a", configId: "c", graphVersion: "v21.0" },
         fb,
         messageTarget: messageTarget as unknown as Window,
@@ -235,6 +264,7 @@ await test("malformed WA payload from Meta origin fails closed", async () => {
   await assert.rejects(
     () =>
       launchMetaEmbeddedSignup({
+        state: "oauth-state-3",
         config: { appId: "a", configId: "c", graphVersion: "v21.0" },
         fb,
         messageTarget: messageTarget as unknown as Window,

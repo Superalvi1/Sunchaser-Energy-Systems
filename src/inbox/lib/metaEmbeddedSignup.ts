@@ -37,6 +37,7 @@ export type MetaEmbeddedSignupResult = {
 
 export type MetaEmbeddedSignupErrorCode =
   | "missing_config"
+  | "missing_state"
   | "sdk_load_failed"
   | "cancelled"
   | "timeout"
@@ -205,6 +206,8 @@ function loadFacebookSdk(appId: string, graphVersion: string): Promise<FbSdk> {
 }
 
 export type LaunchEmbeddedSignupOptions = {
+  /** Server-issued OAuth CSRF state — passed to FB.login as the official `state` param. */
+  state: string;
   config?: MetaEmbeddedSignupConfig;
   timeoutMs?: number;
   /** Test injection */
@@ -216,10 +219,19 @@ export type LaunchEmbeddedSignupOptions = {
 /**
  * Launch Meta Embedded Signup once. Removes listeners on settle.
  * Prevents stale events via attempt token.
+ * Binds the server-issued OAuth state into FB.login (Meta-supported `state` parameter).
  */
 export async function launchMetaEmbeddedSignup(
-  options: LaunchEmbeddedSignupOptions = {}
+  options: LaunchEmbeddedSignupOptions
 ): Promise<MetaEmbeddedSignupResult> {
+  const oauthState = String(options.state || "").trim();
+  if (!oauthState) {
+    throw new MetaEmbeddedSignupError(
+      "missing_state",
+      "OAuth state is required for Embedded Signup"
+    );
+  }
+
   const config = options.config ?? resolveMetaEmbeddedSignupConfig();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const target = options.messageTarget ?? window;
@@ -353,6 +365,8 @@ export async function launchMetaEmbeddedSignup(
         config_id: config.configId,
         response_type: "code",
         override_default_response_type: true,
+        // Official Facebook Login / OAuth CSRF parameter — binds server-issued state.
+        state: oauthState,
         extras: {
           setup: {},
           sessionInfoVersion: "3",
