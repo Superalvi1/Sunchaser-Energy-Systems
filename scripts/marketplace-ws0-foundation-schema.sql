@@ -1442,6 +1442,54 @@ begin
 end;
 $$;
 
+-- =============================================================================
+-- Financial lock helpers (authoritative order: order → payments by id)
+-- =============================================================================
+create or replace function public.mp_lock_order_financial(p_order_id text)
+returns public.mp_orders
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_order public.mp_orders%rowtype;
+begin
+  if p_order_id is null or length(trim(p_order_id)) = 0 then
+    raise exception 'order_id required' using errcode = 'check_violation';
+  end if;
+
+  select * into v_order
+  from public.mp_orders
+  where id = p_order_id
+  for update;
+  if not found then
+    raise exception 'order not found' using errcode = 'no_data_found';
+  end if;
+
+  -- Deterministic sibling payment locks (id ascending) to prevent deadlocks.
+  perform p.id
+  from public.mp_payments p
+  where p.order_id = p_order_id
+  order by p.id
+  for update;
+
+  return v_order;
+end;
+$$;
+
+create or replace function public.mp_order_net_paid(p_order_id text)
+returns numeric
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
+       - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
+  from public.mp_payments
+  where order_id = p_order_id;
+$$;
+
 create or replace function public.mp_record_payment(
   p_actor_scope text,
   p_order_id text,
@@ -1474,11 +1522,10 @@ begin
 
   v_sha := lower(trim(coalesce(p_sha256, '')));
 
-  select * into v_order from public.mp_orders where id = p_order_id for update;
-  if not found then
-    raise exception 'order not found' using errcode = 'no_data_found';
-  end if;
+  -- 1-3: lock order then sibling payments (no payment-row lock before order).
+  v_order := public.mp_lock_order_financial(p_order_id);
 
+  -- Intent lock after financial locks (deterministic vs other financial RPCs).
   select * into v_intent
   from public.mp_upload_intents
   where id = p_upload_intent_id
@@ -1534,12 +1581,7 @@ begin
   end if;
 
   select * into v_plan from public.mp_payment_plans where order_id = p_order_id;
-  perform 1 from public.mp_payments where order_id = p_order_id for update;
-
-  select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
-       - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
-    into v_net
-  from public.mp_payments where order_id = p_order_id;
+  v_net := public.mp_order_net_paid(p_order_id);
   if v_net + p_amount > v_order.grand_total then
     update public.mp_idempotency_keys
     set state = 'failed_known',
@@ -1567,7 +1609,6 @@ begin
     v_media_id, null, null, v_intent.storage_path, 'receipt', 'user_upload', 'unknown', false
   );
 
-  -- Receipt-object metadata from locked upload-intent evidence (not caller overwrite).
   v_object_id := v_media_id;
   insert into public.mp_receipt_objects (
     id, media_id, storage_path, sha256, byte_size, upload_intent_id
@@ -1588,7 +1629,6 @@ begin
       updated_at = timezone('utc', now())
   where id = p_upload_intent_id
     and status = 'uploaded';
-  -- Preserve sha256/byte_size/uploaded_at exactly as marked.
 
   v_receipt_id := public.mp_new_id('mprct');
   insert into public.mp_receipts (id, media_id, object_id, order_id, payment_id)
@@ -1639,6 +1679,7 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_order_id text;
   v_payment public.mp_payments%rowtype;
   v_order public.mp_orders%rowtype;
   v_net numeric(14,2);
@@ -1646,28 +1687,42 @@ begin
   if p_actor_scope not like 'admin:%' and p_actor_scope not like 'system:%' then
     raise exception 'verify requires admin/system actor_scope' using errcode = 'check_violation';
   end if;
-  select * into v_payment from public.mp_payments where id = p_payment_id for update;
+
+  -- Resolve order without payment-row lock.
+  select order_id into v_order_id
+  from public.mp_payments
+  where id = p_payment_id;
+  if v_order_id is null then
+    raise exception 'payment not found' using errcode = 'no_data_found';
+  end if;
+
+  v_order := public.mp_lock_order_financial(v_order_id);
+
+  select * into v_payment
+  from public.mp_payments
+  where id = p_payment_id;
   if not found then
     raise exception 'payment not found' using errcode = 'no_data_found';
   end if;
   if v_payment.method <> 'bank_transfer' or v_payment.status <> 'submitted' then
     raise exception 'payment not verifiable' using errcode = 'check_violation';
   end if;
-  select * into v_order from public.mp_orders where id = v_payment.order_id for update;
+
+  v_net := public.mp_order_net_paid(v_order.id);
+  if v_net + v_payment.amount > v_order.grand_total then
+    raise exception 'verification would exceed order grand_total'
+      using errcode = 'check_violation';
+  end if;
 
   update public.mp_payments
   set status = 'verified',
       verified_by = p_verified_by,
       verified_at = timezone('utc', now()),
       updated_at = timezone('utc', now())
-  where id = p_payment_id;
-
-  select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
-       - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
-    into v_net
-  from public.mp_payments where order_id = v_order.id;
-  if v_net > v_order.grand_total then
-    raise exception 'net paid exceeds grand_total' using errcode = 'check_violation';
+  where id = p_payment_id
+    and status = 'submitted';
+  if not found then
+    raise exception 'payment not verifiable' using errcode = 'check_violation';
   end if;
 
   update public.mp_orders
@@ -1676,7 +1731,12 @@ begin
 
   perform public.mp_write_audit(
     p_actor_scope, 'verify_payment', 'mp_payments', p_payment_id, true,
-    jsonb_build_object('order_id', v_order.id, 'verified_by', p_verified_by)
+    jsonb_build_object(
+      'order_id', v_order.id,
+      'verified_by', p_verified_by,
+      'amount', v_payment.amount,
+      'net_paid_before', v_net
+    )
   );
   return jsonb_build_object('ok', true, 'payment_id', p_payment_id, 'order_status', 'confirmed');
 end;
@@ -1693,6 +1753,7 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_order_id text;
   v_payment public.mp_payments%rowtype;
   v_order public.mp_orders%rowtype;
   v_net numeric(14,2);
@@ -1701,31 +1762,23 @@ begin
     raise exception 'collect requires admin/system actor_scope' using errcode = 'check_violation';
   end if;
 
+  select order_id into v_order_id
+  from public.mp_payments
+  where id = p_payment_id;
+  if v_order_id is null then
+    raise exception 'payment not found' using errcode = 'no_data_found';
+  end if;
+
+  v_order := public.mp_lock_order_financial(v_order_id);
+
   select * into v_payment
   from public.mp_payments
-  where id = p_payment_id
-  for update;
+  where id = p_payment_id;
   if not found or v_payment.method <> 'cash_on_delivery' or v_payment.status <> 'pending' then
     raise exception 'COD payment not collectable' using errcode = 'check_violation';
   end if;
 
-  select * into v_order
-  from public.mp_orders
-  where id = v_payment.order_id
-  for update;
-  if not found then
-    raise exception 'order not found' using errcode = 'no_data_found';
-  end if;
-
-  -- Serialize concurrent payment mutations on this order.
-  perform 1 from public.mp_payments where order_id = v_order.id for update;
-
-  select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
-       - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
-    into v_net
-  from public.mp_payments
-  where order_id = v_order.id;
-
+  v_net := public.mp_order_net_paid(v_order.id);
   if v_net + v_payment.amount > v_order.grand_total then
     raise exception 'COD collection would exceed order grand_total'
       using errcode = 'check_violation';
@@ -1770,24 +1823,47 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_order_id text;
   v_payment public.mp_payments%rowtype;
+  v_order public.mp_orders%rowtype;
 begin
   if p_actor_scope not like 'admin:%' and p_actor_scope not like 'system:%' then
     raise exception 'cancel COD requires admin/system actor_scope' using errcode = 'check_violation';
   end if;
-  select * into v_payment from public.mp_payments where id = p_payment_id for update;
+
+  select order_id into v_order_id
+  from public.mp_payments
+  where id = p_payment_id;
+  if v_order_id is null then
+    raise exception 'payment not found' using errcode = 'no_data_found';
+  end if;
+
+  v_order := public.mp_lock_order_financial(v_order_id);
+
+  select * into v_payment
+  from public.mp_payments
+  where id = p_payment_id;
   if not found or v_payment.method <> 'cash_on_delivery' or v_payment.status <> 'pending' then
     raise exception 'COD payment not cancellable' using errcode = 'check_violation';
   end if;
+
   update public.mp_payments
-  set status = 'rejected', rejection_reason = p_reason, updated_at = timezone('utc', now())
-  where id = p_payment_id;
+  set status = 'rejected',
+      rejection_reason = p_reason,
+      updated_at = timezone('utc', now())
+  where id = p_payment_id
+    and status = 'pending';
+  if not found then
+    raise exception 'COD payment not cancellable' using errcode = 'check_violation';
+  end if;
+
   update public.mp_orders
   set status = 'cancelled', updated_at = timezone('utc', now())
-  where id = v_payment.order_id;
+  where id = v_order.id;
+
   perform public.mp_write_audit(
     p_actor_scope, 'cancel_cod', 'mp_payments', p_payment_id, true,
-    jsonb_build_object('order_id', v_payment.order_id, 'reason', p_reason)
+    jsonb_build_object('order_id', v_order.id, 'reason', p_reason)
   );
   return jsonb_build_object('ok', true, 'payment_id', p_payment_id);
 end;
@@ -1805,18 +1881,47 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_order_id text;
   v_original public.mp_payments%rowtype;
   v_order public.mp_orders%rowtype;
   v_refund_id text;
+  v_net numeric(14,2);
 begin
   if p_actor_scope not like 'admin:%' and p_actor_scope not like 'system:%' then
     raise exception 'refund requires admin/system actor_scope' using errcode = 'check_violation';
   end if;
-  select * into v_original from public.mp_payments where id = p_original_payment_id for update;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'refund amount must be > 0' using errcode = 'check_violation';
+  end if;
+
+  select order_id into v_order_id
+  from public.mp_payments
+  where id = p_original_payment_id;
+  if v_order_id is null then
+    raise exception 'original payment not found' using errcode = 'no_data_found';
+  end if;
+
+  v_order := public.mp_lock_order_financial(v_order_id);
+
+  select * into v_original
+  from public.mp_payments
+  where id = p_original_payment_id;
   if not found then
     raise exception 'original payment not found' using errcode = 'no_data_found';
   end if;
-  select * into v_order from public.mp_orders where id = v_original.order_id for update;
+  if v_original.status not in ('verified', 'collected') then
+    raise exception 'refund original must be verified or collected'
+      using errcode = 'check_violation';
+  end if;
+  if v_original.reverses_payment_id is not null then
+    raise exception 'cannot refund a refund' using errcode = 'check_violation';
+  end if;
+
+  v_net := public.mp_order_net_paid(v_order.id);
+  -- Refund reduces net paid; cumulative cap enforced by mp_payments_refund_cap_trg.
+  if p_amount > v_net then
+    raise exception 'refund would drive net paid negative' using errcode = 'check_violation';
+  end if;
 
   v_refund_id := public.mp_new_id('mppay');
   insert into public.mp_payments (
@@ -1832,7 +1937,8 @@ begin
     jsonb_build_object(
       'original_payment_id', p_original_payment_id,
       'amount', p_amount,
-      'order_id', v_original.order_id
+      'order_id', v_original.order_id,
+      'net_paid_before', v_net
     )
   );
   return jsonb_build_object('ok', true, 'refund_payment_id', v_refund_id);
@@ -1906,8 +2012,14 @@ begin
   if p_actor_scope not like 'admin:super%' then
     raise exception 'overrides are Super-Admin only' using errcode = 'check_violation';
   end if;
-  if p_mode = 'time_limited' and p_ends_at is null then
-    raise exception 'time_limited override requires ends_at' using errcode = 'check_violation';
+  if p_mode = 'time_limited' then
+    if p_ends_at is null then
+      raise exception 'time_limited override requires ends_at' using errcode = 'check_violation';
+    end if;
+    if p_ends_at <= timezone('utc', now()) then
+      raise exception 'time_limited ends_at must be strictly in the future'
+        using errcode = 'check_violation';
+    end if;
   end if;
 
   select website_price, website_price_state into v_old_price, v_old_state
@@ -2205,15 +2317,10 @@ begin
     raise exception 'correct_order_totals requires admin actor_scope'
       using errcode = 'check_violation';
   end if;
-  select * into v_order from public.mp_orders where id = p_order_id for update;
-  if not found then
-    raise exception 'order not found' using errcode = 'no_data_found';
-  end if;
+
+  v_order := public.mp_lock_order_financial(p_order_id);
   v_grand := coalesce(p_subtotal, 0) + coalesce(p_delivery_fee, 0) + coalesce(p_tax, 0);
-  select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
-       - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
-    into v_net
-  from public.mp_payments where order_id = p_order_id;
+  v_net := public.mp_order_net_paid(p_order_id);
   if v_net > v_grand then
     raise exception 'new total below net paid' using errcode = 'check_violation';
   end if;

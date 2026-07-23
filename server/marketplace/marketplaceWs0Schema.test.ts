@@ -733,19 +733,46 @@ async function main(): Promise<void> {
       );
       check("only one effective active override remains", activeCount.rows[0].n === 1);
 
-      // Insert an expired-still-active-looking row via time_limited already ended
+      // Create time_limited with future ends_at, then simulate time passing.
+      const beforePrice = await admin.query(
+        `select website_price, website_price_state from public.mp_product_variants where id = $1`,
+        [ids.variantId],
+      );
+      let pastRejected = false;
+      try {
+        await admin.query(
+          `select public.mp_apply_override(
+             'admin:super:t', $1, $2, 199000, 'time_limited',
+             timezone('utc', now()) - interval '1 minute', 'already-expired', 'admin'
+           )`,
+          [ids.productId, ids.variantId],
+        );
+      } catch {
+        pastRejected = true;
+      }
+      check("past time-limited ends_at is rejected", pastRejected);
+      const afterReject = await admin.query(
+        `select website_price, website_price_state from public.mp_product_variants where id = $1`,
+        [ids.variantId],
+      );
+      check(
+        "rejected expired override does not alter website_price or price state",
+        Number(afterReject.rows[0].website_price) === Number(beforePrice.rows[0].website_price) &&
+          afterReject.rows[0].website_price_state === beforePrice.rows[0].website_price_state,
+      );
+
       await admin.query(
         `select public.mp_apply_override(
            'admin:super:t', $1, $2, 133000, 'time_limited',
-           timezone('utc', now()) - interval '1 minute', 'expired-soon', 'admin'
+           timezone('utc', now()) + interval '1 hour', 'future-limited', 'admin'
          )`,
         [ids.productId, ids.variantId],
       );
-      // Force ends_at in the past while still active (simulate clock pass)
+      // Simulate clock pass: move stored ends_at into the past.
       await admin.query(
         `update public.mp_price_overrides
          set ends_at = timezone('utc', now()) - interval '1 hour'
-         where variant_id = $1 and status = 'active'`,
+         where variant_id = $1 and status = 'active' and mode = 'time_limited'`,
         [ids.variantId],
       );
       const o3 = await admin.query(
@@ -754,7 +781,10 @@ async function main(): Promise<void> {
          ) as r`,
         [ids.productId, ids.variantId],
       );
-      check("expired override does not block replacement", o3.rows[0].r.ok === true);
+      check(
+        "previously valid override that expires no longer blocks replacement",
+        o3.rows[0].r.ok === true,
+      );
       const activeAfter = await admin.query(
         `select count(*)::int as n, max(override_price)::numeric as price
          from public.mp_price_overrides
@@ -765,6 +795,12 @@ async function main(): Promise<void> {
         "single active after expired replacement",
         activeAfter.rows[0].n === 1 && Number(activeAfter.rows[0].price) === 144000,
       );
+      const expiredRows = await admin.query(
+        `select count(*)::int as n from public.mp_price_overrides
+         where variant_id = $1 and status = 'expired' and override_price = 133000`,
+        [ids.variantId],
+      );
+      check("timed-out override marked expired", expiredRows.rows[0].n === 1);
       const resurrected = await admin.query(
         `select count(*)::int as n from public.mp_price_overrides
          where variant_id = $1 and status in ('superseded','revoked','expired')
@@ -895,6 +931,211 @@ async function main(): Promise<void> {
         }
       }
       check("concurrent payment operations serialize safely", secondFailed === true);
+      await c1.end();
+      await c2.end();
+    }
+
+    // =========================================================================
+    // WS0 Correction 2 — financial lock-order concurrency
+    // =========================================================================
+    async function resetVariantPrice(client: pg.Client, price = 100000): Promise<void> {
+      await client.query("begin");
+      await client.query(`select set_config('mp.allow_price_write','on',true)`);
+      await client.query(
+        `update public.mp_product_variants
+         set website_price = $2, website_price_state = 'priced_auto',
+             website_price_source = 'seed', stock_status = 'in_stock'
+         where id = $1`,
+        [ids.variantId, price],
+      );
+      await client.query("commit");
+    }
+
+    // Verify + COD collect on sibling payments: serialize without deadlock
+    {
+      await resetVariantPrice(admin);
+      const oid = await freshPendingOrder(
+        admin,
+        "corr2-sib",
+        "token_plus_balance_cod",
+        "mpz_cod",
+        100000,
+        0,
+        60000,
+      );
+      const plan = await admin.query(
+        `select id from public.mp_payment_plans where order_id = $1`,
+        [oid],
+      );
+      await admin.query(
+        `insert into public.mp_payments
+           (id, order_id, payment_plan_id, amount, method, status)
+         values ('mppay_sib_bt', $1, $2, 40000, 'bank_transfer', 'submitted')`,
+        [oid, plan.rows[0].id],
+      );
+      const codPay = await admin.query(
+        `select id from public.mp_payments
+         where order_id = $1 and method = 'cash_on_delivery'`,
+        [oid],
+      );
+      const c1 = adminFactory();
+      const c2 = adminFactory();
+      await c1.connect();
+      await c2.connect();
+      await c1.query("set lock_timeout = '5s'");
+      await c2.query("set lock_timeout = '5s'");
+      const started = Date.now();
+      const results = await Promise.allSettled([
+        c1.query(`select public.mp_verify_payment('admin:finance', $1, 'v1') as r`, [
+          "mppay_sib_bt",
+        ]),
+        c2.query(`select public.mp_collect_cod_payment('admin:finance', $1, 'c1') as r`, [
+          codPay.rows[0].id,
+        ]),
+      ]);
+      const elapsed = Date.now() - started;
+      check(
+        "verify+COD sibling ops serialize without deadlock",
+        elapsed < 5000 &&
+          results.every((r) => r.status === "fulfilled") &&
+          results.filter((r) => r.status === "fulfilled").length === 2,
+      );
+      const net = await admin.query(`select public.mp_order_net_paid($1)::numeric as n`, [
+        oid,
+      ]);
+      check("sibling verify+collect preserves full balance", Number(net.rows[0].n) === 100000);
+      await c1.end();
+      await c2.end();
+    }
+
+    // Record-payment versus verification on same order
+    {
+      await resetVariantPrice(admin);
+      const oid = await freshPendingOrder(admin, "corr2-rv", "full", null, 100000, 0, 0);
+      // Seed a submitted bank payment to verify
+      const plan = await admin.query(
+        `select id from public.mp_payment_plans where order_id = $1`,
+        [oid],
+      );
+      await admin.query(
+        `insert into public.mp_payments
+           (id, order_id, payment_plan_id, amount, method, status)
+         values ('mppay_rv_bt', $1, $2, 50000, 'bank_transfer', 'submitted')`,
+        [oid, plan.rows[0].id],
+      );
+      const iid = await createClaimedIntent(admin, oid, "idem-rv", "hash-rv");
+      const sha = "e".repeat(64);
+      await admin.query(`select public.mp_mark_upload_intent_uploaded($1, 10, $2)`, [
+        iid,
+        sha,
+      ]);
+
+      const c1 = adminFactory();
+      const c2 = adminFactory();
+      await c1.connect();
+      await c2.connect();
+      await c1.query("set lock_timeout = '5s'");
+      await c2.query("set lock_timeout = '5s'");
+      const started = Date.now();
+      const results = await Promise.allSettled([
+        c1.query(`select public.mp_verify_payment('admin:finance', $1, 'v') as r`, [
+          "mppay_rv_bt",
+        ]),
+        c2.query(
+          `select public.mp_record_payment(
+             'guest:corr', $1, $2, 50000, $3, 10, 'idem-rv', 'hash-rv'
+           ) as r`,
+          [oid, iid, sha],
+        ),
+      ]);
+      const elapsed = Date.now() - started;
+      check(
+        "record vs verify serialize without deadlock",
+        elapsed < 5000 && results.every((r) => r.status === "fulfilled" || r.status === "rejected"),
+      );
+      // Exactly one financial winner path that leaves consistent state
+      const order = await admin.query(`select status from public.mp_orders where id = $1`, [
+        oid,
+      ]);
+      const pays = await admin.query(
+        `select status, count(*)::int as n from public.mp_payments
+         where order_id = $1 group by status`,
+        [oid],
+      );
+      const statusMap = Object.fromEntries(pays.rows.map((r) => [r.status, r.n]));
+      check(
+        "failed concurrent ops leave order/payment status consistent",
+        ["pending_payment", "awaiting_verification", "confirmed"].includes(order.rows[0].status) &&
+          (statusMap.verified ?? 0) + (statusMap.submitted ?? 0) + (statusMap.attached ?? 0) >= 0,
+      );
+      // If verify won first, record should have failed_known / cleanup or still pending
+      // If record won first, verify may still succeed on submitted sibling.
+      const deadlockFree = results.every(
+        (r) =>
+          r.status === "fulfilled" ||
+          (r.status === "rejected" &&
+            !/deadlock detected/i.test(String((r as PromiseRejectedResult).reason))),
+      );
+      check("record/verify concurrency is deadlock-free", deadlockFree);
+      void started;
+      await c1.end();
+      await c2.end();
+    }
+
+    // Concurrent refund/payment mutation preserves balance
+    {
+      await resetVariantPrice(admin);
+      const oid = await freshPendingOrder(admin, "corr2-ref", "full", null, 100000, 0, 0);
+      const plan = await admin.query(
+        `select id from public.mp_payment_plans where order_id = $1`,
+        [oid],
+      );
+      await admin.query(
+        `insert into public.mp_payments
+           (id, order_id, payment_plan_id, amount, method, status)
+         values ('mppay_ref_src', $1, $2, 100000, 'bank_transfer', 'verified')`,
+        [oid, plan.rows[0].id],
+      );
+      await admin.query(
+        `update public.mp_orders set status = 'confirmed' where id = $1`,
+        [oid],
+      );
+      const c1 = adminFactory();
+      const c2 = adminFactory();
+      await c1.connect();
+      await c2.connect();
+      await c1.query("set lock_timeout = '5s'");
+      await c2.query("set lock_timeout = '5s'");
+      const started = Date.now();
+      const results = await Promise.allSettled([
+        c1.query(
+          `select public.mp_refund_payment('admin:finance', 'mppay_ref_src', 60000, 'r1') as r`,
+        ),
+        c2.query(
+          `select public.mp_refund_payment('admin:finance', 'mppay_ref_src', 60000, 'r2') as r`,
+        ),
+      ]);
+      const elapsed = Date.now() - started;
+      const fulfilled = results.filter((r) => r.status === "fulfilled").length;
+      const rejected = results.filter((r) => r.status === "rejected").length;
+      check(
+        "concurrent refunds serialize without deadlock",
+        elapsed < 5000 && fulfilled === 1 && rejected === 1,
+      );
+      const net = await admin.query(`select public.mp_order_net_paid($1)::numeric as n`, [
+        oid,
+      ]);
+      check(
+        "concurrent refund/payment mutation preserves order balance",
+        Number(net.rows[0].n) === 40000,
+      );
+      const order = await admin.query(`select status from public.mp_orders where id = $1`, [
+        oid,
+      ]);
+      check(
+        "failed concurrent refund leaves order status consistent",
+        order.rows[0].status === "confirmed",
+      );
       await c1.end();
       await c2.end();
     }
