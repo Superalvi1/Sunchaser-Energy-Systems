@@ -259,7 +259,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
       .update({
         state: "failed_known" as WhatsAppOutboundIdempotencyState,
         error: input.error,
-        completedAt: input.completedAt ?? nowIso(),
+        completed_at: input.completedAt ?? nowIso(),
       })
       .eq("company_id", this.access.companyId(input.companyId))
       .eq("idempotency_key", input.idempotencyKey)
@@ -280,7 +280,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
       .from("whatsapp_outbound_idempotency_keys")
       .update({
         state: "outcome_unknown" as WhatsAppOutboundIdempotencyState,
-        completedAt: input.completedAt ?? nowIso(),
+        completed_at: input.completedAt ?? nowIso(),
       })
       .eq("company_id", this.access.companyId(input.companyId))
       .eq("idempotency_key", input.idempotencyKey)

@@ -5,12 +5,14 @@ import {
   computeTokenHealth,
   computeWebhookHealth,
   disconnectWhatsApp,
+  deregisterSubscribedApps,
   generateEmbeddedSignupState,
   getWhatsAppConnectionStatus,
   maskId,
   maskPhone,
   processEmbeddedSignupOnboarding,
   recordWebhookPing,
+  registerSubscribedApps,
   resetConnectionStoreForTests,
   verifyWabaOwnership,
   verifyPhoneNumberIdOwnership,
@@ -18,48 +20,38 @@ import {
 import { InMemoryWhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
 import { WhatsAppInboxMemoryStore } from "./whatsappInboxRepoSupport.ts";
 import type { OAuthStateStore } from "./whatsappOAuthStateStore.ts";
-import { memoryOAuthStateStore } from "./whatsappOAuthStateStore.ts";
+import { makeMemoryOAuthStateStore } from "./whatsappOAuthStateStore.ts";
 
 const adminActor: RequestActor = {
   id: "u-admin-1",
+  username: "admin",
+  name: "Admin",
   email: "admin@sunchaser.pk",
   role: "Super Admin",
-  status: "Approved",
-  allowedModules: ["crm_leads"],
+  accountStatus: "Approved",
+  emailVerified: true,
+  onboardingCompleted: true,
+  authMethod: "jwt",
 };
 
 const salesActor: RequestActor = {
   id: "u-sales-1",
+  username: "sales",
+  name: "Sales",
   email: "sales@sunchaser.pk",
   role: "Sales Representative",
-  status: "Approved",
-  allowedModules: ["crm_leads"],
+  accountStatus: "Approved",
+  emailVerified: true,
+  onboardingCompleted: true,
+  authMethod: "jwt",
 };
 
 const TEST_COMPANY = "sunchaser";
+const TEST_WABA_ID = "123456789098765";
+const TEST_PHONE_NUMBER_ID = "987654321012345";
 
-/** Create a test-only state store to avoid polluting the singleton. */
 function makeTestStateStore(): OAuthStateStore {
-  const entries = new Map<string, { companyId: string; expiresAt: number; used: boolean }>();
-  return {
-    create(companyId: string): string {
-      const nonce = `test-nonce-${Date.now()}-${Math.random()}`;
-      entries.set(nonce, { companyId, expiresAt: Date.now() + 900_000, used: false });
-      return nonce;
-    },
-    consume(nonce: string, companyId: string) {
-      const e = entries.get(nonce);
-      if (!e) return { ok: false, reason: "not found" };
-      if (e.used) return { ok: false, reason: "already used" };
-      if (e.expiresAt < Date.now()) return { ok: false, reason: "expired" };
-      if (e.companyId !== companyId) return { ok: false, reason: "company mismatch" };
-      e.used = true;
-      return { ok: true };
-    },
-    clear() {
-      entries.clear();
-    },
-  };
+  return makeMemoryOAuthStateStore();
 }
 
 /** A minimal exchange port that returns fixed credentials for tests. */
@@ -70,8 +62,8 @@ function makeTestExchangePort(overrides?: {
 }) {
   return async (input: { code: string; wabaId: string; phoneNumberId: string }) => ({
     accessToken: overrides?.accessToken ?? "EAAG_test_token",
-    wabaId: input.wabaId || overrides?.wabaId || "123456789098765",
-    phoneNumberId: input.phoneNumberId || overrides?.phoneNumberId || "987654321012345",
+    wabaId: input.wabaId || overrides?.wabaId || TEST_WABA_ID,
+    phoneNumberId: input.phoneNumberId || overrides?.phoneNumberId || TEST_PHONE_NUMBER_ID,
     phoneNumber: "923007776655",
   });
 }
@@ -85,8 +77,8 @@ await test("maskId and maskPhone redact sensitive identifiers", () => {
   assert.equal(maskPhone("923007776655"), "+92 300 **** 655");
 });
 
-await test("disconnected state when no credentials present", () => {
-  resetConnectionStoreForTests({
+await test("disconnected state when no credentials present", async () => {
+  await resetConnectionStoreForTests({
     wabaId: null,
     phoneNumberId: null,
     phoneNumber: null,
@@ -94,7 +86,7 @@ await test("disconnected state when no credentials present", () => {
     stateOverride: null,
   });
 
-  const status = getWhatsAppConnectionStatus();
+  const status = await getWhatsAppConnectionStatus();
   assert.equal(status.status, "NOT_CONNECTED");
   assert.equal(status.connectionMode, "COEXISTENCE");
   assert.equal(status.wabaIdMasked, null);
@@ -102,8 +94,32 @@ await test("disconnected state when no credentials present", () => {
   assert.equal(status.phoneNumberMasked, null);
 });
 
+await test("env credentials alone do not produce CONNECTED without persisted record", async () => {
+  const origToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const origPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const origWaba = process.env.WHATSAPP_WABA_ID;
+  process.env.WHATSAPP_ACCESS_TOKEN = "EAAG_env_only_token";
+  process.env.WHATSAPP_PHONE_NUMBER_ID = TEST_PHONE_NUMBER_ID;
+  process.env.WHATSAPP_WABA_ID = TEST_WABA_ID;
+
+  try {
+    await resetConnectionStoreForTests();
+    const status = await getWhatsAppConnectionStatus();
+    assert.equal(status.status, "NOT_CONNECTED");
+    assert.equal(status.wabaIdMasked, null);
+    assert.equal(status.phoneNumberIdMasked, null);
+  } finally {
+    if (origToken !== undefined) process.env.WHATSAPP_ACCESS_TOKEN = origToken;
+    else delete process.env.WHATSAPP_ACCESS_TOKEN;
+    if (origPhoneId !== undefined) process.env.WHATSAPP_PHONE_NUMBER_ID = origPhoneId;
+    else delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (origWaba !== undefined) process.env.WHATSAPP_WABA_ID = origWaba;
+    else delete process.env.WHATSAPP_WABA_ID;
+  }
+});
+
 await test("successful Coexistence Embedded Signup onboarding", async () => {
-  resetConnectionStoreForTests({
+  await resetConnectionStoreForTests({
     wabaId: null,
     phoneNumberId: null,
     phoneNumber: null,
@@ -112,14 +128,14 @@ await test("successful Coexistence Embedded Signup onboarding", async () => {
   });
 
   const stateStore = makeTestStateStore();
-  const state = stateStore.create(TEST_COMPANY, adminActor.id);
+  const state = await stateStore.create(TEST_COMPANY, adminActor.id);
 
   const status = await processEmbeddedSignupOnboarding(
     {
       code: "valid_meta_embedded_code_123",
       state,
-      wabaId: "123456789098765",
-      phoneNumberId: "987654321012345",
+      wabaId: TEST_WABA_ID,
+      phoneNumberId: TEST_PHONE_NUMBER_ID,
       companyId: TEST_COMPANY,
       actor: adminActor,
     },
@@ -138,8 +154,39 @@ await test("successful Coexistence Embedded Signup onboarding", async () => {
   assert.equal(status.tokenHealth, "valid");
 });
 
+await test("subscribed_apps registration uses wabaId in Graph URL", async () => {
+  const seenUrls: string[] = [];
+  const mockFetch: typeof fetch = async (input, init) => {
+    seenUrls.push(String(input));
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  };
+
+  await registerSubscribedApps("token", TEST_WABA_ID, "v21.0", mockFetch);
+  assert.equal(seenUrls.length, 1);
+  assert.match(
+    seenUrls[0],
+    new RegExp(`/v21\\.0/${TEST_WABA_ID}/subscribed_apps$`)
+  );
+  assert.doesNotMatch(seenUrls[0], new RegExp(TEST_PHONE_NUMBER_ID));
+});
+
+await test("subscribed_apps deregistration uses wabaId in Graph URL", async () => {
+  const seenUrls: string[] = [];
+  const mockFetch: typeof fetch = async (input) => {
+    seenUrls.push(String(input));
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  };
+
+  await deregisterSubscribedApps("token", TEST_WABA_ID, "v21.0", mockFetch);
+  assert.equal(seenUrls.length, 1);
+  assert.match(
+    seenUrls[0],
+    new RegExp(`/v21\\.0/${TEST_WABA_ID}/subscribed_apps$`)
+  );
+});
+
 await test("CSRF: missing state parameter throws invalid_argument", async () => {
-  resetConnectionStoreForTests();
+  await resetConnectionStoreForTests();
   const stateStore = makeTestStateStore();
 
   await assert.rejects(
@@ -148,8 +195,8 @@ await test("CSRF: missing state parameter throws invalid_argument", async () => 
         {
           code: "valid_code",
           state: "",
-          wabaId: "123456789098765",
-          phoneNumberId: "987654321012345",
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
           companyId: TEST_COMPANY,
           actor: adminActor,
         },
@@ -160,7 +207,7 @@ await test("CSRF: missing state parameter throws invalid_argument", async () => 
 });
 
 await test("CSRF: invalid/unknown state nonce throws invalid_argument", async () => {
-  resetConnectionStoreForTests();
+  await resetConnectionStoreForTests();
   const stateStore = makeTestStateStore();
 
   await assert.rejects(
@@ -169,8 +216,8 @@ await test("CSRF: invalid/unknown state nonce throws invalid_argument", async ()
         {
           code: "valid_code",
           state: "not-a-real-nonce",
-          wabaId: "123456789098765",
-          phoneNumberId: "987654321012345",
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
           companyId: TEST_COMPANY,
           actor: adminActor,
         },
@@ -181,27 +228,25 @@ await test("CSRF: invalid/unknown state nonce throws invalid_argument", async ()
 });
 
 await test("CSRF: replay — consuming same state nonce twice throws invalid_argument", async () => {
-  resetConnectionStoreForTests({
+  await resetConnectionStoreForTests({
     wabaId: null, phoneNumberId: null, accessToken: null, stateOverride: null,
   });
   const stateStore = makeTestStateStore();
-  const state = stateStore.create(TEST_COMPANY, adminActor.id);
+  const state = await stateStore.create(TEST_COMPANY, adminActor.id);
 
-  // First use: succeeds
   await processEmbeddedSignupOnboarding(
     {
       code: "code-1",
       state,
-      wabaId: "123456789098765",
-      phoneNumberId: "987654321012345",
+      wabaId: TEST_WABA_ID,
+      phoneNumberId: TEST_PHONE_NUMBER_ID,
       companyId: TEST_COMPANY,
       actor: adminActor,
     },
     { stateStore, exchangePort: makeTestExchangePort(), skipOwnershipVerification: true }
   );
 
-  // Second use with same nonce: must be rejected
-  resetConnectionStoreForTests({
+  await resetConnectionStoreForTests({
     wabaId: null, phoneNumberId: null, accessToken: null, stateOverride: null,
   });
   await assert.rejects(
@@ -210,8 +255,8 @@ await test("CSRF: replay — consuming same state nonce twice throws invalid_arg
         {
           code: "code-2",
           state,
-          wabaId: "123456789098765",
-          phoneNumberId: "987654321012345",
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
           companyId: TEST_COMPANY,
           actor: adminActor,
         },
@@ -221,10 +266,87 @@ await test("CSRF: replay — consuming same state nonce twice throws invalid_arg
   );
 });
 
-await test("missing code throws invalid_argument", async () => {
-  resetConnectionStoreForTests();
+await test("CSRF: tenant mismatch rejects onboarding", async () => {
+  await resetConnectionStoreForTests();
   const stateStore = makeTestStateStore();
-  const state = stateStore.create(TEST_COMPANY, adminActor.id);
+  const state = await stateStore.create("other-company", adminActor.id);
+
+  await assert.rejects(
+    () =>
+      processEmbeddedSignupOnboarding(
+        {
+          code: "valid_code",
+          state,
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
+          companyId: TEST_COMPANY,
+          actor: adminActor,
+        },
+        { stateStore, exchangePort: makeTestExchangePort(), skipOwnershipVerification: true }
+      ),
+    (err: any) =>
+      err.code === "invalid_argument" &&
+      /company mismatch/i.test(err.message)
+  );
+});
+
+await test("CSRF: expired state nonce rejects onboarding", async () => {
+  await resetConnectionStoreForTests();
+  const entries = new Map<
+    string,
+    { companyId: string; actorId: string; expiresAt: number; used: boolean }
+  >();
+  const stateStore: OAuthStateStore = {
+    async create(companyId, actorId) {
+      const nonce = "expired-nonce";
+      entries.set(nonce, {
+        companyId,
+        actorId,
+        expiresAt: Date.now() - 1000,
+        used: false,
+      });
+      return nonce;
+    },
+    async consume(nonce, companyId, actorId) {
+      const e = entries.get(nonce);
+      if (!e) return { ok: false, reason: "not found" };
+      if (e.used) return { ok: false, reason: "already used" };
+      if (e.expiresAt < Date.now()) return { ok: false, reason: "State nonce expired" };
+      if (e.companyId !== companyId) return { ok: false, reason: "company mismatch" };
+      if (actorId != null && e.actorId !== actorId) {
+        return { ok: false, reason: "actor mismatch" };
+      }
+      e.used = true;
+      return { ok: true };
+    },
+    async clear() {
+      entries.clear();
+    },
+  };
+  const state = await stateStore.create(TEST_COMPANY, adminActor.id);
+
+  await assert.rejects(
+    () =>
+      processEmbeddedSignupOnboarding(
+        {
+          code: "valid_code",
+          state,
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
+          companyId: TEST_COMPANY,
+          actor: adminActor,
+        },
+        { stateStore, exchangePort: makeTestExchangePort(), skipOwnershipVerification: true }
+      ),
+    (err: any) =>
+      err.code === "invalid_argument" && /expired/i.test(err.message)
+  );
+});
+
+await test("missing code throws invalid_argument", async () => {
+  await resetConnectionStoreForTests();
+  const stateStore = makeTestStateStore();
+  const state = await stateStore.create(TEST_COMPANY, adminActor.id);
 
   await assert.rejects(
     () =>
@@ -232,8 +354,8 @@ await test("missing code throws invalid_argument", async () => {
         {
           code: "   ",
           state,
-          wabaId: "123456789098765",
-          phoneNumberId: "987654321012345",
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
           companyId: TEST_COMPANY,
           actor: adminActor,
         },
@@ -244,9 +366,9 @@ await test("missing code throws invalid_argument", async () => {
 });
 
 await test("missing wabaId throws invalid_argument", async () => {
-  resetConnectionStoreForTests();
+  await resetConnectionStoreForTests();
   const stateStore = makeTestStateStore();
-  const state = stateStore.create(TEST_COMPANY, adminActor.id);
+  const state = await stateStore.create(TEST_COMPANY, adminActor.id);
 
   await assert.rejects(
     () =>
@@ -255,7 +377,7 @@ await test("missing wabaId throws invalid_argument", async () => {
           code: "valid_code",
           state,
           wabaId: "",
-          phoneNumberId: "987654321012345",
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
           companyId: TEST_COMPANY,
           actor: adminActor,
         },
@@ -266,9 +388,9 @@ await test("missing wabaId throws invalid_argument", async () => {
 });
 
 await test("non-admin actor onboarding is forbidden", async () => {
-  resetConnectionStoreForTests();
+  await resetConnectionStoreForTests();
   const stateStore = makeTestStateStore();
-  const state = stateStore.create(TEST_COMPANY, salesActor.id);
+  const state = await stateStore.create(TEST_COMPANY, salesActor.id);
 
   await assert.rejects(
     () =>
@@ -276,8 +398,8 @@ await test("non-admin actor onboarding is forbidden", async () => {
         {
           code: "valid_code",
           state,
-          wabaId: "123456789098765",
-          phoneNumberId: "987654321012345",
+          wabaId: TEST_WABA_ID,
+          phoneNumberId: TEST_PHONE_NUMBER_ID,
           companyId: TEST_COMPANY,
           actor: salesActor,
         },
@@ -288,7 +410,7 @@ await test("non-admin actor onboarding is forbidden", async () => {
 });
 
 await test("non-admin disconnect is forbidden", async () => {
-  resetConnectionStoreForTests();
+  await resetConnectionStoreForTests();
   await assert.rejects(
     () => disconnectWhatsApp(salesActor, { skipRevoke: true }),
     (err: any) => err.code === "forbidden"
@@ -296,10 +418,10 @@ await test("non-admin disconnect is forbidden", async () => {
 });
 
 await test("disconnect clears credentials and returns NOT_CONNECTED", async () => {
-  resetConnectionStoreForTests({
+  await resetConnectionStoreForTests({
     accessToken: "EAAG_test",
-    phoneNumberId: "987654321012345",
-    wabaId: "123456789098765",
+    phoneNumberId: TEST_PHONE_NUMBER_ID,
+    wabaId: TEST_WABA_ID,
   });
 
   const status = await disconnectWhatsApp(adminActor, { skipRevoke: true });
@@ -308,24 +430,48 @@ await test("disconnect clears credentials and returns NOT_CONNECTED", async () =
   assert.equal(status.phoneNumberIdMasked, null);
 });
 
-await test("secret redaction: access token is never leaked in status payload", () => {
-  resetConnectionStoreForTests({
-    accessToken: "EAAG_secret_token_never_expose",
-    phoneNumberId: "987654321012345",
-    wabaId: "123456789098765",
+await test("disconnect returns revokeWarning when Meta revoke fails but still clears local", async () => {
+  await resetConnectionStoreForTests({
+    accessToken: "EAAG_test",
+    phoneNumberId: TEST_PHONE_NUMBER_ID,
+    wabaId: TEST_WABA_ID,
   });
 
-  const status = getWhatsAppConnectionStatus();
+  const mockFetch: typeof fetch = async () =>
+    new Response(JSON.stringify({ error: { message: "Invalid OAuth access token" } }), {
+      status: 400,
+    });
+
+  const status = await disconnectWhatsApp(adminActor, { fetchImpl: mockFetch });
+  assert.equal(status.status, "NOT_CONNECTED");
+  assert.equal(status.wabaIdMasked, null);
+  assert.ok(status.revokeWarning);
+  assert.match(status.revokeWarning!, /deregistration failed/i);
+  assert.doesNotMatch(status.revokeWarning!, /EAAG_test/);
+});
+
+await test("secret redaction: access token is never leaked in status payload", async () => {
+  await resetConnectionStoreForTests({
+    accessToken: "EAAG_secret_token_never_expose",
+    phoneNumberId: TEST_PHONE_NUMBER_ID,
+    wabaId: TEST_WABA_ID,
+  });
+
+  const status = await getWhatsAppConnectionStatus();
   assert.equal("accessToken" in status, false);
   assert.equal(JSON.stringify(status).includes("EAAG_secret_token"), false);
 });
 
-await test("webhook health and timestamp recording", () => {
-  resetConnectionStoreForTests();
+await test("webhook health and timestamp recording", async () => {
+  await resetConnectionStoreForTests({
+    accessToken: "EAAG_test",
+    phoneNumberId: TEST_PHONE_NUMBER_ID,
+    wabaId: TEST_WABA_ID,
+  });
   const now = new Date().toISOString();
-  recordWebhookPing(now);
+  await recordWebhookPing(now);
 
-  const status = getWhatsAppConnectionStatus();
+  const status = await getWhatsAppConnectionStatus();
   assert.equal(status.lastWebhookAt, now);
   assert.equal(status.webhookHealth, "healthy");
 
@@ -358,17 +504,16 @@ await test("WABA ownership verification rejects mismatched WABA", async () => {
     new Response(JSON.stringify({ data: [{ id: "999999" }] }), { status: 200 });
 
   await assert.rejects(
-    () => verifyWabaOwnership("token", "123456789098765", "v21.0", mockFetch),
+    () => verifyWabaOwnership("token", TEST_WABA_ID, "v21.0", mockFetch),
     (err: any) => err.code === "forbidden"
   );
 });
 
 await test("WABA ownership verification passes on matching WABA", async () => {
   const mockFetch: typeof fetch = async () =>
-    new Response(JSON.stringify({ data: [{ id: "123456789098765" }] }), { status: 200 });
+    new Response(JSON.stringify({ data: [{ id: TEST_WABA_ID }] }), { status: 200 });
 
-  // Should not throw
-  await verifyWabaOwnership("token", "123456789098765", "v21.0", mockFetch);
+  await verifyWabaOwnership("token", TEST_WABA_ID, "v21.0", mockFetch);
 });
 
 await test("Phone Number ID ownership verification rejects mismatched ID", async () => {
@@ -379,8 +524,8 @@ await test("Phone Number ID ownership verification rejects mismatched ID", async
     () =>
       verifyPhoneNumberIdOwnership(
         "token",
-        "123456789098765",
-        "987654321012345",
+        TEST_WABA_ID,
+        TEST_PHONE_NUMBER_ID,
         "v21.0",
         mockFetch
       ),
@@ -389,15 +534,14 @@ await test("Phone Number ID ownership verification rejects mismatched ID", async
 });
 
 await test("no mock fallback: missing app credentials throws service_unavailable", async () => {
-  // Temporarily clear env
   const origId = process.env.WHATSAPP_APP_ID;
   const origSecret = process.env.WHATSAPP_APP_SECRET;
   delete process.env.WHATSAPP_APP_ID;
   delete process.env.WHATSAPP_APP_SECRET;
 
-  resetConnectionStoreForTests({ wabaId: null, phoneNumberId: null, accessToken: null });
+  await resetConnectionStoreForTests({ wabaId: null, phoneNumberId: null, accessToken: null });
   const stateStore = makeTestStateStore();
-  const state = stateStore.create(TEST_COMPANY, adminActor.id);
+  const state = await stateStore.create(TEST_COMPANY, adminActor.id);
 
   try {
     await assert.rejects(
@@ -406,12 +550,12 @@ await test("no mock fallback: missing app credentials throws service_unavailable
           {
             code: "code",
             state,
-            wabaId: "123456789098765",
-            phoneNumberId: "987654321012345",
+            wabaId: TEST_WABA_ID,
+            phoneNumberId: TEST_PHONE_NUMBER_ID,
             companyId: TEST_COMPANY,
             actor: adminActor,
           },
-          { stateStore } // No exchangePort → uses real default which requires app credentials
+          { stateStore }
         ),
       (err: any) =>
         err.code === "service_unavailable" &&
@@ -423,9 +567,9 @@ await test("no mock fallback: missing app credentials throws service_unavailable
   }
 });
 
-await test("generateEmbeddedSignupState returns a non-empty nonce", () => {
+await test("generateEmbeddedSignupState returns a non-empty nonce", async () => {
   const stateStore = makeTestStateStore();
-  const nonce = generateEmbeddedSignupState(TEST_COMPANY, adminActor.id, stateStore);
+  const nonce = await generateEmbeddedSignupState(TEST_COMPANY, adminActor.id, stateStore);
   assert.ok(nonce && nonce.length > 0, "nonce should be non-empty");
 });
 
@@ -437,18 +581,15 @@ await test("human takeover sets aiOwnershipState to HUMAN_HANDLING and halts AI 
   store.conversations.set("c_1", {
     id: "c_1",
     companyId,
-    customerPhone: "923007776655",
-    customerName: "Customer",
+    contactId: "wct_1",
     channelId: "default",
-    status: "UNASSIGNED",
+    status: "open",
     assignedUserId: null,
     assignedAt: null,
     assignedBy: null,
     aiOwnershipState: "AI_SHADOW",
     lockVersion: 1,
     lastMessageAt: new Date().toISOString(),
-    lastMessagePreview: "Hello",
-    lastMessageDirection: "inbound",
     hasFailedMessage: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

@@ -252,7 +252,7 @@ export function createWhatsAppWebhookRouter(
     }
 
     const payloadHash = sha256Hex(rawBody);
-    recordWebhookPing();
+    await recordWebhookPing();
     await safeAudit(repo, {
       eventType: AUDIT_EVENTS.WEBHOOK_RECEIVED,
       entityType: "webhook",

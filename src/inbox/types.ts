@@ -123,4 +123,6 @@ export type WhatsAppConnectionStatusPayload = {
   tokenHealth: "valid" | "expiring_soon" | "expired" | "reauth_required";
   connectionErrorSummary: string | null;
   canReconnect: boolean;
+  /** Sanitized non-fatal warning when Meta unsubscribe failed during disconnect. */
+  revokeWarning?: string | null;
 };

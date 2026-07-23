@@ -457,6 +457,24 @@ export class InMemoryWhatsAppInboxConversationRepository
   }
 }
 
+function shouldAllowConversationTableFallback(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  return process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK === "true";
+}
+
+function conversationRpcUnavailableError(): InboxServiceError {
+  return new InboxServiceError(
+    "service_unavailable",
+    "Conversation listing RPC is not available"
+  );
+}
+
+function isConversationRpcMissingError(message: string): boolean {
+  return /Could not find the function|function .* does not exist|PGRST202/i.test(
+    message
+  );
+}
+
 export class SupabaseWhatsAppInboxConversationRepository
   implements WhatsAppInboxConversationRepository
 {
@@ -520,39 +538,25 @@ export class SupabaseWhatsAppInboxConversationRepository
 
     let query = this.client().from("whatsapp_conversations").select("*");
     query = this.applyFilters(query, filters, companyId);
-    query = query
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(limit + 1);
-
-    if (cursor) {
-      // Canonical sort: coalesce(last_message_at, created_at) DESC, id DESC.
-      // The cursor.at is the coalesced value of the last row on the previous page.
-      // We need rows where coalesce(last_message_at, created_at) < cursor.at,
-      // OR where coalesce = cursor.at AND id < cursor.id.
-      //
-      // PostgREST cannot express COALESCE() directly, so we split into cases:
-      //   1. last_message_at IS NOT NULL AND last_message_at < cursor.at
-      //   2. last_message_at IS NULL AND created_at < cursor.at
-      //   3. last_message_at IS NOT NULL AND last_message_at = cursor.at AND id < cursor.id
-      //   4. last_message_at IS NULL AND created_at = cursor.at AND id < cursor.id
-      query = query.or(
-        [
-          `and(last_message_at.not.is.null,last_message_at.lt.${cursor.at})`,
-          `and(last_message_at.is.null,created_at.lt.${cursor.at})`,
-          `and(last_message_at.not.is.null,last_message_at.eq.${cursor.at},id.lt.${cursor.id})`,
-          `and(last_message_at.is.null,created_at.eq.${cursor.at},id.lt.${cursor.id})`,
-        ].join(",")
-      );
-    }
 
     const { data, error } = await query;
     if (error) handleSupabaseError(error);
 
-    const rows = ((data ?? []) as Record<string, unknown>[]).map(
-      mapConversationInbox
-    );
+    const rows = ((data ?? []) as Record<string, unknown>[])
+      .map(mapConversationInbox)
+      .filter((row) => matchesFilters(row, filters, companyId))
+      .sort((a, b) => {
+        const aa = activityAt(a);
+        const ba = activityAt(b);
+        if (aa !== ba) return ba < aa ? -1 : 1;
+        return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+      })
+      .filter((row) => {
+        if (!cursor) return true;
+        return isBeforeKeyset(activityAt(row), row.id, cursor);
+      })
+      .slice(0, limit + 1);
+
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     return {
@@ -590,13 +594,14 @@ export class SupabaseWhatsAppInboxConversationRepository
         }
       );
       if (error) {
-        if (/Could not find the function|function .* does not exist|PGRST202/i.test(error.message)) {
-          // RPC function missing — migration not yet applied.
-          // Log a warning so operators know they need to apply the migration SQL.
+        if (isConversationRpcMissingError(error.message)) {
+          if (!shouldAllowConversationTableFallback()) {
+            throw conversationRpcUnavailableError();
+          }
           console.warn(
             "[WhatsApp] RPC whatsapp_inbox_list_conversations_by_activity not found. " +
               "Apply scripts/whatsapp-inbox-schema.sql to enable optimised conversation listing. " +
-              "Falling back to table scan (may be slower at scale)."
+              "Falling back to table scan (WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK=true)."
           );
           return await this.listByActivityTableFallback(filters, opts);
         }
@@ -680,7 +685,14 @@ export class SupabaseWhatsAppInboxConversationRepository
         }
       );
       if (error) {
-        if (/Could not find the function|function .* does not exist|PGRST202/i.test(error.message)) {
+        if (isConversationRpcMissingError(error.message)) {
+          if (!shouldAllowConversationTableFallback()) {
+            throw conversationRpcUnavailableError();
+          }
+          console.warn(
+            "[WhatsApp] RPC whatsapp_inbox_list_conversations_delta not found. " +
+              "Falling back to table scan (WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK=true)."
+          );
           return await this.listDeltaTableFallback(filters, opts);
         }
         handleSupabaseError(error);

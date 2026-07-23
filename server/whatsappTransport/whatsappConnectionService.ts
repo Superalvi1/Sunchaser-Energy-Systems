@@ -13,25 +13,48 @@
  *     endpoint is called to confirm the token can access the claimed WABA.
  *   - Phone Number ID ownership: /WABA_ID/phone_numbers is queried to confirm the
  *     phone_number_id belongs to the WABA.
- *   - subscribed_apps registration: POST /{phone_number_id}/subscribed_apps registers
+ *   - subscribed_apps registration: POST /{wabaId}/subscribed_apps registers
  *     the app for webhook delivery on every successful onboarding.
- *   - Proper revoke on disconnect: DELETE /{phone_number_id}/subscribed_apps is called
- *     before credentials are cleared from the store.
+ *   - Proper revoke on disconnect: DELETE /{wabaId}/subscribed_apps is called
+ *     before credentials are cleared from the repository.
  *   - Error sanitization: raw Meta Graph API error bodies are never forwarded to
  *     callers. Only sanitized summaries are surfaced.
  *   - Tenant binding: every connection is scoped to a companyId. Cross-tenant
  *     access is rejected.
- *   - Credentials are stored in-process for now. The WhatsAppConnectionSecretStore
- *     interface is exported so callers can inject a DB-backed implementation.
+ *   - Credentials are persisted via WhatsAppConnectionRepository (Supabase in
+ *     production, in-memory for tests). WHATSAPP_* env vars are bootstrap-only
+ *     and never produce CONNECTED status without a tenant-bound repository record.
  */
 
 import type { RequestActor } from "../middleware/actor.ts";
 import { GRAPH_API_VERSION_PATTERN } from "./whatsappConfig.ts";
-import { WHATSAPP_GRAPH_API_VERSION_FALLBACK } from "./whatsappConstants.ts";
+import {
+  DEFAULT_COMPANY_ID,
+  resolveCompanyId,
+  WHATSAPP_GRAPH_API_VERSION_FALLBACK,
+} from "./whatsappConstants.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 import { sanitizeProviderError } from "./whatsappGraphClient.ts";
 import type { OAuthStateStore } from "./whatsappOAuthStateStore.ts";
 import { memoryOAuthStateStore } from "./whatsappOAuthStateStore.ts";
+
+/** Injectable OAuth state store (memory in tests; Supabase in production). */
+let oauthStateStore: OAuthStateStore = memoryOAuthStateStore;
+
+export function setWhatsAppOAuthStateStore(store: OAuthStateStore): void {
+  oauthStateStore = store;
+}
+
+export function getWhatsAppOAuthStateStore(): OAuthStateStore {
+  return oauthStateStore;
+}
+import type {
+  WhatsAppConnectionRecord,
+  WhatsAppConnectionRepository,
+} from "./whatsappConnectionRepository.ts";
+import {
+  InMemoryWhatsAppConnectionRepository,
+} from "./whatsappConnectionRepository.ts";
 
 // ─── Connection state types ────────────────────────────────────────────────
 
@@ -64,49 +87,79 @@ export type WhatsAppConnectionStatusPayload = {
    */
   connectionErrorSummary: string | null;
   canReconnect: boolean;
+  /** Set when local disconnect succeeded but Meta revoke did not. */
+  revokeWarning?: string | null;
 };
 
-// ─── Credential store ──────────────────────────────────────────────────────
+// ─── Credential repository ─────────────────────────────────────────────────
 
-export type WhatsAppConnectionSecretStore = {
-  /** The company this connection belongs to. */
-  companyId: string | null;
-  wabaId: string | null;
-  phoneNumberId: string | null;
-  phoneNumber: string | null;
-  accessToken: string | null;
-  tokenExpiresAt: number | null; // epoch ms
-  lastWebhookAt: string | null;
-  lastError: string | null;
-  stateOverride: WhatsAppConnectionState | null;
-};
+let connectionRepository: WhatsAppConnectionRepository =
+  new InMemoryWhatsAppConnectionRepository();
 
-let connectionStore: WhatsAppConnectionSecretStore = {
-  companyId: null,
-  wabaId: process.env.WHATSAPP_WABA_ID || null,
-  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
-  phoneNumber: process.env.WHATSAPP_PHONE_NUMBER || null,
-  accessToken: process.env.WHATSAPP_ACCESS_TOKEN || null,
-  tokenExpiresAt: null,
-  lastWebhookAt: null,
-  lastError: null,
-  stateOverride: null,
-};
+export function setWhatsAppConnectionRepository(
+  repo: WhatsAppConnectionRepository
+): void {
+  connectionRepository = repo;
+}
 
-export function resetConnectionStoreForTests(
-  initial?: Partial<WhatsAppConnectionSecretStore>
-) {
-  connectionStore = {
-    companyId: null,
-    wabaId: process.env.WHATSAPP_WABA_ID || null,
-    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
-    phoneNumber: process.env.WHATSAPP_PHONE_NUMBER || null,
-    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || null,
+export function getWhatsAppConnectionRepository(): WhatsAppConnectionRepository {
+  return connectionRepository;
+}
+
+export type WhatsAppConnectionTestSeed = Partial<
+  Omit<WhatsAppConnectionRecord, "companyId">
+>;
+
+/** Reset to a fresh in-memory repository; optionally seed DEFAULT_COMPANY_ID. */
+export async function resetConnectionStoreForTests(
+  initial?: WhatsAppConnectionTestSeed
+): Promise<void> {
+  connectionRepository = new InMemoryWhatsAppConnectionRepository();
+  oauthStateStore = memoryOAuthStateStore;
+  await memoryOAuthStateStore.clear();
+  if (initial) {
+    await connectionRepository.upsert({
+      companyId: DEFAULT_COMPANY_ID,
+      wabaId: initial.wabaId ?? null,
+      phoneNumberId: initial.phoneNumberId ?? null,
+      phoneNumber: initial.phoneNumber ?? null,
+      accessToken: initial.accessToken ?? null,
+      tokenExpiresAt: initial.tokenExpiresAt ?? null,
+      lastWebhookAt: initial.lastWebhookAt ?? null,
+      lastError: initial.lastError ?? null,
+      stateOverride: initial.stateOverride ?? null,
+    });
+  }
+}
+
+function parseTokenExpiresAtMs(
+  tokenExpiresAt: string | null | undefined
+): number | null {
+  if (!tokenExpiresAt) return null;
+  const ms = new Date(tokenExpiresAt).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function formatTokenExpiresAt(expiresInSeconds?: number): string | null {
+  if (!expiresInSeconds) return null;
+  return new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+}
+
+async function getOrCreateRecord(
+  companyId: string
+): Promise<WhatsAppConnectionRecord> {
+  const existing = await connectionRepository.get(companyId);
+  if (existing) return existing;
+  return {
+    companyId,
+    wabaId: null,
+    phoneNumberId: null,
+    phoneNumber: null,
+    accessToken: null,
     tokenExpiresAt: null,
     lastWebhookAt: null,
     lastError: null,
     stateOverride: null,
-    ...initial,
   };
 }
 
@@ -126,18 +179,41 @@ export function maskPhone(phone: string | null | undefined): string | null {
   return `+${digits.slice(0, 2)} ${digits.slice(2, 5)} **** ${digits.slice(-3)}`;
 }
 
-export function recordWebhookPing(timestamp = new Date().toISOString()) {
-  connectionStore.lastWebhookAt = timestamp;
+export async function recordWebhookPing(
+  timestamp = new Date().toISOString(),
+  companyId?: string
+): Promise<void> {
+  const cid = resolveCompanyId(companyId);
+  const record = await connectionRepository.get(cid);
+  if (!record) return;
+  await connectionRepository.upsert({
+    ...record,
+    lastWebhookAt: timestamp,
+  });
 }
 
-export function recordConnectionError(sanitizedError: string) {
-  connectionStore.lastError = sanitizedError;
-  connectionStore.stateOverride = "ERROR";
+export async function recordConnectionError(
+  sanitizedError: string,
+  companyId?: string
+): Promise<void> {
+  const cid = resolveCompanyId(companyId);
+  const base = await getOrCreateRecord(cid);
+  await connectionRepository.upsert({
+    ...base,
+    lastError: sanitizedError,
+    stateOverride: "ERROR",
+  });
 }
 
-export function clearConnectionError() {
-  connectionStore.lastError = null;
-  connectionStore.stateOverride = null;
+export async function clearConnectionError(companyId?: string): Promise<void> {
+  const cid = resolveCompanyId(companyId);
+  const record = await connectionRepository.get(cid);
+  if (!record) return;
+  await connectionRepository.upsert({
+    ...record,
+    lastError: null,
+    stateOverride: null,
+  });
 }
 
 export function computeWebhookHealth(
@@ -165,33 +241,31 @@ export function computeTokenHealth(
   return "valid";
 }
 
-export function getWhatsAppConnectionStatus(): WhatsAppConnectionStatusPayload {
-  const wabaId = connectionStore.wabaId || process.env.WHATSAPP_WABA_ID || null;
-  const phoneNumberId =
-    connectionStore.phoneNumberId ||
-    process.env.WHATSAPP_PHONE_NUMBER_ID ||
-    null;
-  const phoneNumber =
-    connectionStore.phoneNumber || process.env.WHATSAPP_PHONE_NUMBER || null;
-  const accessToken =
-    connectionStore.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || null;
+function buildStatusFromRecord(
+  record: WhatsAppConnectionRecord | null
+): WhatsAppConnectionStatusPayload {
+  const wabaId = record?.wabaId ?? null;
+  const phoneNumberId = record?.phoneNumberId ?? null;
+  const phoneNumber = record?.phoneNumber ?? null;
+  const accessToken = record?.accessToken ?? null;
+  const lastWebhookAt = record?.lastWebhookAt ?? null;
+  const lastError = record?.lastError ?? null;
+  const stateOverride = record?.stateOverride ?? null;
+  const tokenExpiresAtMs = parseTokenExpiresAtMs(record?.tokenExpiresAt);
 
-  const webhookHealth = computeWebhookHealth(connectionStore.lastWebhookAt);
+  const webhookHealth = computeWebhookHealth(lastWebhookAt);
   const tokenHealth = computeTokenHealth(
     accessToken,
-    connectionStore.tokenExpiresAt,
-    connectionStore.stateOverride
+    tokenExpiresAtMs,
+    stateOverride
   );
 
   let status: WhatsAppConnectionState = "NOT_CONNECTED";
-  if (connectionStore.stateOverride) {
-    status = connectionStore.stateOverride;
+  if (stateOverride) {
+    status = stateOverride;
   } else if (tokenHealth === "reauth_required" || tokenHealth === "expired") {
     status = accessToken ? "REAUTHORIZATION_REQUIRED" : "NOT_CONNECTED";
   } else if (phoneNumberId && accessToken) {
-    // CONNECTED is only reached when real credentials (not mocks) are present.
-    // The mock fallback has been removed; credentials come from env or a real
-    // Embedded Signup exchange, so this state is authoritative.
     status = "CONNECTED";
   }
 
@@ -201,12 +275,20 @@ export function getWhatsAppConnectionStatus(): WhatsAppConnectionStatusPayload {
     wabaIdMasked: maskId(wabaId),
     phoneNumberMasked: maskPhone(phoneNumber),
     phoneNumberIdMasked: maskId(phoneNumberId),
-    lastWebhookAt: connectionStore.lastWebhookAt,
+    lastWebhookAt,
     webhookHealth,
     tokenHealth,
-    connectionErrorSummary: connectionStore.lastError,
+    connectionErrorSummary: lastError,
     canReconnect: true,
   };
+}
+
+export async function getWhatsAppConnectionStatus(
+  companyId?: string
+): Promise<WhatsAppConnectionStatusPayload> {
+  const cid = resolveCompanyId(companyId);
+  const record = await connectionRepository.get(cid);
+  return buildStatusFromRecord(record);
 }
 
 // ─── Graph API helpers (internal) ─────────────────────────────────────────
@@ -234,7 +316,7 @@ async function graphGet(
     res = await fetchImpl(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-  } catch (networkErr) {
+  } catch {
     throw new InboxServiceError(
       "service_unavailable",
       "Meta Graph API network error during ownership verification"
@@ -303,14 +385,32 @@ async function graphDelete(
   accessToken: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
+  let res: Response;
   try {
-    await fetchImpl(url, {
+    res = await fetchImpl(url, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    // Ignore errors on revoke — we're disconnecting regardless.
   } catch {
-    // Best-effort: network errors during disconnect are non-fatal.
+    throw new InboxServiceError(
+      "service_unavailable",
+      "Meta Graph API network error during app deregistration"
+    );
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await res.json()) as Record<string, unknown>;
+  } catch {
+    body = {};
+  }
+
+  if (!res.ok || body.error) {
+    const sanitized = sanitizeProviderError(body);
+    throw new InboxServiceError(
+      "service_unavailable",
+      `Meta subscribed_apps deregistration failed: ${sanitized}`
+    );
   }
 }
 
@@ -364,30 +464,30 @@ export async function verifyPhoneNumberIdOwnership(
 }
 
 /**
- * Registers the app to receive webhooks for this phone number.
- * POST /{phone_number_id}/subscribed_apps
+ * Registers the app to receive webhooks for this WABA.
+ * POST /{wabaId}/subscribed_apps
  */
 export async function registerSubscribedApps(
   accessToken: string,
-  phoneNumberId: string,
+  wabaId: string,
   version: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
-  const url = `https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}/subscribed_apps`;
+  const url = `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/subscribed_apps`;
   await graphPost(url, accessToken, fetchImpl);
 }
 
 /**
- * Deregisters the app from webhook delivery for this phone number.
- * DELETE /{phone_number_id}/subscribed_apps (best-effort).
+ * Deregisters the app from webhook delivery for this WABA.
+ * DELETE /{wabaId}/subscribed_apps
  */
 export async function deregisterSubscribedApps(
   accessToken: string,
-  phoneNumberId: string,
+  wabaId: string,
   version: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
-  const url = `https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}/subscribed_apps`;
+  const url = `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/subscribed_apps`;
   await graphDelete(url, accessToken, fetchImpl);
 }
 
@@ -444,7 +544,7 @@ async function defaultEmbeddedSignupCodeExchange(
   let res: Response;
   try {
     res = await fetchImpl(url);
-  } catch (networkErr) {
+  } catch {
     throw new InboxServiceError(
       "service_unavailable",
       "Network error during Meta authorization code exchange"
@@ -479,7 +579,6 @@ async function defaultEmbeddedSignupCodeExchange(
 
   return {
     accessToken,
-    // wabaId and phoneNumberId come from the client callback (verified separately).
     wabaId: input.wabaId,
     phoneNumberId: input.phoneNumberId,
     phoneNumber: typeof data.phone_number === "string" ? data.phone_number : undefined,
@@ -495,11 +594,11 @@ async function defaultEmbeddedSignupCodeExchange(
  * The nonce is single-use and expires after 15 minutes.
  * Returns the nonce to embed in the Facebook Login SDK options.
  */
-export function generateEmbeddedSignupState(
+export async function generateEmbeddedSignupState(
   companyId: string,
   actorId: string,
-  stateStore: OAuthStateStore = memoryOAuthStateStore
-): string {
+  stateStore: OAuthStateStore = oauthStateStore
+): Promise<string> {
   return stateStore.create(companyId, actorId);
 }
 
@@ -508,6 +607,7 @@ export function generateEmbeddedSignupState(
 export type EmbeddedSignupOnboardingDeps = {
   exchangePort?: EmbeddedSignupCodeExchangePort;
   stateStore?: OAuthStateStore;
+  connectionRepository?: WhatsAppConnectionRepository;
   /** Injected fetch for unit tests. */
   fetchImpl?: typeof fetch;
   /** Skip Graph API ownership verification (tests only). */
@@ -570,9 +670,15 @@ export async function processEmbeddedSignupOnboarding(
     );
   }
 
+  const stateStore = deps.stateStore ?? oauthStateStore;
+  const repo = deps.connectionRepository ?? connectionRepository;
+
   // ── Step 1: Validate CSRF state nonce ──
-  const stateStore = deps.stateStore ?? memoryOAuthStateStore;
-  const stateResult = stateStore.consume(input.state, input.companyId);
+  const stateResult = await stateStore.consume(
+    input.state,
+    input.companyId,
+    input.actor.id
+  );
   if (!stateResult.ok) {
     throw new InboxServiceError(
       "invalid_argument",
@@ -623,35 +729,32 @@ export async function processEmbeddedSignupOnboarding(
     if (!deps.skipOwnershipVerification) {
       await registerSubscribedApps(
         result.accessToken,
-        result.phoneNumberId,
+        result.wabaId,
         version,
         deps.fetchImpl
       );
     }
 
     // ── Step 6: Persist (scoped to companyId) ──
-    connectionStore.companyId = input.companyId;
-    connectionStore.wabaId = result.wabaId;
-    connectionStore.phoneNumberId = result.phoneNumberId;
-    connectionStore.accessToken = result.accessToken;
-    if (result.phoneNumber) connectionStore.phoneNumber = result.phoneNumber;
-    if (result.expiresInSeconds) {
-      connectionStore.tokenExpiresAt =
-        Date.now() + result.expiresInSeconds * 1000;
-    } else {
-      connectionStore.tokenExpiresAt = null;
-    }
-    connectionStore.lastError = null;
-    connectionStore.stateOverride = null;
+    await repo.upsert({
+      companyId: input.companyId,
+      wabaId: result.wabaId,
+      phoneNumberId: result.phoneNumberId,
+      phoneNumber: result.phoneNumber ?? null,
+      accessToken: result.accessToken,
+      tokenExpiresAt: formatTokenExpiresAt(result.expiresInSeconds),
+      lastWebhookAt: null,
+      lastError: null,
+      stateOverride: null,
+    });
 
-    return getWhatsAppConnectionStatus();
+    return getWhatsAppConnectionStatus(input.companyId);
   } catch (err) {
     if (err instanceof InboxServiceError) throw err;
-    // Sanitize unexpected errors before surfacing.
     const sanitized = sanitizeProviderError(
       err instanceof Error ? err.message : String(err)
     );
-    recordConnectionError(sanitized);
+    await recordConnectionError(sanitized, input.companyId);
     throw new InboxServiceError(
       "service_unavailable",
       `WhatsApp onboarding failed: ${sanitized}`
@@ -665,13 +768,15 @@ export type DisconnectDeps = {
   fetchImpl?: typeof fetch;
   /** Skip Meta API calls (tests only). */
   skipRevoke?: boolean;
+  connectionRepository?: WhatsAppConnectionRepository;
+  companyId?: string;
 };
 
 /**
  * Revokes the current connection:
- *   1. Deregisters subscribed_apps (best-effort — never blocks disconnect).
- *   2. Clears all persisted credentials.
- *   3. Returns updated (NOT_CONNECTED) status.
+ *   1. Deregisters subscribed_apps on the tenant WABA (best-effort).
+ *   2. Clears all persisted credentials via repository.
+ *   3. Returns updated (NOT_CONNECTED) status, with revokeWarning if Meta revoke failed.
  */
 export async function disconnectWhatsApp(
   actor: RequestActor,
@@ -684,39 +789,32 @@ export async function disconnectWhatsApp(
     );
   }
 
-  // Best-effort revoke: deregister from Meta webhook delivery.
-  if (!deps.skipRevoke) {
-    const accessToken =
-      connectionStore.accessToken ||
-      process.env.WHATSAPP_ACCESS_TOKEN ||
-      null;
-    const phoneNumberId =
-      connectionStore.phoneNumberId ||
-      process.env.WHATSAPP_PHONE_NUMBER_ID ||
-      null;
+  const cid = resolveCompanyId(deps.companyId);
+  const repo = deps.connectionRepository ?? connectionRepository;
+  const record = await repo.get(cid);
+  let revokeWarning: string | null = null;
 
-    if (accessToken && phoneNumberId) {
-      const version = resolveGraphVersion();
-      // Fire-and-forget: errors are intentionally swallowed.
+  if (!deps.skipRevoke && record?.accessToken && record?.wabaId) {
+    const version = resolveGraphVersion();
+    try {
       await deregisterSubscribedApps(
-        accessToken,
-        phoneNumberId,
+        record.accessToken,
+        record.wabaId,
         version,
         deps.fetchImpl
-      ).catch(() => {
-        // Non-fatal: Meta revoke failure must not prevent local disconnect.
-      });
+      );
+    } catch (err) {
+      revokeWarning =
+        err instanceof InboxServiceError
+          ? err.message
+          : sanitizeProviderError(
+              err instanceof Error ? err.message : String(err)
+            );
     }
   }
 
-  connectionStore.companyId = null;
-  connectionStore.accessToken = null;
-  connectionStore.phoneNumberId = null;
-  connectionStore.wabaId = null;
-  connectionStore.phoneNumber = null;
-  connectionStore.tokenExpiresAt = null;
-  connectionStore.stateOverride = "NOT_CONNECTED";
-  connectionStore.lastError = null;
+  await repo.clear(cid);
 
-  return getWhatsAppConnectionStatus();
+  const status = await getWhatsAppConnectionStatus(cid);
+  return revokeWarning ? { ...status, revokeWarning } : status;
 }

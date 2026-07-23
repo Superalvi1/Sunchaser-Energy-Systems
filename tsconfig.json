@@ -33,8 +33,6 @@
     "sunchaser-crm",
     "backups",
     "node-env",
-    "**/*.test.ts",
-    "**/*.test.tsx",
     "**/roofStudio/**",
     "src/components/roofStudio/**",
     "server/inventory/**",
@@ -42,7 +40,6 @@
     "server/designSessions/**",
     "server/documents/**",
     "**/SalesTeamApp.tsx",
-    "**/WhatsAppModule.tsx",
     "**/clientPortalTracker.ts",
     "**/demoUserCleanup.ts",
     "**/designStudioMapProviders.ts",
@@ -54,6 +51,17 @@
     "**/invoiceFromLead.ts",
     "**/projectCompletion.ts",
     "**/projectDelivery.ts",
-    "**/googleMapsProvider.ts"
+    "**/googleMapsProvider.ts",
+    // Pre-existing unrelated test debt (outside RC-1.2.4B WhatsApp/inbox scope).
+    // WhatsApp + inbox tests remain typechecked; *.test.ts global exclude was removed.
+    "server/solar/**/*.test.ts",
+    "server/ai/**/*.test.ts",
+    "server/workflow/**/*.test.ts",
+    "server/knowledge/**/*.test.ts",
+    "server/ownership/**/*.test.ts",
+    "server/middleware/**/*.test.ts",
+    "server/publicLeads/**/*.test.ts",
+    "src/lib/**/*.test.ts",
+    "src/services/**/*.test.ts"
   ]
 }

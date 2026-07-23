@@ -1,6 +1,15 @@
 import { AlertTriangle, CheckCircle2, Phone, RefreshCw, Shield, Smartphone, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
-import { fetchWhatsAppConnectionStatus, submitEmbeddedSignup } from "../api/inboxApi";
+import { useEffect, useRef, useState } from "react";
+import {
+  disconnectWhatsAppConnection,
+  fetchEmbeddedSignupState,
+  fetchWhatsAppConnectionStatus,
+  submitEmbeddedSignup,
+} from "../api/inboxApi";
+import {
+  launchMetaEmbeddedSignup,
+  sanitizeEmbeddedSignupError,
+} from "../lib/metaEmbeddedSignup";
 import type { WhatsAppConnectionStatusPayload } from "../types";
 
 type WhatsAppConnectionPanelProps = {
@@ -15,7 +24,10 @@ export default function WhatsAppConnectionPanel({
   const [status, setStatus] = useState<WhatsAppConnectionStatusPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Attempt-scoped OAuth state — never localStorage. */
+  const activeStateRef = useRef<string | null>(null);
 
   const loadStatus = async () => {
     try {
@@ -34,29 +46,51 @@ export default function WhatsAppConnectionPanel({
     void loadStatus();
   }, []);
 
-  const handleLaunchEmbeddedSignup = () => {
+  const handleLaunchEmbeddedSignup = async () => {
     setConnecting(true);
     setError(null);
+    activeStateRef.current = null;
 
-    // Meta Embedded Signup SDK / Popup callback simulation
-    const simulatedCode = `meta_oauth_code_coexistence_${Date.now()}`;
-    const simulatedWabaId = "123456789098765";
-    const simulatedPhoneId = "987654321012345";
+    try {
+      const { state } = await fetchEmbeddedSignupState();
+      if (!state || !String(state).trim()) {
+        throw new Error("OAuth state was not issued by the server");
+      }
+      activeStateRef.current = state;
 
-    // Call server-side token exchange endpoint
-    submitEmbeddedSignup({
-      code: simulatedCode,
-      wabaId: simulatedWabaId,
-      phoneNumberId: simulatedPhoneId,
-    })
-      .then((updated) => {
-        setStatus(updated);
-        setConnecting(false);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Embedded Signup onboarding failed");
-        setConnecting(false);
+      const signup = await launchMetaEmbeddedSignup();
+
+      const attemptState = activeStateRef.current;
+      if (!attemptState) {
+        throw new Error("OAuth state for this attempt is no longer available");
+      }
+
+      const updated = await submitEmbeddedSignup({
+        code: signup.code,
+        wabaId: signup.wabaId,
+        phoneNumberId: signup.phoneNumberId,
+        state: attemptState,
       });
+      setStatus(updated);
+    } catch (err) {
+      setError(sanitizeEmbeddedSignupError(err));
+    } finally {
+      activeStateRef.current = null;
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    setError(null);
+    try {
+      const updated = await disconnectWhatsAppConnection();
+      setStatus(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Disconnect failed");
+    } finally {
+      setDisconnecting(false);
+    }
   };
 
   if (!isAdmin) {
@@ -138,7 +172,12 @@ export default function WhatsAppConnectionPanel({
             </div>
           </div>
 
-          {/* Masked Safe Identifiers */}
+          {status.revokeWarning ? (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
+              {status.revokeWarning}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
             <div className="rounded-lg border border-[var(--inbox-border)] p-2.5">
               <div className="text-[11px] text-[var(--inbox-muted)]">WABA Account ID</div>
@@ -172,11 +211,11 @@ export default function WhatsAppConnectionPanel({
             Secrets & Access Tokens are securely stored server-side and redacted.
           </div>
 
-          <div className="pt-2 border-t border-[var(--inbox-border)]">
+          <div className="pt-2 border-t border-[var(--inbox-border)] space-y-2">
             <button
               type="button"
-              disabled={connecting}
-              onClick={handleLaunchEmbeddedSignup}
+              disabled={connecting || disconnecting}
+              onClick={() => void handleLaunchEmbeddedSignup()}
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 shadow-md"
             >
               {connecting ? (
@@ -191,6 +230,16 @@ export default function WhatsAppConnectionPanel({
                 </>
               )}
             </button>
+            {status.status === "CONNECTED" || status.status === "REAUTHORIZATION_REQUIRED" ? (
+              <button
+                type="button"
+                disabled={connecting || disconnecting}
+                onClick={() => void handleDisconnect()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)] disabled:opacity-50"
+              >
+                {disconnecting ? "Disconnecting..." : "Disconnect WhatsApp"}
+              </button>
+            ) : null}
             <p className="mt-1.5 text-center text-[10px] text-[var(--inbox-muted)]">
               Launches Meta Embedded Signup in Coexistence mode. The WhatsApp Business iPhone app remains active.
             </p>

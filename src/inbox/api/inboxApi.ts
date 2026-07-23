@@ -253,14 +253,31 @@ export async function fetchWhatsAppConnectionStatus(): Promise<WhatsAppConnectio
   return data;
 }
 
+export async function fetchEmbeddedSignupState(): Promise<{ state: string }> {
+  const { data } = await inboxRequest<{ state: string }>(
+    "/api/inbox/admin/whatsapp/embedded-signup/state",
+    { method: "POST", body: JSON.stringify({}) }
+  );
+  return data;
+}
+
 export async function submitEmbeddedSignup(input: {
   code: string;
-  wabaId?: string;
-  phoneNumberId?: string;
+  wabaId: string;
+  phoneNumberId: string;
+  state: string;
 }): Promise<WhatsAppConnectionStatusPayload> {
   const { data } = await inboxRequest<WhatsAppConnectionStatusPayload>(
     "/api/inbox/admin/whatsapp/embedded-signup",
     { method: "POST", body: JSON.stringify(input) }
+  );
+  return data;
+}
+
+export async function disconnectWhatsAppConnection(): Promise<WhatsAppConnectionStatusPayload> {
+  const { data } = await inboxRequest<WhatsAppConnectionStatusPayload>(
+    "/api/inbox/admin/whatsapp/disconnect",
+    { method: "POST", body: JSON.stringify({}) }
   );
   return data;
 }

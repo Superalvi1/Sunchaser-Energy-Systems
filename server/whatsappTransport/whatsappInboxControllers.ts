@@ -421,7 +421,7 @@ export function createInboxControllers(
 
     async getConnectionStatus(req: Request, res: Response) {
       try {
-        const payload = getWhatsAppConnectionStatus();
+        const payload = await getWhatsAppConnectionStatus();
         return inboxOk(res, payload);
       } catch (err) {
         return sendInboxError(res, err);
@@ -439,7 +439,7 @@ export function createInboxControllers(
           return inboxFail(res, 403, "forbidden", "Only Admin users can initiate WhatsApp onboarding.");
         }
         const companyId = DEFAULT_COMPANY_ID;
-        const nonce = generateEmbeddedSignupState(companyId, actor.id);
+        const nonce = await generateEmbeddedSignupState(companyId, actor.id);
         return inboxOk(res, { state: nonce });
       } catch (err) {
         return sendInboxError(res, err);

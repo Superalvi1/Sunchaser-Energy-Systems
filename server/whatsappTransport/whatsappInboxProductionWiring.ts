@@ -53,6 +53,12 @@ import {
   createDefaultWhatsAppRepository,
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
+import { createDefaultWhatsAppConnectionRepository } from "./whatsappConnectionRepository.ts";
+import { createDefaultOAuthStateStore } from "./whatsappOAuthStateStore.ts";
+import {
+  setWhatsAppConnectionRepository,
+  setWhatsAppOAuthStateStore,
+} from "./whatsappConnectionService.ts";
 
 export type ProductionInboxWiringDeps = {
   resolveLocalDb: () => Database;
@@ -60,6 +66,32 @@ export type ProductionInboxWiringDeps = {
   /** Optional override for tests; production uses createDefaultWhatsAppRepository(). */
   whatsappRepo?: WhatsAppRepository;
 };
+
+/**
+ * Wire Supabase-backed WhatsApp connection + OAuth state stores when active.
+ * Production fails closed without Supabase + encryption key.
+ * Non-production without those keeps in-memory module defaults (tests).
+ */
+export function wireWhatsAppPersistentConnectionStores(): void {
+  if (!isSupabaseActive()) {
+    if (process.env.NODE_ENV === "production") {
+      throw infrastructureError(
+        "WhatsApp connection persistence requires an active Supabase backend"
+      );
+    }
+    return;
+  }
+  if (!String(process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY || "").trim()) {
+    if (process.env.NODE_ENV === "production") {
+      throw infrastructureError(
+        "WHATSAPP_TOKEN_ENCRYPTION_KEY is required for WhatsApp connection persistence"
+      );
+    }
+    return;
+  }
+  setWhatsAppConnectionRepository(createDefaultWhatsAppConnectionRepository());
+  setWhatsAppOAuthStateStore(createDefaultOAuthStateStore());
+}
 
 function infrastructureError(message: string): InboxServiceError {
   return new InboxServiceError("service_unavailable", message);
@@ -255,6 +287,8 @@ async function requireConversationContactPhone(
 export function buildProductionInboxServiceOptions(
   deps: ProductionInboxWiringDeps
 ): CreateWhatsAppInboxServicesOptions {
+  wireWhatsAppPersistentConnectionStores();
+
   let whatsappRepo: WhatsAppRepository | null = deps.whatsappRepo ?? null;
   const getWhatsAppRepo = (): WhatsAppRepository => {
     if (!whatsappRepo) {
