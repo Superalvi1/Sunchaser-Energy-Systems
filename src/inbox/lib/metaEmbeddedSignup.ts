@@ -59,78 +59,114 @@ export type MetaEmbeddedSignupErrorCode =
   | "missing_phone_number_id"
   | "login_error";
 
+export type MetaEmbeddedSignupProviderError = {
+  message?: string;
+  code?: string | number;
+  error_subcode?: string | number;
+  fbtrace_id?: string;
+  httpStatus?: number;
+};
+
 export class MetaEmbeddedSignupError extends Error {
   readonly code: MetaEmbeddedSignupErrorCode;
+  readonly providerError?: MetaEmbeddedSignupProviderError;
 
-  constructor(code: MetaEmbeddedSignupErrorCode, message: string) {
+  constructor(
+    code: MetaEmbeddedSignupErrorCode,
+    message: string,
+    providerError?: MetaEmbeddedSignupProviderError
+  ) {
     super(message);
     this.name = "MetaEmbeddedSignupError";
     this.code = code;
+    this.providerError = providerError;
   }
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  if (value == null || typeof value !== "object") return null;
+  if (value instanceof Error) return null;
+  return value as Record<string, unknown>;
+}
+
+function parseProviderHttpStatus(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return undefined;
+}
+
+/**
+ * Extract only allowlisted Meta provider-error fields.
+ * Never copies app codes/messages, OAuth secrets, asset IDs, or raw payloads.
+ */
+export function extractEmbeddedSignupProviderError(
+  source: unknown
+): MetaEmbeddedSignupProviderError | undefined {
+  if (source instanceof MetaEmbeddedSignupError) {
+    return source.providerError;
+  }
+
+  const root = asPlainRecord(source);
+  if (!root) return undefined;
+
+  // Only inspect known Meta envelopes; never recurse into authResponse / tokens.
+  const envelopes = [root, asPlainRecord(root.error), asPlainRecord(root.data)].filter(
+    (v): v is Record<string, unknown> => v != null
+  );
+
+  const providerError: MetaEmbeddedSignupProviderError = {};
+
+  for (const envelope of envelopes) {
+    if (providerError.message == null) {
+      const message = envelope.error_message ?? envelope.message;
+      if (typeof message === "string" && message.trim()) {
+        providerError.message = message.trim();
+      }
+    }
+    if (providerError.code == null) {
+      const code = envelope.error_code ?? envelope.code;
+      if (typeof code === "number" && Number.isFinite(code)) {
+        providerError.code = code;
+      } else if (typeof code === "string" && code.trim()) {
+        providerError.code = code.trim();
+      }
+    }
+    if (providerError.error_subcode == null) {
+      const subcode = envelope.error_subcode;
+      if (typeof subcode === "number" && Number.isFinite(subcode)) {
+        providerError.error_subcode = subcode;
+      } else if (typeof subcode === "string" && subcode.trim()) {
+        providerError.error_subcode = subcode.trim();
+      }
+    }
+    if (providerError.fbtrace_id == null) {
+      const traceId = envelope.fbtrace_id;
+      if (typeof traceId === "string" && traceId.trim()) {
+        providerError.fbtrace_id = traceId.trim();
+      }
+    }
+    if (providerError.httpStatus == null) {
+      const httpStatus = parseProviderHttpStatus(envelope.httpStatus);
+      if (httpStatus != null) providerError.httpStatus = httpStatus;
+    }
+  }
+
+  return Object.keys(providerError).length > 0 ? providerError : undefined;
 }
 
 /**
  * TEMPORARY DEBUG — remove after Meta Embedded Signup failure investigation.
- * Logs full error shape without changing control flow.
+ * Logs only phase + allowlisted providerError. Never logs secrets/payloads/stacks.
  */
 export function logMetaEmbeddedSignupDebug(
   phase: string,
-  err: unknown,
-  extras?: { sdkResponse?: unknown; raw?: unknown }
+  providerError?: MetaEmbeddedSignupProviderError
 ): void {
-  const asRecord = (value: unknown): Record<string, unknown> | null =>
-    value != null && typeof value === "object"
-      ? (value as Record<string, unknown>)
-      : null;
-
-  const errRecord = asRecord(err);
-  const nestedError = asRecord(errRecord?.error);
-  const providerRecord = asRecord(errRecord?.providerError);
-  const sdkRecord = asRecord(extras?.sdkResponse);
-  const sdkNestedError = asRecord(sdkRecord?.error);
-  const sdkData = asRecord(sdkRecord?.data);
-  const fieldSources = [
-    nestedError,
-    providerRecord,
-    sdkNestedError,
-    sdkData,
-    sdkRecord,
-    errRecord,
-  ].filter((v): v is Record<string, unknown> => v != null);
-
-  const pick = (...keys: string[]): unknown => {
-    for (const source of fieldSources) {
-      for (const key of keys) {
-        const value = source[key];
-        if (value !== undefined && value !== null && value !== "") return value;
-      }
-    }
-    return undefined;
-  };
-
-  const message =
-    (pick("message", "error_message") as string | undefined) ||
-    (err instanceof Error ? err.message : undefined);
-
-  // Prefer Meta/provider numeric/string codes when present; app code remains on `error`.
-  const code =
-    pick("error_code", "code") ??
-    (err instanceof MetaEmbeddedSignupError ? err.code : undefined);
-
-  const error_subcode = pick("error_subcode");
-  const fbtrace_id = pick("fbtrace_id");
-  const stack = err instanceof Error ? err.stack : undefined;
-
   console.error("[MetaEmbeddedSignup DEBUG]", {
     phase,
-    error: err,
-    message,
-    code,
-    error_subcode,
-    fbtrace_id,
-    stack,
-    sdkResponse: extras?.sdkResponse ?? null,
-    raw: extras?.raw ?? null,
+    providerError,
   });
 }
 
@@ -202,7 +238,11 @@ export type ParsedEmbeddedSignupMessage =
       phoneNumberId: string;
     }
   | { status: "cancelled"; event: string }
-  | { status: "error"; event: string }
+  | {
+      status: "error";
+      event: string;
+      providerError?: MetaEmbeddedSignupProviderError;
+    }
   | { status: "missing_phone"; event: string; wabaId: string }
   | { status: "malformed" }
   | null;
@@ -249,7 +289,13 @@ export function parseEmbeddedSignupMessageData(
     return { status: "cancelled", event: event || "CANCEL" };
   }
   if (eventKey === "ERROR") {
-    return { status: "error", event: event || "ERROR" };
+    // Extract only from Meta `data` allowlisted fields — never the full event envelope.
+    const providerError = extractEmbeddedSignupProviderError(data);
+    return {
+      status: "error",
+      event: event || "ERROR",
+      ...(providerError ? { providerError } : {}),
+    };
   }
 
   if (eventKey === "FINISH_ONLY_WABA") {
@@ -354,8 +400,8 @@ export function loadFacebookSdk(
       "sdk_load_failed",
       "Facebook SDK requires a browser"
     );
-    // TEMPORARY DEBUG
-    logMetaEmbeddedSignupDebug("loadFacebookSdk.no_window", err);
+    // TEMPORARY DEBUG — no Meta provider fields on local SDK failures.
+    logMetaEmbeddedSignupDebug("loadFacebookSdk.no_window");
     return Promise.reject(err);
   }
 
@@ -371,8 +417,8 @@ export function loadFacebookSdk(
       "sdk_config_conflict",
       "Meta SDK is already loading with a different app configuration. Please refresh and try again."
     );
-    // TEMPORARY DEBUG
-    logMetaEmbeddedSignupDebug("loadFacebookSdk.sdk_config_conflict", err);
+    // TEMPORARY DEBUG — no Meta provider fields on local SDK failures.
+    logMetaEmbeddedSignupDebug("loadFacebookSdk.sdk_config_conflict");
     return Promise.reject(err);
   }
 
@@ -393,16 +439,15 @@ export function loadFacebookSdk(
         sdkLoadPromise = null;
         sdkLoadKey = null;
         resolve(ready);
-      } catch (caught) {
+      } catch {
         sdkLoadPromise = null;
         sdkLoadKey = null;
-        // TEMPORARY DEBUG — log original SDK init failure before wrapping.
-        logMetaEmbeddedSignupDebug("loadFacebookSdk.initFbOnce.catch", caught);
         const wrapped = new MetaEmbeddedSignupError(
           "sdk_load_failed",
           "Failed to load the Facebook JavaScript SDK"
         );
-        logMetaEmbeddedSignupDebug("loadFacebookSdk.initFbOnce.reject", wrapped);
+        // TEMPORARY DEBUG — no Meta provider fields on local SDK failures.
+        logMetaEmbeddedSignupDebug("loadFacebookSdk.initFbOnce.reject");
         reject(wrapped);
       }
     };
@@ -414,8 +459,8 @@ export function loadFacebookSdk(
       sdkLoadPromise = null;
       sdkLoadKey = null;
       const wrapped = new MetaEmbeddedSignupError("sdk_load_failed", message);
-      // TEMPORARY DEBUG — log SDK load rejection before reject.
-      logMetaEmbeddedSignupDebug("loadFacebookSdk.settleFail", wrapped);
+      // TEMPORARY DEBUG — no Meta provider fields on local SDK failures.
+      logMetaEmbeddedSignupDebug("loadFacebookSdk.settleFail");
       reject(wrapped);
     };
 
@@ -510,11 +555,8 @@ export async function launchMetaEmbeddedSignup(
       "missing_state",
       "OAuth state is required for Embedded Signup"
     );
-    // TEMPORARY DEBUG — log before throw/reject path.
-    logMetaEmbeddedSignupDebug(
-      "launchMetaEmbeddedSignup.missing_state",
-      missingStateErr
-    );
+    // TEMPORARY DEBUG — local validation; no Meta provider fields.
+    logMetaEmbeddedSignupDebug("launchMetaEmbeddedSignup.missing_state");
     throw missingStateErr;
   }
 
@@ -565,18 +607,14 @@ export async function launchMetaEmbeddedSignup(
     });
   };
 
-  const settleErr = (
-    err: MetaEmbeddedSignupError,
-    debugExtras?: { sdkResponse?: unknown; raw?: unknown }
-  ) => {
+  const settleErr = (err: MetaEmbeddedSignupError) => {
     if (settled || activeAttempt !== attemptId) return;
     settled = true;
     cleanup();
-    // TEMPORARY DEBUG — log every launch rejection before rejectResult.
+    // TEMPORARY DEBUG — allowlisted providerError only (may be undefined).
     logMetaEmbeddedSignupDebug(
       "launchMetaEmbeddedSignup.settleErr",
-      err,
-      debugExtras
+      err.providerError
     );
     rejectResult(err);
   };
@@ -598,8 +636,7 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "cancelled",
           "Embedded Signup was cancelled or failed"
-        ),
-        { sdkResponse: event.data, raw: parsed }
+        )
       );
       return;
     }
@@ -608,9 +645,9 @@ export async function launchMetaEmbeddedSignup(
       settleErr(
         new MetaEmbeddedSignupError(
           "login_error",
-          "Embedded Signup reported an error from Meta"
-        ),
-        { sdkResponse: event.data, raw: parsed }
+          "Embedded Signup reported an error from Meta",
+          parsed.providerError
+        )
       );
       return;
     }
@@ -620,8 +657,7 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "missing_phone_number_id",
           "Embedded Signup completed without a phone number ID (FINISH_ONLY_WABA)"
-        ),
-        { sdkResponse: event.data, raw: parsed }
+        )
       );
       return;
     }
@@ -631,8 +667,7 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "malformed_payload",
           "Embedded Signup returned an invalid asset payload"
-        ),
-        { sdkResponse: event.data, raw: parsed }
+        )
       );
       return;
     }
@@ -666,14 +701,15 @@ export async function launchMetaEmbeddedSignup(
             !response.authResponse ||
             response.status === "unknown" ||
             response.status === "not_authorized";
+          const providerError = extractEmbeddedSignupProviderError(response);
           settleErr(
             new MetaEmbeddedSignupError(
               cancelled ? "cancelled" : "missing_code",
               cancelled
                 ? "Embedded Signup was cancelled"
-                : "Meta did not return an authorization code"
-            ),
-            { sdkResponse: response }
+                : "Meta did not return an authorization code",
+              providerError
+            )
           );
           return;
         }
@@ -695,14 +731,18 @@ export async function launchMetaEmbeddedSignup(
       }
     );
   } catch (caught) {
-    // TEMPORARY DEBUG — log original FB.login throw before wrapping.
-    logMetaEmbeddedSignupDebug("launchMetaEmbeddedSignup.fb.login.catch", caught);
+    const providerError = extractEmbeddedSignupProviderError(caught);
+    // TEMPORARY DEBUG — allowlisted provider fields only before wrapping.
+    logMetaEmbeddedSignupDebug(
+      "launchMetaEmbeddedSignup.fb.login.catch",
+      providerError
+    );
     settleErr(
       new MetaEmbeddedSignupError(
         "login_error",
-        "Facebook Login failed to start Embedded Signup"
-      ),
-      { sdkResponse: caught }
+        "Facebook Login failed to start Embedded Signup",
+        providerError
+      )
     );
   }
 

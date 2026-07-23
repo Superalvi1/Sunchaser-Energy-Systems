@@ -8,9 +8,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { transformWithEsbuild } from "vite";
 import {
+  extractEmbeddedSignupProviderError,
   isAllowedMetaMessageOrigin,
   launchMetaEmbeddedSignup,
   loadFacebookSdk,
+  logMetaEmbeddedSignupDebug,
   MetaEmbeddedSignupError,
   parseEmbeddedSignupMessageData,
   resetMetaSdkLoaderForTests,
@@ -27,6 +29,65 @@ async function test(name: string, fn: () => void | Promise<void>) {
   } catch (err) {
     failed += 1;
     console.error(`FAIL: ${name}`, err);
+  }
+}
+
+async function withCapturedConsoleError<T>(
+  fn: () => Promise<T> | T
+): Promise<{ result: T; logs: unknown[][] }> {
+  const logs: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
+  };
+  try {
+    const result = await fn();
+    return { result, logs };
+  } finally {
+    console.error = original;
+  }
+}
+
+function debugLogPayloads(logs: unknown[][]): Array<Record<string, unknown>> {
+  return logs
+    .filter(
+      (args) =>
+        args[0] === "[MetaEmbeddedSignup DEBUG]" &&
+        args[1] != null &&
+        typeof args[1] === "object"
+    )
+    .map((args) => args[1] as Record<string, unknown>);
+}
+
+function assertSafeDebugLogs(
+  logs: unknown[][],
+  forbiddenSnippets: string[]
+): void {
+  const serialized = logs
+    .map((args) =>
+      args
+        .map((arg) => {
+          try {
+            return typeof arg === "string" ? arg : JSON.stringify(arg);
+          } catch {
+            return String(arg);
+          }
+        })
+        .join(" ")
+    )
+    .join("\n");
+
+  for (const payload of debugLogPayloads(logs)) {
+    assert.deepEqual(Object.keys(payload).sort(), ["phase", "providerError"]);
+    assert.equal(typeof payload.phase, "string");
+  }
+
+  for (const snippet of forbiddenSnippets) {
+    assert.equal(
+      serialized.includes(snippet),
+      false,
+      `debug logs must not contain ${snippet}`
+    );
   }
 }
 
@@ -155,8 +216,65 @@ await test("CANCEL / ERROR classified before requiring asset IDs", () => {
       event: "ERROR",
       data: { error_message: "denied" },
     }),
+    {
+      status: "error",
+      event: "ERROR",
+      providerError: { message: "denied" },
+    }
+  );
+});
+
+await test("ERROR extracts allowlisted Meta providerError fields only", () => {
+  assert.deepEqual(
+    parseEmbeddedSignupMessageData({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: "ERROR",
+      data: {
+        message: "Meta denied onboarding",
+        code: 403,
+        error_subcode: 1885316,
+        fbtrace_id: "A1trace",
+        httpStatus: 200,
+        waba_id: "must-not-copy",
+        access_token: "must-not-copy",
+      },
+    }),
+    {
+      status: "error",
+      event: "ERROR",
+      providerError: {
+        message: "Meta denied onboarding",
+        code: 403,
+        error_subcode: 1885316,
+        fbtrace_id: "A1trace",
+        httpStatus: 200,
+      },
+    }
+  );
+});
+
+await test("providerError omitted when Meta supplied no allowlisted fields", () => {
+  assert.deepEqual(
+    parseEmbeddedSignupMessageData({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: "ERROR",
+      data: { waba_id: "waba-only", current_step: "x" },
+    }),
     { status: "error", event: "ERROR" }
   );
+  assert.equal(
+    extractEmbeddedSignupProviderError({
+      authResponse: { code: "oauth-code" },
+      status: "unknown",
+    }),
+    undefined
+  );
+  const appErr = new MetaEmbeddedSignupError(
+    "login_error",
+    "Embedded Signup reported an error from Meta"
+  );
+  assert.equal(extractEmbeddedSignupProviderError(appErr), undefined);
+  assert.notEqual(appErr.code, undefined);
 });
 
 await test("FINISH_ONLY_WABA is explicit missing_phone, incomplete FINISH is malformed", () => {
@@ -402,7 +520,7 @@ await test("E: ERROR without asset IDs returns sanitized provider error", async 
         type: "WA_EMBEDDED_SIGNUP",
         event: "ERROR",
         data: {
-          error_message: "denied EAAGabcdefghijklmnop",
+          error_message: "denied",
           error_code: "123",
         },
       });
@@ -423,8 +541,12 @@ await test("E: ERROR without asset IDs returns sanitized provider error", async 
   }
   assert.ok(caught instanceof MetaEmbeddedSignupError);
   assert.equal(caught.code, "login_error");
+  assert.deepEqual(caught.providerError, {
+    message: "denied",
+    code: "123",
+  });
   const sanitized = sanitizeEmbeddedSignupError(caught);
-  assert.ok(!sanitized.includes("EAAGabcdefghijklmnop"));
+  assert.equal(sanitized, "Embedded Signup reported an error from Meta");
   assert.equal(messageTarget.listenerCount(), 0);
 });
 
@@ -1233,6 +1355,251 @@ await test(
       assert.equal(fb.initCalls, 1);
     } finally {
       browser.restore();
+    }
+  }
+);
+
+await test(
+  "safe debug logs: full provider fields, optional absent, malformed, secrets excluded",
+  async () => {
+    const forbidden = [
+      "oauth-auth-code-SECRET",
+      "EAAGsecretTokenValue",
+      "oauth-state-SECRET",
+      "waba-SECRET-ID",
+      "phone-SECRET-ID",
+      "+15551212999",
+      "app-secret-SECRET",
+    ];
+
+    // Full allowlisted provider fields.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(
+          () =>
+            launchMetaEmbeddedSignup({
+              state: "oauth-debug-full",
+              config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+              fb: {
+                init() {},
+                login() {
+                  messageTarget.dispatch("https://www.facebook.com", {
+                    type: "WA_EMBEDDED_SIGNUP",
+                    event: "ERROR",
+                    data: {
+                      message: "Meta denied onboarding",
+                      code: 403,
+                      error_subcode: 1885316,
+                      fbtrace_id: "A1trace",
+                      httpStatus: 200,
+                      waba_id: "waba-SECRET-ID",
+                      phone_number_id: "phone-SECRET-ID",
+                      access_token: "EAAGsecretTokenValue",
+                      state: "oauth-state-SECRET",
+                      customer_phone: "+15551212999",
+                      app_secret: "app-secret-SECRET",
+                      auth_code: "oauth-auth-code-SECRET",
+                    },
+                  });
+                },
+              },
+              messageTarget: messageTarget as unknown as Window,
+              timeoutMs: 2000,
+            }),
+          (err: unknown) =>
+            err instanceof MetaEmbeddedSignupError &&
+            err.code === "login_error" &&
+            assert.deepEqual(err.providerError, {
+              message: "Meta denied onboarding",
+              code: 403,
+              error_subcode: 1885316,
+              fbtrace_id: "A1trace",
+              httpStatus: 200,
+            }) === undefined
+        );
+      });
+
+      const debugPayloads = debugLogPayloads(logs);
+      assert.ok(debugPayloads.length >= 1);
+      const settle = debugPayloads.find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.ok(settle);
+      assert.deepEqual(settle.providerError, {
+        message: "Meta denied onboarding",
+        code: 403,
+        error_subcode: 1885316,
+        fbtrace_id: "A1trace",
+        httpStatus: 200,
+      });
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // Optional fields absent — only message.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(
+          () =>
+            launchMetaEmbeddedSignup({
+              state: "oauth-debug-partial",
+              config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+              fb: {
+                init() {},
+                login() {
+                  messageTarget.dispatch("https://www.facebook.com", {
+                    type: "WA_EMBEDDED_SIGNUP",
+                    event: "ERROR",
+                    data: { error_message: "denied" },
+                  });
+                },
+              },
+              messageTarget: messageTarget as unknown as Window,
+              timeoutMs: 2000,
+            }),
+          (err: unknown) =>
+            err instanceof MetaEmbeddedSignupError &&
+            assert.deepEqual(err.providerError, { message: "denied" }) ===
+              undefined
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.deepEqual(settle?.providerError, { message: "denied" });
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // Malformed ERROR payload / no allowlisted fields → providerError omitted.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(
+          () =>
+            launchMetaEmbeddedSignup({
+              state: "oauth-debug-empty",
+              config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+              fb: {
+                init() {},
+                login() {
+                  messageTarget.dispatch("https://www.facebook.com", {
+                    type: "WA_EMBEDDED_SIGNUP",
+                    event: "ERROR",
+                    data: {
+                      waba_id: "waba-SECRET-ID",
+                      phone_number_id: "phone-SECRET-ID",
+                      access_token: "EAAGsecretTokenValue",
+                      state: "oauth-state-SECRET",
+                      customer_phone: "+15551212999",
+                      nonsense: { nested: true },
+                    },
+                  });
+                },
+              },
+              messageTarget: messageTarget as unknown as Window,
+              timeoutMs: 2000,
+            }),
+          (err: unknown) =>
+            err instanceof MetaEmbeddedSignupError &&
+            err.code === "login_error" &&
+            err.providerError === undefined
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.ok(settle);
+      assert.equal(settle.providerError, undefined);
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // FB.login response with secrets outside allowlisted error fields.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(
+          () =>
+            launchMetaEmbeddedSignup({
+              state: "oauth-debug-login-response",
+              config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+              fb: {
+                init() {},
+                login(
+                  cb: (r: {
+                    authResponse?: { code?: string } | null;
+                    status?: string;
+                    error?: Record<string, unknown>;
+                    access_token?: string;
+                  }) => void
+                ) {
+                  cb({
+                    authResponse: null,
+                    status: "unknown",
+                    access_token: "EAAGsecretTokenValue",
+                    error: {
+                      message: "graph denied",
+                      code: 403,
+                      error_subcode: 1,
+                      fbtrace_id: "trace-login",
+                      httpStatus: 200,
+                      waba_id: "waba-SECRET-ID",
+                      phone_number_id: "phone-SECRET-ID",
+                      state: "oauth-state-SECRET",
+                      customer_phone: "+15551212999",
+                      app_secret: "app-secret-SECRET",
+                    },
+                  });
+                },
+              },
+              messageTarget: messageTarget as unknown as Window,
+              timeoutMs: 2000,
+            }),
+          (err: unknown) =>
+            err instanceof MetaEmbeddedSignupError &&
+            assert.deepEqual(err.providerError, {
+              message: "graph denied",
+              code: 403,
+              error_subcode: 1,
+              fbtrace_id: "trace-login",
+              httpStatus: 200,
+            }) === undefined
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.deepEqual(settle?.providerError, {
+        message: "graph denied",
+        code: 403,
+        error_subcode: 1,
+        fbtrace_id: "trace-login",
+        httpStatus: 200,
+      });
+      assertSafeDebugLogs(logs, forbidden);
+      void messageTarget;
+    }
+
+    // Direct logger contract: exact allowlisted output only.
+    {
+      const { logs } = await withCapturedConsoleError(() => {
+        logMetaEmbeddedSignupDebug("unit.phase", {
+          message: "ok",
+          code: 1,
+        });
+        logMetaEmbeddedSignupDebug("unit.empty");
+      });
+      assert.deepEqual(logs, [
+        [
+          "[MetaEmbeddedSignup DEBUG]",
+          { phase: "unit.phase", providerError: { message: "ok", code: 1 } },
+        ],
+        [
+          "[MetaEmbeddedSignup DEBUG]",
+          { phase: "unit.empty", providerError: undefined },
+        ],
+      ]);
+      assertSafeDebugLogs(logs, forbidden);
     }
   }
 );

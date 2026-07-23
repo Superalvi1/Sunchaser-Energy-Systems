@@ -19,6 +19,7 @@ import {
   testWhatsAppConnection,
 } from "../api/inboxApi";
 import {
+  extractEmbeddedSignupProviderError,
   launchMetaEmbeddedSignup,
   logMetaEmbeddedSignupDebug,
   sanitizeEmbeddedSignupError,
@@ -89,8 +90,11 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
       });
       await load();
     } catch (err) {
-      // TEMPORARY DEBUG — log before sanitizing for UI.
-      logMetaEmbeddedSignupDebug("WhatsAppSetupPage.handleConnect.catch", err);
+      // TEMPORARY DEBUG — allowlisted providerError only before sanitizing for UI.
+      logMetaEmbeddedSignupDebug(
+        "WhatsAppSetupPage.handleConnect.catch",
+        extractEmbeddedSignupProviderError(err)
+      );
       setError(sanitizeEmbeddedSignupError(err));
     } finally {
       setBusy(null);
