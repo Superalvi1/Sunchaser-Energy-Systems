@@ -246,6 +246,180 @@ export function logMetaEmbeddedSignupDebug(
   });
 }
 
+/** Accepted WA_EMBEDDED_SIGNUP event classifications (parser contract). */
+export const META_EMBEDDED_SIGNUP_ACCEPTED_EVENTS = [
+  "FINISH",
+  "FINISH_*", // any event whose uppercase form starts with FINISH_ (except handled FINISH_ONLY_WABA)
+  "FINISH_ONLY_WABA",
+  "CANCEL",
+  "CANCEL*", // any event whose uppercase form starts with CANCEL
+  "ERROR",
+] as const;
+
+export type MetaEmbeddedSignupIgnoreReason =
+  | "origin_not_allowed"
+  | "unsupported_data_type"
+  | "json_parse_failed"
+  | "wrong_message_type"
+  | "unsupported_event"
+  | "malformed_event";
+
+const TRACE_DATA_KEY_ALLOWLIST = new Set([
+  "waba_id",
+  "phone_number_id",
+  "business_id",
+  "error_message",
+  "error_code",
+  "error_subcode",
+  "fbtrace_id",
+  "httpStatus",
+]);
+
+/**
+ * TEMPORARY TRACE — remove after timeout diagnosis.
+ * Caller must pass only already-safe fields (no payload values / secrets).
+ */
+export function logMetaEmbeddedSignupTrace(
+  payload: Record<string, unknown>
+): void {
+  console.error("[MetaEmbeddedSignup TRACE]", payload);
+}
+
+export function originHostFromMessageOrigin(origin: string): string {
+  try {
+    return new URL(String(origin || "")).hostname;
+  } catch {
+    return "invalid-origin";
+  }
+}
+
+function describeDataType(data: unknown): string {
+  if (data === null) return "null";
+  return typeof data;
+}
+
+function allowlistedDataKeysFromPayload(raw: unknown): string[] {
+  let payload: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  const obj = asPlainRecord(payload);
+  if (!obj) return [];
+  const data = asPlainRecord(obj.data);
+  if (!data) return [];
+  return Object.keys(data)
+    .filter((key) => TRACE_DATA_KEY_ALLOWLIST.has(key))
+    .sort();
+}
+
+function readMessageTypeAndEvent(raw: unknown): {
+  type?: string;
+  event?: string;
+  jsonParseFailed?: boolean;
+  unsupportedDataType?: boolean;
+} {
+  let payload: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return { jsonParseFailed: true };
+    }
+  }
+  if (payload == null || typeof payload !== "object") {
+    return { unsupportedDataType: true };
+  }
+  const obj = payload as Record<string, unknown>;
+  return {
+    type: typeof obj.type === "string" ? obj.type : undefined,
+    event: typeof obj.event === "string" ? obj.event.trim() : undefined,
+  };
+}
+
+/**
+ * Classify why an incoming message cannot drive Embedded Signup settlement.
+ * Settlement behavior remains owned by parseEmbeddedSignupMessageData().
+ */
+export function classifyIgnoredEmbeddedSignupMessage(
+  origin: string,
+  raw: unknown
+): {
+  reason: MetaEmbeddedSignupIgnoreReason;
+  originHost: string;
+  type?: string;
+  event?: string;
+} | null {
+  const originHost = originHostFromMessageOrigin(origin);
+  if (!isAllowedMetaMessageOrigin(origin)) {
+    return { reason: "origin_not_allowed", originHost };
+  }
+
+  const meta = readMessageTypeAndEvent(raw);
+  if (meta.jsonParseFailed) {
+    return { reason: "json_parse_failed", originHost };
+  }
+  if (meta.unsupportedDataType) {
+    return {
+      reason: "unsupported_data_type",
+      originHost,
+      type: meta.type,
+      event: meta.event,
+    };
+  }
+  if (meta.type !== "WA_EMBEDDED_SIGNUP") {
+    return {
+      reason: "wrong_message_type",
+      originHost,
+      type: meta.type,
+      event: meta.event,
+    };
+  }
+
+  const parsed = parseEmbeddedSignupMessageData(raw);
+  if (parsed == null) {
+    return {
+      reason: "wrong_message_type",
+      originHost,
+      type: meta.type,
+      event: meta.event,
+    };
+  }
+
+  const eventKey = (meta.event || "").toUpperCase();
+  const known =
+    eventKey === "ERROR" ||
+    eventKey === "FINISH_ONLY_WABA" ||
+    eventKey === "FINISH" ||
+    eventKey.startsWith("FINISH_") ||
+    eventKey === "CANCEL" ||
+    eventKey.startsWith("CANCEL");
+
+  if (!known) {
+    // WA-typed but unrecognized event — parser returns malformed and fails closed.
+    return {
+      reason: "unsupported_event",
+      originHost,
+      type: meta.type,
+      event: meta.event,
+    };
+  }
+
+  if (parsed.status === "malformed") {
+    return {
+      reason: "malformed_event",
+      originHost,
+      type: meta.type,
+      event: meta.event,
+    };
+  }
+
+  return null;
+}
+
 type FbLoginResponse = {
   authResponse?: { code?: string } | null;
   status?: string;
@@ -644,10 +818,15 @@ export async function launchMetaEmbeddedSignup(
   let activeAttempt: symbol | null = attemptId;
   let settled = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const startedAtMs = Date.now();
 
   let code: string | null = null;
   let wabaId: string | null = null;
   let phoneNumberId: string | null = null;
+  let loginCallbackReceived = false;
+  let finishEventReceived = false;
+  let messageCount = 0;
+  let recognizedEmbeddedSignupMessageCount = 0;
   let resolveResult!: (value: MetaEmbeddedSignupResult) => void;
   let rejectResult!: (err: Error) => void;
 
@@ -665,9 +844,25 @@ export async function launchMetaEmbeddedSignup(
     }
   };
 
+  const counterpartState = () => ({
+    hasAuthorizationCode: Boolean(code),
+    hasFinishEvent: Boolean(finishEventReceived && wabaId && phoneNumberId),
+  });
+
   const settleOk = () => {
     if (settled || activeAttempt !== attemptId) return;
-    if (!code || !wabaId || !phoneNumberId) return;
+    if (!code || !wabaId || !phoneNumberId) {
+      // TEMPORARY TRACE — still waiting for the other settlement half.
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.waiting_for_counterpart",
+        ...counterpartState(),
+      });
+      return;
+    }
+    logMetaEmbeddedSignupTrace({
+      phase: "terminal.finish",
+      ...counterpartState(),
+    });
     settled = true;
     cleanup();
     resolveResult({
@@ -692,17 +887,61 @@ export async function launchMetaEmbeddedSignup(
 
   const onMessage = (event: MessageEvent) => {
     if (activeAttempt !== attemptId || settled) return;
+
+    messageCount += 1;
+    const originHost = originHostFromMessageOrigin(event.origin);
+    const meta = readMessageTypeAndEvent(event.data);
+    const parsed = parseEmbeddedSignupMessageData(event.data);
+    const parsedOk = parsed != null;
+
+    // TEMPORARY TRACE — structural metadata only; never event.data / values.
+    logMetaEmbeddedSignupTrace({
+      phase: "window.message.received",
+      originHost,
+      dataType: describeDataType(event.data),
+      parsed: parsedOk,
+      type: meta.type,
+      event: meta.event,
+      dataKeys: allowlistedDataKeysFromPayload(event.data),
+    });
+
+    const ignored = classifyIgnoredEmbeddedSignupMessage(
+      event.origin,
+      event.data
+    );
+    if (ignored) {
+      logMetaEmbeddedSignupTrace({
+        phase: "window.message.ignored",
+        reason: ignored.reason,
+        originHost: ignored.originHost,
+        type: ignored.type,
+        event: ignored.event,
+      });
+      // Keep fail-closed settlement for malformed/unsupported WA events.
+      if (
+        ignored.reason !== "malformed_event" &&
+        ignored.reason !== "unsupported_event"
+      ) {
+        return;
+      }
+    }
+
     if (!isAllowedMetaMessageOrigin(event.origin)) {
       return;
     }
 
-    const parsed = parseEmbeddedSignupMessageData(event.data);
     if (parsed == null) {
       // Non-WA traffic from Meta origins is ignored.
       return;
     }
 
+    recognizedEmbeddedSignupMessageCount += 1;
+
     if (parsed.status === "cancelled") {
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.cancel",
+        ...counterpartState(),
+      });
       settleErr(
         new MetaEmbeddedSignupError(
           "cancelled",
@@ -713,6 +952,10 @@ export async function launchMetaEmbeddedSignup(
     }
 
     if (parsed.status === "error") {
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.error",
+        ...counterpartState(),
+      });
       settleErr(
         new MetaEmbeddedSignupError(
           "login_error",
@@ -724,6 +967,12 @@ export async function launchMetaEmbeddedSignup(
     }
 
     if (parsed.status === "missing_phone") {
+      finishEventReceived = true;
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.finish_only_waba",
+        hasAuthorizationCode: Boolean(code),
+        hasFinishEvent: false,
+      });
       settleErr(
         new MetaEmbeddedSignupError(
           "missing_phone_number_id",
@@ -745,12 +994,24 @@ export async function launchMetaEmbeddedSignup(
 
     wabaId = parsed.wabaId;
     phoneNumberId = parsed.phoneNumberId;
+    finishEventReceived = true;
     settleOk();
   };
 
   target.addEventListener("message", onMessage as EventListener);
 
   timeoutHandle = setTimeout(() => {
+    if (settled || activeAttempt !== attemptId) return;
+    // TEMPORARY TRACE — which settlement half was missing at timeout.
+    logMetaEmbeddedSignupTrace({
+      phase: "terminal.timeout",
+      elapsedMs: Date.now() - startedAtMs,
+      loginCallbackReceived,
+      hasAuthorizationCode: Boolean(code),
+      finishEventReceived: Boolean(finishEventReceived && wabaId && phoneNumberId),
+      messageCount,
+      recognizedEmbeddedSignupMessageCount,
+    });
     settleErr(
       new MetaEmbeddedSignupError(
         "timeout",
@@ -764,9 +1025,19 @@ export async function launchMetaEmbeddedSignup(
     fb.login(
       (response) => {
         if (activeAttempt !== attemptId || settled) return;
+        loginCallbackReceived = true;
         const authCode = response.authResponse?.code
           ? String(response.authResponse.code).trim()
           : "";
+        // TEMPORARY TRACE — booleans/status only; never code/token/userID.
+        logMetaEmbeddedSignupTrace({
+          phase: "fb.login.callback",
+          callbackReceived: true,
+          hasAuthResponse: Boolean(response.authResponse),
+          hasAuthorizationCode: Boolean(authCode),
+          status:
+            typeof response.status === "string" ? response.status : undefined,
+        });
         if (!authCode) {
           const cancelled =
             !response.authResponse ||
