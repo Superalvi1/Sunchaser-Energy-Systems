@@ -90,7 +90,7 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
       });
       await load();
     } catch (err) {
-      // TEMPORARY DEBUG — allowlisted providerError only before sanitizing for UI.
+      // TEMPORARY DEBUG — fresh sanitized allowlisted providerError only.
       logMetaEmbeddedSignupDebug(
         "WhatsAppSetupPage.handleConnect.catch",
         extractEmbeddedSignupProviderError(err)

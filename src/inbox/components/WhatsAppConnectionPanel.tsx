@@ -108,7 +108,7 @@ export default function WhatsAppConnectionPanel({
       });
       setStatus(updated);
     } catch (err) {
-      // TEMPORARY DEBUG — allowlisted providerError only before sanitizing for UI.
+      // TEMPORARY DEBUG — fresh sanitized allowlisted providerError only.
       logMetaEmbeddedSignupDebug(
         "WhatsAppConnectionPanel.handleLaunchEmbeddedSignup.catch",
         extractEmbeddedSignupProviderError(err)
