@@ -17,10 +17,9 @@ const ALLOWED_MESSAGE_ORIGINS = new Set([
 ]);
 
 function readViteEnv(): Record<string, string | undefined> {
-  const meta = import.meta as ImportMeta & {
+  return (import.meta as ImportMeta & {
     env?: Record<string, string | undefined>;
-  };
-  return meta.env ?? {};
+  }).env ?? {};
 }
 
 export type MetaEmbeddedSignupConfig = {

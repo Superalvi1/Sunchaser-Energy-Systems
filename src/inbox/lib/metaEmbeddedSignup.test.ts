@@ -3,6 +3,10 @@
  * No fabricated production IDs — only injected SDK doubles.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { transformWithEsbuild } from "vite";
 import {
   isAllowedMetaMessageOrigin,
   launchMetaEmbeddedSignup,
@@ -23,6 +27,21 @@ async function test(name: string, fn: () => void | Promise<void>) {
     console.error(`FAIL: ${name}`, err);
   }
 }
+
+await test("Vite can statically replace the direct import.meta.env access", async () => {
+  const sourcePath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "metaEmbeddedSignup.ts"
+  );
+  const source = fs.readFileSync(sourcePath, "utf8");
+  const transformed = await transformWithEsbuild(source, sourcePath, {
+    loader: "ts",
+    format: "esm",
+  });
+
+  assert.match(transformed.code, /return import\.meta\.env \?\? \{\}/);
+  assert.doesNotMatch(transformed.code, /const meta = import\.meta/);
+});
 
 await test("required Meta env config fails closed when missing", () => {
   assert.throws(
