@@ -189,10 +189,11 @@ export default function ProjectDesignWorkspace({
   const commitGps = useCallback(
     (nextLat: string, nextLng: string) => {
       const parsed = parseOptionalGpsAnchor(nextLat, nextLng);
-      if (!parsed.ok) {
-        setGpsError(parsed.error);
-        return;
-      }
+            (parsed as any).setGpsError ? setGpsError((parsed as any).error) : setGpsError(null);
+            if (!parsed.ok) {
+              setGpsError((parsed as any).error);
+              return;
+            }
       setGpsError(null);
       setGeoSeed((prev) => ({
         ...prev,
@@ -260,7 +261,7 @@ export default function ProjectDesignWorkspace({
     setControls((c) => {
       const next = { ...c, [key]: value };
       const check = validateDesignStudioLayoutSettings({ ...next, alignment });
-      setSettingsError(check.ok ? null : check.message);
+      setSettingsError(check.ok ? null : (check as any).message);
       return next;
     });
     setLayoutResult(null);
@@ -271,7 +272,7 @@ export default function ProjectDesignWorkspace({
   const handleAlignmentChange = (value: LayoutAlignment) => {
     setAlignment(value);
     const check = validateDesignStudioLayoutSettings({ ...controls, alignment: value });
-    setSettingsError(check.ok ? null : check.message);
+    setSettingsError(check.ok ? null : (check as any).message);
     setLayoutResult(null);
     setAutoLayoutMessage(null);
     setAutoLayoutPhase("idle");
@@ -341,7 +342,7 @@ export default function ProjectDesignWorkspace({
       if (!result.ok) {
         autoLayoutPhaseRef.current = "failure";
         setAutoLayoutPhase("failure");
-        setAutoLayoutMessage(result.message);
+        setAutoLayoutMessage((result as any).message);
         setLayoutResult(null);
         return;
       }
@@ -369,7 +370,7 @@ export default function ProjectDesignWorkspace({
   const handleLocateResult = useCallback(
     (result: LocatePropertyResult) => {
       if (!result.ok) {
-        setLocateMessage(result.message);
+        setLocateMessage((result as any).message);
         return;
       }
       const next = applyLocatePropertyResultToDraft({ latText, lngText }, result);
@@ -390,7 +391,7 @@ export default function ProjectDesignWorkspace({
   const handleFetchSatelliteImage = useCallback(() => {
     const parsed = parseOptionalGpsAnchor(latText, lngText);
     if (!parsed.ok || !parsed.anchor) {
-      setSatelliteMessage(parsed.ok ? "Enter valid latitude and longitude first." : parsed.error);
+      setSatelliteMessage(parsed.ok ? "Enter valid latitude and longitude first." : (parsed as any).error);
       return;
     }
     const canvasEl = document.querySelector(
@@ -405,7 +406,7 @@ export default function ProjectDesignWorkspace({
       height,
     }).then(async (result) => {
       if (!result.ok) {
-        setSatelliteMessage(result.message);
+        setSatelliteMessage((result as any).message);
         return;
       }
       const url = resolveSatelliteDisplayUrl(result.image);
@@ -518,7 +519,7 @@ export default function ProjectDesignWorkspace({
         });
         if (!result.success) {
           setConcurrentEdit(true);
-          setSaveMessage(result.error);
+          setSaveMessage((result as any).error);
           if (result.session?.version != null) {
             setSessionVersion(result.session.version);
             setSessionUpdatedAt(result.session.updatedAt);
@@ -794,7 +795,6 @@ export default function ProjectDesignWorkspace({
             />
           )}
           <RoofIntelligenceStudio
-            key={leadId}
             project={project}
             workspaceMode
             chromeMode="canvas"

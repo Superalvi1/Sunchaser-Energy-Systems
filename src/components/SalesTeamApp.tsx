@@ -1635,7 +1635,7 @@ export default function SalesTeamApp({
       console.log("[Manual BOQ Debug Log] Frontend opened/updated:", {
         leadId: activeLead.id,
         selectedQuoteId: editingQuoteId || "N/A",
-        quote_type: editingQuoteId ? (activeLead.quotes?.find((q: any) => q.id === editingQuoteId)?.quote_type || "manual_boq") : "manual_boq",
+        quote_type: editingQuoteId ? ((activeLead.quotes?.find((q: any) => q.id === editingQuoteId) as any)?.quote_type || "manual_boq") : "manual_boq",
         manualBoqRowsCount: manualCount,
         autoSizerRowsCount: autoCount,
         defaultRowsInjected: autoCount > 0,
@@ -2744,7 +2744,7 @@ export default function SalesTeamApp({
 
     try {
       if (editingProduct) {
-        await updateCatalogProduct(payload);
+        await updateCatalogProduct(payload as any);
       } else {
         const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
           method: "POST",

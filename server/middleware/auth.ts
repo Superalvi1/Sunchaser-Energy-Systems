@@ -57,7 +57,7 @@ export function createRequireAuth(deps: RequireAuthDeps) {
     try {
       const hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
       if (!hydrated.ok) {
-        res.status(hydrated.status).json({ error: hydrated.error });
+        res.status((hydrated as any).status).json({ error: (hydrated as any).error });
         return;
       }
       applyActorToRequest(req, hydrated.actor);

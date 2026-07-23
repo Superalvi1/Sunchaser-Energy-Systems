@@ -434,14 +434,14 @@ export function resolveTypography(
     densityMode: density,
     fontFamily:
       ext.typography?.fontFamily ||
-      globalTypography?.fontFamily ||
+      (globalTypography as any)?.fontFamily ||
       DEFAULT_TEMPLATE_TYPOGRAPHY.fontFamily,
     headingColor:
       ext.typography?.headingColor ||
-      globalTypography?.headingColor ||
+      (globalTypography as any)?.headingColor ||
       DEFAULT_TEMPLATE_TYPOGRAPHY.headingColor,
     bodyColor:
-      ext.typography?.bodyColor || globalTypography?.bodyColor || DEFAULT_TEMPLATE_TYPOGRAPHY.bodyColor,
+      ext.typography?.bodyColor || (globalTypography as any)?.bodyColor || DEFAULT_TEMPLATE_TYPOGRAPHY.bodyColor,
   } as QuoteTypography & { fontFamily?: string; headingColor?: string; bodyColor?: string };
 }
 

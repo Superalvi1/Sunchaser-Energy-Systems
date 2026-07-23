@@ -24,9 +24,11 @@ import { inboxFail, inboxOk, sendInboxError } from "./whatsappInboxHttp.ts";
 import type { WhatsAppInboxServices } from "./whatsappInboxServices.ts";
 import {
   disconnectWhatsApp,
+  generateEmbeddedSignupState,
   getWhatsAppConnectionStatus,
   processEmbeddedSignupOnboarding,
 } from "./whatsappConnectionService.ts";
+import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
 
 export type InboxSendPort = (input: {
   conversationId: string;
@@ -426,16 +428,38 @@ export function createInboxControllers(
       }
     },
 
+    /**
+     * Step 0 of Embedded Signup: generate a CSRF state nonce.
+     * Frontend must include this in the Facebook Login SDK options.state.
+     */
+    async generateEmbeddedSignupState(req: Request, res: Response) {
+      try {
+        const actor = actorOf(req);
+        if (actor.role !== "Super Admin" && actor.role !== "Admin") {
+          return inboxFail(res, 403, "forbidden", "Only Admin users can initiate WhatsApp onboarding.");
+        }
+        const companyId = DEFAULT_COMPANY_ID;
+        const nonce = generateEmbeddedSignupState(companyId, actor.id);
+        return inboxOk(res, { state: nonce });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
     async processEmbeddedSignup(req: Request, res: Response) {
       try {
         const body = (req.body as Record<string, unknown>) || {};
         const code = String(body.code || "");
-        const wabaId = body.wabaId ? String(body.wabaId) : undefined;
-        const phoneNumberId = body.phoneNumberId ? String(body.phoneNumberId) : undefined;
+        const state = String(body.state || "");
+        const wabaId = body.wabaId ? String(body.wabaId) : "";
+        const phoneNumberId = body.phoneNumberId ? String(body.phoneNumberId) : "";
+        const companyId = DEFAULT_COMPANY_ID;
         const payload = await processEmbeddedSignupOnboarding({
           code,
+          state,
           wabaId,
           phoneNumberId,
+          companyId,
           actor: actorOf(req),
         });
         return inboxOk(res, payload);
@@ -446,7 +470,7 @@ export function createInboxControllers(
 
     async disconnectWhatsApp(req: Request, res: Response) {
       try {
-        const payload = disconnectWhatsApp(actorOf(req));
+        const payload = await disconnectWhatsApp(actorOf(req));
         return inboxOk(res, payload);
       } catch (err) {
         return sendInboxError(res, err);

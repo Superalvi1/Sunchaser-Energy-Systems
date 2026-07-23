@@ -27,7 +27,7 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
   );
 }
 
-function TimelineCard({ record }: { record: MaintenanceRecord }) {
+function TimelineCard({ record }: { key?: React.Key; record: MaintenanceRecord }) {
   return (
     <article className="relative pl-6 pb-6 border-l border-slate-800 last:pb-0">
       <span className="absolute -left-1.5 top-1 w-3 h-3 rounded-full bg-amber-500 ring-4 ring-slate-950" />

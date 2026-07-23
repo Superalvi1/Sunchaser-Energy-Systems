@@ -181,7 +181,7 @@ export class GooglePlacesAutocompleteProvider implements PlacesAutocompleteProvi
       const lng = body.result.geometry?.location?.lng;
       const coords = validateProviderCoordinates(lat, lng);
       if (!coords.ok) {
-        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: coords.message };
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: (coords as any).message };
       }
 
       const formattedAddress =

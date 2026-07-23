@@ -113,6 +113,7 @@ function FolderTreeItem({
   onToggle,
   onSelect,
 }: {
+  key?: React.Key;
   folder: KnowledgeFolder;
   depth: number;
   selectedId: string | null;
@@ -190,6 +191,7 @@ function DocumentCard({
   selected,
   onClick,
 }: {
+  key?: React.Key;
   doc: KnowledgeDocument;
   selected: boolean;
   onClick: () => void;

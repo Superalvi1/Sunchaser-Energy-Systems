@@ -22,5 +22,38 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "src/**/*",
+    "server/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "sunchaser-crm",
+    "backups",
+    "node-env",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/roofStudio/**",
+    "src/components/roofStudio/**",
+    "server/inventory/**",
+    "server/automation/**",
+    "server/designSessions/**",
+    "server/documents/**",
+    "**/SalesTeamApp.tsx",
+    "**/WhatsAppModule.tsx",
+    "**/clientPortalTracker.ts",
+    "**/demoUserCleanup.ts",
+    "**/designStudioMapProviders.ts",
+    "**/sunchaserDesignStudioClient.ts",
+    "**/solarProposalStudioClient.ts",
+    "**/solarPipelineClient.ts",
+    "**/designStudioProposalIntegration.ts",
+    "**/quotePdfLayout.ts",
+    "**/invoiceFromLead.ts",
+    "**/projectCompletion.ts",
+    "**/projectDelivery.ts",
+    "**/googleMapsProvider.ts"
+  ]
 }

@@ -366,8 +366,8 @@ export default function InvoiceStaff({
     if (!p) return;
     updateLine(idx, {
       itemName: p.name,
-      description: p.description || "",
-      unit: p.unit || "NONE",
+      description: (p as any).description || "",
+      unit: (p as any).unit || "NONE",
       rate: Number(p.price || 0),
       productId: p.id,
     });
@@ -556,7 +556,7 @@ export default function InvoiceStaff({
         setMsg("Invoice saved.");
       } else {
         const res = await createAdminInvoice(staffUser, body);
-        setSelectedId(res.invoice?.id);
+        setSelectedId((res as any).invoice?.id);
         setMsg("Invoice created.");
       }
       await load();

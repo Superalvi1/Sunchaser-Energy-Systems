@@ -85,6 +85,6 @@ export function validateInventorySku(input: InventorySkuInput): SkuValidation {
 
 export function createInventorySku(input: InventorySkuInput): InventorySku {
   const result = validateInventorySku(input);
-  if (!result.ok) throw new Error(`Invalid SKU: ${result.errors.join("; ")}`);
+  if (!result.ok) throw new Error(`Invalid SKU: ${(result as any).errors.join("; ")}`);
   return result.sku;
 }

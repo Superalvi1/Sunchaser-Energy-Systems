@@ -1137,10 +1137,10 @@ export async function bulkDeleteAdminInvoices(
   body: { ids?: string[]; confirmText?: string },
   localDb?: Database
 ): Promise<{ deleted: string[]; failed: Array<{ id: string; error: string }> }> {
+  const actor = toRequestActor(userId, username, role);
   if (actor.role !== "Super Admin") {
     throw new StaffPortalAuthError("Only Super Admin can bulk delete invoices.", 403);
   }
-  const actor = toRequestActor(userId, username, role);
   if (String(body.confirmText || "").trim() !== "DELETE") {
     throw new InvoiceDbError('Type DELETE to confirm bulk deletion.', 400);
   }

@@ -27,7 +27,7 @@ export class GoogleSolarBuildingInsightsStubProvider implements SolarBuildingIns
   ): Promise<ProviderResult<SolarBuildingInsights>> {
     const coords = validateProviderCoordinates(latitude, longitude);
     if (!coords.ok) {
-      return { ok: false, code: coords.code, message: coords.message };
+      return { ok: false, code: (coords as any).code, message: (coords as any).message };
     }
     return {
       ok: false,

@@ -2648,7 +2648,7 @@ export async function createAdminInventoryFoundationItem(
   body: Record<string, unknown>,
   role = ""
 ) {
-  const res = await staffPortalJsonRequest("/api/admin/inventory/items", {
+  const res = await apiFetch("/api/admin/inventory/items", {
     method: "POST",
     headers: inventoryStaffHeaders(userId, username, role),
     body: JSON.stringify(body),
@@ -2665,7 +2665,7 @@ export async function stockInAdminInventoryItem(
   body: { qty: number; notes?: string },
   role = ""
 ) {
-  const res = await staffPortalJsonRequest(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/stock-in`, {
+  const res = await apiFetch(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/stock-in`, {
     method: "POST",
     headers: inventoryStaffHeaders(userId, username, role),
     body: JSON.stringify(body),
@@ -2682,7 +2682,7 @@ export async function stockOutAdminInventoryItem(
   body: { qty: number; notes?: string },
   role = ""
 ) {
-  const res = await staffPortalJsonRequest(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/stock-out`, {
+  const res = await apiFetch(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/stock-out`, {
     method: "POST",
     headers: inventoryStaffHeaders(userId, username, role),
     body: JSON.stringify(body),
@@ -2699,7 +2699,7 @@ export async function adjustAdminInventoryItem(
   body: { qtyDelta: number; notes?: string },
   role = ""
 ) {
-  const res = await staffPortalJsonRequest(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/adjust`, {
+  const res = await apiFetch(`/api/admin/inventory/items/${encodeURIComponent(itemId)}/adjust`, {
     method: "POST",
     headers: inventoryStaffHeaders(userId, username, role),
     body: JSON.stringify(body),
@@ -2721,7 +2721,7 @@ export async function reserveAdminInventoryForProject(
   },
   role = ""
 ) {
-  const res = await staffPortalJsonRequest("/api/admin/inventory/reservations", {
+  const res = await apiFetch("/api/admin/inventory/reservations", {
     method: "POST",
     headers: inventoryStaffHeaders(userId, username, role),
     body: JSON.stringify(body),
@@ -2738,7 +2738,7 @@ export async function releaseAdminInventoryReservation(
   body?: { notes?: string },
   role = ""
 ) {
-  const res = await staffPortalJsonRequest(
+  const res = await apiFetch(
     `/api/admin/inventory/reservations/${encodeURIComponent(reservationId)}/release`,
     {
       method: "POST",

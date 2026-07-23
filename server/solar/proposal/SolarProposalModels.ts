@@ -62,6 +62,7 @@ export interface SolarProposalInput {
   obstacles?: RoofObstacle[];
   roofWidthMeters?: number;
   canvasWidth?: number;
+  canvasHeight?: number;
   siteComplexityScore?: number;
   netMeteringRequired?: boolean;
 }
@@ -240,3 +241,5 @@ export function num(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
+
+export type { ProposalTemplateDraft } from "./ProposalTemplateModel.ts";

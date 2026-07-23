@@ -10,7 +10,7 @@ export function isDemoSeedUser(user: { name?: string; username?: string }): bool
   const name = String(user.name || "").trim().toLowerCase();
   const username = String(user.username || "").trim().toLowerCase();
   return DEMO_SEED_USER_MATCHERS.some(
-    (d) => d.names.includes(name) || d.usernames.includes(username)
+    (d) => (d.names as readonly string[]).includes(name) || (d.usernames as readonly string[]).includes(username)
   );
 }
 
@@ -18,7 +18,7 @@ export function demoSeedLabel(user: { name?: string; username?: string }): strin
   const name = String(user.name || "").trim().toLowerCase();
   const username = String(user.username || "").trim().toLowerCase();
   const hit = DEMO_SEED_USER_MATCHERS.find(
-    (d) => d.names.includes(name) || d.usernames.includes(username)
+    (d) => (d.names as readonly string[]).includes(name) || (d.usernames as readonly string[]).includes(username)
   );
   return hit?.label || null;
 }

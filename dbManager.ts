@@ -20,7 +20,6 @@ import {
   readAssignedUserId,
 } from "./server/ownership/TechnicianOwnershipResolver.ts";
 import type { RequestActor } from "./server/middleware/actor.ts";
-import type { RequestActor } from "./server/middleware/actor.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -2333,7 +2332,7 @@ export async function runDatabaseMigration(localDbData: any): Promise<boolean> {
 }
 
 export class CustomerPortalAuthError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public statusCode: number = 401) {
     super(message);
     this.name = "CustomerPortalAuthError";
   }
@@ -5933,7 +5932,7 @@ function toTechnicalStaffActor(user: any, role: string): RequestActor {
     accountStatus: String(user.accountStatus || user.account_status || "Approved"),
     emailVerified: user.emailVerified ?? user.email_verified ?? true,
     onboardingCompleted: user.onboardingCompleted ?? user.onboarding_completed ?? true,
-    authMethod: "legacy_header",
+    authMethod: "legacy_header" as any,
   };
 }
 

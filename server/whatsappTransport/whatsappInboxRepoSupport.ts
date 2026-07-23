@@ -18,6 +18,7 @@ import {
   type WhatsAppOutboundIdempotencyState,
   type WhatsAppReadWatermark,
 } from "./whatsappInboxDatabaseTypes.ts";
+export { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 
 export type KeysetCursor = {
   at: string;

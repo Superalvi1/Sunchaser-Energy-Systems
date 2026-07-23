@@ -21,7 +21,7 @@ export default function BrandingSettings({ staffUser }: { staffUser: User }) {
     setMsg(null);
     try {
       const res = await updateAdminBranding(staffUser, draft as unknown as Record<string, unknown>);
-      setDraft({ ...DEFAULT_BRANDING, ...res.branding });
+      setDraft({ ...DEFAULT_BRANDING, ...(res as any).branding });
       setMsg("Branding saved. Refresh app to see icons everywhere.");
     } catch (e: any) {
       setMsg(e.message);

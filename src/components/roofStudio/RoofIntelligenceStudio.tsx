@@ -694,7 +694,7 @@ export default function RoofIntelligenceStudio({
     if (tool === "measure-area") {
       const areaResult = tryMeasureAreaM2(pts, state.metersPerUnit);
       if (!areaResult.ok) {
-        setMeasureResult(areaResult.message);
+        setMeasureResult((areaResult as any).message);
         return;
       }
       setMeasureResult(`Area: ${fmt(areaResult.areaM2, 2)} m²`);

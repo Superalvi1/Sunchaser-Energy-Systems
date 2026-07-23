@@ -302,7 +302,7 @@ export default function FinanceDashboardStaff({
                         staffUser={staffUser}
                         phone={c.phone}
                         messageType="invoice_payment_reminder"
-                        vars={{ customerName: c.name, balanceDue: String(c.outstanding) }}
+                        vars={{ customerName: c.name, balance: String(c.outstanding) }}
                         label="WhatsApp"
                         customerId={c.customerId || undefined}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-900/40 text-emerald-300 text-[9px] font-bold mr-1"
@@ -367,7 +367,7 @@ export default function FinanceDashboardStaff({
                           staffUser={staffUser}
                           phone={row.customerPhone}
                           messageType="invoice_payment_reminder"
-                          vars={{ customerName: row.customerName, invoiceNumber: row.invoiceNumber, balanceDue: String(row.balanceDue) }}
+                          vars={{ customerName: row.customerName, invoiceNumber: row.invoiceNumber, balance: String(row.balanceDue) }}
                           label="Remind"
                           className="px-2 py-1 rounded bg-emerald-900/40 text-emerald-300 text-[9px] font-bold"
                         />

@@ -189,8 +189,8 @@ export function GeoReferenceEditor({
   const commitGpsFields = (nextLat: string, nextLng: string) => {
     const result = tryApplyGpsAnchorTexts(geo, nextLat, nextLng);
     if (!result.ok) {
-      setFieldError(result.error);
-      onValidationError?.(result.error);
+      setFieldError((result as any).error);
+      onValidationError?.((result as any).error);
       return;
     }
     setFieldError(null);
@@ -273,8 +273,8 @@ export function GeoReferenceEditor({
               setMapZoomText(next);
               const parsed = parseOptionalMapZoomText(next);
               if (!parsed.ok) {
-                setFieldError(parsed.error);
-                onValidationError?.(parsed.error);
+                setFieldError((parsed as any).error);
+                onValidationError?.((parsed as any).error);
                 return;
               }
               setFieldError(null);

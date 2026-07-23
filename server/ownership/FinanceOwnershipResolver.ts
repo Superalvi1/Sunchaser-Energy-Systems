@@ -918,7 +918,7 @@ export const FinanceOwnershipResolver = {
       throw new FinanceOwnershipError("Not authorized for this finance resource.", 403);
     }
 
-    switch (resourceType) {
+    switch (resourceType as string) {
       case "invoice":
       case "invoice_pdf": {
         await assertInvoiceOwnedByActor(actor, id, localDb);

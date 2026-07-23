@@ -222,7 +222,7 @@ export class ManualLocationProvider {
   fromLatLngText(latText: string, lngText: string): ProviderResult<Location> {
     const parsed = parseOptionalGpsAnchor(latText, lngText);
     if (!parsed.ok) {
-      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: parsed.error };
+      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: (parsed as any).error };
     }
     if (!parsed.anchor) {
       return {
@@ -446,7 +446,7 @@ export function validateSatelliteImageResponse(
   const obj = raw as Record<string, unknown>;
   const coords = validateProviderCoordinates(obj.latitude, obj.longitude);
   if (!coords.ok) {
-    return { ok: false, code: coords.code, message: coords.message };
+    return { ok: false, code: (coords as any).code, message: (coords as any).message };
   }
 
   const imageUrl = typeof obj.imageUrl === "string" ? obj.imageUrl.trim() : "";
@@ -458,7 +458,7 @@ export function validateSatelliteImageResponse(
 
   const urlCheck = validateSatelliteImageUrl(resolvedUrl);
   if (!urlCheck.ok) {
-    return urlCheck;
+    return { ok: false, code: INVALID_PROVIDER_IMAGE, message: (urlCheck as any).error || INVALID_PROVIDER_IMAGE_MESSAGE };
   }
 
   let zoom = 18;
@@ -548,30 +548,28 @@ export async function locateProperty(address: string): Promise<LocatePropertyRes
   try {
     const raw = await provider.geocodeAddress(trimmed);
     if (!raw.ok) {
-      if (raw.code === PROVIDER_NOT_CONFIGURED || raw.code === "MAP_PROVIDER_NOT_CONNECTED") {
-        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message || MAP_PROVIDER_NOT_CONNECTED };
+      const err = raw as any;
+      if (err.code === INVALID_PROVIDER_COORDINATES) {
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: err.message || INVALID_PROVIDER_RESPONSE_MESSAGE };
       }
-      if (raw.code === INVALID_PROVIDER_COORDINATES) {
-        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: raw.message || INVALID_PROVIDER_RESPONSE_MESSAGE };
+      if (err.code === GEOCODING_NO_RESULTS) {
+        return { ok: false, code: GEOCODING_NO_RESULTS, message: err.message || GEOCODING_NO_RESULTS_MESSAGE };
       }
-      if (raw.code === GEOCODING_NO_RESULTS) {
-        return { ok: false, code: GEOCODING_NO_RESULTS, message: raw.message || GEOCODING_NO_RESULTS_MESSAGE };
-      }
-      if (raw.code === GEOCODING_PROVIDER_ERROR || raw.code === "EMPTY_ADDRESS") {
-        if (raw.code === "EMPTY_ADDRESS") {
-          return { ok: false, code: "EMPTY_ADDRESS", message: raw.message };
+      if (err.code === GEOCODING_PROVIDER_ERROR || err.code === "EMPTY_ADDRESS") {
+        if (err.code === "EMPTY_ADDRESS") {
+          return { ok: false, code: "EMPTY_ADDRESS", message: err.message };
         }
         return {
           ok: false,
           code: GEOCODING_PROVIDER_ERROR,
-          message: raw.message || GEOCODING_PROVIDER_ERROR_MESSAGE,
+          message: err.message || GEOCODING_PROVIDER_ERROR_MESSAGE,
         };
       }
-      return { ok: false, code: "GEOCODE_FAILED", message: raw.message || "Geocoding failed." };
+      return { ok: false, code: "GEOCODE_FAILED", message: err.message || "Geocoding failed." };
     }
     const coords = validateProviderCoordinates(raw.value.latitude, raw.value.longitude);
     if (!coords.ok) {
-      return { ok: false, code: coords.code, message: coords.message };
+      return { ok: false, code: (coords as any).code, message: (coords as any).message };
     }
     return {
       ok: true,
@@ -608,7 +606,7 @@ export async function fetchSatelliteImage(input: {
 }): Promise<FetchSatelliteImageResult> {
   const coords = validateProviderCoordinates(input.latitude, input.longitude);
   if (!coords.ok) {
-    return { ok: false, code: "INVALID_COORDINATES", message: coords.message };
+    return { ok: false, code: "INVALID_COORDINATES", message: (coords as any).message };
   }
   const provider = getConfiguredSatelliteImageProvider();
   if (!provider.configured) {
@@ -623,20 +621,21 @@ export async function fetchSatelliteImage(input: {
       height: input.height,
     });
     if (!raw.ok) {
-      if (raw.code === PROVIDER_NOT_CONFIGURED) {
-        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message || SATELLITE_PROVIDER_NOT_CONNECTED };
+      const err = raw as any;
+      if (err.code === PROVIDER_NOT_CONFIGURED) {
+        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: err.message || SATELLITE_PROVIDER_NOT_CONNECTED };
       }
-      if (raw.code === INVALID_PROVIDER_IMAGE) {
-        return { ok: false, code: INVALID_PROVIDER_IMAGE, message: raw.message };
+      if (err.code === INVALID_PROVIDER_IMAGE) {
+        return { ok: false, code: INVALID_PROVIDER_IMAGE, message: err.message };
       }
-      if (raw.code === INVALID_PROVIDER_COORDINATES) {
-        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: raw.message };
+      if (err.code === INVALID_PROVIDER_COORDINATES) {
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: err.message };
       }
-      return { ok: false, code: "SATELLITE_FETCH_FAILED", message: raw.message || "Satellite image fetch failed." };
+      return { ok: false, code: "SATELLITE_FETCH_FAILED", message: err.message || "Satellite image fetch failed." };
     }
     const validated = validateSatelliteImageResponse(raw.value);
     if (!validated.ok) {
-      return { ok: false, code: validated.code, message: validated.message };
+      return { ok: false, code: (validated as any).code, message: (validated as any).message };
     }
     return { ok: true, image: validated.image };
   } catch (e) {
@@ -687,17 +686,18 @@ export async function resolvePlaceSuggestion(placeId: string): Promise<LocatePro
   try {
     const raw = await provider.resolvePlace(placeId);
     if (!raw.ok) {
-      if (raw.code === PROVIDER_NOT_CONFIGURED) {
-        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: raw.message };
+      const err = raw as any;
+      if (err.code === PROVIDER_NOT_CONFIGURED) {
+        return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: err.message };
       }
-      if (raw.code === GEOCODING_NO_RESULTS) {
-        return { ok: false, code: GEOCODING_NO_RESULTS, message: raw.message || GEOCODING_NO_RESULTS_MESSAGE };
+      if (err.code === GEOCODING_NO_RESULTS) {
+        return { ok: false, code: GEOCODING_NO_RESULTS, message: err.message || GEOCODING_NO_RESULTS_MESSAGE };
       }
-      return { ok: false, code: GEOCODING_PROVIDER_ERROR, message: raw.message || GEOCODING_PROVIDER_ERROR_MESSAGE };
+      return { ok: false, code: GEOCODING_PROVIDER_ERROR, message: err.message || GEOCODING_PROVIDER_ERROR_MESSAGE };
     }
     const coords = validateProviderCoordinates(raw.value.latitude, raw.value.longitude);
     if (!coords.ok) {
-      return { ok: false, code: coords.code, message: coords.message };
+      return { ok: false, code: (coords as any).code, message: (coords as any).message };
     }
     return {
       ok: true,
@@ -724,7 +724,7 @@ export async function fetchSolarBuildingInsightsStub(input: {
 }): Promise<ProviderResult<SolarBuildingInsights>> {
   const coords = validateProviderCoordinates(input.latitude, input.longitude);
   if (!coords.ok) {
-    return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: coords.message };
+    return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: (coords as any).message };
   }
   const provider = getConfiguredSolarBuildingInsightsProvider();
   if (!provider.configured) {

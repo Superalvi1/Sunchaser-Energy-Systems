@@ -9,6 +9,7 @@ import type {
 } from "./whatsappInboxDatabaseTypes.ts";
 import {
   handleSupabaseError,
+  InboxServiceError,
   InboxSupabaseAccess,
   mapCrmLink,
   nowIso,

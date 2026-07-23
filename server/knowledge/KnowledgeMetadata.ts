@@ -126,7 +126,7 @@ export function validateKnowledgeDocumentMetadata(
 export function createKnowledgeDocumentMetadata(input: KnowledgeDocumentMetadataInput): KnowledgeDocumentMetadata {
   const result = validateKnowledgeDocumentMetadata(input);
   if (!result.ok) {
-    throw new Error(`Invalid knowledge metadata: ${result.errors.join("; ")}`);
+    throw new Error(`Invalid knowledge metadata: ${(result as any).errors.join("; ")}`);
   }
   return result.metadata;
 }

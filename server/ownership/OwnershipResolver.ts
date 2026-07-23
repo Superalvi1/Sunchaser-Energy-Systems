@@ -171,7 +171,7 @@ function resolveResourceCustomerIdLocal(
   resourceId: string,
   localDb?: Database
 ): string | null {
-  const db = localDb as Record<string, any[]> | undefined;
+  const db = localDb as unknown as Record<string, any[]> | undefined;
   if (!db) return null;
 
   switch (resourceType) {

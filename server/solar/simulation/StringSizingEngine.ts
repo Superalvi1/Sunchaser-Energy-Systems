@@ -21,7 +21,7 @@ export function computeStringSizing(input: StringSizingInput): StringSizingResul
   const hotT = input.hotDesignTempC ?? LAHORE_DEFAULTS.designTempMaxC;
   const warnings: string[] = [];
 
-  const moduleCount = moduleCountForSystemKw(input.systemSizeKw, module.wattageW);
+  const moduleCount = moduleCountForSystemKw(input.systemSizeKw, module.wattageW as any);
   const vocAtTminV = voltageAtTemp(module.vocStcV, module.tempCoeffVocPctPerC, coldT);
   const vmpAtTmaxV = voltageAtTemp(module.vmpStcV, module.tempCoeffVocPctPerC, hotT);
 

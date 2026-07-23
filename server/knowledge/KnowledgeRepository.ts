@@ -62,7 +62,7 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
   save(input: KnowledgeDocumentInput, metadata: KnowledgeDocumentMetadata, actor: RequestActor): KnowledgeSaveResult {
     const validated = validateKnowledgeDocument(input);
     if (!validated.ok) {
-      throw new Error(`Cannot save invalid document: ${validated.errors.join("; ")}`);
+      throw new Error(`Cannot save invalid document: ${(validated as any).errors.join("; ")}`);
     }
     if (metadata.documentId !== validated.document.id) {
       throw new Error("metadata.documentId must match document.id");

@@ -112,9 +112,9 @@ function buildElectricalSizing(
   proposalInput: SolarProposalInput,
   simulationStringSizing: ElectricalSizingResult["stringSizing"]
 ): ElectricalSizingResult {
-  const protection = calculateProtection(input.systemSizeKw, input.systemType, input.tier);
+  const protection = calculateProtection(input.systemSizeKw as any, input.systemType, input.tier);
   const cables = calculateCables(
-    input.systemSizeKw,
+    input.systemSizeKw as any,
     input.systemType,
     input.structureType,
     proposalInput.siteComplexityScore ?? 0

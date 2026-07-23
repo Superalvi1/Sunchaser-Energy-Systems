@@ -36,7 +36,7 @@ function fmtMoney(n: number | null | undefined): string {
   return `PKR ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ key, label, value }: { key?: React.Key; label: string; value: string }) {
   return <StudioRow label={label} value={value} />;
 }
 

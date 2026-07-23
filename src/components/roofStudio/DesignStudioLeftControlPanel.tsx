@@ -61,6 +61,7 @@ function ToolBtn({
   onClick,
   active,
 }: {
+  key?: React.Key;
   label: string;
   onClick: () => void;
   active?: boolean;
@@ -578,7 +579,7 @@ export default function DesignStudioLeftControlPanel({
         </div>
         {(settingsError || !settingsCheck.ok) && (
           <p className="mt-2 text-[10px] text-rose-400">
-            {settingsError ?? (!settingsCheck.ok ? settingsCheck.message : null)}
+            {settingsError ?? (!settingsCheck.ok ? (settingsCheck as any).message : null)}
           </p>
         )}
         <div className="mt-1 space-y-0.5 text-[9px] text-slate-500">

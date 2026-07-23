@@ -51,6 +51,7 @@ function ProjectCard({
   p,
   onClick,
 }: {
+  key?: React.Key;
   p: OperationsProjectCard;
   onClick: () => void;
 }) {

@@ -105,7 +105,7 @@ export function validateKnowledgeDocument(input: KnowledgeDocumentInput): Knowle
 export function createKnowledgeDocument(input: KnowledgeDocumentInput): KnowledgeDocument {
   const result = validateKnowledgeDocument(input);
   if (!result.ok) {
-    throw new Error(`Invalid knowledge document: ${result.errors.join("; ")}`);
+    throw new Error(`Invalid knowledge document: ${(result as any).errors.join("; ")}`);
   }
   return result.document;
 }

@@ -172,7 +172,7 @@ export function acceptSuggestionIntoStudio<TState>(
   for (const poly of roofPolys) {
     const validated = validateSuggestionPolygon(poly.verticesPx);
     if (!validated.ok) {
-      return { ok: false, code: validated.code, error: validated.error, state };
+      return { ok: false, code: (validated as any).code, error: (validated as any).error, state };
     }
     const before = next;
     next = mutations.addPlane(next, validated.vertices, {
@@ -202,7 +202,7 @@ export function acceptSuggestionIntoStudio<TState>(
     for (const poly of obstaclePolys) {
       const validated = validateSuggestionPolygon(poly.verticesPx);
       if (!validated.ok) {
-        return { ok: false, code: validated.code, error: validated.error, state };
+        return { ok: false, code: (validated as any).code, error: (validated as any).error, state };
       }
       next = mutations.addObstacle(next, planeId, {
         id: mutations.nextObstacleId(),

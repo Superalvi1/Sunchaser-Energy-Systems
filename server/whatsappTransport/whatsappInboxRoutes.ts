@@ -194,6 +194,10 @@ export function createWhatsAppInboxRouter(
     run((c, req, res) => c.getConnectionStatus(req, res))
   );
   router.post(
+    "/admin/whatsapp/embedded-signup/state",
+    run((c, req, res) => c.generateEmbeddedSignupState(req, res))
+  );
+  router.post(
     "/admin/whatsapp/embedded-signup",
     run((c, req, res) => c.processEmbeddedSignup(req, res))
   );

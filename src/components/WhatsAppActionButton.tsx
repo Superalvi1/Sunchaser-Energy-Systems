@@ -11,6 +11,7 @@ import {
 } from "../lib/whatsapp";
 
 interface WhatsAppActionButtonProps {
+  key?: React.Key;
   staffUser: User;
   phone: string;
   messageType: WhatsAppMessageType;

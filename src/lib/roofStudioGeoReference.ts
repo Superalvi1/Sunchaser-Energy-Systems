@@ -122,12 +122,12 @@ export function parseOptionalGpsAnchor(latText: string, lngText: string): GpsAnc
   }
 
   const lat = parseLatitudeText(latText);
-  if (!lat.ok) return { ok: false, error: lat.error };
+  if (!lat.ok) return { ok: false, error: (lat as any).error };
 
   const lng = parseLongitudeText(lngText);
-  if (!lng.ok) return { ok: false, error: lng.error };
+  if (!lng.ok) return { ok: false, error: (lng as any).error };
 
-  return { ok: true, anchor: { latitude: lat.value, longitude: lng.value } };
+  return { ok: true, anchor: { latitude: (lat as any).value, longitude: (lng as any).value } };
 }
 
 export function parseOptionalMapZoomText(input: string): ParseResult<number | null> {
@@ -160,7 +160,7 @@ export function tryApplyGpsAnchorTexts(
 ): GeoGpsUpdateResult {
   const parsed = parseOptionalGpsAnchor(latText, lngText);
   if (!parsed.ok) {
-    return { ok: false, error: parsed.error, geo };
+    return { ok: false, error: (parsed as any).error, geo };
   }
   return { ok: true, geo: applyGpsAnchorToGeo(geo, parsed.anchor) };
 }

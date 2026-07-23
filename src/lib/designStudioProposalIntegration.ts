@@ -279,12 +279,12 @@ export function buildDesignStudioProposalIntegration(
     return {
       draftOnly: true,
       ready: false,
-      gatedReason: moduleResolved.message,
+      gatedReason: (moduleResolved as any).message,
       pages: buildGatedPages(live),
       roofImageUrl: roofPreview.imageUrl,
       roofImageFileName: roofPreview.imageFileName,
       customer,
-      warnings: [...warnings, moduleResolved.message],
+      warnings: [...warnings, (moduleResolved as any).message],
     };
   }
 

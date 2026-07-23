@@ -171,20 +171,21 @@ export function buildPipelineStudioViewModel(input: StudioCanvasInput): StudioPr
   const outcome = runSolarDesignPipeline(toPipelineInput(input));
 
   if (!outcome.success) {
-    const validationMessage = validationMessageForOutcome(input, outcome);
+    const failure = outcome as any;
+    const validationMessage = validationMessageForOutcome(input, failure);
     return {
       ...empty,
-      pipelineStage: outcome.stage,
-      pipelineCode: outcome.code,
-      pipelineMessage: outcome.message,
-      stagesCompleted: outcome.stagesCompleted,
+      pipelineStage: failure.stage,
+      pipelineCode: failure.code,
+      pipelineMessage: failure.message,
+      stagesCompleted: failure.stagesCompleted,
       validationMessage,
-      roofValidationOk: outcome.stage !== "validation" && outcome.stage !== "roof",
+      roofValidationOk: failure.stage !== "validation" && failure.stage !== "roof",
       fixGuidance:
-        input.roofBoundary.length < 3 && outcome.stage === "validation"
+        input.roofBoundary.length < 3 && failure.stage === "validation"
           ? [DESIGN_INCOMPLETE_MESSAGE]
-          : buildFixGuidance(outcome),
-      warnings: outcome.warnings,
+          : buildFixGuidance(failure),
+      warnings: failure.warnings,
     };
   }
 

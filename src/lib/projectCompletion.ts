@@ -28,7 +28,7 @@ export const COMPLETION_MEDIA_TYPES = [
 export type CompletionMediaType = (typeof COMPLETION_MEDIA_TYPES)[number]["key"];
 
 export function requiredMediaTypes(batteryApplicable: boolean): CompletionMediaType[] {
-  return COMPLETION_MEDIA_TYPES.filter((m) => !m.batteryOnly || batteryApplicable).map(
+  return COMPLETION_MEDIA_TYPES.filter((m: any) => !m.batteryOnly || batteryApplicable).map(
     (m) => m.key as CompletionMediaType
   );
 }

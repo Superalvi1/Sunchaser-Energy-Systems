@@ -4,6 +4,7 @@
  */
 
 import type { PanelModuleSpec } from "./PanelLayoutModels.ts";
+export type { PanelModuleSpec };
 import { PanelLayoutError } from "./PanelLayoutModels.ts";
 import { isFiniteNumber } from "../roof/RoofModels.ts";
 

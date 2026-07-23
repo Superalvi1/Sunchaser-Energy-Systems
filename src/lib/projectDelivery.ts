@@ -107,7 +107,7 @@ export function buildCustomerDeliveryProgress(
       );
       let state: "completed" | "active" | "pending" = "pending";
       if (order >= maxStatus) state = "completed";
-      else if (step.statuses.includes(status as DeliveryStatus) || order === maxStatus - 1) {
+      else if ((step.statuses as readonly string[]).includes(status) || order === maxStatus - 1) {
         state = "active";
       }
       if (status === "Handover Completed") state = "completed";

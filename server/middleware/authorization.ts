@@ -58,7 +58,7 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
 
     const hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
     if (!hydrated.ok) {
-      sendAuthFailure(res, hydrated.status, hydrated.error);
+      sendAuthFailure(res, (hydrated as any).status, (hydrated as any).error);
       return;
     }
 

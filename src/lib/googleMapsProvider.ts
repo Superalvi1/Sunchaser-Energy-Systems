@@ -303,7 +303,7 @@ export class GoogleGeocodingProvider implements GeocodingProvider {
       const lng = first?.geometry?.location?.lng;
       const coords = validateProviderCoordinates(lat, lng);
       if (!coords.ok) {
-        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: coords.message };
+        return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: (coords as any).message };
       }
 
       const formattedAddress =
@@ -333,7 +333,7 @@ export class GoogleGeocodingProvider implements GeocodingProvider {
   async reverseGeocode(lat: number, lng: number): Promise<ProviderResult<Address>> {
     const coords = validateProviderCoordinates(lat, lng);
     if (!coords.ok) {
-      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: coords.message };
+      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: (coords as any).message };
     }
     if (!this.apiKey) {
       return { ok: false, code: PROVIDER_NOT_CONFIGURED, message: MAP_PROVIDER_NOT_CONNECTED };
@@ -383,7 +383,7 @@ export class GoogleSatelliteImageProvider implements SatelliteImageProvider {
     }
     const coords = validateProviderCoordinates(input.latitude, input.longitude);
     if (!coords.ok) {
-      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: coords.message };
+      return { ok: false, code: INVALID_PROVIDER_COORDINATES, message: (coords as any).message };
     }
     const size = validateGoogleStaticMapParams({
       zoom: input.zoom,
@@ -391,7 +391,7 @@ export class GoogleSatelliteImageProvider implements SatelliteImageProvider {
       height: input.height,
     });
     if (!size.ok) {
-      return { ok: false, code: size.code, message: size.message };
+      return { ok: false, code: (size as any).code, message: (size as any).message };
     }
 
     const imageUrl = buildGoogleStaticSatelliteUrl({

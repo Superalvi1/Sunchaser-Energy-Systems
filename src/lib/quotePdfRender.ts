@@ -30,9 +30,9 @@ export function buildQuotationPdfFilename(lead: any, quote: any): string {
 }
 
 const CHROMIUM_LAUNCH_OPTIONS = {
-  headless: true,
+  headless: true as const,
   args: ["--no-sandbox", "--disable-setuid-sandbox"],
-} as const;
+};
 
 export function getPlaywrightBrowsersPath(): string {
   return process.env.PLAYWRIGHT_BROWSERS_PATH ?? "0";

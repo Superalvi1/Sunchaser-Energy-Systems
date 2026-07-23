@@ -14,7 +14,8 @@ type State = {
   error: Error | null;
 };
 
-export default class RoofStudioErrorBoundary extends React.Component<Props, State> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export default class RoofStudioErrorBoundary extends (React.Component as any) {
   state: State = { error: null };
 
   static getDerivedStateFromError(error: Error): State {
@@ -27,8 +28,9 @@ export default class RoofStudioErrorBoundary extends React.Component<Props, Stat
   }
 
   render() {
-    const { error } = this.state;
-    if (!error) return this.props.children;
+    const self = this as unknown as { state: State; props: Props; setState: (s: Partial<State>) => void };
+    const { error } = self.state;
+    if (!error) return self.props.children;
 
     const message = error?.message || String(error);
     return (
@@ -38,7 +40,7 @@ export default class RoofStudioErrorBoundary extends React.Component<Props, Stat
         role="alert"
       >
         <p className="text-sm font-bold text-rose-300">
-          {this.props.title || "Roof Studio failed to render"}
+          {self.props.title || "Roof Studio failed to render"}
         </p>
         <p className="mt-2 text-xs text-slate-300 break-words font-mono">{message}</p>
         <p className="mt-3 text-[11px] text-slate-500">
@@ -47,7 +49,7 @@ export default class RoofStudioErrorBoundary extends React.Component<Props, Stat
         <button
           type="button"
           className="mt-4 rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-slate-200 hover:bg-slate-800"
-          onClick={() => this.setState({ error: null })}
+          onClick={() => self.setState({ error: null })}
         >
           Try again
         </button>

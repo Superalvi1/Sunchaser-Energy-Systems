@@ -527,8 +527,23 @@ export class SupabaseWhatsAppInboxConversationRepository
       .limit(limit + 1);
 
     if (cursor) {
+      // Canonical sort: coalesce(last_message_at, created_at) DESC, id DESC.
+      // The cursor.at is the coalesced value of the last row on the previous page.
+      // We need rows where coalesce(last_message_at, created_at) < cursor.at,
+      // OR where coalesce = cursor.at AND id < cursor.id.
+      //
+      // PostgREST cannot express COALESCE() directly, so we split into cases:
+      //   1. last_message_at IS NOT NULL AND last_message_at < cursor.at
+      //   2. last_message_at IS NULL AND created_at < cursor.at
+      //   3. last_message_at IS NOT NULL AND last_message_at = cursor.at AND id < cursor.id
+      //   4. last_message_at IS NULL AND created_at = cursor.at AND id < cursor.id
       query = query.or(
-        `last_message_at.lt.${cursor.at},and(last_message_at.eq.${cursor.at},id.lt.${cursor.id})`
+        [
+          `and(last_message_at.not.is.null,last_message_at.lt.${cursor.at})`,
+          `and(last_message_at.is.null,created_at.lt.${cursor.at})`,
+          `and(last_message_at.not.is.null,last_message_at.eq.${cursor.at},id.lt.${cursor.id})`,
+          `and(last_message_at.is.null,created_at.eq.${cursor.at},id.lt.${cursor.id})`,
+        ].join(",")
       );
     }
 
@@ -576,6 +591,13 @@ export class SupabaseWhatsAppInboxConversationRepository
       );
       if (error) {
         if (/Could not find the function|function .* does not exist|PGRST202/i.test(error.message)) {
+          // RPC function missing — migration not yet applied.
+          // Log a warning so operators know they need to apply the migration SQL.
+          console.warn(
+            "[WhatsApp] RPC whatsapp_inbox_list_conversations_by_activity not found. " +
+              "Apply scripts/whatsapp-inbox-schema.sql to enable optimised conversation listing. " +
+              "Falling back to table scan (may be slower at scale)."
+          );
           return await this.listByActivityTableFallback(filters, opts);
         }
         handleSupabaseError(error);

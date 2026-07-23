@@ -272,7 +272,7 @@ export function assertStudioProposalDraftSafe(
   draft: ProposalDraft,
   forbiddenFragments: string[] = []
 ): boolean {
-  if ("input" in (draft as Record<string, unknown>)) return false;
+  if ("input" in (draft as unknown as Record<string, unknown>)) return false;
   const keys = Object.keys(draft.inputSummary);
   if (!keys.every((k) => ALLOWED_INPUT_SUMMARY_KEYS.has(k))) return false;
   const blob = JSON.stringify(draft);

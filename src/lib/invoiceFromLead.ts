@@ -110,7 +110,7 @@ export function buildInvoiceDraftFromLead(
     systemType: q?.systemType || "",
     panelBrand: q?.panelBrand || q?.panelType || "",
     inverterBrand: q?.inverterBrand || q?.inverterType || "",
-    batteryBrand: q?.batteryBrand || q?.batteryCapacity || q?.batteryOption || "",
+    batteryBrand: (q as any)?.batteryBrand || (q as any)?.batteryCapacity || (q as any)?.batteryOption || "",
     structureType: q?.structureType || "",
     netMeteringStatus: q?.netMeteringRequired || "",
     salesAdvisor: String(lead.assignedSalesperson || q?.bdmName || "").trim(),

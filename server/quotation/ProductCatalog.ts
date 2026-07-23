@@ -104,7 +104,7 @@ export function validateSolarProduct(input: SolarProductInput): ProductValidatio
 export function createSolarProduct(input: SolarProductInput): SolarProduct {
   const result = validateSolarProduct(input);
   if (!result.ok) {
-    throw new QuotationEngineError("product_catalog", "Invalid solar product.", { errors: result.errors });
+    throw new QuotationEngineError("product_catalog", "Invalid solar product.", { errors: (result as any).errors || [(result as any).error || "Invalid solar product."] });
   }
   return result.product;
 }

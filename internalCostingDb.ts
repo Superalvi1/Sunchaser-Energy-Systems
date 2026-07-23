@@ -561,7 +561,7 @@ export async function maybeConsumeCostingInventoryForProject(
   if (!sheet.consumeInventory || sheet.consumedStockValue > 0) return { sheetId: sheet.id, consumed: false };
 
   let items = sheet.items.map((it) => ({ ...it, consumeStock: !!it.inventoryItemId && !it.stockConsumed }));
-  items = await applyStockConsumption(actor.userId, actor.username, sheet.id, items, sheet.items, localDb);
+  items = (await applyStockConsumption(actor.userId, actor.username, sheet.id, items as any, sheet.items as any, localDb)) as any;
   const consumedStockValue = moneyRound(
     items
       .filter((it) => it.stockConsumed && it.inventoryItemId)

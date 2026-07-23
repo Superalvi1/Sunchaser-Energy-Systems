@@ -72,6 +72,6 @@ export function validateWarehouse(input: WarehouseInput): { ok: true; warehouse:
 
 export function createWarehouse(input: WarehouseInput): Warehouse {
   const result = validateWarehouse(input);
-  if (!result.ok) throw new Error(`Invalid warehouse: ${result.errors.join("; ")}`);
+  if (!result.ok) throw new Error(`Invalid warehouse: ${(result as any).errors.join("; ")}`);
   return result.warehouse;
 }

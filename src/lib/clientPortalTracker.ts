@@ -125,7 +125,7 @@ export function buildClientPortalPayload(input: {
   const surveyActive =
     !!survey &&
     !surveyDone &&
-    (survey.status === "In Progress" || survey.status === "Pending" || !!survey.scheduledDate);
+    ((survey.status as string) === "In Progress" || survey.status === "Pending" || !!survey.scheduledDate);
 
   const quoteApproved = !!acceptedQuote;
   const advanceReceived = (payment?.advanceReceived || 0) > 0;

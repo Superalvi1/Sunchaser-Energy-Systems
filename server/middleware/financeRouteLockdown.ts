@@ -168,7 +168,7 @@ export function assertExportTableAccess(
 }
 
 export function filterExportStateForSales(actor: RequestActor, state: Database): Database {
-  return SalesOwnershipResolver.filterAppStateForActor(actor, state as Record<string, unknown>) as Database;
+  return SalesOwnershipResolver.filterAppStateForActor(actor, state as unknown as Record<string, unknown>) as unknown as Database;
 }
 
 export async function assertPaymentMilestoneAccess(

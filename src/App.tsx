@@ -98,7 +98,7 @@ export default function App() {
         customer: data.customer,
         lead: data.lead as ClientPortalPayload["lead"],
         project: data.project as ClientPortalPayload["project"],
-        dashboard: data.dashboard as ClientPortalPayload["dashboard"],
+        dashboard: data.dashboard as unknown as ClientPortalPayload["dashboard"],
         tracker: data.tracker as ClientPortalPayload["tracker"],
       });
     } catch (err: any) {

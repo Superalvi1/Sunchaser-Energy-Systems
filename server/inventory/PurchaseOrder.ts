@@ -96,7 +96,7 @@ export function validatePurchaseOrder(
 
 export function createPurchaseOrder(input: PurchaseOrderInput): PurchaseOrder {
   const result = validatePurchaseOrder(input);
-  if (!result.ok) throw new Error(`Invalid PO: ${result.errors.join("; ")}`);
+  if (!result.ok) throw new Error(`Invalid PO: ${(result as any).errors.join("; ")}`);
   return result.order;
 }
 

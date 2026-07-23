@@ -46,6 +46,7 @@ function PlanCard({
   busy,
   onSubscribe,
 }: {
+  key?: React.Key;
   plan: SubscriptionPlanRecord;
   subscribed: boolean;
   busy: string | null;
@@ -134,7 +135,7 @@ function SubscriptionDashboard({ sub }: { sub: CustomerSubscriptionRecord }) {
   );
 }
 
-function VisitReportCard({ report }: { report: ServiceVisitReportRecord }) {
+function VisitReportCard({ report }: { key?: React.Key; report: ServiceVisitReportRecord }) {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
       <div className="flex items-center gap-2 text-xs text-slate-400">

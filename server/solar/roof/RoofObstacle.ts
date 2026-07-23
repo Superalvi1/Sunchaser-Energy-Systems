@@ -46,7 +46,7 @@ export function normalizeObstacles(raw: unknown, planeBoundary: Point2D[]): Norm
     const polygon = obstacleToPolygon(o);
     if (!polygon) continue;
     const clippedArea = clipRectToPolygon(
-      polygonBounds(polygon) ?? { x: 0, y: 0, w: 0, h: 0 },
+      (polygonBounds(polygon) as any) ?? { x: 0, y: 0, w: 0, h: 0 },
       planeBoundary
     );
     const areaUnits = Math.max(overlapAreaPolygons(polygon, planeBoundary), clippedArea > 0 ? clippedArea : polygonArea(polygon));

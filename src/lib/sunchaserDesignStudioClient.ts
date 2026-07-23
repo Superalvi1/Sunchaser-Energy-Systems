@@ -432,9 +432,8 @@ export function validateEdgeSetbackM(value: unknown): EdgeSetbackValidationResul
     min: EDGE_SETBACK_MIN_M,
     max: EDGE_SETBACK_MAX_M,
   });
-  return r.ok
-    ? { ok: true, value: r.value }
-    : { ok: false, code: "INVALID_EDGE_SETBACK", message: r.message };
+  if (!r.ok) return { ok: false, code: "INVALID_EDGE_SETBACK", message: (r as any).message };
+  return { ok: true, value: r.value };
 }
 
 export function validateRowSpacingM(value: unknown): FiniteRangeValidationResult {
@@ -507,21 +506,21 @@ export function validateDesignStudioLayoutSettings(
   > & { alignment?: LayoutAlignment }
 ): DesignStudioControlsValidation {
   const setback = validateEdgeSetbackM(controls.edgeSetbackM);
-  if (!setback.ok) return setback;
+  if (setback.ok === false) return { ok: false, code: (setback as any).code, message: (setback as any).message };
   const row = validateRowSpacingM(controls.rowSpacingM);
-  if (!row.ok) return { ok: false, code: row.code, message: row.message };
+  if (row.ok === false) return { ok: false, code: (row as any).code, message: (row as any).message };
   const gap = validateModuleGapM(controls.moduleGapM);
-  if (!gap.ok) return { ok: false, code: gap.code, message: gap.message };
+  if (gap.ok === false) return { ok: false, code: (gap as any).code, message: (gap as any).message };
   const tilt = validateTiltDeg(controls.tiltDeg);
-  if (!tilt.ok) return { ok: false, code: tilt.code, message: tilt.message };
+  if (tilt.ok === false) return { ok: false, code: (tilt as any).code, message: (tilt as any).message };
   const az = validateAzimuthDeg(controls.azimuthDeg);
-  if (!az.ok) return { ok: false, code: az.code, message: az.message };
+  if (az.ok === false) return { ok: false, code: (az as any).code, message: (az as any).message };
   if (controls.alignment !== undefined) {
     const align = validateLayoutAlignment(controls.alignment);
-    if (!align.ok) return align;
+    if (align.ok === false) return align;
   }
   const mod = resolveCatalogModule(controls.moduleId);
-  if (!mod.ok) return { ok: false, code: mod.code, message: mod.message };
+  if (mod.ok === false) return { ok: false, code: (mod as any).code, message: (mod as any).message };
   return { ok: true };
 }
 
@@ -636,11 +635,11 @@ export function designStudioWizardProgress(opts: {
     }
   }
   if (opts.hasPanels && !opts.hasBoq) {
-    current = 7;
+    current = 7 as any;
     completed = Math.max(completed, 6);
   }
   if (opts.hasBoq) {
-    current = 7;
+    current = 7 as any;
     completed = 7;
   }
   return { currentStep: current, completedThrough: completed, steps: DESIGN_STUDIO_GUIDED_STEPS };
@@ -729,10 +728,10 @@ export function canRunDesignStudioAutoLayout(opts: {
     if (!roof.ok) {
       return {
         ok: false,
-        reason: roof.reason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT
+        reason: (roof as any).reason === FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT
           ? FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT
-          : roof.reason,
-        code: roof.code === "NO_PLANE" ? "GATED" : "INVALID_ROOF_GEOMETRY",
+          : (roof as any).reason,
+        code: (roof as any).code === "NO_PLANE" ? "GATED" : "INVALID_ROOF_GEOMETRY",
       };
     }
   } else if (opts.hasCompletePlane === false) {
@@ -740,7 +739,7 @@ export function canRunDesignStudioAutoLayout(opts: {
   }
 
   const settings = validateDesignStudioLayoutSettings(opts.controls);
-  if (!settings.ok) return { ok: false, reason: settings.message, code: settings.code };
+  if (!settings.ok) return { ok: false, reason: (settings as any).message, code: (settings as any).code };
   return { ok: true, reason: null, code: null };
 }
 
@@ -772,27 +771,27 @@ export function runDesignStudioAutoLayout(
   if (!roof.ok) {
     return {
       ok: false,
-      code: roof.code === "NO_PLANE" ? "NO_PLANE" : "INVALID_ROOF_GEOMETRY",
-      message: roof.reason,
+      code: (roof as any).code === "NO_PLANE" ? "NO_PLANE" : "INVALID_ROOF_GEOMETRY",
+      message: (roof as any).reason,
     };
   }
-  const plane = roof.plane;
+  const plane = (roof as any).plane;
 
   const settings = validateDesignStudioLayoutSettings(controls);
   if (!settings.ok) {
-    return { ok: false, code: settings.code, message: settings.message };
+    return { ok: false, code: (settings as any).code, message: (settings as any).message };
   }
 
   const setback = validateEdgeSetbackM(controls.edgeSetbackM);
   if (!setback.ok) {
-    return { ok: false, code: setback.code, message: setback.message };
+    return { ok: false, code: (setback as any).code, message: (setback as any).message };
   }
 
   const moduleResolved = resolveCatalogModule(controls.moduleId);
   if (!moduleResolved.ok) {
-    return { ok: false, code: moduleResolved.code, message: moduleResolved.message };
+    return { ok: false, code: (moduleResolved as any).code, message: (moduleResolved as any).message };
   }
-  const module = moduleResolved.module;
+  const module = (moduleResolved as any).module;
 
   try {
     const layout = layoutPanelsOnPlane({
@@ -942,7 +941,7 @@ export function buildDesignStudioLiveResults(
 
   const settings = validateDesignStudioLayoutSettings(controls);
   if (!settings.ok) {
-    return validationStageFailure(settings.code, settings.message, {
+    return validationStageFailure((settings as any).code, (settings as any).message, {
       uploadComplete: opts.hasImage,
       scaleCalibrated: calibrated,
     });
@@ -950,7 +949,7 @@ export function buildDesignStudioLiveResults(
 
   const setback = validateEdgeSetbackM(controls.edgeSetbackM);
   if (!setback.ok) {
-    return validationStageFailure(setback.code, setback.message, {
+    return validationStageFailure((setback as any).code, (setback as any).message, {
       uploadComplete: opts.hasImage,
       scaleCalibrated: calibrated,
     });
@@ -958,22 +957,22 @@ export function buildDesignStudioLiveResults(
 
   const moduleResolved = resolveCatalogModule(controls.moduleId);
   if (!moduleResolved.ok) {
-    return validationStageFailure(moduleResolved.code, moduleResolved.message, {
+    return validationStageFailure((moduleResolved as any).code, (moduleResolved as any).message, {
       uploadComplete: opts.hasImage,
       scaleCalibrated: calibrated,
     });
   }
-  const module = moduleResolved.module;
+  const module = (moduleResolved as any).module;
 
   const roofValidity = evaluateStudioRoofValidity(state);
   if (!roofValidity.ok) {
     const stageMsg =
-      roofValidity.code === "NO_PLANE"
-        ? roofValidity.message
+      (roofValidity as any).code === "NO_PLANE"
+        ? (roofValidity as any).message
         : FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT;
     const stage = validationStageFailure(
-      roofValidity.code === "NO_PLANE" ? "NO_PLANE" : "INVALID_ROOF_GEOMETRY",
-      roofValidity.code === "NO_PLANE" ? roofValidity.message : `${FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT} (${roofValidity.code}: ${roofValidity.message})`,
+      (roofValidity as any).code === "NO_PLANE" ? "NO_PLANE" : "INVALID_ROOF_GEOMETRY",
+      (roofValidity as any).code === "NO_PLANE" ? (roofValidity as any).message : `${FIX_ROOF_GEOMETRY_BEFORE_AUTO_LAYOUT} (${(roofValidity as any).code}: ${(roofValidity as any).message})`,
       {
         uploadComplete: opts.hasImage,
         scaleCalibrated: calibrated,

@@ -53,7 +53,7 @@ export default function PropertyAddressAutocomplete({
       void fetchAddressSuggestions(input).then((result) => {
         if (!result.ok) {
           setSuggestions([]);
-          setSuggestError(result.message);
+          setSuggestError((result as any).message);
           return;
         }
         setSuggestError(null);

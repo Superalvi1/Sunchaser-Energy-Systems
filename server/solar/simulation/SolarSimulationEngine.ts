@@ -147,7 +147,7 @@ export function runSolarSimulation(
 
   const module = normalizeModule(input.module);
   const inverter = normalizeInverter(input.systemSizeKw, input.inverter);
-  const moduleCount = moduleCountForSystemKw(input.systemSizeKw, module.wattageW);
+  const moduleCount = moduleCountForSystemKw(input.systemSizeKw, module.wattageW as any);
   const arrayDcKw = round4((moduleCount * module.wattageW) / 1000);
 
   if (!input.module) warnings.push("Module electrical data: using DEFAULT_MODULE_580W assumptions.");

@@ -113,7 +113,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
       };
       if (role === "Customer") {
         if (phone.trim()) payload.phone = phone.trim();
-        if (cnicNtn.trim()) payload.cnicNtn = cnicNtn.trim();
+        if (cnicNtn.trim()) (payload as any).cnicNtn = cnicNtn.trim();
         if (customerCode.trim()) payload.customerCode = customerCode.trim();
       }
       const res = await registerUser(payload);

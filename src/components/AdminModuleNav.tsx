@@ -100,6 +100,7 @@ function ModuleCard({
   active,
   onClick,
 }: {
+  key?: React.Key;
   mod: ModuleDef;
   active: boolean;
   onClick: () => void;
@@ -139,6 +140,7 @@ function SidebarItem({
   active,
   onClick,
 }: {
+  key?: React.Key;
   mod: ModuleDef;
   active: boolean;
   onClick: () => void;

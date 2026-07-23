@@ -84,7 +84,7 @@ export class InMemoryInventoryRepository implements InventoryRepository {
   saveSku(input: InventorySkuInput, actor: RequestActor): InventorySku {
     assertInventoryWriteAccess(actor);
     const validated = validateInventorySku(input);
-    if (!validated.ok) throw new Error(`Invalid SKU: ${validated.errors.join("; ")}`);
+    if (!validated.ok) throw new Error(`Invalid SKU: ${(validated as any).errors.join("; ")}`);
     this.skus.set(validated.sku.id, validated.sku);
     return validated.sku;
   }
@@ -171,7 +171,7 @@ export class InMemoryInventoryRepository implements InventoryRepository {
   saveSerial(record: SerialNumberRecord, actor: RequestActor): SerialNumberRecord {
     assertInventoryWriteAccess(actor);
     const validated = validateSerialNumberRecord(record);
-    if (!validated.ok) throw new Error(`Invalid serial: ${validated.errors.join("; ")}`);
+    if (!validated.ok) throw new Error(`Invalid serial: ${(validated as any).errors.join("; ")}`);
 
     const lookupKey = serialCompanyLookupKey(validated.record.companyId, validated.record.serialNumber);
     if (this.serialsByCompanyKey.has(lookupKey)) {
@@ -198,7 +198,7 @@ export class InMemoryInventoryRepository implements InventoryRepository {
   saveBatch(record: BatchRecord, actor: RequestActor): BatchRecord {
     assertInventoryWriteAccess(actor);
     const validated = validateBatchRecord(record);
-    if (!validated.ok) throw new Error(`Invalid batch: ${validated.errors.join("; ")}`);
+    if (!validated.ok) throw new Error(`Invalid batch: ${(validated as any).errors.join("; ")}`);
     this.batches.set(validated.record.id, validated.record);
     return validated.record;
   }

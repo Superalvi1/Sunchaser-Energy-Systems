@@ -398,6 +398,7 @@ export class InventoryEngine {
             warehouseId: receipt.warehouseId,
             binId: receipt.binId,
             status: "available",
+            createdAt: new Date().toISOString(),
           };
           this.repo.saveSerial(serial, actor);
           this.emit("serial.registered", actor, "serial", serial.id, receipt.companyId, { serialNumber: serial.serialNumber });
@@ -420,6 +421,7 @@ export class InventoryEngine {
             status: "available",
             warehouseId: receipt.warehouseId,
             binId: receipt.binId,
+            createdAt: new Date().toISOString(),
           };
           this.repo.saveBatch(batch, actor);
           this.emit("batch.registered", actor, "batch", batch.id, receipt.companyId, { batchNumber: batch.batchNumber });

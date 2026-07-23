@@ -40,6 +40,7 @@ import {
 } from "../services/api";
 
 type Props = {
+  key?: React.Key;
   staffUser: User;
   invoiceId: string;
   invoiceNumber?: string;

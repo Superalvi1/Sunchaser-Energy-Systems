@@ -64,7 +64,7 @@ export function validateKnowledgeChunk(input: KnowledgeChunkInput): KnowledgeChu
 export function createKnowledgeChunk(input: KnowledgeChunkInput): KnowledgeChunk {
   const result = validateKnowledgeChunk(input);
   if (!result.ok) {
-    throw new Error(`Invalid knowledge chunk: ${result.errors.join("; ")}`);
+    throw new Error(`Invalid knowledge chunk: ${(result as any).errors.join("; ")}`);
   }
   return result.chunk;
 }

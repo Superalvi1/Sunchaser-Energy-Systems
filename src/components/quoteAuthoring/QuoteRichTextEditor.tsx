@@ -57,8 +57,8 @@ export default function QuoteRichTextEditor({
 
   const editorStyle = useMemo(() => {
     const typo = resolveTypography(
-      { typography: { densityMode: (typography.densityMode as any) || "normal", ...typography } },
-      typography
+      { typography: { densityMode: (typography.densityMode as any) || "normal", ...typography } as any },
+      typography as any
     );
     return typographyInlineStyle(typo);
   }, [typography]);

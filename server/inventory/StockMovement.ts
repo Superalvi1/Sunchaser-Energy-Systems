@@ -135,7 +135,7 @@ export function buildTransferMovements(
   };
 
   const outValidation = validateStockMovement(sku, quantityBeforeSource, out);
-  if (!outValidation.ok) return outValidation;
+  if (!outValidation.ok) return outValidation as any;
 
   const transferIn: StockMovementRequest = {
     key: {

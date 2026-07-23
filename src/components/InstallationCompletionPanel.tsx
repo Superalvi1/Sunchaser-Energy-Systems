@@ -101,7 +101,7 @@ export default function InstallationCompletionPanel({ user }: { user: User }) {
     }
   };
 
-  const mediaTypes = COMPLETION_MEDIA_TYPES.filter((m) => !m.batteryOnly || batteryApplicable);
+  const mediaTypes = COMPLETION_MEDIA_TYPES.filter((m: any) => !m.batteryOnly || batteryApplicable);
 
   if (selectedId && status) {
     return (

@@ -192,7 +192,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
       created_at: input.createdAt ?? nowIso(),
     };
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency")
+      .from("whatsapp_outbound_idempotency_keys")
       .insert(row)
       .select("*")
       .maybeSingle();
@@ -214,7 +214,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     companyId?: string
   ): Promise<WhatsAppOutboundIdempotencyKey | null> {
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency")
+      .from("whatsapp_outbound_idempotency_keys")
       .select("*")
       .eq("company_id", this.access.companyId(companyId))
       .eq("idempotency_key", idempotencyKey)
@@ -232,7 +232,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency")
+      .from("whatsapp_outbound_idempotency_keys")
       .update({
         state: "completed" as WhatsAppOutboundIdempotencyState,
         message_id: input.messageId,
@@ -255,7 +255,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency")
+      .from("whatsapp_outbound_idempotency_keys")
       .update({
         state: "failed_known" as WhatsAppOutboundIdempotencyState,
         error: input.error,
@@ -277,7 +277,7 @@ export class SupabaseWhatsAppInboxIdempotencyRepository
     completedAt?: string;
   }): Promise<WhatsAppOutboundIdempotencyKey | null> {
     const { data, error } = await this.client()
-      .from("whatsapp_outbound_idempotency")
+      .from("whatsapp_outbound_idempotency_keys")
       .update({
         state: "outcome_unknown" as WhatsAppOutboundIdempotencyState,
         completedAt: input.completedAt ?? nowIso(),
