@@ -891,6 +891,161 @@ await test("SDK loader: FB.login is not called before SDK readiness", async () =
   }
 });
 
+// ---------------------------------------------------------------------------
+// Task 19 — config isolation + fbAsyncInit chaining
+// ---------------------------------------------------------------------------
+
+await test("SDK loader: same-key concurrent callers share one promise", async () => {
+  const browser = installBrowserMock();
+  try {
+    const a = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    const b = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    assert.equal(a, b);
+    assert.equal(browser.scripts.length, 1);
+
+    const fb = createMockFb();
+    browser.window.FB = fb;
+    browser.window.fbAsyncInit?.();
+    const [ra, rb] = await Promise.all([a, b]);
+    assert.equal(ra, fb);
+    assert.equal(rb, fb);
+    assert.equal(fb.initCalls, 1);
+    assert.equal(browser.scripts.length, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test(
+  "SDK loader: different-key concurrent caller does not receive the first promise",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      const first = loadFacebookSdk("app-a", "v25.0", { timeoutMs: 1000 });
+      const second = loadFacebookSdk("app-b", "v25.0", { timeoutMs: 1000 });
+      assert.notEqual(first, second);
+      assert.equal(browser.scripts.length, 1);
+
+      await assert.rejects(
+        () => second,
+        (err: unknown) =>
+          err instanceof MetaEmbeddedSignupError &&
+          err.code === "sdk_config_conflict"
+      );
+
+      const fb = createMockFb();
+      browser.window.FB = fb;
+      browser.window.fbAsyncInit?.();
+      assert.equal(await first, fb);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
+await test("SDK loader: different-key conflict rejects clearly", async () => {
+  const browser = installBrowserMock();
+  try {
+    void loadFacebookSdk("app-a", "v25.0", { timeoutMs: 1000 });
+    await assert.rejects(
+      () => loadFacebookSdk("app-a", "v24.0", { timeoutMs: 1000 }),
+      (err: unknown) =>
+        err instanceof MetaEmbeddedSignupError &&
+        err.code === "sdk_config_conflict" &&
+        /different app configuration/i.test(err.message)
+    );
+    assert.equal(browser.scripts.length, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test("SDK loader: existing fbAsyncInit is called", async () => {
+  const browser = installBrowserMock();
+  try {
+    let previousCalls = 0;
+    browser.window.fbAsyncInit = () => {
+      previousCalls += 1;
+    };
+
+    const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    const fb = createMockFb();
+    browser.window.FB = fb;
+    browser.window.fbAsyncInit?.();
+    await pending;
+    assert.equal(previousCalls, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test(
+  "SDK loader: existing fbAsyncInit throwing does not prevent resolution",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      browser.window.fbAsyncInit = () => {
+        throw new Error("previous handler boom");
+      };
+      const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+      const fb = createMockFb();
+      browser.window.FB = fb;
+      browser.window.fbAsyncInit?.();
+      assert.equal(await pending, fb);
+      assert.equal(fb.initCalls, 1);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
+await test("SDK loader: existing handler is not called twice", async () => {
+  const browser = installBrowserMock();
+  try {
+    let previousCalls = 0;
+    browser.window.fbAsyncInit = () => {
+      previousCalls += 1;
+    };
+    const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    const chained = browser.window.fbAsyncInit;
+    assert.equal(typeof chained, "function");
+    const fb = createMockFb();
+    browser.window.FB = fb;
+    // Duplicate Meta callbacks against the loader-owned wrapper.
+    chained?.();
+    chained?.();
+    await pending;
+    assert.equal(previousCalls, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test(
+  "SDK loader: cleanup does not overwrite a newer fbAsyncInit handler",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      const previous = () => {};
+      browser.window.fbAsyncInit = previous;
+      const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+      const loaderHandler = browser.window.fbAsyncInit;
+      assert.notEqual(loaderHandler, previous);
+
+      const newer = () => {};
+      browser.window.fbAsyncInit = newer;
+
+      const fb = createMockFb();
+      browser.window.FB = fb;
+      // Poll settle path (does not go through overwritten handler).
+      await pending;
+      assert.equal(browser.window.fbAsyncInit, newer);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);

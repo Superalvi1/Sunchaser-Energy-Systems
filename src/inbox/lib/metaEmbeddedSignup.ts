@@ -49,6 +49,7 @@ export type MetaEmbeddedSignupErrorCode =
   | "missing_config"
   | "missing_state"
   | "sdk_load_failed"
+  | "sdk_config_conflict"
   | "cancelled"
   | "timeout"
   | "invalid_origin"
@@ -214,11 +215,32 @@ export function parseEmbeddedSignupMessageData(
   return { status: "malformed" };
 }
 
+/** In-flight load keyed by appId|graphVersion. */
 let sdkLoadPromise: Promise<FbSdk> | null = null;
+let sdkLoadKey: string | null = null;
 /** Tracks last successful FB.init identity to avoid duplicate init calls. */
 let sdkInitKey: string | null = null;
 let sdkLoadTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 let sdkPollHandle: ReturnType<typeof setInterval> | null = null;
+/** Loader-owned fbAsyncInit wrapper (for safe restore). */
+let sdkOwnedFbAsyncInit: (() => void) | null = null;
+let sdkPreviousFbAsyncInit: (() => void) | undefined;
+
+function sdkConfigKey(appId: string, graphVersion: string): string {
+  return `${appId}|${graphVersion}`;
+}
+
+function restoreFbAsyncInitIfOwned(): void {
+  if (typeof window === "undefined") return;
+  if (
+    sdkOwnedFbAsyncInit != null &&
+    window.fbAsyncInit === sdkOwnedFbAsyncInit
+  ) {
+    window.fbAsyncInit = sdkPreviousFbAsyncInit;
+  }
+  sdkOwnedFbAsyncInit = null;
+  sdkPreviousFbAsyncInit = undefined;
+}
 
 function clearSdkLoadWatchers(): void {
   if (sdkLoadTimeoutHandle != null) {
@@ -229,16 +251,18 @@ function clearSdkLoadWatchers(): void {
     clearInterval(sdkPollHandle);
     sdkPollHandle = null;
   }
+  restoreFbAsyncInitIfOwned();
 }
 
 export function resetMetaSdkLoaderForTests(): void {
   clearSdkLoadWatchers();
   sdkLoadPromise = null;
+  sdkLoadKey = null;
   sdkInitKey = null;
 }
 
 function initFbOnce(fb: FbSdk, appId: string, graphVersion: string): FbSdk {
-  const key = `${appId}|${graphVersion}`;
+  const key = sdkConfigKey(appId, graphVersion);
   if (sdkInitKey !== key) {
     fb.init({ appId, cookie: true, xfbml: false, version: graphVersion });
     sdkInitKey = key;
@@ -252,7 +276,7 @@ export type LoadFacebookSdkOptions = {
 };
 
 /**
- * Load + initialize the Facebook JS SDK exactly once per pending load.
+ * Load + initialize the Facebook JS SDK exactly once per pending config key.
  * Every path resolves or rejects within timeoutMs (default 15s).
  */
 export function loadFacebookSdk(
@@ -268,12 +292,25 @@ export function loadFacebookSdk(
       )
     );
   }
+
+  const key = sdkConfigKey(appId, graphVersion);
+
   if (window.FB) {
     return Promise.resolve(initFbOnce(window.FB, appId, graphVersion));
   }
-  if (sdkLoadPromise) return sdkLoadPromise;
+
+  if (sdkLoadPromise) {
+    if (sdkLoadKey === key) return sdkLoadPromise;
+    return Promise.reject(
+      new MetaEmbeddedSignupError(
+        "sdk_config_conflict",
+        "Meta SDK is already loading with a different app configuration. Please refresh and try again."
+      )
+    );
+  }
 
   const timeoutMs = options.timeoutMs ?? SDK_LOAD_TIMEOUT_MS;
+  sdkLoadKey = key;
 
   sdkLoadPromise = new Promise<FbSdk>((resolve, reject) => {
     let settled = false;
@@ -286,6 +323,7 @@ export function loadFacebookSdk(
         resolve(initFbOnce(fb, appId, graphVersion));
       } catch {
         sdkLoadPromise = null;
+        sdkLoadKey = null;
         reject(
           new MetaEmbeddedSignupError(
             "sdk_load_failed",
@@ -300,6 +338,7 @@ export function loadFacebookSdk(
       settled = true;
       clearSdkLoadWatchers();
       sdkLoadPromise = null;
+      sdkLoadKey = null;
       reject(new MetaEmbeddedSignupError("sdk_load_failed", message));
     };
 
@@ -307,7 +346,18 @@ export function loadFacebookSdk(
       settleFail(SDK_LOAD_TIMEOUT_MESSAGE);
     }, timeoutMs);
 
-    window.fbAsyncInit = () => {
+    // Preserve any pre-existing fbAsyncInit; invoke it once, safely.
+    sdkPreviousFbAsyncInit = window.fbAsyncInit;
+    let previousInvoked = false;
+    const ourHandler = () => {
+      if (!previousInvoked && typeof sdkPreviousFbAsyncInit === "function") {
+        previousInvoked = true;
+        try {
+          sdkPreviousFbAsyncInit();
+        } catch {
+          // Previous handler must not block loader settlement.
+        }
+      }
       if (settled) return;
       if (!window.FB) {
         settleFail("Failed to load the Facebook JavaScript SDK");
@@ -315,6 +365,8 @@ export function loadFacebookSdk(
       }
       settleOk(window.FB);
     };
+    sdkOwnedFbAsyncInit = ourHandler;
+    window.fbAsyncInit = ourHandler;
 
     // Covers: existing script already past fbAsyncInit, or delayed FB attach.
     sdkPollHandle = setInterval(() => {
