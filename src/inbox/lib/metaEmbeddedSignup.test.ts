@@ -8,14 +8,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { transformWithEsbuild } from "vite";
 import {
+  extractEmbeddedSignupProviderError,
   isAllowedMetaMessageOrigin,
   launchMetaEmbeddedSignup,
   loadFacebookSdk,
+  logMetaEmbeddedSignupDebug,
   MetaEmbeddedSignupError,
   parseEmbeddedSignupMessageData,
   resetMetaSdkLoaderForTests,
   resolveMetaEmbeddedSignupConfig,
   sanitizeEmbeddedSignupError,
+  sanitizeProviderErrorForDebug,
 } from "./metaEmbeddedSignup.ts";
 
 let failed = 0;
@@ -28,6 +31,73 @@ async function test(name: string, fn: () => void | Promise<void>) {
     failed += 1;
     console.error(`FAIL: ${name}`, err);
   }
+}
+
+async function withCapturedConsoleError<T>(
+  fn: () => Promise<T> | T
+): Promise<{ result: T; logs: unknown[][] }> {
+  const logs: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
+  };
+  try {
+    const result = await fn();
+    return { result, logs };
+  } finally {
+    console.error = original;
+  }
+}
+
+function debugLogPayloads(logs: unknown[][]): Array<Record<string, unknown>> {
+  return logs
+    .filter(
+      (args) =>
+        args[0] === "[MetaEmbeddedSignup DEBUG]" &&
+        args[1] != null &&
+        typeof args[1] === "object"
+    )
+    .map((args) => args[1] as Record<string, unknown>);
+}
+
+function serializeLogs(logs: unknown[][]): string {
+  return logs
+    .map((args) =>
+      args
+        .map((arg) => {
+          try {
+            return typeof arg === "string" ? arg : JSON.stringify(arg);
+          } catch {
+            return String(arg);
+          }
+        })
+        .join(" ")
+    )
+    .join("\n");
+}
+
+function assertSafeDebugLogs(
+  logs: unknown[][],
+  forbiddenSnippets: string[]
+): void {
+  for (const payload of debugLogPayloads(logs)) {
+    assert.deepEqual(Object.keys(payload).sort(), ["phase", "providerError"]);
+    assert.equal(typeof payload.phase, "string");
+  }
+
+  const serialized = serializeLogs(logs);
+  for (const snippet of forbiddenSnippets) {
+    assert.equal(
+      serialized.includes(snippet),
+      false,
+      `debug logs must not contain ${snippet}`
+    );
+  }
+
+  assert.equal(serialized.includes("sdkResponse"), false);
+  assert.equal(serialized.includes("stack"), false);
+  assert.equal(serialized.includes("MetaEmbeddedSignupError:"), false);
+  assert.equal(serialized.includes("Error:"), false);
 }
 
 type MessageTarget = {
@@ -155,8 +225,64 @@ await test("CANCEL / ERROR classified before requiring asset IDs", () => {
       event: "ERROR",
       data: { error_message: "denied" },
     }),
+    {
+      status: "error",
+      event: "ERROR",
+      providerError: { message: "denied" },
+    }
+  );
+});
+
+await test("ERROR extracts allowlisted Meta providerError fields only", () => {
+  assert.deepEqual(
+    parseEmbeddedSignupMessageData({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: "ERROR",
+      data: {
+        message: "Meta denied onboarding",
+        code: 403,
+        error_subcode: 1885316,
+        fbtrace_id: "A1trace",
+        httpStatus: 200,
+        waba_id: "must-not-copy",
+        access_token: "must-not-copy",
+      },
+    }),
+    {
+      status: "error",
+      event: "ERROR",
+      providerError: {
+        message: "Meta denied onboarding",
+        code: 403,
+        error_subcode: 1885316,
+        fbtrace_id: "A1trace",
+        httpStatus: 200,
+      },
+    }
+  );
+});
+
+await test("providerError omitted when Meta supplied no allowlisted fields", () => {
+  assert.deepEqual(
+    parseEmbeddedSignupMessageData({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: "ERROR",
+      data: { waba_id: "waba-only", current_step: "x" },
+    }),
     { status: "error", event: "ERROR" }
   );
+  assert.equal(
+    extractEmbeddedSignupProviderError({
+      authResponse: { code: "oauth-code" },
+      status: "unknown",
+    }),
+    undefined
+  );
+  const appErr = new MetaEmbeddedSignupError(
+    "login_error",
+    "Embedded Signup reported an error from Meta"
+  );
+  assert.equal(extractEmbeddedSignupProviderError(appErr), undefined);
 });
 
 await test("FINISH_ONLY_WABA is explicit missing_phone, incomplete FINISH is malformed", () => {
@@ -402,7 +528,7 @@ await test("E: ERROR without asset IDs returns sanitized provider error", async 
         type: "WA_EMBEDDED_SIGNUP",
         event: "ERROR",
         data: {
-          error_message: "denied EAAGabcdefghijklmnop",
+          error_message: "denied",
           error_code: "123",
         },
       });
@@ -423,8 +549,12 @@ await test("E: ERROR without asset IDs returns sanitized provider error", async 
   }
   assert.ok(caught instanceof MetaEmbeddedSignupError);
   assert.equal(caught.code, "login_error");
+  assert.deepEqual(caught.providerError, {
+    message: "denied",
+    code: "123",
+  });
   const sanitized = sanitizeEmbeddedSignupError(caught);
-  assert.ok(!sanitized.includes("EAAGabcdefghijklmnop"));
+  assert.equal(sanitized, "Embedded Signup reported an error from Meta");
   assert.equal(messageTarget.listenerCount(), 0);
 });
 
@@ -1233,6 +1363,314 @@ await test(
       assert.equal(fb.initCalls, 1);
     } finally {
       browser.restore();
+    }
+  }
+);
+
+await test(
+  "safe debug logs: allowlisted sanitized providerError only",
+  async () => {
+    const forbidden = [
+      "oauth-auth-code-SECRETVALUE001",
+      "EAAGsecretTokenValueABCDEF",
+      "Bearer secret.bearer.token.value",
+      "oauth-state-SECRETVALUE002",
+      "waba-SECRET-ID-999001",
+      "phone-SECRET-ID-999002",
+      "+15551212999",
+      "app-secret-SECRETVALUE003",
+      "nonce-SECRETVALUE004",
+      "longOpaqueTokenABCDEFGH1234567890",
+      "111222333444555",
+      "999888777666555",
+    ];
+
+    // 1) Full safe provider fields are logged.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(() =>
+          launchMetaEmbeddedSignup({
+            state: "oauth-debug-full",
+            config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+            fb: {
+              init() {},
+              login() {
+                messageTarget.dispatch("https://www.facebook.com", {
+                  type: "WA_EMBEDDED_SIGNUP",
+                  event: "ERROR",
+                  data: {
+                    message: "Meta denied onboarding",
+                    code: 403,
+                    error_subcode: 1885316,
+                    fbtrace_id: "A1trace",
+                    httpStatus: 200,
+                    waba_id: "waba-SECRET-ID-999001",
+                    phone_number_id: "phone-SECRET-ID-999002",
+                    access_token: "EAAGsecretTokenValueABCDEF",
+                    state: "oauth-state-SECRETVALUE002",
+                    customer_phone: "+15551212999",
+                    app_secret: "app-secret-SECRETVALUE003",
+                    auth_code: "oauth-auth-code-SECRETVALUE001",
+                  },
+                });
+              },
+            },
+            messageTarget: messageTarget as unknown as Window,
+            timeoutMs: 2000,
+          })
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.deepEqual(settle?.providerError, {
+        message: "Meta denied onboarding",
+        code: 403,
+        error_subcode: 1885316,
+        fbtrace_id: "A1trace",
+        httpStatus: 200,
+      });
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // 2) Missing optional fields stay absent.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(() =>
+          launchMetaEmbeddedSignup({
+            state: "oauth-debug-partial",
+            config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+            fb: {
+              init() {},
+              login() {
+                messageTarget.dispatch("https://www.facebook.com", {
+                  type: "WA_EMBEDDED_SIGNUP",
+                  event: "ERROR",
+                  data: { error_message: "denied" },
+                });
+              },
+            },
+            messageTarget: messageTarget as unknown as Window,
+            timeoutMs: 2000,
+          })
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.deepEqual(settle?.providerError, { message: "denied" });
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(settle?.providerError ?? {}, "code"),
+        false
+      );
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // 3) Malformed payload logs no providerError.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(() =>
+          launchMetaEmbeddedSignup({
+            state: "oauth-debug-empty",
+            config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+            fb: {
+              init() {},
+              login() {
+                messageTarget.dispatch("https://www.facebook.com", {
+                  type: "WA_EMBEDDED_SIGNUP",
+                  event: "ERROR",
+                  data: {
+                    waba_id: "waba-SECRET-ID-999001",
+                    phone_number_id: "phone-SECRET-ID-999002",
+                    access_token: "EAAGsecretTokenValueABCDEF",
+                    state: "oauth-state-SECRETVALUE002",
+                  },
+                });
+              },
+            },
+            messageTarget: messageTarget as unknown as Window,
+            timeoutMs: 2000,
+          })
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      assert.equal(settle?.providerError, undefined);
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // 4/5) Secrets in rejected fields never appear; secrets in message are redacted.
+    {
+      const messageTarget = makeMessageTarget();
+      const { logs } = await withCapturedConsoleError(async () => {
+        await assert.rejects(() =>
+          launchMetaEmbeddedSignup({
+            state: "oauth-debug-message-secret",
+            config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+            fb: {
+              init() {},
+              login() {
+                messageTarget.dispatch("https://www.facebook.com", {
+                  type: "WA_EMBEDDED_SIGNUP",
+                  event: "ERROR",
+                  data: {
+                    message:
+                      "denied token=EAAGsecretTokenValueABCDEF phone=+15551212999 id=111222333444555",
+                    code: 403,
+                  },
+                });
+              },
+            },
+            messageTarget: messageTarget as unknown as Window,
+            timeoutMs: 2000,
+          })
+        );
+      });
+      const settle = debugLogPayloads(logs).find(
+        (p) => p.phase === "launchMetaEmbeddedSignup.settleErr"
+      );
+      const providerError = settle?.providerError as
+        | { message?: string; code?: number }
+        | undefined;
+      assert.equal(providerError?.code, 403);
+      assert.equal(typeof providerError?.message, "string");
+      assert.ok(providerError?.message?.includes("[REDACTED]"));
+      assert.equal(
+        providerError?.message?.includes("EAAGsecretTokenValueABCDEF"),
+        false
+      );
+      assert.equal(providerError?.message?.includes("+15551212999"), false);
+      assert.equal(providerError?.message?.includes("111222333444555"), false);
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // 6) Extra runtime properties on providerError are ignored.
+    {
+      const dirty = {
+        message: "ok",
+        code: 1,
+        access_token: "EAAGsecretTokenValueABCDEF",
+        state: "oauth-state-SECRETVALUE002",
+        wabaId: "waba-SECRET-ID-999001",
+        stack: "Error: boom",
+        sdkResponse: { raw: true },
+      };
+      const sanitized = sanitizeProviderErrorForDebug(
+        dirty as unknown as {
+          message?: string;
+          code?: string | number;
+        }
+      );
+      assert.deepEqual(sanitized, { message: "ok", code: 1 });
+      const { logs } = await withCapturedConsoleError(() => {
+        logMetaEmbeddedSignupDebug(
+          "unit.extra-props",
+          dirty as unknown as {
+            message?: string;
+            code?: string | number;
+          }
+        );
+      });
+      assert.deepEqual(logs, [
+        [
+          "[MetaEmbeddedSignup DEBUG]",
+          {
+            phase: "unit.extra-props",
+            providerError: { message: "ok", code: 1 },
+          },
+        ],
+      ]);
+      assertSafeDebugLogs(logs, forbidden);
+      // Fresh object — not the same reference.
+      assert.notEqual(sanitized, dirty);
+    }
+
+    // 7/8) Token-like, phone-like, and ID-like values are redacted.
+    {
+      const sanitized = sanitizeProviderErrorForDebug({
+        message:
+          "x longOpaqueTokenABCDEFGH1234567890 y +15551212999 z 999888777666555",
+        fbtrace_id: "shortTrace",
+        code: 403,
+      });
+      assert.equal(sanitized?.code, 403);
+      assert.equal(sanitized?.fbtrace_id, "shortTrace");
+      assert.ok(sanitized?.message?.includes("[REDACTED]"));
+      assert.equal(
+        sanitized?.message?.includes("longOpaqueTokenABCDEFGH1234567890"),
+        false
+      );
+      assert.equal(sanitized?.message?.includes("+15551212999"), false);
+      assert.equal(sanitized?.message?.includes("999888777666555"), false);
+    }
+
+    // 9) Never log attached providerError object directly (fresh sanitized copy).
+    {
+      const attached = {
+        message: "denied EAAGsecretTokenValueABCDEF",
+        code: 403,
+      };
+      const { logs } = await withCapturedConsoleError(() => {
+        logMetaEmbeddedSignupDebug("unit.fresh-copy", attached);
+      });
+      const logged = debugLogPayloads(logs)[0]?.providerError as {
+        message?: string;
+      };
+      assert.notEqual(logged, attached);
+      assert.ok(logged?.message?.includes("[REDACTED]"));
+      assert.equal(logged?.message?.includes("EAAGsecretTokenValueABCDEF"), false);
+      assertSafeDebugLogs(logs, forbidden);
+    }
+
+    // 10) Signup control flow remains unchanged (success still requires code + FINISH).
+    {
+      const messageTarget = makeMessageTarget();
+      let loginCb:
+        | ((r: {
+            authResponse?: { code?: string } | null;
+            status?: string;
+          }) => void)
+        | null = null;
+      const pending = launchMetaEmbeddedSignup({
+        state: "oauth-flow-unchanged",
+        config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+        fb: {
+          init() {},
+          login(cb) {
+            loginCb = cb;
+          },
+        },
+        messageTarget: messageTarget as unknown as Window,
+        timeoutMs: 500,
+      });
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
+      messageTarget.dispatch("https://www.facebook.com", {
+        type: "WA_EMBEDDED_SIGNUP",
+        event: "FINISH",
+        data: { waba_id: "555", phone_number_id: "666" },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      assert.equal(settled, false);
+      loginCb?.({ authResponse: { code: "final-code" }, status: "connected" });
+      const result = await pending;
+      assert.deepEqual(result, {
+        code: "final-code",
+        state: "oauth-flow-unchanged",
+        wabaId: "555",
+        phoneNumberId: "666",
+      });
     }
   }
 );

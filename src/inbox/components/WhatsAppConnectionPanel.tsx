@@ -9,7 +9,9 @@ import {
   testWhatsAppConnection,
 } from "../api/inboxApi";
 import {
+  extractEmbeddedSignupProviderError,
   launchMetaEmbeddedSignup,
+  logMetaEmbeddedSignupDebug,
   sanitizeEmbeddedSignupError,
 } from "../lib/metaEmbeddedSignup";
 import type {
@@ -106,6 +108,11 @@ export default function WhatsAppConnectionPanel({
       });
       setStatus(updated);
     } catch (err) {
+      // TEMPORARY DEBUG — fresh sanitized allowlisted providerError only.
+      logMetaEmbeddedSignupDebug(
+        "WhatsAppConnectionPanel.handleLaunchEmbeddedSignup.catch",
+        extractEmbeddedSignupProviderError(err)
+      );
       setError(sanitizeEmbeddedSignupError(err));
     } finally {
       activeStateRef.current = null;
