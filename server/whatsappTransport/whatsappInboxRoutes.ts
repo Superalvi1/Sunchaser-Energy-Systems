@@ -11,6 +11,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import type { RequestActor } from "../middleware/actor.ts";
 import {
   createInboxControllers,
+  type InboxControllerDeps,
   type InboxControllers,
   type InboxSendPort,
 } from "./whatsappInboxControllers.ts";
@@ -51,6 +52,8 @@ export type WhatsAppInboxRouterDeps = {
   sendEnabled?: boolean;
   /** Force in-memory repos when services/repos not provided (tests only). */
   useInMemory?: boolean;
+  /** Optional connection-status resolver (tests). */
+  getConnectionStatus?: InboxControllerDeps["getConnectionStatus"];
 };
 
 /**
@@ -106,6 +109,7 @@ export function createWhatsAppInboxRouter(
     controllers = createInboxControllers(services, {
       sendPort: sendPort ?? undefined,
       sendEnabled,
+      getConnectionStatus: deps.getConnectionStatus,
     });
     return controllers;
   };

@@ -2,13 +2,17 @@
  * Conversation RPC fail-closed / ordering evidence tests (RC-1.2.4B).
  */
 import assert from "node:assert/strict";
-import { InMemoryWhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
+import {
+  InMemoryWhatsAppInboxConversationRepository,
+  SupabaseWhatsAppInboxConversationRepository,
+} from "./whatsappInboxConversationRepository.ts";
 import {
   activityAt,
   WhatsAppInboxMemoryStore,
 } from "./whatsappInboxRepoSupport.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
+import { mapInboxError } from "./whatsappInboxHttp.ts";
 
 let failed = 0;
 
@@ -98,6 +102,59 @@ await test("missing RPC → service_unavailable in production (guard)", () => {
     }
   }
 });
+
+await test(
+  "missing RPC listByActivity throws Conversation listing RPC is not available → 503",
+  async () => {
+    const prevNode = process.env.NODE_ENV;
+    const prevFlag = process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK;
+    process.env.NODE_ENV = "production";
+    delete process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK;
+    try {
+      const repo = new SupabaseWhatsAppInboxConversationRepository(
+        () =>
+          ({
+            rpc: async () => ({
+              data: null,
+              error: {
+                code: "PGRST202",
+                message:
+                  "Could not find the function public.whatsapp_inbox_list_conversations_by_activity",
+              },
+            }),
+          }) as any
+      );
+
+      let thrown: unknown;
+      try {
+        await repo.listByActivity({ companyId: "sunchaser" }, { limit: 40 });
+      } catch (err) {
+        thrown = err;
+      }
+
+      assert.ok(thrown instanceof InboxServiceError);
+      assert.equal(thrown.code, "service_unavailable");
+      assert.equal(
+        thrown.message,
+        "Conversation listing RPC is not available"
+      );
+      // Stack points at conversationRpcUnavailableError / listByActivity.
+      assert.match(String((thrown as Error).stack ?? ""), /listByActivity|conversationRpcUnavailable/i);
+
+      const mapped = mapInboxError(thrown);
+      assert.equal(mapped.status, 503);
+      assert.equal(mapped.code, "service_unavailable");
+      assert.equal(mapped.message, "Service temporarily unavailable");
+    } finally {
+      process.env.NODE_ENV = prevNode;
+      if (prevFlag === undefined) {
+        delete process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK;
+      } else {
+        process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK = prevFlag;
+      }
+    }
+  }
+);
 
 await test("fallback only when explicit non-production flag enabled", () => {
   const prevNode = process.env.NODE_ENV;

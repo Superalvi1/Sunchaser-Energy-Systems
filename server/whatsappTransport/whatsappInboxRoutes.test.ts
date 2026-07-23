@@ -30,6 +30,8 @@ import {
   createInboxOutboundSendPort,
   isInboxSendTransportReady,
 } from "./whatsappInboxSendTransport.ts";
+import { resetConnectionStoreForTests } from "./whatsappConnectionService.ts";
+import { SupabaseWhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
 
 let failed = 0;
 
@@ -150,6 +152,8 @@ async function withInboxServer(
       typeof createWhatsAppInboxRouter
     >[0]["resolveSendPort"];
     sendEnabled?: boolean;
+    /** When false, leave WhatsApp DISCONNECTED (default seeds CONNECTED). */
+    seedWhatsAppConnected?: boolean;
     createLead?: Parameters<
       typeof createWhatsAppInboxServices
     >[1]["createLead"];
@@ -162,6 +166,17 @@ async function withInboxServer(
 ): Promise<void> {
   const users = opts.users ?? [staffUser, adminUser, technicianUser, pendingStaff];
   const repos = createInMemoryWhatsAppInboxRepositories();
+  if (opts.seedWhatsAppConnected === false) {
+    await resetConnectionStoreForTests();
+  } else {
+    await resetConnectionStoreForTests({
+      accessToken: "EAAG_test_token",
+      phoneNumberId: "123456789012345",
+      wabaId: "waba_test_1",
+      phoneNumber: "+15551234567",
+      lastWebhookAt: "2026-07-19T10:00:00.000Z",
+    });
+  }
   const services = createWhatsAppInboxServices(repos, {
     now: () => Date.parse("2026-07-19T12:00:00.000Z"),
     assignees: {
@@ -215,6 +230,7 @@ async function withInboxServer(
   try {
     await fn(baseUrl, tokens, repos);
   } finally {
+    await resetConnectionStoreForTests();
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve()))
     );
@@ -378,6 +394,75 @@ await test("rbac: pending account → 403 from auth or rbac", async () => {
     assert.ok(res.status === 403 || res.status === 401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Disconnected WhatsApp / missing listing RPC
+// ---------------------------------------------------------------------------
+
+await test(
+  "list conversations: DISCONNECTED WhatsApp → empty 200 (no 503)",
+  async () => {
+    await withInboxServer({ seedWhatsAppConnected: false }, async (baseUrl, tokens, repos) => {
+      seedConversation(repos.store, {
+        id: "c-orphan",
+        updatedAt: "2026-07-19T10:00:00.000Z",
+        lastMessageAt: "2026-07-19T10:00:00.000Z",
+      });
+      const res = await api(baseUrl, "GET", "/conversations", {
+        token: tokens.staff,
+        query: { limit: "40" },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.success, true);
+      assert.deepEqual(res.body.data.conversations, []);
+      assert.equal(res.body.meta?.nextCursor ?? null, null);
+    });
+  }
+);
+
+await test(
+  "missing conversation listing RPC → service_unavailable → HTTP 503",
+  async () => {
+    const prevNode = process.env.NODE_ENV;
+    const prevFlag = process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK;
+    process.env.NODE_ENV = "production";
+    delete process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK;
+    try {
+      const repo = new SupabaseWhatsAppInboxConversationRepository(
+        () =>
+          ({
+            rpc: async () => ({
+              data: null,
+              error: {
+                code: "PGRST202",
+                message:
+                  "Could not find the function public.whatsapp_inbox_list_conversations_by_activity",
+              },
+            }),
+          }) as any
+      );
+      await assert.rejects(
+        () => repo.listByActivity({ companyId: "sunchaser" }, { limit: 40 }),
+        (err: unknown) => {
+          assert.ok(err instanceof InboxServiceError);
+          assert.equal(err.code, "service_unavailable");
+          assert.match(err.message, /Conversation listing RPC is not available/);
+          const mapped = mapInboxError(err);
+          assert.equal(mapped.status, 503);
+          assert.equal(mapped.message, "Service temporarily unavailable");
+          return true;
+        }
+      );
+    } finally {
+      process.env.NODE_ENV = prevNode;
+      if (prevFlag === undefined) {
+        delete process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK;
+      } else {
+        process.env.WHATSAPP_ALLOW_CONVERSATION_TABLE_FALLBACK = prevFlag;
+      }
+    }
+  }
+);
 
 // ---------------------------------------------------------------------------
 // Integration — conversations / delta / detail

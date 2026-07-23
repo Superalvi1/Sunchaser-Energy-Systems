@@ -65,13 +65,35 @@ export type InboxControllerDeps = {
    * Defaults to true only when a sendPort is provided.
    */
   sendEnabled?: boolean;
+  /**
+   * Connection status resolver (tests). Defaults to getWhatsAppConnectionStatus.
+   */
+  getConnectionStatus?: typeof getWhatsAppConnectionStatus;
 };
+
+/**
+ * When WhatsApp is not connected, conversation list/delta must not hit the
+ * listing RPC (missing RPC → opaque 503 in production). Return an empty page.
+ */
+async function isWhatsAppDisconnectedForList(
+  getStatus: typeof getWhatsAppConnectionStatus
+): Promise<boolean> {
+  try {
+    const status = await getStatus(DEFAULT_COMPANY_ID);
+    return status.status === "DISCONNECTED";
+  } catch {
+    // Connection store unavailable — treat as not connected for list reads.
+    return true;
+  }
+}
 
 export function createInboxControllers(
   services: WhatsAppInboxServices,
   deps: InboxControllerDeps = {}
 ) {
   const sendEnabled = deps.sendEnabled ?? deps.sendPort != null;
+  const resolveConnectionStatus =
+    deps.getConnectionStatus ?? getWhatsAppConnectionStatus;
 
   return {
     async listConversations(req: Request, res: Response) {
@@ -81,6 +103,11 @@ export function createInboxControllers(
         );
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
+        }
+        if (await isWhatsAppDisconnectedForList(resolveConnectionStatus)) {
+          return inboxOk(res, { conversations: [] }, 200, {
+            nextCursor: null,
+          });
         }
         const page = await services.conversations.listByActivity(
           actorOf(req),
@@ -150,6 +177,11 @@ export function createInboxControllers(
         const parsed = parseDeltaQuery(req.query as Record<string, unknown>);
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
+        }
+        if (await isWhatsAppDisconnectedForList(resolveConnectionStatus)) {
+          return inboxOk(res, { conversations: [] }, 200, {
+            nextCursor: null,
+          });
         }
         const page = await services.conversations.listDelta(
           actorOf(req),
