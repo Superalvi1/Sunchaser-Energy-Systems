@@ -72,8 +72,10 @@ export type InboxControllerDeps = {
 };
 
 /**
- * When WhatsApp is not connected, conversation list/delta must not hit the
- * listing RPC (missing RPC → opaque 503 in production). Return an empty page.
+ * Empty-list short-circuit only when status lookup succeeds with DISCONNECTED.
+ * Lookup failures must not masquerade as disconnected — fall through to the
+ * normal repository/RPC path so connected-system errors (e.g. missing RPC)
+ * still surface.
  */
 async function isWhatsAppDisconnectedForList(
   getStatus: typeof getWhatsAppConnectionStatus
@@ -82,8 +84,7 @@ async function isWhatsAppDisconnectedForList(
     const status = await getStatus(DEFAULT_COMPANY_ID);
     return status.status === "DISCONNECTED";
   } catch {
-    // Connection store unavailable — treat as not connected for list reads.
-    return true;
+    return false;
   }
 }
 

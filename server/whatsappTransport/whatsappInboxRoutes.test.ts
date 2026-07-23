@@ -30,8 +30,12 @@ import {
   createInboxOutboundSendPort,
   isInboxSendTransportReady,
 } from "./whatsappInboxSendTransport.ts";
-import { resetConnectionStoreForTests } from "./whatsappConnectionService.ts";
+import {
+  resetConnectionStoreForTests,
+  type WhatsAppConnectionStatusPayload,
+} from "./whatsappConnectionService.ts";
 import { SupabaseWhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
+import { createInboxControllers } from "./whatsappInboxControllers.ts";
 
 let failed = 0;
 
@@ -154,6 +158,9 @@ async function withInboxServer(
     sendEnabled?: boolean;
     /** When false, leave WhatsApp DISCONNECTED (default seeds CONNECTED). */
     seedWhatsAppConnected?: boolean;
+    getConnectionStatus?: Parameters<
+      typeof createWhatsAppInboxRouter
+    >[0]["getConnectionStatus"];
     createLead?: Parameters<
       typeof createWhatsAppInboxServices
     >[1]["createLead"];
@@ -207,6 +214,9 @@ async function withInboxServer(
   if ("sendPort" in opts) routerDeps.sendPort = opts.sendPort;
   if (opts.resolveSendPort) routerDeps.resolveSendPort = opts.resolveSendPort;
   if (opts.sendEnabled != null) routerDeps.sendEnabled = opts.sendEnabled;
+  if (opts.getConnectionStatus) {
+    routerDeps.getConnectionStatus = opts.getConnectionStatus;
+  }
   // Tests omit sendPort → explicitly disable (no production Graph config).
   if (!("sendPort" in opts) && !opts.resolveSendPort) {
     routerDeps.sendPort = null;
@@ -396,8 +406,56 @@ await test("rbac: pending account → 403 from auth or rbac", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Disconnected WhatsApp / missing listing RPC
+// Disconnected WhatsApp / missing listing RPC / status lookup fail-closed
 // ---------------------------------------------------------------------------
+
+function disconnectedStatus(): WhatsAppConnectionStatusPayload {
+  return {
+    status: "DISCONNECTED",
+    connectionMode: "COEXISTENCE",
+    wabaIdMasked: null,
+    phoneNumberMasked: null,
+    phoneNumberIdMasked: null,
+    lastWebhookAt: null,
+    webhookHealth: "unknown",
+    tokenHealth: "reauth_required",
+    connectionErrorSummary: null,
+    canReconnect: true,
+  };
+}
+
+function connectedStatus(): WhatsAppConnectionStatusPayload {
+  return {
+    status: "CONNECTED",
+    connectionMode: "COEXISTENCE",
+    wabaIdMasked: "wa***",
+    phoneNumberMasked: "+15 *** 567",
+    phoneNumberIdMasked: "12***",
+    lastWebhookAt: "2026-07-19T10:00:00.000Z",
+    webhookHealth: "healthy",
+    tokenHealth: "valid",
+    connectionErrorSummary: null,
+    canReconnect: true,
+  };
+}
+
+function mockJsonRes() {
+  const state: { statusCode: number; body: any } = {
+    statusCode: 0,
+    body: null,
+  };
+  const res = {
+    status(code: number) {
+      state.statusCode = code;
+      return res;
+    },
+    json(body: any) {
+      state.body = body;
+      return res;
+    },
+  };
+  return { res: res as any, state };
+}
 
 await test(
   "list conversations: DISCONNECTED WhatsApp → empty 200 (no 503)",
@@ -417,6 +475,151 @@ await test(
       assert.deepEqual(res.body.data.conversations, []);
       assert.equal(res.body.meta?.nextCursor ?? null, null);
     });
+  }
+);
+
+await test(
+  "delta: DISCONNECTED WhatsApp → empty 200 (no 503)",
+  async () => {
+    await withInboxServer({ seedWhatsAppConnected: false }, async (baseUrl, tokens, repos) => {
+      seedConversation(repos.store, {
+        id: "c-orphan",
+        updatedAt: "2026-07-19T10:00:00.000Z",
+        lastMessageAt: "2026-07-19T10:00:00.000Z",
+      });
+      const since = encodeInboxCursor({
+        at: "1970-01-01T00:00:00.000Z",
+        id: "",
+      });
+      const res = await api(baseUrl, "GET", "/delta", {
+        token: tokens.staff,
+        query: { since },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.success, true);
+      assert.deepEqual(res.body.data.conversations, []);
+      assert.equal(res.body.meta?.nextCursor ?? null, null);
+    });
+  }
+);
+
+await test(
+  "controller: explicit DISCONNECTED does not call listByActivity",
+  async () => {
+    let listCalls = 0;
+    const controllers = createInboxControllers(
+      {
+        conversations: {
+          async listByActivity() {
+            listCalls += 1;
+            return { rows: [{ id: "should-not-return" }], nextCursor: null };
+          },
+        },
+      } as any,
+      {
+        getConnectionStatus: async () => disconnectedStatus(),
+      }
+    );
+    const { res, state } = mockJsonRes();
+    await controllers.listConversations(
+      { query: { limit: "40" }, actor: { userId: "u-staff" } } as any,
+      res
+    );
+    assert.equal(listCalls, 0);
+    assert.equal(state.statusCode, 200);
+    assert.deepEqual(state.body.data.conversations, []);
+  }
+);
+
+await test(
+  "controller: explicit DISCONNECTED does not call listDelta",
+  async () => {
+    let deltaCalls = 0;
+    const controllers = createInboxControllers(
+      {
+        conversations: {
+          async listDelta() {
+            deltaCalls += 1;
+            return { rows: [{ id: "should-not-return" }], nextCursor: null };
+          },
+        },
+      } as any,
+      {
+        getConnectionStatus: async () => disconnectedStatus(),
+      }
+    );
+    const { res, state } = mockJsonRes();
+    const since = encodeInboxCursor({
+      at: "1970-01-01T00:00:00.000Z",
+      id: "",
+    });
+    await controllers.listDelta(
+      { query: { since }, actor: { userId: "u-staff" } } as any,
+      res
+    );
+    assert.equal(deltaCalls, 0);
+    assert.equal(state.statusCode, 200);
+    assert.deepEqual(state.body.data.conversations, []);
+  }
+);
+
+await test(
+  "status lookup failure does not silently return empty inbox",
+  async () => {
+    await withInboxServer(
+      {
+        getConnectionStatus: async () => {
+          throw new Error("connection store unavailable");
+        },
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-visible",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const res = await api(baseUrl, "GET", "/conversations", {
+          token: tokens.staff,
+          query: { limit: "40" },
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.success, true);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-visible"]
+        );
+      }
+    );
+  }
+);
+
+await test(
+  "connected RPC failure still surfaces service_unavailable (not empty)",
+  async () => {
+    const controllers = createInboxControllers(
+      {
+        conversations: {
+          async listByActivity() {
+            throw new InboxServiceError(
+              "service_unavailable",
+              "Conversation listing RPC is not available"
+            );
+          },
+        },
+      } as any,
+      {
+        getConnectionStatus: async () => connectedStatus(),
+      }
+    );
+    const { res, state } = mockJsonRes();
+    await controllers.listConversations(
+      { query: { limit: "40" }, actor: { userId: "u-staff" } } as any,
+      res
+    );
+    assert.equal(state.statusCode, 503);
+    assert.equal(state.body.success, false);
+    assert.equal(state.body.error.code, "service_unavailable");
+    assert.equal(state.body.error.message, "Service temporarily unavailable");
   }
 );
 
