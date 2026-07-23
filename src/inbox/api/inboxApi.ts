@@ -10,6 +10,8 @@ import {
   type InboxMessagesPage,
   type InboxConversationStatus,
   type WhatsAppConnectionStatusPayload,
+  type WhatsAppConnectionTestResult,
+  type WhatsAppOnboardingDiagnostics,
 } from "../types";
 
 type Envelope<T> =
@@ -278,6 +280,25 @@ export async function disconnectWhatsAppConnection(): Promise<WhatsAppConnection
   const { data } = await inboxRequest<WhatsAppConnectionStatusPayload>(
     "/api/inbox/admin/whatsapp/disconnect",
     { method: "POST", body: JSON.stringify({}) }
+  );
+  return data;
+}
+
+export async function fetchWhatsAppOnboardingDiagnostics(): Promise<WhatsAppOnboardingDiagnostics> {
+  const { data } = await inboxRequest<WhatsAppOnboardingDiagnostics>(
+    "/api/inbox/admin/whatsapp/diagnostics",
+    { method: "GET" }
+  );
+  return data;
+}
+
+export async function testWhatsAppConnection(): Promise<WhatsAppConnectionTestResult> {
+  const { data } = await inboxRequest<WhatsAppConnectionTestResult>(
+    "/api/inbox/admin/whatsapp/test-connection",
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    }
   );
   return data;
 }

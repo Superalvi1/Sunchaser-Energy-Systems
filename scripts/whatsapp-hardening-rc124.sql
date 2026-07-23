@@ -30,8 +30,9 @@ create table if not exists public.whatsapp_connections (
   last_webhook_at      timestamptz,
   last_error           text,
   state_override       text check (state_override in (
-                         'NOT_CONNECTED','CONNECTING','CONNECTED',
-                         'REAUTHORIZATION_REQUIRED','ERROR')),
+                         'DISCONNECTED','CONNECTING','CONNECTED',
+                         'ERROR','TOKEN_EXPIRED','WEBHOOK_PENDING',
+                         'NOT_CONNECTED','REAUTHORIZATION_REQUIRED')),
   created_at           timestamptz not null default timezone('utc'::text, now()),
   updated_at           timestamptz not null default timezone('utc'::text, now()),
   constraint whatsapp_connections_company_unique unique (company_id)

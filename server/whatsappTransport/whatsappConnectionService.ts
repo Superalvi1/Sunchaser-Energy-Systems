@@ -59,11 +59,12 @@ import {
 // ─── Connection state types ────────────────────────────────────────────────
 
 export type WhatsAppConnectionState =
-  | "NOT_CONNECTED"
+  | "DISCONNECTED"
   | "CONNECTING"
   | "CONNECTED"
-  | "REAUTHORIZATION_REQUIRED"
-  | "ERROR";
+  | "ERROR"
+  | "TOKEN_EXPIRED"
+  | "WEBHOOK_PENDING";
 
 export type WebhookHealthState = "healthy" | "degraded" | "failing" | "unknown";
 export type TokenHealthState =
@@ -90,6 +91,28 @@ export type WhatsAppConnectionStatusPayload = {
   /** Set when local disconnect succeeded but Meta revoke did not. */
   revokeWarning?: string | null;
 };
+
+/** Map persisted / legacy override values onto the onboarding status enum. */
+export function normalizeWhatsAppConnectionStatus(
+  raw: string | null | undefined
+): WhatsAppConnectionState | null {
+  if (!raw) return null;
+  switch (raw) {
+    case "DISCONNECTED":
+    case "CONNECTING":
+    case "CONNECTED":
+    case "ERROR":
+    case "TOKEN_EXPIRED":
+    case "WEBHOOK_PENDING":
+      return raw;
+    case "NOT_CONNECTED":
+      return "DISCONNECTED";
+    case "REAUTHORIZATION_REQUIRED":
+      return "TOKEN_EXPIRED";
+    default:
+      return null;
+  }
+}
 
 // ─── Credential repository ─────────────────────────────────────────────────
 
@@ -232,7 +255,7 @@ export function computeTokenHealth(
   expiresAt: number | null,
   stateOverride: WhatsAppConnectionState | null
 ): TokenHealthState {
-  if (stateOverride === "REAUTHORIZATION_REQUIRED") return "reauth_required";
+  if (stateOverride === "TOKEN_EXPIRED") return "reauth_required";
   if (!accessToken || !accessToken.trim()) return "reauth_required";
   if (!expiresAt) return "valid"; // Permanent System User tokens have no expiration
   const remainingMs = expiresAt - Date.now();
@@ -250,7 +273,7 @@ function buildStatusFromRecord(
   const accessToken = record?.accessToken ?? null;
   const lastWebhookAt = record?.lastWebhookAt ?? null;
   const lastError = record?.lastError ?? null;
-  const stateOverride = record?.stateOverride ?? null;
+  const stateOverride = normalizeWhatsAppConnectionStatus(record?.stateOverride);
   const tokenExpiresAtMs = parseTokenExpiresAtMs(record?.tokenExpiresAt);
 
   const webhookHealth = computeWebhookHealth(lastWebhookAt);
@@ -260,13 +283,15 @@ function buildStatusFromRecord(
     stateOverride
   );
 
-  let status: WhatsAppConnectionState = "NOT_CONNECTED";
-  if (stateOverride) {
+  let status: WhatsAppConnectionState = "DISCONNECTED";
+  if (stateOverride === "CONNECTING" || stateOverride === "ERROR") {
     status = stateOverride;
-  } else if (tokenHealth === "reauth_required" || tokenHealth === "expired") {
-    status = accessToken ? "REAUTHORIZATION_REQUIRED" : "NOT_CONNECTED";
+  } else if (stateOverride === "DISCONNECTED") {
+    status = "DISCONNECTED";
+  } else if (tokenHealth === "expired" || tokenHealth === "reauth_required") {
+    status = accessToken ? "TOKEN_EXPIRED" : "DISCONNECTED";
   } else if (phoneNumberId && accessToken) {
-    status = "CONNECTED";
+    status = lastWebhookAt ? "CONNECTED" : "WEBHOOK_PENDING";
   }
 
   return {
@@ -776,7 +801,7 @@ export type DisconnectDeps = {
  * Revokes the current connection:
  *   1. Deregisters subscribed_apps on the tenant WABA (best-effort).
  *   2. Clears all persisted credentials via repository.
- *   3. Returns updated (NOT_CONNECTED) status, with revokeWarning if Meta revoke failed.
+ *   3. Returns updated (DISCONNECTED) status, with revokeWarning if Meta revoke failed.
  */
 export async function disconnectWhatsApp(
   actor: RequestActor,
@@ -817,4 +842,94 @@ export async function disconnectWhatsApp(
 
   const status = await getWhatsAppConnectionStatus(cid);
   return revokeWarning ? { ...status, revokeWarning } : status;
+}
+
+// ─── Test Connection (admin diagnostics) ───────────────────────────────────
+
+export type WhatsAppConnectionTestResult = {
+  ok: boolean;
+  tokenValid: boolean;
+  wabaAccessOk: boolean;
+  phoneAccessOk: boolean;
+  status: WhatsAppConnectionStatusPayload;
+  summary: string;
+  details: {
+    wabaIdMasked: string | null;
+    phoneNumberIdMasked: string | null;
+  };
+};
+
+/**
+ * Live Graph API probe: validates stored token, WABA access, and phone ownership.
+ * Does not mutate credentials. Sanitized results only.
+ */
+export async function testWhatsAppConnection(
+  companyId?: string,
+  deps: { fetchImpl?: typeof fetch } = {}
+): Promise<WhatsAppConnectionTestResult> {
+  const cid = resolveCompanyId(companyId);
+  const record = await connectionRepository.get(cid);
+  const status = buildStatusFromRecord(record);
+  const fetchImpl = deps.fetchImpl ?? fetch;
+
+  if (!record?.accessToken || !record.wabaId || !record.phoneNumberId) {
+    return {
+      ok: false,
+      tokenValid: false,
+      wabaAccessOk: false,
+      phoneAccessOk: false,
+      status,
+      summary: "No connected WhatsApp credentials to test",
+      details: {
+        wabaIdMasked: status.wabaIdMasked,
+        phoneNumberIdMasked: status.phoneNumberIdMasked,
+      },
+    };
+  }
+
+  const version = resolveGraphVersion();
+  let tokenValid = false;
+  let wabaAccessOk = false;
+  let phoneAccessOk = false;
+  let summary = "Connection test failed";
+
+  try {
+    // Token + WABA access
+    await verifyWabaOwnership(
+      record.accessToken,
+      record.wabaId,
+      version,
+      fetchImpl
+    );
+    tokenValid = true;
+    wabaAccessOk = true;
+
+    await verifyPhoneNumberIdOwnership(
+      record.accessToken,
+      record.wabaId,
+      record.phoneNumberId,
+      version,
+      fetchImpl
+    );
+    phoneAccessOk = true;
+    summary = "Token, WABA access, and phone access validated";
+  } catch (err) {
+    summary =
+      err instanceof InboxServiceError
+        ? err.message
+        : "Connection test failed";
+  }
+
+  return {
+    ok: tokenValid && wabaAccessOk && phoneAccessOk,
+    tokenValid,
+    wabaAccessOk,
+    phoneAccessOk,
+    status,
+    summary,
+    details: {
+      wabaIdMasked: maskId(record.wabaId),
+      phoneNumberIdMasked: maskId(record.phoneNumberId),
+    },
+  };
 }

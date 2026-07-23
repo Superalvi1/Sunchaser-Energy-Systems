@@ -205,6 +205,14 @@ export function createWhatsAppInboxRouter(
     "/admin/whatsapp/disconnect",
     run((c, req, res) => c.disconnectWhatsApp(req, res))
   );
+  router.get(
+    "/admin/whatsapp/diagnostics",
+    run((c, req, res) => c.getOnboardingDiagnostics(req, res))
+  );
+  router.post(
+    "/admin/whatsapp/test-connection",
+    run((c, req, res) => c.testWhatsAppConnection(req, res))
+  );
 
   return router;
 }

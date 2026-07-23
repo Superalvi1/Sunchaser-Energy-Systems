@@ -27,7 +27,9 @@ import {
   generateEmbeddedSignupState,
   getWhatsAppConnectionStatus,
   processEmbeddedSignupOnboarding,
+  testWhatsAppConnection,
 } from "./whatsappConnectionService.ts";
+import { getWhatsAppOnboardingDiagnostics } from "./whatsappOnboardingDiagnostics.ts";
 import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
 
 export type InboxSendPort = (input: {
@@ -471,6 +473,47 @@ export function createInboxControllers(
     async disconnectWhatsApp(req: Request, res: Response) {
       try {
         const payload = await disconnectWhatsApp(actorOf(req));
+        return inboxOk(res, payload);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async getOnboardingDiagnostics(req: Request, res: Response) {
+      try {
+        const actor = actorOf(req);
+        if (actor.role !== "Super Admin" && actor.role !== "Admin") {
+          return inboxFail(
+            res,
+            403,
+            "forbidden",
+            "Only Admin users can view WhatsApp onboarding diagnostics."
+          );
+        }
+        const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "https");
+        const host = String(req.headers["x-forwarded-host"] || req.headers.host || "");
+        const requestBaseUrl = host ? `${proto}://${host}` : undefined;
+        const payload = await getWhatsAppOnboardingDiagnostics({
+          requestBaseUrl,
+        });
+        return inboxOk(res, payload);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    async testWhatsAppConnection(req: Request, res: Response) {
+      try {
+        const actor = actorOf(req);
+        if (actor.role !== "Super Admin" && actor.role !== "Admin") {
+          return inboxFail(
+            res,
+            403,
+            "forbidden",
+            "Only Admin users can test WhatsApp connection."
+          );
+        }
+        const payload = await testWhatsAppConnection();
         return inboxOk(res, payload);
       } catch (err) {
         return sendInboxError(res, err);

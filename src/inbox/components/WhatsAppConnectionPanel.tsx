@@ -4,27 +4,55 @@ import {
   disconnectWhatsAppConnection,
   fetchEmbeddedSignupState,
   fetchWhatsAppConnectionStatus,
+  fetchWhatsAppOnboardingDiagnostics,
   submitEmbeddedSignup,
+  testWhatsAppConnection,
 } from "../api/inboxApi";
 import {
   launchMetaEmbeddedSignup,
   sanitizeEmbeddedSignupError,
 } from "../lib/metaEmbeddedSignup";
-import type { WhatsAppConnectionStatusPayload } from "../types";
+import type {
+  WhatsAppConnectionStatusPayload,
+  WhatsAppConnectionTestResult,
+} from "../types";
 
 type WhatsAppConnectionPanelProps = {
   isAdmin: boolean;
   onClose?: () => void;
 };
 
+function statusLabel(status: WhatsAppConnectionStatusPayload["status"]): string {
+  switch (status) {
+    case "DISCONNECTED":
+      return "Disconnected";
+    case "CONNECTING":
+      return "Connecting";
+    case "CONNECTED":
+      return "Connected";
+    case "TOKEN_EXPIRED":
+      return "Token Expired";
+    case "WEBHOOK_PENDING":
+      return "Webhook Pending";
+    case "ERROR":
+      return "Error";
+    default:
+      return status;
+  }
+}
+
 export default function WhatsAppConnectionPanel({
   isAdmin,
   onClose,
 }: WhatsAppConnectionPanelProps) {
   const [status, setStatus] = useState<WhatsAppConnectionStatusPayload | null>(null);
+  const [webhookCallbackUrl, setWebhookCallbackUrl] = useState<string | null>(null);
+  const [verifyToken, setVerifyToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<WhatsAppConnectionTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Attempt-scoped OAuth state — never localStorage. */
   const activeStateRef = useRef<string | null>(null);
@@ -33,8 +61,15 @@ export default function WhatsAppConnectionPanel({
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchWhatsAppConnectionStatus();
+      const [data, diagnostics] = await Promise.all([
+        fetchWhatsAppConnectionStatus(),
+        fetchWhatsAppOnboardingDiagnostics().catch(() => null),
+      ]);
       setStatus(data);
+      if (diagnostics) {
+        setWebhookCallbackUrl(diagnostics.webhookCallbackUrl);
+        setVerifyToken(diagnostics.webhookVerifyToken);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load connection status");
     } finally {
@@ -86,10 +121,25 @@ export default function WhatsAppConnectionPanel({
     try {
       const updated = await disconnectWhatsAppConnection();
       setStatus(updated);
+      setTestResult(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setDisconnecting(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setError(null);
+    try {
+      const result = await testWhatsAppConnection();
+      setTestResult(result);
+      setStatus(result.status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Connection test failed");
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -100,6 +150,12 @@ export default function WhatsAppConnectionPanel({
       </div>
     );
   }
+
+  const showDisconnect =
+    status?.status === "CONNECTED" ||
+    status?.status === "WEBHOOK_PENDING" ||
+    status?.status === "TOKEN_EXPIRED" ||
+    status?.status === "ERROR";
 
   return (
     <div className="space-y-4 rounded-xl border border-[var(--inbox-border)] bg-[var(--inbox-surface)] p-5 text-[var(--inbox-fg)] shadow-lg">
@@ -150,17 +206,18 @@ export default function WhatsAppConnectionPanel({
                 {status.status === "CONNECTED" ? (
                   <>
                     <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    <span className="text-emerald-400">Connected</span>
+                    <span className="text-emerald-400">{statusLabel(status.status)}</span>
                   </>
-                ) : status.status === "REAUTHORIZATION_REQUIRED" ? (
+                ) : status.status === "TOKEN_EXPIRED" ||
+                  status.status === "WEBHOOK_PENDING" ? (
                   <>
                     <AlertTriangle className="h-4 w-4 text-amber-400" />
-                    <span className="text-amber-400">Reauthorization Required</span>
+                    <span className="text-amber-400">{statusLabel(status.status)}</span>
                   </>
                 ) : (
                   <>
                     <XCircle className="h-4 w-4 text-zinc-400" />
-                    <span className="text-zinc-400">{status.status}</span>
+                    <span className="text-zinc-400">{statusLabel(status.status)}</span>
                   </>
                 )}
               </div>
@@ -175,6 +232,18 @@ export default function WhatsAppConnectionPanel({
           {status.revokeWarning ? (
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
               {status.revokeWarning}
+            </div>
+          ) : null}
+
+          {testResult ? (
+            <div
+              className={`rounded-lg border p-2.5 text-[11px] ${
+                testResult.ok
+                  ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                  : "border-amber-500/20 bg-amber-500/10 text-amber-300"
+              }`}
+            >
+              {testResult.summary}
             </div>
           ) : null}
 
@@ -206,15 +275,32 @@ export default function WhatsAppConnectionPanel({
             </div>
           </div>
 
+          {(webhookCallbackUrl || verifyToken) && (
+            <div className="space-y-2 rounded-lg border border-[var(--inbox-border)] p-2.5 text-[11px]">
+              {webhookCallbackUrl ? (
+                <div>
+                  <div className="text-[var(--inbox-muted)]">Webhook callback URL</div>
+                  <div className="break-all font-mono">{webhookCallbackUrl}</div>
+                </div>
+              ) : null}
+              {verifyToken ? (
+                <div>
+                  <div className="text-[var(--inbox-muted)]">Verify Token</div>
+                  <div className="break-all font-mono">{verifyToken}</div>
+                </div>
+              ) : null}
+            </div>
+          )}
+
           <div className="flex items-center gap-1.5 text-[11px] text-[var(--inbox-muted)]">
             <Shield className="h-3.5 w-3.5 text-emerald-400" />
             Secrets & Access Tokens are securely stored server-side and redacted.
           </div>
 
-          <div className="pt-2 border-t border-[var(--inbox-border)] space-y-2">
+          <div className="space-y-2 border-t border-[var(--inbox-border)] pt-2">
             <button
               type="button"
-              disabled={connecting || disconnecting}
+              disabled={connecting || disconnecting || testing}
               onClick={() => void handleLaunchEmbeddedSignup()}
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 shadow-md"
             >
@@ -226,14 +312,24 @@ export default function WhatsAppConnectionPanel({
               ) : (
                 <>
                   <Smartphone className="h-4 w-4" />
-                  Connect Existing WhatsApp Business Number
+                  {showDisconnect
+                    ? "Reconnect WhatsApp Business Number"
+                    : "Connect Existing WhatsApp Business Number"}
                 </>
               )}
             </button>
-            {status.status === "CONNECTED" || status.status === "REAUTHORIZATION_REQUIRED" ? (
+            <button
+              type="button"
+              disabled={connecting || disconnecting || testing}
+              onClick={() => void handleTestConnection()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)] disabled:opacity-50"
+            >
+              {testing ? "Testing Connection..." : "Test Connection"}
+            </button>
+            {showDisconnect ? (
               <button
                 type="button"
-                disabled={connecting || disconnecting}
+                disabled={connecting || disconnecting || testing}
                 onClick={() => void handleDisconnect()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)] disabled:opacity-50"
               >

@@ -18,6 +18,7 @@ import { Lead, Ticket, InventoryItem, DashboardStats, Product, User, ActivityLog
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
 import SupportDeskStaff from "./SupportDeskStaff";
 import InboxPage from "../inbox/components/InboxPage";
+import WhatsAppSetupPage from "../inbox/components/WhatsAppSetupPage";
 import ServiceDeskStaff from "./ServiceDeskStaff";
 import CustomerSavingsStaff from "./CustomerSavingsStaff";
 import SubscriptionDeskStaff from "./SubscriptionDeskStaff";
@@ -1611,6 +1612,9 @@ export default function AdminApp({
           <SupportDeskStaff staffUser={staffUser} leads={leads} />
         )}
         {activeSegment === "inbox" && <InboxPage staffUser={staffUser} />}
+        {activeSegment === "whatsapp-setup" && (
+          <WhatsAppSetupPage staffUser={staffUser} />
+        )}
         {activeSegment === 'service-desk' && (
           <ServiceDeskStaff staffUser={staffUser} leads={leads} />
         )}

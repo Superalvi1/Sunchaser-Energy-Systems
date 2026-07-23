@@ -16,11 +16,15 @@ import {
 } from "./whatsappTokenCrypto.ts";
 
 export type WhatsAppConnectionStateOverride =
-  | "NOT_CONNECTED"
+  | "DISCONNECTED"
   | "CONNECTING"
   | "CONNECTED"
-  | "REAUTHORIZATION_REQUIRED"
-  | "ERROR";
+  | "ERROR"
+  | "TOKEN_EXPIRED"
+  | "WEBHOOK_PENDING"
+  // Legacy values still readable from older rows:
+  | "NOT_CONNECTED"
+  | "REAUTHORIZATION_REQUIRED";
 
 export type WhatsAppConnectionRecord = {
   companyId: string;

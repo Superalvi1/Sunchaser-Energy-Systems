@@ -20,6 +20,7 @@ import {
   Search,
   Settings2,
   ShieldAlert,
+  Smartphone,
   Truck,
   UserCog,
   UserPlus,
@@ -46,6 +47,7 @@ export type AdminSegmentId =
   | "tickets"
   | "support-desk"
   | "inbox"
+  | "whatsapp-setup"
   | "inventory"
   | "products"
   | "client-portal"
@@ -358,6 +360,12 @@ export function buildAdminNavGroups(opts: {
           title: "WhatsApp Inbox",
           description: "Shared conversations and replies",
           icon: Inbox,
+        },
+        {
+          id: "whatsapp-setup",
+          title: "WhatsApp Setup",
+          description: "Meta onboarding checklist",
+          icon: Smartphone,
         },
         {
           id: "savings-desk",

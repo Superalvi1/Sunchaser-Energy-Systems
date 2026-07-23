@@ -112,8 +112,16 @@ export class InboxClientError extends Error {
   }
 }
 
+export type WhatsAppConnectionStatus =
+  | "DISCONNECTED"
+  | "CONNECTING"
+  | "CONNECTED"
+  | "ERROR"
+  | "TOKEN_EXPIRED"
+  | "WEBHOOK_PENDING";
+
 export type WhatsAppConnectionStatusPayload = {
-  status: "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "REAUTHORIZATION_REQUIRED" | "ERROR";
+  status: WhatsAppConnectionStatus;
   connectionMode: "COEXISTENCE";
   wabaIdMasked: string | null;
   phoneNumberMasked: string | null;
@@ -125,4 +133,45 @@ export type WhatsAppConnectionStatusPayload = {
   canReconnect: boolean;
   /** Sanitized non-fatal warning when Meta unsubscribe failed during disconnect. */
   revokeWarning?: string | null;
+};
+
+export type WhatsAppSetupChecklistItem = {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string | null;
+};
+
+export type WhatsAppOnboardingDiagnostics = {
+  checklist: WhatsAppSetupChecklistItem[];
+  connection: WhatsAppConnectionStatusPayload;
+  webhookCallbackUrl: string;
+  webhookVerifyToken: string | null;
+  webhookVerifyTokenConfigured: boolean;
+  publicBaseUrlConfigured: boolean;
+  graphApi: {
+    version: string;
+    connectivityOk: boolean;
+    detail: string | null;
+  };
+  environment: {
+    metaAppIdConfigured: boolean;
+    metaConfigIdConfigured: boolean;
+    appSecretConfigured: boolean;
+    encryptionKeyConfigured: boolean;
+    conversationsEnabled: boolean;
+  };
+};
+
+export type WhatsAppConnectionTestResult = {
+  ok: boolean;
+  tokenValid: boolean;
+  wabaAccessOk: boolean;
+  phoneAccessOk: boolean;
+  status: WhatsAppConnectionStatusPayload;
+  summary: string;
+  details: {
+    wabaIdMasked: string | null;
+    phoneNumberIdMasked: string | null;
+  };
 };

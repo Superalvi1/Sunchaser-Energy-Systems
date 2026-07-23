@@ -87,7 +87,7 @@ await test("disconnected state when no credentials present", async () => {
   });
 
   const status = await getWhatsAppConnectionStatus();
-  assert.equal(status.status, "NOT_CONNECTED");
+  assert.equal(status.status, "DISCONNECTED");
   assert.equal(status.connectionMode, "COEXISTENCE");
   assert.equal(status.wabaIdMasked, null);
   assert.equal(status.phoneNumberIdMasked, null);
@@ -105,7 +105,7 @@ await test("env credentials alone do not produce CONNECTED without persisted rec
   try {
     await resetConnectionStoreForTests();
     const status = await getWhatsAppConnectionStatus();
-    assert.equal(status.status, "NOT_CONNECTED");
+    assert.equal(status.status, "DISCONNECTED");
     assert.equal(status.wabaIdMasked, null);
     assert.equal(status.phoneNumberIdMasked, null);
   } finally {
@@ -146,7 +146,7 @@ await test("successful Coexistence Embedded Signup onboarding", async () => {
     }
   );
 
-  assert.equal(status.status, "CONNECTED");
+  assert.equal(status.status, "WEBHOOK_PENDING");
   assert.equal(status.connectionMode, "COEXISTENCE");
   assert.equal(status.wabaIdMasked, "12****8765");
   assert.equal(status.phoneNumberIdMasked, "98****2345");
@@ -417,7 +417,7 @@ await test("non-admin disconnect is forbidden", async () => {
   );
 });
 
-await test("disconnect clears credentials and returns NOT_CONNECTED", async () => {
+await test("disconnect clears credentials and returns DISCONNECTED", async () => {
   await resetConnectionStoreForTests({
     accessToken: "EAAG_test",
     phoneNumberId: TEST_PHONE_NUMBER_ID,
@@ -425,7 +425,7 @@ await test("disconnect clears credentials and returns NOT_CONNECTED", async () =
   });
 
   const status = await disconnectWhatsApp(adminActor, { skipRevoke: true });
-  assert.equal(status.status, "NOT_CONNECTED");
+  assert.equal(status.status, "DISCONNECTED");
   assert.equal(status.wabaIdMasked, null);
   assert.equal(status.phoneNumberIdMasked, null);
 });
@@ -443,7 +443,7 @@ await test("disconnect returns revokeWarning when Meta revoke fails but still cl
     });
 
   const status = await disconnectWhatsApp(adminActor, { fetchImpl: mockFetch });
-  assert.equal(status.status, "NOT_CONNECTED");
+  assert.equal(status.status, "DISCONNECTED");
   assert.equal(status.wabaIdMasked, null);
   assert.ok(status.revokeWarning);
   assert.match(status.revokeWarning!, /deregistration failed/i);
