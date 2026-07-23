@@ -82,8 +82,8 @@ export {
 
 /**
  * Path-scoped raw-body middleware for Meta webhook signature verification.
- * Must be registered immediately after `const app = express()` and before
- * the global `express.json()` parser so req.body remains the exact Buffer.
+ * Must be registered before the global `express.json()` parser so req.body
+ * remains the exact Buffer (CORS may be mounted earlier).
  */
 export function installWhatsAppRawBodyMiddleware(app: Express): void {
   const rawParser = express.raw({

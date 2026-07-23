@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import express from "express";
 import type { AddressInfo } from "net";
+import { installWhatsAppRawBodyMiddleware } from "../whatsappTransport/index.ts";
 import {
   applyCorsHeaders,
   createCorsMiddleware,
@@ -12,6 +13,35 @@ import {
   PRODUCTION_CRM_ORIGIN,
   resolveCorsAllowedOrigins,
 } from "./cors.ts";
+
+/**
+ * Mirrors production bootstrap order in server.ts:
+ * CORS → WhatsApp raw-body → json → urlencoded → body-parser error handler.
+ */
+function createProductionOrderedApp(): express.Express {
+  const app = express();
+  app.use(createCorsMiddleware());
+  installWhatsAppRawBodyMiddleware(app);
+  app.use(express.json({ limit: "1mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+  app.use(
+    (
+      err: any,
+      _req: express.Request,
+      res: express.Response,
+      next: express.NextFunction
+    ) => {
+      if (err instanceof SyntaxError || err?.type === "entity.parse.failed") {
+        return res.status(400).json({ error: "Malformed JSON." });
+      }
+      return next(err);
+    }
+  );
+  app.post("/api/inbox/conversations", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
+  return app;
+}
 
 let failed = 0;
 
@@ -143,6 +173,96 @@ await test("HTTP middleware: OPTIONS/GET/POST for CRM origin", async () => {
         assert.ok(res.status === 204 || res.status === 200);
       }
     }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+await test("production order: malformed JSON still returns CORS for CRM origin", async () => {
+  const app = createProductionOrderedApp();
+  const server = await new Promise<import("http").Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const res = await fetch(`${base}/api/inbox/conversations`, {
+      method: "POST",
+      headers: {
+        Origin: PRODUCTION_CRM_ORIGIN,
+        "Content-Type": "application/json",
+      },
+      body: "{not-json",
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "Malformed JSON.");
+    assert.equal(
+      res.headers.get("access-control-allow-origin"),
+      PRODUCTION_CRM_ORIGIN
+    );
+    assert.equal(res.headers.get("access-control-allow-credentials"), "true");
+    assert.equal(res.headers.get("vary"), "Origin");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+await test("production order: malformed JSON denies disallowed origin CORS", async () => {
+  const app = createProductionOrderedApp();
+  const server = await new Promise<import("http").Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const res = await fetch(`${base}/api/inbox/conversations`, {
+      method: "POST",
+      headers: {
+        Origin: "https://evil.example",
+        "Content-Type": "application/json",
+      },
+      body: "{not-json",
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.headers.get("access-control-allow-origin"), null);
+    assert.equal(res.headers.get("access-control-allow-credentials"), null);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+await test("production order: localhost malformed JSON keeps CORS", async () => {
+  const app = createProductionOrderedApp();
+  const server = await new Promise<import("http").Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const res = await fetch(`${base}/api/inbox/conversations`, {
+      method: "POST",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Content-Type": "application/json",
+      },
+      body: "{broken",
+    });
+    assert.equal(res.status, 400);
+    assert.equal(
+      res.headers.get("access-control-allow-origin"),
+      "http://localhost:5173"
+    );
+    assert.equal(res.headers.get("access-control-allow-credentials"), "true");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve()))

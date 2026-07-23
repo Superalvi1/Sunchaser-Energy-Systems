@@ -486,6 +486,10 @@ async function syncQuotationVaultForLead(
 const app = express();
 const PORT = 3000;
 
+// CORS must run before body parsers so parser/error responses still include ACAO.
+// Never pair credentials with a wildcard — see server/middleware/cors.ts.
+app.use(createCorsMiddleware());
+
 // Preserve exact Meta webhook POST bytes before global JSON parsing.
 installWhatsAppRawBodyMiddleware(app);
 
@@ -503,9 +507,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   return next(err);
 });
 app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
-
-// CORS: allow Vercel CRM + localhost; never credentials + wildcard.
-app.use(createCorsMiddleware());
 
 const resolveAuthLocalDb = () => {
   loadDb();
