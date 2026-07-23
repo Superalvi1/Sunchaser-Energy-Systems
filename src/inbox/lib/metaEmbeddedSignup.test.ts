@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 import { transformWithEsbuild } from "vite";
 import {
   classifyIgnoredEmbeddedSignupMessage,
+  classifySafeEmbeddedSignupEvent,
+  classifySafeFbLoginStatus,
+  classifySafeMessageType,
+  classifySafeOriginClass,
   extractEmbeddedSignupProviderError,
   isAllowedMetaMessageOrigin,
   launchMetaEmbeddedSignup,
@@ -16,7 +20,6 @@ import {
   logMetaEmbeddedSignupDebug,
   META_EMBEDDED_SIGNUP_ACCEPTED_EVENTS,
   MetaEmbeddedSignupError,
-  originHostFromMessageOrigin,
   parseEmbeddedSignupMessageData,
   resetMetaSdkLoaderForTests,
   resolveMetaEmbeddedSignupConfig,
@@ -1725,11 +1728,13 @@ await test("safe TRACE logs never expose payload values, codes, tokens, or origi
     "/dialog/oauth",
     "?x=1",
     "raw-secret-payload",
+    "www.facebook.com",
+    "evil.example",
   ];
 
   assert.equal(
-    originHostFromMessageOrigin("https://www.facebook.com/dialog/oauth?x=1"),
-    "www.facebook.com"
+    classifySafeOriginClass("https://www.facebook.com/dialog/oauth?x=1"),
+    "facebook"
   );
 
   const messageTarget = makeMessageTarget();
@@ -1783,13 +1788,13 @@ await test("safe TRACE logs never expose payload values, codes, tokens, or origi
   );
   assert.ok(received.length >= 2);
   for (const payload of received) {
-    assert.equal(payload.originHost, "www.facebook.com");
+    assert.equal(payload.originClass, "facebook");
     assert.equal(Object.prototype.hasOwnProperty.call(payload, "data"), false);
     assert.deepEqual(Object.keys(payload).sort(), [
       "dataKeys",
       "dataType",
       "event",
-      "originHost",
+      "originClass",
       "parsed",
       "phase",
       "type",
@@ -1797,6 +1802,7 @@ await test("safe TRACE logs never expose payload values, codes, tokens, or origi
   }
 
   const finishReceived = received.find((p) => p.event === "FINISH");
+  assert.equal(finishReceived?.type, "WA_EMBEDDED_SIGNUP");
   assert.deepEqual(finishReceived?.dataKeys, ["phone_number_id", "waba_id"]);
 
   const ignoredJson = traceLogPayloads(logs).find(
@@ -1804,6 +1810,7 @@ await test("safe TRACE logs never expose payload values, codes, tokens, or origi
       p.phase === "window.message.ignored" && p.reason === "json_parse_failed"
   );
   assert.ok(ignoredJson);
+  assert.equal(ignoredJson.originClass, "facebook");
 
   const loginTrace = traceLogPayloads(logs).find(
     (p) => p.phase === "fb.login.callback"
@@ -1956,13 +1963,15 @@ await test("TRACE C: no recognized Meta message times out with zero recognized c
       p.phase === "window.message.ignored" && p.reason === "origin_not_allowed"
   );
   assert.ok(ignoredOrigin);
-  assert.equal(ignoredOrigin.originHost, "evil.example");
+  assert.equal(ignoredOrigin.originClass, "unknown");
 
   const ignoredType = traceLogPayloads(logs).find(
     (p) =>
       p.phase === "window.message.ignored" && p.reason === "wrong_message_type"
   );
   assert.ok(ignoredType);
+  assert.equal(ignoredType.originClass, "facebook");
+  assert.equal(ignoredType.type, "missing");
 
   const timeout = traceLogPayloads(logs).find(
     (p) => p.phase === "terminal.timeout"
@@ -1980,7 +1989,9 @@ await test("classifyIgnoredEmbeddedSignupMessage covers malformed JSON and objec
     classifyIgnoredEmbeddedSignupMessage("https://www.facebook.com", "{bad"),
     {
       reason: "json_parse_failed",
-      originHost: "www.facebook.com",
+      originClass: "facebook",
+      type: "missing",
+      event: "MISSING",
     }
   );
   assert.equal(
@@ -1995,6 +2006,261 @@ await test("classifyIgnoredEmbeddedSignupMessage covers malformed JSON and objec
     classifyIgnoredEmbeddedSignupMessage("https://www.facebook.com", 42)?.reason,
     "unsupported_data_type"
   );
+});
+
+await test("TRACE hostile fixtures never leak through classifications", async () => {
+  const hostileToken = "EAAGhostileTokenLeakABCDEF0123456789";
+  const hostilePhone = "+15559876543";
+  const hostileId = "111222333444555666";
+  const hostileLong =
+    "x".repeat(80) + "EAAGembeddedInLongString0123456789ABCDEF";
+  const hostileOriginHost = `eaag-token-${hostileToken.slice(0, 12)}.${hostilePhone.replace("+", "")}.${hostileId}.example`;
+  const hostileType = `WA_${hostileToken}_${hostilePhone}`;
+  const hostileEvent = `LEAK_${hostileToken}_${hostilePhone}_${hostileId}_${hostileLong}`;
+  const hostileFinishVariant = `FINISH_${hostileToken}`;
+  const hostileStatus = `connected_${hostileToken}_${hostilePhone}`;
+  const forbidden = [
+    hostileToken,
+    hostilePhone,
+    hostileId,
+    hostileLong,
+    hostileOriginHost,
+    hostileType,
+    hostileEvent,
+    hostileFinishVariant,
+    hostileStatus,
+    "15559876543",
+  ];
+
+  // 1) Hostile origins → unknown/invalid only.
+  assert.equal(
+    classifySafeOriginClass(`https://${hostileOriginHost}/path?q=${hostileToken}`),
+    "unknown"
+  );
+  assert.equal(classifySafeOriginClass(""), "invalid");
+  assert.equal(classifySafeOriginClass("not a url :::"), "invalid");
+
+  // 2) Hostile/missing types.
+  assert.equal(classifySafeMessageType(hostileType), "other");
+  assert.equal(classifySafeMessageType(123), "missing");
+  assert.equal(classifySafeMessageType(undefined), "missing");
+  assert.equal(classifySafeMessageType("WA_EMBEDDED_SIGNUP"), "WA_EMBEDDED_SIGNUP");
+
+  // 3) Hostile/missing events — never broaden acceptance.
+  assert.equal(classifySafeEmbeddedSignupEvent(hostileEvent), "UNSUPPORTED");
+  assert.equal(classifySafeEmbeddedSignupEvent(undefined), "MISSING");
+  assert.equal(classifySafeEmbeddedSignupEvent(""), "MISSING");
+  assert.equal(classifySafeEmbeddedSignupEvent("FINISH"), "FINISH");
+  assert.equal(
+    classifySafeEmbeddedSignupEvent("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"),
+    "FINISH_VARIANT"
+  );
+  assert.equal(
+    classifySafeEmbeddedSignupEvent("FINISH_ONLY_WABA"),
+    "FINISH_ONLY_WABA"
+  );
+  assert.equal(classifySafeEmbeddedSignupEvent("CANCEL"), "CANCEL");
+  assert.equal(classifySafeEmbeddedSignupEvent("CANCEL_STEP"), "CANCEL_VARIANT");
+  assert.equal(classifySafeEmbeddedSignupEvent("ERROR"), "ERROR");
+  // Tokenized FINISH_* maps to FINISH_VARIANT label only; parser still requires assets.
+  assert.equal(
+    classifySafeEmbeddedSignupEvent(hostileFinishVariant),
+    "FINISH_VARIANT"
+  );
+  assert.equal(
+    parseEmbeddedSignupMessageData({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: hostileFinishVariant,
+      data: {},
+    })?.status,
+    "malformed"
+  );
+  assert.equal(
+    parseEmbeddedSignupMessageData({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: hostileEvent,
+      data: {},
+    })?.status,
+    "malformed"
+  );
+
+  // 4) Hostile FB.login status.
+  assert.equal(classifySafeFbLoginStatus(hostileStatus), "unexpected");
+  assert.equal(classifySafeFbLoginStatus(undefined), undefined);
+  assert.equal(classifySafeFbLoginStatus(null), undefined);
+  assert.equal(classifySafeFbLoginStatus("connected"), "connected");
+  assert.equal(classifySafeFbLoginStatus("not_authorized"), "not_authorized");
+  assert.equal(classifySafeFbLoginStatus("unknown"), "unknown");
+
+  // 5) End-to-end launch must not echo hostile strings.
+  const messageTarget = makeMessageTarget();
+  const { logs } = await withCapturedConsoleError(async () => {
+    await assert.rejects(
+      () =>
+        launchMetaEmbeddedSignup({
+          state: "oauth-hostile",
+          config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+          timeoutMs: 60,
+          fb: {
+            init() {},
+            login(cb) {
+              messageTarget.dispatch(
+                `https://${hostileOriginHost}/oauth?token=${hostileToken}`,
+                {
+                  type: hostileType,
+                  event: hostileEvent,
+                  data: {
+                    waba_id: hostileId,
+                    phone_number_id: hostileId,
+                    access_token: hostileToken,
+                    customer_phone: hostilePhone,
+                  },
+                }
+              );
+              // Structural receive for an allowed Meta origin + recognized type/event.
+              messageTarget.dispatch("https://web.facebook.com", {
+                type: "OTHER_NOISE",
+                event: "ERROR",
+              });
+              // Fire callback before any settling WA event so status is traced.
+              cb({
+                authResponse: null,
+                status: hostileStatus,
+              });
+            },
+          },
+          messageTarget: messageTarget as unknown as Window,
+        }),
+      (err: unknown) => err instanceof MetaEmbeddedSignupError
+    );
+  });
+
+  const serialized = serializeLogs(logs);
+  for (const snippet of forbidden) {
+    assert.equal(
+      serialized.includes(snippet),
+      false,
+      `hostile fixture leaked: ${snippet.slice(0, 40)}`
+    );
+  }
+
+  const receivedHostile = traceLogPayloads(logs).find(
+    (p) => p.phase === "window.message.received" && p.originClass === "unknown"
+  );
+  assert.ok(receivedHostile);
+  assert.equal(receivedHostile.type, "other");
+  assert.equal(receivedHostile.event, "UNSUPPORTED");
+
+  const receivedFbWeb = traceLogPayloads(logs).find(
+    (p) =>
+      p.phase === "window.message.received" &&
+      p.originClass === "facebook_web" &&
+      p.event === "ERROR"
+  );
+  assert.ok(receivedFbWeb);
+  assert.equal(receivedFbWeb.type, "other");
+
+  const loginTrace = traceLogPayloads(logs).find(
+    (p) => p.phase === "fb.login.callback"
+  );
+  assert.equal(loginTrace?.status, "unexpected");
+
+  // Recognized WA + ERROR still classifies safely without leaking values.
+  assert.equal(classifySafeEmbeddedSignupEvent("ERROR"), "ERROR");
+  assert.equal(
+    classifySafeMessageType("WA_EMBEDDED_SIGNUP"),
+    "WA_EMBEDDED_SIGNUP"
+  );
+
+  // 6) Recognized safe classifications still appear.
+  assert.equal(classifySafeOriginClass("https://facebook.com"), "facebook");
+  assert.equal(classifySafeOriginClass("https://www.facebook.com"), "facebook");
+  assert.equal(
+    classifySafeOriginClass("https://web.facebook.com"),
+    "facebook_web"
+  );
+  assert.equal(
+    classifySafeOriginClass("https://business.facebook.com"),
+    "facebook_business"
+  );
+  assert.equal(classifySafeMessageType("WA_EMBEDDED_SIGNUP"), "WA_EMBEDDED_SIGNUP");
+  assert.equal(classifySafeEmbeddedSignupEvent("FINISH"), "FINISH");
+  assert.equal(
+    classifySafeEmbeddedSignupEvent("FINISH_ONLY_WABA"),
+    "FINISH_ONLY_WABA"
+  );
+  assert.equal(classifySafeEmbeddedSignupEvent("CANCEL"), "CANCEL");
+  assert.equal(classifySafeEmbeddedSignupEvent("ERROR"), "ERROR");
+});
+
+await test("TRACE classifications preserve settlement and timeout behavior", async () => {
+  // Success path unchanged.
+  const okTarget = makeMessageTarget();
+  const ok = await launchMetaEmbeddedSignup({
+    state: "oauth-class-ok",
+    config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+    timeoutMs: 2000,
+    fb: {
+      init() {},
+      login(cb) {
+        okTarget.dispatch("https://www.facebook.com", {
+          type: "WA_EMBEDDED_SIGNUP",
+          event: "FINISH",
+          data: { waba_id: "1", phone_number_id: "2" },
+        });
+        cb({ authResponse: { code: "code-ok" }, status: "connected" });
+      },
+    },
+    messageTarget: okTarget as unknown as Window,
+  });
+  assert.deepEqual(ok, {
+    code: "code-ok",
+    state: "oauth-class-ok",
+    wabaId: "1",
+    phoneNumberId: "2",
+  });
+
+  // FINISH_ONLY_WABA still fails closed.
+  const onlyTarget = makeMessageTarget();
+  await assert.rejects(
+    () =>
+      launchMetaEmbeddedSignup({
+        state: "oauth-class-only",
+        config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+        timeoutMs: 2000,
+        fb: {
+          init() {},
+          login() {
+            onlyTarget.dispatch("https://www.facebook.com", {
+              type: "WA_EMBEDDED_SIGNUP",
+              event: "FINISH_ONLY_WABA",
+              data: { waba_id: "1" },
+            });
+          },
+        },
+        messageTarget: onlyTarget as unknown as Window,
+      }),
+    (err: unknown) =>
+      err instanceof MetaEmbeddedSignupError &&
+      err.code === "missing_phone_number_id"
+  );
+
+  // Timeout duration still honored (short override).
+  const started = Date.now();
+  await assert.rejects(
+    () =>
+      launchMetaEmbeddedSignup({
+        state: "oauth-class-timeout",
+        config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+        timeoutMs: 50,
+        fb: { init() {}, login() {} },
+        messageTarget: makeMessageTarget() as unknown as Window,
+      }),
+    (err: unknown) =>
+      err instanceof MetaEmbeddedSignupError && err.code === "timeout"
+  );
+  assert.ok(Date.now() - started >= 45);
+  assert.ok(Date.now() - started < 1500);
 });
 
 if (failed > 0) {
