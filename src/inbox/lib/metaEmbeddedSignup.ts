@@ -69,6 +69,71 @@ export class MetaEmbeddedSignupError extends Error {
   }
 }
 
+/**
+ * TEMPORARY DEBUG — remove after Meta Embedded Signup failure investigation.
+ * Logs full error shape without changing control flow.
+ */
+export function logMetaEmbeddedSignupDebug(
+  phase: string,
+  err: unknown,
+  extras?: { sdkResponse?: unknown; raw?: unknown }
+): void {
+  const asRecord = (value: unknown): Record<string, unknown> | null =>
+    value != null && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : null;
+
+  const errRecord = asRecord(err);
+  const nestedError = asRecord(errRecord?.error);
+  const providerRecord = asRecord(errRecord?.providerError);
+  const sdkRecord = asRecord(extras?.sdkResponse);
+  const sdkNestedError = asRecord(sdkRecord?.error);
+  const sdkData = asRecord(sdkRecord?.data);
+  const fieldSources = [
+    nestedError,
+    providerRecord,
+    sdkNestedError,
+    sdkData,
+    sdkRecord,
+    errRecord,
+  ].filter((v): v is Record<string, unknown> => v != null);
+
+  const pick = (...keys: string[]): unknown => {
+    for (const source of fieldSources) {
+      for (const key of keys) {
+        const value = source[key];
+        if (value !== undefined && value !== null && value !== "") return value;
+      }
+    }
+    return undefined;
+  };
+
+  const message =
+    (pick("message", "error_message") as string | undefined) ||
+    (err instanceof Error ? err.message : undefined);
+
+  // Prefer Meta/provider numeric/string codes when present; app code remains on `error`.
+  const code =
+    pick("error_code", "code") ??
+    (err instanceof MetaEmbeddedSignupError ? err.code : undefined);
+
+  const error_subcode = pick("error_subcode");
+  const fbtrace_id = pick("fbtrace_id");
+  const stack = err instanceof Error ? err.stack : undefined;
+
+  console.error("[MetaEmbeddedSignup DEBUG]", {
+    phase,
+    error: err,
+    message,
+    code,
+    error_subcode,
+    fbtrace_id,
+    stack,
+    sdkResponse: extras?.sdkResponse ?? null,
+    raw: extras?.raw ?? null,
+  });
+}
+
 type FbLoginResponse = {
   authResponse?: { code?: string } | null;
   status?: string;
@@ -285,12 +350,13 @@ export function loadFacebookSdk(
   options: LoadFacebookSdkOptions = {}
 ): Promise<FbSdk> {
   if (typeof window === "undefined") {
-    return Promise.reject(
-      new MetaEmbeddedSignupError(
-        "sdk_load_failed",
-        "Facebook SDK requires a browser"
-      )
+    const err = new MetaEmbeddedSignupError(
+      "sdk_load_failed",
+      "Facebook SDK requires a browser"
     );
+    // TEMPORARY DEBUG
+    logMetaEmbeddedSignupDebug("loadFacebookSdk.no_window", err);
+    return Promise.reject(err);
   }
 
   const key = sdkConfigKey(appId, graphVersion);
@@ -301,12 +367,13 @@ export function loadFacebookSdk(
 
   if (sdkLoadPromise) {
     if (sdkLoadKey === key) return sdkLoadPromise;
-    return Promise.reject(
-      new MetaEmbeddedSignupError(
-        "sdk_config_conflict",
-        "Meta SDK is already loading with a different app configuration. Please refresh and try again."
-      )
+    const err = new MetaEmbeddedSignupError(
+      "sdk_config_conflict",
+      "Meta SDK is already loading with a different app configuration. Please refresh and try again."
     );
+    // TEMPORARY DEBUG
+    logMetaEmbeddedSignupDebug("loadFacebookSdk.sdk_config_conflict", err);
+    return Promise.reject(err);
   }
 
   const timeoutMs = options.timeoutMs ?? SDK_LOAD_TIMEOUT_MS;
@@ -326,15 +393,17 @@ export function loadFacebookSdk(
         sdkLoadPromise = null;
         sdkLoadKey = null;
         resolve(ready);
-      } catch {
+      } catch (caught) {
         sdkLoadPromise = null;
         sdkLoadKey = null;
-        reject(
-          new MetaEmbeddedSignupError(
-            "sdk_load_failed",
-            "Failed to load the Facebook JavaScript SDK"
-          )
+        // TEMPORARY DEBUG — log original SDK init failure before wrapping.
+        logMetaEmbeddedSignupDebug("loadFacebookSdk.initFbOnce.catch", caught);
+        const wrapped = new MetaEmbeddedSignupError(
+          "sdk_load_failed",
+          "Failed to load the Facebook JavaScript SDK"
         );
+        logMetaEmbeddedSignupDebug("loadFacebookSdk.initFbOnce.reject", wrapped);
+        reject(wrapped);
       }
     };
 
@@ -344,7 +413,10 @@ export function loadFacebookSdk(
       clearSdkLoadWatchers();
       sdkLoadPromise = null;
       sdkLoadKey = null;
-      reject(new MetaEmbeddedSignupError("sdk_load_failed", message));
+      const wrapped = new MetaEmbeddedSignupError("sdk_load_failed", message);
+      // TEMPORARY DEBUG — log SDK load rejection before reject.
+      logMetaEmbeddedSignupDebug("loadFacebookSdk.settleFail", wrapped);
+      reject(wrapped);
     };
 
     sdkLoadTimeoutHandle = setTimeout(() => {
@@ -434,10 +506,16 @@ export async function launchMetaEmbeddedSignup(
 ): Promise<MetaEmbeddedSignupResult> {
   const oauthState = String(options.state || "").trim();
   if (!oauthState) {
-    throw new MetaEmbeddedSignupError(
+    const missingStateErr = new MetaEmbeddedSignupError(
       "missing_state",
       "OAuth state is required for Embedded Signup"
     );
+    // TEMPORARY DEBUG — log before throw/reject path.
+    logMetaEmbeddedSignupDebug(
+      "launchMetaEmbeddedSignup.missing_state",
+      missingStateErr
+    );
+    throw missingStateErr;
   }
 
   const config = options.config ?? resolveMetaEmbeddedSignupConfig();
@@ -487,10 +565,19 @@ export async function launchMetaEmbeddedSignup(
     });
   };
 
-  const settleErr = (err: MetaEmbeddedSignupError) => {
+  const settleErr = (
+    err: MetaEmbeddedSignupError,
+    debugExtras?: { sdkResponse?: unknown; raw?: unknown }
+  ) => {
     if (settled || activeAttempt !== attemptId) return;
     settled = true;
     cleanup();
+    // TEMPORARY DEBUG — log every launch rejection before rejectResult.
+    logMetaEmbeddedSignupDebug(
+      "launchMetaEmbeddedSignup.settleErr",
+      err,
+      debugExtras
+    );
     rejectResult(err);
   };
 
@@ -511,7 +598,8 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "cancelled",
           "Embedded Signup was cancelled or failed"
-        )
+        ),
+        { sdkResponse: event.data, raw: parsed }
       );
       return;
     }
@@ -521,7 +609,8 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "login_error",
           "Embedded Signup reported an error from Meta"
-        )
+        ),
+        { sdkResponse: event.data, raw: parsed }
       );
       return;
     }
@@ -531,7 +620,8 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "missing_phone_number_id",
           "Embedded Signup completed without a phone number ID (FINISH_ONLY_WABA)"
-        )
+        ),
+        { sdkResponse: event.data, raw: parsed }
       );
       return;
     }
@@ -541,7 +631,8 @@ export async function launchMetaEmbeddedSignup(
         new MetaEmbeddedSignupError(
           "malformed_payload",
           "Embedded Signup returned an invalid asset payload"
-        )
+        ),
+        { sdkResponse: event.data, raw: parsed }
       );
       return;
     }
@@ -581,7 +672,8 @@ export async function launchMetaEmbeddedSignup(
               cancelled
                 ? "Embedded Signup was cancelled"
                 : "Meta did not return an authorization code"
-            )
+            ),
+            { sdkResponse: response }
           );
           return;
         }
@@ -602,12 +694,15 @@ export async function launchMetaEmbeddedSignup(
         },
       }
     );
-  } catch {
+  } catch (caught) {
+    // TEMPORARY DEBUG — log original FB.login throw before wrapping.
+    logMetaEmbeddedSignupDebug("launchMetaEmbeddedSignup.fb.login.catch", caught);
     settleErr(
       new MetaEmbeddedSignupError(
         "login_error",
         "Facebook Login failed to start Embedded Signup"
-      )
+      ),
+      { sdkResponse: caught }
     );
   }
 

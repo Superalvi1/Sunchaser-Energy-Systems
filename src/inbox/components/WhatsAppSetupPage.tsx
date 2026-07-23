@@ -20,6 +20,7 @@ import {
 } from "../api/inboxApi";
 import {
   launchMetaEmbeddedSignup,
+  logMetaEmbeddedSignupDebug,
   sanitizeEmbeddedSignupError,
 } from "../lib/metaEmbeddedSignup";
 import type {
@@ -88,6 +89,8 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
       });
       await load();
     } catch (err) {
+      // TEMPORARY DEBUG — log before sanitizing for UI.
+      logMetaEmbeddedSignupDebug("WhatsAppSetupPage.handleConnect.catch", err);
       setError(sanitizeEmbeddedSignupError(err));
     } finally {
       setBusy(null);
