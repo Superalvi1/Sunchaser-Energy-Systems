@@ -28,6 +28,10 @@ const child = spawn(process.execPath, [serverPath], {
     ...process.env,
     NODE_ENV: "production",
     PLAYWRIGHT_BROWSERS_PATH: "0",
+    // Production inbox wiring requires an encryption key when Supabase is configured.
+    WHATSAPP_TOKEN_ENCRYPTION_KEY:
+      process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY ||
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });

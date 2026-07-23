@@ -316,6 +316,7 @@ import {
 } from "./userAuthDb.js";
 import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
+import { createCorsMiddleware } from "./server/middleware/cors.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
 import { actorToApiUser, type RequestActor } from "./server/middleware/actor.ts";
 import {
@@ -503,26 +504,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
 
-// Custom CORS middleware to allow the frontend domain to call the backend API securely
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  } else {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Public-Lead-Key, Idempotency-Key"
-  );
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
+// CORS: allow Vercel CRM + localhost; never credentials + wildcard.
+app.use(createCorsMiddleware());
 
 const resolveAuthLocalDb = () => {
   loadDb();
