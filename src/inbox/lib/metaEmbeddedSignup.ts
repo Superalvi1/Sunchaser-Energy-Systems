@@ -3,6 +3,10 @@
  *
  * Captures WABA / Phone Number IDs only from documented WA_EMBEDDED_SIGNUP
  * postMessage events, and the authorization code from FB.login (code mode).
+ *
+ * Settlement is coordinated through a single result promise so timeout,
+ * cancel, and success always unblock the launcher — even when FB.login
+ * never invokes its callback.
  */
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -30,6 +34,8 @@ export type MetaEmbeddedSignupConfig = {
 
 export type MetaEmbeddedSignupResult = {
   code: string;
+  /** Server-issued OAuth state that was bound into FB.login. */
+  state: string;
   wabaId: string;
   phoneNumberId: string;
 };
@@ -44,6 +50,7 @@ export type MetaEmbeddedSignupErrorCode =
   | "malformed_payload"
   | "missing_code"
   | "missing_assets"
+  | "missing_phone_number_id"
   | "login_error";
 
 export class MetaEmbeddedSignupError extends Error {
@@ -116,9 +123,20 @@ export function isAllowedMetaMessageOrigin(origin: string): boolean {
   }
 }
 
-export function parseEmbeddedSignupMessageData(
-  raw: unknown
-): { wabaId: string; phoneNumberId: string; event: string } | null {
+export type ParsedEmbeddedSignupMessage =
+  | {
+      status: "success";
+      event: string;
+      wabaId: string;
+      phoneNumberId: string;
+    }
+  | { status: "cancelled"; event: string }
+  | { status: "error"; event: string }
+  | { status: "missing_phone"; event: string; wabaId: string }
+  | { status: "malformed" }
+  | null;
+
+function decodeMessagePayload(raw: unknown): Record<string, unknown> | null {
   let payload: unknown = raw;
   if (typeof raw === "string") {
     try {
@@ -128,19 +146,67 @@ export function parseEmbeddedSignupMessageData(
     }
   }
   if (!payload || typeof payload !== "object") return null;
-  const obj = payload as Record<string, unknown>;
+  return payload as Record<string, unknown>;
+}
+
+/**
+ * Classify Meta session-info postMessage payloads.
+ * CANCEL / ERROR are recognized before requiring asset IDs.
+ */
+export function parseEmbeddedSignupMessageData(
+  raw: unknown
+): ParsedEmbeddedSignupMessage {
+  const obj = decodeMessagePayload(raw);
+  if (!obj) return null;
   if (obj.type !== "WA_EMBEDDED_SIGNUP") return null;
-  const event = typeof obj.event === "string" ? obj.event : "";
+
+  const event = typeof obj.event === "string" ? obj.event.trim() : "";
+  const eventKey = event.toUpperCase();
   const data =
     obj.data && typeof obj.data === "object"
       ? (obj.data as Record<string, unknown>)
       : null;
-  if (!data) return null;
-  const wabaId = data.waba_id != null ? String(data.waba_id).trim() : "";
+  const wabaId =
+    data && data.waba_id != null ? String(data.waba_id).trim() : "";
   const phoneNumberId =
-    data.phone_number_id != null ? String(data.phone_number_id).trim() : "";
-  if (!wabaId || !phoneNumberId) return null;
-  return { wabaId, phoneNumberId, event };
+    data && data.phone_number_id != null
+      ? String(data.phone_number_id).trim()
+      : "";
+
+  // Cancel / error before requiring asset IDs.
+  if (eventKey === "CANCEL" || eventKey.startsWith("CANCEL")) {
+    return { status: "cancelled", event: event || "CANCEL" };
+  }
+  if (eventKey === "ERROR") {
+    return { status: "error", event: event || "ERROR" };
+  }
+
+  if (eventKey === "FINISH_ONLY_WABA") {
+    if (wabaId) {
+      return {
+        status: "missing_phone",
+        event: event || "FINISH_ONLY_WABA",
+        wabaId,
+      };
+    }
+    return { status: "malformed" };
+  }
+
+  // Documented FINISH* variants require both IDs — never fabricate phoneNumberId.
+  if (eventKey === "FINISH" || eventKey.startsWith("FINISH_")) {
+    if (wabaId && phoneNumberId) {
+      return {
+        status: "success",
+        event: event || "FINISH",
+        wabaId,
+        phoneNumberId,
+      };
+    }
+    return { status: "malformed" };
+  }
+
+  // WA-typed but unrecognized / incomplete.
+  return { status: "malformed" };
 }
 
 let sdkLoadPromise: Promise<FbSdk> | null = null;
@@ -219,6 +285,8 @@ export type LaunchEmbeddedSignupOptions = {
  * Launch Meta Embedded Signup once. Removes listeners on settle.
  * Prevents stale events via attempt token.
  * Binds the server-issued OAuth state into FB.login (Meta-supported `state` parameter).
+ *
+ * Awaits a single coordinated result promise — never an unbounded FB.login wait.
  */
 export async function launchMetaEmbeddedSignup(
   options: LaunchEmbeddedSignupOptions
@@ -239,6 +307,7 @@ export async function launchMetaEmbeddedSignup(
   const attemptId = Symbol("embedded-signup-attempt");
   let activeAttempt: symbol | null = attemptId;
   let settled = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
   let code: string | null = null;
   let wabaId: string | null = null;
@@ -254,18 +323,26 @@ export async function launchMetaEmbeddedSignup(
   const cleanup = () => {
     activeAttempt = null;
     target.removeEventListener("message", onMessage as EventListener);
-    if (timeoutHandle != null) clearTimeout(timeoutHandle);
+    if (timeoutHandle != null) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
   };
 
-  const finishOk = () => {
+  const settleOk = () => {
     if (settled || activeAttempt !== attemptId) return;
     if (!code || !wabaId || !phoneNumberId) return;
     settled = true;
     cleanup();
-    resolveResult({ code, wabaId, phoneNumberId });
+    resolveResult({
+      code,
+      state: oauthState,
+      wabaId,
+      phoneNumberId,
+    });
   };
 
-  const finishErr = (err: MetaEmbeddedSignupError) => {
+  const settleErr = (err: MetaEmbeddedSignupError) => {
     if (settled || activeAttempt !== attemptId) return;
     settled = true;
     cleanup();
@@ -275,38 +352,17 @@ export async function launchMetaEmbeddedSignup(
   const onMessage = (event: MessageEvent) => {
     if (activeAttempt !== attemptId || settled) return;
     if (!isAllowedMetaMessageOrigin(event.origin)) {
-      // Ignore unrelated origins; only fail closed on Meta-looking malformed payloads.
       return;
     }
+
     const parsed = parseEmbeddedSignupMessageData(event.data);
-    if (!parsed) {
-      // Valid Meta origin but unexpected shape — ignore non-WA events; fail if clearly WA-typed malformed.
-      if (
-        typeof event.data === "string" &&
-        event.data.includes("WA_EMBEDDED_SIGNUP")
-      ) {
-        finishErr(
-          new MetaEmbeddedSignupError(
-            "malformed_payload",
-            "Embedded Signup returned an invalid asset payload"
-          )
-        );
-      } else if (
-        event.data &&
-        typeof event.data === "object" &&
-        (event.data as { type?: string }).type === "WA_EMBEDDED_SIGNUP"
-      ) {
-        finishErr(
-          new MetaEmbeddedSignupError(
-            "malformed_payload",
-            "Embedded Signup returned an invalid asset payload"
-          )
-        );
-      }
+    if (parsed == null) {
+      // Non-WA traffic from Meta origins is ignored.
       return;
     }
-    if (/CANCEL|ERROR/i.test(parsed.event)) {
-      finishErr(
+
+    if (parsed.status === "cancelled") {
+      settleErr(
         new MetaEmbeddedSignupError(
           "cancelled",
           "Embedded Signup was cancelled or failed"
@@ -314,15 +370,46 @@ export async function launchMetaEmbeddedSignup(
       );
       return;
     }
+
+    if (parsed.status === "error") {
+      settleErr(
+        new MetaEmbeddedSignupError(
+          "login_error",
+          "Embedded Signup reported an error from Meta"
+        )
+      );
+      return;
+    }
+
+    if (parsed.status === "missing_phone") {
+      settleErr(
+        new MetaEmbeddedSignupError(
+          "missing_phone_number_id",
+          "Embedded Signup completed without a phone number ID (FINISH_ONLY_WABA)"
+        )
+      );
+      return;
+    }
+
+    if (parsed.status === "malformed") {
+      settleErr(
+        new MetaEmbeddedSignupError(
+          "malformed_payload",
+          "Embedded Signup returned an invalid asset payload"
+        )
+      );
+      return;
+    }
+
     wabaId = parsed.wabaId;
     phoneNumberId = parsed.phoneNumberId;
-    finishOk();
+    settleOk();
   };
 
   target.addEventListener("message", onMessage as EventListener);
 
-  const timeoutHandle = setTimeout(() => {
-    finishErr(
+  timeoutHandle = setTimeout(() => {
+    settleErr(
       new MetaEmbeddedSignupError(
         "timeout",
         "Embedded Signup timed out waiting for Meta"
@@ -330,13 +417,11 @@ export async function launchMetaEmbeddedSignup(
     );
   }, timeoutMs);
 
-  await new Promise<void>((resolveLogin) => {
+  // Fire-and-forget: do not await a login-only Promise the timeout cannot unblock.
+  try {
     fb.login(
       (response) => {
-        if (activeAttempt !== attemptId || settled) {
-          resolveLogin();
-          return;
-        }
+        if (activeAttempt !== attemptId || settled) return;
         const authCode = response.authResponse?.code
           ? String(response.authResponse.code).trim()
           : "";
@@ -345,7 +430,7 @@ export async function launchMetaEmbeddedSignup(
             !response.authResponse ||
             response.status === "unknown" ||
             response.status === "not_authorized";
-          finishErr(
+          settleErr(
             new MetaEmbeddedSignupError(
               cancelled ? "cancelled" : "missing_code",
               cancelled
@@ -353,12 +438,10 @@ export async function launchMetaEmbeddedSignup(
                 : "Meta did not return an authorization code"
             )
           );
-          resolveLogin();
           return;
         }
         code = authCode;
-        finishOk();
-        resolveLogin();
+        settleOk();
       },
       {
         config_id: config.configId,
@@ -372,14 +455,16 @@ export async function launchMetaEmbeddedSignup(
         },
       }
     );
-  });
-
-  try {
-    return await resultPromise;
-  } finally {
-    // If promise already settled, cleanup is done; otherwise ensure listeners gone.
-    if (!settled) cleanup();
+  } catch {
+    settleErr(
+      new MetaEmbeddedSignupError(
+        "login_error",
+        "Facebook Login failed to start Embedded Signup"
+      )
+    );
   }
+
+  return resultPromise;
 }
 
 /** Sanitize errors for UI — never include tokens/codes. */

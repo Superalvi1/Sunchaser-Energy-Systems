@@ -93,7 +93,7 @@ export default function WhatsAppConnectionPanel({
 
       const signup = await launchMetaEmbeddedSignup({ state });
 
-      const attemptState = activeStateRef.current;
+      const attemptState = signup.state || activeStateRef.current;
       if (!attemptState) {
         throw new Error("OAuth state for this attempt is no longer available");
       }

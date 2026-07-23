@@ -84,7 +84,7 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
         code: signup.code,
         wabaId: signup.wabaId,
         phoneNumberId: signup.phoneNumberId,
-        state,
+        state: signup.state,
       });
       await load();
     } catch (err) {
