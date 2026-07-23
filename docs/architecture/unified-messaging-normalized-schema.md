@@ -95,6 +95,16 @@ Repository operations return explicit `created` vs `existing` outcomes (`Idempot
 - Official Meta traffic continues to use `server/whatsappTransport/` and `whatsapp_*` tables.
 - Normalized tables coexist until a compatibility façade dual-writes or migrates.
 
+## Live disposable PostgreSQL validation
+
+Against the local harness (`docs/development/unified-messaging-local-postgres.md`):
+
+```bash
+./scripts/test-unified-messaging-postgres.sh
+```
+
+Proves DDL apply, RLS/privilege posture, composite tenant FKs, CHECK alignment with Task 2 contracts, idempotency unique indexes, attachment privacy, history-preserving connection delete, outbox claim index via `EXPLAIN`, and rollback/reapply — without contacting hosted Supabase.
+
 ---
 
 ## Future compatibility-façade insertion point
