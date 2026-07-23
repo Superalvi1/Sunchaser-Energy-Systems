@@ -10,7 +10,12 @@
  */
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Max wait for Facebook JS SDK readiness before FB.login. */
+export const SDK_LOAD_TIMEOUT_MS = 15_000;
 const SDK_URL = "https://connect.facebook.net/en_US/sdk.js";
+const SDK_POLL_INTERVAL_MS = 50;
+const SDK_LOAD_TIMEOUT_MESSAGE =
+  "Meta SDK did not finish loading. Please refresh and try again.";
 
 const ALLOWED_MESSAGE_ORIGINS = new Set([
   "https://www.facebook.com",
@@ -210,60 +215,137 @@ export function parseEmbeddedSignupMessageData(
 }
 
 let sdkLoadPromise: Promise<FbSdk> | null = null;
+/** Tracks last successful FB.init identity to avoid duplicate init calls. */
+let sdkInitKey: string | null = null;
+let sdkLoadTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+let sdkPollHandle: ReturnType<typeof setInterval> | null = null;
 
-export function resetMetaSdkLoaderForTests(): void {
-  sdkLoadPromise = null;
+function clearSdkLoadWatchers(): void {
+  if (sdkLoadTimeoutHandle != null) {
+    clearTimeout(sdkLoadTimeoutHandle);
+    sdkLoadTimeoutHandle = null;
+  }
+  if (sdkPollHandle != null) {
+    clearInterval(sdkPollHandle);
+    sdkPollHandle = null;
+  }
 }
 
-function loadFacebookSdk(appId: string, graphVersion: string): Promise<FbSdk> {
+export function resetMetaSdkLoaderForTests(): void {
+  clearSdkLoadWatchers();
+  sdkLoadPromise = null;
+  sdkInitKey = null;
+}
+
+function initFbOnce(fb: FbSdk, appId: string, graphVersion: string): FbSdk {
+  const key = `${appId}|${graphVersion}`;
+  if (sdkInitKey !== key) {
+    fb.init({ appId, cookie: true, xfbml: false, version: graphVersion });
+    sdkInitKey = key;
+  }
+  return fb;
+}
+
+export type LoadFacebookSdkOptions = {
+  /** Override SDK readiness timeout (tests). Defaults to SDK_LOAD_TIMEOUT_MS. */
+  timeoutMs?: number;
+};
+
+/**
+ * Load + initialize the Facebook JS SDK exactly once per pending load.
+ * Every path resolves or rejects within timeoutMs (default 15s).
+ */
+export function loadFacebookSdk(
+  appId: string,
+  graphVersion: string,
+  options: LoadFacebookSdkOptions = {}
+): Promise<FbSdk> {
   if (typeof window === "undefined") {
     return Promise.reject(
-      new MetaEmbeddedSignupError("sdk_load_failed", "Facebook SDK requires a browser")
+      new MetaEmbeddedSignupError(
+        "sdk_load_failed",
+        "Facebook SDK requires a browser"
+      )
     );
   }
   if (window.FB) {
-    window.FB.init({ appId, cookie: true, xfbml: false, version: graphVersion });
-    return Promise.resolve(window.FB);
+    return Promise.resolve(initFbOnce(window.FB, appId, graphVersion));
   }
   if (sdkLoadPromise) return sdkLoadPromise;
 
-  sdkLoadPromise = new Promise<FbSdk>((resolve, reject) => {
-    const fail = () => {
-      sdkLoadPromise = null;
-      reject(
-        new MetaEmbeddedSignupError(
-          "sdk_load_failed",
-          "Failed to load the Facebook JavaScript SDK"
-        )
-      );
-    };
+  const timeoutMs = options.timeoutMs ?? SDK_LOAD_TIMEOUT_MS;
 
-    window.fbAsyncInit = () => {
+  sdkLoadPromise = new Promise<FbSdk>((resolve, reject) => {
+    let settled = false;
+
+    const settleOk = (fb: FbSdk) => {
+      if (settled) return;
+      settled = true;
+      clearSdkLoadWatchers();
       try {
-        if (!window.FB) {
-          fail();
-          return;
-        }
-        window.FB.init({
-          appId,
-          cookie: true,
-          xfbml: false,
-          version: graphVersion,
-        });
-        resolve(window.FB);
+        resolve(initFbOnce(fb, appId, graphVersion));
       } catch {
-        fail();
+        sdkLoadPromise = null;
+        reject(
+          new MetaEmbeddedSignupError(
+            "sdk_load_failed",
+            "Failed to load the Facebook JavaScript SDK"
+          )
+        );
       }
     };
 
-    const existing = document.getElementById("facebook-jssdk");
-    if (existing) return;
+    const settleFail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      clearSdkLoadWatchers();
+      sdkLoadPromise = null;
+      reject(new MetaEmbeddedSignupError("sdk_load_failed", message));
+    };
+
+    sdkLoadTimeoutHandle = setTimeout(() => {
+      settleFail(SDK_LOAD_TIMEOUT_MESSAGE);
+    }, timeoutMs);
+
+    window.fbAsyncInit = () => {
+      if (settled) return;
+      if (!window.FB) {
+        settleFail("Failed to load the Facebook JavaScript SDK");
+        return;
+      }
+      settleOk(window.FB);
+    };
+
+    // Covers: existing script already past fbAsyncInit, or delayed FB attach.
+    sdkPollHandle = setInterval(() => {
+      if (window.FB) settleOk(window.FB);
+    }, SDK_POLL_INTERVAL_MS);
+
+    const existing = document.getElementById(
+      "facebook-jssdk"
+    ) as HTMLScriptElement | null;
+
+    if (existing) {
+      const onExistingError = () => {
+        settleFail("Failed to load the Facebook JavaScript SDK");
+      };
+      existing.addEventListener("error", onExistingError, { once: true });
+      if (window.FB) {
+        settleOk(window.FB);
+      }
+      return;
+    }
 
     const script = document.createElement("script");
     script.id = "facebook-jssdk";
     script.async = true;
     script.src = SDK_URL;
-    script.onerror = () => fail();
+    script.onerror = () => {
+      settleFail("Failed to load the Facebook JavaScript SDK");
+    };
+    script.onload = () => {
+      if (window.FB) settleOk(window.FB);
+    };
     document.body.appendChild(script);
   });
 
@@ -275,6 +357,8 @@ export type LaunchEmbeddedSignupOptions = {
   state: string;
   config?: MetaEmbeddedSignupConfig;
   timeoutMs?: number;
+  /** SDK readiness timeout before FB.login (tests / overrides). */
+  sdkLoadTimeoutMs?: number;
   /** Test injection */
   fb?: FbSdk;
   /** Test injection for message listener target */
@@ -302,7 +386,11 @@ export async function launchMetaEmbeddedSignup(
   const config = options.config ?? resolveMetaEmbeddedSignupConfig();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const target = options.messageTarget ?? window;
-  const fb = options.fb ?? (await loadFacebookSdk(config.appId, config.graphVersion));
+  const fb =
+    options.fb ??
+    (await loadFacebookSdk(config.appId, config.graphVersion, {
+      timeoutMs: options.sdkLoadTimeoutMs,
+    }));
 
   const attemptId = Symbol("embedded-signup-attempt");
   let activeAttempt: symbol | null = attemptId;

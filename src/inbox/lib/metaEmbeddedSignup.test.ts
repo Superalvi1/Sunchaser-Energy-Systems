@@ -10,8 +10,10 @@ import { transformWithEsbuild } from "vite";
 import {
   isAllowedMetaMessageOrigin,
   launchMetaEmbeddedSignup,
+  loadFacebookSdk,
   MetaEmbeddedSignupError,
   parseEmbeddedSignupMessageData,
+  resetMetaSdkLoaderForTests,
   resolveMetaEmbeddedSignupConfig,
   sanitizeEmbeddedSignupError,
 } from "./metaEmbeddedSignup.ts";
@@ -580,6 +582,313 @@ await test("sanitizeEmbeddedSignupError never echoes raw codes", () => {
     new Error("failed EAAGabcdefghijklmnop")
   );
   assert.ok(!msg.includes("EAAGabcdefghijklmnop"));
+});
+
+// ---------------------------------------------------------------------------
+// Task 18 — deterministic Meta SDK loader
+// ---------------------------------------------------------------------------
+
+type MockFb = {
+  initCalls: number;
+  loginCalls: number;
+  init: (opts: Record<string, unknown>) => void;
+  login: (
+    cb: (r: { authResponse?: { code?: string } | null; status?: string }) => void,
+    opts: Record<string, unknown>
+  ) => void;
+};
+
+function createMockFb(): MockFb {
+  const fb: MockFb = {
+    initCalls: 0,
+    loginCalls: 0,
+    init() {
+      fb.initCalls += 1;
+    },
+    login(cb) {
+      fb.loginCalls += 1;
+      cb({ authResponse: null, status: "unknown" });
+    },
+  };
+  return fb;
+}
+
+type BrowserMock = {
+  window: {
+    FB?: MockFb;
+    fbAsyncInit?: () => void;
+    document: DocumentMock;
+  };
+  document: DocumentMock;
+  scripts: ScriptMock[];
+  restore: () => void;
+};
+
+type ScriptMock = {
+  id: string;
+  async: boolean;
+  src: string;
+  onerror: ((ev?: unknown) => void) | null;
+  onload: ((ev?: unknown) => void) | null;
+  addEventListener: (
+    type: string,
+    fn: EventListener,
+    opts?: { once?: boolean }
+  ) => void;
+  dispatchError: () => void;
+};
+
+type DocumentMock = {
+  getElementById: (id: string) => ScriptMock | null;
+  createElement: (tag: string) => ScriptMock;
+  body: { appendChild: (el: ScriptMock) => ScriptMock };
+};
+
+function installBrowserMock(): BrowserMock {
+  const scripts: ScriptMock[] = [];
+  const byId = new Map<string, ScriptMock>();
+
+  const createScript = (): ScriptMock => {
+    const errorListeners = new Set<EventListener>();
+    const script: ScriptMock = {
+      id: "",
+      async: false,
+      src: "",
+      onerror: null,
+      onload: null,
+      addEventListener(type, fn, opts) {
+        if (type !== "error") return;
+        if (opts?.once) {
+          const wrap: EventListener = (ev) => {
+            errorListeners.delete(wrap);
+            fn(ev);
+          };
+          errorListeners.add(wrap);
+          return;
+        }
+        errorListeners.add(fn);
+      },
+      dispatchError() {
+        if (script.onerror) script.onerror(new Event("error"));
+        for (const fn of [...errorListeners]) {
+          fn(new Event("error") as Event);
+        }
+      },
+    };
+    return script;
+  };
+
+  const documentMock: DocumentMock = {
+    getElementById(id) {
+      return byId.get(id) ?? null;
+    },
+    createElement(tag) {
+      assert.equal(tag, "script");
+      return createScript();
+    },
+    body: {
+      appendChild(el) {
+        if (el.id) byId.set(el.id, el);
+        scripts.push(el);
+        return el;
+      },
+    },
+  };
+
+  const win: BrowserMock["window"] = {
+    FB: undefined,
+    fbAsyncInit: undefined,
+    document: documentMock,
+  };
+
+  const prevWindow = (globalThis as any).window;
+  const prevDocument = (globalThis as any).document;
+  (globalThis as any).window = win;
+  (globalThis as any).document = documentMock;
+
+  resetMetaSdkLoaderForTests();
+
+  return {
+    window: win,
+    document: documentMock,
+    scripts,
+    restore() {
+      resetMetaSdkLoaderForTests();
+      if (prevWindow === undefined) delete (globalThis as any).window;
+      else (globalThis as any).window = prevWindow;
+      if (prevDocument === undefined) delete (globalThis as any).document;
+      else (globalThis as any).document = prevDocument;
+    },
+  };
+}
+
+await test("SDK loader: fresh script load resolves via fbAsyncInit", async () => {
+  const browser = installBrowserMock();
+  try {
+    const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    assert.equal(browser.scripts.length, 1);
+    assert.equal(browser.scripts[0]?.id, "facebook-jssdk");
+    const fb = createMockFb();
+    browser.window.FB = fb;
+    assert.equal(typeof browser.window.fbAsyncInit, "function");
+    browser.window.fbAsyncInit?.();
+    const ready = await pending;
+    assert.equal(ready, fb);
+    assert.equal(fb.initCalls, 1);
+    // No duplicate script on shared in-flight / ready path.
+    await loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    assert.equal(browser.scripts.length, 1);
+    assert.equal(fb.initCalls, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test("SDK loader: existing script + ready window.FB resolves", async () => {
+  const browser = installBrowserMock();
+  try {
+    const existing = browser.document.createElement("script");
+    existing.id = "facebook-jssdk";
+    existing.src = "https://connect.facebook.net/en_US/sdk.js";
+    browser.document.body.appendChild(existing);
+    const fb = createMockFb();
+    browser.window.FB = fb;
+
+    const ready = await loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    assert.equal(ready, fb);
+    assert.equal(fb.initCalls, 1);
+    assert.equal(browser.scripts.length, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test("SDK loader: existing script + delayed FB readiness resolves", async () => {
+  const browser = installBrowserMock();
+  try {
+    const existing = browser.document.createElement("script");
+    existing.id = "facebook-jssdk";
+    browser.document.body.appendChild(existing);
+
+    const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    assert.equal(browser.scripts.length, 1);
+
+    await new Promise((r) => setTimeout(r, 30));
+    const fb = createMockFb();
+    browser.window.FB = fb;
+    // Poll should pick this up without requiring a second script tag.
+    const ready = await pending;
+    assert.equal(ready, fb);
+    assert.equal(fb.initCalls, 1);
+    assert.equal(browser.scripts.length, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test(
+  "SDK loader: existing script never ready rejects after timeout",
+  async () => {
+    const browser = installBrowserMock();
+    try {
+      const existing = browser.document.createElement("script");
+      existing.id = "facebook-jssdk";
+      browser.document.body.appendChild(existing);
+
+      const started = Date.now();
+      await assert.rejects(
+        () => loadFacebookSdk("app", "v25.0", { timeoutMs: 80 }),
+        (err: unknown) =>
+          err instanceof MetaEmbeddedSignupError &&
+          err.code === "sdk_load_failed" &&
+          /Meta SDK did not finish loading/i.test(err.message)
+      );
+      assert.ok(Date.now() - started < 1500);
+      assert.equal(browser.scripts.length, 1);
+    } finally {
+      browser.restore();
+    }
+  }
+);
+
+await test("SDK loader: script error rejects", async () => {
+  const browser = installBrowserMock();
+  try {
+    const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    assert.equal(browser.scripts.length, 1);
+    browser.scripts[0]?.dispatchError();
+    await assert.rejects(
+      () => pending,
+      (err: unknown) =>
+        err instanceof MetaEmbeddedSignupError &&
+        err.code === "sdk_load_failed" &&
+        /Failed to load the Facebook JavaScript SDK/i.test(err.message)
+    );
+  } finally {
+    browser.restore();
+  }
+});
+
+await test("SDK loader: retry after failed/partial load does not hang", async () => {
+  const browser = installBrowserMock();
+  try {
+    const existing = browser.document.createElement("script");
+    existing.id = "facebook-jssdk";
+    browser.document.body.appendChild(existing);
+
+    await assert.rejects(
+      () => loadFacebookSdk("app", "v25.0", { timeoutMs: 60 }),
+      (err: unknown) =>
+        err instanceof MetaEmbeddedSignupError && err.code === "sdk_load_failed"
+    );
+
+    // Retry after partial load — must resolve when FB appears (no hang).
+    const pending = loadFacebookSdk("app", "v25.0", { timeoutMs: 1000 });
+    const fb = createMockFb();
+    browser.window.FB = fb;
+    const ready = await pending;
+    assert.equal(ready, fb);
+    assert.equal(browser.scripts.length, 1);
+  } finally {
+    browser.restore();
+  }
+});
+
+await test("SDK loader: FB.login is not called before SDK readiness", async () => {
+  const browser = installBrowserMock();
+  const messageTarget = makeMessageTarget();
+  try {
+    const pending = launchMetaEmbeddedSignup({
+      state: "oauth-state-sdk",
+      config: { appId: "a", configId: "c", graphVersion: "v25.0" },
+      messageTarget: messageTarget as unknown as Window,
+      timeoutMs: 2000,
+      sdkLoadTimeoutMs: 1000,
+    });
+
+    // While SDK is not ready, login must not have run.
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(browser.window.FB, undefined);
+    assert.equal(browser.scripts.length, 1);
+
+    const readyFb = createMockFb();
+    readyFb.login = (cb) => {
+      readyFb.loginCalls += 1;
+      cb({ authResponse: null, status: "unknown" });
+    };
+    browser.window.FB = readyFb;
+    browser.window.fbAsyncInit?.();
+
+    await assert.rejects(
+      () => pending,
+      (err: unknown) =>
+        err instanceof MetaEmbeddedSignupError && err.code === "cancelled"
+    );
+    assert.ok(readyFb.loginCalls >= 1);
+    assert.equal(browser.scripts.length, 1);
+  } finally {
+    browser.restore();
+  }
 });
 
 if (failed > 0) {
