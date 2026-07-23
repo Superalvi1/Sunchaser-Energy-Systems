@@ -1,7 +1,7 @@
 /**
  * Sunchaser Connect Phase 1B Sprint 2: Deterministic Intent Classifier.
  * Rules-based deterministic classification without direct LLM control over routing.
- * Uses token-based matching to prevent substring false positives (e.g., "hi" inside "this").
+ * Uses token-based matching to prevent substring false positives (e.g., "hi" inside "this", "issue" inside "tissue").
  */
 import { clampConfidence, type LeadIntent } from "./leadQualificationTypes.ts";
 
@@ -35,8 +35,8 @@ export class AiIntentClassifier {
     const hasToken = (...kw: string[]): boolean => kw.some((k) => tokenSet.has(k.toLowerCase()));
     const hasPhrase = (...ph: string[]): boolean => ph.some((p) => text.includes(p.toLowerCase()));
 
-    // 1. Complaint (high priority)
-    if (hasToken("complaint", "fault", "kharab") || hasPhrase("not working", "bad service", "issue")) {
+    // 1. Complaint (high priority - "issue" uses tokenized word matching to avoid matching "tissue")
+    if (hasToken("complaint", "fault", "kharab", "issue") || hasPhrase("not working", "bad service")) {
       return {
         intent: "Complaint",
         confidence: clampConfidence(0.95),

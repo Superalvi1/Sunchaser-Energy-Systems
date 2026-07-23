@@ -1,6 +1,7 @@
 /**
  * Sunchaser Connect Phase 1B Sprint 2: AI Lead Qualification Engine.
- * Implements Strict Field Immutability, Privacy-Safe Shadow Reports, and Dependency Injection.
+ * Implements Strict Field Immutability, Privacy-Safe Shadow Reports, and Strict Dependency Injection.
+ * Engine does NOT instantiate collaborators internally; constructor receives all dependencies.
  * AI MUST remain in AI_SHADOW mode. Zero outbound WhatsApp, Zero CRM mutations.
  */
 import {
@@ -62,12 +63,12 @@ export function createInitialLeadQualification(
   };
 }
 
-export type AiQualificationEngineOptions = {
-  intentClassifier?: AiIntentClassifier;
-  languageDetector?: AiLanguageDetector;
-  qualificationScorer?: AiQualificationScorer;
-  missingFieldEngine?: AiMissingFieldEngine;
-  nextQuestionEngine?: AiNextQuestionEngine;
+export type AiQualificationEngineDependencies = {
+  intentClassifier: AiIntentClassifier;
+  languageDetector: AiLanguageDetector;
+  qualificationScorer: AiQualificationScorer;
+  missingFieldEngine: AiMissingFieldEngine;
+  nextQuestionEngine: AiNextQuestionEngine;
 };
 
 export class AiQualificationEngine {
@@ -77,12 +78,16 @@ export class AiQualificationEngine {
   private readonly missingFieldEngine: AiMissingFieldEngine;
   private readonly nextQuestionEngine: AiNextQuestionEngine;
 
-  constructor(options: AiQualificationEngineOptions = {}) {
-    this.intentClassifier = options.intentClassifier ?? new AiIntentClassifier();
-    this.languageDetector = options.languageDetector ?? new AiLanguageDetector();
-    this.qualificationScorer = options.qualificationScorer ?? new AiQualificationScorer();
-    this.missingFieldEngine = options.missingFieldEngine ?? new AiMissingFieldEngine();
-    this.nextQuestionEngine = options.nextQuestionEngine ?? new AiNextQuestionEngine();
+  /**
+   * Constructor receives every collaborator dependency explicitly.
+   * Engine does NOT instantiate collaborators internally.
+   */
+  constructor(deps: AiQualificationEngineDependencies) {
+    this.intentClassifier = deps.intentClassifier;
+    this.languageDetector = deps.languageDetector;
+    this.qualificationScorer = deps.qualificationScorer;
+    this.missingFieldEngine = deps.missingFieldEngine;
+    this.nextQuestionEngine = deps.nextQuestionEngine;
   }
 
   /**
@@ -198,4 +203,19 @@ export class AiQualificationEngine {
       generatedAt: now,
     };
   }
+}
+
+/**
+ * Factory for creating AiQualificationEngine instances with default or overridden dependencies.
+ */
+export function createDefaultAiQualificationEngine(
+  overrides: Partial<AiQualificationEngineDependencies> = {}
+): AiQualificationEngine {
+  return new AiQualificationEngine({
+    intentClassifier: overrides.intentClassifier ?? new AiIntentClassifier(),
+    languageDetector: overrides.languageDetector ?? new AiLanguageDetector(),
+    qualificationScorer: overrides.qualificationScorer ?? new AiQualificationScorer(),
+    missingFieldEngine: overrides.missingFieldEngine ?? new AiMissingFieldEngine(),
+    nextQuestionEngine: overrides.nextQuestionEngine ?? new AiNextQuestionEngine(),
+  });
 }
