@@ -1,6 +1,6 @@
 /**
  * Predictable repository errors for normalized messaging persistence.
- * Never include connection strings, SQL text, or secrets in public messages.
+ * Never include connection strings, SQL text, secrets, or raw driver errors.
  */
 
 export const MESSAGING_REPOSITORY_ERROR_CODES = [
@@ -18,22 +18,20 @@ export type MessagingRepositoryErrorCode =
 export type MessagingRepositoryErrorInit = {
   code: MessagingRepositoryErrorCode;
   message: string;
-  /** Optional stable machine detail (never secrets / SQL). */
+  /** Optional stable machine detail (constraint name only — never SQL/row values). */
   detail?: string;
-  cause?: unknown;
 };
 
 export class MessagingRepositoryError extends Error {
   readonly code: MessagingRepositoryErrorCode;
   readonly detail?: string;
-  readonly cause?: unknown;
 
   constructor(init: MessagingRepositoryErrorInit) {
     super(init.message);
     this.name = "MessagingRepositoryError";
     this.code = init.code;
     this.detail = init.detail;
-    this.cause = init.cause;
+    // Intentionally do not attach Error.cause or retain the raw driver error.
   }
 }
 
@@ -46,57 +44,59 @@ export function isMessagingRepositoryError(
 type PgErrorLike = {
   code?: string;
   constraint?: string;
-  table?: string;
 };
 
-export function asPgError(err: unknown): PgErrorLike | null {
+function asPgError(err: unknown): PgErrorLike | null {
   if (!err || typeof err !== "object") return null;
   const e = err as PgErrorLike;
   return typeof e.code === "string" ? e : null;
 }
 
-/** Map a driver/database error into a repository error (no SQL leakage). */
+/** Safe constraint name only — reject values that look like SQL or row dumps. */
+function safeConstraintDetail(constraint: string | undefined): string | undefined {
+  if (!constraint) return undefined;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(constraint)) return undefined;
+  return constraint;
+}
+
+/** Map a driver/database error into a repository error (no SQL / raw error leakage). */
 export function mapDatabaseError(
   err: unknown,
   fallbackMessage = "Messaging persistence failed"
 ): MessagingRepositoryError {
   if (err instanceof MessagingRepositoryError) return err;
   const pg = asPgError(err);
+  const detail = safeConstraintDetail(pg?.constraint);
   if (pg?.code === "23505") {
     return new MessagingRepositoryError({
       code: "unique_violation",
       message: "Unique constraint violated",
-      detail: pg.constraint,
-      cause: err,
+      detail,
     });
   }
   if (pg?.code === "23503") {
     return new MessagingRepositoryError({
       code: "constraint_violation",
       message: "Foreign key or referential constraint violated",
-      detail: pg.constraint,
-      cause: err,
+      detail,
     });
   }
   if (pg?.code === "23514") {
     return new MessagingRepositoryError({
       code: "constraint_violation",
       message: "Check constraint violated",
-      detail: pg.constraint,
-      cause: err,
+      detail,
     });
   }
   if (pg?.code === "23502") {
     return new MessagingRepositoryError({
       code: "invalid_input",
       message: "Required database column was null",
-      detail: pg.constraint,
-      cause: err,
+      detail,
     });
   }
   return new MessagingRepositoryError({
     code: "database_failure",
     message: fallbackMessage,
-    cause: err,
   });
 }

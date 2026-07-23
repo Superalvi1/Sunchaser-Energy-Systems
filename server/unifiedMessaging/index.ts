@@ -159,6 +159,11 @@ export {
   type MessagingRepositoryErrorCode,
 } from "./messagingRepositoryErrors.ts";
 
+export {
+  assertSafeMetadata,
+  assertStructuredContent,
+} from "./messagingSafePayload.ts";
+
 export type { SqlExecutor, SqlQueryResult, PgPoolLike } from "./messagingSql.ts";
 export { createPgPoolSqlExecutor } from "./messagingSql.ts";
 

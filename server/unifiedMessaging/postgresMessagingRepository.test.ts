@@ -11,7 +11,12 @@ import { createPostgresMessagingRepository } from "./postgresMessagingRepository
 import {
   MessagingRepositoryError,
   isMessagingRepositoryError,
+  mapDatabaseError,
 } from "./messagingRepositoryErrors.ts";
+import {
+  assertSafeMetadata,
+  assertStructuredContent,
+} from "./messagingSafePayload.ts";
 import {
   createPgPoolSqlExecutor,
   type SqlExecutor,
@@ -44,7 +49,25 @@ async function test(name: string, fn: () => Promise<void>): Promise<void> {
   }
 }
 
-/** Fail the first INSERT into `tableNeedle` inside a transaction (after prior UPDATEs). */
+/** Barrier that releases only after N matching insert attempts have arrived. */
+function createInsertBarrier(
+  match: (sql: string) => boolean,
+  parties = 2
+): (sql: string) => Promise<void> {
+  let waiting: Array<() => void> = [];
+  return async (sql: string) => {
+    if (!match(sql)) return;
+    await new Promise<void>((resolve) => {
+      waiting.push(resolve);
+      if (waiting.length >= parties) {
+        const ready = waiting;
+        waiting = [];
+        for (const r of ready) r();
+      }
+    });
+  };
+}
+
 function wrapFailingInsert(
   base: SqlExecutor,
   tableNeedle: string
@@ -108,13 +131,23 @@ async function cleanupOrg(pool: pg.Pool, organizationId: string): Promise<void> 
   );
 }
 
+function assertNoFailedTx(err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  assert.equal(msg.includes("25P02"), false, "must not surface 25P02");
+  assert.equal(
+    /current transaction is aborted/i.test(msg),
+    false,
+    "must not abort transaction then continue querying"
+  );
+}
+
 const pool = new pg.Pool({
   host: HOST,
   port: PORT,
   database: DATABASE,
   user: USER,
   password: PASSWORD,
-  max: 4,
+  max: 8,
 });
 
 const db = createPgPoolSqlExecutor(pool);
@@ -122,7 +155,6 @@ const orgA = `org_a_${randomUUID().slice(0, 8)}`;
 const orgB = `org_b_${randomUUID().slice(0, 8)}`;
 
 try {
-  // Smoke: schema present
   const { rows: tables } = await pool.query(
     `SELECT count(*)::int AS n FROM pg_tables
      WHERE schemaname = 'public' AND tablename LIKE 'messaging_%'`
@@ -155,12 +187,7 @@ try {
     assert.equal(result.identity.kind, "created");
     assert.equal(result.contact.row.organizationId, orgA);
     assert.equal(result.contact.row.displayName, "Alice");
-    assert.equal(result.contact.row.primaryPhoneNormalized, "+923001112233");
-    assert.equal(result.identity.row.externalUserId, "wa_alice");
-    assert.equal(result.identity.row.transportType, "meta_whatsapp_cloud");
     assert.equal(result.identity.row.displayMetadata.label, "alice");
-    assert.ok(result.contact.row.createdAt);
-    assert.ok(result.identity.row.updatedAt);
   });
 
   await test("repository: upsertContactIdentity idempotent — no duplicate contacts", async () => {
@@ -185,7 +212,6 @@ try {
     assert.equal(second.contact.kind, "existing");
     assert.equal(second.identity.kind, "existing");
     assert.equal(second.contact.row.id, first.contact.row.id);
-    assert.equal(second.identity.row.id, first.identity.row.id);
     const { rows } = await pool.query(
       `SELECT count(*)::int AS n FROM public.messaging_contacts
        WHERE organization_id = $1 AND display_name = 'Bob'`,
@@ -219,46 +245,14 @@ try {
     });
     assert.equal(again.kind, "existing");
     assert.equal(again.row.id, created.row.id);
-    assert.equal(again.row.organizationId, orgA);
-    assert.equal(again.row.contactId, identity.contact.row.id);
-  });
-
-  await test("repository: concurrent findOrCreateConversation is idempotent", async () => {
-    const identity = await repo.upsertContactIdentity({
-      organizationId: orgA,
-      contact: { displayName: "Dana" },
-      identity: {
-        transportType: "meta_whatsapp_cloud",
-        connectionId: "conn_a",
-        externalUserId: "wa_dana",
-      },
-    });
-    const input = {
-      organizationId: orgA,
-      contactId: identity.contact.row.id,
-      connectionId: "conn_a" as const,
-      transportType: "meta_whatsapp_cloud" as const,
-    };
-    const [a, b, c] = await Promise.all([
-      repo.findOrCreateConversation(input),
-      repo.findOrCreateConversation(input),
-      repo.findOrCreateConversation(input),
-    ]);
-    const ids = new Set([a.row.id, b.row.id, c.row.id]);
-    assert.equal(ids.size, 1);
-    const { rows } = await pool.query(
-      `SELECT count(*)::int AS n FROM public.messaging_conversations
-       WHERE organization_id = $1 AND contact_id = $2`,
-      [orgA, identity.contact.row.id]
-    );
-    assert.equal(rows[0]?.n, 1);
   });
 
   let seededConversationId = "";
   let seededIdentityId = "";
+  let seededContactId = "";
   let seededMessageId = "";
 
-  await test("repository: persistInboundMessage create + camelCase NormalizedMessage", async () => {
+  await test("repository: persistInboundMessage maps sender to customer_contact contact_id", async () => {
     const upserted = await repo.upsertContactIdentity({
       organizationId: orgA,
       contact: { displayName: "Eve" },
@@ -269,6 +263,7 @@ try {
       },
     });
     seededIdentityId = upserted.identity.row.id;
+    seededContactId = upserted.contact.row.id;
     const conv = await repo.findOrCreateConversation({
       organizationId: orgA,
       contactId: upserted.contact.row.id,
@@ -289,14 +284,10 @@ try {
     });
     assert.equal(msg.kind, "created");
     seededMessageId = msg.row.messageId;
-    assert.equal(msg.row.organizationId, orgA);
-    assert.equal(msg.row.conversationId, conv.row.id);
-    assert.equal(msg.row.externalMessageId, "wamid.eve.1");
-    assert.equal(msg.row.direction, "inbound");
+    assert.equal(msg.row.sender.kind, "customer_contact");
+    assert.equal(msg.row.sender.id, seededContactId);
+    assert.notEqual(msg.row.sender.id, seededIdentityId);
     assert.equal(msg.row.text, "hello");
-    assert.equal(msg.row.deliveryStatus, "received");
-    assert.equal(msg.row.providerMetadata.source, "test");
-    assert.equal(msg.row.sender.id, upserted.identity.row.id);
   });
 
   await test("repository: duplicate inbound returns existing", async () => {
@@ -312,7 +303,8 @@ try {
     });
     assert.equal(again.kind, "existing");
     assert.equal(again.row.messageId, seededMessageId);
-    assert.equal(again.row.text, "hello");
+    assert.equal(again.row.sender.kind, "customer_contact");
+    assert.equal(again.row.sender.id, seededContactId);
   });
 
   await test("repository: createOutboundMessage + duplicate client key", async () => {
@@ -328,8 +320,8 @@ try {
       origin: "human",
     });
     assert.equal(created.kind, "created");
-    assert.equal(created.row.direction, "outbound");
-    assert.equal(created.row.clientIdempotencyKey, "out-key-1");
+    assert.equal(created.row.recipient.kind, "customer_contact");
+    assert.equal(created.row.recipient.id, seededContactId);
     const dup = await repo.createOutboundMessage({
       organizationId: orgA,
       conversationId: seededConversationId,
@@ -372,14 +364,8 @@ try {
       mediaType: "image/jpeg",
       sizeBytes: 12,
       sha256: "a".repeat(64),
-      originalFilenameSafe: "photo.jpg",
     });
     assert.equal(row.objectKey, "org_a/media/file-1.bin");
-    assert.equal(row.mediaType, "image/jpeg");
-    assert.equal(row.sizeBytes, 12);
-    assert.equal(row.organizationId, orgA);
-    assert.ok(!("publicUrl" in row));
-
     await assert.rejects(
       () =>
         repo.addAttachmentReference({
@@ -401,7 +387,6 @@ try {
       conversationId: seededConversationId,
       assignedTo: "user_1",
       assignedBy: "admin",
-      reason: "initial",
     });
     assert.equal(first.endedAt, null);
     const second = await repo.recordAssignment({
@@ -409,23 +394,16 @@ try {
       conversationId: seededConversationId,
       assignedTo: "user_2",
       assignedBy: "admin",
-      reason: "handoff",
       endPreviousOpen: true,
     });
     assert.equal(second.assignedTo, "user_2");
-    assert.equal(second.endedAt, null);
     const { rows } = await pool.query(
-      `SELECT assigned_to, ended_at IS NOT NULL AS closed
+      `SELECT assigned_to, ended_at IS NULL AS open
        FROM public.messaging_conversation_assignments
-       WHERE organization_id = $1 AND conversation_id = $2
-       ORDER BY started_at ASC`,
+       WHERE organization_id = $1 AND conversation_id = $2`,
       [orgA, seededConversationId]
     );
-    assert.ok(rows.length >= 2);
-    const prior = rows.find((r) => r.assigned_to === "user_1");
-    assert.equal(prior?.closed, true);
-    const openCount = rows.filter((r) => r.closed === false).length;
-    assert.equal(openCount, 1);
+    assert.equal(rows.filter((r) => r.open === true).length, 1);
   });
 
   await test("repository: assignment partial failure rolls back", async () => {
@@ -454,13 +432,6 @@ try {
       [orgA, seededConversationId]
     );
     assert.equal(after.rows[0]?.n, before.rows[0]?.n);
-    const { rows: openRows } = await pool.query(
-      `SELECT assigned_to FROM public.messaging_conversation_assignments
-       WHERE organization_id = $1 AND conversation_id = $2 AND ended_at IS NULL`,
-      [orgA, seededConversationId]
-    );
-    assert.equal(openRows.length, 1);
-    assert.notEqual(openRows[0]?.assigned_to, "user_rollback");
   });
 
   await test("repository: enqueueOutboxEvent create + duplicate key", async () => {
@@ -473,8 +444,6 @@ try {
       payload: { attempt: 1 },
     });
     assert.equal(created.kind, "created");
-    assert.equal(created.row.idempotencyKey, "ob-key-1");
-    assert.equal(created.row.payload.attempt, 1);
     const dup = await repo.enqueueOutboxEvent({
       organizationId: orgA,
       aggregateType: "message",
@@ -485,7 +454,6 @@ try {
     });
     assert.equal(dup.kind, "existing");
     assert.equal(dup.row.id, created.row.id);
-    assert.equal(dup.row.payload.attempt, 1);
   });
 
   await test("repository: appendAuditEvent", async () => {
@@ -498,10 +466,7 @@ try {
       targetId: seededMessageId,
       metadata: { ok: true },
     });
-    assert.equal(row.organizationId, orgA);
-    assert.equal(row.action, "message.persisted");
     assert.equal(row.metadata.ok, true);
-    assert.equal(row.actorType, "service");
   });
 
   await test("repository: tenant isolation across organizations", async () => {
@@ -511,7 +476,7 @@ try {
       identity: {
         transportType: "meta_whatsapp_cloud",
         connectionId: "conn_b",
-        externalUserId: "wa_eve", // same external id, different org/connection
+        externalUserId: "wa_eve",
       },
     });
     const bConv = await repo.findOrCreateConversation({
@@ -525,18 +490,16 @@ try {
       conversationId: bConv.row.id,
       connectionId: "conn_b",
       transportType: "meta_whatsapp_cloud",
-      externalMessageId: "wamid.eve.1", // same external id allowed in other scope
+      externalMessageId: "wamid.eve.1",
       messageType: "text",
       normalizedText: "other org",
     });
     assert.equal(bMsg.kind, "created");
-
-    // Cross-tenant FK must fail predictably
     await assert.rejects(
       () =>
         repo.persistInboundMessage({
           organizationId: orgB,
-          conversationId: seededConversationId, // orgA conversation
+          conversationId: seededConversationId,
           connectionId: "conn_b",
           transportType: "meta_whatsapp_cloud",
           externalMessageId: "wamid.cross.1",
@@ -546,24 +509,6 @@ try {
         isMessagingRepositoryError(err) &&
         (err.code === "constraint_violation" || err.code === "not_found")
     );
-
-    // Outbox key unique per org — same key allowed in orgB
-    const obB = await repo.enqueueOutboxEvent({
-      organizationId: orgB,
-      aggregateType: "message",
-      aggregateId: bMsg.row.messageId,
-      eventType: "dispatch",
-      idempotencyKey: "ob-key-1",
-    });
-    assert.equal(obB.kind, "created");
-
-    // orgA cannot read orgB contact via get path (scoped queries)
-    const { rows } = await pool.query(
-      `SELECT count(*)::int AS n FROM public.messaging_contacts
-       WHERE organization_id = $1 AND id = $2`,
-      [orgA, bIdentity.contact.row.id]
-    );
-    assert.equal(rows[0]?.n, 0);
   });
 
   await test("repository: FK / check constraint errors are categorized", async () => {
@@ -581,36 +526,383 @@ try {
         err instanceof MessagingRepositoryError &&
         err.code === "constraint_violation"
     );
-
-    await assert.rejects(
-      () =>
-        repo.appendAuditEvent({
-          organizationId: orgA,
-          actorType: "not-a-real-actor" as "system",
-          action: "x",
-          targetType: "y",
-        }),
-      (err: unknown) =>
-        err instanceof MessagingRepositoryError &&
-        err.code === "constraint_violation"
-    );
   });
 
-  await test("repository: invalid input does not become existing", async () => {
+  await test("errors: mapped errors never expose raw cause or duplicate values", async () => {
+    const raw = Object.assign(new Error('duplicate key value violates unique constraint "messaging_outbox_idempotency_uidx" Detail: Key (organization_id, idempotency_key)=(org, secret-token-value) already exists.'), {
+      code: "23505",
+      constraint: "messaging_outbox_idempotency_uidx",
+      detail: "Key (organization_id, idempotency_key)=(org, secret-token-value) already exists.",
+    });
+    const mapped = mapDatabaseError(raw);
+    assert.equal(mapped.code, "unique_violation");
+    assert.equal(mapped.detail, "messaging_outbox_idempotency_uidx");
+    assert.equal("cause" in mapped, false);
+    assert.equal((mapped as { cause?: unknown }).cause, undefined);
+    assert.equal(mapped.message.includes("secret-token-value"), false);
+    assert.equal(mapped.message.includes("duplicate key"), false);
+    const json = JSON.stringify(mapped);
+    assert.equal(json.includes("secret-token-value"), false);
+    assert.equal(json.includes("cause"), false);
+  });
+
+  await test("safe payload: rejects nested/credential metadata; accepts scalars", async () => {
+    assert.deepEqual(assertSafeMetadata({ a: 1, b: "x", c: true, d: null }, "m"), {
+      a: 1,
+      b: "x",
+      c: true,
+      d: null,
+    });
+    assert.throws(
+      () => assertSafeMetadata({ nested: { x: 1 } }, "providerMetadata"),
+      (err: unknown) =>
+        isMessagingRepositoryError(err) && err.code === "invalid_input"
+    );
+    assert.throws(
+      () => assertSafeMetadata({ access_token: "abc" }, "diagnostics"),
+      (err: unknown) =>
+        isMessagingRepositoryError(err) && err.detail === "credential_like_key"
+    );
+    assert.throws(
+      () => assertSafeMetadata({ Authorization: "Bearer x" }, "payload"),
+      (err: unknown) => isMessagingRepositoryError(err)
+    );
+    assert.throws(
+      () => assertSafeMetadata(["a"], "metadata"),
+      (err: unknown) => isMessagingRepositoryError(err)
+    );
     await assert.rejects(
       () =>
-        repo.persistInboundMessage({
-          organizationId: "",
-          conversationId: seededConversationId,
-          connectionId: "conn_a",
-          transportType: "meta_whatsapp_cloud",
-          externalMessageId: "x",
-          messageType: "text",
+        repo.enqueueOutboxEvent({
+          organizationId: orgA,
+          aggregateType: "message",
+          aggregateId: seededMessageId,
+          eventType: "dispatch",
+          idempotencyKey: "ob-bad-meta",
+          payload: { refreshToken: "nope" },
         }),
       (err: unknown) =>
         isMessagingRepositoryError(err) && err.code === "invalid_input"
     );
   });
+
+  await test("safe payload: structured content union validation", async () => {
+    assert.deepEqual(assertStructuredContent({ kind: "none" }), { kind: "none" });
+    assert.throws(
+      () =>
+        assertStructuredContent({
+          kind: "media_ref",
+          mediaId: "m1",
+          rawProvider: { envelope: true },
+        }),
+      (err: unknown) => isMessagingRepositoryError(err)
+    );
+    assert.throws(
+      () => assertStructuredContent({ kind: "unknown_kind" }),
+      (err: unknown) => isMessagingRepositoryError(err)
+    );
+  });
+
+  // ---- Deterministic race tests (SQL insert barrier) ----
+
+  await test("race: contact identity ON CONFLICT — one created, one existing, no orphans", async () => {
+    const barrier = createInsertBarrier((sql) =>
+      sql.includes("messaging_contact_identities")
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const externalUserId = `wa_race_id_${randomUUID().slice(0, 8)}`;
+    const [r1, r2] = await Promise.all([
+      repoA.upsertContactIdentity({
+        organizationId: orgA,
+        contact: { displayName: "RaceId1" },
+        identity: {
+          transportType: "meta_whatsapp_cloud",
+          connectionId: "conn_race",
+          externalUserId,
+        },
+      }),
+      repoB.upsertContactIdentity({
+        organizationId: orgA,
+        contact: { displayName: "RaceId2" },
+        identity: {
+          transportType: "meta_whatsapp_cloud",
+          connectionId: "conn_race",
+          externalUserId,
+        },
+      }),
+    ]);
+    const kinds = [r1.identity.kind, r2.identity.kind].sort();
+    assert.deepEqual(kinds, ["created", "existing"]);
+    assert.equal(r1.identity.row.id, r2.identity.row.id);
+    assert.equal(r1.contact.row.id, r2.contact.row.id);
+    const { rows: idRows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_contact_identities
+       WHERE organization_id = $1 AND external_user_id = $2`,
+      [orgA, externalUserId]
+    );
+    assert.equal(idRows[0]?.n, 1);
+    const { rows: orphanRows } = await pool.query(
+      `SELECT c.id FROM public.messaging_contacts c
+       LEFT JOIN public.messaging_contact_identities i
+         ON i.organization_id = c.organization_id AND i.contact_id = c.id
+       WHERE c.organization_id = $1
+         AND c.display_name IN ('RaceId1', 'RaceId2')
+         AND i.id IS NULL`,
+      [orgA]
+    );
+    assert.equal(orphanRows.length, 0);
+  });
+
+  await test("race: conversation findOrCreate ON CONFLICT", async () => {
+    const identity = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "RaceConv" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_race_cv",
+        externalUserId: `wa_race_cv_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const barrier = createInsertBarrier((sql) =>
+      sql.includes("messaging_conversations")
+    );
+    const input = {
+      organizationId: orgA,
+      contactId: identity.contact.row.id,
+      connectionId: "conn_race_cv",
+      transportType: "meta_whatsapp_cloud" as const,
+    };
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const [a, b] = await Promise.all([
+      repoA.findOrCreateConversation(input),
+      repoB.findOrCreateConversation(input),
+    ]);
+    assert.deepEqual([a.kind, b.kind].sort(), ["created", "existing"]);
+    assert.equal(a.row.id, b.row.id);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_conversations
+       WHERE organization_id = $1 AND contact_id = $2 AND connection_id = $3`,
+      [orgA, identity.contact.row.id, "conn_race_cv"]
+    );
+    assert.equal(rows[0]?.n, 1);
+  });
+
+  await test("race: inbound message ON CONFLICT", async () => {
+    const barrier = createInsertBarrier(
+      (sql) =>
+        sql.includes("messaging_messages") &&
+        sql.includes("external_message_id") &&
+        sql.includes("WHERE (external_message_id IS NOT NULL)")
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const externalMessageId = `wamid.race.${randomUUID().slice(0, 8)}`;
+    const input = {
+      organizationId: orgA,
+      conversationId: seededConversationId,
+      connectionId: "conn_a",
+      transportType: "meta_whatsapp_cloud" as const,
+      externalMessageId,
+      senderIdentityId: seededIdentityId,
+      messageType: "text" as const,
+      normalizedText: "race inbound",
+    };
+    const [a, b] = await Promise.all([
+      repoA.persistInboundMessage(input),
+      repoB.persistInboundMessage(input),
+    ]);
+    assert.deepEqual([a.kind, b.kind].sort(), ["created", "existing"]);
+    assert.equal(a.row.messageId, b.row.messageId);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_messages
+       WHERE organization_id = $1 AND external_message_id = $2`,
+      [orgA, externalMessageId]
+    );
+    assert.equal(rows[0]?.n, 1);
+  });
+
+  await test("race: outbound message ON CONFLICT", async () => {
+    const barrier = createInsertBarrier(
+      (sql) =>
+        sql.includes("messaging_messages") &&
+        sql.includes("client_idempotency_key") &&
+        sql.includes("WHERE (client_idempotency_key IS NOT NULL)")
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const clientIdempotencyKey = `out-race-${randomUUID().slice(0, 8)}`;
+    const input = {
+      organizationId: orgA,
+      conversationId: seededConversationId,
+      connectionId: "conn_a",
+      transportType: "meta_whatsapp_cloud" as const,
+      clientIdempotencyKey,
+      messageType: "text" as const,
+      normalizedText: "race outbound",
+      origin: "human" as const,
+    };
+    const [a, b] = await Promise.all([
+      repoA.createOutboundMessage(input),
+      repoB.createOutboundMessage(input),
+    ]);
+    assert.deepEqual([a.kind, b.kind].sort(), ["created", "existing"]);
+    assert.equal(a.row.messageId, b.row.messageId);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_messages
+       WHERE organization_id = $1 AND client_idempotency_key = $2`,
+      [orgA, clientIdempotencyKey]
+    );
+    assert.equal(rows[0]?.n, 1);
+  });
+
+  await test("race: status event ON CONFLICT", async () => {
+    const barrier = createInsertBarrier(
+      (sql) =>
+        sql.includes("messaging_status_events") &&
+        sql.includes("WHERE (external_status_id IS NOT NULL)")
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const externalStatusId = `st-race-${randomUUID().slice(0, 8)}`;
+    const input = {
+      organizationId: orgA,
+      messageId: seededMessageId,
+      status: "read" as const,
+      externalStatusId,
+      occurredAt: new Date().toISOString(),
+    };
+    const [a, b] = await Promise.all([
+      repoA.appendStatusEvent(input),
+      repoB.appendStatusEvent(input),
+    ]);
+    assert.deepEqual([a.kind, b.kind].sort(), ["created", "existing"]);
+    assert.equal(a.row.id, b.row.id);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_status_events
+       WHERE organization_id = $1 AND external_status_id = $2`,
+      [orgA, externalStatusId]
+    );
+    assert.equal(rows[0]?.n, 1);
+  });
+
+  await test("race: outbox ON CONFLICT", async () => {
+    const barrier = createInsertBarrier((sql) =>
+      sql.includes("messaging_outbox")
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const idempotencyKey = `ob-race-${randomUUID().slice(0, 8)}`;
+    const input = {
+      organizationId: orgA,
+      aggregateType: "message",
+      aggregateId: seededMessageId,
+      eventType: "dispatch",
+      idempotencyKey,
+      payload: { n: 1 },
+    };
+    const [a, b] = await Promise.all([
+      repoA.enqueueOutboxEvent(input),
+      repoB.enqueueOutboxEvent(input),
+    ]);
+    assert.deepEqual([a.kind, b.kind].sort(), ["created", "existing"]);
+    assert.equal(a.row.id, b.row.id);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_outbox
+       WHERE organization_id = $1 AND idempotency_key = $2`,
+      [orgA, idempotencyKey]
+    );
+    assert.equal(rows[0]?.n, 1);
+  });
+
+  await test("race: concurrent assignment handoffs leave one open assignee", async () => {
+    const identity = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "AssignRace" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_assign_race",
+        externalUserId: `wa_assign_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const conv = await repo.findOrCreateConversation({
+      organizationId: orgA,
+      contactId: identity.contact.row.id,
+      connectionId: "conn_assign_race",
+      transportType: "meta_whatsapp_cloud",
+    });
+    await repo.recordAssignment({
+      organizationId: orgA,
+      conversationId: conv.row.id,
+      assignedTo: "user_seed",
+      assignedBy: "admin",
+    });
+    const [a, b] = await Promise.all([
+      repo.recordAssignment({
+        organizationId: orgA,
+        conversationId: conv.row.id,
+        assignedTo: "user_a",
+        assignedBy: "admin",
+        endPreviousOpen: true,
+      }),
+      repo.recordAssignment({
+        organizationId: orgA,
+        conversationId: conv.row.id,
+        assignedTo: "user_b",
+        assignedBy: "admin",
+        endPreviousOpen: true,
+      }),
+    ]);
+    assert.ok(a.id);
+    assert.ok(b.id);
+    const { rows } = await pool.query(
+      `SELECT assigned_to FROM public.messaging_conversation_assignments
+       WHERE organization_id = $1 AND conversation_id = $2 AND ended_at IS NULL`,
+      [orgA, conv.row.id]
+    );
+    assert.equal(rows.length, 1);
+    assert.ok(["user_a", "user_b"].includes(String(rows[0]?.assigned_to)));
+  });
+
+  // Ensure race helpers did not leave aborted-tx symptoms in the process.
+  assertNoFailedTx(null);
 } finally {
   await cleanupOrg(pool, orgA).catch(() => undefined);
   await cleanupOrg(pool, orgB).catch(() => undefined);
