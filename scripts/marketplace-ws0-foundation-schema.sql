@@ -1042,8 +1042,10 @@ set search_path = ''
 as $$
 declare
   v_row public.mp_idempotency_keys%rowtype;
+  v_inserted public.mp_idempotency_keys%rowtype;
   v_stale_seconds integer := 300;
   v_env text;
+  v_claimed boolean := false;
 begin
   if p_idempotency_key is null or p_operation_type is null
      or p_actor_scope is null or p_request_hash is null then
@@ -1067,6 +1069,25 @@ begin
     v_stale_seconds := 300;
   end;
 
+  -- Atomic first claim. Swallow unique_violation from PK or hash unique index
+  -- so concurrent identical callers never see a raw constraint error.
+  begin
+    insert into public.mp_idempotency_keys (
+      idempotency_key, operation_type, actor_scope, ref, request_hash, state
+    ) values (
+      p_idempotency_key, p_operation_type, p_actor_scope, p_ref, p_request_hash, 'processing'
+    )
+    returning * into v_inserted;
+    v_claimed := true;
+  exception
+    when unique_violation then
+      v_claimed := false;
+  end;
+
+  if v_claimed then
+    return jsonb_build_object('status', 'NEW_REQUEST', 'reclaimed', false);
+  end if;
+
   select * into v_row
   from public.mp_idempotency_keys
   where idempotency_key = p_idempotency_key
@@ -1074,57 +1095,67 @@ begin
     and actor_scope = p_actor_scope
   for update;
 
-  if found then
-    if v_row.request_hash is distinct from p_request_hash then
-      return jsonb_build_object(
-        'status', 'REQUEST_HASH_CONFLICT',
-        'result_payload', v_row.result_payload
-      );
-    end if;
-    if v_row.state = 'completed' then
-      return jsonb_build_object(
-        'status', 'COMPLETED_REPLAY',
-        'result_ref', v_row.result_ref,
-        'result_payload', v_row.result_payload
-      );
-    end if;
-    if v_row.state = 'failed_known' then
-      return jsonb_build_object(
-        'status', 'FAILED_KNOWN_REPLAY',
-        'result_ref', v_row.result_ref,
-        'result_payload', v_row.result_payload,
-        'last_error_code', v_row.last_error_code,
-        'last_error_message', v_row.last_error_message
-      );
-    end if;
-    if v_row.state = 'processing'
-       and v_row.created_at > timezone('utc', now()) - make_interval(secs => v_stale_seconds)
-    then
-      return jsonb_build_object('status', 'IN_PROGRESS');
-    end if;
-    -- stale processing reclaim
-    update public.mp_idempotency_keys
-    set request_hash = p_request_hash,
-        ref = p_ref,
-        state = 'processing',
-        result_ref = null,
-        result_payload = null,
-        last_error_code = null,
-        last_error_message = null,
-        completed_at = null,
-        created_at = timezone('utc', now())
-    where idempotency_key = p_idempotency_key
-      and operation_type = p_operation_type
-      and actor_scope = p_actor_scope;
-    return jsonb_build_object('status', 'NEW_REQUEST', 'reclaimed', true);
+  if not found then
+    begin
+      insert into public.mp_idempotency_keys (
+        idempotency_key, operation_type, actor_scope, ref, request_hash, state
+      ) values (
+        p_idempotency_key, p_operation_type, p_actor_scope, p_ref, p_request_hash, 'processing'
+      )
+      returning * into v_inserted;
+      return jsonb_build_object('status', 'NEW_REQUEST', 'reclaimed', false);
+    exception
+      when unique_violation then
+        select * into v_row
+        from public.mp_idempotency_keys
+        where idempotency_key = p_idempotency_key
+          and operation_type = p_operation_type
+          and actor_scope = p_actor_scope
+        for update;
+    end;
   end if;
 
-  insert into public.mp_idempotency_keys (
-    idempotency_key, operation_type, actor_scope, ref, request_hash, state
-  ) values (
-    p_idempotency_key, p_operation_type, p_actor_scope, p_ref, p_request_hash, 'processing'
-  );
-  return jsonb_build_object('status', 'NEW_REQUEST', 'reclaimed', false);
+  if v_row.request_hash is distinct from p_request_hash then
+    return jsonb_build_object(
+      'status', 'REQUEST_HASH_CONFLICT',
+      'result_payload', v_row.result_payload
+    );
+  end if;
+  if v_row.state = 'completed' then
+    return jsonb_build_object(
+      'status', 'COMPLETED_REPLAY',
+      'result_ref', v_row.result_ref,
+      'result_payload', v_row.result_payload
+    );
+  end if;
+  if v_row.state = 'failed_known' then
+    return jsonb_build_object(
+      'status', 'FAILED_KNOWN_REPLAY',
+      'result_ref', v_row.result_ref,
+      'result_payload', v_row.result_payload,
+      'last_error_code', v_row.last_error_code,
+      'last_error_message', v_row.last_error_message
+    );
+  end if;
+  if v_row.state = 'processing'
+     and v_row.created_at > timezone('utc', now()) - make_interval(secs => v_stale_seconds)
+  then
+    return jsonb_build_object('status', 'IN_PROGRESS');
+  end if;
+
+  update public.mp_idempotency_keys
+  set ref = p_ref,
+      state = 'processing',
+      result_ref = null,
+      result_payload = null,
+      last_error_code = null,
+      last_error_message = null,
+      completed_at = null,
+      created_at = timezone('utc', now())
+  where idempotency_key = p_idempotency_key
+    and operation_type = p_operation_type
+    and actor_scope = p_actor_scope;
+  return jsonb_build_object('status', 'NEW_REQUEST', 'reclaimed', true);
 end;
 $$;
 
@@ -1238,10 +1269,13 @@ as $$
 declare
   v_order_id text;
   v_plan_id text;
-  v_item jsonb;
   v_variant public.mp_product_variants%rowtype;
+  v_zone public.mp_delivery_zones%rowtype;
+  v_cfg public.mp_pricing_config%rowtype;
+  v_calc_subtotal numeric(14,2) := 0;
   v_grand numeric(14,2);
   v_payment_id text;
+  v_line record;
 begin
   if p_actor_scope is null or length(trim(p_actor_scope)) = 0 then
     raise exception 'actor_scope required' using errcode = 'check_violation';
@@ -1252,10 +1286,78 @@ begin
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     raise exception 'checkout requires items' using errcode = 'check_violation';
   end if;
+  if coalesce(p_delivery_fee, 0) < 0 or coalesce(p_tax, 0) < 0 then
+    raise exception 'delivery_fee and tax must be non-negative' using errcode = 'check_violation';
+  end if;
 
-  v_grand := coalesce(p_subtotal, 0) + coalesce(p_delivery_fee, 0) + coalesce(p_tax, 0);
+  -- Deterministically combine duplicate variants; validate positive integer quantities.
+  for v_line in
+    select
+      e.item->>'product_id' as product_id,
+      e.item->>'variant_id' as variant_id,
+      sum((e.item->>'quantity')::numeric) as quantity
+    from jsonb_array_elements(p_items) with ordinality as e(item, ord)
+    group by e.item->>'product_id', e.item->>'variant_id'
+    order by min(e.ord)
+  loop
+    if v_line.variant_id is null or v_line.product_id is null then
+      raise exception 'checkout item missing product/variant' using errcode = 'check_violation';
+    end if;
+    if v_line.quantity is null
+       or v_line.quantity <= 0
+       or v_line.quantity <> trunc(v_line.quantity)
+    then
+      raise exception 'checkout quantity must be a positive integer'
+        using errcode = 'check_violation';
+    end if;
+
+    select * into v_variant
+    from public.mp_product_variants
+    where id = v_line.variant_id
+      and product_id = v_line.product_id
+    for update;
+    if not found then
+      raise exception 'checkout item variant/product mismatch' using errcode = 'check_violation';
+    end if;
+    if not v_variant.active
+       or not v_variant.is_priceable
+       or v_variant.stock_status <> 'in_stock'
+       or v_variant.website_price is null
+       or v_variant.website_price_state = 'confirm_price'
+    then
+      raise exception 'variant not purchasable' using errcode = 'check_violation';
+    end if;
+
+    v_calc_subtotal := v_calc_subtotal
+      + (v_variant.website_price * v_line.quantity::integer);
+  end loop;
+
+  if p_subtotal is distinct from v_calc_subtotal then
+    raise exception 'checkout subtotal mismatch: proposed % calculated %',
+      p_subtotal, v_calc_subtotal
+      using errcode = 'check_violation';
+  end if;
+
+  v_grand := v_calc_subtotal + coalesce(p_delivery_fee, 0) + coalesce(p_tax, 0);
   if coalesce(p_upfront_amount, 0) + coalesce(p_balance_due, 0) <> v_grand then
     raise exception 'plan amounts must sum to grand_total' using errcode = 'check_violation';
+  end if;
+
+  if p_plan_type in ('cod_eligible', 'token_plus_balance_cod') then
+    if p_delivery_zone_id is null then
+      raise exception 'COD requires delivery_zone_id' using errcode = 'check_violation';
+    end if;
+    select * into v_zone
+    from public.mp_delivery_zones
+    where id = p_delivery_zone_id
+    for update;
+    if not found or not v_zone.active or not v_zone.cod_eligible then
+      raise exception 'delivery zone not COD-eligible' using errcode = 'check_violation';
+    end if;
+    select * into v_cfg from public.mp_pricing_config where company_id = 'sunchaser';
+    if v_cfg.cod_max_order_value is not null and v_grand > v_cfg.cod_max_order_value then
+      raise exception 'order exceeds COD max order value' using errcode = 'check_violation';
+    end if;
   end if;
 
   v_order_id := public.mp_new_id('mpord');
@@ -1265,25 +1367,24 @@ begin
   ) values (
     v_order_id, p_public_ref, p_order_number, p_customer_id, p_guest_token_hash,
     'pending_payment',
-    p_subtotal, coalesce(p_delivery_fee, 0), coalesce(p_tax, 0), v_grand,
+    v_calc_subtotal, coalesce(p_delivery_fee, 0), coalesce(p_tax, 0), v_grand,
     p_delivery_zone_id, true
   );
 
-  for v_item in select * from jsonb_array_elements(p_items)
+  for v_line in
+    select
+      e.item->>'product_id' as product_id,
+      e.item->>'variant_id' as variant_id,
+      sum((e.item->>'quantity')::numeric)::integer as quantity,
+      max(e.item->>'title_snap') as title_snap
+    from jsonb_array_elements(p_items) with ordinality as e(item, ord)
+    group by e.item->>'product_id', e.item->>'variant_id'
+    order by min(e.ord)
   loop
     select * into v_variant
     from public.mp_product_variants
-    where id = v_item->>'variant_id'
-      and product_id = v_item->>'product_id';
-    if not found then
-      raise exception 'checkout item variant/product mismatch' using errcode = 'check_violation';
-    end if;
-    if v_variant.stock_status <> 'in_stock'
-       or v_variant.website_price is null
-       or v_variant.website_price_state = 'confirm_price'
-    then
-      raise exception 'variant not purchasable' using errcode = 'check_violation';
-    end if;
+    where id = v_line.variant_id and product_id = v_line.product_id;
+
     insert into public.mp_order_items (
       id, order_id, product_id, variant_id, title_snap, sku_snap,
       quantity, unit_price, line_total
@@ -1292,11 +1393,11 @@ begin
       v_order_id,
       v_variant.product_id,
       v_variant.id,
-      coalesce(v_item->>'title_snap', v_variant.title),
+      coalesce(nullif(v_line.title_snap, ''), v_variant.title),
       v_variant.sku,
-      (v_item->>'quantity')::integer,
+      v_line.quantity,
       v_variant.website_price,
-      v_variant.website_price * (v_item->>'quantity')::integer
+      v_variant.website_price * v_line.quantity
     );
   end loop;
 
@@ -1321,7 +1422,13 @@ begin
 
   perform public.mp_write_audit(
     p_actor_scope, 'checkout', 'mp_orders', v_order_id, true,
-    jsonb_build_object('plan_id', v_plan_id, 'grand_total', v_grand, 'plan_type', p_plan_type)
+    jsonb_build_object(
+      'plan_id', v_plan_id,
+      'grand_total', v_grand,
+      'plan_type', p_plan_type,
+      'subtotal', v_calc_subtotal,
+      'delivery_fee', coalesce(p_delivery_fee, 0)
+    )
   );
 
   return jsonb_build_object(
@@ -1329,7 +1436,8 @@ begin
     'order_id', v_order_id,
     'payment_plan_id', v_plan_id,
     'public_ref', p_public_ref,
-    'grand_total', v_grand
+    'grand_total', v_grand,
+    'subtotal', v_calc_subtotal
   );
 end;
 $$;
@@ -1358,15 +1466,50 @@ declare
   v_object_id text;
   v_receipt_id text;
   v_net numeric(14,2);
+  v_sha text;
 begin
   if p_actor_scope like 'client:%' then
     raise exception 'client-supplied actor_scope rejected' using errcode = 'check_violation';
   end if;
 
+  v_sha := lower(trim(coalesce(p_sha256, '')));
+
   select * into v_order from public.mp_orders where id = p_order_id for update;
   if not found then
     raise exception 'order not found' using errcode = 'no_data_found';
   end if;
+
+  select * into v_intent
+  from public.mp_upload_intents
+  where id = p_upload_intent_id
+  for update;
+  if not found or v_intent.order_id is distinct from p_order_id then
+    raise exception 'upload intent/order mismatch' using errcode = 'check_violation';
+  end if;
+  if v_intent.operation_type is distinct from 'bank_transfer_receipt' then
+    raise exception 'upload intent operation_type must be bank_transfer_receipt'
+      using errcode = 'check_violation';
+  end if;
+  if v_intent.status is distinct from 'uploaded' then
+    raise exception 'upload intent must be in uploaded status (got %)', v_intent.status
+      using errcode = 'check_violation';
+  end if;
+  if v_intent.idempotency_key is distinct from p_idempotency_key
+     or v_intent.request_hash is distinct from p_request_hash
+     or v_intent.actor_scope is distinct from p_actor_scope
+  then
+    raise exception 'upload intent idempotency mismatch' using errcode = 'check_violation';
+  end if;
+  if v_intent.sha256 is null or v_intent.byte_size is null then
+    raise exception 'upload intent missing uploaded evidence' using errcode = 'check_violation';
+  end if;
+  if v_sha is distinct from lower(trim(v_intent.sha256))
+     or p_byte_size is distinct from v_intent.byte_size
+  then
+    raise exception 'upload evidence mismatch vs marked upload'
+      using errcode = 'check_violation';
+  end if;
+
   if v_order.status <> 'pending_payment' then
     update public.mp_idempotency_keys
     set state = 'failed_known',
@@ -1380,7 +1523,7 @@ begin
       and request_hash = p_request_hash;
     update public.mp_upload_intents
     set status = 'cleanup_pending', updated_at = timezone('utc', now())
-    where id = p_upload_intent_id and status in ('claimed', 'uploaded');
+    where id = p_upload_intent_id and status = 'uploaded';
     insert into public.mp_storage_cleanup_outbox (
       id, storage_path, upload_intent_id, reason, related_order_id, related_idempotency_key
     )
@@ -1391,16 +1534,7 @@ begin
   end if;
 
   select * into v_plan from public.mp_payment_plans where order_id = p_order_id;
-  select * into v_intent from public.mp_upload_intents where id = p_upload_intent_id for update;
-  if not found or v_intent.order_id is distinct from p_order_id then
-    raise exception 'upload intent/order mismatch' using errcode = 'check_violation';
-  end if;
-  if v_intent.idempotency_key is distinct from p_idempotency_key
-     or v_intent.request_hash is distinct from p_request_hash
-     or v_intent.actor_scope is distinct from p_actor_scope
-  then
-    raise exception 'upload intent idempotency mismatch' using errcode = 'check_violation';
-  end if;
+  perform 1 from public.mp_payments where order_id = p_order_id for update;
 
   select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
        - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
@@ -1433,23 +1567,28 @@ begin
     v_media_id, null, null, v_intent.storage_path, 'receipt', 'user_upload', 'unknown', false
   );
 
+  -- Receipt-object metadata from locked upload-intent evidence (not caller overwrite).
   v_object_id := v_media_id;
   insert into public.mp_receipt_objects (
     id, media_id, storage_path, sha256, byte_size, upload_intent_id
   ) values (
-    v_object_id, v_media_id, v_intent.storage_path, p_sha256, p_byte_size, p_upload_intent_id
+    v_object_id,
+    v_media_id,
+    v_intent.storage_path,
+    lower(trim(v_intent.sha256)),
+    v_intent.byte_size,
+    p_upload_intent_id
   );
 
   update public.mp_upload_intents
   set status = 'attached',
       media_id = v_media_id,
       payment_id = v_payment_id,
-      byte_size = p_byte_size,
-      sha256 = p_sha256,
-      uploaded_at = coalesce(uploaded_at, timezone('utc', now())),
       attached_at = timezone('utc', now()),
       updated_at = timezone('utc', now())
-  where id = p_upload_intent_id;
+  where id = p_upload_intent_id
+    and status = 'uploaded';
+  -- Preserve sha256/byte_size/uploaded_at exactly as marked.
 
   v_receipt_id := public.mp_new_id('mprct');
   insert into public.mp_receipts (id, media_id, object_id, order_id, payment_id)
@@ -1474,7 +1613,9 @@ begin
     p_actor_scope, 'record_payment', 'mp_payments', v_payment_id, true,
     jsonb_build_object(
       'order_id', p_order_id, 'amount', p_amount, 'receipt_id', v_receipt_id,
-      'upload_intent_id', p_upload_intent_id
+      'upload_intent_id', p_upload_intent_id,
+      'sha256', lower(trim(v_intent.sha256)),
+      'byte_size', v_intent.byte_size
     )
   );
 
@@ -1553,24 +1694,66 @@ set search_path = ''
 as $$
 declare
   v_payment public.mp_payments%rowtype;
+  v_order public.mp_orders%rowtype;
+  v_net numeric(14,2);
 begin
   if p_actor_scope not like 'admin:%' and p_actor_scope not like 'system:%' then
     raise exception 'collect requires admin/system actor_scope' using errcode = 'check_violation';
   end if;
-  select * into v_payment from public.mp_payments where id = p_payment_id for update;
+
+  select * into v_payment
+  from public.mp_payments
+  where id = p_payment_id
+  for update;
   if not found or v_payment.method <> 'cash_on_delivery' or v_payment.status <> 'pending' then
     raise exception 'COD payment not collectable' using errcode = 'check_violation';
   end if;
+
+  select * into v_order
+  from public.mp_orders
+  where id = v_payment.order_id
+  for update;
+  if not found then
+    raise exception 'order not found' using errcode = 'no_data_found';
+  end if;
+
+  -- Serialize concurrent payment mutations on this order.
+  perform 1 from public.mp_payments where order_id = v_order.id for update;
+
+  select coalesce(sum(case when status in ('verified','collected') then amount else 0 end), 0)
+       - coalesce(sum(case when status = 'refunded' then amount else 0 end), 0)
+    into v_net
+  from public.mp_payments
+  where order_id = v_order.id;
+
+  if v_net + v_payment.amount > v_order.grand_total then
+    raise exception 'COD collection would exceed order grand_total'
+      using errcode = 'check_violation';
+  end if;
+
   update public.mp_payments
-  set status = 'collected', verified_by = p_collected_by,
-      verified_at = timezone('utc', now()), updated_at = timezone('utc', now())
-  where id = p_payment_id;
+  set status = 'collected',
+      verified_by = p_collected_by,
+      verified_at = timezone('utc', now()),
+      updated_at = timezone('utc', now())
+  where id = p_payment_id
+    and status = 'pending';
+  if not found then
+    raise exception 'COD payment not collectable' using errcode = 'check_violation';
+  end if;
+
   update public.mp_orders
   set status = 'delivered', updated_at = timezone('utc', now())
-  where id = v_payment.order_id;
+  where id = v_order.id;
+
   perform public.mp_write_audit(
     p_actor_scope, 'collect_cod', 'mp_payments', p_payment_id, true,
-    jsonb_build_object('order_id', v_payment.order_id, 'collected_by', p_collected_by)
+    jsonb_build_object(
+      'order_id', v_order.id,
+      'collected_by', p_collected_by,
+      'amount', v_payment.amount,
+      'net_paid_before', v_net
+    )
   );
   return jsonb_build_object('ok', true, 'payment_id', p_payment_id);
 end;
@@ -1716,13 +1899,17 @@ set search_path = ''
 as $$
 declare
   v_id text;
-  v_prior text;
+  v_prior_id text;
   v_old_price numeric(14,2);
   v_old_state text;
 begin
   if p_actor_scope not like 'admin:super%' then
     raise exception 'overrides are Super-Admin only' using errcode = 'check_violation';
   end if;
+  if p_mode = 'time_limited' and p_ends_at is null then
+    raise exception 'time_limited override requires ends_at' using errcode = 'check_violation';
+  end if;
+
   select website_price, website_price_state into v_old_price, v_old_state
   from public.mp_product_variants
   where id = p_variant_id and product_id = p_product_id
@@ -1731,24 +1918,46 @@ begin
     raise exception 'variant not found' using errcode = 'no_data_found';
   end if;
 
-  select id into v_prior
+  -- Expire timed-out active rows so they cannot block replacement.
+  update public.mp_price_overrides
+  set status = 'expired'
+  where variant_id = p_variant_id
+    and status = 'active'
+    and mode = 'time_limited'
+    and ends_at is not null
+    and ends_at <= timezone('utc', now());
+
+  -- Lock any remaining active override.
+  select id into v_prior_id
   from public.mp_price_overrides
-  where variant_id = p_variant_id and status = 'active'
+  where variant_id = p_variant_id
+    and status = 'active'
   for update;
 
   v_id := public.mp_new_id('mpovr');
+
+  -- Free the partial unique index before inserting the new active row.
+  if v_prior_id is not null then
+    update public.mp_price_overrides
+    set status = 'superseded'
+    where id = v_prior_id
+      and status = 'active';
+  end if;
+
   insert into public.mp_price_overrides (
     id, product_id, variant_id, override_price, status, mode, ends_at, reason, created_by
   ) values (
     v_id, p_product_id, p_variant_id, p_override_price, 'active', p_mode, p_ends_at, p_reason, p_created_by
   );
 
-  if v_prior is not null then
+  if v_prior_id is not null then
     update public.mp_price_overrides
-    set status = 'superseded', superseded_by = v_id
-    where id = v_prior;
+    set superseded_by = v_id
+    where id = v_prior_id
+      and status = 'superseded';
   end if;
 
+  -- Never reactivate superseded/revoked/expired rows.
   perform set_config('mp.allow_price_write', 'on', true);
   update public.mp_product_variants
   set website_price = p_override_price,
@@ -1768,9 +1977,13 @@ begin
 
   perform public.mp_write_audit(
     p_actor_scope, 'apply_override', 'mp_price_overrides', v_id, true,
-    jsonb_build_object('variant_id', p_variant_id, 'price', p_override_price)
+    jsonb_build_object(
+      'variant_id', p_variant_id,
+      'price', p_override_price,
+      'superseded_override_id', v_prior_id
+    )
   );
-  return jsonb_build_object('ok', true, 'override_id', v_id);
+  return jsonb_build_object('ok', true, 'override_id', v_id, 'superseded_override_id', v_prior_id);
 end;
 $$;
 
@@ -2038,11 +2251,22 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_sha text;
 begin
+  if p_byte_size is null or p_byte_size <= 0 then
+    raise exception 'byte_size must be > 0' using errcode = 'check_violation';
+  end if;
+  v_sha := lower(trim(coalesce(p_sha256, '')));
+  if v_sha !~ '^[0-9a-f]{64}$' then
+    raise exception 'sha256 must be a 64-character hexadecimal digest'
+      using errcode = 'check_violation';
+  end if;
+
   update public.mp_upload_intents
   set status = 'uploaded',
       byte_size = p_byte_size,
-      sha256 = p_sha256,
+      sha256 = v_sha,
       uploaded_at = timezone('utc', now()),
       updated_at = timezone('utc', now())
   where id = p_upload_intent_id
@@ -2050,7 +2274,7 @@ begin
   if not found then
     raise exception 'intent not in claimed state' using errcode = 'check_violation';
   end if;
-  return jsonb_build_object('ok', true, 'status', 'uploaded');
+  return jsonb_build_object('ok', true, 'status', 'uploaded', 'sha256', v_sha, 'byte_size', p_byte_size);
 end;
 $$;
 

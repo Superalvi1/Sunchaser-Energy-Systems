@@ -369,16 +369,17 @@ async function main(): Promise<void> {
     check("storage path uses mp-receipts prefix", storagePath.startsWith("mp-receipts/"));
     check("storage path excludes raw idempotency key", !storagePath.includes("idem-1"));
 
+    const uploadSha = "a".repeat(64);
     await admin.query(`select public.mp_mark_upload_intent_uploaded($1, 12, $2)`, [
       intentId,
-      "a".repeat(64),
+      uploadSha,
     ]);
 
     const recorded = await admin.query(
       `select public.mp_record_payment(
          'guest:abc', $1, $2, 100500, $3, 12, 'idem-1', 'hash-1'
        ) as r`,
-      [orderId, intentId, "b".repeat(64)],
+      [orderId, intentId, uploadSha],
     );
     check("record payment ok", recorded.rows[0].r.ok === true);
 
@@ -538,6 +539,469 @@ async function main(): Promise<void> {
       "idempotency RPC fixed search_path",
       (sp.rows[0].proconfig ?? []).some((c) => c === "search_path=\"\""),
     );
+
+    // =========================================================================
+    // WS0 Correction 1 regressions
+    // =========================================================================
+    await admin.query("begin");
+    await admin.query(`select set_config('mp.allow_price_write','on',true)`);
+    await admin.query(
+      `update public.mp_product_variants
+       set stock_status = 'in_stock',
+           website_price = 100000,
+           website_price_state = 'priced_auto',
+           website_price_source = 'seed',
+           is_priceable = true,
+           active = true
+       where id = $1`,
+      [ids.variantId],
+    );
+    await admin.query("commit");
+    const shaOk = "c".repeat(64);
+    async function freshPendingOrder(
+      client: pg.Client,
+      ref: string,
+      planType = "full",
+      zoneId: string | null = null,
+      subtotal = 100000,
+      delivery = 0,
+      balanceDue = 0,
+    ): Promise<string> {
+      const grand = subtotal + delivery;
+      const upfront = grand - balanceDue;
+      const r = await client.query(
+        `select public.mp_checkout(
+           'guest:corr', $1, $2, null, 'ghash-corr',
+           $3::numeric, $4::numeric, 0, $5, $6, $7::numeric, $8::numeric, $9,
+           $10::jsonb
+         ) as r`,
+        [
+          ref,
+          `ORD-${ref}`,
+          subtotal,
+          delivery,
+          zoneId,
+          planType,
+          upfront,
+          balanceDue,
+          planType.includes("cod"),
+          JSON.stringify([
+            { product_id: ids.productId, variant_id: ids.variantId, quantity: 1 },
+          ]),
+        ],
+      );
+      return r.rows[0].r.order_id as string;
+    }
+
+    async function createClaimedIntent(
+      client: pg.Client,
+      oid: string,
+      key: string,
+      hash: string,
+    ): Promise<string> {
+      await client.query(`select public.mp_idempotency_preflight($1,$2,$3,$4,$5)`, [
+        key,
+        "bank_transfer_receipt",
+        "guest:corr",
+        hash,
+        oid,
+      ]);
+      const r = await client.query(
+        `select public.mp_create_upload_intent($1,$2,$3,$4,$5) as r`,
+        [oid, "bank_transfer_receipt", "guest:corr", key, hash],
+      );
+      return r.rows[0].r.upload_intent_id as string;
+    }
+
+    // claimed cannot attach
+    {
+      const oid = await freshPendingOrder(admin, "corr-claimed");
+      const iid = await createClaimedIntent(admin, oid, "idem-claimed", "hash-claimed");
+      let blocked = false;
+      try {
+        await admin.query(
+          `select public.mp_record_payment('guest:corr',$1,$2,100000,$3,12,'idem-claimed','hash-claimed')`,
+          [oid, iid, shaOk],
+        );
+      } catch {
+        blocked = true;
+      }
+      check("claimed intent cannot be attached", blocked);
+    }
+
+    // abandoned / cleanup_pending cannot attach
+    {
+      const oid = await freshPendingOrder(admin, "corr-aband");
+      const iid = await createClaimedIntent(admin, oid, "idem-aband", "hash-aband");
+      await admin.query(`select public.mp_reconcile_stale_claimed_intent($1,false)`, [iid]);
+      let blocked = false;
+      try {
+        await admin.query(
+          `select public.mp_record_payment('guest:corr',$1,$2,100000,$3,12,'idem-aband','hash-aband')`,
+          [oid, iid, shaOk],
+        );
+      } catch {
+        blocked = true;
+      }
+      check("abandoned intent cannot be attached", blocked);
+    }
+    {
+      const oid = await freshPendingOrder(admin, "corr-clean");
+      const iid = await createClaimedIntent(admin, oid, "idem-clean", "hash-clean");
+      await admin.query(`select public.mp_reconcile_stale_claimed_intent($1,true)`, [iid]);
+      let blocked = false;
+      try {
+        await admin.query(
+          `select public.mp_record_payment('guest:corr',$1,$2,100000,$3,12,'idem-clean','hash-clean')`,
+          [oid, iid, shaOk],
+        );
+      } catch {
+        blocked = true;
+      }
+      check("cleanup_pending intent cannot be attached", blocked);
+    }
+
+    // SHA / byte-size mismatch fails; matching uploaded metadata attaches
+    {
+      const oid = await freshPendingOrder(admin, "corr-meta");
+      const iid = await createClaimedIntent(admin, oid, "idem-meta", "hash-meta");
+      await admin.query(`select public.mp_mark_upload_intent_uploaded($1, 20, $2)`, [
+        iid,
+        shaOk,
+      ]);
+      let shaMismatch = false;
+      try {
+        await admin.query(
+          `select public.mp_record_payment('guest:corr',$1,$2,100000,$3,20,'idem-meta','hash-meta')`,
+          [oid, iid, "d".repeat(64)],
+        );
+      } catch {
+        shaMismatch = true;
+      }
+      check("upload SHA mismatch fails", shaMismatch);
+
+      let sizeMismatch = false;
+      try {
+        await admin.query(
+          `select public.mp_record_payment('guest:corr',$1,$2,100000,$3,99,'idem-meta','hash-meta')`,
+          [oid, iid, shaOk],
+        );
+      } catch {
+        sizeMismatch = true;
+      }
+      check("upload byte-size mismatch fails", sizeMismatch);
+
+      const ok = await admin.query(
+        `select public.mp_record_payment('guest:corr',$1,$2,100000,$3,20,'idem-meta','hash-meta') as r`,
+        [oid, iid, shaOk],
+      );
+      check("correct uploaded metadata attaches successfully", ok.rows[0].r.ok === true);
+      const obj = await admin.query(
+        `select sha256, byte_size from public.mp_receipt_objects
+         where upload_intent_id = $1`,
+        [iid],
+      );
+      check(
+        "receipt object uses locked intent evidence",
+        obj.rows[0].sha256 === shaOk && Number(obj.rows[0].byte_size) === 20,
+      );
+    }
+
+    // Override supersession / expired replacement / single active
+    {
+      const o1 = await admin.query(
+        `select public.mp_apply_override(
+           'admin:super:t', $1, $2, 111000, 'permanent', null, 'first', 'admin'
+         ) as r`,
+        [ids.productId, ids.variantId],
+      );
+      const o2 = await admin.query(
+        `select public.mp_apply_override(
+           'admin:super:t', $1, $2, 122000, 'permanent', null, 'second', 'admin'
+         ) as r`,
+        [ids.productId, ids.variantId],
+      );
+      check("second override supersedes first", o2.rows[0].r.ok === true);
+      check(
+        "superseded_by linkage set",
+        o2.rows[0].r.superseded_override_id === o1.rows[0].r.override_id,
+      );
+      const activeCount = await admin.query(
+        `select count(*)::int as n from public.mp_price_overrides
+         where variant_id = $1 and status = 'active'`,
+        [ids.variantId],
+      );
+      check("only one effective active override remains", activeCount.rows[0].n === 1);
+
+      // Insert an expired-still-active-looking row via time_limited already ended
+      await admin.query(
+        `select public.mp_apply_override(
+           'admin:super:t', $1, $2, 133000, 'time_limited',
+           timezone('utc', now()) - interval '1 minute', 'expired-soon', 'admin'
+         )`,
+        [ids.productId, ids.variantId],
+      );
+      // Force ends_at in the past while still active (simulate clock pass)
+      await admin.query(
+        `update public.mp_price_overrides
+         set ends_at = timezone('utc', now()) - interval '1 hour'
+         where variant_id = $1 and status = 'active'`,
+        [ids.variantId],
+      );
+      const o3 = await admin.query(
+        `select public.mp_apply_override(
+           'admin:super:t', $1, $2, 144000, 'permanent', null, 'after-expired', 'admin'
+         ) as r`,
+        [ids.productId, ids.variantId],
+      );
+      check("expired override does not block replacement", o3.rows[0].r.ok === true);
+      const activeAfter = await admin.query(
+        `select count(*)::int as n, max(override_price)::numeric as price
+         from public.mp_price_overrides
+         where variant_id = $1 and status = 'active'`,
+        [ids.variantId],
+      );
+      check(
+        "single active after expired replacement",
+        activeAfter.rows[0].n === 1 && Number(activeAfter.rows[0].price) === 144000,
+      );
+      const resurrected = await admin.query(
+        `select count(*)::int as n from public.mp_price_overrides
+         where variant_id = $1 and status in ('superseded','revoked','expired')
+           and override_price = 111000`,
+        [ids.variantId],
+      );
+      check(
+        "superseded/expired overrides not reactivated",
+        resurrected.rows[0].n >= 1,
+      );
+    }
+
+    // COD overpay rejected; order not delivered
+    {
+      await admin.query(
+        `insert into public.mp_delivery_zones (id, code, name, cod_eligible, active)
+         values ('mpz_cod', 'COD1', 'COD Zone', true, true)
+         on conflict do nothing`,
+      );
+      // Reset variant price to 100000 for predictable COD (override may have changed it)
+      await admin.query("begin");
+      await admin.query(`select set_config('mp.allow_price_write','on',true)`);
+      await admin.query(
+        `update public.mp_product_variants
+         set website_price = 100000, website_price_state = 'priced_auto',
+             website_price_source = 'seed'
+         where id = $1`,
+        [ids.variantId],
+      );
+      await admin.query("commit");
+      const oid = await freshPendingOrder(
+        admin,
+        "corr-cod",
+        "cod_eligible",
+        "mpz_cod",
+        100000,
+        0,
+        100000,
+      );
+      // Simulate another verified payment consuming the total
+      const plan = await admin.query(
+        `select id from public.mp_payment_plans where order_id = $1`,
+        [oid],
+      );
+      await admin.query(
+        `insert into public.mp_payments
+           (id, order_id, payment_plan_id, amount, method, status)
+         values ('mppay_prepay', $1, $2, 100000, 'bank_transfer', 'verified')`,
+        [oid, plan.rows[0].id],
+      );
+      const codPay = await admin.query(
+        `select id from public.mp_payments
+         where order_id = $1 and method = 'cash_on_delivery'`,
+        [oid],
+      );
+      let overpay = false;
+      try {
+        await admin.query(
+          `select public.mp_collect_cod_payment('admin:finance', $1, 'collector')`,
+          [codPay.rows[0].id],
+        );
+      } catch {
+        overpay = true;
+      }
+      check("COD collection cannot overpay an order", overpay);
+      const st = await admin.query(`select status from public.mp_orders where id = $1`, [
+        oid,
+      ]);
+      check(
+        "failed COD collection does not mark delivered",
+        st.rows[0].status !== "delivered",
+      );
+    }
+
+    // Concurrent payment serialization (order lock)
+    {
+      await admin.query("begin");
+      await admin.query(`select set_config('mp.allow_price_write','on',true)`);
+      await admin.query(
+        `update public.mp_product_variants
+         set website_price = 100000, website_price_state = 'priced_auto'
+         where id = $1`,
+        [ids.variantId],
+      );
+      await admin.query("commit");
+      const oid = await freshPendingOrder(
+        admin,
+        "corr-race",
+        "cod_eligible",
+        "mpz_cod",
+        100000,
+        0,
+        100000,
+      );
+      const codPay = await admin.query(
+        `select id from public.mp_payments
+         where order_id = $1 and method = 'cash_on_delivery'`,
+        [oid],
+      );
+      const c1 = adminFactory();
+      const c2 = adminFactory();
+      await c1.connect();
+      await c2.connect();
+      await c1.query("begin");
+      await c2.query("begin");
+      // c1 locks payment+order path first
+      await c1.query(
+        `select public.mp_collect_cod_payment('admin:finance', $1, 'c1')`,
+        [codPay.rows[0].id],
+      );
+      const p2 = c2.query(
+        `select public.mp_collect_cod_payment('admin:finance', $1, 'c2')`,
+        [codPay.rows[0].id],
+      );
+      // Give c2 time to block on lock
+      await new Promise((r) => setTimeout(r, 200));
+      await c1.query("commit");
+      let secondFailed = false;
+      try {
+        await p2;
+        await c2.query("commit");
+      } catch {
+        secondFailed = true;
+        try {
+          await c2.query("rollback");
+        } catch {
+          /* ignore */
+        }
+      }
+      check("concurrent payment operations serialize safely", secondFailed === true);
+      await c1.end();
+      await c2.end();
+    }
+
+    // Concurrent identical idempotency preflight
+    {
+      const key = `idem-race-${randomUUID()}`;
+      const c1 = adminFactory();
+      const c2 = adminFactory();
+      await c1.connect();
+      await c2.connect();
+      const [r1, r2] = await Promise.all([
+        c1.query(`select public.mp_idempotency_preflight($1,$2,$3,$4,$5) as r`, [
+          key,
+          "bank_transfer_receipt",
+          "guest:race",
+          "hash-race",
+          "ref",
+        ]),
+        c2.query(`select public.mp_idempotency_preflight($1,$2,$3,$4,$5) as r`, [
+          key,
+          "bank_transfer_receipt",
+          "guest:race",
+          "hash-race",
+          "ref",
+        ]),
+      ]);
+      const statuses = [r1.rows[0].r.status, r2.rows[0].r.status].sort();
+      check(
+        "concurrent identical idempotency: NEW_REQUEST + IN_PROGRESS/replay",
+        statuses.includes("NEW_REQUEST") &&
+          (statuses.includes("IN_PROGRESS") ||
+            statuses.includes("COMPLETED_REPLAY") ||
+            statuses.filter((s) => s === "NEW_REQUEST").length === 1),
+      );
+      check(
+        "exactly one NEW_REQUEST among concurrent identical claims",
+        statuses.filter((s) => s === "NEW_REQUEST").length === 1,
+      );
+      await c1.end();
+      await c2.end();
+
+      const conflict = await admin.query(
+        `select public.mp_idempotency_preflight($1,$2,$3,$4,$5) as r`,
+        [key, "bank_transfer_receipt", "guest:race", "hash-other", "ref"],
+      );
+      check(
+        "request-hash conflicts remain blocked",
+        conflict.rows[0].r.status === "REQUEST_HASH_CONFLICT",
+      );
+    }
+
+    // Checkout manipulated subtotal rejected
+    {
+      let badSub = false;
+      try {
+        await admin.query(
+          `select public.mp_checkout(
+             'guest:corr', 'bad-sub', 'ORD-BADSUB', null, 'ghash',
+             1, 0, 0, null, 'full', 1, 0, false,
+             $1::jsonb
+           )`,
+          [
+            JSON.stringify([
+              {
+                product_id: ids.productId,
+                variant_id: ids.variantId,
+                quantity: 1,
+              },
+            ]),
+          ],
+        );
+      } catch {
+        badSub = true;
+      }
+      check("checkout rejects a manipulated subtotal", badSub);
+    }
+
+    // Checkout rejects ineligible / over-limit COD
+    {
+      await admin.query(
+        `insert into public.mp_delivery_zones (id, code, name, cod_eligible, active)
+         values ('mpz_nocod', 'NOCOD', 'No COD', false, true)
+         on conflict do nothing`,
+      );
+      let ineligible = false;
+      try {
+        await freshPendingOrder(admin, "corr-nocod", "cod_eligible", "mpz_nocod", 100000, 0, 100000);
+      } catch {
+        ineligible = true;
+      }
+      check("checkout rejects ineligible COD zone", ineligible);
+
+      await admin.query(
+        `update public.mp_pricing_config set cod_max_order_value = 50000 where company_id = 'sunchaser'`,
+      );
+      let overLimit = false;
+      try {
+        await freshPendingOrder(admin, "corr-over", "cod_eligible", "mpz_cod", 100000, 0, 100000);
+      } catch {
+        overLimit = true;
+      }
+      check("checkout rejects over-limit COD", overLimit);
+      await admin.query(
+        `update public.mp_pricing_config set cod_max_order_value = 250000 where company_id = 'sunchaser'`,
+      );
+    }
 
     void pub;
     await admin.end();
