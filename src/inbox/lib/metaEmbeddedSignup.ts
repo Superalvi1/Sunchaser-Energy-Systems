@@ -596,6 +596,8 @@ export async function launchMetaEmbeddedSignup(
         state: oauthState,
         extras: {
           setup: {},
+          // WhatsApp Business App Coexistence onboarding (not the deprecated "coexistence" value).
+          featureType: "whatsapp_business_app_onboarding",
           sessionInfoVersion: "3",
         },
       }

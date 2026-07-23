@@ -253,8 +253,86 @@ await test("B: success with JSON-string FINISH + login code", async () => {
   assert.equal(result.wabaId, "111");
   assert.equal(result.phoneNumberId, "222");
   assert.equal(capturedLoginOpts?.state, "server-issued-oauth-state");
+  assert.equal(capturedLoginOpts?.config_id, "cfg");
+  assert.equal(capturedLoginOpts?.response_type, "code");
+  assert.equal(capturedLoginOpts?.override_default_response_type, true);
+  assert.equal(
+    (capturedLoginOpts?.extras as { featureType?: string } | undefined)
+      ?.featureType,
+    "whatsapp_business_app_onboarding"
+  );
+  assert.equal(
+    (capturedLoginOpts?.extras as { sessionInfoVersion?: string } | undefined)
+      ?.sessionInfoVersion,
+    "3"
+  );
+  assert.deepEqual(
+    (capturedLoginOpts?.extras as { setup?: unknown } | undefined)?.setup,
+    {}
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(capturedLoginOpts ?? {}, "featureType"),
+    false
+  );
   assert.equal(messageTarget.listenerCount(), 0);
 });
+
+await test(
+  "coexistence launch: FB.login extras include whatsapp_business_app_onboarding",
+  async () => {
+    const messageTarget = makeMessageTarget();
+    let capturedLoginOpts: Record<string, unknown> | null = null;
+    const fb = {
+      init() {},
+      login(
+        cb: (r: {
+          authResponse?: { code?: string } | null;
+          status?: string;
+        }) => void,
+        opts: Record<string, unknown>
+      ) {
+        capturedLoginOpts = opts;
+        messageTarget.dispatch("https://www.facebook.com", {
+          type: "WA_EMBEDDED_SIGNUP",
+          event: "FINISH",
+          data: { waba_id: "w1", phone_number_id: "p1" },
+        });
+        cb({ authResponse: { code: "code-1" }, status: "connected" });
+      },
+    };
+
+    await launchMetaEmbeddedSignup({
+      state: "oauth-coexistence",
+      config: { appId: "app", configId: "cfg-coex", graphVersion: "v25.0" },
+      fb,
+      messageTarget: messageTarget as unknown as Window,
+      timeoutMs: 2000,
+    });
+
+    assert.ok(capturedLoginOpts);
+    assert.equal(capturedLoginOpts.config_id, "cfg-coex");
+    assert.equal(capturedLoginOpts.response_type, "code");
+    assert.equal(capturedLoginOpts.override_default_response_type, true);
+    assert.equal(capturedLoginOpts.state, "oauth-coexistence");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(capturedLoginOpts, "featureType"),
+      false
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(capturedLoginOpts, "coexistence"),
+      false
+    );
+
+    const extras = capturedLoginOpts.extras as Record<string, unknown>;
+    assert.deepEqual(extras.setup, {});
+    assert.equal(extras.sessionInfoVersion, "3");
+    assert.equal(extras.featureType, "whatsapp_business_app_onboarding");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(extras, "coexistence"),
+      false
+    );
+  }
+);
 
 await test("C: success with object-form FINISH", async () => {
   const messageTarget = makeMessageTarget();
@@ -427,11 +505,14 @@ await test("H: does not resolve until code + wabaId + phoneNumberId are present"
   let loginCb:
     | ((r: { authResponse?: { code?: string } | null; status?: string }) => void)
     | null = null;
+  let capturedLoginOpts: Record<string, unknown> | null = null;
   const fb = {
     init() {},
     login(
-      cb: (r: { authResponse?: { code?: string } | null; status?: string }) => void
+      cb: (r: { authResponse?: { code?: string } | null; status?: string }) => void,
+      opts: Record<string, unknown>
     ) {
+      capturedLoginOpts = opts;
       loginCb = cb;
     },
   };
@@ -454,7 +535,12 @@ await test("H: does not resolve until code + wabaId + phoneNumberId are present"
     }
   );
 
-  // Assets alone are insufficient.
+  // Assets alone are insufficient — final submit stays blocked until code arrives.
+  assert.equal(
+    (capturedLoginOpts?.extras as { featureType?: string } | undefined)
+      ?.featureType,
+    "whatsapp_business_app_onboarding"
+  );
   messageTarget.dispatch("https://www.facebook.com", {
     type: "WA_EMBEDDED_SIGNUP",
     event: "FINISH",
