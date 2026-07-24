@@ -346,6 +346,7 @@ import {
   buildProductionInboxServiceOptions,
   buildProductionWebhookAutoLinkLead,
 } from "./server/whatsappTransport/index.ts";
+import { createMessagingProductionWiring } from "./server/whatsappTransport/messagingProductionFactory.ts";
 import {
   OwnershipError,
   OwnershipResolver,
@@ -520,10 +521,21 @@ let productionAutoLinkLead: ReturnType<
   typeof buildProductionWebhookAutoLinkLead
 >;
 
+/**
+ * Task 5B: normalized messaging Postgres wiring.
+ * Disabled by default. When UNIFIED_MESSAGING_POSTGRES_ENABLED=true without
+ * DATABASE_URL/SUPABASE_DB_URL, startup fails clearly.
+ * whatsapp_* remains authoritative for CRM Inbox UI; messaging_* dual-writes
+ * when enabled (failures are not silent).
+ */
+const messagingProductionWiring = createMessagingProductionWiring();
+const messagingRepository = messagingProductionWiring.repository;
+
 // Meta webhook must be public and mounted before JWT authorization middleware.
 app.use(
   "/api/whatsapp",
   createWhatsAppWebhookRouter({
+    messagingRepository,
     autoLinkLead: async (conversationId) => {
       const result = await productionAutoLinkLead(conversationId);
       return result.leadId;
@@ -657,10 +669,14 @@ productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   persistLead: persistPublicMarketingLead,
 });
 
-app.use("/api/conversations", createWhatsAppOutboundRouter());
+app.use(
+  "/api/conversations",
+  createWhatsAppOutboundRouter({ messagingRepository })
+);
 app.use(
   "/api/inbox",
   createWhatsAppInboxRouter({
+    messagingRepository,
     serviceOptions: buildProductionInboxServiceOptions({
       resolveLocalDb: resolveAuthLocalDb,
       persistLead: persistPublicMarketingLead,
@@ -9961,6 +9977,12 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
   });
+
+  const shutdownMessaging = () => {
+    void messagingProductionWiring.shutdown().catch(() => undefined);
+  };
+  process.once("SIGTERM", shutdownMessaging);
+  process.once("SIGINT", shutdownMessaging);
 }
 
 startServer();

@@ -171,3 +171,18 @@ export {
   createPostgresMessagingRepository,
   type PostgresMessagingRepositoryDeps,
 } from "./postgresMessagingRepository.ts";
+
+export {
+  UNIFIED_MESSAGING_POSTGRES_FLAG,
+  MESSAGING_TRUSTED_ORGANIZATION_ID,
+  readMessagingRuntimeConfig,
+  trustedMetaConnectionId,
+  assertMessagingRuntimeStartup,
+  type MessagingRuntimeConfig,
+} from "./messagingRuntimeConfig.ts";
+
+export {
+  logMessagingRuntime,
+  type MessagingRuntimeLogEvent,
+  type MessagingRuntimeLogFields,
+} from "./messagingRuntimeLog.ts";

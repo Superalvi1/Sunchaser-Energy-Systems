@@ -2,7 +2,8 @@
  * PostgreSQL implementation of MessagingRepository for messaging_* tables.
  *
  * Dependency-injected SqlExecutor only — no CRM/AI/Meta/whatsappTransport imports.
- * Not wired into live WhatsApp runtime in this task.
+ * Task 5B wires this into WhatsApp webhook/outbound via messagingProductionFactory
+ * when UNIFIED_MESSAGING_POSTGRES_ENABLED is set (dual-write; whatsapp_* drives inbox).
  *
  * Identity mapping: sender/recipient identity FKs are joined to
  * messaging_contact_identities so NormalizedMessage returns
@@ -967,6 +968,24 @@ export function createPostgresMessagingRepository(
               [organizationId, messageId, input.externalStatusId]
             );
             if (existingRows[0]) {
+              const providerMessageId =
+                typeof diagnostics.providerMessageId === "string"
+                  ? diagnostics.providerMessageId
+                  : null;
+              await tx.query(
+                `UPDATE public.messaging_messages
+                 SET delivery_status = $3,
+                     external_message_id = COALESCE(external_message_id, $4),
+                     provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $5::jsonb
+                 WHERE organization_id = $1 AND id = $2`,
+                [
+                  organizationId,
+                  messageId,
+                  input.status,
+                  providerMessageId,
+                  JSON.stringify(diagnostics),
+                ]
+              );
               return {
                 kind: "existing",
                 row: mapStatusEvent(existingRows[0]),
@@ -1006,24 +1025,28 @@ export function createPostgresMessagingRepository(
             JSON.stringify(diagnostics),
             createdAt,
           ]);
-          if (rows[0]) {
-            return { kind: "created", row: mapStatusEvent(rows[0]) };
-          }
-          if (!input.externalStatusId) {
-            throw new MessagingRepositoryError({
-              code: "database_failure",
-              message: "Status event insert returned no row",
-            });
-          }
-          const { rows: racedRows } = await tx.query(
-            `SELECT * FROM public.messaging_status_events
-             WHERE organization_id = $1
-               AND message_id = $2
-               AND external_status_id = $3
-             LIMIT 1`,
-            [organizationId, messageId, input.externalStatusId]
-          );
-          if (!racedRows[0]) {
+          const statusRow = rows[0]
+            ? rows[0]
+            : input.externalStatusId
+              ? (
+                  await tx.query(
+                    `SELECT * FROM public.messaging_status_events
+                     WHERE organization_id = $1
+                       AND message_id = $2
+                       AND external_status_id = $3
+                     LIMIT 1`,
+                    [organizationId, messageId, input.externalStatusId]
+                  )
+                ).rows[0]
+              : null;
+
+          if (!statusRow) {
+            if (!input.externalStatusId) {
+              throw new MessagingRepositoryError({
+                code: "database_failure",
+                message: "Status event insert returned no row",
+              });
+            }
             throw new MessagingRepositoryError({
               code: "unique_violation",
               message:
@@ -1031,7 +1054,31 @@ export function createPostgresMessagingRepository(
               detail: "messaging_status_events_external_uidx",
             });
           }
-          return { kind: "existing", row: mapStatusEvent(racedRows[0]) };
+
+          // Advance message delivery_status for outbound idempotency / inbox sync.
+          const providerMessageId =
+            typeof diagnostics.providerMessageId === "string"
+              ? diagnostics.providerMessageId
+              : null;
+          await tx.query(
+            `UPDATE public.messaging_messages
+             SET delivery_status = $3,
+                 external_message_id = COALESCE(external_message_id, $4),
+                 provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $5::jsonb
+             WHERE organization_id = $1 AND id = $2`,
+            [
+              organizationId,
+              messageId,
+              input.status,
+              providerMessageId,
+              JSON.stringify(diagnostics),
+            ]
+          );
+
+          return {
+            kind: rows[0] ? "created" : "existing",
+            row: mapStatusEvent(statusRow),
+          };
         });
       } catch (err) {
         throw mapDatabaseError(err, "Failed to append status event");

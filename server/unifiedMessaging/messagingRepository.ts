@@ -2,7 +2,8 @@
  * Gateway-facing persistence contract for normalized messaging tables.
  *
  * Interface / types only — no Supabase wiring, no CRM/AI/provider SDKs.
- * Production Meta traffic remains on server/whatsappTransport/ until a later façade.
+ * Task 5B: WhatsApp runtime dual-writes through MessagingRepository when
+ * UNIFIED_MESSAGING_POSTGRES_ENABLED is set; whatsapp_* remains inbox-authoritative.
  */
 import type {
   NormalizedMessage,

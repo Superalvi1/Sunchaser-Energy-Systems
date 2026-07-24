@@ -18,12 +18,14 @@ import {
   createDefaultWhatsAppRepository,
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
 
 export type InboxSendTransportDeps = {
   repo?: WhatsAppRepository;
   config?: WhatsAppConfig;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  messagingRepository?: MessagingRepository | null;
 };
 
 function isOutboundSuccess(
@@ -45,6 +47,7 @@ export function createInboxOutboundSendPort(
   }
   const repo = deps.repo ?? createDefaultWhatsAppRepository();
   const fetchImpl = deps.fetchImpl;
+  const messagingRepository = deps.messagingRepository;
 
   return async (input: {
     conversationId: string;
@@ -59,6 +62,7 @@ export function createInboxOutboundSendPort(
         config,
         actor: input.actor,
         fetchImpl,
+        messagingRepository,
       }
     );
     if (isOutboundSuccess(result)) {

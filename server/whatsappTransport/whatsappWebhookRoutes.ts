@@ -24,12 +24,24 @@ import {
 } from "./whatsappRepository.ts";
 import { sha256Hex, verifyWhatsAppSignature } from "./whatsappSignature.ts";
 import { recordWebhookPing } from "./whatsappConnectionService.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
+import {
+  bridgePersistInboundMessage,
+  bridgePersistInboundStatus,
+  createWhatsAppMessagingBridge,
+  type WhatsAppMessagingBridge,
+} from "./whatsappMessagingBridge.ts";
 
 export type WhatsAppWebhookRouterDeps = {
   repo?: WhatsAppRepository;
   config?: WhatsAppConfig;
   env?: NodeJS.ProcessEnv;
   autoLinkLead?: (conversationId: string) => Promise<unknown>;
+  /**
+   * Normalized messaging repository (Task 5B dual-write).
+   * When set, inbound persistence also writes messaging_* and failures are not ignored.
+   */
+  messagingRepository?: MessagingRepository | null;
 };
 
 function resolveConfig(deps: WhatsAppWebhookRouterDeps): WhatsAppConfig {
@@ -45,9 +57,13 @@ function readRawBody(req: Request): Buffer | null {
 async function persistNormalizedEvents(
   repo: WhatsAppRepository,
   events: NormalizedWebhookEvent[],
-  autoLinkLead?: (conversationId: string) => Promise<unknown>
+  autoLinkLead?: (conversationId: string) => Promise<unknown>,
+  messagingBridge?: WhatsAppMessagingBridge | null
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
+    /** Map Meta wa_message_id → messaging message id for same-envelope status events. */
+    const messagingMessageIds = new Map<string, string>();
+
     for (const event of events) {
       if (event.kind === "inbound_text" || event.kind === "inbound_message") {
         const channel = await repo.resolveOrCreateChannel({
@@ -113,6 +129,15 @@ async function persistNormalizedEvents(
           event.occurredAt
         );
 
+        // Dual-write to messaging_* when enabled — failure is not silent.
+        if (messagingBridge) {
+          const mirrored = await bridgePersistInboundMessage(
+            messagingBridge,
+            event
+          );
+          messagingMessageIds.set(event.waMessageId, mirrored.message.messageId);
+        }
+
         if (autoLinkLead) {
           try {
             await autoLinkLead(conversation.id);
@@ -134,6 +159,7 @@ async function persistNormalizedEvents(
             waMessageId: event.waMessageId,
             created: inserted.created,
             messageType,
+            messagingDualWrite: Boolean(messagingBridge),
           },
         });
         continue;
@@ -143,6 +169,13 @@ async function persistNormalizedEvents(
         const inserted = await repo.insertStatusEvent(event);
         if (inserted.ok === false) {
           return { ok: false, error: inserted.error };
+        }
+        if (messagingBridge) {
+          await bridgePersistInboundStatus(
+            messagingBridge,
+            event,
+            messagingMessageIds.get(event.waMessageId) ?? null
+          );
         }
         await safeAudit(repo, {
           eventType: AUDIT_EVENTS.STATUS_EVENT_STORED,
@@ -285,10 +318,28 @@ export function createWhatsAppWebhookRouter(
       return res.status(400).json({ error: "Malformed webhook payload" });
     }
 
+    let messagingBridge: WhatsAppMessagingBridge | null = null;
+    if (deps.messagingRepository) {
+      try {
+        messagingBridge = createWhatsAppMessagingBridge({
+          repository: deps.messagingRepository,
+          config,
+        });
+      } catch (bridgeErr) {
+        const message =
+          bridgeErr instanceof Error
+            ? bridgeErr.message
+            : "messaging bridge unavailable";
+        await repo.markWebhookEventError(claim.event.id, message);
+        return res.status(503).json({ error: "Normalized messaging unavailable" });
+      }
+    }
+
     const persist = await persistNormalizedEvents(
       repo,
       parsed.events,
-      deps.autoLinkLead
+      deps.autoLinkLead,
+      messagingBridge
     );
     if (persist.ok === false) {
       await repo.markWebhookEventError(claim.event.id, persist.error);

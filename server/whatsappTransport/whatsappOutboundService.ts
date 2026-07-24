@@ -14,6 +14,13 @@ import {
 } from "./whatsappPermissions.ts";
 import type { WhatsAppRepository } from "./whatsappRepository.ts";
 import { safeAudit } from "./whatsappRepository.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
+import {
+  bridgePrepareOutboundMessage,
+  bridgeRecordOutboundProviderResult,
+  createWhatsAppMessagingBridge,
+} from "./whatsappMessagingBridge.ts";
+import { randomUUID } from "node:crypto";
 
 export type OutboundSendDeps = {
   repo: WhatsAppRepository;
@@ -21,6 +28,10 @@ export type OutboundSendDeps = {
   actor: RequestActor | null | undefined;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  /** Normalized messaging repository (Task 5B). When set, gates Meta via client idempotency. */
+  messagingRepository?: MessagingRepository | null;
+  /** Stable client idempotency key; generated when missing and messaging is enabled. */
+  clientIdempotencyKey?: string | null;
 };
 
 export type OutboundSendResult =
@@ -168,6 +179,46 @@ export async function sendOutboundPlainText(
     };
   }
 
+  const messagingBridge = deps.messagingRepository
+    ? createWhatsAppMessagingBridge({
+        repository: deps.messagingRepository,
+        config: deps.config,
+      })
+    : null;
+
+  const clientIdempotencyKey =
+    (deps.clientIdempotencyKey && deps.clientIdempotencyKey.trim()) ||
+    (messagingBridge ? randomUUID() : "");
+
+  let messagingMessageId: string | null = null;
+
+  if (messagingBridge) {
+    try {
+      const prepared = await bridgePrepareOutboundMessage(messagingBridge, {
+        recipientWaId: conversationBundle.contact.phoneE164,
+        text,
+        clientIdempotencyKey,
+        actorId: deps.actor.id,
+      });
+      messagingMessageId = prepared.message.messageId;
+
+      if (prepared.kind === "existing_complete") {
+        // Idempotent replay — do not call Meta again.
+        return {
+          httpStatus: 201,
+          messageId: prepared.message.messageId,
+          providerMessageId: prepared.providerMessageId ?? prepared.message.messageId,
+          status: "sent",
+        };
+      }
+    } catch {
+      return {
+        httpStatus: 500,
+        error: "Failed to persist normalized outbound message",
+      };
+    }
+  }
+
   let message;
   try {
     message = await deps.repo.insertOutboundMessage({
@@ -223,6 +274,27 @@ export async function sendOutboundPlainText(
   if (graphResult.ok === true) {
     const providerMessageId = graphResult.providerMessageId;
     const sentAt = new Date().toISOString();
+
+    if (messagingBridge && messagingMessageId) {
+      try {
+        await bridgeRecordOutboundProviderResult(messagingBridge, {
+          messageId: messagingMessageId,
+          outcome: "accepted",
+          providerMessageId,
+        });
+      } catch {
+        // Provider already accepted — record degraded but do not resend.
+        console.error(
+          JSON.stringify({
+            scope: "unified-messaging-runtime",
+            event: "normalized_persistence_failed",
+            code: "provider_accepted_status_persist",
+            messageId: messagingMessageId,
+          })
+        );
+      }
+    }
+
     const statusUpdate = await updateStatusWithRetry(deps, {
       messageId: message.id,
       status: MESSAGE_STATUSES.SENT,
@@ -289,6 +361,17 @@ export async function sendOutboundPlainText(
 
   const failure = graphResult;
   if (failure.kind === "timeout") {
+    if (messagingBridge && messagingMessageId) {
+      try {
+        await bridgeRecordOutboundProviderResult(messagingBridge, {
+          messageId: messagingMessageId,
+          outcome: "timeout",
+          errorCategory: "timeout",
+        });
+      } catch {
+        /* logged inside bridge */
+      }
+    }
     const statusUpdate = await updateStatusWithRetry(deps, {
       messageId: message.id,
       status: MESSAGE_STATUSES.TIMEOUT,
@@ -327,6 +410,18 @@ export async function sendOutboundPlainText(
       status: MESSAGE_STATUSES.TIMEOUT,
       error: failure.sanitizedError,
     };
+  }
+
+  if (messagingBridge && messagingMessageId) {
+    try {
+      await bridgeRecordOutboundProviderResult(messagingBridge, {
+        messageId: messagingMessageId,
+        outcome: "failed",
+        errorCategory: "provider_rejected",
+      });
+    } catch {
+      /* logged inside bridge */
+    }
   }
 
   const statusUpdate = await updateStatusWithRetry(deps, {
