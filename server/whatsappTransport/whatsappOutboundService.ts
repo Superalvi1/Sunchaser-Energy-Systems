@@ -17,11 +17,12 @@ import { safeAudit } from "./whatsappRepository.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
 import { isMessagingRepositoryError } from "../unifiedMessaging/messagingRepositoryErrors.ts";
 import {
+  bridgeAssociateOutboundProviderExternalId,
   bridgeClaimOutboundSend,
-  bridgeInboxCompatibleMessageId,
   bridgePrepareOutboundMessage,
   bridgeProviderMessageId,
   bridgeRecordOutboundProviderResult,
+  bridgeStrictInboxMessageId,
   createWhatsAppMessagingBridge,
 } from "./whatsappMessagingBridge.ts";
 import { randomUUID } from "node:crypto";
@@ -213,19 +214,30 @@ export async function sendOutboundPlainText(
       );
 
       if (claim.kind === "completed") {
+        const inboxId = bridgeStrictInboxMessageId(claim.row);
+        if (!inboxId) {
+          return {
+            httpStatus: 202,
+            providerMessageId: bridgeProviderMessageId(claim.row) ?? undefined,
+            status: claim.row.deliveryStatus,
+            persistenceStatus: "incomplete",
+            providerOutcome: "accepted",
+            error:
+              "Outbound completed but Inbox message binding is incomplete",
+          };
+        }
         return {
           httpStatus: 201,
-          messageId: bridgeInboxCompatibleMessageId(claim.row),
+          messageId: inboxId,
           providerMessageId:
-            bridgeProviderMessageId(claim.row) ??
-            bridgeInboxCompatibleMessageId(claim.row),
+            bridgeProviderMessageId(claim.row) ?? inboxId,
           status: "sent",
         };
       }
       if (claim.kind === "in_flight") {
         return {
           httpStatus: 202,
-          messageId: bridgeInboxCompatibleMessageId(claim.row),
+          messageId: bridgeStrictInboxMessageId(claim.row) ?? undefined,
           providerMessageId: bridgeProviderMessageId(claim.row) ?? undefined,
           status: MESSAGE_STATUSES.SENDING,
           persistenceStatus: "incomplete",
@@ -236,7 +248,7 @@ export async function sendOutboundPlainText(
       if (claim.kind === "terminal") {
         return {
           httpStatus: 409,
-          messageId: bridgeInboxCompatibleMessageId(claim.row),
+          messageId: bridgeStrictInboxMessageId(claim.row) ?? undefined,
           status: claim.row.deliveryStatus,
           error:
             "Idempotency key is not eligible for automatic resend; use a new key",
@@ -280,7 +292,33 @@ export async function sendOutboundPlainText(
         whatsappMessageId: message.id,
       });
     } catch {
-      /* binding failure must not double-send; continue and surface via response IDs */
+      console.error(
+        JSON.stringify({
+          scope: "unified-messaging-runtime",
+          event: "normalized_persistence_failed",
+          code: "legacy_binding_failed",
+          messageId: messagingMessageId,
+        })
+      );
+      await safeAudit(deps.repo, {
+        eventType: AUDIT_EVENTS.OUTBOUND_PERSISTENCE_DEGRADED,
+        entityType: "message",
+        entityId: message.id,
+        metadata: {
+          conversationId,
+          reason: "legacy_binding_failed",
+          metaCalled: false,
+        },
+      });
+      // Claimed + unbound: leave non-sendable. Never call Meta.
+      return {
+        httpStatus: 202,
+        messageId: message.id,
+        status: MESSAGE_STATUSES.QUEUED,
+        persistenceStatus: "incomplete",
+        error:
+          "Outbound message queued but Inbox binding incomplete; not sent to provider",
+      };
     }
   }
 
@@ -330,6 +368,7 @@ export async function sendOutboundPlainText(
     const providerMessageId = graphResult.providerMessageId;
     const sentAt = new Date().toISOString();
 
+    let normalizedAcceptedPersisted = !messagingBridge || !messagingMessageId;
     if (messagingBridge && messagingMessageId) {
       try {
         await bridgeRecordOutboundProviderResult(messagingBridge, {
@@ -337,8 +376,9 @@ export async function sendOutboundPlainText(
           outcome: "accepted",
           providerMessageId,
         });
+        normalizedAcceptedPersisted = true;
       } catch {
-        // Provider already accepted — record degraded but do not resend.
+        normalizedAcceptedPersisted = false;
         console.error(
           JSON.stringify({
             scope: "unified-messaging-runtime",
@@ -347,6 +387,15 @@ export async function sendOutboundPlainText(
             messageId: messagingMessageId,
           })
         );
+        // Best-effort: associate provider id so later status webhooks can resolve.
+        try {
+          await bridgeAssociateOutboundProviderExternalId(messagingBridge, {
+            messageId: messagingMessageId,
+            providerMessageId,
+          });
+        } catch {
+          /* association failure remains observable via logs; legacy binding still usable */
+        }
       }
     }
 
@@ -358,20 +407,23 @@ export async function sendOutboundPlainText(
       providerError: null,
     });
 
-    if (statusUpdate.ok === false) {
-      console.error(
-        "[whatsapp-transport] Meta accepted message but DB status update failed",
-        {
-          messageId: message.id,
-          providerMessageId,
-          error: statusUpdate.error,
-        }
-      );
+    if (statusUpdate.ok === false || !normalizedAcceptedPersisted) {
+      if (statusUpdate.ok === false) {
+        console.error(
+          "[whatsapp-transport] Meta accepted message but DB status update failed",
+          {
+            messageId: message.id,
+            providerMessageId,
+          }
+        );
+      }
       await recordPersistenceDegraded(deps, {
         messageId: message.id,
         conversationId,
         providerOutcome: "accepted",
-        persistError: statusUpdate.error,
+        persistError: !normalizedAcceptedPersisted
+          ? "normalized_accepted_status_incomplete"
+          : "legacy_status_incomplete",
       });
       await safeAudit(deps.repo, {
         eventType: AUDIT_EVENTS.OUTBOUND_SENT,
@@ -381,7 +433,7 @@ export async function sendOutboundPlainText(
           conversationId,
           providerMessageId,
           degraded: true,
-          persistError: statusUpdate.error,
+          normalizedAcceptedPersisted,
         },
       });
       return {

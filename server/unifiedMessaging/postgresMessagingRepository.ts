@@ -20,11 +20,13 @@ import type {
   AppendAuditEventInput,
   AppendStatusEventInput,
   BindOutboundLegacyMessageInput,
+  AssociateOutboundProviderExternalIdInput,
   ClaimOutboundSendInput,
   ClaimOutboundSendResult,
   CreateOutboundMessageInput,
   EnqueueOutboxEventInput,
   FindMessageByExternalIdInput,
+  FindMessageByLegacyWhatsAppIdInput,
   FindOrCreateConversationInput,
   IdempotentOutcome,
   MessagingAssignmentRow,
@@ -1186,6 +1188,51 @@ export function createPostgresMessagingRepository(
       }
     },
 
+    async associateOutboundProviderExternalId(
+      input: AssociateOutboundProviderExternalIdInput
+    ): Promise<NormalizedMessage> {
+      const organizationId = requireOrgId(input.organizationId);
+      const messageId = requireNonEmpty(input.messageId, "messageId");
+      const providerMessageId = requireNonEmpty(
+        input.providerMessageId,
+        "providerMessageId"
+      );
+      try {
+        // Do not advance delivery_status — keep sending so the key stays non-resendable.
+        const { rows } = await db.query(
+          `UPDATE public.messaging_messages
+           SET external_message_id = COALESCE(external_message_id, $3),
+               provider_metadata = COALESCE(provider_metadata, '{}'::jsonb)
+                 || jsonb_build_object('providerMessageId', $3::text)
+           WHERE organization_id = $1
+             AND id = $2
+             AND direction = 'outbound'
+           RETURNING id`,
+          [organizationId, messageId, providerMessageId]
+        );
+        if (!rows[0]) {
+          throw new MessagingRepositoryError({
+            code: "not_found",
+            message: "Outbound message not found for provider id association",
+          });
+        }
+        const mapped = await getMessageById(db, organizationId, messageId);
+        if (!mapped) {
+          throw new MessagingRepositoryError({
+            code: "database_failure",
+            message:
+              "Provider id association succeeded but row was not readable",
+          });
+        }
+        return mapped;
+      } catch (err) {
+        throw mapDatabaseError(
+          err,
+          "Failed to associate outbound provider message id"
+        );
+      }
+    },
+
     async findMessageByExternalId(
       input: FindMessageByExternalIdInput
     ): Promise<NormalizedMessage | null> {
@@ -1211,6 +1258,45 @@ export function createPostgresMessagingRepository(
         );
       } catch (err) {
         throw mapDatabaseError(err, "Failed to find message by external id");
+      }
+    },
+
+    async findMessageByLegacyWhatsAppId(
+      input: FindMessageByLegacyWhatsAppIdInput
+    ): Promise<NormalizedMessage | null> {
+      const organizationId = requireOrgId(input.organizationId);
+      const connectionId = requireNonEmpty(input.connectionId, "connectionId");
+      const whatsappMessageId = requireNonEmpty(
+        input.whatsappMessageId,
+        "whatsappMessageId"
+      );
+      if (!input.transportType) {
+        throw new MessagingRepositoryError({
+          code: "invalid_input",
+          message: "transportType is required",
+        });
+      }
+      try {
+        const { rows } = await db.query(
+          `${MESSAGE_SELECT}
+           WHERE m.organization_id = $1
+             AND m.connection_id = $2
+             AND m.transport_type = $3
+             AND m.provider_metadata->>'whatsappMessageId' = $4
+           LIMIT 1`,
+          [
+            organizationId,
+            connectionId,
+            input.transportType,
+            whatsappMessageId,
+          ]
+        );
+        return rows[0] ? mapMessage(rows[0]) : null;
+      } catch (err) {
+        throw mapDatabaseError(
+          err,
+          "Failed to find message by legacy WhatsApp id"
+        );
       }
     },
 

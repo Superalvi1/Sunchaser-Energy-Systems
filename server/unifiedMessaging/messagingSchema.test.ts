@@ -344,14 +344,16 @@ await test(
       "createOutboundMessage",
       "claimOutboundMessageForSend",
       "bindOutboundLegacyMessageId",
+      "associateOutboundProviderExternalId",
       "findMessageByExternalId",
+      "findMessageByLegacyWhatsAppId",
       "appendStatusEvent",
       "addAttachmentReference",
       "recordAssignment",
       "enqueueOutboxEvent",
       "appendAuditEvent",
     ];
-    assert.equal(ops.length, 12);
+    assert.equal(ops.length, 14);
     assert.match(repoSrc, /export type MessagingRepository/);
     assert.match(repoSrc, /IdempotentOutcome/);
   }

@@ -147,16 +147,21 @@ export async function bridgeClaimOutboundSend(
   });
 }
 
-function inboxCompatibleMessageId(message: NormalizedMessage): string {
+function inboxCompatibleMessageId(message: NormalizedMessage): string | null {
   const legacy = message.providerMetadata.whatsappMessageId;
-  return typeof legacy === "string" && legacy.trim()
-    ? legacy.trim()
-    : message.messageId;
+  return typeof legacy === "string" && legacy.trim() ? legacy.trim() : null;
 }
 
 export function bridgeInboxCompatibleMessageId(
   message: NormalizedMessage
 ): string {
+  return inboxCompatibleMessageId(message) ?? message.messageId;
+}
+
+/** Prefer legacy Inbox id; never invent a fallback for callers that must not use messaging UUIDs. */
+export function bridgeStrictInboxMessageId(
+  message: NormalizedMessage
+): string | null {
   return inboxCompatibleMessageId(message);
 }
 
@@ -424,12 +429,13 @@ export async function bridgePersistInboundMessage(
 /**
  * Persist a Meta status webhook against the normalized message.
  * Resolves by external_message_id when messagingMessageId is not provided
- * (cross-envelope delivery receipts).
+ * (cross-envelope delivery receipts). Falls back to bound legacy whatsapp_* id.
  */
 export async function bridgePersistInboundStatus(
   bridge: WhatsAppMessagingBridge,
   event: Extract<NormalizedWebhookEvent, { kind: "status" }>,
-  messagingMessageId: string | null
+  messagingMessageId: string | null,
+  legacyWhatsAppMessageId: string | null = null
 ): Promise<void> {
   const status = mapStatus(event.status);
   if (!status) return;
@@ -442,6 +448,15 @@ export async function bridgePersistInboundStatus(
         connectionId,
         transportType: "meta_whatsapp_cloud",
         externalMessageId: event.waMessageId,
+      });
+      messageId = found?.messageId ?? null;
+    }
+    if (!messageId && legacyWhatsAppMessageId) {
+      const found = await repository.findMessageByLegacyWhatsAppId({
+        organizationId,
+        connectionId,
+        transportType: "meta_whatsapp_cloud",
+        whatsappMessageId: legacyWhatsAppMessageId,
       });
       messageId = found?.messageId ?? null;
     }
@@ -461,7 +476,10 @@ export async function bridgePersistInboundStatus(
       status,
       externalStatusId: `${event.waMessageId}:${event.status}:${event.statusTimestamp}`,
       occurredAt: event.statusTimestamp,
-      diagnostics: { source: "meta_status_webhook" },
+      diagnostics: {
+        source: "meta_status_webhook",
+        providerMessageId: event.waMessageId,
+      },
     });
   } catch (err) {
     const mapped = persistenceError(err);
@@ -473,6 +491,44 @@ export async function bridgePersistInboundStatus(
       externalMessageId: event.waMessageId,
       code: mapped.code,
       detail: mapped.detail,
+    });
+    throw err;
+  }
+}
+
+/**
+ * After Meta accept when full status persistence failed: store provider id for
+ * later webhook resolution without advancing delivery_status to sent.
+ */
+export async function bridgeAssociateOutboundProviderExternalId(
+  bridge: WhatsAppMessagingBridge,
+  input: { messageId: string; providerMessageId: string }
+): Promise<void> {
+  const { repository, organizationId, connectionId } = bridge;
+  try {
+    await repository.associateOutboundProviderExternalId({
+      organizationId,
+      messageId: input.messageId,
+      providerMessageId: input.providerMessageId,
+    });
+    logMessagingRuntime({
+      event: "provider_accepted",
+      organizationId,
+      connectionId,
+      messageId: input.messageId,
+      externalMessageId: input.providerMessageId,
+      code: "provider_id_associated_without_status",
+    });
+  } catch (err) {
+    const mapped = persistenceError(err);
+    logMessagingRuntime({
+      event: "normalized_persistence_failed",
+      organizationId,
+      connectionId,
+      messageId: input.messageId,
+      externalMessageId: input.providerMessageId,
+      code: mapped.code,
+      detail: mapped.detail ?? "provider_id_associate_failed",
     });
     throw err;
   }

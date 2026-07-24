@@ -282,6 +282,21 @@ export type BindOutboundLegacyMessageInput = {
   whatsappMessageId: string;
 };
 
+/** Associate Meta provider id without advancing delivery past sending (recovery path). */
+export type AssociateOutboundProviderExternalIdInput = {
+  organizationId: string;
+  messageId: string;
+  providerMessageId: string;
+};
+
+export type FindMessageByLegacyWhatsAppIdInput = {
+  organizationId: string;
+  connectionId: string;
+  transportType: MessagingTransport;
+  /** Legacy whatsapp_messages.id previously bound into provider_metadata. */
+  whatsappMessageId: string;
+};
+
 /**
  * Normalized messaging persistence port.
  *
@@ -324,8 +339,21 @@ export type MessagingRepository = {
     input: BindOutboundLegacyMessageInput
   ): Promise<NormalizedMessage>;
 
+  /**
+   * Persist provider external id after Meta accept when full status persistence failed.
+   * Must not auto-advance delivery_status to sent (keeps key non-resendable / in_flight).
+   */
+  associateOutboundProviderExternalId(
+    input: AssociateOutboundProviderExternalIdInput
+  ): Promise<NormalizedMessage>;
+
   findMessageByExternalId(
     input: FindMessageByExternalIdInput
+  ): Promise<NormalizedMessage | null>;
+
+  /** Tenant-scoped lookup via bound legacy whatsapp_messages.id. */
+  findMessageByLegacyWhatsAppId(
+    input: FindMessageByLegacyWhatsAppIdInput
   ): Promise<NormalizedMessage | null>;
 
   appendStatusEvent(

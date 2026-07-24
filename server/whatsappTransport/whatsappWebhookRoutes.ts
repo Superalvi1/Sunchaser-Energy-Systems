@@ -171,10 +171,14 @@ async function persistNormalizedEvents(
           return { ok: false, error: inserted.error };
         }
         if (messagingBridge) {
+          const legacyWhatsAppMessageId = await repo.findMessageIdByWaMessageId(
+            event.waMessageId
+          );
           await bridgePersistInboundStatus(
             messagingBridge,
             event,
-            messagingMessageIds.get(event.waMessageId) ?? null
+            messagingMessageIds.get(event.waMessageId) ?? null,
+            legacyWhatsAppMessageId
           );
         }
         await safeAudit(repo, {

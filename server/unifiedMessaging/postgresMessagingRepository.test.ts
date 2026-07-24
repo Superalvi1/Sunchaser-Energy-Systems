@@ -1209,6 +1209,29 @@ try {
     });
     assert.equal(bound.providerMetadata.whatsappMessageId, "wa-legacy-1");
     assert.equal(bound.deliveryStatus, "sending");
+
+    const associated = await repo.associateOutboundProviderExternalId({
+      organizationId: orgA,
+      messageId: created.row.messageId,
+      providerMessageId: "wamid.claim.assoc",
+    });
+    assert.equal(associated.externalMessageId, "wamid.claim.assoc");
+    assert.equal(associated.deliveryStatus, "sending");
+    const byLegacy = await repo.findMessageByLegacyWhatsAppId({
+      organizationId: orgA,
+      connectionId: "conn_claim",
+      transportType: "meta_whatsapp_cloud",
+      whatsappMessageId: "wa-legacy-1",
+    });
+    assert.ok(byLegacy);
+    assert.equal(byLegacy.messageId, created.row.messageId);
+    const cross = await repo.findMessageByLegacyWhatsAppId({
+      organizationId: orgB,
+      connectionId: "conn_claim",
+      transportType: "meta_whatsapp_cloud",
+      whatsappMessageId: "wa-legacy-1",
+    });
+    assert.equal(cross, null);
   });
 
   await test("status: delayed sent cannot downgrade read; attachment/audit idempotent", async () => {

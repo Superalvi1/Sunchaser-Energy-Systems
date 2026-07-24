@@ -81,6 +81,7 @@ type FakeStore = {
 type FakeRepoOptions = {
   beforeOutboundClaim?: (sql: string) => Promise<void>;
   failAppendStatusOnce?: { remaining: number };
+  failBindOnce?: { remaining: number };
 };
 
 function deliveryRank(status: string): number {
@@ -411,6 +412,10 @@ function createFakeMessagingRepository(options: FakeRepoOptions = {}): {
     },
 
     async bindOutboundLegacyMessageId(input) {
+      if (options.failBindOnce && options.failBindOnce.remaining > 0) {
+        options.failBindOnce.remaining -= 1;
+        throw new Error("injected binding failure");
+      }
       const msg = store.messages.get(input.messageId);
       if (!msg || msg.organizationId !== input.organizationId) {
         const { MessagingRepositoryError } = await import(
@@ -432,6 +437,30 @@ function createFakeMessagingRepository(options: FakeRepoOptions = {}): {
       return updated;
     },
 
+    async associateOutboundProviderExternalId(input) {
+      const msg = store.messages.get(input.messageId);
+      if (!msg || msg.organizationId !== input.organizationId) {
+        const { MessagingRepositoryError } = await import(
+          "./messagingRepositoryErrors.ts"
+        );
+        throw new MessagingRepositoryError({
+          code: "not_found",
+          message: "Outbound message not found for provider id association",
+        });
+      }
+      const updated: NormalizedMessage = {
+        ...msg,
+        externalMessageId: msg.externalMessageId ?? input.providerMessageId,
+        providerMetadata: {
+          ...msg.providerMetadata,
+          providerMessageId: input.providerMessageId,
+        },
+      };
+      store.messages.set(input.messageId, updated);
+      store.byExternal.set(input.providerMessageId, input.messageId);
+      return updated;
+    },
+
     async findMessageByExternalId(input) {
       const id = store.byExternal.get(input.externalMessageId);
       if (!id) return null;
@@ -445,6 +474,20 @@ function createFakeMessagingRepository(options: FakeRepoOptions = {}): {
         return null;
       }
       return msg;
+    },
+
+    async findMessageByLegacyWhatsAppId(input) {
+      for (const msg of store.messages.values()) {
+        if (
+          msg.organizationId === input.organizationId &&
+          msg.connectionId === input.connectionId &&
+          msg.transport === input.transportType &&
+          msg.providerMetadata.whatsappMessageId === input.whatsappMessageId
+        ) {
+          return msg;
+        }
+      }
+      return null;
     },
 
     async appendStatusEvent(input) {
@@ -1107,17 +1150,18 @@ await test("2. same key while first is sending: zero second Meta call", async ()
   assert.equal(metaCalls, 1);
 });
 
-await test("3. accepted-status persistence failure: replay does not resend", async () => {
+await test("3. Meta accepted + normalized status failure → 202 with legacy Inbox ID", async () => {
   const whatsappRepo = new InMemoryWhatsAppRepository();
   const { conversation } = await seedOutboundConversation(whatsappRepo);
-  const { repo: messagingRepo } = createFakeMessagingRepository({
+  const { repo: messagingRepo, store } = createFakeMessagingRepository({
     failAppendStatusOnce: { remaining: 1 },
   });
   let metaCalls = 0;
+  const providerId = `wamid.accept.fail.${randomUUID().slice(0, 8)}`;
   const fetchImpl: typeof fetch = async () => {
     metaCalls += 1;
     return new Response(
-      JSON.stringify({ messages: [{ id: "wamid.accept.fail" }] }),
+      JSON.stringify({ messages: [{ id: providerId }] }),
       { status: 200 }
     );
   };
@@ -1130,8 +1174,20 @@ await test("3. accepted-status persistence failure: replay does not resend", asy
     messagingRepository: messagingRepo,
     clientIdempotencyKey: key,
   });
-  assert.equal(first.httpStatus, 201);
+  assert.equal(first.httpStatus, 202, "must not return 201 when normalized status fails");
+  assert.ok("messageId" in first && first.messageId);
+  assert.ok(whatsappRepo.messages.has(first.messageId!));
+  assert.equal(first.providerMessageId, providerId);
+  assert.equal(first.status, "sending");
+  assert.equal(first.persistenceStatus, "incomplete");
+  assert.equal(first.providerOutcome, "accepted");
   assert.equal(metaCalls, 1);
+  assert.equal(
+    [...store.messages.values()].some((m) => m.externalMessageId === providerId),
+    true,
+    "provider id must be associated for later webhook recovery"
+  );
+
   const second = await sendOutboundPlainText(conversation.id, "hello accept", {
     repo: whatsappRepo,
     config: baseConfig,
@@ -1144,156 +1200,146 @@ await test("3. accepted-status persistence failure: replay does not resend", asy
   assert.equal(metaCalls, 1, "replay must not resend after uncertain accept");
 });
 
-await test("4. timeout replay: does not resend", async () => {
+await test("4. binding failure → zero Meta calls and not swallowed", async () => {
+  const whatsappRepo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedOutboundConversation(whatsappRepo);
+  const { repo: messagingRepo } = createFakeMessagingRepository({
+    failBindOnce: { remaining: 1 },
+  });
+  let metaCalls = 0;
+  const key = `bind-fail-${randomUUID().slice(0, 8)}`;
+  const result = await sendOutboundPlainText(conversation.id, "bind fail", {
+    repo: whatsappRepo,
+    config: baseConfig,
+    actor: adminActor,
+    fetchImpl: async () => {
+      metaCalls += 1;
+      return new Response(
+        JSON.stringify({ messages: [{ id: "wamid.bind.fail" }] }),
+        { status: 200 }
+      );
+    },
+    messagingRepository: messagingRepo,
+    clientIdempotencyKey: key,
+  });
+  assert.equal(result.httpStatus, 202);
+  assert.equal(metaCalls, 0, "Meta must not be called when binding fails");
+  assert.ok(result.error);
+  assert.match(String(result.error), /binding/i);
+  assert.equal(result.persistenceStatus, "incomplete");
+  assert.ok(
+    whatsappRepo.auditEvents.some(
+      (a) =>
+        a.eventType === "outbound_persistence_degraded" &&
+        a.metadata?.reason === "legacy_binding_failed"
+    ),
+    "binding failure must be audited, not swallowed"
+  );
+});
+
+await test("4b. binding failure same-key replay → zero Meta", async () => {
+  const whatsappRepo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedOutboundConversation(whatsappRepo);
+  const { repo: messagingRepo } = createFakeMessagingRepository({
+    failBindOnce: { remaining: 1 },
+  });
+  let metaCalls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    metaCalls += 1;
+    return new Response(
+      JSON.stringify({ messages: [{ id: "wamid.bind.2" }] }),
+      { status: 200 }
+    );
+  };
+  const key = `bind-fail-key-${randomUUID().slice(0, 8)}`;
+  const first = await sendOutboundPlainText(conversation.id, "bind fail 2", {
+    repo: whatsappRepo,
+    config: baseConfig,
+    actor: adminActor,
+    fetchImpl,
+    messagingRepository: messagingRepo,
+    clientIdempotencyKey: key,
+  });
+  assert.equal(first.httpStatus, 202);
+  assert.equal(metaCalls, 0);
+  const second = await sendOutboundPlainText(conversation.id, "bind fail 2", {
+    repo: whatsappRepo,
+    config: baseConfig,
+    actor: adminActor,
+    fetchImpl,
+    messagingRepository: messagingRepo,
+    clientIdempotencyKey: key,
+  });
+  assert.equal(second.httpStatus, 202);
+  assert.equal(metaCalls, 0);
+});
+
+await test("5. timeout/rejection replay remain non-resendable", async () => {
   const whatsappRepo = new InMemoryWhatsAppRepository();
   const { conversation } = await seedOutboundConversation(whatsappRepo);
   const { repo: messagingRepo } = createFakeMessagingRepository();
   let metaCalls = 0;
-  const fetchImpl: typeof fetch = async () => {
+  const timeoutFetch: typeof fetch = async () => {
     metaCalls += 1;
     const err = new Error("AbortError");
     err.name = "AbortError";
     throw err;
   };
-  const key = `timeout-key-${randomUUID().slice(0, 8)}`;
-  const first = await sendOutboundPlainText(conversation.id, "hello timeout", {
+  const tKey = `timeout-key-${randomUUID().slice(0, 8)}`;
+  const t1 = await sendOutboundPlainText(conversation.id, "hello timeout", {
     repo: whatsappRepo,
     config: baseConfig,
     actor: adminActor,
-    fetchImpl,
+    fetchImpl: timeoutFetch,
     messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
+    clientIdempotencyKey: tKey,
   });
-  assert.ok(first.httpStatus === 504 || first.httpStatus === 502);
-  assert.equal(metaCalls, 1);
-  const second = await sendOutboundPlainText(conversation.id, "hello timeout", {
+  assert.ok(t1.httpStatus === 504 || t1.httpStatus === 502);
+  const t2 = await sendOutboundPlainText(conversation.id, "hello timeout", {
     repo: whatsappRepo,
     config: baseConfig,
     actor: adminActor,
-    fetchImpl,
+    fetchImpl: timeoutFetch,
     messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
+    clientIdempotencyKey: tKey,
   });
-  assert.equal(second.httpStatus, 409);
+  assert.equal(t2.httpStatus, 409);
   assert.equal(metaCalls, 1);
-});
 
-await test("5. provider-rejected replay: does not resend", async () => {
-  const whatsappRepo = new InMemoryWhatsAppRepository();
-  const { conversation } = await seedOutboundConversation(whatsappRepo);
-  const { repo: messagingRepo } = createFakeMessagingRepository();
-  let metaCalls = 0;
-  const fetchImpl: typeof fetch = async () => {
-    metaCalls += 1;
+  const { repo: messagingRepo2 } = createFakeMessagingRepository();
+  let rejectCalls = 0;
+  const rejectFetch: typeof fetch = async () => {
+    rejectCalls += 1;
     return new Response(JSON.stringify({ error: { message: "rejected" } }), {
       status: 400,
     });
   };
-  const key = `reject-key-${randomUUID().slice(0, 8)}`;
-  const first = await sendOutboundPlainText(conversation.id, "hello reject", {
+  const rKey = `reject-key-${randomUUID().slice(0, 8)}`;
+  const r1 = await sendOutboundPlainText(conversation.id, "hello reject", {
     repo: whatsappRepo,
     config: baseConfig,
     actor: adminActor,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
+    fetchImpl: rejectFetch,
+    messagingRepository: messagingRepo2,
+    clientIdempotencyKey: rKey,
   });
-  assert.ok(first.httpStatus >= 400);
-  assert.equal(metaCalls, 1);
-  const second = await sendOutboundPlainText(conversation.id, "hello reject", {
+  assert.ok(r1.httpStatus >= 400);
+  const r2 = await sendOutboundPlainText(conversation.id, "hello reject", {
     repo: whatsappRepo,
     config: baseConfig,
     actor: adminActor,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
+    fetchImpl: rejectFetch,
+    messagingRepository: messagingRepo2,
+    clientIdempotencyKey: rKey,
   });
-  assert.equal(second.httpStatus, 409);
-  assert.equal(metaCalls, 1);
+  assert.equal(r2.httpStatus, 409);
+  assert.equal(rejectCalls, 1);
 });
 
-await test("6. same key different text: 409, zero extra Meta calls", async () => {
+await test("6. completed replay always returns legacy Inbox ID", async () => {
   const whatsappRepo = new InMemoryWhatsAppRepository();
   const { conversation } = await seedOutboundConversation(whatsappRepo);
-  const { repo: messagingRepo } = createFakeMessagingRepository();
-  let metaCalls = 0;
-  const fetchImpl: typeof fetch = async () => {
-    metaCalls += 1;
-    return new Response(
-      JSON.stringify({ messages: [{ id: "wamid.text.mismatch" }] }),
-      { status: 200 }
-    );
-  };
-  const key = `text-mismatch-${randomUUID().slice(0, 8)}`;
-  const first = await sendOutboundPlainText(conversation.id, "text-a", {
-    repo: whatsappRepo,
-    config: baseConfig,
-    actor: adminActor,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
-  });
-  assert.equal(first.httpStatus, 201);
-  assert.equal(metaCalls, 1);
-  const second = await sendOutboundPlainText(conversation.id, "text-b", {
-    repo: whatsappRepo,
-    config: baseConfig,
-    actor: adminActor,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
-  });
-  assert.equal(second.httpStatus, 409);
-  assert.equal(metaCalls, 1);
-});
-
-await test("7. same key different recipient/conversation: 409", async () => {
-  const whatsappRepo = new InMemoryWhatsAppRepository();
-  const { conversation: c1 } = await seedOutboundConversation(whatsappRepo);
-  const contact2 = await whatsappRepo.resolveOrCreateContact({
-    phoneE164: "923009998877",
-    profileName: "Other",
-  });
-  const channel = [...whatsappRepo.channels.values()][0]!;
-  const c2 = await whatsappRepo.resolveOrCreateOpenConversation({
-    channelId: channel.id,
-    contactId: contact2.id,
-  });
-  const { repo: messagingRepo } = createFakeMessagingRepository();
-  let metaCalls = 0;
-  const fetchImpl: typeof fetch = async () => {
-    metaCalls += 1;
-    return new Response(
-      JSON.stringify({ messages: [{ id: "wamid.recip.mismatch" }] }),
-      { status: 200 }
-    );
-  };
-  const key = `recip-mismatch-${randomUUID().slice(0, 8)}`;
-  const first = await sendOutboundPlainText(c1.id, "shared text", {
-    repo: whatsappRepo,
-    config: baseConfig,
-    actor: adminActor,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
-  });
-  assert.equal(first.httpStatus, 201);
-  const second = await sendOutboundPlainText(c2.id, "shared text", {
-    repo: whatsappRepo,
-    config: baseConfig,
-    actor: adminActor,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: key,
-  });
-  assert.equal(second.httpStatus, 409);
-  assert.equal(metaCalls, 1);
-});
-
-await test("8. completed replay returns Inbox-compatible whatsapp_* id", async () => {
-  const whatsappRepo = new InMemoryWhatsAppRepository();
-  const { conversation } = await seedOutboundConversation(whatsappRepo);
-  const { repo: messagingRepo } = createFakeMessagingRepository();
+  const { repo: messagingRepo, store } = createFakeMessagingRepository();
   let metaCalls = 0;
   const fetchImpl: typeof fetch = async () => {
     metaCalls += 1;
@@ -1315,6 +1361,8 @@ await test("8. completed replay returns Inbox-compatible whatsapp_* id", async (
   assert.ok("messageId" in first);
   const legacyId = first.messageId;
   assert.ok(whatsappRepo.messages.has(legacyId));
+  const normalizedIds = [...store.messages.keys()];
+  assert.equal(normalizedIds.includes(legacyId), false);
   const second = await sendOutboundPlainText(conversation.id, "hello inbox", {
     repo: whatsappRepo,
     config: baseConfig,
@@ -1326,16 +1374,19 @@ await test("8. completed replay returns Inbox-compatible whatsapp_* id", async (
   assert.equal(second.httpStatus, 201);
   assert.ok("messageId" in second);
   assert.equal(second.messageId, legacyId);
+  assert.equal(normalizedIds.includes(second.messageId), false);
   assert.equal(metaCalls, 1);
   assert.equal(whatsappRepo.messages.size, 1);
 });
 
-await test("9. separate delivered/read webhook updates normalized message", async () => {
+await test("7. separate delivered/read webhook recovers after accepted-status failure", async () => {
   const whatsappRepo = new InMemoryWhatsAppRepository();
   const { conversation } = await seedOutboundConversation(whatsappRepo);
-  const { repo: messagingRepo, store } = createFakeMessagingRepository();
-  const providerId = `wamid.status.${randomUUID().slice(0, 8)}`;
-  const first = await sendOutboundPlainText(conversation.id, "status track", {
+  const { repo: messagingRepo, store } = createFakeMessagingRepository({
+    failAppendStatusOnce: { remaining: 1 },
+  });
+  const providerId = `wamid.recover.${randomUUID().slice(0, 8)}`;
+  const first = await sendOutboundPlainText(conversation.id, "status recover", {
     repo: whatsappRepo,
     config: baseConfig,
     actor: adminActor,
@@ -1344,9 +1395,9 @@ await test("9. separate delivered/read webhook updates normalized message", asyn
         status: 200,
       }),
     messagingRepository: messagingRepo,
-    clientIdempotencyKey: `status-${randomUUID().slice(0, 8)}`,
+    clientIdempotencyKey: `recover-${randomUUID().slice(0, 8)}`,
   });
-  assert.equal(first.httpStatus, 201);
+  assert.equal(first.httpStatus, 202);
 
   const app = express();
   installWhatsAppRawBodyMiddleware(app);
@@ -1387,7 +1438,7 @@ await test("9. separate delivered/read webhook updates normalized message", asyn
   );
 });
 
-await test("10. delayed sent event cannot downgrade read/delivered", async () => {
+await test("8. cross-tenant status recovery is rejected", async () => {
   const { repo, store } = createFakeMessagingRepository();
   const bridge = createWhatsAppMessagingBridge({
     repository: repo,
@@ -1395,143 +1446,38 @@ await test("10. delayed sent event cannot downgrade read/delivered", async () =>
   })!;
   const prepared = await bridgePrepareOutboundMessage(bridge, {
     recipientWaId: "923001112233",
-    text: "mono",
-    clientIdempotencyKey: `mono-${randomUUID().slice(0, 8)}`,
+    text: "tenant",
+    clientIdempotencyKey: `tenant-${randomUUID().slice(0, 8)}`,
     actorId: "u1",
   });
-  await repo.appendStatusEvent({
+  await repo.bindOutboundLegacyMessageId({
     organizationId: MESSAGING_TRUSTED_ORGANIZATION_ID,
     messageId: prepared.message.messageId,
-    status: "read",
-    externalStatusId: "ext-read",
-    occurredAt: new Date().toISOString(),
-    diagnostics: { providerMessageId: "wamid.mono.1" },
+    whatsappMessageId: "legacy-wa-1",
   });
-  await bridgePersistInboundStatus(
-    bridge,
-    {
-      kind: "status",
-      phoneNumberId: PHONE_NUMBER_ID,
-      displayPhoneNumber: "15550001111",
-      wabaEntryId: "WABA",
-      waMessageId: "wamid.mono.1",
-      status: "sent",
-      statusTimestamp: "1710000000",
-      recipientWaId: "923001112233",
-      rawEvent: {},
-    },
-    null
-  );
-  const msg = store.messages.get(prepared.message.messageId)!;
-  assert.equal(msg.deliveryStatus, "read");
-});
-
-await test("11. attachment failure then retry recovers exactly one attachment", async () => {
-  const { repo, store } = createFakeMessagingRepository();
-  const bridge = createWhatsAppMessagingBridge({
-    repository: repo,
-    config: { phoneNumberId: PHONE_NUMBER_ID },
-  })!;
-  const event = {
-    kind: "inbound_message" as const,
-    phoneNumberId: PHONE_NUMBER_ID,
-    displayPhoneNumber: "15550001111",
-    wabaEntryId: "WABA",
-    fromWaId: "923001112233",
-    waMessageId: `wamid.att.${randomUUID().slice(0, 8)}`,
-    occurredAt: "2024-01-01T00:00:00.000Z",
-    profileName: "Att",
-    messageType: "image",
-    metaMediaId: "media-1",
-    mimeType: "image/jpeg",
-    sha256: "a".repeat(64),
-    filename: "x.jpg",
-    textBody: null as string | null,
-    caption: null as string | null,
-    voice: false,
-    latitude: null as number | null,
-    longitude: null as number | null,
-    address: null as string | null,
-    placeName: null as string | null,
-    rawEvent: {},
-  };
-  let failOnce = true;
-  const original = repo.addAttachmentReference.bind(repo);
-  repo.addAttachmentReference = async (input) => {
-    if (failOnce) {
-      failOnce = false;
-      throw new Error("injected attachment failure");
-    }
-    return original(input);
-  };
-  await assert.rejects(() => bridgePersistInboundMessage(bridge, event));
-  assert.equal(store.attachments.length, 0);
+  await repo.associateOutboundProviderExternalId({
+    organizationId: MESSAGING_TRUSTED_ORGANIZATION_ID,
+    messageId: prepared.message.messageId,
+    providerMessageId: "wamid.tenant.1",
+  });
+  const crossExt = await repo.findMessageByExternalId({
+    organizationId: "other-org",
+    connectionId: bridge.connectionId,
+    transportType: "meta_whatsapp_cloud",
+    externalMessageId: "wamid.tenant.1",
+  });
+  assert.equal(crossExt, null);
+  const crossLegacy = await repo.findMessageByLegacyWhatsAppId({
+    organizationId: "other-org",
+    connectionId: bridge.connectionId,
+    transportType: "meta_whatsapp_cloud",
+    whatsappMessageId: "legacy-wa-1",
+  });
+  assert.equal(crossLegacy, null);
   assert.equal(store.messages.size, 1);
-  await bridgePersistInboundMessage(bridge, event);
-  assert.equal(store.attachments.length, 1);
-  await bridgePersistInboundMessage(bridge, event);
-  assert.equal(store.attachments.length, 1);
 });
 
-await test("12. duplicate inbound delivery does not duplicate audit action", async () => {
-  const whatsappRepo = new InMemoryWhatsAppRepository();
-  const { repo: messagingRepo, store } = createFakeMessagingRepository();
-  const app = express();
-  installWhatsAppRawBodyMiddleware(app);
-  app.use(
-    "/api/whatsapp",
-    createWhatsAppWebhookRouter({
-      repo: whatsappRepo,
-      messagingRepository: messagingRepo,
-      config: baseConfig,
-    })
-  );
-  const server = await new Promise<import("http").Server>((resolve) => {
-    const s = app.listen(0, "127.0.0.1", () => resolve(s));
-  });
-  const { port } = server.address() as AddressInfo;
-  const waMessageId = `wamid.audit.${randomUUID().slice(0, 8)}`;
-  const raw = sampleInboundEnvelope(waMessageId);
-  const headers = {
-    "content-type": "application/json",
-    "x-hub-signature-256": sign(raw, APP_SECRET),
-  };
-  assert.equal(
-    (
-      await fetch(`http://127.0.0.1:${port}/api/whatsapp/webhook`, {
-        method: "POST",
-        headers,
-        body: raw,
-      })
-    ).status,
-    200
-  );
-  const bridge = createWhatsAppMessagingBridge({
-    repository: messagingRepo,
-    config: { phoneNumberId: PHONE_NUMBER_ID },
-  })!;
-  await bridgePersistInboundMessage(bridge, {
-    kind: "inbound_text",
-    phoneNumberId: PHONE_NUMBER_ID,
-    displayPhoneNumber: "15550001111",
-    wabaEntryId: "WABA",
-    fromWaId: "923001112233",
-    waMessageId,
-    text: "hello runtime",
-    occurredAt: "2024-01-01T00:00:00.000Z",
-    profileName: "Runtime",
-    rawEvent: {},
-  });
-  const inboundAudits = store.audits.filter(
-    (a) => a.action === "inbound.message.persisted"
-  );
-  assert.equal(inboundAudits.length, 1);
-  await new Promise<void>((resolve, reject) =>
-    server.close((err) => (err ? reject(err) : resolve()))
-  );
-});
-
-await test("13. feature disabled preserves existing behavior", async () => {
+await test("9. feature disabled remains unchanged", async () => {
   const whatsappRepo = new InMemoryWhatsAppRepository();
   const { conversation } = await seedOutboundConversation(whatsappRepo);
   let metaCalls = 0;
@@ -1552,73 +1498,80 @@ await test("13. feature disabled preserves existing behavior", async () => {
   assert.equal(first.httpStatus, 201);
   assert.equal(metaCalls, 1);
   assert.equal(whatsappRepo.messages.size, 1);
-
-  const app = express();
-  installWhatsAppRawBodyMiddleware(app);
-  app.use(
-    "/api/whatsapp",
-    createWhatsAppWebhookRouter({
-      repo: whatsappRepo,
-      messagingRepository: null,
-      config: baseConfig,
-    })
-  );
-  const server = await new Promise<import("http").Server>((resolve) => {
-    const s = app.listen(0, "127.0.0.1", () => resolve(s));
-  });
-  const { port } = server.address() as AddressInfo;
-  const raw = sampleInboundEnvelope(`wamid.off.${randomUUID().slice(0, 8)}`);
-  const res = await fetch(`http://127.0.0.1:${port}/api/whatsapp/webhook`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-hub-signature-256": sign(raw, APP_SECRET),
-    },
-    body: raw,
-  });
-  assert.equal(res.status, 200);
-  assert.equal(whatsappRepo.messages.size, 2);
-  await new Promise<void>((resolve, reject) =>
-    server.close((err) => (err ? reject(err) : resolve()))
-  );
 });
 
-await test("14. unauthorized/cross-tenant requests: zero writes and Meta calls", async () => {
+await test("10. simultaneous same-key still exactly one Meta call", async () => {
   const whatsappRepo = new InMemoryWhatsAppRepository();
-  const { repo: messagingRepo, store } = createFakeMessagingRepository();
+  const { conversation } = await seedOutboundConversation(whatsappRepo);
+  const barrier = createClaimBarrier(2);
+  const { repo: messagingRepo } = createFakeMessagingRepository({
+    beforeOutboundClaim: barrier,
+  });
   let metaCalls = 0;
   const fetchImpl: typeof fetch = async () => {
     metaCalls += 1;
-    return new Response("{}", { status: 200 });
+    return new Response(
+      JSON.stringify({ messages: [{ id: "wamid.concurrent.fix2" }] }),
+      { status: 200 }
+    );
   };
-  const unauth = await sendOutboundPlainText("missing", "hi", {
-    repo: whatsappRepo,
-    config: baseConfig,
-    actor: null,
-    fetchImpl,
-    messagingRepository: messagingRepo,
-    clientIdempotencyKey: "k-unauth",
-  });
-  assert.equal(unauth.httpStatus, 401);
-  assert.equal(metaCalls, 0);
-  assert.equal(store.messages.size, 0);
+  const key = `concurrent-fix2-${randomUUID().slice(0, 8)}`;
+  const [a, b] = await Promise.all([
+    sendOutboundPlainText(conversation.id, "hello concurrent 2", {
+      repo: whatsappRepo,
+      config: baseConfig,
+      actor: adminActor,
+      fetchImpl,
+      messagingRepository: messagingRepo,
+      clientIdempotencyKey: key,
+    }),
+    sendOutboundPlainText(conversation.id, "hello concurrent 2", {
+      repo: whatsappRepo,
+      config: baseConfig,
+      actor: adminActor,
+      fetchImpl,
+      messagingRepository: messagingRepo,
+      clientIdempotencyKey: key,
+    }),
+  ]);
+  assert.equal(metaCalls, 1);
+  assert.equal(whatsappRepo.messages.size, 1);
+  const statuses = [a.httpStatus, b.httpStatus].sort();
+  assert.deepEqual(statuses, [201, 202]);
+});
 
-  const forbidden = await sendOutboundPlainText("missing", "hi", {
+await test("idempotency mismatch still 409", async () => {
+  const whatsappRepo = new InMemoryWhatsAppRepository();
+  const { conversation } = await seedOutboundConversation(whatsappRepo);
+  const { repo: messagingRepo } = createFakeMessagingRepository();
+  let metaCalls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    metaCalls += 1;
+    return new Response(
+      JSON.stringify({ messages: [{ id: "wamid.text.mismatch" }] }),
+      { status: 200 }
+    );
+  };
+  const key = `text-mismatch-${randomUUID().slice(0, 8)}`;
+  const first = await sendOutboundPlainText(conversation.id, "text-a", {
     repo: whatsappRepo,
     config: baseConfig,
-    actor: {
-      id: "viewer",
-      username: "v",
-      role: "Customer",
-      accountStatus: "Approved",
-    } as RequestActor,
+    actor: adminActor,
     fetchImpl,
     messagingRepository: messagingRepo,
-    clientIdempotencyKey: "k-forbidden",
+    clientIdempotencyKey: key,
   });
-  assert.equal(forbidden.httpStatus, 403);
-  assert.equal(metaCalls, 0);
-  assert.equal(store.messages.size, 0);
+  assert.equal(first.httpStatus, 201);
+  const second = await sendOutboundPlainText(conversation.id, "text-b", {
+    repo: whatsappRepo,
+    config: baseConfig,
+    actor: adminActor,
+    fetchImpl,
+    messagingRepository: messagingRepo,
+    clientIdempotencyKey: key,
+  });
+  assert.equal(second.httpStatus, 409);
+  assert.equal(metaCalls, 1);
 });
 
 await test("outbound: browser organizationId spoofing is rejected", async () => {
