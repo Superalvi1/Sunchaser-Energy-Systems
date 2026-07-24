@@ -1,0 +1,103 @@
+# Render Blueprint — Claude WhatsApp live-test service
+# Isolated compute for a time-boxed Baileys session.
+# Does NOT replace production (sunchaser-energy-systems).
+#
+# Shared: production Supabase project xxtdfvgkurxabpbmjban (inbox data).
+# Isolated: this Render web service only (survives unrelated main deploys).
+#
+# Secrets are NOT hardcoded. Values with sync:false are entered in the
+# Render Dashboard (copy from the production service), or attach an
+# Environment Group that already holds production secrets.
+
+services:
+  - type: web
+    name: sunchaser-claude-whatsapp
+    runtime: node
+    plan: starter
+    # Tracks ONLY this branch — never main / marketplace merges.
+    branch: feature/claude-whatsapp-web
+    # Manual deploys only — avoids mid-test reconnects from branch pushes.
+    autoDeployTrigger: "off"
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      # Non-secret defaults for this service
+      - key: NODE_ENV
+        value: production
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
+      - key: PORT
+        value: "3000"
+      # Distinct from production PUBLIC_BASE_URL
+      # (https://sunchaser-energy-systems.onrender.com)
+      - key: PUBLIC_BASE_URL
+        value: https://sunchaser-claude-whatsapp.onrender.com
+
+      # --- Copy from production service (prompted; never commit values) ---
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: PUBLIC_LEAD_API_KEY
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+      # WhatsApp Cloud API / Coexistence (copy if present on prod; unused by Baileys path)
+      - key: WHATSAPP_CONVERSATIONS_ENABLED
+        sync: false
+      - key: WHATSAPP_WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_GRAPH_API_VERSION
+        sync: false
+      - key: WHATSAPP_APP_ID
+        sync: false
+      - key: WHATSAPP_META_CONFIG_ID
+        sync: false
+      - key: WHATSAPP_TOKEN_ENCRYPTION_KEY
+        sync: false
+
+      # Vite build-time Meta / Maps (copy if present on prod build env)
+      - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_META_APP_ID
+        sync: false
+      - key: VITE_META_CONFIG_ID
+        sync: false
+      - key: VITE_META_GRAPH_VERSION
+        sync: false
+      - key: VITE_ENABLE_GOOGLE_MAPS_PROVIDER
+        sync: false
+      - key: VITE_GOOGLE_MAPS_API_KEY
+        sync: false
+
+      # Marketplace flags (copy as-is from prod; keep disabled during live test if prod has them off)
+      - key: MARKETPLACE_ENABLED
+        sync: false
+      - key: MARKETPLACE_GATEWAY_ENABLED
+        sync: false
