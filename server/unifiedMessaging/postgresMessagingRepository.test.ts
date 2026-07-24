@@ -586,6 +586,72 @@ try {
     );
   });
 
+  await test("safe payload: credential-like keys including camelCase / prefixed forms", async () => {
+    const rejectedKeys = [
+      "token",
+      "apiToken",
+      "authToken",
+      "accessToken",
+      "whatsappAccessToken",
+      "refreshToken",
+      "secret",
+      "clientSecret",
+      "apiSecret",
+      "password",
+      "passwordHash",
+      "authorization",
+      "authorizationHeader",
+      "cookie",
+      "session",
+      "sessionId",
+      "privateKey",
+    ];
+    for (const key of rejectedKeys) {
+      assert.throws(
+        () => assertSafeMetadata({ [key]: "x" }, "providerMetadata"),
+        (err: unknown) => {
+          if (!isMessagingRepositoryError(err)) return false;
+          assert.equal(err.detail, "credential_like_key");
+          assert.equal(err.message.includes(key), false);
+          assert.equal(err.message.includes("x"), false);
+          return true;
+        },
+        `expected rejection for key form`
+      );
+    }
+
+    // Safe controls: ordinary keys and words that merely contain credential
+    // character sequences without a credential segment.
+    // Conservative policy rejects whole-segment terms even with suffixes
+    // (sessionDurationSeconds, passwordPolicyEnabled), so controls use
+    // durationSeconds / policyEnabled instead.
+    const accepted = assertSafeMetadata(
+      {
+        status: "ok",
+        tokenizedLabel: "label",
+        durationSeconds: 30,
+        policyEnabled: true,
+      },
+      "diagnostics"
+    );
+    assert.equal(accepted.status, "ok");
+    assert.equal(accepted.tokenizedLabel, "label");
+    assert.equal(accepted.durationSeconds, 30);
+    assert.equal(accepted.policyEnabled, true);
+
+    assert.throws(
+      () =>
+        assertSafeMetadata({ sessionDurationSeconds: 1 }, "diagnostics"),
+      (err: unknown) =>
+        isMessagingRepositoryError(err) && err.detail === "credential_like_key"
+    );
+    assert.throws(
+      () => assertSafeMetadata({ passwordPolicyEnabled: true }, "diagnostics"),
+      (err: unknown) =>
+        isMessagingRepositoryError(err) && err.detail === "credential_like_key"
+    );
+  });
+
   await test("safe payload: structured content union validation", async () => {
     assert.deepEqual(assertStructuredContent({ kind: "none" }), { kind: "none" });
     assert.throws(
@@ -899,6 +965,159 @@ try {
     );
     assert.equal(rows.length, 1);
     assert.ok(["user_a", "user_b"].includes(String(rows[0]?.assigned_to)));
+  });
+
+  await test("assignment: out-of-order startedAt still closes previous open", async () => {
+    const identity = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "AssignOOO" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_assign_ooo",
+        externalUserId: `wa_ooo_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const conv = await repo.findOrCreateConversation({
+      organizationId: orgA,
+      contactId: identity.contact.row.id,
+      connectionId: "conn_assign_ooo",
+      transportType: "meta_whatsapp_cloud",
+    });
+    const laterStartedAt = "2026-07-24T12:00:00.000Z";
+    const earlierStartedAt = "2026-07-24T10:00:00.000Z";
+    const first = await repo.recordAssignment({
+      organizationId: orgA,
+      conversationId: conv.row.id,
+      assignedTo: "user_later",
+      assignedBy: "admin",
+      startedAt: laterStartedAt,
+    });
+    assert.equal(first.endedAt, null);
+    const second = await repo.recordAssignment({
+      organizationId: orgA,
+      conversationId: conv.row.id,
+      assignedTo: "user_earlier_handoff",
+      assignedBy: "admin",
+      startedAt: earlierStartedAt,
+      endPreviousOpen: true,
+    });
+    assert.equal(second.endedAt, null);
+    assert.equal(second.assignedTo, "user_earlier_handoff");
+
+    const { rows: openRows } = await pool.query(
+      `SELECT assigned_to FROM public.messaging_conversation_assignments
+       WHERE organization_id = $1 AND conversation_id = $2 AND ended_at IS NULL`,
+      [orgA, conv.row.id]
+    );
+    assert.equal(openRows.length, 1);
+    assert.equal(openRows[0]?.assigned_to, "user_earlier_handoff");
+
+    const { rows: closedRows } = await pool.query(
+      `SELECT started_at, ended_at
+       FROM public.messaging_conversation_assignments
+       WHERE organization_id = $1 AND conversation_id = $2 AND id = $3`,
+      [orgA, conv.row.id, first.id]
+    );
+    assert.ok(closedRows[0]?.ended_at);
+    const closedStarted = new Date(String(closedRows[0]?.started_at)).getTime();
+    const closedEnded = new Date(String(closedRows[0]?.ended_at)).getTime();
+    assert.ok(closedEnded >= closedStarted);
+
+    const { rows: convRows } = await pool.query(
+      `SELECT assigned_user_id FROM public.messaging_conversations
+       WHERE organization_id = $1 AND id = $2`,
+      [orgA, conv.row.id]
+    );
+    assert.equal(convRows[0]?.assigned_user_id, "user_earlier_handoff");
+  });
+
+  await test("race: identity conflict with different existing contact IDs → tenant_mismatch", async () => {
+    const contactA = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "MismatchA" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_mismatch_seed_a",
+        externalUserId: `wa_mm_a_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const contactB = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "MismatchB" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_mismatch_seed_b",
+        externalUserId: `wa_mm_b_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const contactIdA = contactA.contact.row.id;
+    const contactIdB = contactB.contact.row.id;
+    assert.notEqual(contactIdA, contactIdB);
+
+    const barrier = createInsertBarrier((sql) =>
+      sql.includes("messaging_contact_identities")
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeIdempotentInsert: barrier,
+    });
+    const externalUserId = `wa_mm_race_${randomUUID().slice(0, 8)}`;
+    const sharedIdentity = {
+      transportType: "meta_whatsapp_cloud" as const,
+      connectionId: "conn_mismatch_race",
+      externalUserId,
+    };
+
+    const results = await Promise.allSettled([
+      repoA.upsertContactIdentity({
+        organizationId: orgA,
+        contact: { id: contactIdA },
+        identity: sharedIdentity,
+      }),
+      repoB.upsertContactIdentity({
+        organizationId: orgA,
+        contact: { id: contactIdB },
+        identity: sharedIdentity,
+      }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    const winner = (fulfilled[0] as PromiseFulfilledResult<
+      Awaited<ReturnType<typeof repo.upsertContactIdentity>>
+    >).value;
+    assert.equal(winner.identity.kind, "created");
+    assert.ok(
+      winner.contact.row.id === contactIdA ||
+        winner.contact.row.id === contactIdB
+    );
+    const loserErr = (rejected[0] as PromiseRejectedResult).reason;
+    assert.ok(isMessagingRepositoryError(loserErr));
+    assert.equal(loserErr.code, "tenant_mismatch");
+
+    const { rows: idRows } = await pool.query(
+      `SELECT count(*)::int AS n, min(contact_id) AS contact_id
+       FROM public.messaging_contact_identities
+       WHERE organization_id = $1
+         AND connection_id = $2
+         AND external_user_id = $3`,
+      [orgA, "conn_mismatch_race", externalUserId]
+    );
+    assert.equal(idRows[0]?.n, 1);
+    assert.equal(idRows[0]?.contact_id, winner.contact.row.id);
+
+    const { rows: contactRows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_contacts
+       WHERE organization_id = $1 AND id = ANY($2::text[])`,
+      [orgA, [contactIdA, contactIdB]]
+    );
+    assert.equal(contactRows[0]?.n, 2);
   });
 
   // Ensure race helpers did not leave aborted-tx symptoms in the process.

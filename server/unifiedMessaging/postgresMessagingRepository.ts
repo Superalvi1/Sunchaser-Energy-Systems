@@ -585,6 +585,7 @@ export function createPostgresMessagingRepository(
               detail: "messaging_contact_identities_provider_uidx",
             });
           }
+          // Drop only a contact we created in this transaction and never linked.
           if (
             contactOutcome.kind === "created" &&
             contactOutcome.row.id !== raced.contactId
@@ -594,6 +595,17 @@ export function createPostgresMessagingRepository(
                WHERE organization_id = $1 AND id = $2`,
               [organizationId, contactOutcome.row.id]
             );
+          }
+          // Requested existing contact must match the established identity binding.
+          if (
+            requestedContactId &&
+            requestedContactId !== raced.contactId
+          ) {
+            throw new MessagingRepositoryError({
+              code: "tenant_mismatch",
+              message:
+                "Contact identity already bound to a different contact in this organization",
+            });
           }
           const contact = await getContact(tx, organizationId, raced.contactId);
           if (!contact) {
@@ -1095,13 +1107,15 @@ export function createPostgresMessagingRepository(
           }
 
           if (input.endPreviousOpen) {
+            // Close every open assignment for this locked conversation.
+            // GREATEST(started_at, requested) preserves ended_at >= started_at
+            // when a later-serialized handoff supplies an earlier startedAt.
             await tx.query(
               `UPDATE public.messaging_conversation_assignments
-               SET ended_at = $3
+               SET ended_at = GREATEST(started_at, $3::timestamptz)
                WHERE organization_id = $1
                  AND conversation_id = $2
-                 AND ended_at IS NULL
-                 AND started_at <= $3`,
+                 AND ended_at IS NULL`,
               [organizationId, conversationId, startedAt]
             );
           }

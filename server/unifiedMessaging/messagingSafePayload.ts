@@ -9,8 +9,38 @@ import type {
 } from "./transportTypes.ts";
 import { MessagingRepositoryError } from "./messagingRepositoryErrors.ts";
 
-const CREDENTIAL_KEY =
-  /(^|[_-])(token|secret|password|authorization|cookie|session|private[_-]?key|refresh[_-]?token|access[_-]?token)([_-]|$)/i;
+/**
+ * Credential vocabulary matched as complete segmented tokens after normalizing
+ * spaces, underscores, hyphens, and camelCase boundaries.
+ *
+ * Conservative rule: any segment equal to a credential term is rejected, even
+ * when followed by non-credential suffixes (e.g. sessionDurationSeconds,
+ * passwordPolicyEnabled). Safe-control examples in tests use keys that do not
+ * contain these terms as whole segments (durationSeconds, policyEnabled).
+ */
+const CREDENTIAL_SEGMENTS = new Set([
+  "token",
+  "secret",
+  "password",
+  "authorization",
+  "cookie",
+  "session",
+]);
+
+/** Multi-segment / compacted credential compounds (lowercase, no separators). */
+const CREDENTIAL_COMPOUNDS = new Set([
+  "accesstoken",
+  "refreshtoken",
+  "authtoken",
+  "apitoken",
+  "clientsecret",
+  "apisecret",
+  "privatekey",
+  "passwordhash",
+  "authorizationheader",
+  "sessionid",
+  "whatsappaccesstoken",
+]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
@@ -21,22 +51,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   );
 }
 
+/** Split a metadata key into lowercase segments (camelCase / separators). */
+function segmentMetadataKey(key: string): string[] {
+  return key
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[\s_-]+/)
+    .filter((part) => part.length > 0);
+}
+
 function isCredentialLikeKey(key: string): boolean {
-  const normalized = key.trim();
-  if (!normalized) return true;
-  if (CREDENTIAL_KEY.test(normalized)) return true;
-  const compact = normalized.replace(/[\s_-]+/g, "").toLowerCase();
-  return [
-    "token",
-    "secret",
-    "password",
-    "authorization",
-    "cookie",
-    "session",
-    "privatekey",
-    "refreshtoken",
-    "accesstoken",
-  ].includes(compact);
+  const segments = segmentMetadataKey(key);
+  if (segments.length === 0) return true;
+
+  for (const segment of segments) {
+    if (CREDENTIAL_SEGMENTS.has(segment)) return true;
+    if (CREDENTIAL_COMPOUNDS.has(segment)) return true;
+  }
+
+  // Adjacent segment joins catch access+token, private+key, etc.
+  for (let start = 0; start < segments.length; start += 1) {
+    let joined = "";
+    for (let end = start; end < segments.length; end += 1) {
+      joined += segments[end];
+      if (CREDENTIAL_SEGMENTS.has(joined) || CREDENTIAL_COMPOUNDS.has(joined)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function assertScalar(
