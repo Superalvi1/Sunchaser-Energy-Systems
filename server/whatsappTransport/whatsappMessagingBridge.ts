@@ -20,7 +20,6 @@ import {
 import { logMessagingRuntime } from "../unifiedMessaging/messagingRuntimeLog.ts";
 import { isMessagingRepositoryError } from "../unifiedMessaging/messagingRepositoryErrors.ts";
 import type {
-  DeliveryStatus,
   NormalizedMessage,
   NormalizedMessageType,
   NormalizedStructuredContent,
@@ -29,6 +28,10 @@ import type {
 import type { StatusEventStatus } from "../unifiedMessaging/messagingSchemaTypes.ts";
 import type { NormalizedWebhookEvent } from "./whatsappEnvelope.ts";
 import type { WhatsAppConfig } from "./whatsappConfig.ts";
+
+function hashKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
 
 export type WhatsAppMessagingBridge = {
   organizationId: string;
@@ -47,23 +50,125 @@ export type BridgeOutboundPrepareResult =
       message: NormalizedMessage;
     }
   | {
-      kind: "existing_incomplete";
+      kind: "existing";
       message: NormalizedMessage;
-    }
-  | {
-      kind: "existing_complete";
-      message: NormalizedMessage;
-      providerMessageId: string | null;
     };
 
-const COMPLETED_DELIVERY: ReadonlySet<DeliveryStatus> = new Set([
-  "sent",
-  "delivered",
-  "read",
-]);
+/**
+ * Create or load a normalized outbound message (idempotent).
+ * Throws MessagingRepositoryError detail=idempotency_conflict on key reuse mismatch.
+ */
+export async function bridgePrepareOutboundMessage(
+  bridge: WhatsAppMessagingBridge,
+  input: {
+    recipientWaId: string;
+    text: string;
+    clientIdempotencyKey: string;
+    actorId: string;
+  }
+): Promise<BridgeOutboundPrepareResult> {
+  const { repository, organizationId, connectionId } = bridge;
+  try {
+    const upserted = await repository.upsertContactIdentity({
+      organizationId,
+      contact: {
+        primaryPhoneNormalized: input.recipientWaId,
+      },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId,
+        externalUserId: input.recipientWaId,
+        normalizedAddress: input.recipientWaId,
+      },
+    });
 
-function hashKey(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+    const conversation = await repository.findOrCreateConversation({
+      organizationId,
+      contactId: upserted.contact.row.id,
+      connectionId,
+      transportType: "meta_whatsapp_cloud",
+      status: "open",
+      automationMode: "human_handling",
+    });
+
+    const created = await repository.createOutboundMessage({
+      organizationId,
+      conversationId: conversation.row.id,
+      connectionId,
+      transportType: "meta_whatsapp_cloud",
+      clientIdempotencyKey: input.clientIdempotencyKey,
+      recipientIdentityId: upserted.identity.row.id,
+      messageType: "text",
+      normalizedText: input.text,
+      structuredContent: { kind: "none" },
+      origin: "human",
+      deliveryStatus: "queued",
+      processingStatus: "pending",
+      providerMetadata: {
+        actorId: input.actorId,
+        recipientIdentityId: upserted.identity.row.id,
+      },
+    });
+
+    logMessagingRuntime({
+      event:
+        created.kind === "created" ? "outbound_created" : "outbound_duplicate",
+      organizationId,
+      connectionId,
+      conversationId: conversation.row.id,
+      messageId: created.row.messageId,
+      clientIdempotencyKeyHash: hashKey(input.clientIdempotencyKey),
+    });
+    return {
+      kind: created.kind,
+      message: created.row,
+    };
+  } catch (err) {
+    const mapped = persistenceError(err);
+    logMessagingRuntime({
+      event: "normalized_persistence_failed",
+      organizationId,
+      connectionId,
+      clientIdempotencyKeyHash: hashKey(input.clientIdempotencyKey),
+      code: mapped.code,
+      detail: mapped.detail,
+    });
+    throw err;
+  }
+}
+
+export async function bridgeClaimOutboundSend(
+  bridge: WhatsAppMessagingBridge,
+  messageId: string
+) {
+  return bridge.repository.claimOutboundMessageForSend({
+    organizationId: bridge.organizationId,
+    messageId,
+  });
+}
+
+function inboxCompatibleMessageId(message: NormalizedMessage): string {
+  const legacy = message.providerMetadata.whatsappMessageId;
+  return typeof legacy === "string" && legacy.trim()
+    ? legacy.trim()
+    : message.messageId;
+}
+
+export function bridgeInboxCompatibleMessageId(
+  message: NormalizedMessage
+): string {
+  return inboxCompatibleMessageId(message);
+}
+
+export function bridgeProviderMessageId(
+  message: NormalizedMessage
+): string | null {
+  return (
+    message.externalMessageId ??
+    (typeof message.providerMetadata.providerMessageId === "string"
+      ? message.providerMetadata.providerMessageId
+      : null)
+  );
 }
 
 function mapMessageType(raw: string | undefined): NormalizedMessageType {
@@ -258,12 +363,8 @@ export async function bridgePersistInboundMessage(
       }),
     });
 
-    if (
-      persisted.kind === "created" &&
-      event.metaMediaId &&
-      event.sha256 &&
-      event.mimeType
-    ) {
+    if (event.metaMediaId && event.sha256 && event.mimeType) {
+      // Always attempt attachment persistence (created or existing) for retry recovery.
       const objectKey = `meta/${organizationId}/${connectionId}/${event.metaMediaId}`;
       await repository.addAttachmentReference({
         organizationId,
@@ -281,15 +382,14 @@ export async function bridgePersistInboundMessage(
       organizationId,
       actorType: "system",
       actorId: "whatsapp-webhook",
-      action:
-        persisted.kind === "created"
-          ? "inbound.message.persisted"
-          : "inbound.message.duplicate",
+      // Stable action + key so retries/replays do not multiply audit rows.
+      action: "inbound.message.persisted",
       targetType: "message",
       targetId: persisted.row.messageId,
       metadata: {
         conversationId: conversation.row.id,
         duplicate: persisted.kind === "existing",
+        idempotencyKey: `inbound:${event.waMessageId}`,
       },
     });
 
@@ -322,22 +422,42 @@ export async function bridgePersistInboundMessage(
 }
 
 /**
- * Dual-write inbound delivery status when the normalized message is known.
- * Missing normalized message is a soft skip (whatsapp_* remains source of truth for inbox).
+ * Persist a Meta status webhook against the normalized message.
+ * Resolves by external_message_id when messagingMessageId is not provided
+ * (cross-envelope delivery receipts).
  */
 export async function bridgePersistInboundStatus(
   bridge: WhatsAppMessagingBridge,
   event: Extract<NormalizedWebhookEvent, { kind: "status" }>,
   messagingMessageId: string | null
 ): Promise<void> {
-  if (!messagingMessageId) return;
   const status = mapStatus(event.status);
   if (!status) return;
   const { repository, organizationId, connectionId } = bridge;
   try {
+    let messageId = messagingMessageId;
+    if (!messageId) {
+      const found = await repository.findMessageByExternalId({
+        organizationId,
+        connectionId,
+        transportType: "meta_whatsapp_cloud",
+        externalMessageId: event.waMessageId,
+      });
+      messageId = found?.messageId ?? null;
+    }
+    if (!messageId) {
+      logMessagingRuntime({
+        event: "inbound_duplicate",
+        organizationId,
+        connectionId,
+        externalMessageId: event.waMessageId,
+        code: "status_message_unknown",
+      });
+      return;
+    }
     await repository.appendStatusEvent({
       organizationId,
-      messageId: messagingMessageId,
+      messageId,
       status,
       externalStatusId: `${event.waMessageId}:${event.status}:${event.statusTimestamp}`,
       occurredAt: event.statusTimestamp,
@@ -349,7 +469,8 @@ export async function bridgePersistInboundStatus(
       event: "normalized_persistence_failed",
       organizationId,
       connectionId,
-      messageId: messagingMessageId,
+      messageId: messagingMessageId ?? undefined,
+      externalMessageId: event.waMessageId,
       code: mapped.code,
       detail: mapped.detail,
     });
@@ -366,107 +487,6 @@ function mapStatus(raw: string): StatusEventStatus | null {
       return raw;
     default:
       return null;
-  }
-}
-
-/**
- * Create or resume a normalized outbound message before Meta is called.
- * existing_complete ⇒ do not call Meta again.
- */
-export async function bridgePrepareOutboundMessage(
-  bridge: WhatsAppMessagingBridge,
-  input: {
-    recipientWaId: string;
-    text: string;
-    clientIdempotencyKey: string;
-    actorId: string;
-  }
-): Promise<BridgeOutboundPrepareResult> {
-  const { repository, organizationId, connectionId } = bridge;
-  try {
-    const upserted = await repository.upsertContactIdentity({
-      organizationId,
-      contact: {
-        primaryPhoneNormalized: input.recipientWaId,
-      },
-      identity: {
-        transportType: "meta_whatsapp_cloud",
-        connectionId,
-        externalUserId: input.recipientWaId,
-        normalizedAddress: input.recipientWaId,
-      },
-    });
-
-    const conversation = await repository.findOrCreateConversation({
-      organizationId,
-      contactId: upserted.contact.row.id,
-      connectionId,
-      transportType: "meta_whatsapp_cloud",
-      status: "open",
-      automationMode: "human_handling",
-    });
-
-    const created = await repository.createOutboundMessage({
-      organizationId,
-      conversationId: conversation.row.id,
-      connectionId,
-      transportType: "meta_whatsapp_cloud",
-      clientIdempotencyKey: input.clientIdempotencyKey,
-      recipientIdentityId: upserted.identity.row.id,
-      messageType: "text",
-      normalizedText: input.text,
-      structuredContent: { kind: "none" },
-      origin: "human",
-      deliveryStatus: "queued",
-      processingStatus: "pending",
-      providerMetadata: { actorId: input.actorId },
-    });
-
-    if (created.kind === "existing") {
-      const complete = COMPLETED_DELIVERY.has(created.row.deliveryStatus);
-      const providerMessageId =
-        created.row.externalMessageId ??
-        (typeof created.row.providerMetadata.providerMessageId === "string"
-          ? created.row.providerMetadata.providerMessageId
-          : null);
-      logMessagingRuntime({
-        event: "outbound_duplicate",
-        organizationId,
-        connectionId,
-        conversationId: conversation.row.id,
-        messageId: created.row.messageId,
-        clientIdempotencyKeyHash: hashKey(input.clientIdempotencyKey),
-      });
-      if (complete) {
-        return {
-          kind: "existing_complete",
-          message: created.row,
-          providerMessageId,
-        };
-      }
-      return { kind: "existing_incomplete", message: created.row };
-    }
-
-    logMessagingRuntime({
-      event: "outbound_created",
-      organizationId,
-      connectionId,
-      conversationId: conversation.row.id,
-      messageId: created.row.messageId,
-      clientIdempotencyKeyHash: hashKey(input.clientIdempotencyKey),
-    });
-    return { kind: "created", message: created.row };
-  } catch (err) {
-    const mapped = persistenceError(err);
-    logMessagingRuntime({
-      event: "normalized_persistence_failed",
-      organizationId,
-      connectionId,
-      clientIdempotencyKeyHash: hashKey(input.clientIdempotencyKey),
-      code: mapped.code,
-      detail: mapped.detail,
-    });
-    throw err;
   }
 }
 

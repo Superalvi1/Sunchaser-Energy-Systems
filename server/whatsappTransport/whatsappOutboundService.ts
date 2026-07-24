@@ -15,8 +15,12 @@ import {
 import type { WhatsAppRepository } from "./whatsappRepository.ts";
 import { safeAudit } from "./whatsappRepository.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
+import { isMessagingRepositoryError } from "../unifiedMessaging/messagingRepositoryErrors.ts";
 import {
+  bridgeClaimOutboundSend,
+  bridgeInboxCompatibleMessageId,
   bridgePrepareOutboundMessage,
+  bridgeProviderMessageId,
   bridgeRecordOutboundProviderResult,
   createWhatsAppMessagingBridge,
 } from "./whatsappMessagingBridge.ts";
@@ -42,7 +46,7 @@ export type OutboundSendResult =
       status: "sent";
     }
   | {
-      httpStatus: 400 | 401 | 403 | 404 | 503 | 500 | 502 | 504 | 202;
+      httpStatus: 400 | 401 | 403 | 404 | 409 | 503 | 500 | 502 | 504 | 202;
       messageId?: string;
       providerMessageId?: string;
       status?: string;
@@ -191,6 +195,7 @@ export async function sendOutboundPlainText(
     (messagingBridge ? randomUUID() : "");
 
   let messagingMessageId: string | null = null;
+  let claimedSend = false;
 
   if (messagingBridge) {
     try {
@@ -202,16 +207,53 @@ export async function sendOutboundPlainText(
       });
       messagingMessageId = prepared.message.messageId;
 
-      if (prepared.kind === "existing_complete") {
-        // Idempotent replay — do not call Meta again.
+      const claim = await bridgeClaimOutboundSend(
+        messagingBridge,
+        prepared.message.messageId
+      );
+
+      if (claim.kind === "completed") {
         return {
           httpStatus: 201,
-          messageId: prepared.message.messageId,
-          providerMessageId: prepared.providerMessageId ?? prepared.message.messageId,
+          messageId: bridgeInboxCompatibleMessageId(claim.row),
+          providerMessageId:
+            bridgeProviderMessageId(claim.row) ??
+            bridgeInboxCompatibleMessageId(claim.row),
           status: "sent",
         };
       }
-    } catch {
+      if (claim.kind === "in_flight") {
+        return {
+          httpStatus: 202,
+          messageId: bridgeInboxCompatibleMessageId(claim.row),
+          providerMessageId: bridgeProviderMessageId(claim.row) ?? undefined,
+          status: MESSAGE_STATUSES.SENDING,
+          persistenceStatus: "incomplete",
+          providerOutcome: "accepted",
+          error: "Outbound send already in progress for this idempotency key",
+        };
+      }
+      if (claim.kind === "terminal") {
+        return {
+          httpStatus: 409,
+          messageId: bridgeInboxCompatibleMessageId(claim.row),
+          status: claim.row.deliveryStatus,
+          error:
+            "Idempotency key is not eligible for automatic resend; use a new key",
+        };
+      }
+      claimedSend = true;
+      messagingMessageId = claim.row.messageId;
+    } catch (err) {
+      if (
+        isMessagingRepositoryError(err) &&
+        err.detail === "idempotency_conflict"
+      ) {
+        return {
+          httpStatus: 409,
+          error: "Idempotency key reused with different request content",
+        };
+      }
       return {
         httpStatus: 500,
         error: "Failed to persist normalized outbound message",
@@ -219,6 +261,7 @@ export async function sendOutboundPlainText(
     }
   }
 
+  // Without messaging wiring, or after winning the atomic claim, create one legacy row.
   let message;
   try {
     message = await deps.repo.insertOutboundMessage({
@@ -227,6 +270,18 @@ export async function sendOutboundPlainText(
     });
   } catch {
     return { httpStatus: 500, error: "Failed to queue outbound message" };
+  }
+
+  if (messagingBridge && messagingMessageId && claimedSend) {
+    try {
+      await messagingBridge.repository.bindOutboundLegacyMessageId({
+        organizationId: messagingBridge.organizationId,
+        messageId: messagingMessageId,
+        whatsappMessageId: message.id,
+      });
+    } catch {
+      /* binding failure must not double-send; continue and surface via response IDs */
+    }
   }
 
   await safeAudit(deps.repo, {

@@ -328,12 +328,30 @@ try {
       connectionId: "conn_a",
       transportType: "meta_whatsapp_cloud",
       clientIdempotencyKey: "out-key-1",
+      recipientIdentityId: seededIdentityId,
       messageType: "text",
-      normalizedText: "ignored",
+      normalizedText: "reply",
       origin: "human",
     });
     assert.equal(dup.kind, "existing");
     assert.equal(dup.row.messageId, created.row.messageId);
+
+    await assert.rejects(
+      () =>
+        repo.createOutboundMessage({
+          organizationId: orgA,
+          conversationId: seededConversationId,
+          connectionId: "conn_a",
+          transportType: "meta_whatsapp_cloud",
+          clientIdempotencyKey: "out-key-1",
+          recipientIdentityId: seededIdentityId,
+          messageType: "text",
+          normalizedText: "different text",
+          origin: "human",
+        }),
+      (err: unknown) =>
+        isMessagingRepositoryError(err) && err.detail === "idempotency_conflict"
+    );
   });
 
   await test("repository: appendStatusEvent idempotency", async () => {
@@ -1118,6 +1136,185 @@ try {
       [orgA, [contactIdA, contactIdB]]
     );
     assert.equal(contactRows[0]?.n, 2);
+  });
+
+  await test("race: outbound claim — only one claimed, other in_flight", async () => {
+    const identity = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "Claim" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_claim",
+        externalUserId: `wa_claim_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const conversation = await repo.findOrCreateConversation({
+      organizationId: orgA,
+      contactId: identity.contact.row.id,
+      connectionId: "conn_claim",
+      transportType: "meta_whatsapp_cloud",
+    });
+    const created = await repo.createOutboundMessage({
+      organizationId: orgA,
+      conversationId: conversation.row.id,
+      connectionId: "conn_claim",
+      transportType: "meta_whatsapp_cloud",
+      clientIdempotencyKey: `claim-key-${randomUUID()}`,
+      recipientIdentityId: identity.identity.row.id,
+      messageType: "text",
+      normalizedText: "claim race",
+      origin: "human",
+      deliveryStatus: "queued",
+      processingStatus: "pending",
+    });
+    assert.equal(created.kind, "created");
+
+    const barrier = createInsertBarrier(
+      (sql) =>
+        sql.includes("messaging_messages") &&
+        sql.includes("processing_status = 'processing'"),
+      2
+    );
+    const repoA = createPostgresMessagingRepository({
+      db,
+      beforeOutboundClaim: barrier,
+    });
+    const repoB = createPostgresMessagingRepository({
+      db,
+      beforeOutboundClaim: barrier,
+    });
+    const [c1, c2] = await Promise.all([
+      repoA.claimOutboundMessageForSend({
+        organizationId: orgA,
+        messageId: created.row.messageId,
+      }),
+      repoB.claimOutboundMessageForSend({
+        organizationId: orgA,
+        messageId: created.row.messageId,
+      }),
+    ]);
+    const kinds = [c1.kind, c2.kind].sort();
+    assert.deepEqual(kinds, ["claimed", "in_flight"]);
+    const after = await repo.findMessageByExternalId({
+      organizationId: orgA,
+      connectionId: "conn_claim",
+      transportType: "meta_whatsapp_cloud",
+      externalMessageId: "does-not-exist",
+    });
+    assert.equal(after, null);
+    const bound = await repo.bindOutboundLegacyMessageId({
+      organizationId: orgA,
+      messageId: created.row.messageId,
+      whatsappMessageId: "wa-legacy-1",
+    });
+    assert.equal(bound.providerMetadata.whatsappMessageId, "wa-legacy-1");
+    assert.equal(bound.deliveryStatus, "sending");
+  });
+
+  await test("status: delayed sent cannot downgrade read; attachment/audit idempotent", async () => {
+    const identity = await repo.upsertContactIdentity({
+      organizationId: orgA,
+      contact: { displayName: "Mono" },
+      identity: {
+        transportType: "meta_whatsapp_cloud",
+        connectionId: "conn_mono",
+        externalUserId: `wa_mono_${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const conversation = await repo.findOrCreateConversation({
+      organizationId: orgA,
+      contactId: identity.contact.row.id,
+      connectionId: "conn_mono",
+      transportType: "meta_whatsapp_cloud",
+    });
+    const outbound = await repo.createOutboundMessage({
+      organizationId: orgA,
+      conversationId: conversation.row.id,
+      connectionId: "conn_mono",
+      transportType: "meta_whatsapp_cloud",
+      clientIdempotencyKey: `mono-${randomUUID()}`,
+      recipientIdentityId: identity.identity.row.id,
+      messageType: "text",
+      normalizedText: "mono",
+      origin: "human",
+    });
+    await repo.appendStatusEvent({
+      organizationId: orgA,
+      messageId: outbound.row.messageId,
+      status: "read",
+      externalStatusId: `read-${randomUUID()}`,
+      occurredAt: new Date().toISOString(),
+      diagnostics: { providerMessageId: "wamid.mono.repo" },
+    });
+    await repo.appendStatusEvent({
+      organizationId: orgA,
+      messageId: outbound.row.messageId,
+      status: "sent",
+      externalStatusId: `sent-${randomUUID()}`,
+      occurredAt: new Date().toISOString(),
+      diagnostics: { providerMessageId: "wamid.mono.repo" },
+    });
+    const found = await repo.findMessageByExternalId({
+      organizationId: orgA,
+      connectionId: "conn_mono",
+      transportType: "meta_whatsapp_cloud",
+      externalMessageId: "wamid.mono.repo",
+    });
+    assert.ok(found);
+    assert.equal(found.deliveryStatus, "read");
+
+    const inbound = await repo.persistInboundMessage({
+      organizationId: orgA,
+      conversationId: conversation.row.id,
+      connectionId: "conn_mono",
+      transportType: "meta_whatsapp_cloud",
+      externalMessageId: `wamid.att.${randomUUID()}`,
+      senderIdentityId: identity.identity.row.id,
+      messageType: "image",
+      origin: "customer",
+    });
+    const att1 = await repo.addAttachmentReference({
+      organizationId: orgA,
+      messageId: inbound.row.messageId,
+      objectKey: `meta/${orgA}/conn_mono/media1`,
+      mediaType: "image/jpeg",
+      sizeBytes: 1,
+      sha256: "b".repeat(64),
+    });
+    const att2 = await repo.addAttachmentReference({
+      organizationId: orgA,
+      messageId: inbound.row.messageId,
+      objectKey: `meta/${orgA}/conn_mono/media1`,
+      mediaType: "image/jpeg",
+      sizeBytes: 1,
+      sha256: "b".repeat(64),
+    });
+    assert.equal(att1.id, att2.id);
+    const { rows: attRows } = await pool.query(
+      `SELECT count(*)::int AS n FROM public.messaging_attachments
+       WHERE organization_id = $1 AND message_id = $2`,
+      [orgA, inbound.row.messageId]
+    );
+    assert.equal(attRows[0]?.n, 1);
+
+    const auditKey = `inbound:${inbound.row.externalMessageId}`;
+    const a1 = await repo.appendAuditEvent({
+      organizationId: orgA,
+      actorType: "system",
+      action: "inbound.message.persisted",
+      targetType: "message",
+      targetId: inbound.row.messageId,
+      metadata: { idempotencyKey: auditKey },
+    });
+    const a2 = await repo.appendAuditEvent({
+      organizationId: orgA,
+      actorType: "system",
+      action: "inbound.message.persisted",
+      targetType: "message",
+      targetId: inbound.row.messageId,
+      metadata: { idempotencyKey: auditKey },
+    });
+    assert.equal(a1.id, a2.id);
   });
 
   // Ensure race helpers did not leave aborted-tx symptoms in the process.

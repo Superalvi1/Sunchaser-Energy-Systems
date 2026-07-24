@@ -257,6 +257,31 @@ export type AppendAuditEventInput = {
   occurredAt?: string;
 };
 
+export type FindMessageByExternalIdInput = {
+  organizationId: string;
+  connectionId: string;
+  transportType: MessagingTransport;
+  externalMessageId: string;
+};
+
+export type ClaimOutboundSendInput = {
+  organizationId: string;
+  messageId: string;
+};
+
+export type ClaimOutboundSendResult =
+  | { kind: "claimed"; row: NormalizedMessage }
+  | { kind: "in_flight"; row: NormalizedMessage }
+  | { kind: "completed"; row: NormalizedMessage }
+  /** Terminal / uncertain — do not auto-resend with the same key. */
+  | { kind: "terminal"; row: NormalizedMessage };
+
+export type BindOutboundLegacyMessageInput = {
+  organizationId: string;
+  messageId: string;
+  whatsappMessageId: string;
+};
+
 /**
  * Normalized messaging persistence port.
  *
@@ -285,6 +310,23 @@ export type MessagingRepository = {
   createOutboundMessage(
     input: CreateOutboundMessageInput
   ): Promise<IdempotentOutcome<NormalizedMessage>>;
+
+  /**
+   * Atomically claim a queued outbound message for Meta send.
+   * Only one winner across instances may transition pending/queued → processing/sending.
+   */
+  claimOutboundMessageForSend(
+    input: ClaimOutboundSendInput
+  ): Promise<ClaimOutboundSendResult>;
+
+  /** Bind legacy whatsapp_messages.id for Inbox-compatible replays. */
+  bindOutboundLegacyMessageId(
+    input: BindOutboundLegacyMessageInput
+  ): Promise<NormalizedMessage>;
+
+  findMessageByExternalId(
+    input: FindMessageByExternalIdInput
+  ): Promise<NormalizedMessage | null>;
 
   appendStatusEvent(
     input: AppendStatusEventInput

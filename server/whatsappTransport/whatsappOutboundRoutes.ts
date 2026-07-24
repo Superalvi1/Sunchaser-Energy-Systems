@@ -74,6 +74,14 @@ export function createWhatsAppOutboundRouter(
       });
     }
 
+    if (result.httpStatus === 409) {
+      return res.status(409).json({
+        error: result.error,
+        ...(result.messageId ? { messageId: result.messageId } : {}),
+        ...(result.status ? { status: result.status } : {}),
+      });
+    }
+
     const responseBody: Record<string, unknown> = { error: result.error };
     if (result.messageId) responseBody.messageId = result.messageId;
     if (result.providerMessageId) {

@@ -342,13 +342,16 @@ await test(
       "findOrCreateConversation",
       "persistInboundMessage",
       "createOutboundMessage",
+      "claimOutboundMessageForSend",
+      "bindOutboundLegacyMessageId",
+      "findMessageByExternalId",
       "appendStatusEvent",
       "addAttachmentReference",
       "recordAssignment",
       "enqueueOutboxEvent",
       "appendAuditEvent",
     ];
-    assert.equal(ops.length, 9);
+    assert.equal(ops.length, 12);
     assert.match(repoSrc, /export type MessagingRepository/);
     assert.match(repoSrc, /IdempotentOutcome/);
   }

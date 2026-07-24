@@ -19,8 +19,12 @@ import type {
   AddAttachmentReferenceInput,
   AppendAuditEventInput,
   AppendStatusEventInput,
+  BindOutboundLegacyMessageInput,
+  ClaimOutboundSendInput,
+  ClaimOutboundSendResult,
   CreateOutboundMessageInput,
   EnqueueOutboxEventInput,
+  FindMessageByExternalIdInput,
   FindOrCreateConversationInput,
   IdempotentOutcome,
   MessagingAssignmentRow,
@@ -56,6 +60,10 @@ export type PostgresMessagingRepositoryDeps = SafeMessagingRepositoryDeps & {
    * Used to force concurrent transactions to the same insert point.
    */
   beforeIdempotentInsert?: (sql: string) => Promise<void>;
+  /**
+   * Test-only barrier invoked immediately before the outbound send-claim UPDATE.
+   */
+  beforeOutboundClaim?: (sql: string) => Promise<void>;
 };
 
 type DbRow = Record<string, unknown>;
@@ -143,6 +151,60 @@ function assertPrivateObjectKey(objectKey: string): void {
     throw new MessagingRepositoryError({
       code: "invalid_input",
       message: "objectKey must be a private storage key, not a public URL",
+    });
+  }
+}
+
+/** Monotonic ranks for outbound delivery_status (higher wins). failed is terminal. */
+function deliveryStatusRank(status: string): number {
+  switch (status) {
+    case "queued":
+      return 0;
+    case "sending":
+      return 1;
+    case "received":
+    case "sent":
+      return 2;
+    case "delivered":
+      return 3;
+    case "read":
+      return 4;
+    case "failed":
+      return 100;
+    default:
+      return -1;
+  }
+}
+
+function assertOutboundIdempotencyMatch(input: {
+  organizationId: string;
+  conversationId: string;
+  connectionId: string;
+  transportType: string;
+  normalizedText: string | null;
+  recipientIdentityId: string | null;
+  existing: {
+    organizationId: string;
+    conversationId: string;
+    connectionId: string;
+    transportType: string;
+    normalizedText: string | null;
+    recipientIdentityId: string | null;
+  };
+}): void {
+  if (
+    input.existing.organizationId !== input.organizationId ||
+    input.existing.conversationId !== input.conversationId ||
+    input.existing.connectionId !== input.connectionId ||
+    input.existing.transportType !== input.transportType ||
+    (input.existing.normalizedText ?? null) !== (input.normalizedText ?? null) ||
+    (input.existing.recipientIdentityId ?? null) !==
+      (input.recipientIdentityId ?? null)
+  ) {
+    throw new MessagingRepositoryError({
+      code: "invalid_input",
+      message: "Idempotency key reused with different outbound request content",
+      detail: "idempotency_conflict",
     });
   }
 }
@@ -331,9 +393,63 @@ export function createPostgresMessagingRepository(
   const newId = deps.newId ?? (() => randomUUID());
   const now = deps.now ?? (() => new Date());
   const beforeInsert = deps.beforeIdempotentInsert;
+  const beforeClaim = deps.beforeOutboundClaim;
 
   async function awaitInsertBarrier(sql: string): Promise<void> {
     if (beforeInsert) await beforeInsert(sql);
+  }
+
+  async function awaitClaimBarrier(sql: string): Promise<void> {
+    if (beforeClaim) await beforeClaim(sql);
+  }
+
+  async function getMessageById(
+    executor: SqlExecutor,
+    organizationId: string,
+    messageId: string
+  ): Promise<NormalizedMessage | null> {
+    const { rows } = await executor.query(
+      `${MESSAGE_SELECT}
+       WHERE m.organization_id = $1 AND m.id = $2
+       LIMIT 1`,
+      [organizationId, messageId]
+    );
+    return rows[0] ? mapMessage(rows[0]) : null;
+  }
+
+  async function getOutboundRawIdempotencyFields(
+    executor: SqlExecutor,
+    organizationId: string,
+    connectionId: string,
+    clientIdempotencyKey: string
+  ): Promise<{
+    organizationId: string;
+    conversationId: string;
+    connectionId: string;
+    transportType: string;
+    normalizedText: string | null;
+    recipientIdentityId: string | null;
+  } | null> {
+    const { rows } = await executor.query(
+      `SELECT organization_id, conversation_id, connection_id, transport_type,
+              normalized_text, recipient_identity_id
+       FROM public.messaging_messages
+       WHERE organization_id = $1
+         AND connection_id = $2
+         AND client_idempotency_key = $3
+       LIMIT 1`,
+      [organizationId, connectionId, clientIdempotencyKey]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      organizationId: asString(row.organization_id),
+      conversationId: asString(row.conversation_id),
+      connectionId: asString(row.connection_id),
+      transportType: asString(row.transport_type),
+      normalizedText: asStringOrNull(row.normalized_text),
+      recipientIdentityId: asStringOrNull(row.recipient_identity_id),
+    };
   }
 
   async function getContact(
@@ -860,7 +976,26 @@ export function createPostgresMessagingRepository(
             connectionId,
             clientIdempotencyKey
           );
-          if (existing) return { kind: "existing", row: existing };
+          if (existing) {
+            const raw = await getOutboundRawIdempotencyFields(
+              tx,
+              organizationId,
+              connectionId,
+              clientIdempotencyKey
+            );
+            if (raw) {
+              assertOutboundIdempotencyMatch({
+                organizationId,
+                conversationId,
+                connectionId,
+                transportType,
+                normalizedText: input.normalizedText ?? null,
+                recipientIdentityId: input.recipientIdentityId ?? null,
+                existing: raw,
+              });
+            }
+            return { kind: "existing", row: existing };
+          }
 
           const id = newId();
           const ts = now();
@@ -940,10 +1075,142 @@ export function createPostgresMessagingRepository(
               detail: "messaging_messages_outbound_idempotency_uidx",
             });
           }
+          const raw = await getOutboundRawIdempotencyFields(
+            tx,
+            organizationId,
+            connectionId,
+            clientIdempotencyKey
+          );
+          if (raw) {
+            assertOutboundIdempotencyMatch({
+              organizationId,
+              conversationId,
+              connectionId,
+              transportType,
+              normalizedText: input.normalizedText ?? null,
+              recipientIdentityId: input.recipientIdentityId ?? null,
+              existing: raw,
+            });
+          }
           return { kind: "existing", row: raced };
         });
       } catch (err) {
         throw mapDatabaseError(err, "Failed to create outbound message");
+      }
+    },
+
+    async claimOutboundMessageForSend(
+      input: ClaimOutboundSendInput
+    ): Promise<ClaimOutboundSendResult> {
+      const organizationId = requireOrgId(input.organizationId);
+      const messageId = requireNonEmpty(input.messageId, "messageId");
+      const claimSql = `UPDATE public.messaging_messages
+             SET processing_status = 'processing',
+                 delivery_status = 'sending'
+             WHERE organization_id = $1
+               AND id = $2
+               AND direction = 'outbound'
+               AND processing_status = 'pending'
+               AND delivery_status = 'queued'
+             RETURNING id`;
+      try {
+        return await db.withTransaction(async (tx) => {
+          await awaitClaimBarrier(claimSql);
+          const { rows } = await tx.query(claimSql, [organizationId, messageId]);
+          const current = await getMessageById(tx, organizationId, messageId);
+          if (!current) {
+            throw new MessagingRepositoryError({
+              code: "not_found",
+              message: "Outbound message not found for send claim",
+            });
+          }
+          if (rows[0]) {
+            const claimed = await getMessageById(tx, organizationId, messageId);
+            return { kind: "claimed", row: claimed ?? current };
+          }
+          if (
+            current.deliveryStatus === "sent" ||
+            current.deliveryStatus === "delivered" ||
+            current.deliveryStatus === "read"
+          ) {
+            return { kind: "completed", row: current };
+          }
+          if (
+            current.deliveryStatus === "sending" ||
+            current.processingStatus === "processing"
+          ) {
+            return { kind: "in_flight", row: current };
+          }
+          // failed / other uncertain states — never auto-resend same key
+          return { kind: "terminal", row: current };
+        });
+      } catch (err) {
+        throw mapDatabaseError(err, "Failed to claim outbound message for send");
+      }
+    },
+
+    async bindOutboundLegacyMessageId(
+      input: BindOutboundLegacyMessageInput
+    ): Promise<NormalizedMessage> {
+      const organizationId = requireOrgId(input.organizationId);
+      const messageId = requireNonEmpty(input.messageId, "messageId");
+      const whatsappMessageId = requireNonEmpty(
+        input.whatsappMessageId,
+        "whatsappMessageId"
+      );
+      try {
+        const { rows } = await db.query(
+          `UPDATE public.messaging_messages
+           SET provider_metadata = COALESCE(provider_metadata, '{}'::jsonb)
+             || jsonb_build_object('whatsappMessageId', $3::text)
+           WHERE organization_id = $1 AND id = $2 AND direction = 'outbound'
+           RETURNING id`,
+          [organizationId, messageId, whatsappMessageId]
+        );
+        if (!rows[0]) {
+          throw new MessagingRepositoryError({
+            code: "not_found",
+            message: "Outbound message not found for legacy binding",
+          });
+        }
+        const mapped = await getMessageById(db, organizationId, messageId);
+        if (!mapped) {
+          throw new MessagingRepositoryError({
+            code: "database_failure",
+            message: "Outbound message binding succeeded but row was not readable",
+          });
+        }
+        return mapped;
+      } catch (err) {
+        throw mapDatabaseError(err, "Failed to bind legacy WhatsApp message id");
+      }
+    },
+
+    async findMessageByExternalId(
+      input: FindMessageByExternalIdInput
+    ): Promise<NormalizedMessage | null> {
+      const organizationId = requireOrgId(input.organizationId);
+      const connectionId = requireNonEmpty(input.connectionId, "connectionId");
+      const externalMessageId = requireNonEmpty(
+        input.externalMessageId,
+        "externalMessageId"
+      );
+      if (!input.transportType) {
+        throw new MessagingRepositoryError({
+          code: "invalid_input",
+          message: "transportType is required",
+        });
+      }
+      try {
+        return await getInboundByExternal(
+          db,
+          organizationId,
+          connectionId,
+          input.transportType,
+          externalMessageId
+        );
+      } catch (err) {
+        throw mapDatabaseError(err, "Failed to find message by external id");
       }
     },
 
@@ -972,11 +1239,31 @@ export function createPostgresMessagingRepository(
                 typeof diagnostics.providerMessageId === "string"
                   ? diagnostics.providerMessageId
                   : null;
+              const newRank = deliveryStatusRank(input.status);
               await tx.query(
                 `UPDATE public.messaging_messages
-                 SET delivery_status = $3,
+                 SET delivery_status = CASE
+                       WHEN $6::int < 0 THEN delivery_status
+                       WHEN delivery_status = 'failed' THEN delivery_status
+                       WHEN CASE delivery_status
+                              WHEN 'queued' THEN 0
+                              WHEN 'sending' THEN 1
+                              WHEN 'received' THEN 2
+                              WHEN 'sent' THEN 2
+                              WHEN 'delivered' THEN 3
+                              WHEN 'read' THEN 4
+                              WHEN 'failed' THEN 100
+                              ELSE -1
+                            END < $6::int
+                         THEN $3
+                       ELSE delivery_status
+                     END,
                      external_message_id = COALESCE(external_message_id, $4),
-                     provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $5::jsonb
+                     provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $5::jsonb,
+                     processing_status = CASE
+                       WHEN $3 IN ('sent', 'delivered', 'read', 'failed') THEN 'processed'
+                       ELSE processing_status
+                     END
                  WHERE organization_id = $1 AND id = $2`,
                 [
                   organizationId,
@@ -984,6 +1271,7 @@ export function createPostgresMessagingRepository(
                   input.status,
                   providerMessageId,
                   JSON.stringify(diagnostics),
+                  newRank,
                 ]
               );
               return {
@@ -1055,16 +1343,36 @@ export function createPostgresMessagingRepository(
             });
           }
 
-          // Advance message delivery_status for outbound idempotency / inbox sync.
+          // Advance message delivery_status monotonically (never downgrade).
           const providerMessageId =
             typeof diagnostics.providerMessageId === "string"
               ? diagnostics.providerMessageId
               : null;
+          const newRank = deliveryStatusRank(input.status);
           await tx.query(
             `UPDATE public.messaging_messages
-             SET delivery_status = $3,
+             SET delivery_status = CASE
+                   WHEN $6::int < 0 THEN delivery_status
+                   WHEN delivery_status = 'failed' THEN delivery_status
+                   WHEN CASE delivery_status
+                          WHEN 'queued' THEN 0
+                          WHEN 'sending' THEN 1
+                          WHEN 'received' THEN 2
+                          WHEN 'sent' THEN 2
+                          WHEN 'delivered' THEN 3
+                          WHEN 'read' THEN 4
+                          WHEN 'failed' THEN 100
+                          ELSE -1
+                        END < $6::int
+                     THEN $3
+                   ELSE delivery_status
+                 END,
                  external_message_id = COALESCE(external_message_id, $4),
-                 provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $5::jsonb
+                 provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $5::jsonb,
+                 processing_status = CASE
+                   WHEN $3 IN ('sent', 'delivered', 'read', 'failed') THEN 'processed'
+                   ELSE processing_status
+                 END
              WHERE organization_id = $1 AND id = $2`,
             [
               organizationId,
@@ -1072,6 +1380,7 @@ export function createPostgresMessagingRepository(
               input.status,
               providerMessageId,
               JSON.stringify(diagnostics),
+              newRank,
             ]
           );
 
@@ -1101,6 +1410,7 @@ export function createPostgresMessagingRepository(
       try {
         const id = newId();
         const createdAt = now().toISOString();
+        const objectKey = input.objectKey.trim();
         const { rows } = await db.query(
           `INSERT INTO public.messaging_attachments (
              id, organization_id, message_id, object_key, media_type,
@@ -1108,12 +1418,14 @@ export function createPostgresMessagingRepository(
            ) VALUES (
              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
            )
+           ON CONFLICT (organization_id, message_id, sha256, object_key)
+           DO NOTHING
            RETURNING *`,
           [
             id,
             organizationId,
             messageId,
-            input.objectKey.trim(),
+            objectKey,
             mediaType,
             input.originalFilenameSafe ?? null,
             input.sizeBytes,
@@ -1122,7 +1434,26 @@ export function createPostgresMessagingRepository(
             createdAt,
           ]
         );
-        return mapAttachment(rows[0]!);
+        if (rows[0]) return mapAttachment(rows[0]);
+
+        const { rows: existing } = await db.query(
+          `SELECT * FROM public.messaging_attachments
+           WHERE organization_id = $1
+             AND message_id = $2
+             AND sha256 = $3
+             AND object_key = $4
+           LIMIT 1`,
+          [organizationId, messageId, sha256, objectKey]
+        );
+        if (!existing[0]) {
+          throw new MessagingRepositoryError({
+            code: "unique_violation",
+            message:
+              "Attachment conflict occurred but existing row was not found",
+            detail: "messaging_attachments_sha_object_uidx",
+          });
+        }
+        return mapAttachment(existing[0]);
       } catch (err) {
         throw mapDatabaseError(err, "Failed to add attachment reference");
       }
@@ -1293,31 +1624,61 @@ export function createPostgresMessagingRepository(
         });
       }
       const metadata = assertSafeMetadata(input.metadata ?? {}, "metadata");
+      const idempotencyKey =
+        typeof metadata.idempotencyKey === "string"
+          ? metadata.idempotencyKey.trim()
+          : "";
 
       try {
-        const id = newId();
-        const occurredAt = input.occurredAt ?? now().toISOString();
-        const { rows } = await db.query(
-          `INSERT INTO public.messaging_audit_logs (
-             id, organization_id, actor_type, actor_id, action,
-             target_type, target_id, metadata, occurred_at
-           ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9
-           )
-           RETURNING *`,
-          [
-            id,
-            organizationId,
-            input.actorType,
-            input.actorId ?? null,
-            action,
-            targetType,
-            input.targetId ?? null,
-            JSON.stringify(metadata),
-            occurredAt,
-          ]
-        );
-        return mapAudit(rows[0]!);
+        return await db.withTransaction(async (tx) => {
+          if (idempotencyKey) {
+            const lockKey = `${organizationId}|${action}|${targetType}|${input.targetId ?? ""}|${idempotencyKey}`;
+            await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+              lockKey,
+            ]);
+            const { rows: existing } = await tx.query(
+              `SELECT * FROM public.messaging_audit_logs
+               WHERE organization_id = $1
+                 AND action = $2
+                 AND target_type = $3
+                 AND COALESCE(target_id, '') = COALESCE($4, '')
+                 AND metadata->>'idempotencyKey' = $5
+               LIMIT 1`,
+              [
+                organizationId,
+                action,
+                targetType,
+                input.targetId ?? null,
+                idempotencyKey,
+              ]
+            );
+            if (existing[0]) return mapAudit(existing[0]);
+          }
+
+          const id = newId();
+          const occurredAt = input.occurredAt ?? now().toISOString();
+          const { rows } = await tx.query(
+            `INSERT INTO public.messaging_audit_logs (
+               id, organization_id, actor_type, actor_id, action,
+               target_type, target_id, metadata, occurred_at
+             ) VALUES (
+               $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9
+             )
+             RETURNING *`,
+            [
+              id,
+              organizationId,
+              input.actorType,
+              input.actorId ?? null,
+              action,
+              targetType,
+              input.targetId ?? null,
+              JSON.stringify(metadata),
+              occurredAt,
+            ]
+          );
+          return mapAudit(rows[0]!);
+        });
       } catch (err) {
         throw mapDatabaseError(err, "Failed to append audit event");
       }
