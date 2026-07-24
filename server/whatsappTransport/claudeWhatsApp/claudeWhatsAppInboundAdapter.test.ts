@@ -360,6 +360,83 @@ await test(
   }
 );
 
+await test(
+  "kill switch OFF + messages.upsert still persists inbound to inbox",
+  async () => {
+    resetClaudeWhatsAppKillSwitchForTests();
+    resetClaudeWhatsAppProviderForTests();
+
+    const memory = { enabled: false }; // OFF
+    const killSwitch = new ClaudeWhatsAppKillSwitch({ memoryStore: memory });
+    const repo = new InMemoryWhatsAppRepository();
+
+    const handlers = new Map<string, (...args: any[]) => void>();
+    const provider = new ClaudeWhatsAppProvider({
+      killSwitch,
+      repo,
+      autoReconnect: false,
+      loadAuth: async () => ({
+        state: {
+          creds: {},
+          keys: { get: async () => ({}), set: async () => {} },
+        },
+        saveCreds: async () => {},
+        clearSession: async () => {},
+      }),
+      makeSocket: async () => ({
+        ev: {
+          on: (event: string, handler: (...args: any[]) => void) => {
+            handlers.set(event, handler);
+          },
+        },
+        sendMessage: async () => ({ key: { id: "x" } }),
+        user: { id: "923000000000:0@s.whatsapp.net" },
+      }),
+    });
+
+    await provider.start();
+    assert.equal(killSwitch.isEnabled(), false);
+    assert.ok(
+      handlers.has("messages.upsert"),
+      "messages.upsert handler must be registered"
+    );
+
+    const upsert = handlers.get("messages.upsert")!;
+    upsert({
+      type: "notify",
+      messages: [
+        {
+          key: {
+            id: "WHILE_OFF_1",
+            remoteJid: "923007771111@s.whatsapp.net",
+            fromMe: false,
+          },
+          message: { conversation: "Customer while kill switch OFF" },
+          messageTimestamp: 1700000300,
+          pushName: "Customer",
+        },
+      ],
+    });
+
+    // Handler is fire-and-forget; allow the async persist to finish.
+    const deadline = Date.now() + 2000;
+    while (repo.messages.size === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    assert.equal(repo.messages.size, 1);
+    const message = [...repo.messages.values()][0];
+    assert.equal(message.textBody, "Customer while kill switch OFF");
+    assert.equal(message.waMessageId, "claude_WHILE_OFF_1");
+    assert.equal(message.direction, "inbound");
+    assert.equal(
+      (message.rawPayload as { provider?: string }).provider,
+      CLAUDE_WHATSAPP_PROVIDER
+    );
+    assert.equal(repo.conversations.size, 1);
+  }
+);
+
 if (failed > 0) {
   console.error(`\n${failed} Claude WhatsApp test(s) failed`);
   process.exit(1);

@@ -205,13 +205,12 @@ export class ClaudeWhatsAppProvider {
         void this.onConnectionUpdate(update);
       });
 
+      // Inbound persistence is never gated by the kill switch — staff must see
+      // customer messages that arrived while OFF. Only outbound send is gated
+      // (claudeWhatsAppOutboundPort). No AI auto-reply hook rides this handler.
       socket.ev.on(
         "messages.upsert",
         (upsert: { type?: string; messages?: unknown[] }) => {
-          if (!this.killSwitch.isEnabled()) {
-            // Kill switch off: do not accept new inbound into CRM during abort.
-            return;
-          }
           void handleClaudeWhatsAppMessagesUpsert(
             upsert as {
               type?: string;
