@@ -12,11 +12,14 @@
 -- Deterministic IDs: mpbrand_ws1_*, mpcat_ws1_*, mpprod_ws1_*, mpvar_ws1_*
 --
 -- Safety:
---   - Rejects slug/SKU collisions that refer to different records
---   - Does not overwrite non-seed records
---   - Does not overwrite operational price changes (website_price_source <> 'seed')
---   - Does not seed costs, media, or delivery charges
---   - Repeatable without duplicating products/variants
+--   - Bidirectional ownership guards (slug/SKU ↔ deterministic ID, plus
+--     product taxonomy owners and variant product_id) abort the whole
+--     transaction on mismatch — no partial writes, no price mutation.
+--   - ID prefix alone is never treated as proof of seed ownership.
+--   - Does not overwrite non-seed / foreign-owned records.
+--   - Does not overwrite operational price changes (website_price_source <> 'seed').
+--   - Does not seed costs, media, or delivery charges.
+--   - Repeatable for correctly owned WS1 rows without duplicating products/variants.
 --
 -- Prerequisites: WS0 foundation + WS1 additive schema applied.
 
@@ -27,548 +30,1891 @@ begin;
 select set_config('mp.allow_price_write', 'on', true);
 
 -- -----------------------------------------------------------------------------
--- Collision guards (slug / SKU belonging to a different id)
+-- Bidirectional ownership guards (abort entire transaction on mismatch)
 -- -----------------------------------------------------------------------------
 do $guard$
 declare
   v_conflict text;
+  v_found_slug text;
+  v_found_sku text;
+  v_found_product_id text;
+  v_found_brand_id text;
+  v_found_category_id text;
 begin
 
+  -- brand canadian-solar
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'canadian-solar' and id <> 'mpbrand_ws1_canadian_solar' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'canadian-solar', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'canadian-solar', v_conflict, 'mpbrand_ws1_canadian_solar';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_canadian_solar';
+  if v_found_slug is not null and v_found_slug <> 'canadian-solar' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_canadian_solar', v_found_slug, 'canadian-solar';
   end if;
 
+  -- brand fronus
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'fronus' and id <> 'mpbrand_ws1_fronus' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'fronus', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'fronus', v_conflict, 'mpbrand_ws1_fronus';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_fronus';
+  if v_found_slug is not null and v_found_slug <> 'fronus' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_fronus', v_found_slug, 'fronus';
   end if;
 
+  -- brand generic
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'generic' and id <> 'mpbrand_ws1_generic' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'generic', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'generic', v_conflict, 'mpbrand_ws1_generic';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_generic';
+  if v_found_slug is not null and v_found_slug <> 'generic' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_generic', v_found_slug, 'generic';
   end if;
 
+  -- brand growatt
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'growatt' and id <> 'mpbrand_ws1_growatt' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'growatt', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'growatt', v_conflict, 'mpbrand_ws1_growatt';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_growatt';
+  if v_found_slug is not null and v_found_slug <> 'growatt' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_growatt', v_found_slug, 'growatt';
   end if;
 
+  -- brand huawei
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'huawei' and id <> 'mpbrand_ws1_huawei' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'huawei', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'huawei', v_conflict, 'mpbrand_ws1_huawei';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_huawei';
+  if v_found_slug is not null and v_found_slug <> 'huawei' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_huawei', v_found_slug, 'huawei';
   end if;
 
+  -- brand inverex
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'inverex' and id <> 'mpbrand_ws1_inverex' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'inverex', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'inverex', v_conflict, 'mpbrand_ws1_inverex';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_inverex';
+  if v_found_slug is not null and v_found_slug <> 'inverex' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_inverex', v_found_slug, 'inverex';
   end if;
 
+  -- brand ja-solar
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'ja-solar' and id <> 'mpbrand_ws1_ja_solar' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'ja-solar', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'ja-solar', v_conflict, 'mpbrand_ws1_ja_solar';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_ja_solar';
+  if v_found_slug is not null and v_found_slug <> 'ja-solar' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_ja_solar', v_found_slug, 'ja-solar';
   end if;
 
+  -- brand jinko
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'jinko' and id <> 'mpbrand_ws1_jinko' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'jinko', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'jinko', v_conflict, 'mpbrand_ws1_jinko';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_jinko';
+  if v_found_slug is not null and v_found_slug <> 'jinko' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_jinko', v_found_slug, 'jinko';
   end if;
 
+  -- brand knox
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'knox' and id <> 'mpbrand_ws1_knox' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'knox', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'knox', v_conflict, 'mpbrand_ws1_knox';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_knox';
+  if v_found_slug is not null and v_found_slug <> 'knox' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_knox', v_found_slug, 'knox';
   end if;
 
+  -- brand longi
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'longi' and id <> 'mpbrand_ws1_longi' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'longi', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'longi', v_conflict, 'mpbrand_ws1_longi';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_longi';
+  if v_found_slug is not null and v_found_slug <> 'longi' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_longi', v_found_slug, 'longi';
   end if;
 
+  -- brand maxpower
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'maxpower' and id <> 'mpbrand_ws1_maxpower' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'maxpower', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'maxpower', v_conflict, 'mpbrand_ws1_maxpower';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_maxpower';
+  if v_found_slug is not null and v_found_slug <> 'maxpower' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_maxpower', v_found_slug, 'maxpower';
   end if;
 
+  -- brand narada
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'narada' and id <> 'mpbrand_ws1_narada' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'narada', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'narada', v_conflict, 'mpbrand_ws1_narada';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_narada';
+  if v_found_slug is not null and v_found_slug <> 'narada' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_narada', v_found_slug, 'narada';
   end if;
 
+  -- brand pylontech
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'pylontech' and id <> 'mpbrand_ws1_pylontech' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'pylontech', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'pylontech', v_conflict, 'mpbrand_ws1_pylontech';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_pylontech';
+  if v_found_slug is not null and v_found_slug <> 'pylontech' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_pylontech', v_found_slug, 'pylontech';
   end if;
 
+  -- brand solis
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'solis' and id <> 'mpbrand_ws1_solis' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'solis', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'solis', v_conflict, 'mpbrand_ws1_solis';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_solis';
+  if v_found_slug is not null and v_found_slug <> 'solis' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_solis', v_found_slug, 'solis';
   end if;
 
+  -- brand sunchaser
   v_conflict := null;
   select id into v_conflict from public.mp_brands
     where slug = 'sunchaser' and id <> 'mpbrand_ws1_sunchaser' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed brand slug collision: % belongs to %', 'sunchaser', v_conflict;
+    raise exception 'WS1 seed brand slug ownership conflict: slug % owned by % (expected %)',
+      'sunchaser', v_conflict, 'mpbrand_ws1_sunchaser';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_brands where id = 'mpbrand_ws1_sunchaser';
+  if v_found_slug is not null and v_found_slug <> 'sunchaser' then
+    raise exception 'WS1 seed brand ID ownership conflict: id % has slug % (expected %)',
+      'mpbrand_ws1_sunchaser', v_found_slug, 'sunchaser';
   end if;
 
+  -- category solar-inverters
   v_conflict := null;
   select id into v_conflict from public.mp_categories
     where slug = 'solar-inverters' and id <> 'mpcat_ws1_solar_inverters' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed category slug collision: % belongs to %', 'solar-inverters', v_conflict;
+    raise exception 'WS1 seed category slug ownership conflict: slug % owned by % (expected %)',
+      'solar-inverters', v_conflict, 'mpcat_ws1_solar_inverters';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_categories where id = 'mpcat_ws1_solar_inverters';
+  if v_found_slug is not null and v_found_slug <> 'solar-inverters' then
+    raise exception 'WS1 seed category ID ownership conflict: id % has slug % (expected %)',
+      'mpcat_ws1_solar_inverters', v_found_slug, 'solar-inverters';
   end if;
 
+  -- category solar-panels
   v_conflict := null;
   select id into v_conflict from public.mp_categories
     where slug = 'solar-panels' and id <> 'mpcat_ws1_solar_panels' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed category slug collision: % belongs to %', 'solar-panels', v_conflict;
+    raise exception 'WS1 seed category slug ownership conflict: slug % owned by % (expected %)',
+      'solar-panels', v_conflict, 'mpcat_ws1_solar_panels';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_categories where id = 'mpcat_ws1_solar_panels';
+  if v_found_slug is not null and v_found_slug <> 'solar-panels' then
+    raise exception 'WS1 seed category ID ownership conflict: id % has slug % (expected %)',
+      'mpcat_ws1_solar_panels', v_found_slug, 'solar-panels';
   end if;
 
+  -- category lithium-batteries
   v_conflict := null;
   select id into v_conflict from public.mp_categories
     where slug = 'lithium-batteries' and id <> 'mpcat_ws1_lithium_batteries' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed category slug collision: % belongs to %', 'lithium-batteries', v_conflict;
+    raise exception 'WS1 seed category slug ownership conflict: slug % owned by % (expected %)',
+      'lithium-batteries', v_conflict, 'mpcat_ws1_lithium_batteries';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_categories where id = 'mpcat_ws1_lithium_batteries';
+  if v_found_slug is not null and v_found_slug <> 'lithium-batteries' then
+    raise exception 'WS1 seed category ID ownership conflict: id % has slug % (expected %)',
+      'mpcat_ws1_lithium_batteries', v_found_slug, 'lithium-batteries';
   end if;
 
+  -- category hybrid-systems
   v_conflict := null;
   select id into v_conflict from public.mp_categories
     where slug = 'hybrid-systems' and id <> 'mpcat_ws1_hybrid_systems' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed category slug collision: % belongs to %', 'hybrid-systems', v_conflict;
+    raise exception 'WS1 seed category slug ownership conflict: slug % owned by % (expected %)',
+      'hybrid-systems', v_conflict, 'mpcat_ws1_hybrid_systems';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_categories where id = 'mpcat_ws1_hybrid_systems';
+  if v_found_slug is not null and v_found_slug <> 'hybrid-systems' then
+    raise exception 'WS1 seed category ID ownership conflict: id % has slug % (expected %)',
+      'mpcat_ws1_hybrid_systems', v_found_slug, 'hybrid-systems';
   end if;
 
+  -- category accessories
   v_conflict := null;
   select id into v_conflict from public.mp_categories
     where slug = 'accessories' and id <> 'mpcat_ws1_accessories' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed category slug collision: % belongs to %', 'accessories', v_conflict;
+    raise exception 'WS1 seed category slug ownership conflict: slug % owned by % (expected %)',
+      'accessories', v_conflict, 'mpcat_ws1_accessories';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_categories where id = 'mpcat_ws1_accessories';
+  if v_found_slug is not null and v_found_slug <> 'accessories' then
+    raise exception 'WS1 seed category ID ownership conflict: id % has slug % (expected %)',
+      'mpcat_ws1_accessories', v_found_slug, 'accessories';
   end if;
 
+  -- category on-grid-inverters
   v_conflict := null;
   select id into v_conflict from public.mp_categories
     where slug = 'on-grid-inverters' and id <> 'mpcat_ws1_on_grid_inverters' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed category slug collision: % belongs to %', 'on-grid-inverters', v_conflict;
+    raise exception 'WS1 seed category slug ownership conflict: slug % owned by % (expected %)',
+      'on-grid-inverters', v_conflict, 'mpcat_ws1_on_grid_inverters';
+  end if;
+  v_found_slug := null;
+  select slug into v_found_slug from public.mp_categories where id = 'mpcat_ws1_on_grid_inverters';
+  if v_found_slug is not null and v_found_slug <> 'on-grid-inverters' then
+    raise exception 'WS1 seed category ID ownership conflict: id % has slug % (expected %)',
+      'mpcat_ws1_on_grid_inverters', v_found_slug, 'on-grid-inverters';
   end if;
 
+  -- product knox-krypton-eco-6-2kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'knox-krypton-eco-6-2kw-hybrid' and id <> 'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'knox-krypton-eco-6-2kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'knox-krypton-eco-6-2kw-hybrid', v_conflict, 'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'knox-krypton-eco-6-2kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid', v_found_slug, 'knox-krypton-eco-6-2kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_knox' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid', v_found_brand_id, 'mpbrand_ws1_knox';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-KNOX_KRYPTON_ECO_6_2KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-KNOX_KRYPTON_ECO_6_2KW_HYBRID' and id <> 'mpvar_ws1_knox_krypton_eco_6_2kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-KNOX_KRYPTON_ECO_6_2KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-KNOX_KRYPTON_ECO_6_2KW_HYBRID', v_conflict, 'mpvar_ws1_knox_krypton_eco_6_2kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_knox_krypton_eco_6_2kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-KNOX_KRYPTON_ECO_6_2KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_knox_krypton_eco_6_2kw_hybrid', v_found_sku, 'SC-KNOX_KRYPTON_ECO_6_2KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_knox_krypton_eco_6_2kw_hybrid', v_found_product_id, 'mpprod_ws1_knox_krypton_eco_6_2kw_hybrid';
+    end if;
   end if;
 
+  -- product knox-krypton-6-5kw-pv9055-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'knox-krypton-6-5kw-pv9055-hybrid' and id <> 'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'knox-krypton-6-5kw-pv9055-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'knox-krypton-6-5kw-pv9055-hybrid', v_conflict, 'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'knox-krypton-6-5kw-pv9055-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid', v_found_slug, 'knox-krypton-6-5kw-pv9055-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_knox' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid', v_found_brand_id, 'mpbrand_ws1_knox';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-KNOX_KRYPTON_6_5KW_PV9055_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-KNOX_KRYPTON_6_5KW_PV9055_HYBRID' and id <> 'mpvar_ws1_knox_krypton_6_5kw_pv9055_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-KNOX_KRYPTON_6_5KW_PV9055_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-KNOX_KRYPTON_6_5KW_PV9055_HYBRID', v_conflict, 'mpvar_ws1_knox_krypton_6_5kw_pv9055_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_knox_krypton_6_5kw_pv9055_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-KNOX_KRYPTON_6_5KW_PV9055_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_knox_krypton_6_5kw_pv9055_hybrid', v_found_sku, 'SC-KNOX_KRYPTON_6_5KW_PV9055_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_knox_krypton_6_5kw_pv9055_hybrid', v_found_product_id, 'mpprod_ws1_knox_krypton_6_5kw_pv9055_hybrid';
+    end if;
   end if;
 
+  -- product growatt-min-6000tl-xh-6kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'growatt-min-6000tl-xh-6kw-hybrid' and id <> 'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'growatt-min-6000tl-xh-6kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'growatt-min-6000tl-xh-6kw-hybrid', v_conflict, 'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'growatt-min-6000tl-xh-6kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid', v_found_slug, 'growatt-min-6000tl-xh-6kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_growatt' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid', v_found_brand_id, 'mpbrand_ws1_growatt';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-GROWATT_MIN_6000TL_XH_6KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-GROWATT_MIN_6000TL_XH_6KW_HYBRID' and id <> 'mpvar_ws1_growatt_min_6000tl_xh_6kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-GROWATT_MIN_6000TL_XH_6KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-GROWATT_MIN_6000TL_XH_6KW_HYBRID', v_conflict, 'mpvar_ws1_growatt_min_6000tl_xh_6kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_growatt_min_6000tl_xh_6kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-GROWATT_MIN_6000TL_XH_6KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_growatt_min_6000tl_xh_6kw_hybrid', v_found_sku, 'SC-GROWATT_MIN_6000TL_XH_6KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_growatt_min_6000tl_xh_6kw_hybrid', v_found_product_id, 'mpprod_ws1_growatt_min_6000tl_xh_6kw_hybrid';
+    end if;
   end if;
 
+  -- product growatt-sph-8000tl3-8kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'growatt-sph-8000tl3-8kw-hybrid' and id <> 'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'growatt-sph-8000tl3-8kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'growatt-sph-8000tl3-8kw-hybrid', v_conflict, 'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'growatt-sph-8000tl3-8kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid', v_found_slug, 'growatt-sph-8000tl3-8kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_growatt' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid', v_found_brand_id, 'mpbrand_ws1_growatt';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-GROWATT_SPH_8000TL3_8KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-GROWATT_SPH_8000TL3_8KW_HYBRID' and id <> 'mpvar_ws1_growatt_sph_8000tl3_8kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-GROWATT_SPH_8000TL3_8KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-GROWATT_SPH_8000TL3_8KW_HYBRID', v_conflict, 'mpvar_ws1_growatt_sph_8000tl3_8kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_growatt_sph_8000tl3_8kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-GROWATT_SPH_8000TL3_8KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_growatt_sph_8000tl3_8kw_hybrid', v_found_sku, 'SC-GROWATT_SPH_8000TL3_8KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_growatt_sph_8000tl3_8kw_hybrid', v_found_product_id, 'mpprod_ws1_growatt_sph_8000tl3_8kw_hybrid';
+    end if;
   end if;
 
+  -- product solis-6kw-ip66-l-plus-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'solis-6kw-ip66-l-plus-hybrid' and id <> 'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'solis-6kw-ip66-l-plus-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'solis-6kw-ip66-l-plus-hybrid', v_conflict, 'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'solis-6kw-ip66-l-plus-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid', v_found_slug, 'solis-6kw-ip66-l-plus-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_solis' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid', v_found_brand_id, 'mpbrand_ws1_solis';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-SOLIS_6KW_IP66_L_PLUS_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-SOLIS_6KW_IP66_L_PLUS_HYBRID' and id <> 'mpvar_ws1_solis_6kw_ip66_l_plus_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-SOLIS_6KW_IP66_L_PLUS_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-SOLIS_6KW_IP66_L_PLUS_HYBRID', v_conflict, 'mpvar_ws1_solis_6kw_ip66_l_plus_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_solis_6kw_ip66_l_plus_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-SOLIS_6KW_IP66_L_PLUS_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_solis_6kw_ip66_l_plus_hybrid', v_found_sku, 'SC-SOLIS_6KW_IP66_L_PLUS_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_solis_6kw_ip66_l_plus_hybrid', v_found_product_id, 'mpprod_ws1_solis_6kw_ip66_l_plus_hybrid';
+    end if;
   end if;
 
+  -- product solis-8kw-ip66-l-plus-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'solis-8kw-ip66-l-plus-hybrid' and id <> 'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'solis-8kw-ip66-l-plus-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'solis-8kw-ip66-l-plus-hybrid', v_conflict, 'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'solis-8kw-ip66-l-plus-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid', v_found_slug, 'solis-8kw-ip66-l-plus-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_solis' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid', v_found_brand_id, 'mpbrand_ws1_solis';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-SOLIS_8KW_IP66_L_PLUS_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-SOLIS_8KW_IP66_L_PLUS_HYBRID' and id <> 'mpvar_ws1_solis_8kw_ip66_l_plus_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-SOLIS_8KW_IP66_L_PLUS_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-SOLIS_8KW_IP66_L_PLUS_HYBRID', v_conflict, 'mpvar_ws1_solis_8kw_ip66_l_plus_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_solis_8kw_ip66_l_plus_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-SOLIS_8KW_IP66_L_PLUS_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_solis_8kw_ip66_l_plus_hybrid', v_found_sku, 'SC-SOLIS_8KW_IP66_L_PLUS_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_solis_8kw_ip66_l_plus_hybrid', v_found_product_id, 'mpprod_ws1_solis_8kw_ip66_l_plus_hybrid';
+    end if;
   end if;
 
+  -- product huawei-sun2000-5kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'huawei-sun2000-5kw-hybrid' and id <> 'mpprod_ws1_huawei_sun2000_5kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'huawei-sun2000-5kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'huawei-sun2000-5kw-hybrid', v_conflict, 'mpprod_ws1_huawei_sun2000_5kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_huawei_sun2000_5kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'huawei-sun2000-5kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_huawei_sun2000_5kw_hybrid', v_found_slug, 'huawei-sun2000-5kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_huawei' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_huawei_sun2000_5kw_hybrid', v_found_brand_id, 'mpbrand_ws1_huawei';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_huawei_sun2000_5kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-HUAWEI_SUN2000_5KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-HUAWEI_SUN2000_5KW_HYBRID' and id <> 'mpvar_ws1_huawei_sun2000_5kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-HUAWEI_SUN2000_5KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-HUAWEI_SUN2000_5KW_HYBRID', v_conflict, 'mpvar_ws1_huawei_sun2000_5kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_huawei_sun2000_5kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-HUAWEI_SUN2000_5KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_huawei_sun2000_5kw_hybrid', v_found_sku, 'SC-HUAWEI_SUN2000_5KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_huawei_sun2000_5kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_huawei_sun2000_5kw_hybrid', v_found_product_id, 'mpprod_ws1_huawei_sun2000_5kw_hybrid';
+    end if;
   end if;
 
+  -- product huawei-sun2000-8kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'huawei-sun2000-8kw-hybrid' and id <> 'mpprod_ws1_huawei_sun2000_8kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'huawei-sun2000-8kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'huawei-sun2000-8kw-hybrid', v_conflict, 'mpprod_ws1_huawei_sun2000_8kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_huawei_sun2000_8kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'huawei-sun2000-8kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_huawei_sun2000_8kw_hybrid', v_found_slug, 'huawei-sun2000-8kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_huawei' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_huawei_sun2000_8kw_hybrid', v_found_brand_id, 'mpbrand_ws1_huawei';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_huawei_sun2000_8kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-HUAWEI_SUN2000_8KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-HUAWEI_SUN2000_8KW_HYBRID' and id <> 'mpvar_ws1_huawei_sun2000_8kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-HUAWEI_SUN2000_8KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-HUAWEI_SUN2000_8KW_HYBRID', v_conflict, 'mpvar_ws1_huawei_sun2000_8kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_huawei_sun2000_8kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-HUAWEI_SUN2000_8KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_huawei_sun2000_8kw_hybrid', v_found_sku, 'SC-HUAWEI_SUN2000_8KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_huawei_sun2000_8kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_huawei_sun2000_8kw_hybrid', v_found_product_id, 'mpprod_ws1_huawei_sun2000_8kw_hybrid';
+    end if;
   end if;
 
+  -- product inverex-nitrox-10kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'inverex-nitrox-10kw-hybrid' and id <> 'mpprod_ws1_inverex_nitrox_10kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'inverex-nitrox-10kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'inverex-nitrox-10kw-hybrid', v_conflict, 'mpprod_ws1_inverex_nitrox_10kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_inverex_nitrox_10kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'inverex-nitrox-10kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_inverex_nitrox_10kw_hybrid', v_found_slug, 'inverex-nitrox-10kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_inverex' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_inverex_nitrox_10kw_hybrid', v_found_brand_id, 'mpbrand_ws1_inverex';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_inverex_nitrox_10kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-INVEREX_NITROX_10KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-INVEREX_NITROX_10KW_HYBRID' and id <> 'mpvar_ws1_inverex_nitrox_10kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-INVEREX_NITROX_10KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-INVEREX_NITROX_10KW_HYBRID', v_conflict, 'mpvar_ws1_inverex_nitrox_10kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_inverex_nitrox_10kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-INVEREX_NITROX_10KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_inverex_nitrox_10kw_hybrid', v_found_sku, 'SC-INVEREX_NITROX_10KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_inverex_nitrox_10kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_inverex_nitrox_10kw_hybrid', v_found_product_id, 'mpprod_ws1_inverex_nitrox_10kw_hybrid';
+    end if;
   end if;
 
+  -- product maxpower-suntronic-6kw-hybrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'maxpower-suntronic-6kw-hybrid' and id <> 'mpprod_ws1_maxpower_suntronic_6kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'maxpower-suntronic-6kw-hybrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'maxpower-suntronic-6kw-hybrid', v_conflict, 'mpprod_ws1_maxpower_suntronic_6kw_hybrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_maxpower_suntronic_6kw_hybrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'maxpower-suntronic-6kw-hybrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_maxpower_suntronic_6kw_hybrid', v_found_slug, 'maxpower-suntronic-6kw-hybrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_maxpower' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_maxpower_suntronic_6kw_hybrid', v_found_brand_id, 'mpbrand_ws1_maxpower';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_maxpower_suntronic_6kw_hybrid', v_found_category_id, 'mpcat_ws1_solar_inverters';
+    end if;
+  end if;
+
+  -- variant SC-MAXPOWER_SUNTRONIC_6KW_HYBRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-MAXPOWER_SUNTRONIC_6KW_HYBRID' and id <> 'mpvar_ws1_maxpower_suntronic_6kw_hybrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-MAXPOWER_SUNTRONIC_6KW_HYBRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-MAXPOWER_SUNTRONIC_6KW_HYBRID', v_conflict, 'mpvar_ws1_maxpower_suntronic_6kw_hybrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_maxpower_suntronic_6kw_hybrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-MAXPOWER_SUNTRONIC_6KW_HYBRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_maxpower_suntronic_6kw_hybrid', v_found_sku, 'SC-MAXPOWER_SUNTRONIC_6KW_HYBRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_maxpower_suntronic_6kw_hybrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_maxpower_suntronic_6kw_hybrid', v_found_product_id, 'mpprod_ws1_maxpower_suntronic_6kw_hybrid';
+    end if;
   end if;
 
+  -- product longi-himo6-580w-mono
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'longi-himo6-580w-mono' and id <> 'mpprod_ws1_longi_himo6_580w_mono' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'longi-himo6-580w-mono', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'longi-himo6-580w-mono', v_conflict, 'mpprod_ws1_longi_himo6_580w_mono';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_longi_himo6_580w_mono';
+  if v_found_slug is not null then
+    if v_found_slug <> 'longi-himo6-580w-mono' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_longi_himo6_580w_mono', v_found_slug, 'longi-himo6-580w-mono';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_longi' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_longi_himo6_580w_mono', v_found_brand_id, 'mpbrand_ws1_longi';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_panels' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_longi_himo6_580w_mono', v_found_category_id, 'mpcat_ws1_solar_panels';
+    end if;
+  end if;
+
+  -- variant SC-LONGI_HIMO6_580W_MONO
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-LONGI_HIMO6_580W_MONO' and id <> 'mpvar_ws1_longi_himo6_580w_mono' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-LONGI_HIMO6_580W_MONO', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-LONGI_HIMO6_580W_MONO', v_conflict, 'mpvar_ws1_longi_himo6_580w_mono';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_longi_himo6_580w_mono';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-LONGI_HIMO6_580W_MONO' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_longi_himo6_580w_mono', v_found_sku, 'SC-LONGI_HIMO6_580W_MONO';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_longi_himo6_580w_mono' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_longi_himo6_580w_mono', v_found_product_id, 'mpprod_ws1_longi_himo6_580w_mono';
+    end if;
   end if;
 
+  -- product longi-himo7-600w-ntype
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'longi-himo7-600w-ntype' and id <> 'mpprod_ws1_longi_himo7_600w_ntype' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'longi-himo7-600w-ntype', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'longi-himo7-600w-ntype', v_conflict, 'mpprod_ws1_longi_himo7_600w_ntype';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_longi_himo7_600w_ntype';
+  if v_found_slug is not null then
+    if v_found_slug <> 'longi-himo7-600w-ntype' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_longi_himo7_600w_ntype', v_found_slug, 'longi-himo7-600w-ntype';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_longi' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_longi_himo7_600w_ntype', v_found_brand_id, 'mpbrand_ws1_longi';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_panels' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_longi_himo7_600w_ntype', v_found_category_id, 'mpcat_ws1_solar_panels';
+    end if;
+  end if;
+
+  -- variant SC-LONGI_HIMO7_600W_NTYPE
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-LONGI_HIMO7_600W_NTYPE' and id <> 'mpvar_ws1_longi_himo7_600w_ntype' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-LONGI_HIMO7_600W_NTYPE', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-LONGI_HIMO7_600W_NTYPE', v_conflict, 'mpvar_ws1_longi_himo7_600w_ntype';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_longi_himo7_600w_ntype';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-LONGI_HIMO7_600W_NTYPE' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_longi_himo7_600w_ntype', v_found_sku, 'SC-LONGI_HIMO7_600W_NTYPE';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_longi_himo7_600w_ntype' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_longi_himo7_600w_ntype', v_found_product_id, 'mpprod_ws1_longi_himo7_600w_ntype';
+    end if;
   end if;
 
+  -- product canadian-solar-hiku7-580w
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'canadian-solar-hiku7-580w' and id <> 'mpprod_ws1_canadian_solar_hiku7_580w' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'canadian-solar-hiku7-580w', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'canadian-solar-hiku7-580w', v_conflict, 'mpprod_ws1_canadian_solar_hiku7_580w';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_canadian_solar_hiku7_580w';
+  if v_found_slug is not null then
+    if v_found_slug <> 'canadian-solar-hiku7-580w' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_canadian_solar_hiku7_580w', v_found_slug, 'canadian-solar-hiku7-580w';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_canadian_solar' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_canadian_solar_hiku7_580w', v_found_brand_id, 'mpbrand_ws1_canadian_solar';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_panels' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_canadian_solar_hiku7_580w', v_found_category_id, 'mpcat_ws1_solar_panels';
+    end if;
+  end if;
+
+  -- variant SC-CANADIAN_SOLAR_HIKU7_580W
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-CANADIAN_SOLAR_HIKU7_580W' and id <> 'mpvar_ws1_canadian_solar_hiku7_580w' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-CANADIAN_SOLAR_HIKU7_580W', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-CANADIAN_SOLAR_HIKU7_580W', v_conflict, 'mpvar_ws1_canadian_solar_hiku7_580w';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_canadian_solar_hiku7_580w';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-CANADIAN_SOLAR_HIKU7_580W' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_canadian_solar_hiku7_580w', v_found_sku, 'SC-CANADIAN_SOLAR_HIKU7_580W';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_canadian_solar_hiku7_580w' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_canadian_solar_hiku7_580w', v_found_product_id, 'mpprod_ws1_canadian_solar_hiku7_580w';
+    end if;
   end if;
 
+  -- product jinko-tiger-neo-580w
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'jinko-tiger-neo-580w' and id <> 'mpprod_ws1_jinko_tiger_neo_580w' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'jinko-tiger-neo-580w', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'jinko-tiger-neo-580w', v_conflict, 'mpprod_ws1_jinko_tiger_neo_580w';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_jinko_tiger_neo_580w';
+  if v_found_slug is not null then
+    if v_found_slug <> 'jinko-tiger-neo-580w' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_jinko_tiger_neo_580w', v_found_slug, 'jinko-tiger-neo-580w';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_jinko' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_jinko_tiger_neo_580w', v_found_brand_id, 'mpbrand_ws1_jinko';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_panels' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_jinko_tiger_neo_580w', v_found_category_id, 'mpcat_ws1_solar_panels';
+    end if;
+  end if;
+
+  -- variant SC-JINKO_TIGER_NEO_580W
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-JINKO_TIGER_NEO_580W' and id <> 'mpvar_ws1_jinko_tiger_neo_580w' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-JINKO_TIGER_NEO_580W', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-JINKO_TIGER_NEO_580W', v_conflict, 'mpvar_ws1_jinko_tiger_neo_580w';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_jinko_tiger_neo_580w';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-JINKO_TIGER_NEO_580W' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_jinko_tiger_neo_580w', v_found_sku, 'SC-JINKO_TIGER_NEO_580W';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_jinko_tiger_neo_580w' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_jinko_tiger_neo_580w', v_found_product_id, 'mpprod_ws1_jinko_tiger_neo_580w';
+    end if;
   end if;
 
+  -- product ja-solar-deepblue-580w
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'ja-solar-deepblue-580w' and id <> 'mpprod_ws1_ja_solar_deepblue_580w' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'ja-solar-deepblue-580w', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'ja-solar-deepblue-580w', v_conflict, 'mpprod_ws1_ja_solar_deepblue_580w';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_ja_solar_deepblue_580w';
+  if v_found_slug is not null then
+    if v_found_slug <> 'ja-solar-deepblue-580w' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_ja_solar_deepblue_580w', v_found_slug, 'ja-solar-deepblue-580w';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_ja_solar' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_ja_solar_deepblue_580w', v_found_brand_id, 'mpbrand_ws1_ja_solar';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_solar_panels' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_ja_solar_deepblue_580w', v_found_category_id, 'mpcat_ws1_solar_panels';
+    end if;
+  end if;
+
+  -- variant SC-JA_SOLAR_DEEPBLUE_580W
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-JA_SOLAR_DEEPBLUE_580W' and id <> 'mpvar_ws1_ja_solar_deepblue_580w' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-JA_SOLAR_DEEPBLUE_580W', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-JA_SOLAR_DEEPBLUE_580W', v_conflict, 'mpvar_ws1_ja_solar_deepblue_580w';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_ja_solar_deepblue_580w';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-JA_SOLAR_DEEPBLUE_580W' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_ja_solar_deepblue_580w', v_found_sku, 'SC-JA_SOLAR_DEEPBLUE_580W';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_ja_solar_deepblue_580w' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_ja_solar_deepblue_580w', v_found_product_id, 'mpprod_ws1_ja_solar_deepblue_580w';
+    end if;
   end if;
 
+  -- product narada-5-12kwh-lithium
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'narada-5-12kwh-lithium' and id <> 'mpprod_ws1_narada_5_12kwh_lithium' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'narada-5-12kwh-lithium', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'narada-5-12kwh-lithium', v_conflict, 'mpprod_ws1_narada_5_12kwh_lithium';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_narada_5_12kwh_lithium';
+  if v_found_slug is not null then
+    if v_found_slug <> 'narada-5-12kwh-lithium' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_narada_5_12kwh_lithium', v_found_slug, 'narada-5-12kwh-lithium';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_narada' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_narada_5_12kwh_lithium', v_found_brand_id, 'mpbrand_ws1_narada';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_lithium_batteries' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_narada_5_12kwh_lithium', v_found_category_id, 'mpcat_ws1_lithium_batteries';
+    end if;
+  end if;
+
+  -- variant SC-NARADA_5_12KWH_LITHIUM
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-NARADA_5_12KWH_LITHIUM' and id <> 'mpvar_ws1_narada_5_12kwh_lithium' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-NARADA_5_12KWH_LITHIUM', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-NARADA_5_12KWH_LITHIUM', v_conflict, 'mpvar_ws1_narada_5_12kwh_lithium';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_narada_5_12kwh_lithium';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-NARADA_5_12KWH_LITHIUM' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_narada_5_12kwh_lithium', v_found_sku, 'SC-NARADA_5_12KWH_LITHIUM';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_narada_5_12kwh_lithium' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_narada_5_12kwh_lithium', v_found_product_id, 'mpprod_ws1_narada_5_12kwh_lithium';
+    end if;
   end if;
 
+  -- product knox-5-12kwh-lithium
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'knox-5-12kwh-lithium' and id <> 'mpprod_ws1_knox_5_12kwh_lithium' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'knox-5-12kwh-lithium', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'knox-5-12kwh-lithium', v_conflict, 'mpprod_ws1_knox_5_12kwh_lithium';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_knox_5_12kwh_lithium';
+  if v_found_slug is not null then
+    if v_found_slug <> 'knox-5-12kwh-lithium' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_knox_5_12kwh_lithium', v_found_slug, 'knox-5-12kwh-lithium';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_knox' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_knox_5_12kwh_lithium', v_found_brand_id, 'mpbrand_ws1_knox';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_lithium_batteries' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_knox_5_12kwh_lithium', v_found_category_id, 'mpcat_ws1_lithium_batteries';
+    end if;
+  end if;
+
+  -- variant SC-KNOX_5_12KWH_LITHIUM
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-KNOX_5_12KWH_LITHIUM' and id <> 'mpvar_ws1_knox_5_12kwh_lithium' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-KNOX_5_12KWH_LITHIUM', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-KNOX_5_12KWH_LITHIUM', v_conflict, 'mpvar_ws1_knox_5_12kwh_lithium';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_knox_5_12kwh_lithium';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-KNOX_5_12KWH_LITHIUM' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_knox_5_12kwh_lithium', v_found_sku, 'SC-KNOX_5_12KWH_LITHIUM';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_knox_5_12kwh_lithium' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_knox_5_12kwh_lithium', v_found_product_id, 'mpprod_ws1_knox_5_12kwh_lithium';
+    end if;
   end if;
 
+  -- product pylontech-us5000-4-8kwh
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'pylontech-us5000-4-8kwh' and id <> 'mpprod_ws1_pylontech_us5000_4_8kwh' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'pylontech-us5000-4-8kwh', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'pylontech-us5000-4-8kwh', v_conflict, 'mpprod_ws1_pylontech_us5000_4_8kwh';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_pylontech_us5000_4_8kwh';
+  if v_found_slug is not null then
+    if v_found_slug <> 'pylontech-us5000-4-8kwh' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_pylontech_us5000_4_8kwh', v_found_slug, 'pylontech-us5000-4-8kwh';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_pylontech' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_pylontech_us5000_4_8kwh', v_found_brand_id, 'mpbrand_ws1_pylontech';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_lithium_batteries' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_pylontech_us5000_4_8kwh', v_found_category_id, 'mpcat_ws1_lithium_batteries';
+    end if;
+  end if;
+
+  -- variant SC-PYLONTECH_US5000_4_8KWH
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-PYLONTECH_US5000_4_8KWH' and id <> 'mpvar_ws1_pylontech_us5000_4_8kwh' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-PYLONTECH_US5000_4_8KWH', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-PYLONTECH_US5000_4_8KWH', v_conflict, 'mpvar_ws1_pylontech_us5000_4_8kwh';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_pylontech_us5000_4_8kwh';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-PYLONTECH_US5000_4_8KWH' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_pylontech_us5000_4_8kwh', v_found_sku, 'SC-PYLONTECH_US5000_4_8KWH';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_pylontech_us5000_4_8kwh' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_pylontech_us5000_4_8kwh', v_found_product_id, 'mpprod_ws1_pylontech_us5000_4_8kwh';
+    end if;
   end if;
 
+  -- product inverex-lv2-6-lithium
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'inverex-lv2-6-lithium' and id <> 'mpprod_ws1_inverex_lv2_6_lithium' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'inverex-lv2-6-lithium', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'inverex-lv2-6-lithium', v_conflict, 'mpprod_ws1_inverex_lv2_6_lithium';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_inverex_lv2_6_lithium';
+  if v_found_slug is not null then
+    if v_found_slug <> 'inverex-lv2-6-lithium' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_inverex_lv2_6_lithium', v_found_slug, 'inverex-lv2-6-lithium';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_inverex' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_inverex_lv2_6_lithium', v_found_brand_id, 'mpbrand_ws1_inverex';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_lithium_batteries' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_inverex_lv2_6_lithium', v_found_category_id, 'mpcat_ws1_lithium_batteries';
+    end if;
+  end if;
+
+  -- variant SC-INVEREX_LV2_6_LITHIUM
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-INVEREX_LV2_6_LITHIUM' and id <> 'mpvar_ws1_inverex_lv2_6_lithium' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-INVEREX_LV2_6_LITHIUM', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-INVEREX_LV2_6_LITHIUM', v_conflict, 'mpvar_ws1_inverex_lv2_6_lithium';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_inverex_lv2_6_lithium';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-INVEREX_LV2_6_LITHIUM' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_inverex_lv2_6_lithium', v_found_sku, 'SC-INVEREX_LV2_6_LITHIUM';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_inverex_lv2_6_lithium' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_inverex_lv2_6_lithium', v_found_product_id, 'mpprod_ws1_inverex_lv2_6_lithium';
+    end if;
   end if;
 
+  -- product fronus-meta-10kw-ongrid
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'fronus-meta-10kw-ongrid' and id <> 'mpprod_ws1_fronus_meta_10kw_ongrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'fronus-meta-10kw-ongrid', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'fronus-meta-10kw-ongrid', v_conflict, 'mpprod_ws1_fronus_meta_10kw_ongrid';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_fronus_meta_10kw_ongrid';
+  if v_found_slug is not null then
+    if v_found_slug <> 'fronus-meta-10kw-ongrid' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_fronus_meta_10kw_ongrid', v_found_slug, 'fronus-meta-10kw-ongrid';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_fronus' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_fronus_meta_10kw_ongrid', v_found_brand_id, 'mpbrand_ws1_fronus';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_on_grid_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_fronus_meta_10kw_ongrid', v_found_category_id, 'mpcat_ws1_on_grid_inverters';
+    end if;
+  end if;
+
+  -- variant SC-FRONUS_META_10KW_ONGRID
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-FRONUS_META_10KW_ONGRID' and id <> 'mpvar_ws1_fronus_meta_10kw_ongrid' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-FRONUS_META_10KW_ONGRID', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-FRONUS_META_10KW_ONGRID', v_conflict, 'mpvar_ws1_fronus_meta_10kw_ongrid';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_fronus_meta_10kw_ongrid';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-FRONUS_META_10KW_ONGRID' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_fronus_meta_10kw_ongrid', v_found_sku, 'SC-FRONUS_META_10KW_ONGRID';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_fronus_meta_10kw_ongrid' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_fronus_meta_10kw_ongrid', v_found_product_id, 'mpprod_ws1_fronus_meta_10kw_ongrid';
+    end if;
   end if;
 
+  -- product solis-6kw-ongrid-string
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'solis-6kw-ongrid-string' and id <> 'mpprod_ws1_solis_6kw_ongrid_string' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'solis-6kw-ongrid-string', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'solis-6kw-ongrid-string', v_conflict, 'mpprod_ws1_solis_6kw_ongrid_string';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_solis_6kw_ongrid_string';
+  if v_found_slug is not null then
+    if v_found_slug <> 'solis-6kw-ongrid-string' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_solis_6kw_ongrid_string', v_found_slug, 'solis-6kw-ongrid-string';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_solis' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_solis_6kw_ongrid_string', v_found_brand_id, 'mpbrand_ws1_solis';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_on_grid_inverters' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_solis_6kw_ongrid_string', v_found_category_id, 'mpcat_ws1_on_grid_inverters';
+    end if;
+  end if;
+
+  -- variant SC-SOLIS_6KW_ONGRID_STRING
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-SOLIS_6KW_ONGRID_STRING' and id <> 'mpvar_ws1_solis_6kw_ongrid_string' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-SOLIS_6KW_ONGRID_STRING', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-SOLIS_6KW_ONGRID_STRING', v_conflict, 'mpvar_ws1_solis_6kw_ongrid_string';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_solis_6kw_ongrid_string';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-SOLIS_6KW_ONGRID_STRING' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_solis_6kw_ongrid_string', v_found_sku, 'SC-SOLIS_6KW_ONGRID_STRING';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_solis_6kw_ongrid_string' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_solis_6kw_ongrid_string', v_found_product_id, 'mpprod_ws1_solis_6kw_ongrid_string';
+    end if;
   end if;
 
+  -- product solar-mounting-structure-per-kw
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'solar-mounting-structure-per-kw' and id <> 'mpprod_ws1_solar_mounting_structure_per_kw' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'solar-mounting-structure-per-kw', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'solar-mounting-structure-per-kw', v_conflict, 'mpprod_ws1_solar_mounting_structure_per_kw';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_solar_mounting_structure_per_kw';
+  if v_found_slug is not null then
+    if v_found_slug <> 'solar-mounting-structure-per-kw' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_solar_mounting_structure_per_kw', v_found_slug, 'solar-mounting-structure-per-kw';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_sunchaser' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_solar_mounting_structure_per_kw', v_found_brand_id, 'mpbrand_ws1_sunchaser';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_accessories' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_solar_mounting_structure_per_kw', v_found_category_id, 'mpcat_ws1_accessories';
+    end if;
+  end if;
+
+  -- variant SC-SOLAR_MOUNTING_STRUCTURE_PER_KW
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-SOLAR_MOUNTING_STRUCTURE_PER_KW' and id <> 'mpvar_ws1_solar_mounting_structure_per_kw' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-SOLAR_MOUNTING_STRUCTURE_PER_KW', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-SOLAR_MOUNTING_STRUCTURE_PER_KW', v_conflict, 'mpvar_ws1_solar_mounting_structure_per_kw';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_solar_mounting_structure_per_kw';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-SOLAR_MOUNTING_STRUCTURE_PER_KW' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_solar_mounting_structure_per_kw', v_found_sku, 'SC-SOLAR_MOUNTING_STRUCTURE_PER_KW';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_solar_mounting_structure_per_kw' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_solar_mounting_structure_per_kw', v_found_product_id, 'mpprod_ws1_solar_mounting_structure_per_kw';
+    end if;
   end if;
 
+  -- product dc-solar-cable-6mm-per-meter
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'dc-solar-cable-6mm-per-meter' and id <> 'mpprod_ws1_dc_solar_cable_6mm_per_meter' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'dc-solar-cable-6mm-per-meter', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'dc-solar-cable-6mm-per-meter', v_conflict, 'mpprod_ws1_dc_solar_cable_6mm_per_meter';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_dc_solar_cable_6mm_per_meter';
+  if v_found_slug is not null then
+    if v_found_slug <> 'dc-solar-cable-6mm-per-meter' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_dc_solar_cable_6mm_per_meter', v_found_slug, 'dc-solar-cable-6mm-per-meter';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_generic' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_dc_solar_cable_6mm_per_meter', v_found_brand_id, 'mpbrand_ws1_generic';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_accessories' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_dc_solar_cable_6mm_per_meter', v_found_category_id, 'mpcat_ws1_accessories';
+    end if;
+  end if;
+
+  -- variant SC-DC_SOLAR_CABLE_6MM_PER_METER
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-DC_SOLAR_CABLE_6MM_PER_METER' and id <> 'mpvar_ws1_dc_solar_cable_6mm_per_meter' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-DC_SOLAR_CABLE_6MM_PER_METER', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-DC_SOLAR_CABLE_6MM_PER_METER', v_conflict, 'mpvar_ws1_dc_solar_cable_6mm_per_meter';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_dc_solar_cable_6mm_per_meter';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-DC_SOLAR_CABLE_6MM_PER_METER' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_dc_solar_cable_6mm_per_meter', v_found_sku, 'SC-DC_SOLAR_CABLE_6MM_PER_METER';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_dc_solar_cable_6mm_per_meter' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_dc_solar_cable_6mm_per_meter', v_found_product_id, 'mpprod_ws1_dc_solar_cable_6mm_per_meter';
+    end if;
   end if;
 
+  -- product mc4-solar-connectors-pair
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'mc4-solar-connectors-pair' and id <> 'mpprod_ws1_mc4_solar_connectors_pair' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'mc4-solar-connectors-pair', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'mc4-solar-connectors-pair', v_conflict, 'mpprod_ws1_mc4_solar_connectors_pair';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_mc4_solar_connectors_pair';
+  if v_found_slug is not null then
+    if v_found_slug <> 'mc4-solar-connectors-pair' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_mc4_solar_connectors_pair', v_found_slug, 'mc4-solar-connectors-pair';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_generic' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_mc4_solar_connectors_pair', v_found_brand_id, 'mpbrand_ws1_generic';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_accessories' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_mc4_solar_connectors_pair', v_found_category_id, 'mpcat_ws1_accessories';
+    end if;
+  end if;
+
+  -- variant SC-MC4_SOLAR_CONNECTORS_PAIR
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-MC4_SOLAR_CONNECTORS_PAIR' and id <> 'mpvar_ws1_mc4_solar_connectors_pair' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-MC4_SOLAR_CONNECTORS_PAIR', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-MC4_SOLAR_CONNECTORS_PAIR', v_conflict, 'mpvar_ws1_mc4_solar_connectors_pair';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_mc4_solar_connectors_pair';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-MC4_SOLAR_CONNECTORS_PAIR' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_mc4_solar_connectors_pair', v_found_sku, 'SC-MC4_SOLAR_CONNECTORS_PAIR';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_mc4_solar_connectors_pair' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_mc4_solar_connectors_pair', v_found_product_id, 'mpprod_ws1_mc4_solar_connectors_pair';
+    end if;
   end if;
 
+  -- product solar-lightning-arrester-dc
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'solar-lightning-arrester-dc' and id <> 'mpprod_ws1_solar_lightning_arrester_dc' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'solar-lightning-arrester-dc', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'solar-lightning-arrester-dc', v_conflict, 'mpprod_ws1_solar_lightning_arrester_dc';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_solar_lightning_arrester_dc';
+  if v_found_slug is not null then
+    if v_found_slug <> 'solar-lightning-arrester-dc' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_solar_lightning_arrester_dc', v_found_slug, 'solar-lightning-arrester-dc';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_generic' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_solar_lightning_arrester_dc', v_found_brand_id, 'mpbrand_ws1_generic';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_accessories' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_solar_lightning_arrester_dc', v_found_category_id, 'mpcat_ws1_accessories';
+    end if;
+  end if;
+
+  -- variant SC-SOLAR_LIGHTNING_ARRESTER_DC
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-SOLAR_LIGHTNING_ARRESTER_DC' and id <> 'mpvar_ws1_solar_lightning_arrester_dc' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-SOLAR_LIGHTNING_ARRESTER_DC', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-SOLAR_LIGHTNING_ARRESTER_DC', v_conflict, 'mpvar_ws1_solar_lightning_arrester_dc';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_solar_lightning_arrester_dc';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-SOLAR_LIGHTNING_ARRESTER_DC' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_solar_lightning_arrester_dc', v_found_sku, 'SC-SOLAR_LIGHTNING_ARRESTER_DC';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_solar_lightning_arrester_dc' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_solar_lightning_arrester_dc', v_found_product_id, 'mpprod_ws1_solar_lightning_arrester_dc';
+    end if;
   end if;
 
+  -- product ac-dc-distribution-box
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'ac-dc-distribution-box' and id <> 'mpprod_ws1_ac_dc_distribution_box' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'ac-dc-distribution-box', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'ac-dc-distribution-box', v_conflict, 'mpprod_ws1_ac_dc_distribution_box';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_ac_dc_distribution_box';
+  if v_found_slug is not null then
+    if v_found_slug <> 'ac-dc-distribution-box' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_ac_dc_distribution_box', v_found_slug, 'ac-dc-distribution-box';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_sunchaser' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_ac_dc_distribution_box', v_found_brand_id, 'mpbrand_ws1_sunchaser';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_accessories' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_ac_dc_distribution_box', v_found_category_id, 'mpcat_ws1_accessories';
+    end if;
+  end if;
+
+  -- variant SC-AC_DC_DISTRIBUTION_BOX
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-AC_DC_DISTRIBUTION_BOX' and id <> 'mpvar_ws1_ac_dc_distribution_box' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-AC_DC_DISTRIBUTION_BOX', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-AC_DC_DISTRIBUTION_BOX', v_conflict, 'mpvar_ws1_ac_dc_distribution_box';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_ac_dc_distribution_box';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-AC_DC_DISTRIBUTION_BOX' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_ac_dc_distribution_box', v_found_sku, 'SC-AC_DC_DISTRIBUTION_BOX';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_ac_dc_distribution_box' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_ac_dc_distribution_box', v_found_product_id, 'mpprod_ws1_ac_dc_distribution_box';
+    end if;
   end if;
 
+  -- product bi-directional-net-meter
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = 'bi-directional-net-meter' and id <> 'mpprod_ws1_bi_directional_net_meter' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', 'bi-directional-net-meter', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      'bi-directional-net-meter', v_conflict, 'mpprod_ws1_bi_directional_net_meter';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_bi_directional_net_meter';
+  if v_found_slug is not null then
+    if v_found_slug <> 'bi-directional-net-meter' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_bi_directional_net_meter', v_found_slug, 'bi-directional-net-meter';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_generic' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_bi_directional_net_meter', v_found_brand_id, 'mpbrand_ws1_generic';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_accessories' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_bi_directional_net_meter', v_found_category_id, 'mpcat_ws1_accessories';
+    end if;
+  end if;
+
+  -- variant SC-BI_DIRECTIONAL_NET_METER
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-BI_DIRECTIONAL_NET_METER' and id <> 'mpvar_ws1_bi_directional_net_meter' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-BI_DIRECTIONAL_NET_METER', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-BI_DIRECTIONAL_NET_METER', v_conflict, 'mpvar_ws1_bi_directional_net_meter';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_bi_directional_net_meter';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-BI_DIRECTIONAL_NET_METER' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_bi_directional_net_meter', v_found_sku, 'SC-BI_DIRECTIONAL_NET_METER';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_bi_directional_net_meter' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_bi_directional_net_meter', v_found_product_id, 'mpprod_ws1_bi_directional_net_meter';
+    end if;
   end if;
 
+  -- product 6kw-complete-hybrid-system
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = '6kw-complete-hybrid-system' and id <> 'mpprod_ws1_6kw_complete_hybrid_system' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', '6kw-complete-hybrid-system', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      '6kw-complete-hybrid-system', v_conflict, 'mpprod_ws1_6kw_complete_hybrid_system';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_6kw_complete_hybrid_system';
+  if v_found_slug is not null then
+    if v_found_slug <> '6kw-complete-hybrid-system' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_6kw_complete_hybrid_system', v_found_slug, '6kw-complete-hybrid-system';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_sunchaser' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_6kw_complete_hybrid_system', v_found_brand_id, 'mpbrand_ws1_sunchaser';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_hybrid_systems' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_6kw_complete_hybrid_system', v_found_category_id, 'mpcat_ws1_hybrid_systems';
+    end if;
+  end if;
+
+  -- variant SC-6KW_COMPLETE_HYBRID_SYSTEM
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-6KW_COMPLETE_HYBRID_SYSTEM' and id <> 'mpvar_ws1_6kw_complete_hybrid_system' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-6KW_COMPLETE_HYBRID_SYSTEM', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-6KW_COMPLETE_HYBRID_SYSTEM', v_conflict, 'mpvar_ws1_6kw_complete_hybrid_system';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_6kw_complete_hybrid_system';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-6KW_COMPLETE_HYBRID_SYSTEM' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_6kw_complete_hybrid_system', v_found_sku, 'SC-6KW_COMPLETE_HYBRID_SYSTEM';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_6kw_complete_hybrid_system' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_6kw_complete_hybrid_system', v_found_product_id, 'mpprod_ws1_6kw_complete_hybrid_system';
+    end if;
   end if;
 
+  -- product 10kw-complete-hybrid-system
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = '10kw-complete-hybrid-system' and id <> 'mpprod_ws1_10kw_complete_hybrid_system' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', '10kw-complete-hybrid-system', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      '10kw-complete-hybrid-system', v_conflict, 'mpprod_ws1_10kw_complete_hybrid_system';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_10kw_complete_hybrid_system';
+  if v_found_slug is not null then
+    if v_found_slug <> '10kw-complete-hybrid-system' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_10kw_complete_hybrid_system', v_found_slug, '10kw-complete-hybrid-system';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_sunchaser' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_10kw_complete_hybrid_system', v_found_brand_id, 'mpbrand_ws1_sunchaser';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_hybrid_systems' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_10kw_complete_hybrid_system', v_found_category_id, 'mpcat_ws1_hybrid_systems';
+    end if;
+  end if;
+
+  -- variant SC-10KW_COMPLETE_HYBRID_SYSTEM
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-10KW_COMPLETE_HYBRID_SYSTEM' and id <> 'mpvar_ws1_10kw_complete_hybrid_system' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-10KW_COMPLETE_HYBRID_SYSTEM', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-10KW_COMPLETE_HYBRID_SYSTEM', v_conflict, 'mpvar_ws1_10kw_complete_hybrid_system';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_10kw_complete_hybrid_system';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-10KW_COMPLETE_HYBRID_SYSTEM' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_10kw_complete_hybrid_system', v_found_sku, 'SC-10KW_COMPLETE_HYBRID_SYSTEM';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_10kw_complete_hybrid_system' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_10kw_complete_hybrid_system', v_found_product_id, 'mpprod_ws1_10kw_complete_hybrid_system';
+    end if;
   end if;
 
+  -- product 15kw-commercial-solar-system
   v_conflict := null;
   select id into v_conflict from public.mp_products
     where slug = '15kw-commercial-solar-system' and id <> 'mpprod_ws1_15kw_commercial_solar_system' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed product slug collision: % belongs to %', '15kw-commercial-solar-system', v_conflict;
+    raise exception 'WS1 seed product slug ownership conflict: slug % owned by % (expected %)',
+      '15kw-commercial-solar-system', v_conflict, 'mpprod_ws1_15kw_commercial_solar_system';
   end if;
+  v_found_slug := null;
+  v_found_brand_id := null;
+  v_found_category_id := null;
+  select slug, brand_id, category_id
+    into v_found_slug, v_found_brand_id, v_found_category_id
+  from public.mp_products where id = 'mpprod_ws1_15kw_commercial_solar_system';
+  if v_found_slug is not null then
+    if v_found_slug <> '15kw-commercial-solar-system' then
+      raise exception 'WS1 seed product ID ownership conflict: id % has slug % (expected %)',
+        'mpprod_ws1_15kw_commercial_solar_system', v_found_slug, '15kw-commercial-solar-system';
+    end if;
+    if v_found_brand_id is distinct from 'mpbrand_ws1_sunchaser' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has brand_id % (expected %)',
+        'mpprod_ws1_15kw_commercial_solar_system', v_found_brand_id, 'mpbrand_ws1_sunchaser';
+    end if;
+    if v_found_category_id is distinct from 'mpcat_ws1_hybrid_systems' then
+      raise exception 'WS1 seed product ID taxonomy conflict: id % has category_id % (expected %)',
+        'mpprod_ws1_15kw_commercial_solar_system', v_found_category_id, 'mpcat_ws1_hybrid_systems';
+    end if;
+  end if;
+
+  -- variant SC-15KW_COMMERCIAL_SOLAR_SYSTEM
   v_conflict := null;
   select id into v_conflict from public.mp_product_variants
     where sku = 'SC-15KW_COMMERCIAL_SOLAR_SYSTEM' and id <> 'mpvar_ws1_15kw_commercial_solar_system' limit 1;
   if v_conflict is not null then
-    raise exception 'WS1 seed SKU collision: % belongs to %', 'SC-15KW_COMMERCIAL_SOLAR_SYSTEM', v_conflict;
+    raise exception 'WS1 seed SKU ownership conflict: sku % owned by % (expected %)',
+      'SC-15KW_COMMERCIAL_SOLAR_SYSTEM', v_conflict, 'mpvar_ws1_15kw_commercial_solar_system';
+  end if;
+  v_found_sku := null;
+  v_found_product_id := null;
+  select sku, product_id into v_found_sku, v_found_product_id
+  from public.mp_product_variants where id = 'mpvar_ws1_15kw_commercial_solar_system';
+  if v_found_sku is not null then
+    if v_found_sku <> 'SC-15KW_COMMERCIAL_SOLAR_SYSTEM' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has sku % (expected %)',
+        'mpvar_ws1_15kw_commercial_solar_system', v_found_sku, 'SC-15KW_COMMERCIAL_SOLAR_SYSTEM';
+    end if;
+    if v_found_product_id is distinct from 'mpprod_ws1_15kw_commercial_solar_system' then
+      raise exception 'WS1 seed variant ID ownership conflict: id % has product_id % (expected %)',
+        'mpvar_ws1_15kw_commercial_solar_system', v_found_product_id, 'mpprod_ws1_15kw_commercial_solar_system';
+    end if;
   end if;
 
 end $guard$;
@@ -580,7 +1926,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_fronus', 'Fronus', 'fronus', true)
@@ -589,7 +1935,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_generic', 'Generic', 'generic', true)
@@ -598,7 +1944,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_growatt', 'Growatt', 'growatt', true)
@@ -607,7 +1953,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_huawei', 'Huawei', 'huawei', true)
@@ -616,7 +1962,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_inverex', 'Inverex', 'inverex', true)
@@ -625,7 +1971,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_ja_solar', 'JA Solar', 'ja-solar', true)
@@ -634,7 +1980,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_jinko', 'Jinko', 'jinko', true)
@@ -643,7 +1989,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_knox', 'Knox', 'knox', true)
@@ -652,7 +1998,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_longi', 'Longi', 'longi', true)
@@ -661,7 +2007,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_maxpower', 'MaxPower', 'maxpower', true)
@@ -670,7 +2016,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_narada', 'Narada', 'narada', true)
@@ -679,7 +2025,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_pylontech', 'Pylontech', 'pylontech', true)
@@ -688,7 +2034,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_solis', 'Solis', 'solis', true)
@@ -697,7 +2043,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_brands (id, name, slug, active)
 values ('mpbrand_ws1_sunchaser', 'SunChaser', 'sunchaser', true)
@@ -706,7 +2052,7 @@ on conflict (id) do update set
   slug = excluded.slug,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_brands.id like 'mpbrand\_ws1\_%' escape '\';
+where public.mp_brands.slug = excluded.slug;
 
 insert into public.mp_categories (id, name, slug, description, sort_order, active)
 values ('mpcat_ws1_solar_inverters', 'Solar Inverters', 'solar-inverters', 'Hybrid, On-Grid, and Off-Grid solar inverters from top brands', 1, true)
@@ -717,7 +2063,7 @@ on conflict (id) do update set
   sort_order = excluded.sort_order,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_categories.id like 'mpcat\_ws1\_%' escape '\';
+where public.mp_categories.slug = excluded.slug;
 
 insert into public.mp_categories (id, name, slug, description, sort_order, active)
 values ('mpcat_ws1_solar_panels', 'Solar Panels', 'solar-panels', 'High-efficiency mono and poly crystalline solar panels', 2, true)
@@ -728,7 +2074,7 @@ on conflict (id) do update set
   sort_order = excluded.sort_order,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_categories.id like 'mpcat\_ws1\_%' escape '\';
+where public.mp_categories.slug = excluded.slug;
 
 insert into public.mp_categories (id, name, slug, description, sort_order, active)
 values ('mpcat_ws1_lithium_batteries', 'Lithium Batteries', 'lithium-batteries', 'Long-lasting lithium-ion and LiFePO4 batteries for solar storage', 3, true)
@@ -739,7 +2085,7 @@ on conflict (id) do update set
   sort_order = excluded.sort_order,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_categories.id like 'mpcat\_ws1\_%' escape '\';
+where public.mp_categories.slug = excluded.slug;
 
 insert into public.mp_categories (id, name, slug, description, sort_order, active)
 values ('mpcat_ws1_hybrid_systems', 'Hybrid Systems', 'hybrid-systems', 'Complete hybrid solar system packages for homes and businesses', 4, true)
@@ -750,7 +2096,7 @@ on conflict (id) do update set
   sort_order = excluded.sort_order,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_categories.id like 'mpcat\_ws1\_%' escape '\';
+where public.mp_categories.slug = excluded.slug;
 
 insert into public.mp_categories (id, name, slug, description, sort_order, active)
 values ('mpcat_ws1_accessories', 'Accessories', 'accessories', 'Solar mounting structures, cables, connectors, and protection devices', 5, true)
@@ -761,7 +2107,7 @@ on conflict (id) do update set
   sort_order = excluded.sort_order,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_categories.id like 'mpcat\_ws1\_%' escape '\';
+where public.mp_categories.slug = excluded.slug;
 
 insert into public.mp_categories (id, name, slug, description, sort_order, active)
 values ('mpcat_ws1_on_grid_inverters', 'On-Grid Inverters', 'on-grid-inverters', 'Grid-tied inverters for net metering and zero export systems', 6, true)
@@ -772,7 +2118,7 @@ on conflict (id) do update set
   sort_order = excluded.sort_order,
   active = true,
   updated_at = timezone('utc', now())
-where public.mp_categories.id like 'mpcat\_ws1\_%' escape '\';
+where public.mp_categories.slug = excluded.slug;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -821,7 +2167,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -870,7 +2218,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -919,7 +2269,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -968,7 +2320,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1017,7 +2371,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1066,7 +2422,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1115,7 +2473,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1164,7 +2524,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1213,7 +2575,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1262,7 +2626,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1311,7 +2677,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1360,7 +2728,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1409,7 +2779,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1458,7 +2830,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1507,7 +2881,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1556,7 +2932,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1605,7 +2983,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1654,7 +3034,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1703,7 +3085,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1752,7 +3136,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1801,7 +3187,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1850,7 +3238,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1899,7 +3289,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1948,7 +3340,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -1997,7 +3391,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -2046,7 +3442,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -2095,7 +3493,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -2144,7 +3544,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -2193,7 +3595,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_products (
   id, brand_id, category_id, title, slug, description, tags, active, featured,
@@ -2242,7 +3646,9 @@ on conflict (id) do update set
     else public.mp_products.display_price_state
   end,
   updated_at = timezone('utc', now())
-where public.mp_products.id like 'mpprod\_ws1\_%' escape '\';
+where public.mp_products.slug = excluded.slug
+  and public.mp_products.brand_id = excluded.brand_id
+  and public.mp_products.category_id = excluded.category_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2279,7 +3685,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2316,7 +3723,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2353,7 +3761,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2390,7 +3799,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2427,7 +3837,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2464,7 +3875,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2501,7 +3913,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2538,7 +3951,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2575,7 +3989,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2612,7 +4027,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2649,7 +4065,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2686,7 +4103,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2723,7 +4141,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2760,7 +4179,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2797,7 +4217,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2834,7 +4255,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2871,7 +4293,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2908,7 +4331,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2945,7 +4369,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -2982,7 +4407,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3019,7 +4445,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3056,7 +4483,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3093,7 +4521,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3130,7 +4559,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3167,7 +4597,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3204,7 +4635,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3241,7 +4673,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3278,7 +4711,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3315,7 +4749,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 insert into public.mp_product_variants (
   id, product_id, sku, title, is_default, is_priceable,
@@ -3352,7 +4787,8 @@ on conflict (id) do update set
     else public.mp_product_variants.website_price_source
   end,
   updated_at = timezone('utc', now())
-where public.mp_product_variants.id like 'mpvar\_ws1\_%' escape '\';
+where public.mp_product_variants.sku = excluded.sku
+  and public.mp_product_variants.product_id = excluded.product_id;
 
 
 do $assert$

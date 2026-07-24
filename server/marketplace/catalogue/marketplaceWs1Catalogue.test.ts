@@ -87,6 +87,24 @@ async function applySqlFile(client: pg.Client, filePath: string): Promise<void> 
   await client.query(readFileSync(filePath, "utf8"));
 }
 
+/** Apply SQL expected to fail; clears aborted transaction state afterward. */
+async function applySqlFileExpectReject(
+  client: pg.Client,
+  filePath: string,
+): Promise<boolean> {
+  try {
+    await client.query(readFileSync(filePath, "utf8"));
+    return false;
+  } catch {
+    try {
+      await client.query("rollback");
+    } catch {
+      /* ignore */
+    }
+    return true;
+  }
+}
+
 async function main(): Promise<void> {
   if (!dockerAvailable()) {
     console.error("BLOCKED: Docker unavailable — cannot run WS1 catalogue schema tests");
@@ -276,7 +294,38 @@ async function main(): Promise<void> {
         after.rows[0].website_price_source === "override",
     );
 
-    // Insert a non-seed product referencing a seed brand, then rollback
+    // -------------------------------------------------------------------------
+    // Cascade-safe rollback fixtures
+    // -------------------------------------------------------------------------
+    const longi = WS1_SEED_PRODUCTS.find((p) => p.slug === "longi-himo6-580w-mono")!;
+    const pylon = WS1_SEED_PRODUCTS.find((p) => p.slug === "pylontech-us5000-4-8kwh")!;
+    const mc4 = WS1_SEED_PRODUCTS.find((p) => p.slug === "mc4-solar-connectors-pair")!;
+    const unusedBrandVictim = WS1_SEED_PRODUCTS.find(
+      (p) => p.brandId !== longi.brandId && p.brandId !== pylon.brandId && p.brandId !== eco.brandId,
+    )!;
+
+    // Non-seeded sibling variant on a seeded product
+    await admin.query(
+      `insert into public.mp_product_variants
+         (id, product_id, sku, title, is_default, stock_status, website_price,
+          website_price_state, website_price_source, active)
+       values
+         ('mpvar_ops_longi_extra', $1, 'SKU-OPS-LONGI-EXTRA', 'Ops Extra', false,
+          'unknown', 100, 'confirm_price', null, true)`,
+      [longi.productId],
+    );
+
+    // Operational dependent attached to a seeded default variant (cascade FK)
+    await admin.query(
+      `insert into public.mp_price_overrides
+         (id, product_id, variant_id, override_price, status, mode, reason, created_by)
+       values
+         ('mpovr_ops_pylon', $1, $2, 270000, 'active', 'permanent',
+          'ops retention fixture', 'test')`,
+      [pylon.productId, pylon.variantId],
+    );
+
+    // Non-seed product referencing a seed brand (brand retention)
     await admin.query(
       `insert into public.mp_products
          (id, brand_id, category_id, title, slug, description, specifications)
@@ -287,35 +336,262 @@ async function main(): Promise<void> {
 
     await applySqlFile(admin, WS1_ROLLBACK);
 
-    const seededLeft = await admin.query(
-      `select count(*)::int as n from public.mp_products where id = any($1::text[])`,
-      [WS1_SEED_PRODUCT_IDS],
+    const opsVariantLeft = await admin.query(
+      `select count(*)::int as n from public.mp_product_variants where id = 'mpvar_ops_longi_extra'`,
     );
-    check("rollback removed seeded products", seededLeft.rows[0].n === 0);
+    check(
+      "non-seeded variant on seeded product survives rollback",
+      opsVariantLeft.rows[0].n === 1,
+    );
 
-    const opsLeft = await admin.query(
+    const longiProductLeft = await admin.query(
+      `select count(*)::int as n from public.mp_products where id = $1`,
+      [longi.productId],
+    );
+    check(
+      "seeded parent product survives when non-seeded variant remains",
+      longiProductLeft.rows[0].n === 1,
+    );
+
+    const longiSeedVariantLeft = await admin.query(
+      `select count(*)::int as n from public.mp_product_variants where id = $1`,
+      [longi.variantId],
+    );
+    check(
+      "seeded default variant without dependents is removed",
+      longiSeedVariantLeft.rows[0].n === 0,
+    );
+
+    const overrideLeft = await admin.query(
+      `select count(*)::int as n from public.mp_price_overrides where id = 'mpovr_ops_pylon'`,
+    );
+    check(
+      "operational dependent on seeded variant survives rollback",
+      overrideLeft.rows[0].n === 1,
+    );
+
+    const pylonVariantLeft = await admin.query(
+      `select count(*)::int as n from public.mp_product_variants where id = $1`,
+      [pylon.variantId],
+    );
+    const pylonProductLeft = await admin.query(
+      `select count(*)::int as n from public.mp_products where id = $1`,
+      [pylon.productId],
+    );
+    check(
+      "seeded variant parent survives when operational dependent exists",
+      pylonVariantLeft.rows[0].n === 1,
+    );
+    check(
+      "seeded product parent survives when operational dependent exists",
+      pylonProductLeft.rows[0].n === 1,
+    );
+
+    const mc4Left = await admin.query(
+      `select count(*)::int as n from public.mp_products where id = $1`,
+      [mc4.productId],
+    );
+    const mc4VarLeft = await admin.query(
+      `select count(*)::int as n from public.mp_product_variants where id = $1`,
+      [mc4.variantId],
+    );
+    check("seed-only product removed by rollback", mc4Left.rows[0].n === 0);
+    check("seed-only variant removed by rollback", mc4VarLeft.rows[0].n === 0);
+
+    const opsProductLeft = await admin.query(
       `select count(*)::int as n from public.mp_products where id = 'mpprod_ops_keep'`,
     );
-    check("rollback kept non-seed product", opsLeft.rows[0].n === 1);
+    check("non-seed product survives rollback", opsProductLeft.rows[0].n === 1);
 
-    const brandLeft = await admin.query(
+    const longiBrandLeft = await admin.query(
+      `select count(*)::int as n from public.mp_brands where id = $1`,
+      [longi.brandId],
+    );
+    const pylonBrandLeft = await admin.query(
+      `select count(*)::int as n from public.mp_brands where id = $1`,
+      [pylon.brandId],
+    );
+    const ecoBrandLeft = await admin.query(
       `select count(*)::int as n from public.mp_brands where id = $1`,
       [eco.brandId],
     );
     check(
-      "rollback kept brand referenced by non-seed product",
-      brandLeft.rows[0].n === 1,
+      "brands referenced by retained products survive",
+      longiBrandLeft.rows[0].n === 1 &&
+        pylonBrandLeft.rows[0].n === 1 &&
+        ecoBrandLeft.rows[0].n === 1,
     );
 
-    const orphanBrand = WS1_SEED_BRAND_IDS.find((id) => id !== eco.brandId)!;
     const orphanBrandLeft = await admin.query(
       `select count(*)::int as n from public.mp_brands where id = $1`,
-      [orphanBrand],
+      [unusedBrandVictim.brandId],
     );
     check(
-      "rollback removed unused seed brand",
+      "unused seed brand removed when no retained products reference it",
       orphanBrandLeft.rows[0].n === 0,
     );
+
+    // -------------------------------------------------------------------------
+    // Bidirectional ownership guards
+    // -------------------------------------------------------------------------
+    // Restore a clean seed for collision tests
+    await applySqlFile(admin, WS1_SEED);
+
+    const brandVictim = WS1_SEED_PRODUCTS[0]!;
+    const beforeBrand = await admin.query(
+      `select slug, name from public.mp_brands where id = $1`,
+      [brandVictim.brandId],
+    );
+    const beforePrice = await admin.query(
+      `select website_price::numeric as website_price, website_price_state, website_price_source
+       from public.mp_product_variants where id = $1`,
+      [brandVictim.variantId],
+    );
+
+    await admin.query(
+      `update public.mp_brands set slug = 'foreign-hijacked-slug' where id = $1`,
+      [brandVictim.brandId],
+    );
+
+    const brandCollisionRejected = await applySqlFileExpectReject(admin, WS1_SEED);
+    check(
+      "deterministic brand ID with foreign slug is rejected",
+      brandCollisionRejected,
+    );
+
+    const afterBrand = await admin.query(
+      `select slug from public.mp_brands where id = $1`,
+      [brandVictim.brandId],
+    );
+    check(
+      "rejected brand collision leaves foreign slug unchanged",
+      afterBrand.rows[0].slug === "foreign-hijacked-slug",
+    );
+
+    const afterPriceBrand = await admin.query(
+      `select website_price::numeric as website_price, website_price_state, website_price_source
+       from public.mp_product_variants where id = $1`,
+      [brandVictim.variantId],
+    );
+    check(
+      "rejected brand collision does not alter published price/state",
+      Number(afterPriceBrand.rows[0].website_price) ===
+        Number(beforePrice.rows[0].website_price) &&
+        afterPriceBrand.rows[0].website_price_state ===
+          beforePrice.rows[0].website_price_state &&
+        afterPriceBrand.rows[0].website_price_source ===
+          beforePrice.rows[0].website_price_source,
+    );
+
+    // Restore brand ownership, then test variant ID / SKU mismatch
+    await admin.query(
+      `update public.mp_brands set slug = $2, name = $3 where id = $1`,
+      [brandVictim.brandId, beforeBrand.rows[0].slug, beforeBrand.rows[0].name],
+    );
+
+    const variantVictim = WS1_SEED_PRODUCTS[1]!;
+    const beforeVar = await admin.query(
+      `select sku, product_id, website_price::numeric as website_price,
+              website_price_state, website_price_source
+       from public.mp_product_variants where id = $1`,
+      [variantVictim.variantId],
+    );
+
+    await admin.query("begin");
+    await admin.query(`select set_config('mp.allow_price_write', 'on', true)`);
+    await admin.query(
+      `update public.mp_product_variants
+         set sku = 'FOREIGN-SKU-COLLISION', website_price = 123456,
+             website_price_state = 'priced_override', website_price_source = 'override'
+       where id = $1`,
+      [variantVictim.variantId],
+    );
+    await admin.query("commit");
+
+    const variantCollisionRejected = await applySqlFileExpectReject(
+      admin,
+      WS1_SEED,
+    );
+    check(
+      "deterministic variant ID with foreign SKU is rejected",
+      variantCollisionRejected,
+    );
+
+    const afterVar = await admin.query(
+      `select sku, product_id, website_price::numeric as website_price,
+              website_price_state, website_price_source
+       from public.mp_product_variants where id = $1`,
+      [variantVictim.variantId],
+    );
+    check(
+      "rejected variant collision leaves foreign SKU/product_id unchanged",
+      afterVar.rows[0].sku === "FOREIGN-SKU-COLLISION" &&
+        afterVar.rows[0].product_id === beforeVar.rows[0].product_id,
+    );
+    check(
+      "rejected variant collision does not alter published price/state",
+      Number(afterVar.rows[0].website_price) === 123456 &&
+        afterVar.rows[0].website_price_state === "priced_override" &&
+        afterVar.rows[0].website_price_source === "override",
+    );
+
+    // product_id mismatch on deterministic variant id
+    // Clear default flag first so the unique one-default-per-product index allows the move.
+    await admin.query(
+      `update public.mp_product_variants
+         set sku = $2, is_default = false
+       where id = $1`,
+      [variantVictim.variantId, beforeVar.rows[0].sku],
+    );
+    const otherProduct = WS1_SEED_PRODUCTS.find(
+      (p) => p.productId !== variantVictim.productId,
+    )!;
+    await admin.query(
+      `update public.mp_product_variants set product_id = $2 where id = $1`,
+      [variantVictim.variantId, otherProduct.productId],
+    );
+    const productIdCollisionRejected = await applySqlFileExpectReject(
+      admin,
+      WS1_SEED,
+    );
+    check(
+      "deterministic variant ID with foreign product_id is rejected",
+      productIdCollisionRejected,
+    );
+    const afterProductId = await admin.query(
+      `select product_id from public.mp_product_variants where id = $1`,
+      [variantVictim.variantId],
+    );
+    check(
+      "rejected product_id collision leaves pre-existing row unchanged",
+      afterProductId.rows[0].product_id === otherProduct.productId,
+    );
+
+    // Restore correct ownership and prove normal seed remains repeatable
+    await admin.query(
+      `update public.mp_product_variants
+         set product_id = $2, sku = $3, is_default = true
+       where id = $1`,
+      [variantVictim.variantId, variantVictim.productId, variantVictim.sku],
+    );
+    await admin.query("begin");
+    await admin.query(`select set_config('mp.allow_price_write', 'on', true)`);
+    await admin.query(
+      `update public.mp_product_variants
+         set website_price = $2, website_price_state = 'priced_auto',
+             website_price_source = 'seed'
+       where id = $1`,
+      [variantVictim.variantId, variantVictim.websitePrice],
+    );
+    await admin.query("commit");
+
+    await applySqlFile(admin, WS1_SEED);
+    await applySqlFile(admin, WS1_SEED);
+    const repeatCount = await admin.query(
+      `select count(*)::int as n from public.mp_products where id = any($1::text[])`,
+      [WS1_SEED_PRODUCT_IDS],
+    );
+    check("normal seed remains repeatable at 30 products", repeatCount.rows[0].n === 30);
 
     // Privilege: anon cannot select mp_products
     await admin.query("set role anon");
