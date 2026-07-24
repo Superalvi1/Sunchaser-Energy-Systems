@@ -246,6 +246,264 @@ export function logMetaEmbeddedSignupDebug(
   });
 }
 
+/** Accepted WA_EMBEDDED_SIGNUP event classifications (parser contract). */
+export const META_EMBEDDED_SIGNUP_ACCEPTED_EVENTS = [
+  "FINISH",
+  "FINISH_*", // any event whose uppercase form starts with FINISH_ (except handled FINISH_ONLY_WABA)
+  "FINISH_ONLY_WABA",
+  "CANCEL",
+  "CANCEL*", // any event whose uppercase form starts with CANCEL
+  "ERROR",
+] as const;
+
+export type MetaEmbeddedSignupIgnoreReason =
+  | "origin_not_allowed"
+  | "unsupported_data_type"
+  | "json_parse_failed"
+  | "wrong_message_type"
+  | "unsupported_event"
+  | "malformed_event";
+
+/** Fixed origin labels only — never log runtime hostnames/URLs. */
+export type SafeOriginClass =
+  | "facebook"
+  | "facebook_web"
+  | "facebook_business"
+  | "unknown"
+  | "invalid";
+
+/** Fixed message-type labels only — never log runtime type strings. */
+export type SafeMessageType = "WA_EMBEDDED_SIGNUP" | "other" | "missing";
+
+/**
+ * Fixed event labels mirroring parser recognition — does not broaden acceptance.
+ */
+export type SafeEmbeddedSignupEvent =
+  | "FINISH"
+  | "FINISH_VARIANT"
+  | "FINISH_ONLY_WABA"
+  | "CANCEL"
+  | "CANCEL_VARIANT"
+  | "ERROR"
+  | "UNSUPPORTED"
+  | "MISSING";
+
+/** Fixed FB.login status labels only — never log runtime status strings. */
+export type SafeFbLoginStatus =
+  | "connected"
+  | "not_authorized"
+  | "unknown"
+  | "unexpected";
+
+const TRACE_DATA_KEY_ALLOWLIST = new Set([
+  "waba_id",
+  "phone_number_id",
+  "business_id",
+  "error_message",
+  "error_code",
+  "error_subcode",
+  "fbtrace_id",
+  "httpStatus",
+]);
+
+/**
+ * TEMPORARY TRACE — remove after timeout diagnosis.
+ * Caller must pass only already-safe fields (no payload values / secrets).
+ */
+export function logMetaEmbeddedSignupTrace(
+  payload: Record<string, unknown>
+): void {
+  console.error("[MetaEmbeddedSignup TRACE]", payload);
+}
+
+/**
+ * Map event.origin to a fixed allowlist-consistent label.
+ * Never returns hostname/path/query/fragment.
+ */
+export function classifySafeOriginClass(origin: string): SafeOriginClass {
+  const raw = String(origin || "").trim();
+  if (!raw) return "invalid";
+  try {
+    const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    const host = url.hostname.toLowerCase();
+    if (host === "facebook.com" || host === "www.facebook.com") return "facebook";
+    if (host === "web.facebook.com") return "facebook_web";
+    if (host === "business.facebook.com") return "facebook_business";
+    return "unknown";
+  } catch {
+    return "invalid";
+  }
+}
+
+export function classifySafeMessageType(type: unknown): SafeMessageType {
+  if (typeof type !== "string") return "missing";
+  if (type === "WA_EMBEDDED_SIGNUP") return "WA_EMBEDDED_SIGNUP";
+  return "other";
+}
+
+/**
+ * Classify event strings using the same recognition rules as the parser.
+ * Does not broaden which events parseEmbeddedSignupMessageData accepts.
+ */
+export function classifySafeEmbeddedSignupEvent(
+  event: unknown
+): SafeEmbeddedSignupEvent {
+  if (typeof event !== "string") return "MISSING";
+  const eventKey = event.trim().toUpperCase();
+  if (!eventKey) return "MISSING";
+  // Mirror parseEmbeddedSignupMessageData order/semantics exactly.
+  if (eventKey === "CANCEL" || eventKey.startsWith("CANCEL")) {
+    return eventKey === "CANCEL" ? "CANCEL" : "CANCEL_VARIANT";
+  }
+  if (eventKey === "ERROR") return "ERROR";
+  if (eventKey === "FINISH_ONLY_WABA") return "FINISH_ONLY_WABA";
+  if (eventKey === "FINISH" || eventKey.startsWith("FINISH_")) {
+    return eventKey === "FINISH" ? "FINISH" : "FINISH_VARIANT";
+  }
+  return "UNSUPPORTED";
+}
+
+export function classifySafeFbLoginStatus(
+  status: unknown
+): SafeFbLoginStatus | undefined {
+  if (typeof status !== "string") return undefined;
+  if (status === "connected") return "connected";
+  if (status === "not_authorized") return "not_authorized";
+  if (status === "unknown") return "unknown";
+  return "unexpected";
+}
+
+function describeDataType(data: unknown): string {
+  if (data === null) return "null";
+  return typeof data;
+}
+
+function allowlistedDataKeysFromPayload(raw: unknown): string[] {
+  let payload: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  const obj = asPlainRecord(payload);
+  if (!obj) return [];
+  const data = asPlainRecord(obj.data);
+  if (!data) return [];
+  return Object.keys(data)
+    .filter((key) => TRACE_DATA_KEY_ALLOWLIST.has(key))
+    .sort();
+}
+
+function readMessageTypeAndEvent(raw: unknown): {
+  type: unknown;
+  event: unknown;
+  jsonParseFailed?: boolean;
+  unsupportedDataType?: boolean;
+} {
+  let payload: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return { type: undefined, event: undefined, jsonParseFailed: true };
+    }
+  }
+  if (payload == null || typeof payload !== "object") {
+    return {
+      type: undefined,
+      event: undefined,
+      unsupportedDataType: true,
+    };
+  }
+  const obj = payload as Record<string, unknown>;
+  return {
+    type: obj.type,
+    event: obj.event,
+  };
+}
+
+/**
+ * Classify why an incoming message cannot drive Embedded Signup settlement.
+ * Settlement behavior remains owned by parseEmbeddedSignupMessageData().
+ * Returns only fixed enums — never runtime origin/type/event strings.
+ */
+export function classifyIgnoredEmbeddedSignupMessage(
+  origin: string,
+  raw: unknown
+): {
+  reason: MetaEmbeddedSignupIgnoreReason;
+  originClass: SafeOriginClass;
+  type: SafeMessageType;
+  event: SafeEmbeddedSignupEvent;
+} | null {
+  const originClass = classifySafeOriginClass(origin);
+  if (!isAllowedMetaMessageOrigin(origin)) {
+    return {
+      reason: "origin_not_allowed",
+      originClass,
+      type: "missing",
+      event: "MISSING",
+    };
+  }
+
+  const meta = readMessageTypeAndEvent(raw);
+  const type = classifySafeMessageType(meta.type);
+  const event = classifySafeEmbeddedSignupEvent(meta.event);
+
+  if (meta.jsonParseFailed) {
+    return { reason: "json_parse_failed", originClass, type, event };
+  }
+  if (meta.unsupportedDataType) {
+    return {
+      reason: "unsupported_data_type",
+      originClass,
+      type,
+      event,
+    };
+  }
+  if (type !== "WA_EMBEDDED_SIGNUP") {
+    return {
+      reason: "wrong_message_type",
+      originClass,
+      type,
+      event,
+    };
+  }
+
+  const parsed = parseEmbeddedSignupMessageData(raw);
+  if (parsed == null) {
+    return {
+      reason: "wrong_message_type",
+      originClass,
+      type,
+      event,
+    };
+  }
+
+  if (event === "UNSUPPORTED") {
+    // WA-typed but unrecognized event — parser returns malformed and fails closed.
+    return {
+      reason: "unsupported_event",
+      originClass,
+      type,
+      event,
+    };
+  }
+
+  if (parsed.status === "malformed") {
+    return {
+      reason: "malformed_event",
+      originClass,
+      type,
+      event,
+    };
+  }
+
+  return null;
+}
+
 type FbLoginResponse = {
   authResponse?: { code?: string } | null;
   status?: string;
@@ -644,10 +902,15 @@ export async function launchMetaEmbeddedSignup(
   let activeAttempt: symbol | null = attemptId;
   let settled = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const startedAtMs = Date.now();
 
   let code: string | null = null;
   let wabaId: string | null = null;
   let phoneNumberId: string | null = null;
+  let loginCallbackReceived = false;
+  let finishEventReceived = false;
+  let messageCount = 0;
+  let recognizedEmbeddedSignupMessageCount = 0;
   let resolveResult!: (value: MetaEmbeddedSignupResult) => void;
   let rejectResult!: (err: Error) => void;
 
@@ -665,9 +928,25 @@ export async function launchMetaEmbeddedSignup(
     }
   };
 
+  const counterpartState = () => ({
+    hasAuthorizationCode: Boolean(code),
+    hasFinishEvent: Boolean(finishEventReceived && wabaId && phoneNumberId),
+  });
+
   const settleOk = () => {
     if (settled || activeAttempt !== attemptId) return;
-    if (!code || !wabaId || !phoneNumberId) return;
+    if (!code || !wabaId || !phoneNumberId) {
+      // TEMPORARY TRACE — still waiting for the other settlement half.
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.waiting_for_counterpart",
+        ...counterpartState(),
+      });
+      return;
+    }
+    logMetaEmbeddedSignupTrace({
+      phase: "terminal.finish",
+      ...counterpartState(),
+    });
     settled = true;
     cleanup();
     resolveResult({
@@ -692,17 +971,63 @@ export async function launchMetaEmbeddedSignup(
 
   const onMessage = (event: MessageEvent) => {
     if (activeAttempt !== attemptId || settled) return;
+
+    messageCount += 1;
+    const meta = readMessageTypeAndEvent(event.data);
+    const parsed = parseEmbeddedSignupMessageData(event.data);
+    const parsedOk = parsed != null;
+    const originClass = classifySafeOriginClass(event.origin);
+    const safeType = classifySafeMessageType(meta.type);
+    const safeEvent = classifySafeEmbeddedSignupEvent(meta.event);
+
+    // TEMPORARY TRACE — fixed classifications only; never runtime strings/values.
+    logMetaEmbeddedSignupTrace({
+      phase: "window.message.received",
+      originClass,
+      dataType: describeDataType(event.data),
+      parsed: parsedOk,
+      type: safeType,
+      event: safeEvent,
+      dataKeys: allowlistedDataKeysFromPayload(event.data),
+    });
+
+    const ignored = classifyIgnoredEmbeddedSignupMessage(
+      event.origin,
+      event.data
+    );
+    if (ignored) {
+      logMetaEmbeddedSignupTrace({
+        phase: "window.message.ignored",
+        reason: ignored.reason,
+        originClass: ignored.originClass,
+        type: ignored.type,
+        event: ignored.event,
+      });
+      // Keep fail-closed settlement for malformed/unsupported WA events.
+      if (
+        ignored.reason !== "malformed_event" &&
+        ignored.reason !== "unsupported_event"
+      ) {
+        return;
+      }
+    }
+
     if (!isAllowedMetaMessageOrigin(event.origin)) {
       return;
     }
 
-    const parsed = parseEmbeddedSignupMessageData(event.data);
     if (parsed == null) {
       // Non-WA traffic from Meta origins is ignored.
       return;
     }
 
+    recognizedEmbeddedSignupMessageCount += 1;
+
     if (parsed.status === "cancelled") {
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.cancel",
+        ...counterpartState(),
+      });
       settleErr(
         new MetaEmbeddedSignupError(
           "cancelled",
@@ -713,6 +1038,10 @@ export async function launchMetaEmbeddedSignup(
     }
 
     if (parsed.status === "error") {
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.error",
+        ...counterpartState(),
+      });
       settleErr(
         new MetaEmbeddedSignupError(
           "login_error",
@@ -724,6 +1053,12 @@ export async function launchMetaEmbeddedSignup(
     }
 
     if (parsed.status === "missing_phone") {
+      finishEventReceived = true;
+      logMetaEmbeddedSignupTrace({
+        phase: "terminal.finish_only_waba",
+        hasAuthorizationCode: Boolean(code),
+        hasFinishEvent: false,
+      });
       settleErr(
         new MetaEmbeddedSignupError(
           "missing_phone_number_id",
@@ -745,12 +1080,24 @@ export async function launchMetaEmbeddedSignup(
 
     wabaId = parsed.wabaId;
     phoneNumberId = parsed.phoneNumberId;
+    finishEventReceived = true;
     settleOk();
   };
 
   target.addEventListener("message", onMessage as EventListener);
 
   timeoutHandle = setTimeout(() => {
+    if (settled || activeAttempt !== attemptId) return;
+    // TEMPORARY TRACE — which settlement half was missing at timeout.
+    logMetaEmbeddedSignupTrace({
+      phase: "terminal.timeout",
+      elapsedMs: Date.now() - startedAtMs,
+      loginCallbackReceived,
+      hasAuthorizationCode: Boolean(code),
+      finishEventReceived: Boolean(finishEventReceived && wabaId && phoneNumberId),
+      messageCount,
+      recognizedEmbeddedSignupMessageCount,
+    });
     settleErr(
       new MetaEmbeddedSignupError(
         "timeout",
@@ -764,9 +1111,19 @@ export async function launchMetaEmbeddedSignup(
     fb.login(
       (response) => {
         if (activeAttempt !== attemptId || settled) return;
+        loginCallbackReceived = true;
         const authCode = response.authResponse?.code
           ? String(response.authResponse.code).trim()
           : "";
+        // TEMPORARY TRACE — booleans + fixed status enum only; never code/token/userID.
+        const safeStatus = classifySafeFbLoginStatus(response.status);
+        logMetaEmbeddedSignupTrace({
+          phase: "fb.login.callback",
+          callbackReceived: true,
+          hasAuthResponse: Boolean(response.authResponse),
+          hasAuthorizationCode: Boolean(authCode),
+          ...(safeStatus ? { status: safeStatus } : {}),
+        });
         if (!authCode) {
           const cancelled =
             !response.authResponse ||
