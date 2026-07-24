@@ -215,13 +215,14 @@ export async function sendOutboundPlainText(
 
       if (claim.kind === "completed") {
         const inboxId = bridgeStrictInboxMessageId(claim.row);
+        const providerMessageId = bridgeProviderMessageId(claim.row);
         if (!inboxId) {
           return {
             httpStatus: 202,
-            providerMessageId: bridgeProviderMessageId(claim.row) ?? undefined,
+            ...(providerMessageId ? { providerMessageId } : {}),
             status: claim.row.deliveryStatus,
             persistenceStatus: "incomplete",
-            providerOutcome: "accepted",
+            ...(providerMessageId ? { providerOutcome: "accepted" as const } : {}),
             error:
               "Outbound completed but Inbox message binding is incomplete",
           };
@@ -229,20 +230,23 @@ export async function sendOutboundPlainText(
         return {
           httpStatus: 201,
           messageId: inboxId,
-          providerMessageId:
-            bridgeProviderMessageId(claim.row) ?? inboxId,
+          providerMessageId: providerMessageId ?? inboxId,
           status: "sent",
         };
       }
       if (claim.kind === "in_flight") {
+        const providerMessageId = bridgeProviderMessageId(claim.row);
         return {
           httpStatus: 202,
           messageId: bridgeStrictInboxMessageId(claim.row) ?? undefined,
-          providerMessageId: bridgeProviderMessageId(claim.row) ?? undefined,
+          ...(providerMessageId ? { providerMessageId } : {}),
           status: MESSAGE_STATUSES.SENDING,
           persistenceStatus: "incomplete",
-          providerOutcome: "accepted",
-          error: "Outbound send already in progress for this idempotency key",
+          // Only report accepted when a provider message id is already known.
+          ...(providerMessageId ? { providerOutcome: "accepted" as const } : {}),
+          error: providerMessageId
+            ? "Outbound send already in progress for this idempotency key"
+            : "Outbound processing incomplete for this idempotency key; no resend attempted",
         };
       }
       if (claim.kind === "terminal") {
