@@ -135,6 +135,21 @@ export type WhatsAppConnectionStatusPayload = {
   revokeWarning?: string | null;
 };
 
+/** Unofficial Baileys / WhatsApp Web live-test provider (distinct from Coexistence). */
+export type ClaudeWhatsAppStatusPayload = {
+  provider: "claude_whatsapp";
+  label: string;
+  enabled: boolean;
+  status: "connected" | "awaiting_qr" | "disconnected";
+  disconnectKind: "reconnecting" | "logged_out" | "idle" | "none";
+  qrDataUrl: string | null;
+  hasQr: boolean;
+  lastError: string | null;
+  phoneNumber: string | null;
+  reconnectAttempt: number;
+  killSwitchCheckedAt: string;
+};
+
 export type WhatsAppSetupChecklistItem = {
   id: string;
   label: string;

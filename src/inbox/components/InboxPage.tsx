@@ -17,6 +17,7 @@ import ConversationList from "./ConversationList";
 import ConversationView from "./ConversationView";
 import CRMPanel from "./CRMPanel";
 import WhatsAppConnectionPanel from "./WhatsAppConnectionPanel";
+import ClaudeWhatsAppPanel from "./ClaudeWhatsAppPanel";
 
 type InboxPageProps = {
   staffUser: User;
@@ -36,6 +37,7 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
   const [mobilePane, setMobilePane] = useState<"list" | "thread">("list");
   const [showConnectionPanel, setShowConnectionPanel] = useState(false);
+  const [showClaudeWhatsAppPanel, setShowClaudeWhatsAppPanel] = useState(false);
 
   const list = useInboxConversations(filters);
   const detail = useInboxConversation(selectedId);
@@ -199,14 +201,30 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
         </div>
         <div className="flex items-center gap-2">
           {(staffUser.role === "Super Admin" || staffUser.role === "Admin") && (
-            <button
-              type="button"
-              onClick={() => setShowConnectionPanel((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-            >
-              <Smartphone className="h-3.5 w-3.5" />
-              WhatsApp Coexistence
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConnectionPanel((v) => !v);
+                  setShowClaudeWhatsAppPanel(false);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+              >
+                <Smartphone className="h-3.5 w-3.5" />
+                WhatsApp Coexistence
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowClaudeWhatsAppPanel((v) => !v);
+                  setShowConnectionPanel(false);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
+              >
+                <Smartphone className="h-3.5 w-3.5" />
+                Claude WhatsApp
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -231,6 +249,15 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
           <WhatsAppConnectionPanel
             isAdmin={staffUser.role === "Super Admin" || staffUser.role === "Admin"}
             onClose={() => setShowConnectionPanel(false)}
+          />
+        </div>
+      )}
+
+      {showClaudeWhatsAppPanel && (
+        <div className="border-b border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-4">
+          <ClaudeWhatsAppPanel
+            isAdmin={staffUser.role === "Super Admin" || staffUser.role === "Admin"}
+            onClose={() => setShowClaudeWhatsAppPanel(false)}
           />
         </div>
       )}

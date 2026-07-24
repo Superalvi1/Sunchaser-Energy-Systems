@@ -348,6 +348,11 @@ import {
   buildProductionWebhookAutoLinkLead,
 } from "./server/whatsappTransport/index.ts";
 import {
+  createClaudeWhatsAppRouter,
+  startClaudeWhatsAppLifecycle,
+  resolveClaudeAwareInboxSendPort,
+} from "./server/whatsappTransport/claudeWhatsApp/index.ts";
+import {
   OwnershipError,
   OwnershipResolver,
   portalIdentityFromActor,
@@ -661,6 +666,17 @@ productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   persistLead: persistPublicMarketingLead,
 });
 
+// Claude WhatsApp (Baileys) — isolated live-test provider. Starts kill-switch
+// polling; socket connects when settings.claude_whatsapp_enabled is true.
+void startClaudeWhatsAppLifecycle({
+  autoLinkLead: (conversationId) =>
+    productionAutoLinkLead
+      ? productionAutoLinkLead(conversationId)
+      : Promise.resolve(null),
+}).catch((err) => {
+  console.error("[claude-whatsapp] lifecycle start failed:", err);
+});
+
 app.use("/api/conversations", createWhatsAppOutboundRouter());
 app.use(
   "/api/inbox",
@@ -669,8 +685,10 @@ app.use(
       resolveLocalDb: resolveAuthLocalDb,
       persistLead: persistPublicMarketingLead,
     }),
+    resolveSendPort: () => resolveClaudeAwareInboxSendPort(),
   })
 );
+app.use("/api/inbox", createClaudeWhatsAppRouter());
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 

@@ -1,6 +1,7 @@
 import { authorizedFetch } from "../../services/api";
 import {
   InboxClientError,
+  type ClaudeWhatsAppStatusPayload,
   type InboxConversation,
   type InboxConversationDetail,
   type InboxCrmLink,
@@ -295,6 +296,38 @@ export async function fetchWhatsAppOnboardingDiagnostics(): Promise<WhatsAppOnbo
 export async function testWhatsAppConnection(): Promise<WhatsAppConnectionTestResult> {
   const { data } = await inboxRequest<WhatsAppConnectionTestResult>(
     "/api/inbox/admin/whatsapp/test-connection",
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    }
+  );
+  return data;
+}
+
+export async function fetchClaudeWhatsAppStatus(): Promise<ClaudeWhatsAppStatusPayload> {
+  const { data } = await inboxRequest<ClaudeWhatsAppStatusPayload>(
+    "/api/inbox/admin/claude-whatsapp/status",
+    { method: "GET" }
+  );
+  return data;
+}
+
+export async function setClaudeWhatsAppEnabled(
+  enabled: boolean
+): Promise<ClaudeWhatsAppStatusPayload> {
+  const { data } = await inboxRequest<ClaudeWhatsAppStatusPayload>(
+    "/api/inbox/admin/claude-whatsapp/enabled",
+    {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }
+  );
+  return data;
+}
+
+export async function reconnectClaudeWhatsApp(): Promise<ClaudeWhatsAppStatusPayload> {
+  const { data } = await inboxRequest<ClaudeWhatsAppStatusPayload>(
+    "/api/inbox/admin/claude-whatsapp/reconnect",
     {
       method: "POST",
       body: JSON.stringify({}),
