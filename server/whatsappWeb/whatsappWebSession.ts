@@ -361,11 +361,10 @@ async function defaultSocketFactory(input: {
       chats?: Array<Record<string, unknown>>;
       contacts?: Array<Record<string, unknown>>;
       messages?: Array<Record<string, unknown>>;
+      peerDataRequestSessionId?: string | null;
     };
-    syncSource.markProviderHistoryEvent();
-    if (p.contacts) syncSource.ingestContacts(p.contacts);
-    if (p.chats) syncSource.ingestChats(p.chats);
-    if (p.messages) syncSource.ingestMessages(p.messages);
+    // Ingest then correlate by request id (null/unrelated ids do not release waiters).
+    syncSource.handleHistorySet(p);
   });
 
   sock.ev.on("messages.upsert", (upsert) => {

@@ -88,4 +88,7 @@ export {
   isBackfillMetadata,
   WHATSAPP_WEB_BACKFILL_SOURCE,
 } from "./whatsappWebHistoryPersist.ts";
-export { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
+export {
+  BaileysInMemorySyncSource,
+  type BaileysHistorySetPayload,
+} from "./whatsappWebBaileysSyncSource.ts";

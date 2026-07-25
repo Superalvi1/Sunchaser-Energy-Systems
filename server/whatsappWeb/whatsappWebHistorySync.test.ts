@@ -1005,4 +1005,336 @@ console.log("PASS: device JID normalize; @lid/unknown hosts excluded");
 }
 console.log("PASS: empty/unready history cannot claim full 7-day; partial reported");
 
+// ---------------------------------------------------------------------------
+// SYNC-1B — request-ID correlation + retryable in-flight state
+// ---------------------------------------------------------------------------
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true, "923001112233@s.whatsapp.net");
+  source.ingestChats([{ id: "923009998877@s.whatsapp.net", name: "A" }]);
+  source.ingestMessages([
+    {
+      key: {
+        id: "CURSOR_A",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "seed" },
+    },
+  ]);
+
+  let fetchCount = 0;
+  source.setHistoryFetcher(async () => {
+    fetchCount += 1;
+    return fetchCount === 1 ? "req-A" : "req-B";
+  });
+
+  const waitA = source.requestBoundedHistory("923009998877@s.whatsapp.net", {
+    limit: 50,
+    waitMs: 500,
+  });
+  // Allow waiter registration
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Unrelated / null events must not release A
+  source.handleHistorySet({
+    peerDataRequestSessionId: null,
+    messages: [
+      {
+        key: {
+          id: "UNRELATED",
+          remoteJid: "923009998877@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: Math.floor(
+          Date.parse("2026-07-21T10:00:00.000Z") / 1000
+        ),
+        message: { conversation: "initial" },
+      },
+    ],
+  });
+  source.handleHistorySet({
+    peerDataRequestSessionId: "req-OTHER",
+    messages: [],
+  });
+  assert.equal(source.__testPendingWaitCount(), 1);
+
+  // Concurrent chat B must not be released by A's event either.
+  source.ingestChats([{ id: "923008887766@s.whatsapp.net", name: "B" }]);
+  source.ingestMessages([
+    {
+      key: {
+        id: "CURSOR_B",
+        remoteJid: "923008887766@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T11:00:00.000Z") / 1000),
+      message: { conversation: "seed-b" },
+    },
+  ]);
+  const waitB = source.requestBoundedHistory("923008887766@s.whatsapp.net", {
+    limit: 50,
+    waitMs: 500,
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(source.__testPendingWaitCount(), 2);
+
+  source.handleHistorySet({
+    peerDataRequestSessionId: "req-A",
+    messages: [
+      {
+        key: {
+          id: "HIST_A1",
+          remoteJid: "923009998877@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: Math.floor(
+          Date.parse("2026-07-20T09:00:00.000Z") / 1000
+        ),
+        message: { conversation: "older-a" },
+      },
+    ],
+  });
+  assert.equal(await waitA, true);
+  assert.equal(source.__testPendingWaitCount(), 1);
+
+  // B still waiting — A's event did not release it
+  let bDone = false;
+  void waitB.then(() => {
+    bDone = true;
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(bDone, false);
+
+  source.handleHistorySet({
+    peerDataRequestSessionId: "req-B",
+    messages: [
+      {
+        key: {
+          id: "HIST_B1",
+          remoteJid: "923008887766@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: Math.floor(
+          Date.parse("2026-07-20T08:00:00.000Z") / 1000
+        ),
+        message: { conversation: "older-b" },
+      },
+    ],
+  });
+  assert.equal(await waitB, true);
+
+  // Matching event messages were ingested before waitA resolved (before return).
+  source.setHistoryFetcher(async () => {
+    queueMicrotask(() =>
+      source.handleHistorySet({ peerDataRequestSessionId: "req-read" })
+    );
+    return "req-read";
+  });
+  const msgs = await source.fetchMessages("923009998877@s.whatsapp.net", {
+    limit: 80,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.ok(msgs.some((m) => m.providerMessageId === "HIST_A1"));
+}
+console.log("PASS: request-ID correlation isolates concurrent chats");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
+  source.ingestMessages([
+    {
+      key: {
+        id: "CUR",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "seed" },
+    },
+  ]);
+
+  // Event arrives immediately after fetch returns id, before waiter registers.
+  source.setHistoryFetcher(async () => {
+    queueMicrotask(() => {
+      source.handleHistorySet({
+        peerDataRequestSessionId: "req-race",
+        messages: [
+          {
+            key: {
+              id: "EARLY",
+              remoteJid: "923009998877@s.whatsapp.net",
+              fromMe: false,
+            },
+            messageTimestamp: Math.floor(
+              Date.parse("2026-07-20T10:00:00.000Z") / 1000
+            ),
+            message: { conversation: "early" },
+          },
+        ],
+      });
+    });
+    return "req-race";
+  });
+
+  const matched = await source.requestBoundedHistory(
+    "923009998877@s.whatsapp.net",
+    { limit: 50, waitMs: 300 }
+  );
+  assert.equal(matched, true);
+  const msgs = await source.fetchMessages("923009998877@s.whatsapp.net", {
+    limit: 10,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.ok(msgs.some((m) => m.providerMessageId === "EARLY"));
+}
+console.log("PASS: early matching history event is not lost");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
+  source.ingestMessages([
+    {
+      key: {
+        id: "CUR1",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "seed" },
+    },
+  ]);
+
+  const cursors: string[] = [];
+  let n = 0;
+  source.setHistoryFetcher(async (_count, key) => {
+    cursors.push(String(key.id || ""));
+    n += 1;
+    return `req-${n}`;
+  });
+
+  // Timeout cleans up and permits retry
+  const timedOut = await source.requestBoundedHistory(
+    "923009998877@s.whatsapp.net",
+    { limit: 50, waitMs: 40 }
+  );
+  assert.equal(timedOut, false);
+  assert.equal(source.__testPendingWaitCount(), 0);
+  assert.equal(source.__testHasInFlightHistory("923009998877@s.whatsapp.net"), false);
+
+  // Provider failure cleans up and permits retry
+  source.setHistoryFetcher(async () => {
+    throw new Error("provider_failed");
+  });
+  assert.equal(
+    await source.requestBoundedHistory("923009998877@s.whatsapp.net", {
+      limit: 50,
+      waitMs: 100,
+    }),
+    false
+  );
+  assert.equal(source.__testHasInFlightHistory("923009998877@s.whatsapp.net"), false);
+
+  // Later sync can request next page with new oldest cursor
+  source.ingestMessages([
+    {
+      key: {
+        id: "OLDER_PAGE",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-19T10:00:00.000Z") / 1000),
+      message: { conversation: "page" },
+    },
+  ]);
+  source.setHistoryFetcher(async (_count, key) => {
+    cursors.push(String(key.id || ""));
+    queueMicrotask(() => {
+      source.handleHistorySet({ peerDataRequestSessionId: "req-page2" });
+    });
+    return "req-page2";
+  });
+  assert.equal(
+    await source.requestBoundedHistory("923009998877@s.whatsapp.net", {
+      limit: 50,
+      waitMs: 200,
+    }),
+    true
+  );
+  assert.ok(cursors.includes("OLDER_PAGE") || cursors.includes("CUR1"));
+  assert.equal(cursors[cursors.length - 1], "OLDER_PAGE");
+}
+console.log("PASS: timeout/failure cleanup + retry with new oldest cursor");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
+  source.ingestMessages([
+    {
+      key: {
+        id: "CUR",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "seed" },
+    },
+  ]);
+  let providerCalls = 0;
+  source.setHistoryFetcher(async () => {
+    providerCalls += 1;
+    return "req-dup";
+  });
+  const p1 = source.requestBoundedHistory("923009998877@s.whatsapp.net", {
+    limit: 50,
+    waitMs: 300,
+  });
+  const p2 = source.requestBoundedHistory("923009998877@s.whatsapp.net", {
+    limit: 50,
+    waitMs: 300,
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(providerCalls, 1);
+  source.handleHistorySet({ peerDataRequestSessionId: "req-dup" });
+  assert.deepEqual(await Promise.all([p1, p2]), [true, true]);
+  assert.equal(providerCalls, 1);
+}
+console.log("PASS: concurrent same-chat requests do not duplicate provider calls");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
+  source.ingestMessages([
+    {
+      key: {
+        id: "CUR",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "seed" },
+    },
+  ]);
+  source.setHistoryFetcher(async () => "req-disc");
+  const pending = source.requestBoundedHistory("923009998877@s.whatsapp.net", {
+    limit: 50,
+    waitMs: 1000,
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(source.__testPendingWaitCount(), 1);
+  source.setConnected(false);
+  assert.equal(await pending, false);
+  assert.equal(source.__testPendingWaitCount(), 0);
+  // Coverage still never reports complete
+  const meta = source.getHistoryCoverageMeta(Date.parse("2026-07-17T00:00:00.000Z"));
+  assert.notEqual(meta.coverage as string, "complete");
+}
+console.log("PASS: disconnect clears pending waits; coverage never complete");
+
 console.log("ALL PASS: whatsappWebHistorySync");

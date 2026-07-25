@@ -1,7 +1,7 @@
 /**
  * In-memory Baileys sync source.
  * Populated from contacts/chats/history events while the socket is connected.
- * Optionally requests bounded on-demand history via Baileys fetchMessageHistory.
+ * Bounded on-demand history uses request-ID correlation (peerDataRequestSessionId).
  */
 import { jidToWaId } from "./whatsappWebNormalize.ts";
 import {
@@ -23,9 +23,28 @@ type InternalChat = WhatsAppWebSyncChat & {
 
 export type BaileysHistoryFetchFn = (
   count: number,
-  oldestMsgKey: { remoteJid?: string | null; id?: string | null; fromMe?: boolean | null },
+  oldestMsgKey: {
+    remoteJid?: string | null;
+    id?: string | null;
+    fromMe?: boolean | null;
+  },
   oldestMsgTimestamp: number
 ) => Promise<string>;
+
+export type BaileysHistorySetPayload = {
+  peerDataRequestSessionId?: string | null;
+  chats?: Array<Record<string, unknown>>;
+  contacts?: Array<Record<string, unknown>>;
+  messages?: Array<Record<string, unknown>>;
+};
+
+type PendingHistoryWait = {
+  requestId: string;
+  chatJid: string;
+  settled: boolean;
+  resolve: (matched: boolean) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+};
 
 function messageTypeOf(msg: Record<string, unknown>): string {
   const message = msg.message as Record<string, unknown> | undefined;
@@ -99,13 +118,22 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private readonly chats = new Map<string, InternalChat>();
   private historyFetcher: BaileysHistoryFetchFn | null = null;
   private providerHistoryEventObserved = false;
-  private historyWaitGeneration = 0;
-  private readonly requestedHistoryChats = new Set<string>();
+
+  /** In-flight per-chat protection (not permanent). */
+  private readonly inFlightByChat = new Map<string, Promise<boolean>>();
+  /** Active waiters keyed by fetchMessageHistory request/session id. */
+  private readonly pendingByRequestId = new Map<string, PendingHistoryWait>();
+  /**
+   * Matching events that arrived after fetch returned an id but before the
+   * waiter was registered (or while the call was still in flight).
+   */
+  private readonly earlyMatchedRequestIds = new Set<string>();
 
   setConnected(connected: boolean, selfJid?: string | null): void {
     this.connected = connected;
     if (selfJid !== undefined) this.selfJid = selfJid ? normalizeJid(selfJid) : null;
     if (!connected) {
+      this.cancelPendingHistoryWaits();
       this.historyFetcher = null;
     }
   }
@@ -114,9 +142,44 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     this.historyFetcher = fn;
   }
 
-  markProviderHistoryEvent(): void {
+  /**
+   * Ingest a messaging-history.set payload, then resolve only the matching
+   * on-demand waiter (exact peerDataRequestSessionId).
+   */
+  handleHistorySet(payload: BaileysHistorySetPayload): void {
     this.providerHistoryEventObserved = true;
-    this.historyWaitGeneration += 1;
+    if (payload.contacts) this.ingestContacts(payload.contacts);
+    if (payload.chats) this.ingestChats(payload.chats);
+    if (payload.messages) this.ingestMessages(payload.messages);
+
+    const requestId = nonEmptyString(payload.peerDataRequestSessionId);
+    if (!requestId) {
+      // Initial / uncorrelated history still populates cache + coverage.
+      return;
+    }
+
+    const pending = this.pendingByRequestId.get(requestId);
+    if (pending && !pending.settled) {
+      this.settlePending(pending, true);
+      return;
+    }
+    // Race: matching event before waiter registration.
+    this.earlyMatchedRequestIds.add(requestId);
+  }
+
+  /** @deprecated Prefer handleHistorySet — kept for narrow test hooks. */
+  markProviderHistoryEvent(peerDataRequestSessionId?: string | null): void {
+    this.handleHistorySet({ peerDataRequestSessionId });
+  }
+
+  /** Cancel all pending on-demand waits (disconnect / logout / end). */
+  cancelPendingHistoryWaits(): void {
+    for (const pending of [...this.pendingByRequestId.values()]) {
+      this.settlePending(pending, false);
+    }
+    this.pendingByRequestId.clear();
+    this.inFlightByChat.clear();
+    this.earlyMatchedRequestIds.clear();
   }
 
   isConnected(): boolean {
@@ -134,7 +197,6 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       const phone = jidToWaId(jid);
       if (!phone) continue;
       const prev = this.contacts.get(jid);
-      // savedName is contact-book name only — never notify/push.
       const savedName = nonEmptyString(c.name) ?? prev?.savedName ?? null;
       const pushName =
         nonEmptyString(c.notify) ??
@@ -217,8 +279,8 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
 
   /**
    * Bounded on-demand history request (Baileys 6.7.x fetchMessageHistory).
-   * Requires an existing oldest message cursor; waits briefly for history events.
-   * Never enables unlimited/full-history sync.
+   * Correlates via returned request id ↔ peerDataRequestSessionId.
+   * In-flight per chat only — timeouts/errors/disconnects allow retry.
    */
   async requestBoundedHistory(
     chatJid: string,
@@ -228,34 +290,17 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   ): Promise<boolean> {
     if (!this.connected || !this.historyFetcher) return false;
     const jid = normalizeJid(chatJid);
-    if (this.requestedHistoryChats.has(jid)) return false;
-    const chat = this.chats.get(jid);
-    if (!chat || chat.messages.size === 0) return false;
+    const existing = this.inFlightByChat.get(jid);
+    if (existing) return existing;
 
-    const oldest = [...chat.messages.values()].sort(
-      (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
-    )[0];
-    if (!oldest) return false;
-
-    this.requestedHistoryChats.add(jid);
-    const generationBefore = this.historyWaitGeneration;
+    const run = this.runBoundedHistoryRequest(jid, opts);
+    this.inFlightByChat.set(jid, run);
     try {
-      await this.historyFetcher(
-        Math.max(1, Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT)),
-        {
-          remoteJid: jid,
-          id: oldest.providerMessageId,
-          fromMe: oldest.fromMe,
-        },
-        Date.parse(oldest.occurredAt)
-      );
-      await this.waitForHistoryEvent(
-        opts.waitMs ?? WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS,
-        generationBefore
-      );
-      return this.historyWaitGeneration > generationBefore;
-    } catch {
-      return false;
+      return await run;
+    } finally {
+      if (this.inFlightByChat.get(jid) === run) {
+        this.inFlightByChat.delete(jid);
+      }
     }
   }
 
@@ -264,7 +309,6 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     opts: { limit: number; sinceMs: number }
   ): Promise<WhatsAppWebSyncMessage[]> {
     const jid = normalizeJid(chatJid);
-    // Best-effort bounded provider request before reading the local cache.
     await this.requestBoundedHistory(jid, {
       limit: Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT),
     });
@@ -287,7 +331,9 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         if (Number.isFinite(ts)) timestamps.push(ts);
       }
     }
-    const sourceReady = this.connected && (timestamps.length > 0 || this.providerHistoryEventObserved);
+    const sourceReady =
+      this.connected &&
+      (timestamps.length > 0 || this.providerHistoryEventObserved);
     let oldest: number | null = null;
     let newest: number | null = null;
     for (const ts of timestamps) {
@@ -299,10 +345,8 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     if (!this.connected) {
       coverage = "unknown";
     } else if (timestamps.length === 0) {
-      coverage = this.providerHistoryEventObserved ? "empty" : "empty";
+      coverage = "empty";
     } else if (oldest !== null && oldest <= windowStartMs) {
-      // We may have messages at/before the window start, but companion on-demand
-      // history is not a reliable guarantee of a complete 7-day archive.
       coverage = "partial";
     } else {
       coverage = "available_only";
@@ -318,26 +362,105 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     };
   }
 
-  private waitForHistoryEvent(
-    waitMs: number,
-    generationBefore: number
-  ): Promise<void> {
-    if (this.historyWaitGeneration > generationBefore) {
-      return Promise.resolve();
+  /** Test seam: whether a chat currently has an in-flight history request. */
+  __testHasInFlightHistory(chatJid: string): boolean {
+    return this.inFlightByChat.has(normalizeJid(chatJid));
+  }
+
+  /** Test seam: pending waiter count. */
+  __testPendingWaitCount(): number {
+    return this.pendingByRequestId.size;
+  }
+
+  private async runBoundedHistoryRequest(
+    jid: string,
+    opts: { limit: number; waitMs?: number }
+  ): Promise<boolean> {
+    const fetcher = this.historyFetcher;
+    if (!this.connected || !fetcher) return false;
+    const chat = this.chats.get(jid);
+    if (!chat || chat.messages.size === 0) return false;
+
+    const oldest = [...chat.messages.values()].sort(
+      (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
+    )[0];
+    if (!oldest) return false;
+
+    try {
+      const rawId = await fetcher(
+        Math.max(
+          1,
+          Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT)
+        ),
+        {
+          remoteJid: jid,
+          id: oldest.providerMessageId,
+          fromMe: oldest.fromMe,
+        },
+        Date.parse(oldest.occurredAt)
+      );
+      const requestId = nonEmptyString(rawId);
+      if (!requestId) return false;
+      if (!this.connected) return false;
+
+      // Event may have arrived while fetchMessageHistory was awaiting.
+      if (this.earlyMatchedRequestIds.has(requestId)) {
+        this.earlyMatchedRequestIds.delete(requestId);
+        return true;
+      }
+
+      return await this.waitForMatchingRequest(
+        requestId,
+        jid,
+        opts.waitMs ?? WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS
+      );
+    } catch {
+      // Provider failure — in-flight chat lock cleared in requestBoundedHistory finally.
+      return false;
     }
-    return new Promise((resolve) => {
-      const started = Date.now();
-      const tick = () => {
-        if (
-          this.historyWaitGeneration > generationBefore ||
-          Date.now() - started >= waitMs
-        ) {
-          resolve();
-          return;
-        }
-        setTimeout(tick, 50);
+  }
+
+  private waitForMatchingRequest(
+    requestId: string,
+    chatJid: string,
+    waitMs: number
+  ): Promise<boolean> {
+    if (this.earlyMatchedRequestIds.has(requestId)) {
+      this.earlyMatchedRequestIds.delete(requestId);
+      return Promise.resolve(true);
+    }
+
+    return new Promise<boolean>((resolve) => {
+      const pending: PendingHistoryWait = {
+        requestId,
+        chatJid,
+        settled: false,
+        resolve,
+        timer: null,
       };
-      tick();
+      this.pendingByRequestId.set(requestId, pending);
+
+      // Re-check race after registration.
+      if (this.earlyMatchedRequestIds.has(requestId)) {
+        this.earlyMatchedRequestIds.delete(requestId);
+        this.settlePending(pending, true);
+        return;
+      }
+
+      pending.timer = setTimeout(() => {
+        this.settlePending(pending, false);
+      }, waitMs);
     });
+  }
+
+  private settlePending(pending: PendingHistoryWait, matched: boolean): void {
+    if (pending.settled) return;
+    pending.settled = true;
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
+    }
+    this.pendingByRequestId.delete(pending.requestId);
+    pending.resolve(matched);
   }
 }
