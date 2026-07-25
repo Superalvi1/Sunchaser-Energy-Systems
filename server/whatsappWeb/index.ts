@@ -30,10 +30,14 @@ export {
   getSharedWhatsAppWebSession,
   __resetSharedWhatsAppWebSession,
   classifyDisconnect,
+  classifyDisconnectDiagnostic,
+  buildConnectionClosedDiagnostic,
+  sanitizeDisconnectStatusCode,
   reconnectDelayMs,
   WHATSAPP_WEB_RECONNECT_DELAYS_MS,
   type WhatsAppWebSocketFactory,
   type WhatsAppWebInboundHandler,
+  type DisconnectDiagnosticClassification,
 } from "./whatsappWebSession.ts";
 
 export {

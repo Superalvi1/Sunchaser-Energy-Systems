@@ -38,10 +38,13 @@ import { canManageWhatsAppWebQr } from "./whatsappWebPermissions.ts";
 import {
   WhatsAppWebSession,
   classifyDisconnect,
+  classifyDisconnectDiagnostic,
+  buildConnectionClosedDiagnostic,
   reconnectDelayMs,
   WHATSAPP_WEB_RECONNECT_DELAYS_MS,
   type WhatsAppWebSocketFactory,
 } from "./whatsappWebSession.ts";
+import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import {
   FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS,
   maskPhoneNumber,
@@ -1249,5 +1252,198 @@ console.log("PASS: WhatsApp Web rate-limiter regression coverage");
 }
 
 console.log("PASS: QR Inbox path works with Postgres dual-write off");
+
+// ---------------------------------------------------------------------------
+// QR-10 — safe disconnect diagnostics (reconnect policy unchanged)
+// ---------------------------------------------------------------------------
+
+{
+  assert.equal(classifyDisconnectDiagnostic(401), "logged_out");
+  assert.equal(classifyDisconnectDiagnostic(515), "restart_required");
+  assert.equal(classifyDisconnectDiagnostic(428), "connection_closed");
+  assert.equal(classifyDisconnectDiagnostic(408), "timed_out");
+  assert.equal(classifyDisconnectDiagnostic(500), "bad_session");
+  assert.equal(classifyDisconnectDiagnostic(503), "retryable");
+  assert.equal(classifyDisconnectDiagnostic(undefined), "unknown");
+  assert.equal(classifyDisconnectDiagnostic(null), "unknown");
+
+  // Policy classification remains unchanged.
+  assert.equal(classifyDisconnect(401), "logged_out");
+  assert.equal(classifyDisconnect(428), "retryable");
+  assert.equal(classifyDisconnect(undefined), "retryable");
+  assert.equal(classifyDisconnect(500), "terminal");
+
+  const loggedOutDiag = buildConnectionClosedDiagnostic({
+    statusCode: 401,
+    willRetry: false,
+    nextState: "LOGGED_OUT",
+  });
+  assert.deepEqual(loggedOutDiag, {
+    statusCode: 401,
+    classification: "logged_out",
+    willRetry: false,
+    nextState: "LOGGED_OUT",
+  });
+
+  const retryableDiag = buildConnectionClosedDiagnostic({
+    statusCode: 428,
+    willRetry: true,
+    nextState: "RECONNECTING",
+  });
+  assert.equal(retryableDiag.classification, "connection_closed");
+  assert.equal(retryableDiag.willRetry, true);
+  assert.equal(retryableDiag.nextState, "RECONNECTING");
+
+  const unknownDiag = buildConnectionClosedDiagnostic({
+    statusCode: undefined,
+    willRetry: true,
+    nextState: "RECONNECTING",
+  });
+  assert.equal(unknownDiag.statusCode, null);
+  assert.equal(unknownDiag.classification, "unknown");
+
+  const forbidden = [
+    "qrDataUrl",
+    "creds",
+    "noiseKey",
+    "phoneNumber",
+    "remoteJid",
+    "stack",
+    "authorization",
+    "cookie",
+    "message content",
+  ];
+  const diagJson = JSON.stringify(loggedOutDiag);
+  for (const field of forbidden) {
+    assert.equal(diagJson.toLowerCase().includes(field.toLowerCase()), false);
+  }
+
+  // Diagnostic log line contains only safe fixed fields.
+  const lines: string[] = [];
+  const originalInfo = console.info;
+  console.info = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  try {
+    logWhatsAppWeb("info", "connection_closed", {
+      statusCode: 401,
+      classification: "logged_out",
+      willRetry: false,
+      nextState: "LOGGED_OUT",
+      // Attempted poison fields — logger must drop forbidden keys.
+      qr: "SHOULD_NOT_APPEAR",
+      creds: { noiseKey: "x" },
+      phone: "923001112233",
+      session: "raw-session",
+      error: new Error("raw boom"),
+    });
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.equal(lines.length, 1);
+  const parsed = JSON.parse(lines[0]!);
+  assert.equal(parsed.scope, "whatsapp_web_qr");
+  assert.equal(parsed.event, "connection_closed");
+  assert.equal(parsed.statusCode, 401);
+  assert.equal(parsed.classification, "logged_out");
+  assert.equal(parsed.willRetry, false);
+  assert.equal(parsed.nextState, "LOGGED_OUT");
+  assert.ok(typeof parsed.at === "string");
+  assert.equal("qr" in parsed, false);
+  assert.equal("creds" in parsed, false);
+  assert.equal("phone" in parsed, false);
+  assert.equal("session" in parsed, false);
+  assert.equal("error" in parsed, false);
+  const blob = JSON.stringify(parsed).toLowerCase();
+  assert.equal(blob.includes("should_not_appear"), false);
+  assert.equal(blob.includes("923001112233"), false);
+  assert.equal(blob.includes("raw boom"), false);
+
+  // LOGGED_OUT close path emits connection_closed and does not retry.
+  const authDir = tmpAuthDir();
+  const scheduled: Array<{ ms: number; fn: () => void }> = [];
+  const infoLines: string[] = [];
+  const prevInfo = console.info;
+  console.info = (...args: unknown[]) => {
+    infoLines.push(args.map(String).join(" "));
+  };
+  try {
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      reconnectDelaysMs: [2_000, 5_000],
+      setTimeoutFn: ((fn: () => void, ms: number) => {
+        scheduled.push({ ms, fn: fn as () => void });
+        return scheduled.length as unknown as NodeJS.Timeout;
+      }) as typeof setTimeout,
+      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+      socketFactory: (async () => ({
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "x" }),
+      })) as WhatsAppWebSocketFactory,
+    });
+    await session.connect();
+    await session.__testHandleConnectionUpdate({
+      connection: "close",
+      statusCode: 401,
+    });
+    assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+    assert.equal(scheduled.length, 0);
+    const closed = infoLines
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter((row) => row && row.event === "connection_closed");
+    assert.ok(closed.length >= 1);
+    assert.equal(closed[0]!.classification, "logged_out");
+    assert.equal(closed[0]!.willRetry, false);
+    assert.equal(closed[0]!.nextState, "LOGGED_OUT");
+    assert.equal(closed[0]!.statusCode, 401);
+    await session.shutdown();
+  } finally {
+    console.info = prevInfo;
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // Retryable disconnect still schedules reconnect (policy unchanged).
+  const authDir2 = tmpAuthDir();
+  const scheduled2: Array<{ ms: number; fn: () => void }> = [];
+  const session2 = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir2,
+    },
+    reconnectDelaysMs: [2_000, 5_000],
+    setTimeoutFn: ((fn: () => void, ms: number) => {
+      scheduled2.push({ ms, fn: fn as () => void });
+      return scheduled2.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: (async () => ({
+      end: () => undefined,
+      logout: async () => undefined,
+      sendText: async () => ({ providerMessageId: "x" }),
+    })) as WhatsAppWebSocketFactory,
+  });
+  await session2.connect();
+  await session2.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session2.getSafeStatus().state, "RECONNECTING");
+  assert.equal(scheduled2.length, 1);
+  assert.equal(scheduled2[0]!.ms, 2_000);
+  await session2.shutdown();
+  await fsp.rm(authDir2, { recursive: true, force: true });
+}
+
+console.log("PASS: safe disconnect diagnostics + unchanged reconnect policy");
 
 console.log("\nAll WhatsApp Web QR tests passed.");

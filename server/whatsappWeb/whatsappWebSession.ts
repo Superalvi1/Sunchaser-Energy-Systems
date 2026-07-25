@@ -51,6 +51,10 @@ export type DisconnectClassification =
   | "terminal"
   | "retryable";
 
+/**
+ * Policy classification used for reconnect decisions.
+ * Do not change behavior here without proven disconnect evidence.
+ */
 export function classifyDisconnect(
   statusCode: number | undefined | null
 ): DisconnectClassification {
@@ -59,6 +63,67 @@ export function classifyDisconnect(
     return "terminal";
   }
   return "retryable";
+}
+
+/** Sanitized diagnostic labels for connection_closed logs (not reconnect policy). */
+export type DisconnectDiagnosticClassification =
+  | "logged_out"
+  | "restart_required"
+  | "connection_closed"
+  | "timed_out"
+  | "bad_session"
+  | "retryable"
+  | "unknown";
+
+export function classifyDisconnectDiagnostic(
+  statusCode: number | undefined | null
+): DisconnectDiagnosticClassification {
+  if (statusCode == null || !Number.isFinite(Number(statusCode))) {
+    return "unknown";
+  }
+  switch (Number(statusCode)) {
+    case 401:
+      return "logged_out";
+    case 515:
+      return "restart_required";
+    case 428:
+      return "connection_closed";
+    case 408:
+      return "timed_out";
+    case 500:
+      return "bad_session";
+    default:
+      return classifyDisconnect(statusCode) === "retryable"
+        ? "retryable"
+        : "unknown";
+  }
+}
+
+export function sanitizeDisconnectStatusCode(
+  statusCode: number | undefined | null
+): number | null {
+  if (statusCode == null) return null;
+  const n = Number(statusCode);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Fixed-field payload for connection_closed diagnostics — no secrets. */
+export function buildConnectionClosedDiagnostic(input: {
+  statusCode: number | undefined | null;
+  willRetry: boolean;
+  nextState: WhatsAppWebLifecycleState;
+}): {
+  statusCode: number | null;
+  classification: DisconnectDiagnosticClassification;
+  willRetry: boolean;
+  nextState: WhatsAppWebLifecycleState;
+} {
+  return {
+    statusCode: sanitizeDisconnectStatusCode(input.statusCode),
+    classification: classifyDisconnectDiagnostic(input.statusCode),
+    willRetry: input.willRetry === true,
+    nextState: input.nextState,
+  };
 }
 
 export function reconnectDelayMs(
@@ -684,6 +749,11 @@ export class WhatsAppWebSession {
       this.clearQr();
       this.phoneRaw = null;
       this.socket = null;
+      this.logConnectionClosed({
+        statusCode: update.statusCode ?? 401,
+        willRetry: false,
+        nextState: "LOGGED_OUT",
+      });
       this.setState("LOGGED_OUT", "WhatsApp session logged out");
       if (this.paths) {
         try {
@@ -702,6 +772,11 @@ export class WhatsAppWebSession {
       // Manual stop / shutdown: close events must not reconnect.
       if (!this.connectionDesired || this.shuttingDown) {
         if (this.state !== "LOGGED_OUT" && this.state !== "DISCONNECTED") {
+          this.logConnectionClosed({
+            statusCode: update.statusCode,
+            willRetry: false,
+            nextState: "DISCONNECTED",
+          });
           this.setState("DISCONNECTED", "Disconnected");
         }
         return;
@@ -721,14 +796,39 @@ export class WhatsAppWebSession {
         this.clearReconnectTimer();
         this.reconnectAttempt = 0;
         this.phoneRaw = null;
+        this.logConnectionClosed({
+          statusCode: update.statusCode,
+          willRetry: false,
+          nextState: "ERROR",
+        });
         this.setState("ERROR", "WhatsApp Web session ended");
         return;
       }
 
-      // Temporary / retryable network loss.
+      // Temporary / retryable network loss — reconnect policy unchanged.
+      const willRetry = this.shouldReconnect();
+      this.logConnectionClosed({
+        statusCode: update.statusCode,
+        willRetry,
+        nextState: "RECONNECTING",
+      });
       this.setState("RECONNECTING", "Reconnecting after network loss");
       this.scheduleReconnect();
     }
+  }
+
+  private logConnectionClosed(input: {
+    statusCode: number | undefined | null;
+    willRetry: boolean;
+    nextState: WhatsAppWebLifecycleState;
+  }): void {
+    const diagnostic = buildConnectionClosedDiagnostic(input);
+    logWhatsAppWeb("info", "connection_closed", {
+      statusCode: diagnostic.statusCode,
+      classification: diagnostic.classification,
+      willRetry: diagnostic.willRetry,
+      nextState: diagnostic.nextState,
+    });
   }
 
   private scheduleReconnect(): void {
