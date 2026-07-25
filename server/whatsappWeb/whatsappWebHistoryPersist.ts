@@ -77,6 +77,11 @@ export async function syncWhatsAppWebContact(
 
   const nowIso = (deps.now ?? (() => new Date))().toISOString();
 
+  const businessPatch =
+    contact.isBusiness === null || contact.isBusiness === undefined
+      ? {}
+      : { isBusinessContact: contact.isBusiness };
+
   if (!existing) {
     const created = await repo.resolveOrCreateContact({
       phoneE164: phone,
@@ -88,8 +93,8 @@ export async function syncWhatsAppWebContact(
         created.id,
         {
           waJid: contact.jid,
-          isBusinessContact: contact.isBusiness,
           lastSyncedAt: nowIso,
+          ...businessPatch,
           ...(resolved.name && resolved.source
             ? { profileName: resolved.name, nameSource: resolved.source }
             : {}),
@@ -114,12 +119,14 @@ export async function syncWhatsAppWebContact(
 
   let updated = false;
   if (repo.updateContactSyncFields) {
+    // Metadata (wa_jid / last_synced_at) never blindly writes weaker names —
+    // updateContactSyncFields applies upgrade-only CAS for profile fields.
     await repo.updateContactSyncFields(
       existing.id,
       {
         waJid: contact.jid,
-        isBusinessContact: contact.isBusiness,
         lastSyncedAt: nowIso,
+        ...businessPatch,
         ...(applyName && resolved.name && resolved.source
           ? { profileName: resolved.name, nameSource: resolved.source }
           : {}),
@@ -129,7 +136,9 @@ export async function syncWhatsAppWebContact(
     updated = Boolean(
       applyName ||
         contact.jid ||
-        contact.isBusiness !== Boolean(existing.isBusinessContact)
+        (contact.isBusiness !== null &&
+          contact.isBusiness !== undefined &&
+          contact.isBusiness !== Boolean(existing.isBusinessContact))
     );
   } else {
     await repo.resolveOrCreateContact({

@@ -34,6 +34,10 @@ import {
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
 import { syncWhatsAppWebContact } from "./whatsappWebHistoryPersist.ts";
+import {
+  ContactIdentityPersistQueue,
+  WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
+} from "./whatsappWebContactIdentityQueue.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
   WhatsAppWebSyncSource,
@@ -344,16 +348,23 @@ async function defaultSocketFactory(input: {
     }
   });
 
+  // Bounded persist pool — avoids unbounded fire-and-forget write storms.
+  const contactPersistQueue = new ContactIdentityPersistQueue({
+    concurrency: WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
+    onTaskError: () => {
+      logWhatsAppWeb("warn", "contact_identity_persist_failed");
+    },
+  });
   const persistContactBatch = (
     contacts: Array<Record<string, unknown>> | null | undefined
   ) => {
     const resolved = syncSource.ingestContacts(contacts ?? []);
     if (!input.onContactIdentity || resolved.length === 0) return;
     for (const contact of resolved) {
-      void input.onContactIdentity(contact).catch(() => {
-        // Never disconnect the session or interrupt message processing.
-        logWhatsAppWeb("warn", "contact_identity_persist_failed");
-      });
+      // Per-contact isolation: one failure never rejects the batch or socket.
+      void contactPersistQueue.enqueue(() =>
+        input.onContactIdentity!(contact)
+      );
     }
   };
   sock.ev.on("contacts.upsert", (contacts) => {

@@ -5,7 +5,14 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
-import { InMemoryWhatsAppRepository } from "../whatsappTransport/whatsappRepository.ts";
+import {
+  InMemoryWhatsAppRepository,
+  SupabaseWhatsAppRepository,
+} from "../whatsappTransport/whatsappRepository.ts";
+import {
+  ContactIdentityPersistQueue,
+  WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
+} from "./whatsappWebContactIdentityQueue.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "../whatsappTransport/whatsappInboxRepository.ts";
 import { createWhatsAppInboxServices } from "../whatsappTransport/whatsappInboxServices.ts";
 import type { RequestActor } from "../middleware/actor.ts";
@@ -2469,5 +2476,280 @@ console.log("PASS: SYNC-14B live inbound fills empty; cannot downgrade saved");
   assert.ok(!displayContactLabel({ profileName: "x", phoneE164: "1" }).includes("@"));
 }
 console.log("PASS: SYNC-14B frontend privacy fallbacks unchanged");
+
+// ---------------------------------------------------------------------------
+// SYNC-14B-R1 — concurrency-safe upgrades, bounded queue, business preserve
+// ---------------------------------------------------------------------------
+{
+  const repo = new InMemoryWhatsAppRepository();
+  await repo.resolveOrCreateContact({
+    phoneE164: "923009991010",
+    profileName: "Push Base",
+    nameSource: "whatsapp_push",
+  });
+  await Promise.all([
+    repo.resolveOrCreateContact({
+      phoneE164: "923009991010",
+      profileName: "Verified Win",
+      nameSource: "whatsapp_verified",
+    }),
+    repo.resolveOrCreateContact({
+      phoneE164: "923009991010",
+      profileName: "Saved Race",
+      nameSource: "whatsapp_saved",
+    }),
+    repo.resolveOrCreateContact({
+      phoneE164: "923009991010",
+      profileName: "Push Race",
+      nameSource: "whatsapp_push",
+    }),
+  ]);
+  const final = await repo.findContactByPhoneE164!("923009991010");
+  assert.equal(final?.profileName, "Verified Win");
+  assert.equal(final?.nameSource, "whatsapp_verified");
+
+  await Promise.all([
+    repo.resolveOrCreateContact({
+      phoneE164: "923009991011",
+      profileName: "Saved Only",
+      nameSource: "whatsapp_saved",
+    }),
+    repo.resolveOrCreateContact({
+      phoneE164: "923009991011",
+      profileName: "Push Only",
+      nameSource: "whatsapp_push",
+    }),
+  ]);
+  const savedWins = await repo.findContactByPhoneE164!("923009991011");
+  assert.equal(savedWins?.profileName, "Saved Only");
+  assert.equal(savedWins?.nameSource, "whatsapp_saved");
+
+  await repo.updateContactSyncFields!(savedWins!.id, {
+    profileName: "Manual Lock",
+    nameSource: "manual",
+  });
+  await Promise.all([
+    repo.resolveOrCreateContact({
+      phoneE164: "923009991011",
+      profileName: "Verified Attack",
+      nameSource: "whatsapp_verified",
+    }),
+    repo.updateContactSyncFields!(savedWins!.id, {
+      waJid: "923009991011@s.whatsapp.net",
+      lastSyncedAt: "2026-07-24T12:00:00.000Z",
+      profileName: "Push Downgrade",
+      nameSource: "whatsapp_push",
+    }),
+  ]);
+  const manual = await repo.findContactByPhoneE164!("923009991011");
+  assert.equal(manual?.profileName, "Manual Lock");
+  assert.equal(manual?.nameSource, "manual");
+  assert.equal(manual?.waJid, "923009991011@s.whatsapp.net");
+}
+console.log("PASS: SYNC-14B-R1 concurrent upgrades + manual + metadata no downgrade");
+
+{
+  // Fake PostgREST-style client exercising CAS filters (eq/is + maybeSingle).
+  type Row = Record<string, unknown>;
+  const row: Row = {
+    id: "wct_cas_1",
+    company_id: DEFAULT_COMPANY_ID,
+    phone_e164: "923009991012",
+    profile_name: "Push Base",
+    name_source: "whatsapp_push",
+    wa_jid: null,
+    is_business_contact: false,
+    last_synced_at: null,
+    created_at: "2026-07-24T12:00:00.000Z",
+    updated_at: "2026-07-24T12:00:00.000Z",
+  };
+  let updateAttempts = 0;
+  const client = {
+    from(table: string) {
+      assert.equal(table, "whatsapp_contacts");
+      let mode: "select" | "update" | "insert" = "select";
+      let patch: Row = {};
+      const filters: Record<string, unknown> = {};
+      const api = {
+        select() {
+          return api;
+        },
+        insert(values: Row) {
+          mode = "insert";
+          Object.assign(row, values);
+          return api;
+        },
+        update(values: Row) {
+          mode = "update";
+          patch = { ...values };
+          return api;
+        },
+        eq(key: string, value: unknown) {
+          filters[key] = value;
+          return api;
+        },
+        is(key: string, value: unknown) {
+          filters[key] = value;
+          return api;
+        },
+        async maybeSingle() {
+          if (mode === "update") {
+            updateAttempts += 1;
+            // First CAS attempt: simulate concurrent verified write winning first.
+            if (
+              updateAttempts === 1 &&
+              patch.name_source === "whatsapp_saved"
+            ) {
+              row.profile_name = "Verified Concurrent";
+              row.name_source = "whatsapp_verified";
+              row.updated_at = "2026-07-24T12:00:01.000Z";
+              return { data: null, error: null }; // CAS miss
+            }
+            for (const [k, v] of Object.entries(filters)) {
+              if (k === "company_id" || k === "id" || k === "phone_e164") {
+                if (row[k] !== v) return { data: null, error: null };
+                continue;
+              }
+              if (row[k] !== v) return { data: null, error: null };
+            }
+            Object.assign(row, patch);
+            return { data: { ...row }, error: null };
+          }
+          // select
+          if (
+            filters.phone_e164 != null &&
+            row.phone_e164 !== filters.phone_e164
+          ) {
+            return { data: null, error: null };
+          }
+          if (filters.id != null && row.id !== filters.id) {
+            return { data: null, error: null };
+          }
+          return { data: { ...row }, error: null };
+        },
+        async single() {
+          const r = await api.maybeSingle();
+          if (!r.data) {
+            return { data: null, error: { message: "not found", code: "PGRST116" } };
+          }
+          return r;
+        },
+      };
+      return api;
+    },
+  };
+
+  const repo = new SupabaseWhatsAppRepository(() => client as never);
+  // Saved loses CAS to concurrent verified, then must not overwrite verified.
+  const result = await repo.resolveOrCreateContact({
+    phoneE164: "923009991012",
+    profileName: "Saved Late",
+    nameSource: "whatsapp_saved",
+  });
+  assert.equal(result.profileName, "Verified Concurrent");
+  assert.equal(result.nameSource, "whatsapp_verified");
+  assert.ok(updateAttempts >= 1);
+
+  // Metadata update must not downgrade verified → push.
+  const afterMeta = await repo.updateContactSyncFields!(result.id, {
+    waJid: "923009991012@s.whatsapp.net",
+    lastSyncedAt: "2026-07-24T12:05:00.000Z",
+    profileName: "Push Downgrade",
+    nameSource: "whatsapp_push",
+  });
+  assert.equal(afterMeta?.profileName, "Verified Concurrent");
+  assert.equal(afterMeta?.nameSource, "whatsapp_verified");
+  assert.equal(afterMeta?.waJid, "923009991012@s.whatsapp.net");
+}
+console.log("PASS: SYNC-14B-R1 Supabase CAS mock — strongest name wins");
+
+{
+  const queue = new ContactIdentityPersistQueue({ concurrency: 2 });
+  assert.equal(WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY, 3);
+  let current = 0;
+  let failures = 0;
+  const order: number[] = [];
+  const tasks = Array.from({ length: 6 }, (_, i) =>
+    queue.enqueue(async () => {
+      current += 1;
+      if (current > queue.peakActive) {
+        // peakActive tracked inside queue
+      }
+      assert.ok(current <= 2);
+      order.push(i);
+      await new Promise((r) => setTimeout(r, 5));
+      current -= 1;
+      if (i === 2) throw new Error("boom");
+      return i;
+    })
+  );
+  const results = await Promise.all(tasks);
+  assert.equal(queue.peakActive, 2);
+  assert.equal(results.filter((v) => v === undefined).length, 1);
+  assert.equal(results.filter((v) => typeof v === "number").length, 5);
+  assert.equal(order.length, 6);
+  void failures;
+}
+console.log("PASS: SYNC-14B-R1 bounded contact persist queue + failure isolation");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true, "923001112233@s.whatsapp.net");
+  source.ingestContacts([
+    {
+      id: "923009991013@s.whatsapp.net",
+      name: "Biz Person",
+      isBusiness: true,
+      verifiedName: "Biz Co",
+    },
+  ]);
+  assert.equal((await source.listContacts())[0]?.isBusiness, true);
+
+  // Partial update without isBusiness / verifiedName must not clear the flag in memory.
+  const partial = source.ingestContacts([
+    {
+      id: "923009991013@s.whatsapp.net",
+      notify: "Newer Push",
+    },
+  ]);
+  assert.equal(partial[0]?.isBusiness, null); // persist payload: do not patch
+  assert.equal((await source.listContacts())[0]?.isBusiness, true);
+  assert.equal((await source.listContacts())[0]?.pushName, "Newer Push");
+
+  const repo = new InMemoryWhatsAppRepository();
+  await syncWhatsAppWebContact(
+    {
+      jid: "923009991013@s.whatsapp.net",
+      phoneE164: "923009991013",
+      savedName: "Biz Person",
+      verifiedName: "Biz Co",
+      pushName: null,
+      shortName: null,
+      isBusiness: true,
+    },
+    { repo }
+  );
+  assert.equal(
+    (await repo.findContactByPhoneE164!("923009991013"))?.isBusinessContact,
+    true
+  );
+  await syncWhatsAppWebContact(
+    {
+      jid: "923009991013@s.whatsapp.net",
+      phoneE164: "923009991013",
+      savedName: null,
+      verifiedName: null,
+      pushName: "Newer Push",
+      shortName: null,
+      isBusiness: null,
+    },
+    { repo }
+  );
+  assert.equal(
+    (await repo.findContactByPhoneE164!("923009991013"))?.isBusinessContact,
+    true
+  );
+}
+console.log("PASS: SYNC-14B-R1 partial update preserves business flag");
 
 console.log("ALL PASS: whatsappWebHistorySync");

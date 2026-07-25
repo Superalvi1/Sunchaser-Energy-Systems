@@ -77,7 +77,11 @@ export type WhatsAppWebSyncContact = {
   verifiedName: string | null;
   pushName: string | null;
   shortName: string | null;
-  isBusiness: boolean;
+  /**
+   * Business flag from provider proof.
+   * `null` = absent on this event — persistence must preserve existing DB/memory value.
+   */
+  isBusiness: boolean | null;
 };
 
 export type WhatsAppWebSyncChat = {

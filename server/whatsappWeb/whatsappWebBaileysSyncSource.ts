@@ -225,6 +225,21 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         nonEmptyString(c.verifiedName) ?? prev?.verifiedName ?? null;
       const pushName = nonEmptyString(c.notify) ?? prev?.pushName ?? null;
       const shortName = nonEmptyString(c.short) ?? prev?.shortName ?? null;
+      // Partial contacts.update: only change business when provider proves a value.
+      const hasBusinessField = Object.prototype.hasOwnProperty.call(
+        c,
+        "isBusiness"
+      );
+      let isBusiness: boolean | null = null;
+      if (hasBusinessField) {
+        isBusiness = Boolean(c.isBusiness);
+      } else if (nonEmptyString(c.verifiedName)) {
+        isBusiness = true;
+      }
+      const memoryBusiness =
+        isBusiness !== null
+          ? isBusiness
+          : (prev?.isBusiness ?? false);
       const entry: WhatsAppWebSyncContact = {
         jid,
         phoneE164: identity.phoneE164,
@@ -232,10 +247,15 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         verifiedName,
         pushName,
         shortName,
-        isBusiness: Boolean(c.isBusiness || verifiedName),
+        // Memory keeps a concrete flag; persist payload uses null when unproven.
+        isBusiness: memoryBusiness,
       };
       this.contacts.set(jid, entry);
-      resolved.push(entry);
+      resolved.push({
+        ...entry,
+        // Downstream persistence: null means "do not patch business flag".
+        isBusiness,
+      });
     }
     return resolved;
   }
