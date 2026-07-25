@@ -1,11 +1,15 @@
 /**
  * In-memory Baileys sync source.
  * Populated from contacts/chats/history events while the socket is connected.
- * Exposes getContacts/getChats/fetchMessages-style methods for the sync job.
+ * Optionally requests bounded on-demand history via Baileys fetchMessageHistory.
  */
 import { jidToWaId } from "./whatsappWebNormalize.ts";
 import {
   normalizeJid,
+  WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT,
+  WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS,
+  type WhatsAppWebHistoryCoverage,
+  type WhatsAppWebHistoryCoverageMeta,
   type WhatsAppWebSyncChat,
   type WhatsAppWebSyncContact,
   type WhatsAppWebSyncMessage,
@@ -16,6 +20,12 @@ type InternalContact = WhatsAppWebSyncContact;
 type InternalChat = WhatsAppWebSyncChat & {
   messages: Map<string, WhatsAppWebSyncMessage>;
 };
+
+export type BaileysHistoryFetchFn = (
+  count: number,
+  oldestMsgKey: { remoteJid?: string | null; id?: string | null; fromMe?: boolean | null },
+  oldestMsgTimestamp: number
+) => Promise<string>;
 
 function messageTypeOf(msg: Record<string, unknown>): string {
   const message = msg.message as Record<string, unknown> | undefined;
@@ -77,15 +87,36 @@ function mediaMeta(msg: Record<string, unknown>): {
   return { mimeType: null, caption: null, filename: null };
 }
 
+function nonEmptyString(value: unknown): string | null {
+  const s = typeof value === "string" ? value.trim() : "";
+  return s ? s : null;
+}
+
 export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private connected = false;
   private selfJid: string | null = null;
   private readonly contacts = new Map<string, InternalContact>();
   private readonly chats = new Map<string, InternalChat>();
+  private historyFetcher: BaileysHistoryFetchFn | null = null;
+  private providerHistoryEventObserved = false;
+  private historyWaitGeneration = 0;
+  private readonly requestedHistoryChats = new Set<string>();
 
   setConnected(connected: boolean, selfJid?: string | null): void {
     this.connected = connected;
     if (selfJid !== undefined) this.selfJid = selfJid ? normalizeJid(selfJid) : null;
+    if (!connected) {
+      this.historyFetcher = null;
+    }
+  }
+
+  setHistoryFetcher(fn: BaileysHistoryFetchFn | null): void {
+    this.historyFetcher = fn;
+  }
+
+  markProviderHistoryEvent(): void {
+    this.providerHistoryEventObserved = true;
+    this.historyWaitGeneration += 1;
   }
 
   isConnected(): boolean {
@@ -103,20 +134,20 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       const phone = jidToWaId(jid);
       if (!phone) continue;
       const prev = this.contacts.get(jid);
+      // savedName is contact-book name only — never notify/push.
+      const savedName = nonEmptyString(c.name) ?? prev?.savedName ?? null;
+      const pushName =
+        nonEmptyString(c.notify) ??
+        nonEmptyString(c.verifiedName) ??
+        prev?.pushName ??
+        null;
+      const shortName = nonEmptyString(c.short) ?? prev?.shortName ?? null;
       this.contacts.set(jid, {
         jid,
         phoneE164: phone,
-        savedName:
-          (c.name as string) ||
-          (c.notify as string) ||
-          prev?.savedName ||
-          null,
-        pushName:
-          (c.notify as string) ||
-          (c.verifiedName as string) ||
-          prev?.pushName ||
-          null,
-        shortName: (c.short as string) || prev?.shortName || null,
+        savedName,
+        pushName,
+        shortName,
         isBusiness: Boolean(c.isBusiness || c.verifiedName),
       });
     }
@@ -130,12 +161,13 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       const isStatusOrBroadcast =
         jid === "status@broadcast" || jid.includes("broadcast");
       const isChannel = jid.endsWith("@newsletter");
-      const phone = isGroup || isStatusOrBroadcast || isChannel ? null : jidToWaId(jid);
+      const phone =
+        isGroup || isStatusOrBroadcast || isChannel ? null : jidToWaId(jid);
       const prev = this.chats.get(jid);
       this.chats.set(jid, {
         jid,
         phoneE164: phone,
-        name: (chat.name as string) || prev?.name || null,
+        name: nonEmptyString(chat.name) || prev?.name || null,
         isGroup,
         isStatusOrBroadcast,
         isChannel,
@@ -180,16 +212,63 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   }
 
   async listChats(): Promise<WhatsAppWebSyncChat[]> {
-    return [...this.chats.values()].map(
-      ({ messages: _m, ...chat }) => chat
-    );
+    return [...this.chats.values()].map(({ messages: _m, ...chat }) => chat);
+  }
+
+  /**
+   * Bounded on-demand history request (Baileys 6.7.x fetchMessageHistory).
+   * Requires an existing oldest message cursor; waits briefly for history events.
+   * Never enables unlimited/full-history sync.
+   */
+  async requestBoundedHistory(
+    chatJid: string,
+    opts: { limit: number; waitMs?: number } = {
+      limit: WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT,
+    }
+  ): Promise<boolean> {
+    if (!this.connected || !this.historyFetcher) return false;
+    const jid = normalizeJid(chatJid);
+    if (this.requestedHistoryChats.has(jid)) return false;
+    const chat = this.chats.get(jid);
+    if (!chat || chat.messages.size === 0) return false;
+
+    const oldest = [...chat.messages.values()].sort(
+      (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
+    )[0];
+    if (!oldest) return false;
+
+    this.requestedHistoryChats.add(jid);
+    const generationBefore = this.historyWaitGeneration;
+    try {
+      await this.historyFetcher(
+        Math.max(1, Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT)),
+        {
+          remoteJid: jid,
+          id: oldest.providerMessageId,
+          fromMe: oldest.fromMe,
+        },
+        Date.parse(oldest.occurredAt)
+      );
+      await this.waitForHistoryEvent(
+        opts.waitMs ?? WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS,
+        generationBefore
+      );
+      return this.historyWaitGeneration > generationBefore;
+    } catch {
+      return false;
+    }
   }
 
   async fetchMessages(
     chatJid: string,
     opts: { limit: number; sinceMs: number }
   ): Promise<WhatsAppWebSyncMessage[]> {
-    const chat = this.chats.get(normalizeJid(chatJid));
+    const jid = normalizeJid(chatJid);
+    // Best-effort bounded provider request before reading the local cache.
+    await this.requestBoundedHistory(jid, {
+      limit: Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT),
+    });
+    const chat = this.chats.get(jid);
     if (!chat) return [];
     return [...chat.messages.values()]
       .filter((m) => {
@@ -198,5 +277,67 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       })
       .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))
       .slice(-Math.max(1, opts.limit));
+  }
+
+  getHistoryCoverageMeta(windowStartMs: number): WhatsAppWebHistoryCoverageMeta {
+    const timestamps: number[] = [];
+    for (const chat of this.chats.values()) {
+      for (const m of chat.messages.values()) {
+        const ts = Date.parse(m.occurredAt);
+        if (Number.isFinite(ts)) timestamps.push(ts);
+      }
+    }
+    const sourceReady = this.connected && (timestamps.length > 0 || this.providerHistoryEventObserved);
+    let oldest: number | null = null;
+    let newest: number | null = null;
+    for (const ts of timestamps) {
+      if (oldest === null || ts < oldest) oldest = ts;
+      if (newest === null || ts > newest) newest = ts;
+    }
+
+    let coverage: WhatsAppWebHistoryCoverage = "unknown";
+    if (!this.connected) {
+      coverage = "unknown";
+    } else if (timestamps.length === 0) {
+      coverage = this.providerHistoryEventObserved ? "empty" : "empty";
+    } else if (oldest !== null && oldest <= windowStartMs) {
+      // We may have messages at/before the window start, but companion on-demand
+      // history is not a reliable guarantee of a complete 7-day archive.
+      coverage = "partial";
+    } else {
+      coverage = "available_only";
+    }
+
+    return {
+      sourceReady,
+      coverage,
+      providerHistoryEventObserved: this.providerHistoryEventObserved,
+      oldestAvailableAt: oldest !== null ? new Date(oldest).toISOString() : null,
+      newestAvailableAt: newest !== null ? new Date(newest).toISOString() : null,
+      onDemandHistorySupported: this.historyFetcher != null,
+    };
+  }
+
+  private waitForHistoryEvent(
+    waitMs: number,
+    generationBefore: number
+  ): Promise<void> {
+    if (this.historyWaitGeneration > generationBefore) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (
+          this.historyWaitGeneration > generationBefore ||
+          Date.now() - started >= waitMs
+        ) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
   }
 }

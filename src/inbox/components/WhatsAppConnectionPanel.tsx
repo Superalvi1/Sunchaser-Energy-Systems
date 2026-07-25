@@ -670,6 +670,18 @@ export default function WhatsAppConnectionPanel({
                     {syncJob.duplicatesSkipped} duplicates skipped ·{" "}
                     {syncJob.failedChats} failed chats
                   </div>
+                  <div>
+                    History coverage: {syncJob.historyCoverage}
+                    {syncJob.historySourceReady ? "" : " · source not ready"}
+                    {syncJob.historyProviderEventObserved
+                      ? " · provider history event observed"
+                      : " · no provider history event"}
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-[var(--inbox-muted)]">
+                    Only history supplied to the current WhatsApp Web session is
+                    imported. This is not a guaranteed full 7-day archive from
+                    WhatsApp.
+                  </p>
                   {syncJob.startedAt ? (
                     <div>Started: {new Date(syncJob.startedAt).toLocaleString()}</div>
                   ) : null}

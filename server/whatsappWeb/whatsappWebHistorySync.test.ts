@@ -34,9 +34,34 @@ import {
 import { createWhatsAppWebRouter } from "./whatsappWebRoutes.ts";
 import { persistWhatsAppWebInbound } from "./whatsappWebInbound.ts";
 import { WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID } from "./whatsappWebConfig.ts";
+import { jidToWaId } from "./whatsappWebNormalize.ts";
+import { DEFAULT_COMPANY_ID } from "../whatsappTransport/whatsappConstants.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+/** Reproduces the SYNC-1 read-modify-write race (for regression contrast). */
+async function racyAdvanceLastMessageAt(
+  state: { lastMessageAt: string | null },
+  at: string,
+  yieldMs: number
+): Promise<boolean> {
+  const current = state.lastMessageAt;
+  await new Promise((r) => setTimeout(r, yieldMs));
+  if (current && current >= at) return false;
+  state.lastMessageAt = at;
+  return true;
+}
+
+/** Atomic max semantics matching the SQL RPC. */
+function atomicAdvanceLastMessageAt(
+  state: { lastMessageAt: string | null },
+  at: string
+): boolean {
+  if (state.lastMessageAt && state.lastMessageAt >= at) return false;
+  state.lastMessageAt = at;
+  return true;
+}
 
 function actor(role = "Admin"): RequestActor {
   return {
@@ -63,6 +88,8 @@ class FakeSyncSource implements WhatsAppWebSyncSource {
   chats: WhatsAppWebSyncChat[] = [];
   messagesByChat = new Map<string, WhatsAppWebSyncMessage[]>();
   failChatJids = new Set<string>();
+  providerHistoryEventObserved = false;
+  onDemandHistorySupported = false;
 
   isConnected(): boolean {
     return this.connected;
@@ -87,6 +114,28 @@ class FakeSyncSource implements WhatsAppWebSyncSource {
       .filter((m) => Date.parse(m.occurredAt) >= opts.sinceMs)
       .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))
       .slice(-opts.limit);
+  }
+  getHistoryCoverageMeta(windowStartMs: number) {
+    const stamps = [...this.messagesByChat.values()]
+      .flat()
+      .map((m) => Date.parse(m.occurredAt))
+      .filter((n) => Number.isFinite(n));
+    const oldest = stamps.length ? Math.min(...stamps) : null;
+    const newest = stamps.length ? Math.max(...stamps) : null;
+    const coverage =
+      stamps.length === 0
+        ? ("empty" as const)
+        : oldest !== null && oldest <= windowStartMs
+          ? ("partial" as const)
+          : ("available_only" as const);
+    return {
+      sourceReady: stamps.length > 0 || this.providerHistoryEventObserved,
+      coverage,
+      providerHistoryEventObserved: this.providerHistoryEventObserved,
+      oldestAvailableAt: oldest !== null ? new Date(oldest).toISOString() : null,
+      newestAvailableAt: newest !== null ? new Date(newest).toISOString() : null,
+      onDemandHistorySupported: this.onDemandHistorySupported,
+    };
   }
 }
 
@@ -747,5 +796,213 @@ console.log("PASS: Baileys in-memory sync source ingest");
   await fs.promises.rm(authDir, { recursive: true, force: true });
 }
 console.log("PASS: admin sync API + tenant auth unchanged (non-admin 403)");
+
+{
+  // Race: live newer timestamp interleaved with older backfill write.
+  const racy = { lastMessageAt: null as string | null };
+  const older = "2026-07-20T10:00:00.000Z";
+  const newer = "2026-07-24T18:00:00.000Z";
+  const p1 = racyAdvanceLastMessageAt(racy, older, 30);
+  await new Promise((r) => setTimeout(r, 5));
+  atomicAdvanceLastMessageAt(racy, newer); // live wins mid-flight
+  await p1;
+  assert.equal(
+    racy.lastMessageAt,
+    older,
+    "racy path incorrectly overwrote newer with older"
+  );
+
+  const atomic = { lastMessageAt: null as string | null };
+  assert.equal(atomicAdvanceLastMessageAt(atomic, older), true); // null → set
+  assert.equal(atomic.lastMessageAt, older);
+  assert.equal(atomicAdvanceLastMessageAt(atomic, older), false); // equal → no
+  assert.equal(atomicAdvanceLastMessageAt(atomic, newer), true); // newer → yes
+  assert.equal(atomicAdvanceLastMessageAt(atomic, older), false); // older → no
+  assert.equal(atomic.lastMessageAt, newer);
+
+  const repo = new InMemoryWhatsAppRepository();
+  const channel = await repo.resolveOrCreateChannel({
+    phoneNumberId: WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID,
+  });
+  const contact = await repo.resolveOrCreateContact({ phoneE164: "923009998877" });
+  const conversation = await repo.resolveOrCreateOpenConversation({
+    channelId: channel.id,
+    contactId: contact.id,
+  });
+  await repo.advanceConversationLastMessageAt!(
+    conversation.id,
+    newer,
+    DEFAULT_COMPANY_ID
+  );
+  const advanced = await repo.advanceConversationLastMessageAt!(
+    conversation.id,
+    older,
+    DEFAULT_COMPANY_ID
+  );
+  assert.equal(advanced, false);
+  const bundle = await repo.getConversationBundle(conversation.id, DEFAULT_COMPANY_ID);
+  assert.equal(bundle?.conversation.lastMessageAt, newer);
+  // Wrong company must not mutate.
+  assert.equal(
+    await repo.advanceConversationLastMessageAt!(
+      conversation.id,
+      "2026-07-25T00:00:00.000Z",
+      "other_company"
+    ),
+    false
+  );
+  assert.equal(
+    (await repo.getConversationBundle(conversation.id))?.conversation.lastMessageAt,
+    newer
+  );
+}
+console.log("PASS: atomic last_message_at max + race regression + company scope");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  const created = await syncWhatsAppWebContact(
+    {
+      jid: "923009998877@s.whatsapp.net",
+      phoneE164: "923009998877",
+      savedName: "Saved",
+      pushName: "Push",
+      shortName: null,
+      isBusiness: false,
+    },
+    { repo }
+  );
+  assert.equal(
+    await repo.updateContactSyncFields!(
+      created.contact.id,
+      { profileName: "X" },
+      "other_company"
+    ),
+    null
+  );
+  const still = await repo.findContactByPhoneE164("923009998877", DEFAULT_COMPANY_ID);
+  assert.equal(still?.profileName, "Saved");
+  assert.equal(
+    await repo.findContactByPhoneE164("923009998877", "other_company"),
+    null
+  );
+}
+console.log("PASS: company scoping on contact sync mutations");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true, "923001112233@s.whatsapp.net");
+  source.ingestContacts([
+    {
+      id: "923009998877@s.whatsapp.net",
+      name: "AddressBook",
+      notify: "PushOnly",
+      short: "Shorty",
+    },
+  ]);
+  let contacts = await source.listContacts();
+  assert.equal(contacts[0]?.savedName, "AddressBook");
+  assert.equal(contacts[0]?.pushName, "PushOnly");
+  assert.equal(contacts[0]?.shortName, "Shorty");
+
+  // Push-only update must not wipe savedName.
+  source.ingestContacts([
+    {
+      id: "923009998877@s.whatsapp.net",
+      notify: "NewerPush",
+    },
+  ]);
+  contacts = await source.listContacts();
+  assert.equal(contacts[0]?.savedName, "AddressBook");
+  assert.equal(contacts[0]?.pushName, "NewerPush");
+
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Legacy CRM",
+      existingSource: null,
+      nextName: "WhatsApp",
+      nextSource: "whatsapp_saved",
+    }),
+    false
+  );
+}
+console.log("PASS: notify stays pushName; push cannot overwrite saved; legacy protected");
+
+{
+  assert.equal(
+    jidToWaId("923001112233:12@s.whatsapp.net"),
+    "923001112233"
+  );
+  assert.equal(jidToWaId("923001112233@s.whatsapp.net"), "923001112233");
+  assert.equal(jidToWaId("123456789012345@lid"), null);
+  assert.equal(jidToWaId("923001112233@unknown.host"), null);
+  assert.equal(jidToWaId("120363@g.us"), null);
+  assert.equal(jidToWaId("status@broadcast"), null);
+  assert.equal(jidToWaId("123@newsletter"), null);
+
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestContacts([
+    { id: "123456789012345@lid", name: "LID Person", notify: "Push" },
+    { id: "999@unknown.host", name: "Unknown", notify: "X" },
+  ]);
+  assert.equal((await source.listContacts()).length, 0);
+}
+console.log("PASS: device JID normalize; @lid/unknown hosts excluded");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  const empty = new FakeSyncSource();
+  empty.messagesByChat.clear();
+  empty.chats = [];
+  empty.contacts = [];
+  const service = new WhatsAppWebHistorySyncService({
+    source: empty,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+  });
+  const snap = await service.startOrJoin().done;
+  assert.equal(snap.status, "completed");
+  assert.equal(snap.historyCoverage, "empty");
+  assert.equal(snap.historySourceReady, false);
+  assert.equal(snap.messagesImported, 0);
+  assert.ok(
+    String(snap.errorSummary || "").includes("full 7-day") ||
+      String(snap.errorSummary || "").includes("available")
+  );
+
+  const partial = new FakeSyncSource();
+  partial.providerHistoryEventObserved = true;
+  partial.chats = [
+    {
+      jid: "923009998877@s.whatsapp.net",
+      phoneE164: "923009998877",
+      name: "Ali",
+      isGroup: false,
+      isStatusOrBroadcast: false,
+      isChannel: false,
+    },
+  ];
+  partial.messagesByChat.set("923009998877@s.whatsapp.net", [
+    {
+      providerMessageId: "P1",
+      chatJid: "923009998877@s.whatsapp.net",
+      fromMe: false,
+      text: "recent only",
+      messageType: "text",
+      occurredAt: "2026-07-22T10:00:00.000Z",
+    },
+  ]);
+  const service2 = new WhatsAppWebHistorySyncService({
+    source: partial,
+    repo: new InMemoryWhatsAppRepository(),
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+  });
+  const snap2 = await service2.startOrJoin().done;
+  assert.equal(snap2.historyCoverage, "available_only");
+  assert.equal(snap2.historyProviderEventObserved, true);
+  assert.ok(snap2.historyOldestAvailableAt);
+  assert.notEqual(snap2.historyCoverage as string, "complete");
+}
+console.log("PASS: empty/unready history cannot claim full 7-day; partial reported");
 
 console.log("ALL PASS: whatsappWebHistorySync");

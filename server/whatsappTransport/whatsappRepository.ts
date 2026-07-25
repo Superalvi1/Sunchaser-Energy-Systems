@@ -166,10 +166,14 @@ export interface WhatsAppRepository {
     conversationId: string,
     at: string
   ): Promise<void>;
-  /** Only advances last_message_at when `at` is strictly newer. */
+  /**
+   * Atomic last_message_at maximum — never reduces.
+   * Implementations must scope by company_id and use a single compare/update.
+   */
   advanceConversationLastMessageAt?(
     conversationId: string,
-    at: string
+    at: string,
+    companyId?: string
   ): Promise<boolean>;
   insertAuditEvent(input: {
     eventType: AuditEventType | string;
@@ -177,11 +181,15 @@ export interface WhatsAppRepository {
     entityId?: string | null;
     metadata?: Record<string, unknown>;
   }): Promise<WhatsAppAuditEvent>;
-  getConversationBundle(conversationId: string): Promise<ConversationBundle | null>;
+  getConversationBundle(
+    conversationId: string,
+    companyId?: string
+  ): Promise<ConversationBundle | null>;
   /** Resolve legacy whatsapp_messages.id by Meta wa_message_id (for normalized binding recovery). */
   findMessageIdByWaMessageId(waMessageId: string): Promise<string | null>;
   findContactByPhoneE164?(
-    phoneE164: string
+    phoneE164: string,
+    companyId?: string
   ): Promise<WhatsAppContact | null>;
   updateContactSyncFields?(
     contactId: string,
@@ -191,7 +199,8 @@ export interface WhatsAppRepository {
       isBusinessContact?: boolean;
       lastSyncedAt?: string | null;
       profileName?: string | null;
-    }
+    },
+    companyId?: string
   ): Promise<WhatsAppContact | null>;
   insertOutboundMessage(input: {
     conversationId: string;
@@ -509,10 +518,12 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
 
   async advanceConversationLastMessageAt(
     conversationId: string,
-    at: string
+    at: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<boolean> {
     const conversation = this.conversations.get(conversationId);
-    if (!conversation) return false;
+    if (!conversation || conversation.companyId !== companyId) return false;
+    // Single synchronous max — no await between read and write.
     if (conversation.lastMessageAt && conversation.lastMessageAt >= at) {
       return false;
     }
@@ -522,13 +533,11 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
   }
 
   async findContactByPhoneE164(
-    phoneE164: string
+    phoneE164: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<WhatsAppContact | null> {
     for (const contact of this.contacts.values()) {
-      if (
-        contact.companyId === DEFAULT_COMPANY_ID &&
-        contact.phoneE164 === phoneE164
-      ) {
+      if (contact.companyId === companyId && contact.phoneE164 === phoneE164) {
         return contact;
       }
     }
@@ -543,10 +552,11 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       isBusinessContact?: boolean;
       lastSyncedAt?: string | null;
       profileName?: string | null;
-    }
+    },
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<WhatsAppContact | null> {
     const contact = this.contacts.get(contactId);
-    if (!contact) return null;
+    if (!contact || contact.companyId !== companyId) return null;
     if (fields.waJid !== undefined) contact.waJid = fields.waJid;
     if (fields.nameSource !== undefined) contact.nameSource = fields.nameSource;
     if (fields.isBusinessContact !== undefined) {
@@ -582,13 +592,17 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
   }
 
   async getConversationBundle(
-    conversationId: string
+    conversationId: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<ConversationBundle | null> {
     const conversation = this.conversations.get(conversationId);
-    if (!conversation) return null;
+    if (!conversation || conversation.companyId !== companyId) return null;
     const contact = this.contacts.get(conversation.contactId);
     const channel = this.channels.get(conversation.channelId);
     if (!contact || !channel) return null;
+    if (contact.companyId !== companyId || channel.companyId !== companyId) {
+      return null;
+    }
     return { conversation, contact, channel };
   }
 
@@ -1272,33 +1286,31 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
 
   async advanceConversationLastMessageAt(
     conversationId: string,
-    at: string
+    at: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<boolean> {
     const supabase = this.client();
-    const { data: existing, error: readError } = await supabase
-      .from("whatsapp_conversations")
-      .select("last_message_at")
-      .eq("id", conversationId)
-      .maybeSingle();
-    if (readError) throw new Error(readError.message);
-    if (!existing) return false;
-    const current = (existing.last_message_at as string | null) ?? null;
-    if (current && current >= at) return false;
-    const { error } = await supabase
-      .from("whatsapp_conversations")
-      .update({ last_message_at: at, updated_at: nowIso() })
-      .eq("id", conversationId);
+    // Atomic DB-side maximum (SYNC-1A). Never read-modify-write in app code.
+    const { data, error } = await supabase.rpc(
+      "whatsapp_advance_conversation_last_message_at",
+      {
+        p_company_id: companyId,
+        p_conversation_id: conversationId,
+        p_at: at,
+      }
+    );
     if (error) throw new Error(error.message);
-    return true;
+    return data === true;
   }
 
   async findContactByPhoneE164(
-    phoneE164: string
+    phoneE164: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<WhatsAppContact | null> {
     const { data, error } = await this.client()
       .from("whatsapp_contacts")
       .select("*")
-      .eq("company_id", DEFAULT_COMPANY_ID)
+      .eq("company_id", companyId)
       .eq("phone_e164", phoneE164)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -1313,7 +1325,8 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       isBusinessContact?: boolean;
       lastSyncedAt?: string | null;
       profileName?: string | null;
-    }
+    },
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<WhatsAppContact | null> {
     const patch: Record<string, unknown> = { updated_at: nowIso() };
     if (fields.waJid !== undefined) patch.wa_jid = fields.waJid;
@@ -1330,6 +1343,7 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
     const { data, error } = await this.client()
       .from("whatsapp_contacts")
       .update(patch)
+      .eq("company_id", companyId)
       .eq("id", contactId)
       .select("*")
       .maybeSingle();
@@ -1448,12 +1462,14 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
   }
 
   async getConversationBundle(
-    conversationId: string
+    conversationId: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<ConversationBundle | null> {
     const supabase = this.client();
     const { data: conversation, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
+      .eq("company_id", companyId)
       .eq("id", conversationId)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -1461,8 +1477,18 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
 
     const conv = mapConversation(conversation as Record<string, unknown>);
     const [{ data: contact }, { data: channel }] = await Promise.all([
-      supabase.from("whatsapp_contacts").select("*").eq("id", conv.contactId).maybeSingle(),
-      supabase.from("whatsapp_channels").select("*").eq("id", conv.channelId).maybeSingle(),
+      supabase
+        .from("whatsapp_contacts")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", conv.contactId)
+        .maybeSingle(),
+      supabase
+        .from("whatsapp_channels")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", conv.channelId)
+        .maybeSingle(),
     ]);
     if (!contact || !channel) return null;
     return {

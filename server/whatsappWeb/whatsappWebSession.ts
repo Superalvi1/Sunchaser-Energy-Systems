@@ -76,6 +76,29 @@ class SessionBoundSyncSource implements WhatsAppWebSyncSource {
       this.live()?.fetchMessages(chatJid, opts) ?? Promise.resolve([])
     );
   }
+
+  getHistoryCoverageMeta(windowStartMs: number) {
+    return (
+      this.live()?.getHistoryCoverageMeta?.(windowStartMs) ?? {
+        sourceReady: false,
+        coverage: "unknown" as const,
+        providerHistoryEventObserved: false,
+        oldestAvailableAt: null,
+        newestAvailableAt: null,
+        onDemandHistorySupported: false,
+      }
+    );
+  }
+
+  requestBoundedHistory(
+    chatJid: string,
+    opts?: { limit: number; waitMs?: number }
+  ) {
+    return (
+      this.live()?.requestBoundedHistory?.(chatJid, opts) ??
+      Promise.resolve(false)
+    );
+  }
 }
 
 /** Capped exponential-ish reconnect delays (ms). */
@@ -260,6 +283,9 @@ async function defaultSocketFactory(input: {
     markOnlineOnConnect: false,
   });
   const syncSource = new BaileysInMemorySyncSource();
+  syncSource.setHistoryFetcher(async (count, oldestMsgKey, oldestMsgTimestamp) =>
+    sock.fetchMessageHistory(count, oldestMsgKey as never, oldestMsgTimestamp)
+  );
 
   sock.ev.on("creds.update", () => {
     void saveCreds().then(() => input.onCredentialsSaved());
@@ -273,6 +299,14 @@ async function defaultSocketFactory(input: {
 
     if (update.connection === "open") {
       syncSource.setConnected(true, sock.user?.id ?? null);
+      syncSource.setHistoryFetcher(
+        async (count, oldestMsgKey, oldestMsgTimestamp) =>
+          sock.fetchMessageHistory(
+            count,
+            oldestMsgKey as never,
+            oldestMsgTimestamp
+          )
+      );
       input.onConnectionUpdate({
         connection: "open",
         userId: sock.user?.id ?? null,
@@ -328,6 +362,7 @@ async function defaultSocketFactory(input: {
       contacts?: Array<Record<string, unknown>>;
       messages?: Array<Record<string, unknown>>;
     };
+    syncSource.markProviderHistoryEvent();
     if (p.contacts) syncSource.ingestContacts(p.contacts);
     if (p.chats) syncSource.ingestChats(p.chats);
     if (p.messages) syncSource.ingestMessages(p.messages);

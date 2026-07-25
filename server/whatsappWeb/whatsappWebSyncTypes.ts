@@ -7,6 +7,25 @@ export const WHATSAPP_WEB_SYNC_WINDOW_DAYS = 7;
 export const WHATSAPP_WEB_SYNC_MESSAGE_LIMIT_PER_CHAT = 80;
 export const WHATSAPP_WEB_SYNC_CHAT_CONCURRENCY = 2;
 export const WHATSAPP_WEB_SYNC_CHAT_BATCH_SIZE = 10;
+/** Bounded Baileys on-demand history request size (not unlimited). */
+export const WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT = 50;
+/** Max wait for a matching messaging-history.set after on-demand request. */
+export const WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS = 2500;
+
+export type WhatsAppWebHistoryCoverage =
+  | "unknown"
+  | "empty"
+  | "available_only"
+  | "partial";
+
+export type WhatsAppWebHistoryCoverageMeta = {
+  sourceReady: boolean;
+  coverage: WhatsAppWebHistoryCoverage;
+  providerHistoryEventObserved: boolean;
+  oldestAvailableAt: string | null;
+  newestAvailableAt: string | null;
+  onDemandHistorySupported: boolean;
+};
 
 export type WhatsAppContactNameSource =
   | "manual"
@@ -66,6 +85,15 @@ export type WhatsAppWebSyncSource = {
     chatJid: string,
     opts: { limit: number; sinceMs: number }
   ) => Promise<WhatsAppWebSyncMessage[]>;
+  /** Optional: truthfully report what history the session actually has. */
+  getHistoryCoverageMeta?: (
+    windowStartMs: number
+  ) => WhatsAppWebHistoryCoverageMeta;
+  /** Optional: bounded Baileys on-demand history request. */
+  requestBoundedHistory?: (
+    chatJid: string,
+    opts?: { limit: number; waitMs?: number }
+  ) => Promise<boolean>;
 };
 
 export type WhatsAppWebSyncJobStatus =
@@ -92,6 +120,17 @@ export type WhatsAppWebSyncJobSnapshot = {
   /** Safe, non-PII error summary for admins. */
   errorSummary: string | null;
   windowDays: number;
+  /** True when the session had any usable history cache/events. */
+  historySourceReady: boolean;
+  /**
+   * Never "complete" — companion sessions only guarantee available history.
+   * empty / available_only / partial / unknown.
+   */
+  historyCoverage: WhatsAppWebHistoryCoverage;
+  historyProviderEventObserved: boolean;
+  historyOldestAvailableAt: string | null;
+  historyNewestAvailableAt: string | null;
+  historyOnDemandSupported: boolean;
 };
 
 export function emptySyncJobSnapshot(): WhatsAppWebSyncJobSnapshot {
@@ -111,6 +150,12 @@ export function emptySyncJobSnapshot(): WhatsAppWebSyncJobSnapshot {
     completedAt: null,
     errorSummary: null,
     windowDays: WHATSAPP_WEB_SYNC_WINDOW_DAYS,
+    historySourceReady: false,
+    historyCoverage: "unknown",
+    historyProviderEventObserved: false,
+    historyOldestAvailableAt: null,
+    historyNewestAvailableAt: null,
+    historyOnDemandSupported: false,
   };
 }
 
@@ -130,7 +175,11 @@ export function resolveWhatsAppDisplayName(input: {
   return { name: phone, source: "phone" };
 }
 
-/** Upgrade-only name policy — never replace a stronger/manual name. */
+/**
+ * Upgrade-only name policy — never replace a stronger/manual name.
+ * Legacy populated profile_name with null/unknown name_source is treated as
+ * manual (conservative) unless provenance is explicitly proven.
+ */
 export function shouldApplyWhatsAppContactName(input: {
   existingName: string | null | undefined;
   existingSource: WhatsAppContactNameSource | null | undefined;
@@ -139,7 +188,11 @@ export function shouldApplyWhatsAppContactName(input: {
 }): boolean {
   const existing = String(input.existingName || "").trim();
   if (!existing) return Boolean(String(input.nextName || "").trim());
-  const existingSource = input.existingSource ?? "manual";
+  const existingSource =
+    input.existingSource &&
+    input.existingSource in WHATSAPP_CONTACT_NAME_SOURCE_RANK
+      ? input.existingSource
+      : "manual";
   const existingRank = WHATSAPP_CONTACT_NAME_SOURCE_RANK[existingSource] ?? 50;
   const nextRank = WHATSAPP_CONTACT_NAME_SOURCE_RANK[input.nextSource] ?? 0;
   return nextRank > existingRank;

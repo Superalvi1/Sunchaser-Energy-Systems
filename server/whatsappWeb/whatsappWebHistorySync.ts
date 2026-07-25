@@ -1,6 +1,7 @@
 /**
- * Admin-triggered WhatsApp Web contact sync + 7-day history backfill.
+ * Admin-triggered WhatsApp Web contact sync + recent history backfill.
  * Single-flight job; injectable sync source; never sends messages or runs AI.
+ * History coverage is reported truthfully (never claims a full 7-day import).
  */
 import { randomUUID } from "node:crypto";
 import type { WhatsAppRepository } from "../whatsappTransport/whatsappRepository.ts";
@@ -18,6 +19,7 @@ import {
   WHATSAPP_WEB_SYNC_CHAT_CONCURRENCY,
   WHATSAPP_WEB_SYNC_MESSAGE_LIMIT_PER_CHAT,
   WHATSAPP_WEB_SYNC_WINDOW_DAYS,
+  type WhatsAppWebHistoryCoverageMeta,
   type WhatsAppWebSyncJobSnapshot,
   type WhatsAppWebSyncSource,
 } from "./whatsappWebSyncTypes.ts";
@@ -89,6 +91,8 @@ export class WhatsAppWebHistorySyncService {
         errorSummary: "WhatsApp Web is not connected",
         completedAt: this.now().toISOString(),
         windowDays: this.windowDays,
+        historyCoverage: "unknown",
+        historySourceReady: false,
       };
       return {
         accepted: false,
@@ -120,6 +124,30 @@ export class WhatsAppWebHistorySyncService {
     };
   }
 
+  private applyCoverage(meta: WhatsAppWebHistoryCoverageMeta): void {
+    this.snapshot.historySourceReady = meta.sourceReady;
+    this.snapshot.historyCoverage = meta.coverage;
+    this.snapshot.historyProviderEventObserved =
+      meta.providerHistoryEventObserved;
+    this.snapshot.historyOldestAvailableAt = meta.oldestAvailableAt;
+    this.snapshot.historyNewestAvailableAt = meta.newestAvailableAt;
+    this.snapshot.historyOnDemandSupported = meta.onDemandHistorySupported;
+  }
+
+  private resolveCoverage(sinceMs: number): WhatsAppWebHistoryCoverageMeta {
+    if (this.source.getHistoryCoverageMeta) {
+      return this.source.getHistoryCoverageMeta(sinceMs);
+    }
+    return {
+      sourceReady: false,
+      coverage: "unknown",
+      providerHistoryEventObserved: false,
+      oldestAvailableAt: null,
+      newestAvailableAt: null,
+      onDemandHistorySupported: false,
+    };
+  }
+
   private async runJob(): Promise<WhatsAppWebSyncJobSnapshot> {
     this.snapshot.status = "running";
     logWhatsAppWeb("info", "history_sync_started", {
@@ -129,6 +157,9 @@ export class WhatsAppWebHistorySyncService {
     try {
       const selfJid = this.source.getSelfJid();
       const sinceMs = syncWindowStartMs(this.now().getTime(), this.windowDays);
+
+      // Capture coverage before import so empty/unready sources cannot look complete.
+      this.applyCoverage(this.resolveCoverage(sinceMs));
 
       const contacts = (await this.source.listContacts()).filter((c) =>
         isEligibleSyncContact(c, selfJid)
@@ -160,14 +191,14 @@ export class WhatsAppWebHistorySyncService {
           if (this.cancelRequested) return;
           this.snapshot.chatsInspected += 1;
           try {
-            // Ensure contact exists for chat participants.
+            // Chat display name is not a contact-book saved name — treat as push.
             if (chat.phoneE164) {
               const synced = await syncWhatsAppWebContact(
                 {
                   jid: chat.jid,
                   phoneE164: chat.phoneE164,
-                  savedName: chat.name,
-                  pushName: null,
+                  savedName: null,
+                  pushName: chat.name,
                   shortName: null,
                   isBusiness: false,
                 },
@@ -219,15 +250,34 @@ export class WhatsAppWebHistorySyncService {
         });
       }
 
-      this.snapshot.status = this.cancelRequested ? "completed" : "completed";
+      // Re-evaluate coverage after imports / on-demand waits.
+      this.applyCoverage(this.resolveCoverage(sinceMs));
+
+      this.snapshot.status = "completed";
       this.snapshot.completedAt = this.now().toISOString();
       if (this.cancelRequested && !this.snapshot.errorSummary) {
         this.snapshot.errorSummary = "Sync stopped early (session disconnect)";
+      } else if (
+        !this.snapshot.errorSummary &&
+        (this.snapshot.historyCoverage === "empty" ||
+          !this.snapshot.historySourceReady)
+      ) {
+        this.snapshot.errorSummary =
+          "Only session-available history was imported; full 7-day coverage was not available";
+      } else if (
+        !this.snapshot.errorSummary &&
+        (this.snapshot.historyCoverage === "available_only" ||
+          this.snapshot.historyCoverage === "partial")
+      ) {
+        this.snapshot.errorSummary =
+          "Imported available WhatsApp history for this session (not a guaranteed full 7-day archive)";
       }
+
       logWhatsAppWeb("info", "history_sync_completed", {
         messagesImported: this.snapshot.messagesImported,
         failedChats: this.snapshot.failedChats,
         duplicatesSkipped: this.snapshot.duplicatesSkipped,
+        historyCoverage: this.snapshot.historyCoverage,
       });
       return this.getSnapshot();
     } catch {

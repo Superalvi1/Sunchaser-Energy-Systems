@@ -7,7 +7,10 @@ import {
   type WhatsAppContact,
   type WhatsAppRepository,
 } from "../whatsappTransport/whatsappRepository.ts";
-import { MESSAGE_STATUSES } from "../whatsappTransport/whatsappConstants.ts";
+import {
+  DEFAULT_COMPANY_ID,
+  MESSAGE_STATUSES,
+} from "../whatsappTransport/whatsappConstants.ts";
 import { WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID } from "./whatsappWebConfig.ts";
 import { jidToWaId } from "./whatsappWebNormalize.ts";
 import { logWhatsAppWeb } from "./whatsappWebLog.ts";
@@ -67,8 +70,9 @@ export async function syncWhatsAppWebContact(
     phoneE164: phone,
   });
 
+  const companyId = DEFAULT_COMPANY_ID;
   const existing = repo.findContactByPhoneE164
-    ? await repo.findContactByPhoneE164(phone)
+    ? await repo.findContactByPhoneE164(phone, companyId)
     : null;
 
   if (!existing) {
@@ -77,17 +81,22 @@ export async function syncWhatsAppWebContact(
       profileName: resolved.name,
     });
     if (repo.updateContactSyncFields) {
-      await repo.updateContactSyncFields(created.id, {
-        waJid: contact.jid,
-        nameSource: resolved.source,
-        isBusinessContact: contact.isBusiness,
-        lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
-        profileName: resolved.name,
-      });
+      await repo.updateContactSyncFields(
+        created.id,
+        {
+          waJid: contact.jid,
+          nameSource: resolved.source,
+          isBusinessContact: contact.isBusiness,
+          lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
+          profileName: resolved.name,
+        },
+        companyId
+      );
     }
     return { contact: created, created: true, updated: false };
   }
 
+  // Legacy non-null profile_name with null name_source → treat as manual.
   const existingSource = (existing.nameSource ??
     (existing.profileName ? "manual" : null)) as WhatsAppContactNameSource | null;
   const applyName = shouldApplyWhatsAppContactName({
@@ -99,20 +108,24 @@ export async function syncWhatsAppWebContact(
 
   let updated = false;
   if (repo.updateContactSyncFields) {
-    await repo.updateContactSyncFields(existing.id, {
-      waJid: contact.jid,
-      isBusinessContact: contact.isBusiness,
-      lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
-      ...(applyName
-        ? { profileName: resolved.name, nameSource: resolved.source }
-        : {}),
-    });
+    await repo.updateContactSyncFields(
+      existing.id,
+      {
+        waJid: contact.jid,
+        isBusinessContact: contact.isBusiness,
+        lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
+        ...(applyName
+          ? { profileName: resolved.name, nameSource: resolved.source }
+          : {}),
+      },
+      companyId
+    );
     updated = true;
   }
 
   const refreshed =
     (repo.findContactByPhoneE164
-      ? await repo.findContactByPhoneE164(phone)
+      ? await repo.findContactByPhoneE164(phone, companyId)
       : null) ?? existing;
   return { contact: refreshed, created: false, updated };
 }
@@ -234,12 +247,17 @@ async function advanceLastMessageAt(
   at: string
 ): Promise<void> {
   if (repo.advanceConversationLastMessageAt) {
-    await repo.advanceConversationLastMessageAt(conversationId, at);
+    await repo.advanceConversationLastMessageAt(
+      conversationId,
+      at,
+      DEFAULT_COMPANY_ID
+    );
     return;
   }
   const bundle = await repo.getConversationBundle(conversationId);
+  if (bundle && bundle.conversation.companyId !== DEFAULT_COMPANY_ID) return;
   const current = bundle?.conversation.lastMessageAt;
-  if (current && current > at) return;
+  if (current && current >= at) return;
   await repo.updateConversationLastMessageAt(conversationId, at);
 }
 
