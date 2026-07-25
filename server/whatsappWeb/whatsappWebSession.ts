@@ -493,12 +493,27 @@ export class WhatsAppWebSession {
   private readonly historySync: WhatsAppWebHistorySyncService;
   /**
    * Single session-owned persist queue reused across socket reconnects.
-   * Per-phone generation drops stale queued writes after newer events arrive.
+   * Per-phone generation + key serialization; monotonic epoch blocks ABA reuse.
    */
   private contactPersistQueue: ContactIdentityPersistQueue;
   private readonly contactPersistGeneration = new Map<string, number>();
-  /** Test observability: how many queue instances this session has created. */
+  /**
+   * Monotonic queue/session epoch. Bumped on create and on close so closed-epoch
+   * tasks can never become current again after generation maps are cleared.
+   */
   private contactPersistQueueEpoch = 0;
+  /**
+   * Test seam: awaited inside guarded updateContactSyncFields after the final
+   * pre-write isCurrent check and before the real repository mutate.
+   */
+  private contactPersistTestBeforeWrite:
+    | ((ctx: {
+        id: string;
+        fields: Parameters<
+          NonNullable<WhatsAppRepository["updateContactSyncFields"]>
+        >[1];
+      }) => Promise<void>)
+    | null = null;
 
   private state: WhatsAppWebLifecycleState = "DISCONNECTED";
   private phoneRaw: string | null = null;
@@ -549,7 +564,7 @@ export class WhatsAppWebSession {
     this.inboundHandler = handler;
   }
 
-  /** Test/helper: queue instances created (increments only on recreate after close). */
+  /** Test/helper: monotonic queue epoch (create + close both advance it). */
   getContactPersistQueueEpoch(): number {
     return this.contactPersistQueueEpoch;
   }
@@ -559,13 +574,36 @@ export class WhatsAppWebSession {
     return this.contactPersistQueue.peakActive;
   }
 
+  /** Test/helper: peak same-phone concurrency on the current queue. */
+  getContactPersistPeakActiveForPhone(phoneE164: string): number {
+    return this.contactPersistQueue.getPeakActiveForKey(phoneE164.trim());
+  }
+
   /** Test/helper: whether the session persist queue is closed. */
   isContactPersistQueueClosed(): boolean {
     return this.contactPersistQueue.isClosed;
   }
 
+  /**
+   * Test seam: pause inside guarded updateContactSyncFields after the final
+   * pre-write isCurrent check (deterministic stale/logout races).
+   */
+  __testSetContactPersistBeforeWrite(
+    fn:
+      | ((ctx: {
+          id: string;
+          fields: Parameters<
+            NonNullable<WhatsAppRepository["updateContactSyncFields"]>
+          >[1];
+        }) => Promise<void>)
+      | null
+  ): void {
+    this.contactPersistTestBeforeWrite = fn;
+  }
+
   private createContactPersistQueue(): ContactIdentityPersistQueue {
     this.contactPersistQueueEpoch += 1;
+    this.contactPersistGeneration.clear();
     return new ContactIdentityPersistQueue({
       concurrency: WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
       onTaskError: () => {
@@ -583,10 +621,13 @@ export class WhatsAppWebSession {
 
   /**
    * Close the session persist queue: drop pending work, refuse new enqueues.
-   * Active tasks finish without unhandled rejection; writers no-op when closed/shutting down.
+   * Bumps epoch so in-flight tasks from this epoch can never become current again
+   * (including after generation maps are cleared and a new queue is created).
    */
   private closeContactPersistQueue(reason: string): void {
     this.contactPersistGeneration.clear();
+    // Invalidate every task that captured the prior epoch (ABA protection).
+    this.contactPersistQueueEpoch += 1;
     if (!this.contactPersistQueue.isClosed) {
       this.contactPersistQueue.close();
       logWhatsAppWeb("info", "contact_identity_persist_queue_closed", {
@@ -597,7 +638,8 @@ export class WhatsAppWebSession {
 
   /**
    * Enqueue contact identity persistence on the session-owned bounded queue.
-   * Per-phone generation prevents stale reconnect work from overwriting newer metadata.
+   * Same phone is strictly serialized; global concurrency stays ≤3 across phones.
+   * Captured epoch + queue identity prevent ABA revival after close/recreate.
    */
   private enqueueContactIdentityPersist(
     contact: import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncContact
@@ -605,25 +647,66 @@ export class WhatsAppWebSession {
     if (this.shuttingDown || this.contactPersistQueue.isClosed) {
       return Promise.resolve();
     }
-    const phoneKey = contact.phoneE164;
+    const phoneKey = String(contact.phoneE164 || "").trim();
+    if (!phoneKey) return Promise.resolve();
+
+    const epochAtEnqueue = this.contactPersistQueueEpoch;
+    const queueAtEnqueue = this.contactPersistQueue;
     const generation =
       (this.contactPersistGeneration.get(phoneKey) ?? 0) + 1;
     this.contactPersistGeneration.set(phoneKey, generation);
 
     const isCurrent = () =>
       !this.shuttingDown &&
-      !this.contactPersistQueue.isClosed &&
+      this.contactPersistQueueEpoch === epochAtEnqueue &&
+      this.contactPersistQueue === queueAtEnqueue &&
+      !queueAtEnqueue.isClosed &&
       this.contactPersistGeneration.get(phoneKey) === generation;
 
-    return this.contactPersistQueue
-      .enqueue(async () => {
-        if (!isCurrent()) return;
-        await syncWhatsAppWebContact(contact, {
-          repo: this.syncRepo,
-          now: this.now,
-          shouldContinue: isCurrent,
-        });
-      })
+    const baseRepo = this.syncRepo;
+    const guardedRepo: WhatsAppRepository = new Proxy(baseRepo, {
+      get: (target, prop, receiver) => {
+        if (prop === "updateContactSyncFields") {
+          const underlying = target.updateContactSyncFields;
+          if (!underlying) return undefined;
+          return async (
+            id: string,
+            fields: Parameters<NonNullable<WhatsAppRepository["updateContactSyncFields"]>>[1],
+            companyId?: string
+          ) => {
+            // Final pre-write check (inside updateContactSyncFields).
+            if (!isCurrent()) {
+              return null as never;
+            }
+            if (this.contactPersistTestBeforeWrite) {
+              await this.contactPersistTestBeforeWrite({ id, fields });
+            }
+            // Re-check after any await so logout/newer-epoch cannot overwrite.
+            if (!isCurrent()) {
+              return null as never;
+            }
+            return underlying.call(target, id, fields, companyId);
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function"
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+
+    return queueAtEnqueue
+      .enqueue(
+        async () => {
+          if (!isCurrent()) return;
+          await syncWhatsAppWebContact(contact, {
+            repo: guardedRepo,
+            now: this.now,
+            shouldContinue: isCurrent,
+          });
+        },
+        { key: phoneKey }
+      )
       .then(() => undefined);
   }
 

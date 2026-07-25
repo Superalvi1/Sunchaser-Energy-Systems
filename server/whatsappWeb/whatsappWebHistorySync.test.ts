@@ -2926,9 +2926,10 @@ console.log("PASS: SYNC-14B-R2 business-field provider proof");
     const stale = onContact(contactOf("923009991015", false));
     await new Promise((r) => setTimeout(r, 10));
     const fresh = onContact(contactOf("923009991015", true));
-    await fresh;
+    // Same-phone serialization: release the stalled older task before awaiting
+    // the newer one, or the phone key stays locked forever.
     releaseOldFind!();
-    await stale;
+    await Promise.all([stale, fresh]);
 
     const final = await repo.findContactByPhoneE164!("923009991015");
     assert.equal(final?.isBusinessContact, true);
@@ -3025,5 +3026,329 @@ console.log("PASS: SYNC-14B-R2 business-field provider proof");
   }
 }
 console.log("PASS: SYNC-14B-R2 session queue lifecycle + stale write guard");
+
+// ---------------------------------------------------------------------------
+// SYNC-14B-R3 — per-phone serialization + queue epoch ABA protection
+// ---------------------------------------------------------------------------
+{
+  type SocketWithIdentity = {
+    __onContactIdentity: WhatsAppWebContactIdentityHandler;
+  };
+  const contactOf = (
+    phone: string,
+    isBusiness: boolean | null
+  ): WhatsAppWebSyncContact => ({
+    jid: `${phone}@s.whatsapp.net`,
+    phoneE164: phone,
+    savedName: "Name",
+    verifiedName: null,
+    pushName: null,
+    shortName: null,
+    isBusiness,
+  });
+  const openFactory = (): {
+    factory: WhatsAppWebSocketFactory;
+    getHandler: (session: WhatsAppWebSession) => WhatsAppWebContactIdentityHandler;
+  } => {
+    const factory: WhatsAppWebSocketFactory = async (input) => {
+      queueMicrotask(() =>
+        input.onConnectionUpdate({
+          connection: "open",
+          userId: "923001112233@s.whatsapp.net",
+        })
+      );
+      return {
+        end: () => {},
+        logout: async () => {},
+        sendText: async () => ({ providerMessageId: "x" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+        getSyncSource: () => null,
+        __onContactIdentity: input.onContactIdentity!,
+      };
+    };
+    return {
+      factory,
+      getHandler: (session) => {
+        const sock = (session as unknown as { socket: SocketWithIdentity | null })
+          .socket;
+        assert.ok(sock?.__onContactIdentity);
+        return sock.__onContactIdentity;
+      },
+    };
+  };
+  const connectSession = async (repo: InMemoryWhatsAppRepository) => {
+    const authDir = tmpAuthDir();
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    const { factory, getHandler } = openFactory();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: factory,
+      syncRepo: repo,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    });
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    return { session, onContact: getHandler(session), authDir };
+  };
+
+  // --- Stale false paused inside updateContactSyncFields; newer true wins ---
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    await repo.resolveOrCreateContact({ phoneE164: "923009991030" });
+    const { session, onContact } = await connectSession(repo);
+
+    let releaseOld: (() => void) | null = null;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    let oldEntered = false;
+    session.__testSetContactPersistBeforeWrite(async ({ fields }) => {
+      if (fields.isBusinessContact === false) {
+        oldEntered = true;
+        await oldGate;
+      }
+    });
+
+    const stale = onContact(contactOf("923009991030", false));
+    for (let i = 0; i < 40 && !oldEntered; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(oldEntered, true);
+
+    const fresh = onContact(contactOf("923009991030", true));
+    // Same-phone serialization: newer waits behind the paused old write.
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(session.getContactPersistPeakActiveForPhone("923009991030"), 1);
+
+    releaseOld!();
+    await Promise.all([stale, fresh]);
+    assert.equal(
+      (await repo.findContactByPhoneE164!("923009991030"))?.isBusinessContact,
+      true
+    );
+    await session.shutdown();
+  }
+
+  // --- Old true / new false ends at newer explicit false ---
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    await repo.resolveOrCreateContact({
+      phoneE164: "923009991031",
+      profileName: "X",
+    });
+    await repo.updateContactSyncFields!(
+      (await repo.findContactByPhoneE164!("923009991031"))!.id,
+      { isBusinessContact: true }
+    );
+    const { session, onContact } = await connectSession(repo);
+
+    let releaseOld: (() => void) | null = null;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    let oldEntered = false;
+    session.__testSetContactPersistBeforeWrite(async ({ fields }) => {
+      if (fields.isBusinessContact === true) {
+        oldEntered = true;
+        await oldGate;
+      }
+    });
+
+    const stale = onContact(contactOf("923009991031", true));
+    for (let i = 0; i < 40 && !oldEntered; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(oldEntered, true);
+    const fresh = onContact(contactOf("923009991031", false));
+    releaseOld!();
+    await Promise.all([stale, fresh]);
+    assert.equal(
+      (await repo.findContactByPhoneE164!("923009991031"))?.isBusinessContact,
+      false
+    );
+    await session.shutdown();
+  }
+
+  // --- Same-phone concurrency ≤1; different phones >1 and ≤3 ---
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    const { session, onContact } = await connectSession(repo);
+    session.__testSetContactPersistBeforeWrite(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    const samePhone = Array.from({ length: 5 }, () =>
+      onContact(contactOf("923009991032", true))
+    );
+    const multiPhone = Array.from({ length: 6 }, (_, i) =>
+      onContact(contactOf(`92300999104${i}`, i % 2 === 0))
+    );
+    await Promise.all([...samePhone, ...multiPhone]);
+
+    assert.equal(session.getContactPersistPeakActiveForPhone("923009991032"), 1);
+    assert.ok(session.getContactPersistPeakActive() > 1);
+    assert.ok(session.getContactPersistPeakActive() <= 3);
+    await session.shutdown();
+  }
+
+  // --- Same-phone failure does not block the next task ---
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    let attempts = 0;
+    const realResolve = repo.resolveOrCreateContact.bind(repo);
+    repo.resolveOrCreateContact = async (input) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("first boom");
+      return realResolve(input);
+    };
+    const { session, onContact } = await connectSession(repo);
+    await onContact(contactOf("923009991033", true));
+    await onContact(contactOf("923009991033", false));
+    assert.ok(attempts >= 2);
+    assert.equal(
+      (await repo.findContactByPhoneE164!("923009991033"))?.isBusinessContact,
+      false
+    );
+    await session.shutdown();
+  }
+
+  // --- Logout/close during active task invalidates that write ---
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    await repo.resolveOrCreateContact({ phoneE164: "923009991034" });
+    const { session, onContact } = await connectSession(repo);
+
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = false;
+    session.__testSetContactPersistBeforeWrite(async () => {
+      entered = true;
+      await gate;
+    });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    const pending = onContact(contactOf("923009991034", true));
+    for (let i = 0; i < 40 && !entered; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(entered, true);
+
+    const epochBeforeClose = session.getContactPersistQueueEpoch();
+    await session.logout();
+    assert.equal(session.isContactPersistQueueClosed(), true);
+    assert.ok(session.getContactPersistQueueEpoch() > epochBeforeClose);
+
+    release!();
+    await pending;
+
+    // Invalidated task must not apply business=true.
+    assert.notEqual(
+      (await repo.findContactByPhoneE164!("923009991034"))?.isBusinessContact,
+      true
+    );
+
+    await new Promise((r) => setTimeout(r, 15));
+    process.off("unhandledRejection", onUnhandled);
+    assert.equal(unhandled.length, 0);
+  }
+
+  // --- Reconnect after close: new epoch; soft reconnect keeps epoch;
+  //     old task cannot revive via reused generation ---
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    await repo.resolveOrCreateContact({ phoneE164: "923009991035" });
+    const authDir = tmpAuthDir();
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    const { factory, getHandler } = openFactory();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: factory,
+      syncRepo: repo,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    });
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(session.getContactPersistQueueEpoch(), 1);
+
+    await session.disconnect();
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    // Soft reconnect: same queue + epoch.
+    assert.equal(session.getContactPersistQueueEpoch(), 1);
+
+    let releaseOld: (() => void) | null = null;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    let oldEntered = false;
+    let oldWriteAttempts = 0;
+    session.__testSetContactPersistBeforeWrite(async ({ fields }) => {
+      if (fields.isBusinessContact === false) {
+        oldWriteAttempts += 1;
+        oldEntered = true;
+        await oldGate;
+      }
+    });
+
+    const onContact = getHandler(session);
+    const stale = onContact(contactOf("923009991035", false));
+    for (let i = 0; i < 40 && !oldEntered; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(oldEntered, true);
+
+    const epochAtPause = session.getContactPersistQueueEpoch();
+    await session.shutdown();
+    assert.ok(session.getContactPersistQueueEpoch() > epochAtPause);
+    assert.equal(session.isContactPersistQueueClosed(), true);
+
+    // Recreate queue via connect (new epoch). Generation for phone restarts at 1.
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    session.__testSetContactPersistBeforeWrite(null);
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    const epochAfterRecreate = session.getContactPersistQueueEpoch();
+    assert.ok(epochAfterRecreate > epochAtPause);
+
+    const onContact2 = getHandler(session);
+    const newer = onContact2(contactOf("923009991035", true));
+    await newer;
+
+    // Release old epoch-1 task (local gen was 1; new epoch also uses gen 1).
+    releaseOld!();
+    await stale;
+
+    assert.equal(
+      (await repo.findContactByPhoneE164!("923009991035"))?.isBusinessContact,
+      true
+    );
+    // Old task entered beforeWrite once before close; must not mutate after revive.
+    assert.equal(oldWriteAttempts, 1);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    await session.shutdown();
+    await new Promise((r) => setTimeout(r, 15));
+    process.off("unhandledRejection", onUnhandled);
+    assert.equal(unhandled.length, 0);
+  }
+}
+console.log("PASS: SYNC-14B-R3 per-phone serialization + queue epoch ABA");
 
 console.log("ALL PASS: whatsappWebHistorySync");
