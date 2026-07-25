@@ -22,12 +22,16 @@ export {
   assertPathInsideRoot,
   ensureWhatsAppWebAuthDirWritable,
   deleteWhatsAppWebSessionDir,
+  hasSavedBaileysCredentials,
 } from "./whatsappWebAuthDir.ts";
 
 export {
   WhatsAppWebSession,
   getSharedWhatsAppWebSession,
   __resetSharedWhatsAppWebSession,
+  classifyDisconnect,
+  reconnectDelayMs,
+  WHATSAPP_WEB_RECONNECT_DELAYS_MS,
   type WhatsAppWebSocketFactory,
   type WhatsAppWebInboundHandler,
 } from "./whatsappWebSession.ts";

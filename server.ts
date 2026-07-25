@@ -10016,6 +10016,20 @@ async function startServer() {
     console.log("[Sunchaser] Serving React SPA from dist/ at /");
   }
 
+  // WhatsApp Web QR: validate auth dir + resume saved session before listen.
+  // When flag is false this is a no-op. When enabled with a bad auth dir, fail closed.
+  try {
+    await whatsappWebSession.initializeAtStartup();
+  } catch (err) {
+    console.error(
+      "\x1b[31m%s\x1b[0m",
+      `🚨 [CRITICAL] WhatsApp Web QR startup failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    process.exit(1);
+  }
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
   });

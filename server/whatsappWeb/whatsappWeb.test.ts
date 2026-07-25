@@ -29,9 +29,15 @@ import { persistWhatsAppWebInbound } from "./whatsappWebInbound.ts";
 import { createWhatsAppWebRouter } from "./whatsappWebRoutes.ts";
 import {
   WhatsAppWebSession,
+  classifyDisconnect,
+  reconnectDelayMs,
+  WHATSAPP_WEB_RECONNECT_DELAYS_MS,
   type WhatsAppWebSocketFactory,
 } from "./whatsappWebSession.ts";
-import { FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS } from "./whatsappWebTypes.ts";
+import {
+  FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS,
+  maskPhoneNumber,
+} from "./whatsappWebTypes.ts";
 import { InMemoryWhatsAppRepository } from "../whatsappTransport/whatsappRepository.ts";
 import { isWhatsAppWebQrChannel } from "./whatsappWebOutbound.ts";
 import { sendWhatsAppWebPlainText } from "./whatsappWebOutbound.ts";
@@ -86,17 +92,26 @@ function mockSocketFactory(opts?: {
   openOnStart?: boolean;
   providerMessageId?: string;
   failSend?: boolean;
+  userId?: string | null;
+  onEnd?: () => void;
 }): WhatsAppWebSocketFactory {
   return async (input) => {
     if (opts?.qr) {
       queueMicrotask(() => input.onQr(opts.qr!));
     }
     if (opts?.openOnStart) {
-      queueMicrotask(() => input.onConnectionUpdate({ connection: "open" }));
+      queueMicrotask(() =>
+        input.onConnectionUpdate({
+          connection: "open",
+          userId: opts.userId ?? "923001112233:1@s.whatsapp.net",
+        })
+      );
     }
     return {
-      userId: "923001112233:1@s.whatsapp.net",
-      end: () => undefined,
+      getUserId: () => opts?.userId ?? "923001112233:1@s.whatsapp.net",
+      end: () => {
+        opts?.onEnd?.();
+      },
       logout: async () => undefined,
       sendText: async () => {
         if (opts?.failSend) throw new Error("send failed");
@@ -516,5 +531,391 @@ console.log("PASS: outbound provider-ID confirmation");
 }
 
 console.log("PASS: Baileys pinned; Meta/unifiedMessaging isolation");
+
+// ---------------------------------------------------------------------------
+// QR-1A — reconnect lifecycle hardening
+// ---------------------------------------------------------------------------
+
+{
+  assert.equal(classifyDisconnect(401), "logged_out");
+  assert.equal(classifyDisconnect(500), "terminal");
+  assert.equal(classifyDisconnect(440), "terminal");
+  assert.equal(classifyDisconnect(403), "terminal");
+  assert.equal(classifyDisconnect(411), "terminal");
+  assert.equal(classifyDisconnect(428), "retryable");
+  assert.equal(classifyDisconnect(408), "retryable");
+  assert.equal(classifyDisconnect(undefined), "retryable");
+
+  assert.equal(reconnectDelayMs(0), 2_000);
+  assert.equal(reconnectDelayMs(1), 5_000);
+  assert.equal(reconnectDelayMs(2), 10_000);
+  assert.equal(reconnectDelayMs(3), 30_000);
+  assert.equal(reconnectDelayMs(4), 60_000);
+  assert.equal(reconnectDelayMs(99), 60_000);
+  assert.equal(
+    WHATSAPP_WEB_RECONNECT_DELAYS_MS[WHATSAPP_WEB_RECONNECT_DELAYS_MS.length - 1],
+    60_000
+  );
+}
+
+console.log("PASS: disconnect classification + capped reconnect delays");
+
+{
+  const authDir = tmpAuthDir();
+  const scheduled: Array<{ ms: number; fn: () => void }> = [];
+  let socketStarts = 0;
+
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [0, 0, 0, 0, 0],
+    setTimeoutFn: ((fn: () => void, ms: number) => {
+      scheduled.push({ ms, fn: fn as () => void });
+      return scheduled.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: ((handle: NodeJS.Timeout) => {
+      const idx = (handle as unknown as number) - 1;
+      if (idx >= 0 && idx < scheduled.length) scheduled[idx]!.fn = () => undefined;
+    }) as typeof clearTimeout,
+    socketFactory: async (input) => {
+      socketStarts += 1;
+      return {
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+      };
+    },
+  });
+
+  await session.connect();
+  assert.equal(session.__testIsConnectionDesired(), true);
+
+  // Temporary close → schedule reconnect
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session.getSafeStatus().state, "RECONNECTING");
+  assert.equal(session.__testHasReconnectTimer(), true);
+  assert.equal(session.__testGetScheduledReconnectDelays().length, 1);
+
+  // Only one timer — second schedule while timer pending is a no-op
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 408,
+  });
+  assert.equal(session.__testGetScheduledReconnectDelays().length, 1);
+
+  // Flush first timer → another socket start + may schedule again on failure path
+  const first = scheduled[0]!;
+  first.fn();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(socketStarts >= 2);
+
+  // Manual disconnect never reconnects
+  await session.disconnect();
+  assert.equal(session.__testIsConnectionDesired(), false);
+  const delaysAfterDisconnect = session.__testGetScheduledReconnectDelays().length;
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session.getSafeStatus().state, "DISCONNECTED");
+  assert.equal(
+    session.__testGetScheduledReconnectDelays().length,
+    delaysAfterDisconnect
+  );
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: manual disconnect never reconnects; single reconnect timer");
+
+{
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [0, 0, 0],
+    setTimeoutFn: ((fn: () => void) => {
+      // Do not auto-run — prove logout cancels without scheduling
+      return 1 as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: mockSocketFactory({ openOnStart: true }),
+  });
+
+  await session.connect();
+  await new Promise((r) => setTimeout(r, 20));
+  await fsp.mkdir(path.join(authDir, WHATSAPP_WEB_SESSION_DIR_NAME), {
+    recursive: true,
+  });
+  await fsp.writeFile(
+    path.join(authDir, WHATSAPP_WEB_SESSION_DIR_NAME, "creds.json"),
+    '{"noiseKey":true}',
+    "utf8"
+  );
+  await session.logout();
+  assert.equal(session.__testIsConnectionDesired(), false);
+  assert.equal(session.__testHasReconnectTimer(), false);
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: logout never schedules reconnect");
+
+{
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [0],
+    setTimeoutFn: ((fn: () => void) => {
+      queueMicrotask(fn);
+      return 1 as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: mockSocketFactory({}),
+  });
+
+  await session.connect();
+  session.__testSetState("CONNECTED", {
+    connectionDesired: true,
+    phoneRaw: "923001112233",
+  });
+
+  // Logged-out must be exclusive terminal — not transient reconnect.
+  await session.__testHandleConnectionUpdate({
+    connection: "logged_out",
+    statusCode: 401,
+  });
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+  assert.equal(session.__testIsConnectionDesired(), false);
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  // If a close with loggedOut code arrives, still terminal.
+  session.__testSetState("CONNECTED", { connectionDesired: true });
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 401,
+  });
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: logged-out close is not treated as transient");
+
+{
+  const authDir = tmpAuthDir();
+  const scheduledFns: Array<() => void> = [];
+  let starts = 0;
+
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [0, 0, 0, 0, 0],
+    setTimeoutFn: ((fn: () => void) => {
+      scheduledFns.push(fn as () => void);
+      return scheduledFns.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: ((handle: NodeJS.Timeout) => {
+      const idx = (handle as unknown as number) - 1;
+      if (scheduledFns[idx]) scheduledFns[idx] = () => undefined;
+    }) as typeof clearTimeout,
+    socketFactory: async () => {
+      starts += 1;
+      // Fail start after first to force retries
+      if (starts > 1) {
+        throw new Error("transient");
+      }
+      return {
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => null,
+      };
+    },
+  });
+
+  await session.connect();
+  assert.equal(starts, 1);
+
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  // Flush retries
+  for (let i = 0; i < 3; i += 1) {
+    const fn = scheduledFns[i];
+    if (fn) {
+      try {
+        fn();
+      } catch {
+        /* ignore */
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+  assert.ok(
+    session.__testGetReconnectAttempt() >= 2,
+    "expected multiple reconnect attempts"
+  );
+  assert.ok(starts >= 2, "expected more than one socket start");
+
+  // Successful open resets attempt counter
+  await session.__testHandleConnectionUpdate({
+    connection: "open",
+    userId: "923009998877@s.whatsapp.net",
+  });
+  assert.equal(session.__testGetReconnectAttempt(), 0);
+  assert.equal(session.getSafeStatus().state, "CONNECTED");
+  const openMasked = session.getSafeStatus().phoneMasked;
+  assert.ok(openMasked?.includes("*"));
+  assert.equal(openMasked, maskPhoneNumber("923009998877"));
+
+  await session.shutdown();
+  assert.equal(session.__testIsConnectionDesired(), false);
+  assert.equal(session.__testHasReconnectTimer(), false);
+  const delays = session.__testGetScheduledReconnectDelays().length;
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session.__testGetScheduledReconnectDelays().length, delays);
+
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: multi-retry, open resets counter, shutdown cancels reconnect");
+
+{
+  // Startup without credentials waits for Admin
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    socketFactory: mockSocketFactory({ qr: "should-not-auto-qr" }),
+  });
+  const init = await session.initializeAtStartup();
+  assert.equal(init.resumed, false);
+  assert.equal(init.state, "DISCONNECTED");
+  assert.equal(session.__testIsConnectionDesired(), false);
+  assert.equal(session.getSafeStatus().qrAvailable, false);
+
+  // Startup with saved credentials resumes
+  await fsp.mkdir(path.join(authDir, WHATSAPP_WEB_SESSION_DIR_NAME), {
+    recursive: true,
+  });
+  await fsp.writeFile(
+    path.join(authDir, WHATSAPP_WEB_SESSION_DIR_NAME, "creds.json"),
+    '{"registered":true}',
+    "utf8"
+  );
+  const resumeSession = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    socketFactory: mockSocketFactory({
+      openOnStart: true,
+      userId: "923001112233:12@s.whatsapp.net",
+    }),
+  });
+  const resumed = await resumeSession.initializeAtStartup();
+  assert.equal(resumed.resumed, true);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(resumeSession.getSafeStatus().state, "CONNECTED");
+  assert.ok(resumeSession.getSafeStatus().phoneMasked?.includes("*"));
+  assert.equal(resumeSession.__testIsConnectionDesired(), true);
+
+  // Flag-off startup is unchanged no-op
+  const off = new WhatsAppWebSession({
+    env: { WHATSAPP_WEB_QR_ENABLED: "false" },
+  });
+  const offInit = await off.initializeAtStartup();
+  assert.equal(offInit.resumed, false);
+  assert.equal(off.getSafeStatus().enabled, false);
+
+  // Enabled + unusable auth directory fails closed
+  const blocker = path.join(tmpAuthDir(), "not-a-dir");
+  await fsp.writeFile(blocker, "file", "utf8");
+  const bad = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: path.join(blocker, "auth"),
+    },
+  });
+  await assert.rejects(() => bad.initializeAtStartup());
+
+  await session.shutdown();
+  await resumeSession.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: startup resume / await-admin / fail-closed / flag-off");
+
+{
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    socketFactory: mockSocketFactory({}),
+  });
+  await session.connect();
+  session.__testSetState("CONNECTED", {
+    connectionDesired: true,
+    phoneRaw: "923001112233",
+  });
+  await session.__testAcceptQr("stale-qr-payload");
+  assert.equal(session.getSafeStatus().state, "CONNECTED");
+  assert.equal(session.getSafeStatus().qrAvailable, false);
+
+  // Newer QR generation invalidates older conversion: set connecting, accept A then B
+  session.__testSetState("CONNECTING", { connectionDesired: true });
+  const slow = session.__testAcceptQr("qr-a");
+  const fast = session.__testAcceptQr("qr-b");
+  await Promise.all([slow, fast]);
+  assert.equal(session.getSafeStatus().state, "QR_READY");
+  // Connected phone masking after open
+  await session.__testHandleConnectionUpdate({
+    connection: "open",
+    userId: "923007771111@s.whatsapp.net",
+  });
+  const masked = session.getSafeStatus().phoneMasked;
+  assert.ok(masked);
+  assert.match(masked!, /^\+/);
+  assert.ok(masked!.includes("*"));
+  assert.equal(masked!.includes("7771111"), false);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: stale QR cannot overwrite CONNECTED; phone masked after open");
 
 console.log("\nAll WhatsApp Web QR tests passed.");

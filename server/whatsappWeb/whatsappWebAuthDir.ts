@@ -54,6 +54,22 @@ export function assertPathInsideRoot(candidate: string, root: string): void {
 }
 
 /**
+ * True when a Baileys multi-file auth session appears present (creds.json).
+ * Used for startup resume — does not read credential contents into logs/API.
+ */
+export async function hasSavedBaileysCredentials(
+  sessionDir: string
+): Promise<boolean> {
+  const credsPath = path.join(path.resolve(sessionDir), "creds.json");
+  try {
+    const st = await fsp.stat(credsPath);
+    return st.isFile() && st.size > 2;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Ensure auth root and session directory exist and are writable.
  * Production fail-closed when unavailable.
  */
