@@ -45,7 +45,8 @@
     "test:startup-smoke": "node scripts/smoke-server-start.mjs",
     "test:vercel-spa": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/vercelSpaConfig.test.ts",
     "test:marketplace-ws0": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceConfig.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWs0Schema.test.ts",
-    "test:marketplace-ws1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/catalogueRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/marketplaceWs1Catalogue.test.ts"
+    "test:marketplace-ws1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/catalogueRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/marketplaceWs1Catalogue.test.ts",
+    "test:marketplace-ws2": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/admin/adminRoutes.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",

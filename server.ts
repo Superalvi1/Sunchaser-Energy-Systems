@@ -338,6 +338,7 @@ import {
   type PersistedPublicLead,
 } from "./server/publicLeads/index.ts";
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
+import { createMarketplaceAdminRouter } from "./server/marketplace/admin/adminRoutes.ts";
 import {
   createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
@@ -655,6 +656,8 @@ app.use(
 
 // Marketplace public catalogue (requires MARKETPLACE_ENABLED=true; defaults off).
 app.use("/api/marketplace/catalogue", createCatalogueRouter());
+// Marketplace admin taxonomy (JWT + marketplace permission + MARKETPLACE_ENABLED).
+app.use("/api/marketplace/admin", createMarketplaceAdminRouter());
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
