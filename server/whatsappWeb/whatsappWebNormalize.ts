@@ -5,6 +5,7 @@
 import { digitsOnlyPhone } from "../whatsappTransport/whatsappEnvelope.ts";
 import type { NormalizedInboundText } from "../whatsappTransport/whatsappEnvelope.ts";
 import { WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID } from "./whatsappWebConfig.ts";
+import { resolveWhatsAppIdentity } from "./whatsappWebIdentity.ts";
 
 export type BaileysInboundLike = {
   providerMessageId: string;
@@ -16,6 +17,13 @@ export type BaileysInboundLike = {
   isGroup: boolean;
   isStatusOrNewsletter: boolean;
   rawType: string | null;
+  remoteJidAlt?: string | null;
+  participant?: string | null;
+  participantAlt?: string | null;
+  senderPn?: string | null;
+  senderLid?: string | null;
+  participantPn?: string | null;
+  participantLid?: string | null;
 };
 
 export type NormalizeBaileysResult =
@@ -74,7 +82,17 @@ export function normalizeBaileysInbound(
   if (!text) {
     return { kind: "ignore", reason: "no_text" };
   }
-  const fromWaId = jidToWaId(message.remoteJid);
+  const identity = resolveWhatsAppIdentity({
+    remoteJid: message.remoteJid,
+    remoteJidAlt: message.remoteJidAlt,
+    participant: message.participant,
+    participantAlt: message.participantAlt,
+    senderPn: message.senderPn,
+    senderLid: message.senderLid,
+    participantPn: message.participantPn,
+    participantLid: message.participantLid,
+  });
+  const fromWaId = identity?.phoneE164 ?? jidToWaId(message.remoteJid);
   if (!fromWaId) {
     return { kind: "ignore", reason: "bad_jid" };
   }

@@ -35,6 +35,12 @@ import { createWhatsAppWebRouter } from "./whatsappWebRoutes.ts";
 import { persistWhatsAppWebInbound } from "./whatsappWebInbound.ts";
 import { WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID } from "./whatsappWebConfig.ts";
 import { jidToWaId } from "./whatsappWebNormalize.ts";
+import { resolveWhatsAppIdentity } from "./whatsappWebIdentity.ts";
+import {
+  createWhatsAppWebSyncJobStore,
+  __resetWhatsAppWebSyncJobMemoryStore,
+} from "./whatsappWebSyncJobStore.ts";
+import { displayContactLabel } from "../../src/inbox/utils/format.ts";
 import { DEFAULT_COMPANY_ID } from "../whatsappTransport/whatsappConstants.ts";
 import fs from "node:fs";
 import os from "node:os";
@@ -1336,5 +1342,163 @@ console.log("PASS: concurrent same-chat requests do not duplicate provider calls
   assert.notEqual(meta.coverage as string, "complete");
 }
 console.log("PASS: disconnect clears pending waits; coverage never complete");
+
+// ---------------------------------------------------------------------------
+// SYNC-8 — identity resolution, empty-cache honesty, durable results
+// ---------------------------------------------------------------------------
+
+{
+  const phone = resolveWhatsAppIdentity({
+    remoteJid: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(phone?.phoneE164, "923001112233");
+
+  const viaAlt = resolveWhatsAppIdentity({
+    remoteJid: "123456789012345@lid",
+    remoteJidAlt: "923009998877@s.whatsapp.net",
+  });
+  assert.equal(viaAlt?.phoneE164, "923009998877");
+  assert.equal(viaAlt?.lidJid, "123456789012345@lid");
+
+  const viaPn = resolveWhatsAppIdentity({
+    remoteJid: "999888777666555@lid",
+    senderPn: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(viaPn?.phoneE164, "923001112233");
+
+  const viaParticipantAlt = resolveWhatsAppIdentity({
+    remoteJid: "111222333444555@lid",
+    participantAlt: "923007776655@s.whatsapp.net",
+  });
+  assert.equal(viaParticipantAlt?.phoneE164, "923007776655");
+
+  const unresolved = resolveWhatsAppIdentity({
+    remoteJid: "123456789012345@lid",
+  });
+  assert.equal(unresolved, null);
+}
+console.log("PASS: phone/LID/alt/Pn identity resolution");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestContacts([
+    {
+      id: "123456789012345@lid",
+      jid: "923001112233@s.whatsapp.net",
+      lid: "123456789012345@lid",
+      name: "Saved LID",
+      notify: "Push",
+    },
+  ]);
+  const contacts = await source.listContacts();
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0]?.phoneE164, "923001112233");
+  assert.equal(contacts[0]?.jid, "923001112233@s.whatsapp.net");
+
+  source.ingestMessages([
+    {
+      key: {
+        id: "M1",
+        remoteJid: "123456789012345@lid",
+        remoteJidAlt: "923001112233@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "hello" },
+    },
+  ]);
+  const msgs = await source.fetchMessages("923001112233@s.whatsapp.net", {
+    limit: 50,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.equal(msgs.length, 1);
+}
+console.log("PASS: @lid with contact.jid / remoteJidAlt resolves");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestChats([{ id: "923001112233@s.whatsapp.net", name: "Empty" }]);
+  let fetchCalls = 0;
+  source.setHistoryFetcher(async () => {
+    fetchCalls += 1;
+    return "x";
+  });
+  const msgs = await source.fetchMessages("923001112233@s.whatsapp.net", {
+    limit: 50,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.equal(msgs.length, 0);
+  assert.equal(fetchCalls, 0);
+  assert.equal(source.getLastHistoryAvailability(), "empty_companion_cache");
+}
+console.log("PASS: empty chat has no fabricated history cursor");
+
+{
+  __resetWhatsAppWebSyncJobMemoryStore();
+  const storeA = createWhatsAppWebSyncJobStore();
+  const empty = new FakeSyncSource();
+  empty.messagesByChat.clear();
+  empty.chats = [];
+  empty.contacts = [];
+  const service = new WhatsAppWebHistorySyncService({
+    source: empty,
+    repo: new InMemoryWhatsAppRepository(),
+    jobStore: storeA,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+  });
+  const snap = await service.startOrJoin().done;
+  assert.equal(snap.outcome, "history_not_available");
+  assert.notEqual(snap.outcome, null);
+
+  const storeB = createWhatsAppWebSyncJobStore();
+  const latest = await storeB.getLatest(DEFAULT_COMPANY_ID);
+  assert.ok(latest);
+  assert.equal(latest.outcome, "history_not_available");
+  assert.equal(latest.messagesImported, 0);
+}
+console.log("PASS: empty cache outcome + durable job across store instances");
+
+{
+  assert.equal(
+    displayContactLabel({
+      profileName: "Ali Khan",
+      phoneE164: "923001112233",
+      contactId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    }),
+    "Ali Khan"
+  );
+  assert.equal(
+    displayContactLabel({
+      profileName: null,
+      phoneE164: "923001112233",
+      contactId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    }),
+    "+923001112233"
+  );
+  assert.equal(
+    displayContactLabel({
+      profileName: null,
+      phoneE164: null,
+      contactId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    }),
+    "Unknown WhatsApp contact"
+  );
+  assert.equal(
+    displayContactLabel("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+    "Unknown WhatsApp contact"
+  );
+  assert.ok(
+    !String(
+      displayContactLabel({
+        profileName: null,
+        phoneE164: null,
+        contactId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      })
+    ).includes("Contact ·")
+  );
+}
+console.log("PASS: inbox display labels never use UUID suffixes");
 
 console.log("ALL PASS: whatsappWebHistorySync");

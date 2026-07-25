@@ -27,15 +27,57 @@ export function formatClock(iso: string | null | undefined): string {
   });
 }
 
-export function displayContactLabel(contactId: string): string {
-  if (!contactId) return "Unknown contact";
-  if (contactId.length <= 12) return contactId;
-  return `Contact · ${contactId.slice(-8)}`;
+/** Format digits-only / E.164-ish phone for display (no raw LID/JID). */
+export function formatPhoneDisplay(phone: string | null | undefined): string {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) {
+    return `+${digits}`;
+  }
+  return digits;
 }
 
-export function initialsFromId(id: string): string {
-  const clean = (id || "?").replace(/[^a-zA-Z0-9]/g, "");
+export type ContactDisplayInput = {
+  profileName?: string | null;
+  phoneE164?: string | null;
+  /** @deprecated unused — never show UUID as identity */
+  contactId?: string | null;
+};
+
+/**
+ * Display order: real name → formatted phone → Unknown WhatsApp contact.
+ * Never returns UUID-derived labels such as "Contact · <uuid suffix>".
+ */
+export function displayContactLabel(input: ContactDisplayInput | string): string {
+  if (typeof input === "string") {
+    // Legacy callers passing contactId only — do not render UUID tails.
+    return "Unknown WhatsApp contact";
+  }
+  const name = String(input.profileName || "").trim();
+  if (name && !looksLikeInternalId(name)) return name;
+  const phone = formatPhoneDisplay(input.phoneE164);
+  if (phone) return phone;
+  return "Unknown WhatsApp contact";
+}
+
+function looksLikeInternalId(value: string): boolean {
+  // Guard against accidentally showing UUIDs or @lid / jid hosts.
+  if (value.includes("@")) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(value)) return true;
+  if (/^Contact\s*·/i.test(value)) return true;
+  return false;
+}
+
+export function initialsFromContact(input: ContactDisplayInput): string {
+  const label = displayContactLabel(input);
+  if (label === "Unknown WhatsApp contact") return "?";
+  const clean = label.replace(/[^a-zA-Z0-9]/g, "");
   return (clean.slice(0, 2) || "?").toUpperCase();
+}
+
+/** @deprecated use initialsFromContact */
+export function initialsFromId(id: string): string {
+  return initialsFromContact({ contactId: id });
 }
 
 export function newIdempotencyKey(): string {

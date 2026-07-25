@@ -176,9 +176,9 @@ export function createWhatsAppWebRouter(
     }
   });
 
-  router.get("/sync", (_req, res) => {
+  router.get("/sync", async (_req, res) => {
     noStore(res);
-    const snapshot = session.getHistorySyncSnapshot();
+    const snapshot = await session.getHistorySyncSnapshot();
     assertNoCredentialLeak(snapshot);
     return inboxOk(res, snapshot);
   });

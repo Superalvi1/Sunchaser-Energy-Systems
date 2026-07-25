@@ -80,7 +80,87 @@ export function mapConversationInbox(
     aiOwnershipState: isWhatsAppAiOwnershipState(row.ai_ownership_state)
       ? row.ai_ownership_state
       : "AI_SHADOW",
+    profileName:
+      row.profile_name !== undefined
+        ? ((row.profile_name as string) ?? null)
+        : row.profileName !== undefined
+          ? ((row.profileName as string) ?? null)
+          : undefined,
+    phoneE164:
+      row.phone_e164 !== undefined
+        ? ((row.phone_e164 as string) ?? null)
+        : row.phoneE164 !== undefined
+          ? ((row.phoneE164 as string) ?? null)
+          : undefined,
   };
+}
+
+/** Batch-attach contact display fields (company-scoped). Never exposes LID/JID. */
+export async function attachContactDisplayFields(
+  rows: WhatsAppConversationInbox[],
+  opts?: {
+    companyId?: string;
+    client?: SupabaseClient | null;
+    /** Optional in-memory contact lookup for tests. */
+    contactLookup?: (
+      contactId: string
+    ) => { profileName: string | null; phoneE164: string | null } | null;
+  }
+): Promise<WhatsAppConversationInbox[]> {
+  if (rows.length === 0) return rows;
+  const companyId = resolveCompanyId(opts?.companyId);
+  const contactIds = [...new Set(rows.map((r) => r.contactId).filter(Boolean))];
+  if (contactIds.length === 0) return rows;
+
+  const byId = new Map<
+    string,
+    { profileName: string | null; phoneE164: string | null }
+  >();
+
+  if (opts?.contactLookup) {
+    for (const id of contactIds) {
+      const contact = opts.contactLookup(id);
+      if (contact) byId.set(id, contact);
+    }
+  }
+
+  if (byId.size < contactIds.length && (isSupabaseActive() || opts?.client)) {
+    const client = opts?.client ?? getSupabase();
+    if (client) {
+      const missing = contactIds.filter((id) => !byId.has(id));
+      if (missing.length > 0) {
+        const { data, error } = await client
+          .from("whatsapp_contacts")
+          .select("id,profile_name,phone_e164,company_id")
+          .eq("company_id", companyId)
+          .in("id", missing);
+        if (!error && data) {
+          for (const row of data as Array<Record<string, unknown>>) {
+            byId.set(String(row.id), {
+              profileName: (row.profile_name as string) ?? null,
+              phoneE164: (row.phone_e164 as string) ?? null,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return rows.map((row) => {
+    const contact = byId.get(row.contactId);
+    if (!contact) {
+      return {
+        ...row,
+        profileName: row.profileName ?? null,
+        phoneE164: row.phoneE164 ?? null,
+      };
+    }
+    return {
+      ...row,
+      profileName: contact.profileName,
+      phoneE164: contact.phoneE164,
+    };
+  });
 }
 
 export function mapAssignmentEvent(

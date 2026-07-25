@@ -226,6 +226,15 @@ export default function WhatsAppConnectionPanel({
   useEffect(() => {
     const gate = requestGateRef.current;
     void loadWebStatus("initial");
+    void fetchWhatsAppWebHistorySync()
+      .then((snapshot) => {
+        if (gate.isMounted() && snapshot.status !== "idle") {
+          setSyncJob(snapshot);
+        }
+      })
+      .catch(() => {
+        /* durable sync status is best-effort */
+      });
     return () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
@@ -358,13 +367,20 @@ export default function WhatsAppConnectionPanel({
       const snapshot = await fetchWhatsAppWebHistorySync();
       if (!requestGateRef.current.isMounted()) return;
       setSyncJob(snapshot);
-      if (snapshot.status === "completed" || snapshot.status === "failed") {
-        stopSyncPolling();
-        setSyncBusy(false);
-        if (snapshot.status === "failed" && snapshot.errorSummary) {
-          setSyncError(snapshot.errorSummary);
+        if (snapshot.status === "completed" || snapshot.status === "failed") {
+          stopSyncPolling();
+          setSyncBusy(false);
+          if (
+            snapshot.status === "failed" ||
+            snapshot.outcome === "failed" ||
+            snapshot.outcome === "history_not_available"
+          ) {
+            setSyncError(
+              snapshot.errorSummary ||
+                "Sync did not import available WhatsApp history"
+            );
+          }
         }
-      }
     } catch {
       // Background sync poll must not affect Inbox / QR status loading.
       if (requestGateRef.current.isMounted()) {
@@ -635,30 +651,56 @@ export default function WhatsAppConnectionPanel({
                   {syncBusy ? (
                     <>
                       <RefreshCw className="h-4 w-4 animate-spin" />
-                      Syncing contacts &amp; history…
+                      Syncing available contacts &amp; history…
                     </>
                   ) : (
                     <>
                       <RefreshCw className="h-4 w-4" />
-                      Sync contacts &amp; last 7 days
+                      Sync available WhatsApp contacts and history
                     </>
                   )}
                 </button>
               ) : null}
+              <p className="text-[10px] leading-relaxed text-[var(--inbox-muted)]">
+                Imports only contacts and messages already available to this
+                companion WhatsApp Web session. WhatsApp may not provide a
+                complete seven-day archive.
+              </p>
               {syncError ? (
                 <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-400">
                   {syncError}
+                </div>
+              ) : null}
+              {syncJob &&
+              (syncJob.outcome === "history_not_available" ||
+                syncJob.historyAvailability === "empty_companion_cache" ||
+                syncJob.historyAvailability === "history_not_available") ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200">
+                  No session-available history was ready to import (empty
+                  companion cache or missing history cursor).
+                </div>
+              ) : null}
+              {syncJob?.outcome === "partial" ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200">
+                  Sync finished with partial results.
+                </div>
+              ) : null}
+              {syncJob?.outcome === "failed" || syncJob?.status === "failed" ? (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-300">
+                  Sync failed{syncJob.errorSummary ? `: ${syncJob.errorSummary}` : "."}
                 </div>
               ) : null}
               {syncJob && syncJob.status !== "idle" ? (
                 <div className="space-y-1 rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-3 text-[11px] text-[var(--inbox-muted)]">
                   <div className="font-semibold text-[var(--inbox-fg)]">
                     Sync: {syncJob.status}
+                    {syncJob.outcome ? ` · ${syncJob.outcome}` : ""}
                   </div>
                   <div>
                     Contacts: {syncJob.contactsDiscovered} discovered ·{" "}
-                    {syncJob.contactsCreated} created · {syncJob.contactsUpdated}{" "}
-                    updated
+                    {syncJob.contactsCreated} created ·{" "}
+                    {syncJob.contactsUpdated} updated ·{" "}
+                    {syncJob.contactsSkipped ?? 0} skipped
                   </div>
                   <div>
                     Chats: {syncJob.chatsInspected} inspected ·{" "}
@@ -666,28 +708,24 @@ export default function WhatsAppConnectionPanel({
                     {syncJob.conversationsUpdated} updated
                   </div>
                   <div>
-                    Messages: {syncJob.messagesImported} imported ·{" "}
-                    {syncJob.duplicatesSkipped} duplicates skipped ·{" "}
+                    Messages: {syncJob.messagesDiscovered ?? 0} discovered ·{" "}
+                    {syncJob.messagesImported} imported ·{" "}
+                    {syncJob.messagesSkipped ?? syncJob.duplicatesSkipped} skipped ·{" "}
                     {syncJob.failedChats} failed chats
                   </div>
                   <div>
-                    History coverage: {syncJob.historyCoverage}
+                    History: {syncJob.historyAvailability ?? syncJob.historyCoverage}
                     {syncJob.historySourceReady ? "" : " · source not ready"}
                     {syncJob.historyProviderEventObserved
                       ? " · provider history event observed"
                       : " · no provider history event"}
                   </div>
-                  <p className="text-[10px] leading-relaxed text-[var(--inbox-muted)]">
-                    Only history supplied to the current WhatsApp Web session is
-                    imported. This is not a guaranteed full 7-day archive from
-                    WhatsApp.
-                  </p>
                   {syncJob.startedAt ? (
                     <div>Started: {new Date(syncJob.startedAt).toLocaleString()}</div>
                   ) : null}
                   {syncJob.completedAt ? (
                     <div>
-                      Completed: {new Date(syncJob.completedAt).toLocaleString()}
+                      Last run: {new Date(syncJob.completedAt).toLocaleString()}
                     </div>
                   ) : null}
                   {syncJob.errorSummary ? (

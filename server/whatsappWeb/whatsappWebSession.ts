@@ -205,17 +205,9 @@ export function reconnectDelayMs(
   return delays[attemptIndex]!;
 }
 
-export type WhatsAppWebInboundHandler = (message: {
-  providerMessageId: string;
-  remoteJid: string;
-  fromMe: boolean;
-  text: string | null;
-  pushName: string | null;
-  occurredAt: string;
-  isGroup: boolean;
-  isStatusOrNewsletter: boolean;
-  rawType: string | null;
-}) => Promise<void>;
+export type WhatsAppWebInboundHandler = (
+  message: import("./whatsappWebNormalize.ts").BaileysInboundLike
+) => Promise<void>;
 
 export type WhatsAppWebConnectionUpdate = {
   connection?: "open" | "close" | "connecting" | "logged_out";
@@ -279,7 +271,10 @@ async function defaultSocketFactory(input: {
     auth: state,
     logger: createSilentBaileysLogger() as never,
     printQRInTerminal: false,
-    syncFullHistory: false,
+    // Request companion history asynchronously when the phone offers it.
+    // shouldSyncHistoryMessage still bounds what we accept; import window is 7 days.
+    syncFullHistory: true,
+    shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false,
   });
   const syncSource = new BaileysInMemorySyncSource();
@@ -395,6 +390,15 @@ async function defaultSocketFactory(input: {
         const occurredAt = msg.messageTimestamp
           ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
           : new Date().toISOString();
+        const key = msg.key as {
+          remoteJidAlt?: string | null;
+          participant?: string | null;
+          participantAlt?: string | null;
+          senderPn?: string | null;
+          senderLid?: string | null;
+          participantPn?: string | null;
+          participantLid?: string | null;
+        };
         await input.onInbound({
           providerMessageId,
           remoteJid,
@@ -405,6 +409,13 @@ async function defaultSocketFactory(input: {
           isGroup,
           isStatusOrNewsletter,
           rawType: msg.message ? Object.keys(msg.message)[0] ?? null : null,
+          remoteJidAlt: key.remoteJidAlt ?? null,
+          participant: key.participant ?? null,
+          participantAlt: key.participantAlt ?? null,
+          senderPn: key.senderPn ?? null,
+          senderLid: key.senderLid ?? null,
+          participantPn: key.participantPn ?? null,
+          participantLid: key.participantLid ?? null,
         });
       })().catch(() => {
         logWhatsAppWeb("warn", "inbound_handler_failed");
@@ -697,8 +708,8 @@ export class WhatsAppWebSession {
     };
   }
 
-  getHistorySyncSnapshot(): WhatsAppWebSyncJobSnapshot {
-    return this.historySync.getSnapshot();
+  async getHistorySyncSnapshot(): Promise<WhatsAppWebSyncJobSnapshot> {
+    return this.historySync.getDurableSnapshot();
   }
 
   private cancelHistorySync(reason: string): void {

@@ -103,17 +103,38 @@ export type WhatsAppWebSyncJobStatus =
   | "completed"
   | "failed";
 
+/** Explicit terminal outcomes — zero-import is never ordinary success. */
+export type WhatsAppWebSyncOutcome =
+  | "completed_with_imports"
+  | "completed_no_changes"
+  | "history_not_available"
+  | "partial"
+  | "failed"
+  | null;
+
+export type WhatsAppWebHistoryAvailability =
+  | "ready"
+  | "empty_companion_cache"
+  | "history_not_available"
+  | "partially_available"
+  | "unknown";
+
 export type WhatsAppWebSyncJobSnapshot = {
   jobId: string | null;
   status: WhatsAppWebSyncJobStatus;
+  /** Terminal outcome for durable/UI honesty. */
+  outcome: WhatsAppWebSyncOutcome;
   contactsDiscovered: number;
   contactsCreated: number;
   contactsUpdated: number;
+  contactsSkipped: number;
   chatsInspected: number;
   conversationsCreated: number;
   conversationsUpdated: number;
+  messagesDiscovered: number;
   messagesImported: number;
   duplicatesSkipped: number;
+  messagesSkipped: number;
   failedChats: number;
   startedAt: string | null;
   completedAt: string | null;
@@ -127,6 +148,7 @@ export type WhatsAppWebSyncJobSnapshot = {
    * empty / available_only / partial / unknown.
    */
   historyCoverage: WhatsAppWebHistoryCoverage;
+  historyAvailability: WhatsAppWebHistoryAvailability;
   historyProviderEventObserved: boolean;
   historyOldestAvailableAt: string | null;
   historyNewestAvailableAt: string | null;
@@ -137,14 +159,18 @@ export function emptySyncJobSnapshot(): WhatsAppWebSyncJobSnapshot {
   return {
     jobId: null,
     status: "idle",
+    outcome: null,
     contactsDiscovered: 0,
     contactsCreated: 0,
     contactsUpdated: 0,
+    contactsSkipped: 0,
     chatsInspected: 0,
     conversationsCreated: 0,
     conversationsUpdated: 0,
+    messagesDiscovered: 0,
     messagesImported: 0,
     duplicatesSkipped: 0,
+    messagesSkipped: 0,
     failedChats: 0,
     startedAt: null,
     completedAt: null,
@@ -152,11 +178,42 @@ export function emptySyncJobSnapshot(): WhatsAppWebSyncJobSnapshot {
     windowDays: WHATSAPP_WEB_SYNC_WINDOW_DAYS,
     historySourceReady: false,
     historyCoverage: "unknown",
+    historyAvailability: "unknown",
     historyProviderEventObserved: false,
     historyOldestAvailableAt: null,
     historyNewestAvailableAt: null,
     historyOnDemandSupported: false,
   };
+}
+
+export function deriveSyncOutcome(
+  snapshot: WhatsAppWebSyncJobSnapshot
+): WhatsAppWebSyncOutcome {
+  if (snapshot.status === "failed") return "failed";
+  if (snapshot.status !== "completed") return null;
+  if (snapshot.failedChats > 0 && snapshot.messagesImported > 0) return "partial";
+  if (
+    snapshot.historyAvailability === "empty_companion_cache" ||
+    snapshot.historyAvailability === "history_not_available" ||
+    (snapshot.contactsDiscovered === 0 &&
+      snapshot.messagesDiscovered === 0 &&
+      snapshot.messagesImported === 0 &&
+      !snapshot.historySourceReady)
+  ) {
+    return "history_not_available";
+  }
+  if (snapshot.messagesImported > 0 || snapshot.contactsCreated > 0) {
+    return "completed_with_imports";
+  }
+  if (
+    snapshot.contactsUpdated > 0 ||
+    snapshot.duplicatesSkipped > 0 ||
+    snapshot.conversationsUpdated > 0
+  ) {
+    return "completed_no_changes";
+  }
+  if (snapshot.failedChats > 0) return "partial";
+  return "history_not_available";
 }
 
 export function resolveWhatsAppDisplayName(input: {

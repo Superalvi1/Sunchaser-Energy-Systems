@@ -27,6 +27,8 @@ export type InboxConversation = {
   lockVersion: number;
   hasFailedMessage: boolean;
   aiOwnershipState?: InboxAiOwnershipState;
+  profileName?: string | null;
+  phoneE164?: string | null;
 };
 
 export type InboxCrmLink = {

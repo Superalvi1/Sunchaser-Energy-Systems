@@ -1,13 +1,15 @@
 /**
- * In-memory Baileys sync source.
+ * In-memory Baileys sync source (Baileys 6.7.x).
  * Populated from contacts/chats/history events while the socket is connected.
- * Bounded on-demand history uses request-ID correlation (peerDataRequestSessionId).
+ * Resolves @lid via Contact.jid / *Pn / *Alt fields — never treats LID digits as phones.
  */
-import { jidToWaId } from "./whatsappWebNormalize.ts";
+import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
+import { jidToWaId, waIdToChatJid } from "./whatsappWebNormalize.ts";
 import {
   normalizeJid,
   WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT,
   WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS,
+  type WhatsAppWebHistoryAvailability,
   type WhatsAppWebHistoryCoverage,
   type WhatsAppWebHistoryCoverageMeta,
   type WhatsAppWebSyncChat,
@@ -16,9 +18,17 @@ import {
   type WhatsAppWebSyncSource,
 } from "./whatsappWebSyncTypes.ts";
 
+type HistoryCursor = {
+  remoteJid: string;
+  id: string;
+  fromMe: boolean;
+  timestampMs: number;
+};
+
 type InternalContact = WhatsAppWebSyncContact;
 type InternalChat = WhatsAppWebSyncChat & {
   messages: Map<string, WhatsAppWebSyncMessage>;
+  historyCursor: HistoryCursor | null;
 };
 
 export type BaileysHistoryFetchFn = (
@@ -111,27 +121,30 @@ function nonEmptyString(value: unknown): string | null {
   return s ? s : null;
 }
 
+function keyFields(msg: Record<string, unknown>): Record<string, unknown> {
+  return (msg.key as Record<string, unknown> | undefined) ?? {};
+}
+
 export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private connected = false;
   private selfJid: string | null = null;
   private readonly contacts = new Map<string, InternalContact>();
   private readonly chats = new Map<string, InternalChat>();
+  private readonly lidMap = new WhatsAppLidPhoneMap();
   private historyFetcher: BaileysHistoryFetchFn | null = null;
   private providerHistoryEventObserved = false;
+  private lastAvailability: WhatsAppWebHistoryAvailability = "unknown";
 
-  /** In-flight per-chat protection (not permanent). */
   private readonly inFlightByChat = new Map<string, Promise<boolean>>();
-  /** Active waiters keyed by fetchMessageHistory request/session id. */
   private readonly pendingByRequestId = new Map<string, PendingHistoryWait>();
-  /**
-   * Matching events that arrived after fetch returned an id but before the
-   * waiter was registered (or while the call was still in flight).
-   */
   private readonly earlyMatchedRequestIds = new Set<string>();
 
   setConnected(connected: boolean, selfJid?: string | null): void {
     this.connected = connected;
-    if (selfJid !== undefined) this.selfJid = selfJid ? normalizeJid(selfJid) : null;
+    if (selfJid !== undefined) {
+      const phone = jidToWaId(String(selfJid || ""));
+      this.selfJid = phone ? waIdToChatJid(phone) : normalizeJid(String(selfJid || ""));
+    }
     if (!connected) {
       this.cancelPendingHistoryWaits();
       this.historyFetcher = null;
@@ -142,10 +155,10 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     this.historyFetcher = fn;
   }
 
-  /**
-   * Ingest a messaging-history.set payload, then resolve only the matching
-   * on-demand waiter (exact peerDataRequestSessionId).
-   */
+  getLastHistoryAvailability(): WhatsAppWebHistoryAvailability {
+    return this.lastAvailability;
+  }
+
   handleHistorySet(payload: BaileysHistorySetPayload): void {
     this.providerHistoryEventObserved = true;
     if (payload.contacts) this.ingestContacts(payload.contacts);
@@ -153,26 +166,20 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     if (payload.messages) this.ingestMessages(payload.messages);
 
     const requestId = nonEmptyString(payload.peerDataRequestSessionId);
-    if (!requestId) {
-      // Initial / uncorrelated history still populates cache + coverage.
-      return;
-    }
+    if (!requestId) return;
 
     const pending = this.pendingByRequestId.get(requestId);
     if (pending && !pending.settled) {
       this.settlePending(pending, true);
       return;
     }
-    // Race: matching event before waiter registration.
     this.earlyMatchedRequestIds.add(requestId);
   }
 
-  /** @deprecated Prefer handleHistorySet — kept for narrow test hooks. */
   markProviderHistoryEvent(peerDataRequestSessionId?: string | null): void {
     this.handleHistorySet({ peerDataRequestSessionId });
   }
 
-  /** Cancel all pending on-demand waits (disconnect / logout / end). */
   cancelPendingHistoryWaits(): void {
     for (const pending of [...this.pendingByRequestId.values()]) {
       this.settlePending(pending, false);
@@ -192,10 +199,15 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
 
   ingestContacts(rawContacts: Array<Record<string, unknown>>): void {
     for (const c of rawContacts) {
-      const jid = normalizeJid(String(c.id || c.jid || ""));
-      if (!jid || jid.endsWith("@g.us")) continue;
-      const phone = jidToWaId(jid);
-      if (!phone) continue;
+      const identity = this.lidMap.resolveIdentity({
+        contactId: String(c.id || ""),
+        contactJid: c.jid != null ? String(c.jid) : null,
+        contactLid: c.lid != null ? String(c.lid) : null,
+        remoteJid: String(c.id || c.jid || ""),
+      });
+      if (!identity) continue;
+
+      const jid = identity.phoneJid;
       const prev = this.contacts.get(jid);
       const savedName = nonEmptyString(c.name) ?? prev?.savedName ?? null;
       const pushName =
@@ -206,7 +218,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       const shortName = nonEmptyString(c.short) ?? prev?.shortName ?? null;
       this.contacts.set(jid, {
         jid,
-        phoneE164: phone,
+        phoneE164: identity.phoneE164,
         savedName,
         pushName,
         shortName,
@@ -217,39 +229,77 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
 
   ingestChats(rawChats: Array<Record<string, unknown>>): void {
     for (const chat of rawChats) {
-      const jid = normalizeJid(String(chat.id || chat.jid || ""));
-      if (!jid) continue;
-      const isGroup = jid.endsWith("@g.us");
+      const rawId = String(chat.id || chat.jid || "");
+      const identity = this.lidMap.resolveIdentity({
+        remoteJid: rawId,
+        remoteJidAlt:
+          chat.remoteJidAlt != null ? String(chat.remoteJidAlt) : null,
+        contactJid: chat.jid != null ? String(chat.jid) : null,
+      });
+
+      const isGroup =
+        normalizeJid(rawId).endsWith("@g.us") || Boolean(chat.isGroup);
       const isStatusOrBroadcast =
-        jid === "status@broadcast" || jid.includes("broadcast");
-      const isChannel = jid.endsWith("@newsletter");
-      const phone =
-        isGroup || isStatusOrBroadcast || isChannel ? null : jidToWaId(jid);
+        normalizeJid(rawId) === "status@broadcast" ||
+        normalizeJid(rawId).includes("broadcast");
+      const isChannel = normalizeJid(rawId).endsWith("@newsletter");
+
+      // Groups/status/channels keep raw jid; individuals require phone identity.
+      const jid = identity?.phoneJid ?? normalizeJid(rawId);
+      if (!jid) continue;
+      if (!isGroup && !isStatusOrBroadcast && !isChannel && !identity) {
+        continue;
+      }
+
       const prev = this.chats.get(jid);
+      const cursor = this.extractChatCursor(chat, jid) ?? prev?.historyCursor ?? null;
+      // Conversation.messages[] from history sync may seed the cache.
+      if (Array.isArray(chat.messages)) {
+        this.ingestHistorySyncMsgs(chat.messages as Array<Record<string, unknown>>, jid);
+      }
+
       this.chats.set(jid, {
         jid,
-        phoneE164: phone,
+        phoneE164: identity?.phoneE164 ?? jidToWaId(jid),
         name: nonEmptyString(chat.name) || prev?.name || null,
         isGroup,
         isStatusOrBroadcast,
         isChannel,
         messages: prev?.messages ?? new Map(),
+        historyCursor: cursor,
       });
     }
   }
 
   ingestMessages(rawMessages: Array<Record<string, unknown>>): void {
     for (const msg of rawMessages) {
-      const key = msg.key as
-        | { id?: string; remoteJid?: string; fromMe?: boolean }
-        | undefined;
-      const providerMessageId = String(key?.id || "");
-      const chatJid = normalizeJid(String(key?.remoteJid || ""));
-      if (!providerMessageId || !chatJid) continue;
+      const key = keyFields(msg);
+      const providerMessageId = String(key.id || "");
+      if (!providerMessageId) continue;
+
+      const identity = this.lidMap.resolveIdentity({
+        remoteJid: key.remoteJid != null ? String(key.remoteJid) : null,
+        remoteJidAlt:
+          key.remoteJidAlt != null ? String(key.remoteJidAlt) : null,
+        participant: key.participant != null ? String(key.participant) : null,
+        participantAlt:
+          key.participantAlt != null ? String(key.participantAlt) : null,
+        senderPn: key.senderPn != null ? String(key.senderPn) : null,
+        senderLid: key.senderLid != null ? String(key.senderLid) : null,
+        participantPn:
+          key.participantPn != null ? String(key.participantPn) : null,
+        participantLid:
+          key.participantLid != null ? String(key.participantLid) : null,
+      });
+      if (!identity) continue;
+
+      const chatJid = identity.phoneJid;
       if (!this.chats.has(chatJid)) {
         this.ingestChats([{ id: chatJid }]);
       }
-      const chat = this.chats.get(chatJid)!;
+      const chat = this.chats.get(chatJid);
+      if (!chat) continue;
+
       const ts = Number(msg.messageTimestamp || 0);
       const occurredAt = ts
         ? new Date(ts * 1000).toISOString()
@@ -258,7 +308,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       chat.messages.set(providerMessageId, {
         providerMessageId,
         chatJid,
-        fromMe: key?.fromMe === true,
+        fromMe: key.fromMe === true,
         text: extractText(msg),
         messageType: messageTypeOf(msg),
         occurredAt,
@@ -266,6 +316,19 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         caption: media.caption,
         filename: media.filename,
       });
+
+      const cursorTs = ts ? ts * 1000 : Date.parse(occurredAt);
+      if (
+        !chat.historyCursor ||
+        cursorTs <= chat.historyCursor.timestampMs
+      ) {
+        chat.historyCursor = {
+          remoteJid: chatJid,
+          id: providerMessageId,
+          fromMe: key.fromMe === true,
+          timestampMs: Number.isFinite(cursorTs) ? cursorTs : Date.now(),
+        };
+      }
     }
   }
 
@@ -274,21 +337,21 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   }
 
   async listChats(): Promise<WhatsAppWebSyncChat[]> {
-    return [...this.chats.values()].map(({ messages: _m, ...chat }) => chat);
+    return [...this.chats.values()].map(
+      ({ messages: _m, historyCursor: _c, ...chat }) => chat
+    );
   }
 
-  /**
-   * Bounded on-demand history request (Baileys 6.7.x fetchMessageHistory).
-   * Correlates via returned request id ↔ peerDataRequestSessionId.
-   * In-flight per chat only — timeouts/errors/disconnects allow retry.
-   */
   async requestBoundedHistory(
     chatJid: string,
     opts: { limit: number; waitMs?: number } = {
       limit: WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT,
     }
   ): Promise<boolean> {
-    if (!this.connected || !this.historyFetcher) return false;
+    if (!this.connected || !this.historyFetcher) {
+      this.lastAvailability = "history_not_available";
+      return false;
+    }
     const jid = normalizeJid(chatJid);
     const existing = this.inFlightByChat.get(jid);
     if (existing) return existing;
@@ -309,12 +372,23 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     opts: { limit: number; sinceMs: number }
   ): Promise<WhatsAppWebSyncMessage[]> {
     const jid = normalizeJid(chatJid);
-    await this.requestBoundedHistory(jid, {
-      limit: Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT),
-    });
     const chat = this.chats.get(jid);
-    if (!chat) return [];
-    return [...chat.messages.values()]
+    const hasCursor =
+      Boolean(chat?.historyCursor) || Boolean(chat && chat.messages.size > 0);
+
+    if (!hasCursor) {
+      this.lastAvailability = this.providerHistoryEventObserved
+        ? "history_not_available"
+        : "empty_companion_cache";
+    } else {
+      await this.requestBoundedHistory(jid, {
+        limit: Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT),
+      });
+    }
+
+    const after = this.chats.get(jid);
+    if (!after) return [];
+    return [...after.messages.values()]
       .filter((m) => {
         const ts = Date.parse(m.occurredAt);
         return Number.isFinite(ts) && ts >= opts.sinceMs;
@@ -346,10 +420,17 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       coverage = "unknown";
     } else if (timestamps.length === 0) {
       coverage = "empty";
+      if (this.lastAvailability === "unknown") {
+        this.lastAvailability = this.providerHistoryEventObserved
+          ? "history_not_available"
+          : "empty_companion_cache";
+      }
     } else if (oldest !== null && oldest <= windowStartMs) {
       coverage = "partial";
+      this.lastAvailability = "partially_available";
     } else {
       coverage = "available_only";
+      this.lastAvailability = "ready";
     }
 
     return {
@@ -362,14 +443,49 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     };
   }
 
-  /** Test seam: whether a chat currently has an in-flight history request. */
   __testHasInFlightHistory(chatJid: string): boolean {
     return this.inFlightByChat.has(normalizeJid(chatJid));
   }
 
-  /** Test seam: pending waiter count. */
   __testPendingWaitCount(): number {
     return this.pendingByRequestId.size;
+  }
+
+  private extractChatCursor(
+    chat: Record<string, unknown>,
+    fallbackJid: string
+  ): HistoryCursor | null {
+    const msgs = chat.messages as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(msgs) && msgs.length > 0) {
+      for (const entry of msgs) {
+        const inner =
+          (entry.message as Record<string, unknown> | undefined) ?? entry;
+        const key = keyFields(inner);
+        const id = nonEmptyString(key.id);
+        if (!id) continue;
+        const ts = Number(inner.messageTimestamp || chat.lastMsgTimestamp || 0);
+        return {
+          remoteJid: fallbackJid,
+          id,
+          fromMe: key.fromMe === true,
+          timestampMs: ts ? ts * 1000 : Date.now(),
+        };
+      }
+    }
+    return null;
+  }
+
+  private ingestHistorySyncMsgs(
+    entries: Array<Record<string, unknown>>,
+    chatJid: string
+  ): void {
+    const flattened: Array<Record<string, unknown>> = [];
+    for (const entry of entries) {
+      const inner = (entry.message as Record<string, unknown> | undefined) ?? entry;
+      if (inner.key || inner.message) flattened.push(inner);
+    }
+    if (flattened.length) this.ingestMessages(flattened);
+    void chatJid;
   }
 
   private async runBoundedHistoryRequest(
@@ -377,14 +493,39 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     opts: { limit: number; waitMs?: number }
   ): Promise<boolean> {
     const fetcher = this.historyFetcher;
-    if (!this.connected || !fetcher) return false;
+    if (!this.connected || !fetcher) {
+      this.lastAvailability = "history_not_available";
+      return false;
+    }
     const chat = this.chats.get(jid);
-    if (!chat || chat.messages.size === 0) return false;
+    if (!chat) {
+      this.lastAvailability = "empty_companion_cache";
+      return false;
+    }
 
-    const oldest = [...chat.messages.values()].sort(
-      (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
-    )[0];
-    if (!oldest) return false;
+    let cursor = chat.historyCursor;
+    if (!cursor && chat.messages.size > 0) {
+      const oldest = [...chat.messages.values()].sort(
+        (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
+      )[0];
+      if (oldest) {
+        cursor = {
+          remoteJid: jid,
+          id: oldest.providerMessageId,
+          fromMe: oldest.fromMe,
+          timestampMs: Date.parse(oldest.occurredAt) || Date.now(),
+        };
+      }
+    }
+
+    // Baileys fetchMessageHistory requires a valid oldest message key.
+    // Do not invent one — report availability instead.
+    if (!cursor) {
+      this.lastAvailability = this.providerHistoryEventObserved
+        ? "history_not_available"
+        : "empty_companion_cache";
+      return false;
+    }
 
     try {
       const rawId = await fetcher(
@@ -393,17 +534,19 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
           Math.min(opts.limit, WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT)
         ),
         {
-          remoteJid: jid,
-          id: oldest.providerMessageId,
-          fromMe: oldest.fromMe,
+          remoteJid: cursor.remoteJid,
+          id: cursor.id,
+          fromMe: cursor.fromMe,
         },
-        Date.parse(oldest.occurredAt)
+        cursor.timestampMs
       );
       const requestId = nonEmptyString(rawId);
-      if (!requestId) return false;
+      if (!requestId) {
+        this.lastAvailability = "history_not_available";
+        return false;
+      }
       if (!this.connected) return false;
 
-      // Event may have arrived while fetchMessageHistory was awaiting.
       if (this.earlyMatchedRequestIds.has(requestId)) {
         this.earlyMatchedRequestIds.delete(requestId);
         return true;
@@ -415,7 +558,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         opts.waitMs ?? WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS
       );
     } catch {
-      // Provider failure — in-flight chat lock cleared in requestBoundedHistory finally.
+      this.lastAvailability = "history_not_available";
       return false;
     }
   }
@@ -440,7 +583,6 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       };
       this.pendingByRequestId.set(requestId, pending);
 
-      // Re-check race after registration.
       if (this.earlyMatchedRequestIds.has(requestId)) {
         this.earlyMatchedRequestIds.delete(requestId);
         this.settlePending(pending, true);

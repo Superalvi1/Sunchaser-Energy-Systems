@@ -74,7 +74,7 @@ export default function CRMPanel({
   }
 
   const { conversation, crmLink } = detail;
-  const contact = displayContactLabel(conversation.contactId);
+  const contact = displayContactLabel(conversation);
 
   return (
     <aside

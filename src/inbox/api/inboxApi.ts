@@ -371,14 +371,24 @@ export async function logoutWhatsAppWeb(): Promise<WhatsAppWebSafeStatus> {
 export type WhatsAppWebSyncJobSnapshot = {
   jobId: string | null;
   status: "idle" | "starting" | "running" | "completed" | "failed";
+  outcome:
+    | "completed_with_imports"
+    | "completed_no_changes"
+    | "history_not_available"
+    | "partial"
+    | "failed"
+    | null;
   contactsDiscovered: number;
   contactsCreated: number;
   contactsUpdated: number;
+  contactsSkipped: number;
   chatsInspected: number;
   conversationsCreated: number;
   conversationsUpdated: number;
+  messagesDiscovered: number;
   messagesImported: number;
   duplicatesSkipped: number;
+  messagesSkipped: number;
   failedChats: number;
   startedAt: string | null;
   completedAt: string | null;
@@ -387,6 +397,12 @@ export type WhatsAppWebSyncJobSnapshot = {
   joinedExisting?: boolean;
   historySourceReady: boolean;
   historyCoverage: "unknown" | "empty" | "available_only" | "partial";
+  historyAvailability:
+    | "ready"
+    | "empty_companion_cache"
+    | "history_not_available"
+    | "partially_available"
+    | "unknown";
   historyProviderEventObserved: boolean;
   historyOldestAvailableAt: string | null;
   historyNewestAvailableAt: string | null;
