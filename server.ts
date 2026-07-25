@@ -349,6 +349,13 @@ import {
 } from "./server/whatsappTransport/index.ts";
 import { createMessagingProductionWiring } from "./server/whatsappTransport/messagingProductionFactory.ts";
 import {
+  createWhatsAppWebRouter,
+  getSharedWhatsAppWebSession,
+  persistWhatsAppWebInbound,
+  readWhatsAppWebConfig,
+} from "./server/whatsappWeb/index.ts";
+import { AiShadowEngine } from "./server/whatsappTransport/aiEngine/aiShadowEngine.ts";
+import {
   OwnershipError,
   OwnershipResolver,
   portalIdentityFromActor,
@@ -687,6 +694,37 @@ app.use(
     }),
   })
 );
+
+// WhatsApp Web QR (Baileys) — Admin-only; disabled unless WHATSAPP_WEB_QR_ENABLED=true.
+const whatsappWebSession = getSharedWhatsAppWebSession();
+const whatsappWebShadowEngine = new AiShadowEngine();
+whatsappWebSession.setInboundHandler(async (message) => {
+  await persistWhatsAppWebInbound(message, {
+    messagingRepository,
+    autoLinkLead: async (conversationId) => {
+      const result = await productionAutoLinkLead(conversationId);
+      return result.leadId;
+    },
+    evaluateShadow: async (input) => {
+      // Shadow only — never auto-sends in QR-1.
+      return whatsappWebShadowEngine.evaluateShadow({
+        conversationId: input.conversationId,
+        messageText: input.messageText,
+        contactPhone: input.contactPhone,
+      });
+    },
+  });
+});
+if (readWhatsAppWebConfig().enabled) {
+  console.info(
+    JSON.stringify({
+      scope: "whatsapp_web_qr",
+      event: "feature_enabled_at_startup",
+      note: "Auth directory required before connect",
+    })
+  );
+}
+app.use("/api/whatsapp-web", createWhatsAppWebRouter({ session: whatsappWebSession }));
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
@@ -9984,6 +10022,7 @@ async function startServer() {
 
   const shutdownMessaging = () => {
     void messagingProductionWiring.shutdown().catch(() => undefined);
+    void whatsappWebSession.shutdown().catch(() => undefined);
   };
   process.once("SIGTERM", shutdownMessaging);
   process.once("SIGINT", shutdownMessaging);

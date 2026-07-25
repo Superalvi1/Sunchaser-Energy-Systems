@@ -20,6 +20,7 @@ import {
 import { logMessagingRuntime } from "../unifiedMessaging/messagingRuntimeLog.ts";
 import { isMessagingRepositoryError } from "../unifiedMessaging/messagingRepositoryErrors.ts";
 import type {
+  MessagingTransport,
   NormalizedMessage,
   NormalizedMessageType,
   NormalizedStructuredContent,
@@ -37,7 +38,13 @@ export type WhatsAppMessagingBridge = {
   organizationId: string;
   connectionId: string;
   repository: MessagingRepository;
+  /** Defaults to meta_whatsapp_cloud; QR connector sets whatsapp_web_qr. */
+  transportType?: MessagingTransport;
 };
+
+function bridgeTransport(bridge: WhatsAppMessagingBridge): MessagingTransport {
+  return bridge.transportType ?? "meta_whatsapp_cloud";
+}
 
 export type BridgeInboundResult = {
   message: NormalizedMessage;
@@ -75,7 +82,7 @@ export async function bridgePrepareOutboundMessage(
         primaryPhoneNormalized: input.recipientWaId,
       },
       identity: {
-        transportType: "meta_whatsapp_cloud",
+        transportType: bridgeTransport(bridge),
         connectionId,
         externalUserId: input.recipientWaId,
         normalizedAddress: input.recipientWaId,
@@ -86,7 +93,7 @@ export async function bridgePrepareOutboundMessage(
       organizationId,
       contactId: upserted.contact.row.id,
       connectionId,
-      transportType: "meta_whatsapp_cloud",
+      transportType: bridgeTransport(bridge),
       status: "open",
       automationMode: "human_handling",
     });
@@ -95,7 +102,7 @@ export async function bridgePrepareOutboundMessage(
       organizationId,
       conversationId: conversation.row.id,
       connectionId,
-      transportType: "meta_whatsapp_cloud",
+      transportType: bridgeTransport(bridge),
       clientIdempotencyKey: input.clientIdempotencyKey,
       recipientIdentityId: upserted.identity.row.id,
       messageType: "text",
@@ -312,7 +319,7 @@ export async function bridgePersistInboundMessage(
         primaryPhoneNormalized: event.fromWaId,
       },
       identity: {
-        transportType: "meta_whatsapp_cloud",
+        transportType: bridgeTransport(bridge),
         connectionId,
         externalUserId: event.fromWaId,
         normalizedAddress: event.fromWaId,
@@ -324,7 +331,7 @@ export async function bridgePersistInboundMessage(
       organizationId,
       contactId: upserted.contact.row.id,
       connectionId,
-      transportType: "meta_whatsapp_cloud",
+      transportType: bridgeTransport(bridge),
       status: "open",
       automationMode: "human_handling",
     });
@@ -353,7 +360,7 @@ export async function bridgePersistInboundMessage(
       organizationId,
       conversationId: conversation.row.id,
       connectionId,
-      transportType: "meta_whatsapp_cloud",
+      transportType: bridgeTransport(bridge),
       externalMessageId: event.waMessageId,
       senderIdentityId: upserted.identity.row.id,
       messageType,
@@ -446,7 +453,7 @@ export async function bridgePersistInboundStatus(
       const found = await repository.findMessageByExternalId({
         organizationId,
         connectionId,
-        transportType: "meta_whatsapp_cloud",
+        transportType: bridgeTransport(bridge),
         externalMessageId: event.waMessageId,
       });
       messageId = found?.messageId ?? null;
@@ -455,7 +462,7 @@ export async function bridgePersistInboundStatus(
       const found = await repository.findMessageByLegacyWhatsAppId({
         organizationId,
         connectionId,
-        transportType: "meta_whatsapp_cloud",
+        transportType: bridgeTransport(bridge),
         whatsappMessageId: legacyWhatsAppMessageId,
       });
       messageId = found?.messageId ?? null;

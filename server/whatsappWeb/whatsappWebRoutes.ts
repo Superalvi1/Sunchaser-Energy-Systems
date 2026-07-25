@@ -1,0 +1,153 @@
+/**
+ * Admin-only WhatsApp Web QR API.
+ *
+ * GET  /api/whatsapp-web/status
+ * POST /api/whatsapp-web/connect
+ * GET  /api/whatsapp-web/qr
+ * POST /api/whatsapp-web/disconnect
+ * POST /api/whatsapp-web/logout
+ */
+import { Router, type NextFunction, type Request, type Response } from "express";
+import type { RequestActor } from "../middleware/actor.ts";
+import {
+  inboxFail,
+  inboxOk,
+} from "../whatsappTransport/whatsappInboxHttp.ts";
+import {
+  FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS,
+  type WhatsAppWebSafeStatus,
+} from "./whatsappWebTypes.ts";
+import { createWhatsAppWebRateLimit } from "./whatsappWebRateLimit.ts";
+import {
+  getSharedWhatsAppWebSession,
+  type WhatsAppWebSession,
+} from "./whatsappWebSession.ts";
+
+function requireWhatsAppWebAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const actor = req.actor as RequestActor | undefined;
+  if (!actor) {
+    inboxFail(res, 401, "unauthorized", "Unauthorized");
+    return;
+  }
+  if (actor.role !== "Super Admin" && actor.role !== "Admin") {
+    inboxFail(res, 403, "forbidden", "Admin access required");
+    return;
+  }
+  next();
+}
+
+function noStore(res: Response): void {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+}
+
+function assertNoCredentialLeak(payload: unknown): void {
+  const json = JSON.stringify(payload);
+  for (const field of FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS) {
+    if (json.includes(`"${field}"`)) {
+      throw new Error(`Refusing to return forbidden field: ${field}`);
+    }
+  }
+}
+
+export type WhatsAppWebRouterDeps = {
+  session?: WhatsAppWebSession;
+  rateLimitStore?: Map<string, { count: number; resetAt: number }>;
+};
+
+export function createWhatsAppWebRouter(
+  deps: WhatsAppWebRouterDeps = {}
+): Router {
+  const router = Router();
+  const session = deps.session ?? getSharedWhatsAppWebSession();
+  const rateLimit = createWhatsAppWebRateLimit({
+    store: deps.rateLimitStore,
+  });
+
+  router.use(rateLimit);
+  router.use(requireWhatsAppWebAdmin);
+
+  router.get("/status", (_req, res) => {
+    noStore(res);
+    const status = session.getSafeStatus();
+    assertNoCredentialLeak(status);
+    return inboxOk(res, status);
+  });
+
+  router.post("/connect", async (_req, res) => {
+    noStore(res);
+    try {
+      const status = await session.connect();
+      assertNoCredentialLeak(status);
+      return inboxOk(res, status);
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code === "feature_disabled") {
+        return inboxFail(
+          res,
+          503,
+          "feature_disabled",
+          "WhatsApp Web QR is disabled"
+        );
+      }
+      if (code === "start_in_progress") {
+        return inboxFail(
+          res,
+          409,
+          "start_in_progress",
+          "Connection start already in progress"
+        );
+      }
+      return inboxFail(
+        res,
+        500,
+        "connect_failed",
+        "Failed to start WhatsApp Web connection"
+      );
+    }
+  });
+
+  router.get("/qr", async (_req, res) => {
+    noStore(res);
+    const qr = await session.getQrPayload();
+    if (!qr) {
+      return inboxFail(
+        res,
+        404,
+        "qr_unavailable",
+        "No active QR code. Start connect to generate one."
+      );
+    }
+    assertNoCredentialLeak(qr);
+    return inboxOk(res, qr);
+  });
+
+  router.post("/disconnect", async (_req, res) => {
+    noStore(res);
+    const status = await session.disconnect();
+    assertNoCredentialLeak(status);
+    return inboxOk(res, status);
+  });
+
+  router.post("/logout", async (_req, res) => {
+    noStore(res);
+    try {
+      const status = await session.logout();
+      assertNoCredentialLeak(status);
+      return inboxOk(res, status as WhatsAppWebSafeStatus);
+    } catch {
+      return inboxFail(
+        res,
+        500,
+        "logout_failed",
+        "Failed to logout WhatsApp Web session"
+      );
+    }
+  });
+
+  return router;
+}

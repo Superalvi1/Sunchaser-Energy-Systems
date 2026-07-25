@@ -9,3 +9,8 @@ coverage/
 .env*
 !.env.example
 !.env.production
+
+# WhatsApp Web (Baileys) session material — never commit
+/var/data/whatsapp-web-auth/
+whatsapp-web-auth/
+**/.whatsapp-web-auth/

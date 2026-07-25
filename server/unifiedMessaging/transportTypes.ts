@@ -61,7 +61,7 @@ export const TRANSPORT_CHANNEL_DESCRIPTORS: Readonly<
     audience: "internal_only",
     independentlyDisableable: true,
     classificationNotes:
-      "Experimental internal-only QR transport. Independently disableable. No connector in this phase.",
+      "Experimental internal-only QR transport. Independently disableable. Connector lives under server/whatsappWeb/ behind WHATSAPP_WEB_QR_ENABLED.",
   },
   website_chat: {
     transport: "website_chat",

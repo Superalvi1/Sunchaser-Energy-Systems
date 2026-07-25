@@ -418,7 +418,8 @@ await test(
       }
     }
 
-    // package.json must not gain WhatsApp Web / QR connector deps from this task
+    // Contract module itself must stay free of QR SDKs. The experimental
+    // connector may live under server/whatsappWeb/ with its own deps.
     const pkg = JSON.parse(
       fs.readFileSync(
         path.join(MODULE_ROOT, "../../package.json"),
@@ -429,17 +430,22 @@ await test(
       ...(pkg.dependencies ?? {}),
       ...(pkg.devDependencies ?? {}),
     };
-    for (const banned of [
-      "@whiskeysockets/baileys",
-      "whatsapp-web.js",
-      "qrcode",
-      "qrcode-terminal",
-    ]) {
+    for (const banned of ["whatsapp-web.js", "puppeteer", "playwright-core"]) {
       assert.equal(
         Object.prototype.hasOwnProperty.call(allDeps, banned),
         false,
-        `package.json must not depend on ${banned}`
+        `package.json must not depend on ${banned} for WhatsApp connection`
       );
+    }
+    // If Baileys is present, it must not be imported by unifiedMessaging/.
+    if (Object.prototype.hasOwnProperty.call(allDeps, "@whiskeysockets/baileys")) {
+      for (const { file, source } of files) {
+        assert.equal(
+          source.includes("@whiskeysockets/baileys"),
+          false,
+          `${file} must not import Baileys`
+        );
+      }
     }
   }
 );
