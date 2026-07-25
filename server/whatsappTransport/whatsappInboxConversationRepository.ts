@@ -12,6 +12,7 @@ import type {
 } from "./whatsappInboxDatabaseTypes.ts";
 import {
   activityAt,
+  attachContactDisplayFields,
   clampLimit,
   handleSupabaseError,
   InboxSupabaseAccess,
@@ -504,7 +505,12 @@ export class SupabaseWhatsAppInboxConversationRepository
       .maybeSingle();
     if (error) handleSupabaseError(error);
     if (!data) return null;
-    return mapConversationInbox(data as Record<string, unknown>);
+    const mapped = mapConversationInbox(data as Record<string, unknown>);
+    const [enriched] = await attachContactDisplayFields([mapped], {
+      companyId: this.access.companyId(companyId),
+      client: this.client(),
+    });
+    return enriched ?? mapped;
   }
 
   private applyFilters(
@@ -557,7 +563,10 @@ export class SupabaseWhatsAppInboxConversationRepository
       })
       .slice(0, limit + 1);
 
-    const page = rows.slice(0, limit);
+    const page = await attachContactDisplayFields(rows.slice(0, limit), {
+      companyId,
+      client: this.client(),
+    });
     const last = page[page.length - 1];
     return {
       rows: page,
@@ -611,7 +620,10 @@ export class SupabaseWhatsAppInboxConversationRepository
       const rows = ((data ?? []) as Record<string, unknown>[]).map(
         mapConversationInbox
       );
-      const page = rows.slice(0, limit);
+      const page = await attachContactDisplayFields(rows.slice(0, limit), {
+        companyId,
+        client: this.client(),
+      });
       const last = page[page.length - 1];
       return {
         rows: page,
@@ -649,7 +661,10 @@ export class SupabaseWhatsAppInboxConversationRepository
     const rows = ((data ?? []) as Record<string, unknown>[]).map(
       mapConversationInbox
     );
-    const page = rows.slice(0, limit);
+    const page = await attachContactDisplayFields(rows.slice(0, limit), {
+      companyId,
+      client: this.client(),
+    });
     const last = page[page.length - 1];
     return {
       rows: page,
@@ -701,7 +716,10 @@ export class SupabaseWhatsAppInboxConversationRepository
       const rows = ((data ?? []) as Record<string, unknown>[]).map(
         mapConversationInbox
       );
-      const page = rows.slice(0, limit);
+      const page = await attachContactDisplayFields(rows.slice(0, limit), {
+        companyId,
+        client: this.client(),
+      });
       const last = page[page.length - 1];
       return {
         rows: page,

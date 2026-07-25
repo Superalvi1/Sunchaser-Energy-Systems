@@ -7,7 +7,12 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type { InboxConversationDetail, InboxMessage } from "../types";
-import { displayContactLabel, initialsFromId } from "../utils/format";
+import {
+  displayContactLabel,
+  formatPhoneDisplay,
+  initialsFromContact,
+  initialsFromId,
+} from "../utils/format";
 import Composer from "./Composer";
 import MessageTimeline from "./MessageTimeline";
 import InboxEmptyState from "./InboxEmptyState";
@@ -85,7 +90,8 @@ export default function ConversationView({
   }
 
   const conversation = detail!.conversation;
-  const contact = displayContactLabel(conversation.contactId);
+  const contact = displayContactLabel(conversation);
+  const phone = formatPhoneDisplay(conversation.phoneE164);
   const assignedToMe = conversation.assignedUserId === currentUserId;
 
   return (
@@ -99,14 +105,14 @@ export default function ConversationView({
             className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--inbox-surface-2)] text-xs font-semibold"
             aria-hidden
           >
-            {initialsFromId(conversation.contactId)}
+            {initialsFromContact(conversation)}
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-[var(--inbox-fg)]">
               {contact}
             </h2>
             <p className="truncate text-xs text-[var(--inbox-muted)]">
-              Phone · contact {conversation.contactId.slice(-8)} · Channel{" "}
+              {phone ? `${phone} · ` : ""}Channel{" "}
               {conversation.channelId.slice(-6)}
             </p>
             <p className="mt-0.5 text-xs text-[var(--inbox-muted)]">

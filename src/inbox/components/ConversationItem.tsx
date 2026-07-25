@@ -2,7 +2,9 @@ import { AlertCircle } from "lucide-react";
 import type { InboxConversation } from "../types";
 import {
   displayContactLabel,
+  formatPhoneDisplay,
   formatRelativeTime,
+  initialsFromContact,
   initialsFromId,
 } from "../utils/format";
 
@@ -26,7 +28,10 @@ export default function ConversationItem({
   unread,
   onSelect,
 }: ConversationItemProps) {
-  const label = displayContactLabel(conversation.contactId);
+  const label = displayContactLabel(conversation);
+  const phone = formatPhoneDisplay(conversation.phoneE164);
+  const showPhoneUnderName =
+    Boolean(String(conversation.profileName || "").trim()) && Boolean(phone);
   const activity =
     conversation.lastMessageAt ??
     conversation.updatedAt ??
@@ -48,7 +53,7 @@ export default function ConversationItem({
         className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--inbox-surface-2)] text-xs font-semibold text-[var(--inbox-fg)]"
         aria-hidden
       >
-        {initialsFromId(conversation.contactId)}
+        {initialsFromContact(conversation)}
         {unread ? (
           <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[var(--inbox-accent)] ring-2 ring-[var(--inbox-surface)]" />
         ) : null}
@@ -67,7 +72,9 @@ export default function ConversationItem({
           </time>
         </div>
         <p className="mt-0.5 truncate text-xs text-[var(--inbox-muted)]">
-          Channel {conversation.channelId.slice(-6)}
+          {showPhoneUnderName
+            ? phone
+            : `Channel ${conversation.channelId.slice(-6)}`}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span

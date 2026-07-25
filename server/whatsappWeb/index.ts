@@ -47,6 +47,11 @@ export {
 } from "./whatsappWebNormalize.ts";
 
 export {
+  resolveWhatsAppIdentity,
+  WhatsAppLidPhoneMap,
+} from "./whatsappWebIdentity.ts";
+
+export {
   persistWhatsAppWebInbound,
   createWhatsAppWebMessagingBridge,
 } from "./whatsappWebInbound.ts";

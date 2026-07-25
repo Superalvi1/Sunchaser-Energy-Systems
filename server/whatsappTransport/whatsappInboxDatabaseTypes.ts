@@ -134,6 +134,9 @@ export type WhatsAppConversationInbox = {
   lockVersion: number;
   hasFailedMessage: boolean;
   aiOwnershipState?: WhatsAppAiOwnershipState;
+  /** Safe contact display fields (joined; never LID/raw JID). */
+  profileName?: string | null;
+  phoneE164?: string | null;
 };
 
 export type WhatsAppConversationAssignmentEvent = {
