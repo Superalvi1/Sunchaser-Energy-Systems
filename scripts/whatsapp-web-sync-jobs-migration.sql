@@ -71,6 +71,10 @@ revoke all on table public.whatsapp_web_sync_jobs from anon, authenticated;
 do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
+    -- Normalize privileges: default privileges / prior applies may leave
+    -- REFERENCES/TRIGGER/TRUNCATE. Revoke all, then grant the intended set only.
+    -- Do not alter postgres-owner privileges.
+    revoke all on table public.whatsapp_web_sync_jobs from service_role;
     grant select, insert, update, delete on table public.whatsapp_web_sync_jobs to service_role;
   else
     raise notice 'service_role missing — skip table grant (local/non-Supabase)';
