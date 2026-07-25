@@ -346,6 +346,7 @@ import {
   whatsappRawBodyErrorHandler,
   buildProductionInboxServiceOptions,
   buildProductionWebhookAutoLinkLead,
+  createWhatsAppInboxListAvailabilityResolver,
 } from "./server/whatsappTransport/index.ts";
 import { createMessagingProductionWiring } from "./server/whatsappTransport/messagingProductionFactory.ts";
 import {
@@ -684,18 +685,9 @@ app.use(
   "/api/conversations",
   createWhatsAppOutboundRouter({ messagingRepository })
 );
-app.use(
-  "/api/inbox",
-  createWhatsAppInboxRouter({
-    messagingRepository,
-    serviceOptions: buildProductionInboxServiceOptions({
-      resolveLocalDb: resolveAuthLocalDb,
-      persistLead: persistPublicMarketingLead,
-    }),
-  })
-);
 
 // WhatsApp Web QR (Baileys) — Admin-only; disabled unless WHATSAPP_WEB_QR_ENABLED=true.
+// Shared session is created before Inbox mount so list availability can see QR CONNECTED.
 const whatsappWebSession = getSharedWhatsAppWebSession();
 const whatsappWebShadowEngine = new AiShadowEngine();
 whatsappWebSession.setInboundHandler(async (message) => {
@@ -724,6 +716,20 @@ if (readWhatsAppWebConfig().enabled) {
     })
   );
 }
+
+app.use(
+  "/api/inbox",
+  createWhatsAppInboxRouter({
+    messagingRepository,
+    serviceOptions: buildProductionInboxServiceOptions({
+      resolveLocalDb: resolveAuthLocalDb,
+      persistLead: persistPublicMarketingLead,
+    }),
+    resolveListAvailability: createWhatsAppInboxListAvailabilityResolver({
+      getQrConnectionStatus: () => whatsappWebSession.getSafeStatus(),
+    }),
+  })
+);
 app.use("/api/whatsapp-web", createWhatsAppWebRouter({ session: whatsappWebSession }));
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
