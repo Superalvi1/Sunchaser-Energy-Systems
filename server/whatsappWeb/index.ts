@@ -53,7 +53,16 @@ export {
 } from "./whatsappWebOutbound.ts";
 
 export { createWhatsAppWebTransportAdapter } from "./whatsappWebTransportAdapter.ts";
-export { createWhatsAppWebRouter } from "./whatsappWebRoutes.ts";
+export {
+  createWhatsAppWebRouter,
+  requireWhatsAppWebAdmin,
+  WHATSAPP_WEB_ADMIN_ROUTES,
+} from "./whatsappWebRoutes.ts";
+export {
+  canManageWhatsAppWebQr,
+  isWhatsAppWebAdminRole,
+  WHATSAPP_WEB_ADMIN_ROLES,
+} from "./whatsappWebPermissions.ts";
 export {
   createWhatsAppWebRateLimit,
   resetWhatsAppWebRateLimitStore,
