@@ -21,6 +21,16 @@ import {
   WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID,
   WHATSAPP_WEB_QR_CONNECTION_ID,
 } from "./whatsappWebConfig.ts";
+import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
+import {
+  rememberVerifiedLidMapping,
+  resolveWhatsAppIdentityDurable,
+} from "./whatsappWebLidMapping.ts";
+import {
+  defaultWhatsAppLidMappingScope,
+  type WhatsAppLidMappingScope,
+  type WhatsAppLidPhoneMappingRepository,
+} from "./whatsappWebLidMappingRepository.ts";
 import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import {
   normalizeBaileysInbound,
@@ -30,6 +40,11 @@ import {
 export type WhatsAppWebInboundDeps = {
   repo?: WhatsAppRepository;
   messagingRepository?: MessagingRepository | null;
+  /** Optional ephemeral LID map shared with the sync source. */
+  lidMap?: WhatsAppLidPhoneMap | null;
+  /** Optional durable LID→phone repository (SYNC-14C-B). */
+  lidMappingRepo?: WhatsAppLidPhoneMappingRepository | null;
+  lidMappingScope?: WhatsAppLidMappingScope;
   /** Optional AI shadow evaluate — must not send messages. */
   evaluateShadow?: ((input: {
     conversationId: string;
@@ -64,7 +79,39 @@ export async function persistWhatsAppWebInbound(
   | { kind: "ignored"; reason: string }
   | { kind: "error"; error: string }
 > {
-  const normalized = normalizeBaileysInbound(message);
+  const lidMap = deps.lidMap ?? new WhatsAppLidPhoneMap();
+  const lidMappingRepo = deps.lidMappingRepo ?? null;
+  const lidMappingScope =
+    deps.lidMappingScope ?? defaultWhatsAppLidMappingScope();
+
+  // Durable LID lookup before normalize so post-restart LID-only events can
+  // attach to the existing phone contact. Failures degrade to bad_jid ignore.
+  if (lidMappingRepo) {
+    try {
+      await resolveWhatsAppIdentityDurable(
+        {
+          remoteJid: message.remoteJid,
+          remoteJidAlt: message.remoteJidAlt,
+          participant: message.participant,
+          participantAlt: message.participantAlt,
+          senderPn: message.senderPn,
+          senderLid: message.senderLid,
+          participantPn: message.participantPn,
+          participantLid: message.participantLid,
+        },
+        {
+          repo: lidMappingRepo,
+          scope: lidMappingScope,
+          memory: lidMap,
+        }
+      );
+    } catch {
+      // Mapping failure must not disconnect WhatsApp or fail inbound hard.
+      logWhatsAppWeb("warn", "lid_mapping_resolve_degraded");
+    }
+  }
+
+  const normalized = normalizeBaileysInbound(message, { lidMap });
   if (normalized.kind === "ignore") {
     return { kind: "ignored", reason: normalized.reason };
   }
@@ -91,6 +138,23 @@ export async function persistWhatsAppWebInbound(
       channelId: channel.id,
       contactId: contact.id,
     });
+
+    // When inbound carried both LID + phone, persist verified mapping (no throw).
+    if (lidMappingRepo && message.remoteJid?.includes("@lid")) {
+      const altPhone =
+        message.remoteJidAlt ||
+        message.senderPn ||
+        message.participantAlt ||
+        message.participantPn ||
+        null;
+      if (altPhone) {
+        void rememberVerifiedLidMapping(message.remoteJid, altPhone, {
+          repo: lidMappingRepo,
+          scope: lidMappingScope,
+          memory: lidMap,
+        });
+      }
+    }
 
     const inserted = await repo.insertInboundMessage({
       conversationId: conversation.id,

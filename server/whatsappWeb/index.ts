@@ -47,9 +47,33 @@ export {
 } from "./whatsappWebNormalize.ts";
 
 export {
+  collectLidJid,
   resolveWhatsAppIdentity,
   WhatsAppLidPhoneMap,
 } from "./whatsappWebIdentity.ts";
+
+export {
+  __resetSharedWhatsAppLidMappingRuntime,
+  containsRawWhatsAppIdentifier,
+  getSharedWhatsAppLidMappingRuntime,
+  hydrateWhatsAppLidPhoneMap,
+  rememberVerifiedLidMapping,
+  resolveWhatsAppIdentityDurable,
+  resolveWhatsAppIdentityWithOptionalMap,
+} from "./whatsappWebLidMapping.ts";
+
+export {
+  createWhatsAppLidPhoneMappingRepository,
+  defaultWhatsAppLidMappingScope,
+  InMemoryWhatsAppLidPhoneMappingRepository,
+  normalizeLidJid,
+  normalizeMappingPhoneE164,
+  SupabaseWhatsAppLidPhoneMappingRepository,
+  type UpsertVerifiedLidMappingResult,
+  type WhatsAppLidMappingRecord,
+  type WhatsAppLidMappingScope,
+  type WhatsAppLidPhoneMappingRepository,
+} from "./whatsappWebLidMappingRepository.ts";
 
 export {
   persistWhatsAppWebInbound,

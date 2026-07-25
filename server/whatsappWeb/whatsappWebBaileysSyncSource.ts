@@ -3,7 +3,20 @@
  * Populated from contacts/chats/history events while the socket is connected.
  * Resolves @lid via Contact.jid / *Pn / *Alt fields — never treats LID digits as phones.
  */
-import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
+import {
+  WhatsAppLidPhoneMap,
+  type ResolvedWhatsAppIdentity,
+} from "./whatsappWebIdentity.ts";
+import {
+  hydrateWhatsAppLidPhoneMap,
+  rememberVerifiedLidMapping,
+} from "./whatsappWebLidMapping.ts";
+import {
+  defaultWhatsAppLidMappingScope,
+  type WhatsAppLidMappingScope,
+  type WhatsAppLidPhoneMappingRepository,
+} from "./whatsappWebLidMappingRepository.ts";
+import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import { jidToWaId, waIdToChatJid } from "./whatsappWebNormalize.ts";
 import {
   isExcludedSyncRemoteJid,
@@ -154,7 +167,10 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private selfJid: string | null = null;
   private readonly contacts = new Map<string, InternalContact>();
   private readonly chats = new Map<string, InternalChat>();
-  private readonly lidMap = new WhatsAppLidPhoneMap();
+  private readonly lidMap: WhatsAppLidPhoneMap;
+  private lidMappingRepo: WhatsAppLidPhoneMappingRepository | null = null;
+  private lidMappingScope: WhatsAppLidMappingScope =
+    defaultWhatsAppLidMappingScope();
   private historyFetcher: BaileysHistoryFetchFn | null = null;
   private providerHistoryEventObserved = false;
   private lastAvailability: WhatsAppWebHistoryAvailability = "unknown";
@@ -162,6 +178,46 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private readonly inFlightByChat = new Map<string, Promise<boolean>>();
   private readonly pendingByRequestId = new Map<string, PendingHistoryWait>();
   private readonly earlyMatchedRequestIds = new Set<string>();
+
+  constructor(options?: { lidMap?: WhatsAppLidPhoneMap }) {
+    this.lidMap = options?.lidMap ?? new WhatsAppLidPhoneMap();
+  }
+
+  /**
+   * Attach durable LID mapping store (SYNC-14C-B). Optional — no production
+   * reconnect/outbound side effects; hydrate is best-effort and never throws.
+   */
+  setLidMappingStore(
+    repo: WhatsAppLidPhoneMappingRepository | null,
+    scope?: WhatsAppLidMappingScope
+  ): void {
+    this.lidMappingRepo = repo;
+    if (scope) this.lidMappingScope = scope;
+  }
+
+  getLidMap(): WhatsAppLidPhoneMap {
+    return this.lidMap;
+  }
+
+  async hydrateLidMappings(): Promise<number> {
+    if (!this.lidMappingRepo) return 0;
+    return hydrateWhatsAppLidPhoneMap(this.lidMap, {
+      repo: this.lidMappingRepo,
+      scope: this.lidMappingScope,
+    });
+  }
+
+  private noteVerifiedIdentity(identity: ResolvedWhatsAppIdentity): void {
+    if (!this.lidMappingRepo || !identity.lidJid) return;
+    void rememberVerifiedLidMapping(identity.lidJid, identity.phoneE164, {
+      repo: this.lidMappingRepo,
+      scope: this.lidMappingScope,
+      memory: this.lidMap,
+    }).catch(() => {
+      // Mapping failure must never affect sync/socket lifecycle.
+      logWhatsAppWeb("warn", "lid_mapping_persist_failed");
+    });
+  }
 
   setConnected(connected: boolean, selfJid?: string | null): void {
     this.connected = connected;
@@ -172,6 +228,11 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     if (!connected) {
       this.cancelPendingHistoryWaits();
       this.historyFetcher = null;
+      return;
+    }
+    // Best-effort hydrate after connect — never blocks or throws into socket.
+    if (this.lidMappingRepo) {
+      void this.hydrateLidMappings();
     }
   }
 
@@ -236,6 +297,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         remoteJid: String(c.id || c.jid || ""),
       });
       if (!identity) continue;
+      this.noteVerifiedIdentity(identity);
 
       const jid = identity.phoneJid;
       const prev = this.contacts.get(jid);
@@ -283,6 +345,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         contactJid: chat.jid != null ? String(chat.jid) : null,
       });
       if (!identity) continue;
+      this.noteVerifiedIdentity(identity);
 
       const jid = identity.phoneJid;
       const prev = this.chats.get(jid);
@@ -350,6 +413,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
           key.remoteJidAlt != null ? String(key.remoteJidAlt) : null,
       });
       if (!identity) continue;
+      this.noteVerifiedIdentity(identity);
 
       // Chat key is always the resolved phone JID of remoteJid (never participant).
       const chatJid = identity.phoneJid;

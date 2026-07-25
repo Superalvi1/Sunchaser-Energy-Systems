@@ -6,7 +6,7 @@
 export type WhatsAppWebLogLevel = "info" | "warn" | "error";
 
 const FORBIDDEN_KEY_PATTERN =
-  /(cred|secret|token|key|auth|session|qr|password|cookie|noise|identity|prekey|phone|jid|msisdn|waid|header|cookie|stack|error)/i;
+  /(cred|secret|token|key|auth|session|qr|password|cookie|noise|identity|prekey|phone|jid|lid|msisdn|waid|header|cookie|stack|error)/i;
 
 export function logWhatsAppWeb(
   level: WhatsAppWebLogLevel,
