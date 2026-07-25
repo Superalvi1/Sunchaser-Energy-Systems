@@ -272,7 +272,10 @@ async function defaultSocketFactory(input: {
     logger: createSilentBaileysLogger() as never,
     printQRInTerminal: false,
     // Request companion history asynchronously when the phone offers it.
-    // shouldSyncHistoryMessage still bounds what we accept; import window is 7 days.
+    // Baileys 6.7.23 shouldSyncHistoryMessage only accepts/rejects HistorySyncNotification
+    // types — it cannot enforce a seven-day message window. Window/cap bounds are applied
+    // in BaileysInMemorySyncSource.ingestMessages (see WHATSAPP_WEB_SYNC_WINDOW_DAYS /
+    // WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT).
     syncFullHistory: true,
     shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false,

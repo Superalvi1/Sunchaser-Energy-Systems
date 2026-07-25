@@ -407,6 +407,8 @@ export type WhatsAppWebSyncJobSnapshot = {
   historyOldestAvailableAt: string | null;
   historyNewestAvailableAt: string | null;
   historyOnDemandSupported: boolean;
+  cancelled?: boolean;
+  durabilityWarning?: string | null;
 };
 
 export async function startWhatsAppWebHistorySync(): Promise<WhatsAppWebSyncJobSnapshot> {

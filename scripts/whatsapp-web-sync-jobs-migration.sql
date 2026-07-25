@@ -33,6 +33,8 @@ create table if not exists public.whatsapp_web_sync_jobs (
   history_newest_available_at timestamptz,
   window_days integer not null default 7,
   error_summary text,
+  cancelled boolean not null default false,
+  durability_warning text,
   created_at timestamptz not null default timezone('utc'::text, now()),
   updated_at timestamptz not null default timezone('utc'::text, now()),
   constraint whatsapp_web_sync_jobs_status_check check (
@@ -49,6 +51,12 @@ create table if not exists public.whatsapp_web_sync_jobs (
     )
   )
 );
+
+-- Additive columns for environments that already created the table before SYNC-8R.
+alter table public.whatsapp_web_sync_jobs
+  add column if not exists cancelled boolean not null default false;
+alter table public.whatsapp_web_sync_jobs
+  add column if not exists durability_warning text;
 
 comment on table public.whatsapp_web_sync_jobs is
   'Latest WhatsApp Web contact/history sync result per company. Non-PII operational fields only. Backend/service_role.';

@@ -6,9 +6,13 @@
 import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
 import { jidToWaId, waIdToChatJid } from "./whatsappWebNormalize.ts";
 import {
+  isExcludedSyncRemoteJid,
   normalizeJid,
+  syncWindowStartMs,
+  WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT,
   WHATSAPP_WEB_SYNC_HISTORY_REQUEST_COUNT,
   WHATSAPP_WEB_SYNC_HISTORY_WAIT_MS,
+  WHATSAPP_WEB_SYNC_WINDOW_DAYS,
   type WhatsAppWebHistoryAvailability,
   type WhatsAppWebHistoryCoverage,
   type WhatsAppWebHistoryCoverageMeta,
@@ -230,80 +234,126 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   ingestChats(rawChats: Array<Record<string, unknown>>): void {
     for (const chat of rawChats) {
       const rawId = String(chat.id || chat.jid || "");
+      // Never cache group/status/broadcast/newsletter chats for individual sync.
+      if (isExcludedSyncRemoteJid(rawId) || Boolean(chat.isGroup)) continue;
+
       const identity = this.lidMap.resolveIdentity({
         remoteJid: rawId,
         remoteJidAlt:
           chat.remoteJidAlt != null ? String(chat.remoteJidAlt) : null,
         contactJid: chat.jid != null ? String(chat.jid) : null,
       });
+      if (!identity) continue;
 
-      const isGroup =
-        normalizeJid(rawId).endsWith("@g.us") || Boolean(chat.isGroup);
-      const isStatusOrBroadcast =
-        normalizeJid(rawId) === "status@broadcast" ||
-        normalizeJid(rawId).includes("broadcast");
-      const isChannel = normalizeJid(rawId).endsWith("@newsletter");
-
-      // Groups/status/channels keep raw jid; individuals require phone identity.
-      const jid = identity?.phoneJid ?? normalizeJid(rawId);
-      if (!jid) continue;
-      if (!isGroup && !isStatusOrBroadcast && !isChannel && !identity) {
-        continue;
-      }
-
+      const jid = identity.phoneJid;
       const prev = this.chats.get(jid);
-      const cursor = this.extractChatCursor(chat, jid) ?? prev?.historyCursor ?? null;
-      // Conversation.messages[] from history sync may seed the cache.
+      const cursorFromChat =
+        this.extractChatCursor(chat, jid) ?? prev?.historyCursor ?? null;
+
+      // Canonicalize chat first so nested messages merge into the same map.
+      const entry: InternalChat = {
+        jid,
+        phoneE164: identity.phoneE164,
+        name: nonEmptyString(chat.name) || prev?.name || null,
+        isGroup: false,
+        isStatusOrBroadcast: false,
+        isChannel: false,
+        messages: prev?.messages ?? new Map(),
+        historyCursor: cursorFromChat,
+      };
+      this.chats.set(jid, entry);
+
       if (Array.isArray(chat.messages)) {
-        this.ingestHistorySyncMsgs(chat.messages as Array<Record<string, unknown>>, jid);
+        this.ingestHistorySyncMsgs(
+          chat.messages as Array<Record<string, unknown>>,
+          jid
+        );
       }
 
-      this.chats.set(jid, {
-        jid,
-        phoneE164: identity?.phoneE164 ?? jidToWaId(jid),
-        name: nonEmptyString(chat.name) || prev?.name || null,
-        isGroup,
-        isStatusOrBroadcast,
-        isChannel,
-        messages: prev?.messages ?? new Map(),
-        historyCursor: cursor,
-      });
+      // Re-read after nested ingest so cursor/messages are not overwritten.
+      const after = this.chats.get(jid);
+      if (after) {
+        after.name = nonEmptyString(chat.name) || after.name || null;
+        if (cursorFromChat && !after.historyCursor) {
+          after.historyCursor = cursorFromChat;
+        } else if (
+          cursorFromChat &&
+          after.historyCursor &&
+          cursorFromChat.timestampMs < after.historyCursor.timestampMs
+        ) {
+          after.historyCursor = cursorFromChat;
+        }
+        this.pruneChatCache(after);
+      }
     }
   }
 
   ingestMessages(rawMessages: Array<Record<string, unknown>>): void {
+    const windowStartMs = syncWindowStartMs(
+      Date.now(),
+      WHATSAPP_WEB_SYNC_WINDOW_DAYS
+    );
+
     for (const msg of rawMessages) {
       const key = keyFields(msg);
       const providerMessageId = String(key.id || "");
       if (!providerMessageId) continue;
 
+      // remoteJid is the authoritative chat identity. Group/status/newsletter
+      // messages are excluded before any participant/alt canonicalization.
+      const remoteJid = key.remoteJid != null ? String(key.remoteJid) : "";
+      if (!remoteJid || isExcludedSyncRemoteJid(remoteJid)) continue;
+
+      // Chat identity = remoteJid (+ remoteJidAlt for LID→PN). Never participant*/sender*.
       const identity = this.lidMap.resolveIdentity({
-        remoteJid: key.remoteJid != null ? String(key.remoteJid) : null,
+        remoteJid,
         remoteJidAlt:
           key.remoteJidAlt != null ? String(key.remoteJidAlt) : null,
-        participant: key.participant != null ? String(key.participant) : null,
-        participantAlt:
-          key.participantAlt != null ? String(key.participantAlt) : null,
-        senderPn: key.senderPn != null ? String(key.senderPn) : null,
-        senderLid: key.senderLid != null ? String(key.senderLid) : null,
-        participantPn:
-          key.participantPn != null ? String(key.participantPn) : null,
-        participantLid:
-          key.participantLid != null ? String(key.participantLid) : null,
       });
       if (!identity) continue;
 
+      // Chat key is always the resolved phone JID of remoteJid (never participant).
       const chatJid = identity.phoneJid;
       if (!this.chats.has(chatJid)) {
-        this.ingestChats([{ id: chatJid }]);
+        this.chats.set(chatJid, {
+          jid: chatJid,
+          phoneE164: identity.phoneE164,
+          name: null,
+          isGroup: false,
+          isStatusOrBroadcast: false,
+          isChannel: false,
+          messages: new Map(),
+          historyCursor: null,
+        });
       }
       const chat = this.chats.get(chatJid);
-      if (!chat) continue;
+      if (!chat || chat.isGroup || chat.isStatusOrBroadcast || chat.isChannel) {
+        continue;
+      }
 
       const ts = Number(msg.messageTimestamp || 0);
       const occurredAt = ts
         ? new Date(ts * 1000).toISOString()
         : new Date().toISOString();
+      const cursorTs = ts ? ts * 1000 : Date.parse(occurredAt);
+      const finiteCursorTs = Number.isFinite(cursorTs) ? cursorTs : Date.now();
+
+      // Always retain genuine oldest cursor metadata (no body required).
+      if (!chat.historyCursor || finiteCursorTs <= chat.historyCursor.timestampMs) {
+        chat.historyCursor = {
+          remoteJid: chatJid,
+          id: providerMessageId,
+          fromMe: key.fromMe === true,
+          timestampMs: finiteCursorTs,
+        };
+      }
+
+      // Bound bodies at ingestion: drop out-of-window message bodies.
+      if (Number.isFinite(cursorTs) && cursorTs < windowStartMs) {
+        this.pruneChatCache(chat);
+        continue;
+      }
+
       const media = mediaMeta(msg);
       chat.messages.set(providerMessageId, {
         providerMessageId,
@@ -312,23 +362,35 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         text: extractText(msg),
         messageType: messageTypeOf(msg),
         occurredAt,
+        // Metadata only — never binary media payloads.
         mimeType: media.mimeType,
         caption: media.caption,
         filename: media.filename,
       });
+      this.pruneChatCache(chat);
+    }
+  }
 
-      const cursorTs = ts ? ts * 1000 : Date.parse(occurredAt);
-      if (
-        !chat.historyCursor ||
-        cursorTs <= chat.historyCursor.timestampMs
-      ) {
-        chat.historyCursor = {
-          remoteJid: chatJid,
-          id: providerMessageId,
-          fromMe: key.fromMe === true,
-          timestampMs: Number.isFinite(cursorTs) ? cursorTs : Date.now(),
-        };
+  /** Keep newest N in-window bodies; cursor metadata is independent. */
+  private pruneChatCache(chat: InternalChat): void {
+    const windowStartMs = syncWindowStartMs(
+      Date.now(),
+      WHATSAPP_WEB_SYNC_WINDOW_DAYS
+    );
+    for (const [id, message] of [...chat.messages.entries()]) {
+      const ts = Date.parse(message.occurredAt);
+      if (Number.isFinite(ts) && ts < windowStartMs) {
+        chat.messages.delete(id);
       }
+    }
+    if (chat.messages.size <= WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT) return;
+    const sorted = [...chat.messages.values()].sort(
+      (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
+    );
+    const drop = sorted.length - WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT;
+    for (let i = 0; i < drop; i += 1) {
+      const oldest = sorted[i];
+      if (oldest) chat.messages.delete(oldest.providerMessageId);
     }
   }
 
@@ -456,36 +518,64 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     fallbackJid: string
   ): HistoryCursor | null {
     const msgs = chat.messages as Array<Record<string, unknown>> | undefined;
-    if (Array.isArray(msgs) && msgs.length > 0) {
-      for (const entry of msgs) {
-        const inner =
-          (entry.message as Record<string, unknown> | undefined) ?? entry;
-        const key = keyFields(inner);
-        const id = nonEmptyString(key.id);
-        if (!id) continue;
-        const ts = Number(inner.messageTimestamp || chat.lastMsgTimestamp || 0);
-        return {
+    if (!Array.isArray(msgs) || msgs.length === 0) return null;
+    let oldest: HistoryCursor | null = null;
+    for (const entry of msgs) {
+      const inner =
+        (entry.message as Record<string, unknown> | undefined) ?? entry;
+      const key = keyFields(inner);
+      const id = nonEmptyString(key.id);
+      if (!id) continue;
+      const ts = Number(inner.messageTimestamp || chat.lastMsgTimestamp || 0);
+      const timestampMs = ts ? ts * 1000 : 0;
+      if (!timestampMs) continue;
+      if (!oldest || timestampMs < oldest.timestampMs) {
+        oldest = {
           remoteJid: fallbackJid,
           id,
           fromMe: key.fromMe === true,
-          timestampMs: ts ? ts * 1000 : Date.now(),
+          timestampMs,
         };
       }
     }
-    return null;
+    return oldest;
+  }
+
+  /** Test helper: inspect per-chat cache (messages + cursor metadata). */
+  __testPeekChat(chatJid: string): {
+    messageIds: string[];
+    messageCount: number;
+    historyCursor: HistoryCursor | null;
+  } | null {
+    const chat = this.chats.get(normalizeJid(chatJid));
+    if (!chat) return null;
+    return {
+      messageIds: [...chat.messages.keys()],
+      messageCount: chat.messages.size,
+      historyCursor: chat.historyCursor
+        ? { ...chat.historyCursor }
+        : null,
+    };
   }
 
   private ingestHistorySyncMsgs(
     entries: Array<Record<string, unknown>>,
     chatJid: string
   ): void {
+    if (isExcludedSyncRemoteJid(chatJid)) return;
     const flattened: Array<Record<string, unknown>> = [];
     for (const entry of entries) {
-      const inner = (entry.message as Record<string, unknown> | undefined) ?? entry;
-      if (inner.key || inner.message) flattened.push(inner);
+      const inner =
+        (entry.message as Record<string, unknown> | undefined) ?? entry;
+      if (!inner.key && !inner.message) continue;
+      const key = {
+        ...keyFields(inner),
+        // Nested conversation messages inherit the parent chat remoteJid.
+        remoteJid: chatJid,
+      };
+      flattened.push({ ...inner, key });
     }
     if (flattened.length) this.ingestMessages(flattened);
-    void chatJid;
   }
 
   private async runBoundedHistoryRequest(

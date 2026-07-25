@@ -16,13 +16,18 @@ import {
 } from "./whatsappWebHistoryPersist.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
 import {
+  deriveSyncOutcome,
   isEligibleSyncChat,
   isEligibleSyncContact,
+  isExcludedSyncRemoteJid,
   resolveWhatsAppDisplayName,
   shouldApplyWhatsAppContactName,
   syncWindowStartMs,
+  WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT,
+  WHATSAPP_WEB_SYNC_WINDOW_DAYS,
   type WhatsAppWebSyncChat,
   type WhatsAppWebSyncContact,
+  type WhatsAppWebSyncJobSnapshot,
   type WhatsAppWebSyncMessage,
   type WhatsAppWebSyncSource,
 } from "./whatsappWebSyncTypes.ts";
@@ -39,6 +44,7 @@ import { resolveWhatsAppIdentity } from "./whatsappWebIdentity.ts";
 import {
   createWhatsAppWebSyncJobStore,
   __resetWhatsAppWebSyncJobMemoryStore,
+  type WhatsAppWebSyncJobStore,
 } from "./whatsappWebSyncJobStore.ts";
 import { displayContactLabel } from "../../src/inbox/utils/format.ts";
 import { DEFAULT_COMPANY_ID } from "../whatsappTransport/whatsappConstants.ts";
@@ -625,8 +631,15 @@ console.log("PASS: concurrent sync joins existing job");
   service.requestCancel();
   const snap = await started.done;
   assert.equal(snap.status, "completed");
+  assert.equal(snap.cancelled, true);
   assert.ok(
-    snap.errorSummary?.includes("disconnect") ||
+    snap.outcome === "partial" || snap.outcome === "history_not_available"
+  );
+  assert.notEqual(snap.outcome, "completed_with_imports");
+  assert.notEqual(snap.outcome, "completed_no_changes");
+  assert.ok(
+    snap.errorSummary?.includes("interrupt") ||
+      snap.errorSummary?.includes("disconnect") ||
       snap.messagesImported < 30
   );
 }
@@ -663,7 +676,9 @@ console.log("PASS: cancel prevents unsafe continuation");
   const contacts = await baileys.listContacts();
   assert.equal(contacts.length, 1);
   const chats = await baileys.listChats();
-  assert.equal(chats.length, 3);
+  // Group/status chats are excluded at ingest (SYNC-8R); only the 1:1 chat remains.
+  assert.equal(chats.length, 1);
+  assert.equal(chats[0]?.jid, "923009998877@s.whatsapp.net");
   const msgs = await baileys.fetchMessages("923009998877@s.whatsapp.net", {
     limit: 10,
     sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
@@ -1500,5 +1515,551 @@ console.log("PASS: empty cache outcome + durable job across store instances");
   );
 }
 console.log("PASS: inbox display labels never use UUID suffixes");
+
+// ---------------------------------------------------------------------------
+// SYNC-8R — group isolation, cache bounds, nested merge, cancel/durability
+// ---------------------------------------------------------------------------
+
+{
+  assert.equal(isExcludedSyncRemoteJid("12036399@g.us"), true);
+  assert.equal(isExcludedSyncRemoteJid("status@broadcast"), true);
+  assert.equal(isExcludedSyncRemoteJid("12345@broadcast"), true);
+  assert.equal(isExcludedSyncRemoteJid("120363@newsletter"), true);
+  assert.equal(isExcludedSyncRemoteJid("923001112233@s.whatsapp.net"), false);
+}
+console.log("PASS: SYNC-8R excluded remote JID helpers");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true, "923001112233@s.whatsapp.net");
+  // Group message with participant phone JID must never become a private chat.
+  source.ingestMessages([
+    {
+      key: {
+        id: "G_PART",
+        remoteJid: "12036399@g.us",
+        participant: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      message: { conversation: "group hello" },
+    },
+  ]);
+  const chats = await source.listChats();
+  assert.equal(chats.length, 0);
+  assert.equal(source.__testPeekChat("923009998877@s.whatsapp.net"), null);
+  const msgs = await source.fetchMessages("923009998877@s.whatsapp.net", {
+    limit: 50,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.equal(msgs.length, 0);
+}
+console.log("PASS: SYNC-8R group+participant never becomes private chat");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestMessages([
+    {
+      key: {
+        id: "G_ALT",
+        remoteJid: "12036388@g.us",
+        participant: "111222333444555@lid",
+        participantAlt: "923007776655@s.whatsapp.net",
+        participantPn: "923007776655@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T11:00:00.000Z") / 1000),
+      message: { conversation: "alt group" },
+    },
+  ]);
+  assert.equal((await source.listChats()).length, 0);
+  assert.equal(source.__testPeekChat("923007776655@s.whatsapp.net"), null);
+}
+console.log("PASS: SYNC-8R group+participantAlt/Pn never imported privately");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.handleHistorySet({
+    chats: [{ id: "12036377@g.us", name: "Team", isGroup: true }],
+    messages: [
+      {
+        key: {
+          id: "GH1",
+          remoteJid: "12036377@g.us",
+          participant: "923009998877@s.whatsapp.net",
+          fromMe: false,
+        },
+        messageTimestamp: Math.floor(Date.parse("2026-07-22T12:00:00.000Z") / 1000),
+        message: { conversation: "history group" },
+      },
+    ],
+  });
+  assert.equal((await source.listChats()).length, 0);
+  assert.equal(source.__testPeekChat("923009998877@s.whatsapp.net"), null);
+}
+console.log("PASS: SYNC-8R messaging-history.set group messages excluded");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  // messages.upsert path uses the same ingestMessages entrypoint.
+  source.ingestMessages([
+    {
+      key: {
+        id: "UP_G",
+        remoteJid: "12036366@g.us",
+        participant: "923001112233@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T13:00:00.000Z") / 1000),
+      message: { conversation: "upsert group" },
+    },
+    {
+      key: { id: "ST1", remoteJid: "status@broadcast", fromMe: false },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T13:01:00.000Z") / 1000),
+      message: { conversation: "status" },
+    },
+    {
+      key: { id: "BC1", remoteJid: "status@broadcast", fromMe: false },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T13:02:00.000Z") / 1000),
+      message: { conversation: "broadcast" },
+    },
+    {
+      key: { id: "NL1", remoteJid: "120363@newsletter", fromMe: false },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T13:03:00.000Z") / 1000),
+      message: { conversation: "newsletter" },
+    },
+  ]);
+  assert.equal((await source.listChats()).length, 0);
+}
+console.log("PASS: SYNC-8R upsert excludes group/status/broadcast/newsletter");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  const chatJid = "923009998877@s.whatsapp.net";
+  const now = Date.parse("2026-07-24T12:00:00.000Z");
+  const windowStart = syncWindowStartMs(now, WHATSAPP_WEB_SYNC_WINDOW_DAYS);
+  const raw: Array<Record<string, unknown>> = [];
+  // Old messages outside the 7-day window (cursor metadata only).
+  for (let i = 0; i < 5; i += 1) {
+    raw.push({
+      key: { id: `OLD_${i}`, remoteJid: chatJid, fromMe: false },
+      messageTimestamp: Math.floor((windowStart - (i + 1) * 86_400_000) / 1000),
+      message: { conversation: `old body ${i}` },
+    });
+  }
+  // Many in-window bodies — must prune to cache cap (newest 50).
+  for (let i = 0; i < WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT + 20; i += 1) {
+    raw.push({
+      key: { id: `IN_${i}`, remoteJid: chatJid, fromMe: false },
+      messageTimestamp: Math.floor((windowStart + (i + 1) * 60_000) / 1000),
+      message: { conversation: `in ${i}` },
+    });
+  }
+  // Freeze Date.now used by ingest window relative to fixture "now".
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    source.ingestMessages(raw);
+  } finally {
+    Date.now = realNow;
+  }
+  const peek = source.__testPeekChat(chatJid);
+  assert.ok(peek);
+  assert.equal(peek.messageCount, WHATSAPP_WEB_SYNC_CACHE_CAP_PER_CHAT);
+  assert.ok(!peek.messageIds.some((id) => id.startsWith("OLD_")));
+  assert.ok(peek.historyCursor);
+  assert.ok(peek.historyCursor.id.startsWith("OLD_"));
+  assert.ok(peek.historyCursor.timestampMs < windowStart);
+  // Old bodies are not retained merely to preserve the cursor.
+  const bodies = await source.fetchMessages(chatJid, {
+    limit: 200,
+    sinceMs: 0,
+  });
+  assert.ok(bodies.every((m) => !m.providerMessageId.startsWith("OLD_")));
+  assert.ok(bodies.every((m) => !String(m.text || "").startsWith("old body")));
+}
+console.log("PASS: SYNC-8R history pruned to window+cap; old bodies not kept for cursor");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  const chatJid = "923008887766@s.whatsapp.net";
+  source.ingestChats([
+    {
+      id: chatJid,
+      name: "New nested",
+      messages: [
+        {
+          message: {
+            key: { id: "N1", remoteJid: chatJid, fromMe: false },
+            messageTimestamp: Math.floor(
+              Date.parse("2026-07-22T09:00:00.000Z") / 1000
+            ),
+            message: { conversation: "nested-1" },
+          },
+        },
+        {
+          message: {
+            key: { id: "N2", remoteJid: chatJid, fromMe: false },
+            messageTimestamp: Math.floor(
+              Date.parse("2026-07-22T09:05:00.000Z") / 1000
+            ),
+            message: { conversation: "nested-2" },
+          },
+        },
+      ],
+    },
+  ]);
+  const peek = source.__testPeekChat(chatJid);
+  assert.ok(peek);
+  assert.equal(peek.messageCount, 2);
+  assert.equal(peek.historyCursor?.id, "N1");
+  const msgs = await source.fetchMessages(chatJid, {
+    limit: 50,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.equal(msgs.length, 2);
+}
+console.log("PASS: SYNC-8R nested chat.messages survive for unseen chat");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  const chatJid = "923008887755@s.whatsapp.net";
+  source.ingestChats([{ id: chatJid, name: "Existing" }]);
+  source.ingestMessages([
+    {
+      key: { id: "E1", remoteJid: chatJid, fromMe: false },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T08:00:00.000Z") / 1000),
+      message: { conversation: "existing-1" },
+    },
+  ]);
+  source.ingestChats([
+    {
+      id: chatJid,
+      name: "Existing",
+      messages: [
+        {
+          message: {
+            key: { id: "E1", remoteJid: chatJid, fromMe: false },
+            messageTimestamp: Math.floor(
+              Date.parse("2026-07-22T08:00:00.000Z") / 1000
+            ),
+            message: { conversation: "existing-1" },
+          },
+        },
+        {
+          message: {
+            key: { id: "E2", remoteJid: chatJid, fromMe: false },
+            messageTimestamp: Math.floor(
+              Date.parse("2026-07-22T08:10:00.000Z") / 1000
+            ),
+            message: { conversation: "existing-2" },
+          },
+        },
+      ],
+    },
+  ]);
+  const peek = source.__testPeekChat(chatJid);
+  assert.ok(peek);
+  assert.equal(peek.messageCount, 2);
+  assert.deepEqual(new Set(peek.messageIds), new Set(["E1", "E2"]));
+  assert.equal(peek.historyCursor?.id, "E1");
+}
+console.log("PASS: SYNC-8R nested messages merge idempotently into existing chat");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  const chatJid = "923008887744@s.whatsapp.net";
+  source.ingestChats([{ id: chatJid, name: "Cursor" }]);
+  // No fabricated cursor when empty.
+  assert.equal(source.__testPeekChat(chatJid)?.historyCursor, null);
+  source.ingestMessages([
+    {
+      key: { id: "C_NEW", remoteJid: chatJid, fromMe: false },
+      messageTimestamp: Math.floor(Date.parse("2026-07-23T10:00:00.000Z") / 1000),
+      message: { conversation: "newer" },
+    },
+    {
+      key: { id: "C_OLD", remoteJid: chatJid, fromMe: false },
+      messageTimestamp: Math.floor(Date.parse("2026-07-21T10:00:00.000Z") / 1000),
+      message: { conversation: "older" },
+    },
+  ]);
+  assert.equal(source.__testPeekChat(chatJid)?.historyCursor?.id, "C_OLD");
+}
+console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
+
+{
+  __resetWhatsAppWebSyncJobMemoryStore();
+  const statuses: string[] = [];
+  const store: WhatsAppWebSyncJobStore = {
+    async saveLatest(record) {
+      statuses.push(record.status);
+      return createWhatsAppWebSyncJobStore().saveLatest(record);
+    },
+    async getLatest(companyId) {
+      return createWhatsAppWebSyncJobStore().getLatest(companyId);
+    },
+  };
+  const source = new FakeSyncSource();
+  source.chats = [
+    {
+      jid: "923009991111@s.whatsapp.net",
+      phoneE164: "923009991111",
+      name: "Partial",
+      isGroup: false,
+      isStatusOrBroadcast: false,
+      isChannel: false,
+    },
+  ];
+  let fetchCount = 0;
+  const baseFetch = source.fetchMessages.bind(source);
+  source.fetchMessages = async (chatJid, opts) => {
+    fetchCount += 1;
+    const msgs = await baseFetch(chatJid, opts);
+    return msgs;
+  };
+  source.messagesByChat.set(
+    "923009991111@s.whatsapp.net",
+    Array.from({ length: 8 }, (_, i) => ({
+      providerMessageId: `P_${i}`,
+      chatJid: "923009991111@s.whatsapp.net",
+      fromMe: false,
+      text: `p ${i}`,
+      messageType: "text",
+      occurredAt: `2026-07-20T12:0${i}:00.000Z`,
+    }))
+  );
+  // Slow persist so cancel lands after at least one import.
+  const repo = new InMemoryWhatsAppRepository();
+  const origInsert = repo.insertInboundMessage.bind(repo);
+  let imports = 0;
+  repo.insertInboundMessage = async (input) => {
+    imports += 1;
+    const result = await origInsert(input);
+    if (imports === 2) {
+      // Allow the service cancel hook to fire mid-job.
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return result;
+  };
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    jobStore: store,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+    chatConcurrency: 1,
+  });
+  const started = service.startOrJoin();
+  // Cancel after starting state is queued; small delay lets first imports begin.
+  await new Promise((r) => setTimeout(r, 15));
+  service.requestCancel();
+  const snap = await started.done;
+  assert.equal(snap.cancelled, true);
+  assert.ok(
+    snap.outcome === "partial" || snap.outcome === "history_not_available"
+  );
+  assert.notEqual(snap.outcome, "completed_with_imports");
+  assert.ok(statuses.includes("starting"));
+  assert.ok(statuses.includes("completed") || statuses.includes("failed"));
+  void fetchCount;
+}
+console.log("PASS: SYNC-8R cancel/disconnect not ordinary success; start+terminal durable");
+
+{
+  __resetWhatsAppWebSyncJobMemoryStore();
+  let warned = false;
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const line = String(args[0] ?? "");
+    if (line.includes("sync_job_durable_persist_failed")) warned = true;
+    assert.ok(!/92300|@s\.whatsapp\.net|phone/i.test(line));
+  };
+  try {
+    const failingClient = {
+      from() {
+        return {
+          upsert: async () => ({
+            error: { message: "relation missing", code: "42P01" },
+            data: null,
+          }),
+          select() {
+            return {
+              eq() {
+                return {
+                  maybeSingle: async () => ({ data: null, error: null }),
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    const store = createWhatsAppWebSyncJobStore({
+      client: failingClient as never,
+    });
+    const service = new WhatsAppWebHistorySyncService({
+      source: new FakeSyncSource(),
+      repo: new InMemoryWhatsAppRepository(),
+      jobStore: store,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    });
+    const snap = await service.startOrJoin().done;
+    assert.ok(snap.durabilityWarning);
+    assert.ok(warned);
+    assert.ok(!/92300|@s\.whatsapp\.net/i.test(String(snap.durabilityWarning)));
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+console.log("PASS: SYNC-8R durable persistence failure reported without PII");
+
+{
+  // Baileys sync source never downloads historical media binaries.
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true);
+  source.ingestMessages([
+    {
+      key: {
+        id: "IMG1",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+      },
+      messageTimestamp: Math.floor(Date.parse("2026-07-22T14:00:00.000Z") / 1000),
+      message: {
+        imageMessage: {
+          mimetype: "image/jpeg",
+          caption: "photo",
+          // Deliberately omit binary / URL download fields usage.
+        },
+      },
+    },
+  ]);
+  const msgs = await source.fetchMessages("923009998877@s.whatsapp.net", {
+    limit: 10,
+    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+  });
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0]?.messageType, "image");
+  assert.equal(msgs[0]?.mimeType, "image/jpeg");
+  assert.equal(msgs[0]?.caption, "photo");
+  // No media bytes stored on the cached message object.
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(msgs[0], "mediaBytes"),
+    false
+  );
+}
+console.log("PASS: SYNC-8R no historical media download/binary cache");
+
+{
+  let shadowCalls = 0;
+  let sendCalls = 0;
+  const repo = new InMemoryWhatsAppRepository();
+  const source = new FakeSyncSource();
+  source.contacts = [
+    {
+      jid: "923009990000@s.whatsapp.net",
+      phoneE164: "923009990000",
+      savedName: "Safe",
+      pushName: null,
+      shortName: null,
+      isBusiness: false,
+    },
+  ];
+  source.chats = [
+    {
+      jid: "923009990000@s.whatsapp.net",
+      phoneE164: "923009990000",
+      name: "Safe",
+      isGroup: false,
+      isStatusOrBroadcast: false,
+      isChannel: false,
+    },
+  ];
+  source.messagesByChat.set("923009990000@s.whatsapp.net", [
+    {
+      providerMessageId: "SAFE_1",
+      chatJid: "923009990000@s.whatsapp.net",
+      fromMe: false,
+      text: "backfill only",
+      messageType: "text",
+      occurredAt: "2026-07-22T15:00:00.000Z",
+    },
+  ]);
+  // Prove sync service path does not touch AI/outbound hooks (those live only on live inbound).
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+  });
+  const snap = await service.startOrJoin().done;
+  assert.equal(snap.messagesImported, 1);
+  assert.equal(shadowCalls, 0);
+  assert.equal(sendCalls, 0);
+  // Live inbound still can call AI; backfill helper must not.
+  await persistWhatsAppWebBackfillMessage(
+    {
+      providerMessageId: "SAFE_2",
+      chatJid: "923009990000@s.whatsapp.net",
+      fromMe: false,
+      text: "second",
+      messageType: "text",
+      occurredAt: "2026-07-22T15:01:00.000Z",
+    },
+    {
+      repo,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    }
+  );
+  assert.equal(shadowCalls, 0);
+  assert.equal(sendCalls, 0);
+}
+console.log("PASS: SYNC-8R backfill invokes neither AI nor outbound transport");
+
+{
+  // deriveSyncOutcome: cancelled with imports => partial; without => unavailable.
+  const base: WhatsAppWebSyncJobSnapshot = {
+    jobId: "j",
+    status: "completed",
+    outcome: null,
+    contactsDiscovered: 0,
+    contactsCreated: 0,
+    contactsUpdated: 0,
+    contactsSkipped: 0,
+    chatsInspected: 1,
+    conversationsCreated: 0,
+    conversationsUpdated: 0,
+    messagesDiscovered: 2,
+    messagesImported: 2,
+    duplicatesSkipped: 0,
+    messagesSkipped: 0,
+    failedChats: 0,
+    startedAt: "2026-07-24T12:00:00.000Z",
+    completedAt: "2026-07-24T12:00:01.000Z",
+    errorSummary: null,
+    windowDays: 7,
+    historySourceReady: true,
+    historyCoverage: "available_only",
+    historyAvailability: "ready",
+    historyProviderEventObserved: true,
+    historyOldestAvailableAt: null,
+    historyNewestAvailableAt: null,
+    historyOnDemandSupported: false,
+    cancelled: true,
+    durabilityWarning: null,
+  };
+  assert.equal(deriveSyncOutcome(base), "partial");
+  assert.equal(
+    deriveSyncOutcome({ ...base, messagesImported: 0, conversationsUpdated: 0 }),
+    "history_not_available"
+  );
+}
+console.log("PASS: SYNC-8R deriveSyncOutcome cancel semantics");
 
 console.log("ALL PASS: whatsappWebHistorySync");

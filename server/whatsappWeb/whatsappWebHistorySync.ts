@@ -201,12 +201,27 @@ export class WhatsAppWebHistorySyncService {
   private async persistDurable(): Promise<void> {
     const record = snapshotToJobRecord(this.snapshot, this.companyId);
     if (!record) return;
-    await this.jobStore.saveLatest(record);
+    const result = await this.jobStore.saveLatest(record);
+    if (result.warning) {
+      this.snapshot.durabilityWarning = result.warning;
+    }
   }
 
   private finalizeTerminal(): void {
+    if (this.cancelRequested) {
+      this.snapshot.cancelled = true;
+    }
     this.snapshot.historyAvailability = this.readAvailability();
     this.snapshot.outcome = deriveSyncOutcome(this.snapshot);
+
+    if (this.snapshot.cancelled) {
+      this.snapshot.errorSummary =
+        this.snapshot.errorSummary ||
+        (this.snapshot.outcome === "partial"
+          ? "Sync interrupted (cancel/disconnect) after partial imports."
+          : "Sync interrupted (cancel/disconnect); no imports completed.");
+      return;
+    }
 
     if (this.snapshot.outcome === "history_not_available") {
       this.snapshot.errorSummary =
@@ -228,6 +243,8 @@ export class WhatsAppWebHistorySyncService {
   }
 
   private async runJob(): Promise<WhatsAppWebSyncJobSnapshot> {
+    // Persist starting state before any contact/message processing.
+    await this.persistDurable();
     this.snapshot.status = "running";
     logWhatsAppWeb("info", "history_sync_started", {
       windowDays: this.windowDays,
@@ -337,9 +354,6 @@ export class WhatsAppWebHistorySyncService {
 
       this.snapshot.status = "completed";
       this.snapshot.completedAt = this.now().toISOString();
-      if (this.cancelRequested && !this.snapshot.errorSummary) {
-        this.snapshot.errorSummary = "Sync stopped early (session disconnect)";
-      }
       this.finalizeTerminal();
 
       logWhatsAppWeb("info", "history_sync_completed", {
@@ -348,6 +362,7 @@ export class WhatsAppWebHistorySyncService {
         duplicatesSkipped: this.snapshot.duplicatesSkipped,
         historyCoverage: this.snapshot.historyCoverage,
         outcome: this.snapshot.outcome,
+        cancelled: this.snapshot.cancelled,
       });
       await this.persistDurable();
       return this.getSnapshot();
@@ -357,6 +372,7 @@ export class WhatsAppWebHistorySyncService {
       this.snapshot.completedAt = this.now().toISOString();
       this.snapshot.errorSummary = "Sync failed";
       this.snapshot.historyAvailability = "history_not_available";
+      if (this.cancelRequested) this.snapshot.cancelled = true;
       logWhatsAppWeb("error", "history_sync_failed");
       await this.persistDurable();
       return this.getSnapshot();

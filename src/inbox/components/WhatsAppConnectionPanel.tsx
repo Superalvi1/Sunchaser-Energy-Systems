@@ -682,7 +682,14 @@ export default function WhatsAppConnectionPanel({
               ) : null}
               {syncJob?.outcome === "partial" ? (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200">
-                  Sync finished with partial results.
+                  {syncJob.cancelled
+                    ? "Sync interrupted (cancel/disconnect) with partial results."
+                    : "Sync finished with partial results."}
+                </div>
+              ) : null}
+              {syncJob?.durabilityWarning ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200">
+                  {syncJob.durabilityWarning}
                 </div>
               ) : null}
               {syncJob?.outcome === "failed" || syncJob?.status === "failed" ? (
