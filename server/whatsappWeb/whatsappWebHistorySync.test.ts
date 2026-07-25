@@ -152,14 +152,55 @@ class FakeSyncSource implements WhatsAppWebSyncSource {
 }
 
 {
+  const verifiedBeatsSaved = resolveWhatsAppDisplayName({
+    verifiedName: "Verified Co",
+    savedName: "Saved",
+    pushName: "Push",
+    shortName: "Short",
+    phoneE164: "923001234567",
+  });
+  assert.equal(verifiedBeatsSaved.source, "whatsapp_verified");
+  assert.equal(verifiedBeatsSaved.name, "Verified Co");
+
   const resolved = resolveWhatsAppDisplayName({
     savedName: "Saved",
+    verifiedName: null,
     pushName: "Push",
     shortName: "Short",
     phoneE164: "923001234567",
   });
   assert.equal(resolved.source, "whatsapp_saved");
   assert.equal(resolved.name, "Saved");
+
+  const pushBeatsShort = resolveWhatsAppDisplayName({
+    pushName: "Push",
+    shortName: "Short",
+    phoneE164: "923001234567",
+  });
+  assert.equal(pushBeatsShort.source, "whatsapp_push");
+
+  // Phone digits / JID / UUID are never profile_name candidates.
+  assert.equal(
+    resolveWhatsAppDisplayName({
+      savedName: "923001234567",
+      phoneE164: "923001234567",
+    }).name,
+    null
+  );
+  assert.equal(
+    resolveWhatsAppDisplayName({
+      pushName: "923001234567@s.whatsapp.net",
+      phoneE164: "923001234567",
+    }).name,
+    null
+  );
+  assert.equal(
+    resolveWhatsAppDisplayName({
+      pushName: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      phoneE164: "923001234567",
+    }).name,
+    null
+  );
 
   assert.equal(
     shouldApplyWhatsAppContactName({
@@ -172,12 +213,85 @@ class FakeSyncSource implements WhatsAppWebSyncSource {
   );
   assert.equal(
     shouldApplyWhatsAppContactName({
-      existingName: "92300",
+      existingName: "Legacy Name",
       existingSource: "phone",
       nextName: "Push Name",
       nextSource: "whatsapp_push",
     }),
     true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: null,
+      existingSource: null,
+      nextName: "Push Name",
+      nextSource: "whatsapp_push",
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Shorty",
+      existingSource: "whatsapp_short",
+      nextName: "Push Name",
+      nextSource: "whatsapp_push",
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Push Name",
+      existingSource: "whatsapp_push",
+      nextName: "Saved Name",
+      nextSource: "whatsapp_saved",
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Saved Name",
+      existingSource: "whatsapp_saved",
+      nextName: "Verified Co",
+      nextSource: "whatsapp_verified",
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Saved Name",
+      existingSource: "whatsapp_saved",
+      nextName: "Push Name",
+      nextSource: "whatsapp_push",
+    }),
+    false
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Verified Co",
+      existingSource: "whatsapp_verified",
+      nextName: "Saved Name",
+      nextSource: "whatsapp_saved",
+    }),
+    false
+  );
+  // Legacy null-source: saved/verified may upgrade; push/short may not.
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Legacy Name",
+      existingSource: null,
+      nextName: "Saved Name",
+      nextSource: "whatsapp_saved",
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Legacy Name",
+      existingSource: null,
+      nextName: "Push Name",
+      nextSource: "whatsapp_push",
+    }),
+    false
   );
 }
 console.log("PASS: name precedence + manual preserve policy");
@@ -190,6 +304,7 @@ console.log("PASS: name precedence + manual preserve policy");
         jid: "923009998877@s.whatsapp.net",
         phoneE164: "923009998877",
         savedName: "A",
+        verifiedName: null,
         pushName: null,
         shortName: null,
         isBusiness: false,
@@ -204,6 +319,7 @@ console.log("PASS: name precedence + manual preserve policy");
         jid: self,
         phoneE164: "923001112233",
         savedName: "Me",
+        verifiedName: null,
         pushName: null,
         shortName: null,
         isBusiness: false,
@@ -257,6 +373,7 @@ console.log("PASS: seven-day cutoff helper");
       jid: "923009998877@s.whatsapp.net",
       phoneE164: "923009998877",
       savedName: "Saved Contact",
+      verifiedName: null,
       pushName: "Push",
       shortName: null,
       isBusiness: true,
@@ -277,6 +394,7 @@ console.log("PASS: seven-day cutoff helper");
       jid: "923009998877@s.whatsapp.net",
       phoneE164: "923009998877",
       savedName: "Weaker WhatsApp",
+      verifiedName: null,
       pushName: "Push",
       shortName: null,
       isBusiness: true,
@@ -298,6 +416,7 @@ console.log("PASS: saved contacts sync + manual CRM name preserved");
       jid: "923009998877@s.whatsapp.net",
       phoneE164: "923009998877",
       savedName: "Ali",
+      verifiedName: null,
       pushName: null,
       shortName: null,
       isBusiness: false,
@@ -733,6 +852,8 @@ console.log("PASS: Baileys in-memory sync source ingest");
     };
   };
 
+  __resetWhatsAppWebSyncJobMemoryStore();
+  const memoryJobStore = createWhatsAppWebSyncJobStore({ memoryOnly: true });
   const session = new WhatsAppWebSession({
     env: {
       WHATSAPP_WEB_QR_ENABLED: "true",
@@ -740,6 +861,7 @@ console.log("PASS: Baileys in-memory sync source ingest");
     },
     socketFactory,
     syncRepo: repo,
+    syncJobStore: memoryJobStore,
     now: () => new Date("2026-07-24T12:00:00.000Z"),
   });
   await session.connect();
@@ -886,6 +1008,7 @@ console.log("PASS: atomic last_message_at max + race regression + company scope"
       jid: "923009998877@s.whatsapp.net",
       phoneE164: "923009998877",
       savedName: "Saved",
+      verifiedName: null,
       pushName: "Push",
       shortName: null,
       isBusiness: false,
@@ -942,6 +1065,15 @@ console.log("PASS: company scoping on contact sync mutations");
       existingSource: null,
       nextName: "WhatsApp",
       nextSource: "whatsapp_saved",
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyWhatsAppContactName({
+      existingName: "Legacy CRM",
+      existingSource: null,
+      nextName: "Push Only",
+      nextSource: "whatsapp_push",
     }),
     false
   );
@@ -1857,8 +1989,7 @@ console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
     chatConcurrency: 1,
   });
   const started = service.startOrJoin();
-  // Cancel after starting state is queued; small delay lets first imports begin.
-  await new Promise((r) => setTimeout(r, 15));
+  // Cancel as soon as the job is joined; do not wait on wall-clock (flaky when persist is fast).
   service.requestCancel();
   const snap = await started.done;
   assert.equal(snap.cancelled, true);
@@ -1967,6 +2098,7 @@ console.log("PASS: SYNC-8R no historical media download/binary cache");
       jid: "923009990000@s.whatsapp.net",
       phoneE164: "923009990000",
       savedName: "Safe",
+      verifiedName: null,
       pushName: null,
       shortName: null,
       isBusiness: false,
@@ -2061,5 +2193,281 @@ console.log("PASS: SYNC-8R backfill invokes neither AI nor outbound transport");
   );
 }
 console.log("PASS: SYNC-8R deriveSyncOutcome cancel semantics");
+
+// ---------------------------------------------------------------------------
+// SYNC-14B — ranked identity capture, repository parity, contact events
+// ---------------------------------------------------------------------------
+{
+  const repo = new InMemoryWhatsAppRepository();
+  // Empty name → push fill
+  const created = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+  });
+  assert.equal(created.profileName, null);
+  const filled = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+    profileName: "Push Later",
+    nameSource: "whatsapp_push",
+  });
+  assert.equal(filled.id, created.id);
+  assert.equal(filled.profileName, "Push Later");
+  assert.equal(filled.nameSource, "whatsapp_push");
+
+  // push → saved
+  const upgraded = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+    profileName: "Address Book",
+    nameSource: "whatsapp_saved",
+  });
+  assert.equal(upgraded.profileName, "Address Book");
+  assert.equal(upgraded.nameSource, "whatsapp_saved");
+
+  // saved not overwritten by push
+  const blocked = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+    profileName: "Weaker Push",
+    nameSource: "whatsapp_push",
+  });
+  assert.equal(blocked.profileName, "Address Book");
+  assert.equal(blocked.nameSource, "whatsapp_saved");
+
+  // saved → verified
+  const verified = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+    profileName: "Verified Biz",
+    nameSource: "whatsapp_verified",
+  });
+  assert.equal(verified.profileName, "Verified Biz");
+  assert.equal(verified.nameSource, "whatsapp_verified");
+
+  // explicit manual never overwritten
+  await repo.updateContactSyncFields!(verified.id, {
+    profileName: "Manual Name",
+    nameSource: "manual",
+  });
+  const stillManual = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+    profileName: "Verified Biz",
+    nameSource: "whatsapp_verified",
+  });
+  assert.equal(stillManual.profileName, "Manual Name");
+  assert.equal(stillManual.nameSource, "manual");
+
+  // Same phone → one contact
+  const again = await repo.resolveOrCreateContact({
+    phoneE164: "923009990001",
+    profileName: "Ignored",
+    nameSource: "whatsapp_saved",
+  });
+  assert.equal(again.id, created.id);
+
+  // Phone digits rejected as profile name
+  const phoneOnly = await repo.resolveOrCreateContact({
+    phoneE164: "923009990002",
+    profileName: "923009990002",
+    nameSource: "whatsapp_push",
+  });
+  assert.equal(phoneOnly.profileName, null);
+}
+console.log("PASS: SYNC-14B repository ranked upgrades + dedupe + no phone-as-name");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  await repo.resolveOrCreateContact({
+    phoneE164: "923009990003",
+    profileName: "Legacy Row",
+  });
+  // Simulate legacy nonempty + null name_source
+  const legacy = await repo.findContactByPhoneE164!("923009990003");
+  assert.ok(legacy);
+  legacy!.nameSource = null;
+  assert.equal(legacy!.profileName, "Legacy Row");
+
+  // push cannot replace legacy
+  await syncWhatsAppWebContact(
+    {
+      jid: "923009990003@s.whatsapp.net",
+      phoneE164: "923009990003",
+      savedName: null,
+      verifiedName: null,
+      pushName: "Push Attempt",
+      shortName: null,
+      isBusiness: false,
+    },
+    { repo }
+  );
+  assert.equal(
+    (await repo.findContactByPhoneE164!("923009990003"))?.profileName,
+    "Legacy Row"
+  );
+
+  // saved can replace legacy
+  await syncWhatsAppWebContact(
+    {
+      jid: "923009990003@s.whatsapp.net",
+      phoneE164: "923009990003",
+      savedName: "Saved Upgrade",
+      verifiedName: null,
+      pushName: "Push Attempt",
+      shortName: null,
+      isBusiness: false,
+    },
+    { repo }
+  );
+  const after = await repo.findContactByPhoneE164!("923009990003");
+  assert.equal(after?.profileName, "Saved Upgrade");
+  assert.equal(after?.nameSource, "whatsapp_saved");
+  assert.equal(after?.waJid, "923009990003@s.whatsapp.net");
+  assert.ok(after?.lastSyncedAt);
+}
+console.log("PASS: SYNC-14B legacy null-source upgrade rules + wa_jid/last_synced_at");
+
+{
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true, "923001112233@s.whatsapp.net");
+  const resolved = source.ingestContacts([
+    {
+      id: "923009990004@s.whatsapp.net",
+      name: "Book",
+      verifiedName: "Biz Verified",
+      notify: "Notify",
+      short: "Sh",
+    },
+    { id: "999888777666555@lid", name: "LID Only", notify: "Nope" },
+  ]);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0]?.verifiedName, "Biz Verified");
+  assert.equal(resolved[0]?.savedName, "Book");
+  assert.equal(resolved[0]?.pushName, "Notify");
+  assert.notEqual(resolved[0]?.verifiedName, resolved[0]?.pushName);
+
+  const repo = new InMemoryWhatsAppRepository();
+  let failures = 0;
+  for (const contact of resolved) {
+    try {
+      await syncWhatsAppWebContact(contact, { repo });
+    } catch {
+      failures += 1;
+    }
+  }
+  assert.equal(failures, 0);
+  const stored = await repo.findContactByPhoneE164!("923009990004");
+  assert.equal(stored?.profileName, "Biz Verified");
+  assert.equal(stored?.nameSource, "whatsapp_verified");
+
+  // One failed persistence must not stop the batch (session swallows via catch).
+  const batch = [
+    resolved[0]!,
+    {
+      jid: "not-a-phone",
+      phoneE164: "",
+      savedName: "X",
+      verifiedName: null,
+      pushName: null,
+      shortName: null,
+      isBusiness: false,
+    },
+    {
+      jid: "923009990005@s.whatsapp.net",
+      phoneE164: "923009990005",
+      savedName: "Second",
+      verifiedName: null,
+      pushName: null,
+      shortName: null,
+      isBusiness: false,
+    },
+  ];
+  let persisted = 0;
+  for (const contact of batch) {
+    try {
+      await syncWhatsAppWebContact(contact, { repo });
+      persisted += 1;
+    } catch {
+      // continue
+    }
+  }
+  assert.equal(persisted, 2);
+  assert.ok(await repo.findContactByPhoneE164!("923009990005"));
+}
+console.log("PASS: SYNC-14B contacts.upsert capture; LID-only skipped; batch resilience");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  await repo.resolveOrCreateContact({ phoneE164: "923009990006" });
+  const live = await persistWhatsAppWebInbound(
+    {
+      providerMessageId: "INB_PUSH_1",
+      remoteJid: "923009990006@s.whatsapp.net",
+      fromMe: false,
+      text: "hello",
+      pushName: "Inbound Push",
+      occurredAt: "2026-07-24T12:00:00.000Z",
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    },
+    { repo }
+  );
+  assert.equal(live.kind, "stored");
+  assert.equal(
+    (await repo.findContactByPhoneE164!("923009990006"))?.profileName,
+    "Inbound Push"
+  );
+
+  // Later weaker push cannot overwrite saved
+  await syncWhatsAppWebContact(
+    {
+      jid: "923009990006@s.whatsapp.net",
+      phoneE164: "923009990006",
+      savedName: "Saved Now",
+      verifiedName: null,
+      pushName: null,
+      shortName: null,
+      isBusiness: false,
+    },
+    { repo }
+  );
+  await persistWhatsAppWebInbound(
+    {
+      providerMessageId: "INB_PUSH_2",
+      remoteJid: "923009990006@s.whatsapp.net",
+      fromMe: false,
+      text: "again",
+      pushName: "Newer Push",
+      occurredAt: "2026-07-24T12:01:00.000Z",
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    },
+    { repo }
+  );
+  assert.equal(
+    (await repo.findContactByPhoneE164!("923009990006"))?.profileName,
+    "Saved Now"
+  );
+}
+console.log("PASS: SYNC-14B live inbound fills empty; cannot downgrade saved");
+
+{
+  assert.equal(
+    displayContactLabel({ profileName: null, phoneE164: "923001112233" }),
+    "+923001112233"
+  );
+  assert.equal(
+    displayContactLabel({ profileName: null, phoneE164: null }),
+    "Unknown WhatsApp contact"
+  );
+  assert.equal(
+    displayContactLabel({
+      profileName: "Name",
+      phoneE164: "923001112233",
+      contactId: "wct_secret",
+    }),
+    "Name"
+  );
+  assert.ok(!displayContactLabel({ profileName: "x", phoneE164: "1" }).includes("Contact ·"));
+  assert.ok(!displayContactLabel({ profileName: "x", phoneE164: "1" }).includes("@"));
+}
+console.log("PASS: SYNC-14B frontend privacy fallbacks unchanged");
 
 console.log("ALL PASS: whatsappWebHistorySync");

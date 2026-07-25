@@ -12,6 +12,11 @@ import type {
   NormalizedInboundText,
   NormalizedStatusEvent,
 } from "./whatsappEnvelope.ts";
+import {
+  isValidWhatsAppDisplayName,
+  shouldApplyWhatsAppContactName,
+  type WhatsAppContactNameSource,
+} from "../whatsappWeb/whatsappWebSyncTypes.ts";
 
 export type WhatsAppChannel = {
   id: string;
@@ -126,6 +131,8 @@ export interface WhatsAppRepository {
   resolveOrCreateContact(input: {
     phoneE164: string;
     profileName?: string | null;
+    /** Provenance for profileName when applying ranked upgrades. */
+    nameSource?: WhatsAppContactNameSource | string | null;
   }): Promise<WhatsAppContact>;
   resolveOrCreateOpenConversation(input: {
     channelId: string;
@@ -341,14 +348,31 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
   async resolveOrCreateContact(input: {
     phoneE164: string;
     profileName?: string | null;
+    nameSource?: WhatsAppContactNameSource | string | null;
   }): Promise<WhatsAppContact> {
+    const nextName = isValidWhatsAppDisplayName(
+      input.profileName,
+      input.phoneE164
+    );
+    const nextSource = (input.nameSource ??
+      (nextName ? "whatsapp_push" : null)) as WhatsAppContactNameSource | null;
+
     for (const contact of this.contacts.values()) {
       if (
         contact.companyId === DEFAULT_COMPANY_ID &&
         contact.phoneE164 === input.phoneE164
       ) {
-        if (input.profileName && !contact.profileName) {
-          contact.profileName = input.profileName;
+        if (
+          shouldApplyWhatsAppContactName({
+            existingName: contact.profileName,
+            existingSource: contact.nameSource,
+            nextName,
+            nextSource,
+            phoneE164: input.phoneE164,
+          })
+        ) {
+          contact.profileName = nextName;
+          contact.nameSource = nextSource;
           contact.updatedAt = nowIso();
         }
         return contact;
@@ -358,7 +382,8 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       id: newId("wct"),
       companyId: DEFAULT_COMPANY_ID,
       phoneE164: input.phoneE164,
-      profileName: input.profileName ?? null,
+      profileName: nextName,
+      nameSource: nextName ? nextSource : null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -966,8 +991,16 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
   async resolveOrCreateContact(input: {
     phoneE164: string;
     profileName?: string | null;
+    nameSource?: WhatsAppContactNameSource | string | null;
   }): Promise<WhatsAppContact> {
     const supabase = this.client();
+    const nextName = isValidWhatsAppDisplayName(
+      input.profileName,
+      input.phoneE164
+    );
+    const nextSource = (input.nameSource ??
+      (nextName ? "whatsapp_push" : null)) as WhatsAppContactNameSource | null;
+
     const { data: existing } = await supabase
       .from("whatsapp_contacts")
       .select("*")
@@ -975,14 +1008,42 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .eq("phone_e164", input.phoneE164)
       .maybeSingle();
     if (existing) {
-      return mapContact(existing as Record<string, unknown>);
+      const mapped = mapContact(existing as Record<string, unknown>);
+      if (
+        !shouldApplyWhatsAppContactName({
+          existingName: mapped.profileName,
+          existingSource: mapped.nameSource,
+          nextName,
+          nextSource,
+          phoneE164: input.phoneE164,
+        })
+      ) {
+        return mapped;
+      }
+      // Conditional upgrade: only when policy says the candidate is stronger.
+      const { data: updated, error: updateError } = await supabase
+        .from("whatsapp_contacts")
+        .update({
+          profile_name: nextName,
+          name_source: nextSource,
+          updated_at: nowIso(),
+        })
+        .eq("company_id", DEFAULT_COMPANY_ID)
+        .eq("id", mapped.id)
+        .select("*")
+        .maybeSingle();
+      if (updateError) throw new Error(updateError.message);
+      return updated
+        ? mapContact(updated as Record<string, unknown>)
+        : mapped;
     }
 
-    const row = {
+    const row: Record<string, unknown> = {
       id: newId("wct"),
       company_id: DEFAULT_COMPANY_ID,
       phone_e164: input.phoneE164,
-      profile_name: input.profileName ?? null,
+      profile_name: nextName,
+      ...(nextName && nextSource ? { name_source: nextSource } : {}),
     };
     const { data, error } = await supabase
       .from("whatsapp_contacts")
@@ -1003,7 +1064,8 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
               "contact unique conflict but existing row not found"
           );
         }
-        return mapContact(raced as Record<string, unknown>);
+        // Race: apply the same upgrade policy against the winning row.
+        return this.resolveOrCreateContact(input);
       }
       throw new Error(error.message);
     }

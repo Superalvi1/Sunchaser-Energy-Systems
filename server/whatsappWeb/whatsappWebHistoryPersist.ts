@@ -17,7 +17,6 @@ import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import {
   resolveWhatsAppDisplayName,
   shouldApplyWhatsAppContactName,
-  type WhatsAppContactNameSource,
   type WhatsAppWebSyncContact,
   type WhatsAppWebSyncMessage,
 } from "./whatsappWebSyncTypes.ts";
@@ -64,6 +63,7 @@ export async function syncWhatsAppWebContact(
     throw new Error("invalid_contact_phone");
   }
   const resolved = resolveWhatsAppDisplayName({
+    verifiedName: contact.verifiedName,
     savedName: contact.savedName,
     pushName: contact.pushName,
     shortName: contact.shortName,
@@ -75,35 +75,41 @@ export async function syncWhatsAppWebContact(
     ? await repo.findContactByPhoneE164(phone, companyId)
     : null;
 
+  const nowIso = (deps.now ?? (() => new Date))().toISOString();
+
   if (!existing) {
     const created = await repo.resolveOrCreateContact({
       phoneE164: phone,
       profileName: resolved.name,
+      nameSource: resolved.source,
     });
     if (repo.updateContactSyncFields) {
       await repo.updateContactSyncFields(
         created.id,
         {
           waJid: contact.jid,
-          nameSource: resolved.source,
           isBusinessContact: contact.isBusiness,
-          lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
-          profileName: resolved.name,
+          lastSyncedAt: nowIso,
+          ...(resolved.name && resolved.source
+            ? { profileName: resolved.name, nameSource: resolved.source }
+            : {}),
         },
         companyId
       );
     }
-    return { contact: created, created: true, updated: false };
+    const refreshed =
+      (repo.findContactByPhoneE164
+        ? await repo.findContactByPhoneE164(phone, companyId)
+        : null) ?? created;
+    return { contact: refreshed, created: true, updated: false };
   }
 
-  // Legacy non-null profile_name with null name_source → treat as manual.
-  const existingSource = (existing.nameSource ??
-    (existing.profileName ? "manual" : null)) as WhatsAppContactNameSource | null;
   const applyName = shouldApplyWhatsAppContactName({
     existingName: existing.profileName,
-    existingSource,
+    existingSource: existing.nameSource,
     nextName: resolved.name,
     nextSource: resolved.source,
+    phoneE164: phone,
   });
 
   let updated = false;
@@ -113,14 +119,25 @@ export async function syncWhatsAppWebContact(
       {
         waJid: contact.jid,
         isBusinessContact: contact.isBusiness,
-        lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
-        ...(applyName
+        lastSyncedAt: nowIso,
+        ...(applyName && resolved.name && resolved.source
           ? { profileName: resolved.name, nameSource: resolved.source }
           : {}),
       },
       companyId
     );
-    updated = true;
+    updated = Boolean(
+      applyName ||
+        contact.jid ||
+        contact.isBusiness !== Boolean(existing.isBusinessContact)
+    );
+  } else {
+    await repo.resolveOrCreateContact({
+      phoneE164: phone,
+      profileName: resolved.name,
+      nameSource: resolved.source,
+    });
+    updated = applyName;
   }
 
   const refreshed =

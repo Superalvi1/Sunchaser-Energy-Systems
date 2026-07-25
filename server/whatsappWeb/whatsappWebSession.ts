@@ -33,6 +33,7 @@ import {
 } from "./whatsappWebTypes.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
+import { syncWhatsAppWebContact } from "./whatsappWebHistoryPersist.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
   WhatsAppWebSyncSource,
@@ -226,12 +227,18 @@ export type WhatsAppWebSocketHandle = {
   getSyncSource?: () => import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncSource;
 };
 
+export type WhatsAppWebContactIdentityHandler = (
+  contact: import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncContact
+) => Promise<void>;
+
 export type WhatsAppWebSocketFactory = (input: {
   sessionDir: string;
   onQr: (qr: string) => void;
   onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
   onCredentialsSaved: () => void;
   onInbound: WhatsAppWebInboundHandler;
+  /** Persist useful contact identity from contacts.upsert/update (best-effort). */
+  onContactIdentity?: WhatsAppWebContactIdentityHandler;
 }) => Promise<WhatsAppWebSocketHandle>;
 
 export type WhatsAppWebSessionOptions = {
@@ -247,6 +254,8 @@ export type WhatsAppWebSessionOptions = {
   clearTimeoutFn?: typeof clearTimeout;
   /** Repository used by admin contact/history sync (defaults to createDefault). */
   syncRepo?: WhatsAppRepository;
+  /** Optional sync job store (tests inject memory-only to avoid hosted Supabase). */
+  syncJobStore?: import("./whatsappWebSyncJobStore.ts").WhatsAppWebSyncJobStore;
 };
 
 async function defaultSocketFactory(input: {
@@ -255,6 +264,7 @@ async function defaultSocketFactory(input: {
   onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
   onCredentialsSaved: () => void;
   onInbound: WhatsAppWebInboundHandler;
+  onContactIdentity?: WhatsAppWebContactIdentityHandler;
 }): Promise<WhatsAppWebSocketHandle> {
   const baileys = await import("@whiskeysockets/baileys");
   const {
@@ -334,13 +344,25 @@ async function defaultSocketFactory(input: {
     }
   });
 
+  const persistContactBatch = (
+    contacts: Array<Record<string, unknown>> | null | undefined
+  ) => {
+    const resolved = syncSource.ingestContacts(contacts ?? []);
+    if (!input.onContactIdentity || resolved.length === 0) return;
+    for (const contact of resolved) {
+      void input.onContactIdentity(contact).catch(() => {
+        // Never disconnect the session or interrupt message processing.
+        logWhatsAppWeb("warn", "contact_identity_persist_failed");
+      });
+    }
+  };
   sock.ev.on("contacts.upsert", (contacts) => {
-    syncSource.ingestContacts(
+    persistContactBatch(
       (contacts ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
   sock.ev.on("contacts.update", (contacts) => {
-    syncSource.ingestContacts(
+    persistContactBatch(
       (contacts ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
@@ -461,6 +483,7 @@ export class WhatsAppWebSession {
   private readonly setTimeoutFn: typeof setTimeout;
   private readonly clearTimeoutFn: typeof clearTimeout;
   private inboundHandler: WhatsAppWebInboundHandler | null;
+  private readonly syncRepo: WhatsAppRepository;
   private readonly historySync: WhatsAppWebHistorySyncService;
 
   private state: WhatsAppWebLifecycleState = "DISCONNECTED";
@@ -490,6 +513,7 @@ export class WhatsAppWebSession {
     this.now = options.now ?? (() => new Date());
     this.qrTtlMs = options.qrTtlMs ?? WHATSAPP_WEB_QR_TTL_MS;
     this.inboundHandler = options.inboundHandler ?? null;
+    this.syncRepo = options.syncRepo ?? createDefaultWhatsAppRepository();
     this.reconnectDelaysMs =
       options.reconnectDelaysMs ?? WHATSAPP_WEB_RECONNECT_DELAYS_MS;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
@@ -500,7 +524,8 @@ export class WhatsAppWebSession {
     );
     this.historySync = new WhatsAppWebHistorySyncService({
       source: boundSource,
-      repo: options.syncRepo ?? createDefaultWhatsAppRepository(),
+      repo: this.syncRepo,
+      jobStore: options.syncJobStore,
       now: this.now,
     });
   }
@@ -894,6 +919,12 @@ export class WhatsAppWebSession {
           if (this.inboundHandler) {
             await this.inboundHandler(message);
           }
+        },
+        onContactIdentity: async (contact) => {
+          await syncWhatsAppWebContact(contact, {
+            repo: this.syncRepo,
+            now: this.now,
+          });
         },
       });
     } catch (err) {

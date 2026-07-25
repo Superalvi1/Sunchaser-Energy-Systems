@@ -181,10 +181,15 @@ export type WhatsAppWebSyncJobStore = {
 
 export function createWhatsAppWebSyncJobStore(deps?: {
   client?: SupabaseClient | null;
+  /** When true, never touch hosted Supabase (tests / local isolation). */
+  memoryOnly?: boolean;
 }): WhatsAppWebSyncJobStore {
   return {
     async saveLatest(record) {
       memoryLatestByCompany.set(record.companyId, record);
+      if (deps?.memoryOnly) {
+        return { durablePersisted: false, warning: null };
+      }
       if (!isSupabaseActive() && !deps?.client) {
         return { durablePersisted: false, warning: null };
       }
@@ -248,6 +253,9 @@ export function createWhatsAppWebSyncJobStore(deps?: {
     },
 
     async getLatest(companyId = DEFAULT_COMPANY_ID) {
+      if (deps?.memoryOnly) {
+        return memoryLatestByCompany.get(companyId) ?? null;
+      }
       if (isSupabaseActive() || deps?.client) {
         const client = deps?.client ?? getSupabase();
         if (client) {

@@ -40,19 +40,30 @@ export type WhatsAppWebHistoryCoverageMeta = {
   onDemandHistorySupported: boolean;
 };
 
+/**
+ * Provenance for whatsapp_contacts.profile_name.
+ * `phone` is deprecated (never store phone digits as profile_name).
+ * `whatsapp_legacy` is an effective rank for nonempty profile_name + null name_source
+ * (not written by SYNC-14B unless a migration allows it).
+ */
 export type WhatsAppContactNameSource =
   | "manual"
+  | "whatsapp_verified"
   | "whatsapp_saved"
+  | "whatsapp_legacy"
   | "whatsapp_push"
   | "whatsapp_short"
   | "phone";
 
+/** Higher rank wins. Explicit manual is protected separately and never auto-overwritten. */
 export const WHATSAPP_CONTACT_NAME_SOURCE_RANK: Record<
   WhatsAppContactNameSource,
   number
 > = {
-  manual: 50,
+  manual: 100,
+  whatsapp_verified: 50,
   whatsapp_saved: 40,
+  whatsapp_legacy: 35,
   whatsapp_push: 30,
   whatsapp_short: 20,
   phone: 10,
@@ -62,6 +73,8 @@ export type WhatsAppWebSyncContact = {
   jid: string;
   phoneE164: string;
   savedName: string | null;
+  /** Baileys Contact.verifiedName — never folded into push/notify. */
+  verifiedName: string | null;
   pushName: string | null;
   shortName: string | null;
   isBusiness: boolean;
@@ -262,41 +275,121 @@ export function isExcludedSyncRemoteJid(jid: string): boolean {
   return false;
 }
 
+/**
+ * Normalize/validate a candidate display name. Returns null when unsafe or blank.
+ * Phone digits are never accepted as a profile name (phone is a UI fallback only).
+ */
+export function isValidWhatsAppDisplayName(
+  raw: string | null | undefined,
+  phoneE164?: string | null
+): string | null {
+  const name = String(raw ?? "").trim();
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  if (
+    lower.includes("@s.whatsapp.net") ||
+    lower.includes("@lid") ||
+    lower.includes("@g.us") ||
+    lower.includes("@newsletter") ||
+    lower.includes("broadcast")
+  ) {
+    return null;
+  }
+  if (name.includes("@")) return null;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(name)) return null;
+  if (/^Contact\s*·/i.test(name)) return null;
+  if (/^\+?\d{6,}$/.test(name)) return null;
+  const phoneDigits = String(phoneE164 ?? "").replace(/\D/g, "");
+  const nameDigits = name.replace(/\D/g, "");
+  if (phoneDigits && nameDigits && nameDigits === phoneDigits) return null;
+  return name;
+}
+
+export type ResolvedWhatsAppDisplayName = {
+  name: string | null;
+  source: WhatsAppContactNameSource | null;
+};
+
+/**
+ * Select the strongest valid WhatsApp name candidate.
+ * Phone is intentionally not a profile_name candidate.
+ */
 export function resolveWhatsAppDisplayName(input: {
+  verifiedName?: string | null;
   savedName?: string | null;
   pushName?: string | null;
   shortName?: string | null;
-  phoneE164: string;
-}): { name: string; source: WhatsAppContactNameSource } {
-  const saved = String(input.savedName || "").trim();
+  phoneE164?: string | null;
+}): ResolvedWhatsAppDisplayName {
+  const phone = input.phoneE164 ?? null;
+  const verified = isValidWhatsAppDisplayName(input.verifiedName, phone);
+  if (verified) return { name: verified, source: "whatsapp_verified" };
+  const saved = isValidWhatsAppDisplayName(input.savedName, phone);
   if (saved) return { name: saved, source: "whatsapp_saved" };
-  const push = String(input.pushName || "").trim();
+  const push = isValidWhatsAppDisplayName(input.pushName, phone);
   if (push) return { name: push, source: "whatsapp_push" };
-  const short = String(input.shortName || "").trim();
+  const short = isValidWhatsAppDisplayName(input.shortName, phone);
   if (short) return { name: short, source: "whatsapp_short" };
-  const phone = String(input.phoneE164 || "").trim() || "Unknown";
-  return { name: phone, source: "phone" };
+  return { name: null, source: null };
 }
 
 /**
- * Upgrade-only name policy — never replace a stronger/manual name.
- * Legacy populated profile_name with null/unknown name_source is treated as
- * manual (conservative) unless provenance is explicitly proven.
+ * Effective ranking source for an existing stored name.
+ * - explicit manual stays protected
+ * - nonempty + null provenance → whatsapp_legacy (not manual)
+ * - deprecated phone provenance remains weakest WhatsApp tier
+ */
+export function effectiveWhatsAppContactNameSource(
+  existingName: string | null | undefined,
+  existingSource: string | null | undefined
+): WhatsAppContactNameSource | null {
+  const name = String(existingName ?? "").trim();
+  if (!name) return null;
+  if (existingSource === "manual") return "manual";
+  if (
+    existingSource &&
+    Object.prototype.hasOwnProperty.call(
+      WHATSAPP_CONTACT_NAME_SOURCE_RANK,
+      existingSource
+    )
+  ) {
+    return existingSource as WhatsAppContactNameSource;
+  }
+  return "whatsapp_legacy";
+}
+
+/**
+ * Upgrade-only name policy shared by memory, Supabase, sync, and contact events.
  */
 export function shouldApplyWhatsAppContactName(input: {
   existingName: string | null | undefined;
-  existingSource: WhatsAppContactNameSource | null | undefined;
-  nextName: string;
-  nextSource: WhatsAppContactNameSource;
+  existingSource: WhatsAppContactNameSource | string | null | undefined;
+  nextName: string | null | undefined;
+  nextSource: WhatsAppContactNameSource | null | undefined;
+  phoneE164?: string | null;
 }): boolean {
-  const existing = String(input.existingName || "").trim();
-  if (!existing) return Boolean(String(input.nextName || "").trim());
-  const existingSource =
-    input.existingSource &&
-    input.existingSource in WHATSAPP_CONTACT_NAME_SOURCE_RANK
-      ? input.existingSource
-      : "manual";
-  const existingRank = WHATSAPP_CONTACT_NAME_SOURCE_RANK[existingSource] ?? 50;
+  const next = isValidWhatsAppDisplayName(input.nextName, input.phoneE164);
+  if (!next || !input.nextSource) return false;
+  if (input.nextSource === "manual") {
+    // Automatic paths never claim manual; only explicit manual writers set it.
+    return false;
+  }
+  if (input.nextSource === "phone" || input.nextSource === "whatsapp_legacy") {
+    // phone/legacy are not winning write sources from automatic capture.
+    return false;
+  }
+
+  const existing = String(input.existingName ?? "").trim();
+  if (!existing) return true;
+
+  const existingSource = effectiveWhatsAppContactNameSource(
+    existing,
+    input.existingSource
+  );
+  if (existingSource === "manual") return false;
+
+  const existingRank =
+    WHATSAPP_CONTACT_NAME_SOURCE_RANK[existingSource ?? "whatsapp_legacy"] ?? 0;
   const nextRank = WHATSAPP_CONTACT_NAME_SOURCE_RANK[input.nextSource] ?? 0;
   return nextRank > existingRank;
 }

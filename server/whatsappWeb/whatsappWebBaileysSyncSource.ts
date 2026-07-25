@@ -201,7 +201,13 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     return this.selfJid;
   }
 
-  ingestContacts(rawContacts: Array<Record<string, unknown>>): void {
+  /**
+   * Ingest Baileys contacts into the in-memory sync source.
+   * Returns phone-resolved contacts suitable for immediate persistence.
+   * LID-only contacts (no trustworthy phone mapping) are skipped.
+   */
+  ingestContacts(rawContacts: Array<Record<string, unknown>>): WhatsAppWebSyncContact[] {
+    const resolved: WhatsAppWebSyncContact[] = [];
     for (const c of rawContacts) {
       const identity = this.lidMap.resolveIdentity({
         contactId: String(c.id || ""),
@@ -214,21 +220,24 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       const jid = identity.phoneJid;
       const prev = this.contacts.get(jid);
       const savedName = nonEmptyString(c.name) ?? prev?.savedName ?? null;
-      const pushName =
-        nonEmptyString(c.notify) ??
-        nonEmptyString(c.verifiedName) ??
-        prev?.pushName ??
-        null;
+      // Keep verifiedName separate from push/notify (never fold).
+      const verifiedName =
+        nonEmptyString(c.verifiedName) ?? prev?.verifiedName ?? null;
+      const pushName = nonEmptyString(c.notify) ?? prev?.pushName ?? null;
       const shortName = nonEmptyString(c.short) ?? prev?.shortName ?? null;
-      this.contacts.set(jid, {
+      const entry: WhatsAppWebSyncContact = {
         jid,
         phoneE164: identity.phoneE164,
         savedName,
+        verifiedName,
         pushName,
         shortName,
-        isBusiness: Boolean(c.isBusiness || c.verifiedName),
-      });
+        isBusiness: Boolean(c.isBusiness || verifiedName),
+      };
+      this.contacts.set(jid, entry);
+      resolved.push(entry);
     }
+    return resolved;
   }
 
   ingestChats(rawChats: Array<Record<string, unknown>>): void {
