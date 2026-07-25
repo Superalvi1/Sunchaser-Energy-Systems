@@ -338,6 +338,7 @@ import {
   type PersistedPublicLead,
 } from "./server/publicLeads/index.ts";
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
+import { createMarketplacePricingRouter } from "./server/marketplace/pricing/pricingRoutes.ts";
 import {
   createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
@@ -655,6 +656,8 @@ app.use(
 
 // Marketplace public catalogue (requires MARKETPLACE_ENABLED=true; defaults off).
 app.use("/api/marketplace/catalogue", createCatalogueRouter());
+// Marketplace Super-Admin pricing engine (MARKETPLACE_ENABLED + marketplace + Super Admin).
+app.use("/api/marketplace/admin", createMarketplacePricingRouter());
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
