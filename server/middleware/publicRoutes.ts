@@ -26,6 +26,7 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   { method: "GET", path: "/api/whatsapp/webhook" },
   { method: "POST", path: "/api/whatsapp/webhook" },
   // Marketplace public + guest possession-token APIs (handler-gated + MARKETPLACE_ENABLED).
+  // Admin finance routes under /api/marketplace/admin/* are NOT public (JWT + lockdown).
   { pathPrefix: "/api/marketplace/" },
 ];
 
@@ -36,6 +37,14 @@ export function normalizeHttpMethod(method: string): HttpMethod {
 export function isPublicApiRoute(method: string, pathname: string): boolean {
   const normalizedMethod = normalizeHttpMethod(method);
   const path = pathname.split("?")[0] || pathname;
+
+  // marketplaceRouteLockdown surface — requires CRM JWT via central auth.
+  if (
+    path === "/api/marketplace/admin" ||
+    path.startsWith("/api/marketplace/admin/")
+  ) {
+    return false;
+  }
 
   for (const entry of PUBLIC_ROUTE_ENTRIES) {
     if ("pathPrefix" in entry) {

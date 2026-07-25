@@ -26,6 +26,13 @@ const CUSTOMER_ALLOWED_STAFF_PDF_PREFIXES = [
 
 export function isCustomerAllowedApiRoute(pathname: string): boolean {
   const path = normalizeApiPathname(pathname);
+  // Customers must not reach marketplace admin finance routes.
+  if (
+    path === "/api/marketplace/admin" ||
+    path.startsWith("/api/marketplace/admin/")
+  ) {
+    return false;
+  }
   if (CUSTOMER_ALLOWED_EXACT.has(path)) return true;
   if (CUSTOMER_ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
   if (CUSTOMER_ALLOWED_STAFF_PDF_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;

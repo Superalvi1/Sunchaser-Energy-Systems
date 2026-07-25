@@ -339,6 +339,7 @@ import {
 } from "./server/publicLeads/index.ts";
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
 import { createCartRouter } from "./server/marketplace/cart/index.ts";
+import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
 import {
   createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
@@ -679,6 +680,11 @@ app.use("/api/marketplace/catalogue", createCatalogueRouter());
 app.use(
   "/api/marketplace",
   createCartRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace bank-transfer payments (customer/guest + admin finance lockdown).
+app.use(
+  "/api/marketplace",
+  createPaymentRouter({ resolveLocalDb: resolveAuthLocalDb }),
 );
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
