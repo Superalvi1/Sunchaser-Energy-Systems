@@ -161,6 +161,12 @@ async function withInboxServer(
     getConnectionStatus?: Parameters<
       typeof createWhatsAppInboxRouter
     >[0]["getConnectionStatus"];
+    getQrConnectionStatus?: Parameters<
+      typeof createWhatsAppInboxRouter
+    >[0]["getQrConnectionStatus"];
+    resolveListAvailability?: Parameters<
+      typeof createWhatsAppInboxRouter
+    >[0]["resolveListAvailability"];
     createLead?: Parameters<
       typeof createWhatsAppInboxServices
     >[1]["createLead"];
@@ -216,6 +222,12 @@ async function withInboxServer(
   if (opts.sendEnabled != null) routerDeps.sendEnabled = opts.sendEnabled;
   if (opts.getConnectionStatus) {
     routerDeps.getConnectionStatus = opts.getConnectionStatus;
+  }
+  if (opts.getQrConnectionStatus) {
+    routerDeps.getQrConnectionStatus = opts.getQrConnectionStatus;
+  }
+  if (opts.resolveListAvailability) {
+    routerDeps.resolveListAvailability = opts.resolveListAvailability;
   }
   // Tests omit sendPort → explicitly disable (no production Graph config).
   if (!("sendPort" in opts) && !opts.resolveSendPort) {
@@ -590,6 +602,216 @@ await test(
         );
       }
     );
+  }
+);
+
+await test(
+  "Meta DISCONNECTED + QR CONNECTED → stored conversations returned",
+  async () => {
+    await withInboxServer(
+      {
+        seedWhatsAppConnected: false,
+        getConnectionStatus: async () => disconnectedStatus(),
+        getQrConnectionStatus: async () => ({ state: "CONNECTED" }),
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-qr-visible",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const res = await api(baseUrl, "GET", "/conversations", {
+          token: tokens.staff,
+          query: { limit: "40" },
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.success, true);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-qr-visible"]
+        );
+      }
+    );
+  }
+);
+
+await test(
+  "Meta DISCONNECTED + QR CONNECTED → delta returned",
+  async () => {
+    await withInboxServer(
+      {
+        seedWhatsAppConnected: false,
+        getConnectionStatus: async () => disconnectedStatus(),
+        getQrConnectionStatus: async () => ({ state: "CONNECTED" }),
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-qr-delta",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const since = encodeInboxCursor({
+          at: "1970-01-01T00:00:00.000Z",
+          id: "",
+        });
+        const res = await api(baseUrl, "GET", "/delta", {
+          token: tokens.staff,
+          query: { since },
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.success, true);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-qr-delta"]
+        );
+      }
+    );
+  }
+);
+
+await test(
+  "Meta CONNECTED + QR DISCONNECTED → conversations returned",
+  async () => {
+    await withInboxServer(
+      {
+        getConnectionStatus: async () => connectedStatus(),
+        getQrConnectionStatus: async () => ({ state: "DISCONNECTED" }),
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-meta-visible",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const res = await api(baseUrl, "GET", "/conversations", {
+          token: tokens.staff,
+          query: { limit: "40" },
+        });
+        assert.equal(res.status, 200);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-meta-visible"]
+        );
+      }
+    );
+  }
+);
+
+await test(
+  "both explicitly DISCONNECTED → empty 200",
+  async () => {
+    await withInboxServer(
+      {
+        seedWhatsAppConnected: false,
+        getConnectionStatus: async () => disconnectedStatus(),
+        getQrConnectionStatus: async () => ({ state: "DISCONNECTED" }),
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-hidden",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const res = await api(baseUrl, "GET", "/conversations", {
+          token: tokens.staff,
+          query: { limit: "40" },
+        });
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.data.conversations, []);
+      }
+    );
+  }
+);
+
+await test(
+  "Meta lookup failure + QR CONNECTED → conversations returned",
+  async () => {
+    await withInboxServer(
+      {
+        getConnectionStatus: async () => {
+          throw new Error("meta unavailable");
+        },
+        getQrConnectionStatus: async () => ({ state: "CONNECTED" }),
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-meta-fail-qr-ok",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const res = await api(baseUrl, "GET", "/conversations", {
+          token: tokens.staff,
+          query: { limit: "40" },
+        });
+        assert.equal(res.status, 200);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-meta-fail-qr-ok"]
+        );
+      }
+    );
+  }
+);
+
+await test(
+  "QR lookup failure must not silently hide existing conversations",
+  async () => {
+    await withInboxServer(
+      {
+        seedWhatsAppConnected: false,
+        getConnectionStatus: async () => disconnectedStatus(),
+        getQrConnectionStatus: async () => {
+          throw new Error("qr status unavailable");
+        },
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, {
+          id: "c-qr-fail-visible",
+          updatedAt: "2026-07-19T10:00:00.000Z",
+          lastMessageAt: "2026-07-19T10:00:00.000Z",
+        });
+        const res = await api(baseUrl, "GET", "/conversations", {
+          token: tokens.staff,
+          query: { limit: "40" },
+        });
+        assert.equal(res.status, 200);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-qr-fail-visible"]
+        );
+      }
+    );
+  }
+);
+
+await test(
+  "QR_READY/CONNECTING/RECONNECTING are not treated as CONNECTED for list",
+  async () => {
+    for (const state of ["QR_READY", "CONNECTING", "RECONNECTING"] as const) {
+      let listCalls = 0;
+      const controllers = createInboxControllers(
+        {
+          conversations: {
+            async listByActivity() {
+              listCalls += 1;
+              return { rows: [{ id: "should-not-return" }], nextCursor: null };
+            },
+          },
+        } as any,
+        {
+          getConnectionStatus: async () => disconnectedStatus(),
+          getQrConnectionStatus: async () => ({ state }),
+        }
+      );
+      const { res, state: http } = mockJsonRes();
+      await controllers.listConversations(
+        { query: { limit: "40" }, actor: { userId: "u-staff" } } as any,
+        res
+      );
+      assert.equal(listCalls, 0, state);
+      assert.equal(http.statusCode, 200, state);
+      assert.deepEqual(http.body.data.conversations, [], state);
+    }
   }
 );
 

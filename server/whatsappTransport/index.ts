@@ -56,6 +56,14 @@ export {
   type WhatsAppInboxRouterDeps,
 } from "./whatsappInboxRoutes.ts";
 export {
+  createWhatsAppInboxListAvailabilityResolver,
+  resolveWhatsAppInboxListAvailability,
+  isWhatsAppWebQrConnectedForInbox,
+  isMetaWhatsAppDisconnectedForInbox,
+  type WhatsAppInboxListAvailability,
+  type WhatsAppInboxListAvailabilityResolver,
+} from "./whatsappInboxListAvailability.ts";
+export {
   buildProductionInboxServiceOptions,
   buildProductionWebhookAutoLinkLead,
   type ProductionInboxWiringDeps,

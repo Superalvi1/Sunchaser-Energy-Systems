@@ -31,6 +31,11 @@ import {
 } from "./whatsappConnectionService.ts";
 import { getWhatsAppOnboardingDiagnostics } from "./whatsappOnboardingDiagnostics.ts";
 import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
+import {
+  createWhatsAppInboxListAvailabilityResolver,
+  type WhatsAppInboxListAvailabilityResolver,
+  type WhatsAppQrListStatus,
+} from "./whatsappInboxListAvailability.ts";
 
 export type InboxSendPort = (input: {
   conversationId: string;
@@ -66,26 +71,34 @@ export type InboxControllerDeps = {
    */
   sendEnabled?: boolean;
   /**
-   * Connection status resolver (tests). Defaults to getWhatsAppConnectionStatus.
+   * Legacy Meta connection status resolver (tests / connection panel API).
+   * Also used as the Meta half of list availability when resolveListAvailability
+   * is not provided.
    */
   getConnectionStatus?: typeof getWhatsAppConnectionStatus;
+  /**
+   * Optional WhatsApp Web QR status getter for list availability (tests).
+   * Defaults to explicit DISCONNECTED when omitted.
+   */
+  getQrConnectionStatus?: () =>
+    | WhatsAppQrListStatus
+    | Promise<WhatsAppQrListStatus>;
+  /**
+   * Combined Meta + QR list availability. Prefer injecting this in production.
+   */
+  resolveListAvailability?: WhatsAppInboxListAvailabilityResolver;
 };
 
 /**
- * Empty-list short-circuit only when status lookup succeeds with DISCONNECTED.
- * Lookup failures must not masquerade as disconnected — fall through to the
- * normal repository/RPC path so connected-system errors (e.g. missing RPC)
- * still surface.
+ * Empty-list short-circuit only when every WhatsApp transport is explicitly
+ * disconnected. Lookup failures must not masquerade as disconnected — fall
+ * through so repository/RPC errors still surface.
  */
 async function isWhatsAppDisconnectedForList(
-  getStatus: typeof getWhatsAppConnectionStatus
+  resolveAvailability: WhatsAppInboxListAvailabilityResolver
 ): Promise<boolean> {
-  try {
-    const status = await getStatus(DEFAULT_COMPANY_ID);
-    return status.status === "DISCONNECTED";
-  } catch {
-    return false;
-  }
+  const availability = await resolveAvailability();
+  return availability.allTransportsDisconnected === true;
 }
 
 export function createInboxControllers(
@@ -95,6 +108,12 @@ export function createInboxControllers(
   const sendEnabled = deps.sendEnabled ?? deps.sendPort != null;
   const resolveConnectionStatus =
     deps.getConnectionStatus ?? getWhatsAppConnectionStatus;
+  const resolveListAvailability =
+    deps.resolveListAvailability ??
+    createWhatsAppInboxListAvailabilityResolver({
+      getMetaConnectionStatus: resolveConnectionStatus,
+      getQrConnectionStatus: deps.getQrConnectionStatus,
+    });
 
   return {
     async listConversations(req: Request, res: Response) {
@@ -105,7 +124,7 @@ export function createInboxControllers(
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
         }
-        if (await isWhatsAppDisconnectedForList(resolveConnectionStatus)) {
+        if (await isWhatsAppDisconnectedForList(resolveListAvailability)) {
           return inboxOk(res, { conversations: [] }, 200, {
             nextCursor: null,
           });
@@ -179,7 +198,7 @@ export function createInboxControllers(
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
         }
-        if (await isWhatsAppDisconnectedForList(resolveConnectionStatus)) {
+        if (await isWhatsAppDisconnectedForList(resolveListAvailability)) {
           return inboxOk(res, { conversations: [] }, 200, {
             nextCursor: null,
           });

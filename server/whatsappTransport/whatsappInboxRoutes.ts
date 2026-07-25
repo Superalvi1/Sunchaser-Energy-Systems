@@ -53,8 +53,12 @@ export type WhatsAppInboxRouterDeps = {
   sendEnabled?: boolean;
   /** Force in-memory repos when services/repos not provided (tests only). */
   useInMemory?: boolean;
-  /** Optional connection-status resolver (tests). */
+  /** Optional Meta connection-status resolver (tests / panel API). */
   getConnectionStatus?: InboxControllerDeps["getConnectionStatus"];
+  /** Optional WhatsApp Web QR status getter for list availability (tests). */
+  getQrConnectionStatus?: InboxControllerDeps["getQrConnectionStatus"];
+  /** Combined Meta + QR list availability (production DI). */
+  resolveListAvailability?: InboxControllerDeps["resolveListAvailability"];
   /** Task 5B: normalized messaging dual-write for inbox outbound send. */
   messagingRepository?: MessagingRepository | null;
 };
@@ -115,6 +119,8 @@ export function createWhatsAppInboxRouter(
       sendPort: sendPort ?? undefined,
       sendEnabled,
       getConnectionStatus: deps.getConnectionStatus,
+      getQrConnectionStatus: deps.getQrConnectionStatus,
+      resolveListAvailability: deps.resolveListAvailability,
     });
     return controllers;
   };
