@@ -1,0 +1,35 @@
+# Disposable local PostgreSQL for unified-messaging schema tests ONLY.
+# Bind: 127.0.0.1 only. Do not point at hosted Supabase.
+#
+# Project name is fixed via scripts (COMPOSE_PROJECT_NAME=sunchaser-messaging-test).
+# Credentials below are intentionally disposable local-only values.
+
+services:
+  messaging-test-db:
+    image: postgres:16.6-alpine
+    container_name: sunchaser-messaging-test-db
+    restart: "no"
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_USER: messaging_test
+      POSTGRES_PASSWORD: messaging_test_local_only
+      POSTGRES_DB: messaging_test
+    volumes:
+      - messaging_test_pgdata:/var/lib/postgresql/data
+    networks:
+      - messaging_test_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U messaging_test -d messaging_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  messaging_test_pgdata:
+    name: sunchaser-messaging-test-pgdata
+
+networks:
+  messaging_test_net:
+    name: sunchaser-messaging-test-net

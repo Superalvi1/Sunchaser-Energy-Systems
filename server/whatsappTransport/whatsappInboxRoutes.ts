@@ -28,6 +28,7 @@ import {
   type WhatsAppInboxServices,
 } from "./whatsappInboxServices.ts";
 import { createInboxOutboundSendPort } from "./whatsappInboxSendTransport.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
 
 export type WhatsAppInboxRouterDeps = {
   /** Injected services (tests). When omitted, built from repositories. */
@@ -54,6 +55,8 @@ export type WhatsAppInboxRouterDeps = {
   useInMemory?: boolean;
   /** Optional connection-status resolver (tests). */
   getConnectionStatus?: InboxControllerDeps["getConnectionStatus"];
+  /** Task 5B: normalized messaging dual-write for inbox outbound send. */
+  messagingRepository?: MessagingRepository | null;
 };
 
 /**
@@ -92,7 +95,9 @@ function resolveOutboundSendPort(
 ): InboxSendPort | null {
   if (deps.sendPort !== undefined) return deps.sendPort;
   if (deps.resolveSendPort) return deps.resolveSendPort();
-  return createInboxOutboundSendPort();
+  return createInboxOutboundSendPort({
+    messagingRepository: deps.messagingRepository,
+  });
 }
 
 export function createWhatsAppInboxRouter(

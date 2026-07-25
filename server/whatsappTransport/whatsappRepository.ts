@@ -164,6 +164,8 @@ export interface WhatsAppRepository {
     metadata?: Record<string, unknown>;
   }): Promise<WhatsAppAuditEvent>;
   getConversationBundle(conversationId: string): Promise<ConversationBundle | null>;
+  /** Resolve legacy whatsapp_messages.id by Meta wa_message_id (for normalized binding recovery). */
+  findMessageIdByWaMessageId(waMessageId: string): Promise<string | null>;
   insertOutboundMessage(input: {
     conversationId: string;
     textBody: string;
@@ -488,6 +490,20 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
     const channel = this.channels.get(conversation.channelId);
     if (!contact || !channel) return null;
     return { conversation, contact, channel };
+  }
+
+  async findMessageIdByWaMessageId(waMessageId: string): Promise<string | null> {
+    const needle = String(waMessageId || "").trim();
+    if (!needle) return null;
+    for (const message of this.messages.values()) {
+      if (
+        message.companyId === DEFAULT_COMPANY_ID &&
+        message.waMessageId === needle
+      ) {
+        return message.id;
+      }
+    }
+    return null;
   }
 
   async insertOutboundMessage(input: {
@@ -1146,6 +1162,20 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       contact: mapContact(contact as Record<string, unknown>),
       channel: mapChannel(channel as Record<string, unknown>),
     };
+  }
+
+  async findMessageIdByWaMessageId(waMessageId: string): Promise<string | null> {
+    const needle = String(waMessageId || "").trim();
+    if (!needle) return null;
+    const { data, error } = await this.client()
+      .from("whatsapp_messages")
+      .select("id")
+      .eq("wa_message_id", needle)
+      .eq("company_id", DEFAULT_COMPANY_ID)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data?.id ? String(data.id) : null;
   }
 
   async insertOutboundMessage(input: {

@@ -79,6 +79,17 @@ export {
   canSendOutboundWhatsApp,
   authorizeOutboundWhatsAppActor,
 } from "./whatsappPermissions.ts";
+export {
+  createMessagingProductionWiring,
+  type MessagingProductionWiring,
+  type CreateMessagingProductionWiringOptions,
+} from "./messagingProductionFactory.ts";
+export {
+  createWhatsAppMessagingBridge,
+  bridgePersistInboundMessage,
+  bridgePrepareOutboundMessage,
+  type WhatsAppMessagingBridge,
+} from "./whatsappMessagingBridge.ts";
 
 /**
  * Path-scoped raw-body middleware for Meta webhook signature verification.

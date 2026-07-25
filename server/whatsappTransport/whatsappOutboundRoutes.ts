@@ -6,18 +6,23 @@ import {
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 import { sendOutboundPlainText } from "./whatsappOutboundService.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
 
 export type WhatsAppOutboundRouterDeps = {
   repo?: WhatsAppRepository;
   config?: WhatsAppConfig;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  messagingRepository?: MessagingRepository | null;
 };
 
 /**
  * Protected outbound route: POST /api/conversations/:id/messages
  * Relies on centralized JWT authorization (not on the public allowlist).
  * Staff outbound permission is enforced in the service (crm_leads roles only).
+ *
+ * Optional Idempotency-Key header (or body.idempotencyKey) is used when
+ * normalized messaging Postgres wiring is enabled.
  */
 export function createWhatsAppOutboundRouter(
   deps: WhatsAppOutboundRouterDeps = {}
@@ -37,17 +42,29 @@ export function createWhatsAppOutboundRouter(
       return res.status(400).json({ error: "conversation id is required" });
     }
 
+    const body = req.body as
+      | { text?: unknown; idempotencyKey?: unknown; organizationId?: unknown }
+      | undefined;
+
+    // Browser cannot choose organizationId — ignore/reject spoof attempts.
+    if (body && "organizationId" in body && body.organizationId != null) {
+      return res.status(400).json({ error: "organizationId is not accepted" });
+    }
+
+    const headerKey = String(req.header("idempotency-key") ?? "").trim();
+    const bodyKey =
+      typeof body?.idempotencyKey === "string" ? body.idempotencyKey.trim() : "";
+    const clientIdempotencyKey = headerKey || bodyKey || null;
+
     // Recipient/sender/channel/company are never accepted from the browser body.
-    const result = await sendOutboundPlainText(
-      conversationId,
-      (req.body as { text?: unknown } | undefined)?.text,
-      {
-        repo,
-        config,
-        actor: req.actor,
-        fetchImpl: deps.fetchImpl,
-      }
-    );
+    const result = await sendOutboundPlainText(conversationId, body?.text, {
+      repo,
+      config,
+      actor: req.actor,
+      fetchImpl: deps.fetchImpl,
+      messagingRepository: deps.messagingRepository,
+      clientIdempotencyKey,
+    });
 
     if (result.httpStatus === 201) {
       return res.status(201).json({
@@ -57,19 +74,27 @@ export function createWhatsAppOutboundRouter(
       });
     }
 
-    const body: Record<string, unknown> = { error: result.error };
-    if (result.messageId) body.messageId = result.messageId;
-    if (result.providerMessageId) {
-      body.providerMessageId = result.providerMessageId;
+    if (result.httpStatus === 409) {
+      return res.status(409).json({
+        error: result.error,
+        ...(result.messageId ? { messageId: result.messageId } : {}),
+        ...(result.status ? { status: result.status } : {}),
+      });
     }
-    if (result.status) body.status = result.status;
+
+    const responseBody: Record<string, unknown> = { error: result.error };
+    if (result.messageId) responseBody.messageId = result.messageId;
+    if (result.providerMessageId) {
+      responseBody.providerMessageId = result.providerMessageId;
+    }
+    if (result.status) responseBody.status = result.status;
     if (result.persistenceStatus) {
-      body.persistenceStatus = result.persistenceStatus;
+      responseBody.persistenceStatus = result.persistenceStatus;
     }
     if (result.providerOutcome) {
-      body.providerOutcome = result.providerOutcome;
+      responseBody.providerOutcome = result.providerOutcome;
     }
-    return res.status(result.httpStatus).json(body);
+    return res.status(result.httpStatus).json(responseBody);
   });
 
   return router;

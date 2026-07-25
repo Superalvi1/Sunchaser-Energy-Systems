@@ -1,6 +1,6 @@
 /**
  * Production outbound transport adapter for POST /api/inbox/messages/send.
- * Wraps PR1 sendOutboundPlainText — no inbox business rules.
+ * Routes WhatsApp Web QR channel conversations to Baileys; otherwise Meta Cloud API.
  */
 import type { RequestActor } from "../middleware/actor.ts";
 import {
@@ -18,12 +18,25 @@ import {
   createDefaultWhatsAppRepository,
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
+import { readWhatsAppWebConfig } from "../whatsappWeb/whatsappWebConfig.ts";
+import {
+  getSharedWhatsAppWebSession,
+  type WhatsAppWebSession,
+} from "../whatsappWeb/whatsappWebSession.ts";
+import {
+  isWhatsAppWebQrChannel,
+  sendWhatsAppWebPlainText,
+} from "../whatsappWeb/whatsappWebOutbound.ts";
 
 export type InboxSendTransportDeps = {
   repo?: WhatsAppRepository;
   config?: WhatsAppConfig;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  messagingRepository?: MessagingRepository | null;
+  /** Test seam for WhatsApp Web session. */
+  whatsappWebSession?: WhatsAppWebSession;
 };
 
 function isOutboundSuccess(
@@ -33,39 +46,60 @@ function isOutboundSuccess(
 }
 
 /**
- * Returns a send port when WhatsApp outbound is enabled and configured;
- * otherwise null (caller must disable the send endpoint).
+ * Returns a send port when Meta outbound is configured and/or WhatsApp Web QR
+ * is enabled; otherwise null (caller must disable the send endpoint).
  */
 export function createInboxOutboundSendPort(
   deps: InboxSendTransportDeps = {}
 ): InboxSendPort | null {
-  const config = deps.config ?? readWhatsAppConfig(deps.env ?? process.env);
-  if (!isWhatsAppEnabled(config) || !hasOutboundSendConfig(config)) {
+  const env = deps.env ?? process.env;
+  const config = deps.config ?? readWhatsAppConfig(env);
+  const webConfig = readWhatsAppWebConfig(env);
+  const metaReady = isWhatsAppEnabled(config) && hasOutboundSendConfig(config);
+  const webReady = webConfig.enabled === true;
+  if (!metaReady && !webReady) {
     return null;
   }
+
   const repo = deps.repo ?? createDefaultWhatsAppRepository();
   const fetchImpl = deps.fetchImpl;
+  const messagingRepository = deps.messagingRepository;
+  const session = deps.whatsappWebSession ?? getSharedWhatsAppWebSession({ env });
 
   return async (input: {
     conversationId: string;
     text: string;
     actor: RequestActor;
   }) => {
-    const result = await sendOutboundPlainText(
-      input.conversationId,
-      input.text,
-      {
-        repo,
-        config,
-        actor: input.actor,
-        fetchImpl,
-      }
-    );
+    const bundle = await repo.getConversationBundle(input.conversationId);
+    const useWeb =
+      webReady &&
+      bundle != null &&
+      isWhatsAppWebQrChannel(bundle.channel.phoneNumberId);
+
+    const result = useWeb
+      ? await sendWhatsAppWebPlainText(input.conversationId, input.text, {
+          repo,
+          session,
+          actor: input.actor,
+          messagingRepository,
+        })
+      : metaReady
+        ? await sendOutboundPlainText(input.conversationId, input.text, {
+            repo,
+            config,
+            actor: input.actor,
+            fetchImpl,
+            messagingRepository,
+          })
+        : ({
+            httpStatus: 503 as const,
+            error: "No WhatsApp outbound transport is available",
+          } satisfies OutboundSendResult);
+
     if (isOutboundSuccess(result)) {
       return { ok: true, messageId: result.messageId };
     }
-    // Treat classic client errors as permanent; keep timeouts/retryables soft.
-    // 408 is not in OutboundSendResult today; guard via numeric status for safety.
     const status = result.httpStatus as number;
     const permanent = status >= 400 && status < 500 && status !== 408;
     return {

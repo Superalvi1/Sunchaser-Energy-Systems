@@ -302,3 +302,67 @@ export async function testWhatsAppConnection(): Promise<WhatsAppConnectionTestRe
   );
   return data;
 }
+
+/** WhatsApp Web QR (Baileys) — Admin-only; never returns session credentials. */
+export type WhatsAppWebSafeStatus = {
+  enabled: boolean;
+  state:
+    | "DISCONNECTED"
+    | "QR_READY"
+    | "CONNECTING"
+    | "CONNECTED"
+    | "RECONNECTING"
+    | "LOGGED_OUT"
+    | "ERROR";
+  phoneMasked: string | null;
+  updatedAt: string;
+  qrAvailable: boolean;
+  qrExpiresAt: string | null;
+  safeMessage: string | null;
+};
+
+export type WhatsAppWebQrPayload = {
+  qrDataUrl: string;
+  expiresAt: string;
+  state: WhatsAppWebSafeStatus["state"];
+};
+
+export async function fetchWhatsAppWebStatus(): Promise<WhatsAppWebSafeStatus> {
+  const { data } = await inboxRequest<WhatsAppWebSafeStatus>(
+    "/api/whatsapp-web/status",
+    { method: "GET" }
+  );
+  return data;
+}
+
+export async function connectWhatsAppWeb(): Promise<WhatsAppWebSafeStatus> {
+  const { data } = await inboxRequest<WhatsAppWebSafeStatus>(
+    "/api/whatsapp-web/connect",
+    { method: "POST", body: JSON.stringify({}) }
+  );
+  return data;
+}
+
+export async function fetchWhatsAppWebQr(): Promise<WhatsAppWebQrPayload> {
+  const { data } = await inboxRequest<WhatsAppWebQrPayload>(
+    "/api/whatsapp-web/qr",
+    { method: "GET" }
+  );
+  return data;
+}
+
+export async function disconnectWhatsAppWeb(): Promise<WhatsAppWebSafeStatus> {
+  const { data } = await inboxRequest<WhatsAppWebSafeStatus>(
+    "/api/whatsapp-web/disconnect",
+    { method: "POST", body: JSON.stringify({}) }
+  );
+  return data;
+}
+
+export async function logoutWhatsAppWeb(): Promise<WhatsAppWebSafeStatus> {
+  const { data } = await inboxRequest<WhatsAppWebSafeStatus>(
+    "/api/whatsapp-web/logout",
+    { method: "POST", body: JSON.stringify({}) }
+  );
+  return data;
+}

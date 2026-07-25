@@ -1,0 +1,188 @@
+/**
+ * Unified messaging — transport-neutral contracts (phase 0 / task 2).
+ *
+ * Isolated from server/whatsappTransport/. No production wiring in this phase.
+ */
+
+export {
+  MESSAGING_TRANSPORTS,
+  TRANSPORT_CHANNEL_DESCRIPTORS,
+  CONNECTION_STATES,
+  CONNECTION_HEALTH_STATES,
+  CONNECTION_ERROR_CATEGORIES,
+  FORBIDDEN_BROWSER_CONNECTION_FIELDS,
+  MESSAGE_TYPES,
+  MESSAGE_ORIGINS,
+  MESSAGE_DIRECTIONS,
+  DELIVERY_STATUSES,
+  META_COMPAT_DELIVERY_STATUSES,
+  PROCESSING_STATUSES,
+  MESSAGING_EVENT_KINDS,
+  isMessagingTransport,
+  getTransportChannelDescriptor,
+  isExperimentalInternalTransport,
+  type MessagingTransport,
+  type TransportVisibility,
+  type TransportAudience,
+  type TransportChannelDescriptor,
+  type ConnectionState,
+  type ConnectionHealthState,
+  type ConnectionErrorCategory,
+  type TransportSecretRef,
+  type SafeTransportMetadata,
+  type BrowserSafeConnectionStatus,
+  type ForbiddenBrowserConnectionField,
+  type MessagingIdentityKind,
+  type MessagingIdentityRef,
+  type NormalizedMessageType,
+  type MessageOrigin,
+  type MessageDirection,
+  type DeliveryStatus,
+  type MetaCompatDeliveryStatus,
+  type ProcessingStatus,
+  type NormalizedStructuredContent,
+  type SafeProviderMetadata,
+  type NormalizedMessage,
+  type MessagingEventKind,
+  type InboundMessageReceivedEvent,
+  type OutboundMessageRequestedEvent,
+  type OutboundMessageAcceptedEvent,
+  type OutboundMessageFailedEvent,
+  type DeliveryStatusUpdatedEvent,
+  type ConnectionStatusChangedEvent,
+  type MediaReceivedEvent,
+  type TransportDiagnosticEvent,
+  type NormalizedMessagingEvent,
+  type OutboundSendRequest,
+  type OutboundTemplateSendRequest,
+  type MediaDownloadRequest,
+  type MediaUploadRequest,
+  type InboundVerificationRequest,
+  type InboundNormalizationRequest,
+  type StatusNormalizationRequest,
+  type IdentityResolveRequest,
+} from "./transportTypes.ts";
+
+export {
+  TRANSPORT_CAPABILITIES,
+  OPERATION_REQUIRED_CAPABILITY,
+  emptyCapabilitySet,
+  capabilitySet,
+  hasCapability,
+  assertCapability,
+  requireCapability,
+  outboundCapabilityForMessageType,
+  exampleCapabilityProfile,
+  type TransportCapability,
+  type TransportCapabilitySet,
+  type CapabilityGatedOperation,
+  type CapabilityCheckResult,
+} from "./transportCapabilities.ts";
+
+export {
+  TRANSPORT_ERROR_CATEGORIES,
+  RETRYABLE_ERROR_CATEGORIES,
+  PERMANENT_ERROR_CATEGORIES,
+  TransportContractError,
+  okResult,
+  errResult,
+  isTransportContractError,
+  isRetryableTransportError,
+  isPermanentTransportError,
+  requireOutboundIdempotencyKey,
+  type TransportErrorCategory,
+  type RedactedDiagnosticContext,
+  type TransportErrorInit,
+  type TransportResult,
+} from "./transportErrors.ts";
+
+export type {
+  TransportSecretResolver,
+  TransportConnectInput,
+  TransportDisconnectInput,
+  TransportReconnectInput,
+  TransportHealthCheckResult,
+  InboundVerificationResult,
+  MediaDownloadResult,
+  MediaUploadResult,
+  MessagingTransportAdapter,
+  MessagingTransportAdapterDeps,
+  SafeAdapterDeps,
+} from "./transportAdapter.ts";
+
+export {
+  CONVERSATION_STATUSES,
+  AUTOMATION_MODES,
+  CONSENT_STATUSES,
+  ATTACHMENT_SCAN_STATUSES,
+  OUTBOX_STATUSES,
+  STATUS_EVENT_STATUSES,
+  AUDIT_ACTOR_TYPES,
+  SQL_ALIGNED_ENUMS,
+  type ConversationStatus,
+  type AutomationMode,
+  type ConsentStatus,
+  type AttachmentScanStatus,
+  type OutboxStatus,
+  type StatusEventStatus,
+  type AuditActorType,
+} from "./messagingSchemaTypes.ts";
+
+export type {
+  IdempotentOutcome,
+  MessagingContactRow,
+  MessagingContactIdentityRow,
+  MessagingConversationRow,
+  MessagingAttachmentRow,
+  MessagingStatusEventRow,
+  MessagingAssignmentRow,
+  MessagingOutboxRow,
+  MessagingAuditLogRow,
+  UpsertContactIdentityInput,
+  FindOrCreateConversationInput,
+  PersistInboundMessageInput,
+  CreateOutboundMessageInput,
+  AppendStatusEventInput,
+  AddAttachmentReferenceInput,
+  RecordAssignmentInput,
+  EnqueueOutboxEventInput,
+  AppendAuditEventInput,
+  MessagingRepository,
+  MessagingRepositoryDeps,
+  SafeMessagingRepositoryDeps,
+} from "./messagingRepository.ts";
+
+export {
+  MessagingRepositoryError,
+  isMessagingRepositoryError,
+  MESSAGING_REPOSITORY_ERROR_CODES,
+  type MessagingRepositoryErrorCode,
+} from "./messagingRepositoryErrors.ts";
+
+export {
+  assertSafeMetadata,
+  assertStructuredContent,
+} from "./messagingSafePayload.ts";
+
+export type { SqlExecutor, SqlQueryResult, PgPoolLike } from "./messagingSql.ts";
+export { createPgPoolSqlExecutor } from "./messagingSql.ts";
+
+export {
+  createPostgresMessagingRepository,
+  type PostgresMessagingRepositoryDeps,
+} from "./postgresMessagingRepository.ts";
+
+export {
+  UNIFIED_MESSAGING_POSTGRES_FLAG,
+  MESSAGING_TRUSTED_ORGANIZATION_ID,
+  readMessagingRuntimeConfig,
+  trustedMetaConnectionId,
+  assertMessagingRuntimeStartup,
+  type MessagingRuntimeConfig,
+} from "./messagingRuntimeConfig.ts";
+
+export {
+  logMessagingRuntime,
+  type MessagingRuntimeLogEvent,
+  type MessagingRuntimeLogFields,
+} from "./messagingRuntimeLog.ts";

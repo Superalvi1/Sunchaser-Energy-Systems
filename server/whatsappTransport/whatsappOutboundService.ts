@@ -14,6 +14,18 @@ import {
 } from "./whatsappPermissions.ts";
 import type { WhatsAppRepository } from "./whatsappRepository.ts";
 import { safeAudit } from "./whatsappRepository.ts";
+import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
+import { isMessagingRepositoryError } from "../unifiedMessaging/messagingRepositoryErrors.ts";
+import {
+  bridgeAssociateOutboundProviderExternalId,
+  bridgeClaimOutboundSend,
+  bridgePrepareOutboundMessage,
+  bridgeProviderMessageId,
+  bridgeRecordOutboundProviderResult,
+  bridgeStrictInboxMessageId,
+  createWhatsAppMessagingBridge,
+} from "./whatsappMessagingBridge.ts";
+import { randomUUID } from "node:crypto";
 
 export type OutboundSendDeps = {
   repo: WhatsAppRepository;
@@ -21,6 +33,10 @@ export type OutboundSendDeps = {
   actor: RequestActor | null | undefined;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  /** Normalized messaging repository (Task 5B). When set, gates Meta via client idempotency. */
+  messagingRepository?: MessagingRepository | null;
+  /** Stable client idempotency key; generated when missing and messaging is enabled. */
+  clientIdempotencyKey?: string | null;
 };
 
 export type OutboundSendResult =
@@ -31,7 +47,7 @@ export type OutboundSendResult =
       status: "sent";
     }
   | {
-      httpStatus: 400 | 401 | 403 | 404 | 503 | 500 | 502 | 504 | 202;
+      httpStatus: 400 | 401 | 403 | 404 | 409 | 503 | 500 | 502 | 504 | 202;
       messageId?: string;
       providerMessageId?: string;
       status?: string;
@@ -168,6 +184,100 @@ export async function sendOutboundPlainText(
     };
   }
 
+  const messagingBridge = deps.messagingRepository
+    ? createWhatsAppMessagingBridge({
+        repository: deps.messagingRepository,
+        config: deps.config,
+      })
+    : null;
+
+  const clientIdempotencyKey =
+    (deps.clientIdempotencyKey && deps.clientIdempotencyKey.trim()) ||
+    (messagingBridge ? randomUUID() : "");
+
+  let messagingMessageId: string | null = null;
+  let claimedSend = false;
+
+  if (messagingBridge) {
+    try {
+      const prepared = await bridgePrepareOutboundMessage(messagingBridge, {
+        recipientWaId: conversationBundle.contact.phoneE164,
+        text,
+        clientIdempotencyKey,
+        actorId: deps.actor.id,
+      });
+      messagingMessageId = prepared.message.messageId;
+
+      const claim = await bridgeClaimOutboundSend(
+        messagingBridge,
+        prepared.message.messageId
+      );
+
+      if (claim.kind === "completed") {
+        const inboxId = bridgeStrictInboxMessageId(claim.row);
+        const providerMessageId = bridgeProviderMessageId(claim.row);
+        if (!inboxId) {
+          return {
+            httpStatus: 202,
+            ...(providerMessageId ? { providerMessageId } : {}),
+            status: claim.row.deliveryStatus,
+            persistenceStatus: "incomplete",
+            ...(providerMessageId ? { providerOutcome: "accepted" as const } : {}),
+            error:
+              "Outbound completed but Inbox message binding is incomplete",
+          };
+        }
+        return {
+          httpStatus: 201,
+          messageId: inboxId,
+          providerMessageId: providerMessageId ?? inboxId,
+          status: "sent",
+        };
+      }
+      if (claim.kind === "in_flight") {
+        const providerMessageId = bridgeProviderMessageId(claim.row);
+        return {
+          httpStatus: 202,
+          messageId: bridgeStrictInboxMessageId(claim.row) ?? undefined,
+          ...(providerMessageId ? { providerMessageId } : {}),
+          status: MESSAGE_STATUSES.SENDING,
+          persistenceStatus: "incomplete",
+          // Only report accepted when a provider message id is already known.
+          ...(providerMessageId ? { providerOutcome: "accepted" as const } : {}),
+          error: providerMessageId
+            ? "Outbound send already in progress for this idempotency key"
+            : "Outbound processing incomplete for this idempotency key; no resend attempted",
+        };
+      }
+      if (claim.kind === "terminal") {
+        return {
+          httpStatus: 409,
+          messageId: bridgeStrictInboxMessageId(claim.row) ?? undefined,
+          status: claim.row.deliveryStatus,
+          error:
+            "Idempotency key is not eligible for automatic resend; use a new key",
+        };
+      }
+      claimedSend = true;
+      messagingMessageId = claim.row.messageId;
+    } catch (err) {
+      if (
+        isMessagingRepositoryError(err) &&
+        err.detail === "idempotency_conflict"
+      ) {
+        return {
+          httpStatus: 409,
+          error: "Idempotency key reused with different request content",
+        };
+      }
+      return {
+        httpStatus: 500,
+        error: "Failed to persist normalized outbound message",
+      };
+    }
+  }
+
+  // Without messaging wiring, or after winning the atomic claim, create one legacy row.
   let message;
   try {
     message = await deps.repo.insertOutboundMessage({
@@ -176,6 +286,44 @@ export async function sendOutboundPlainText(
     });
   } catch {
     return { httpStatus: 500, error: "Failed to queue outbound message" };
+  }
+
+  if (messagingBridge && messagingMessageId && claimedSend) {
+    try {
+      await messagingBridge.repository.bindOutboundLegacyMessageId({
+        organizationId: messagingBridge.organizationId,
+        messageId: messagingMessageId,
+        whatsappMessageId: message.id,
+      });
+    } catch {
+      console.error(
+        JSON.stringify({
+          scope: "unified-messaging-runtime",
+          event: "normalized_persistence_failed",
+          code: "legacy_binding_failed",
+          messageId: messagingMessageId,
+        })
+      );
+      await safeAudit(deps.repo, {
+        eventType: AUDIT_EVENTS.OUTBOUND_PERSISTENCE_DEGRADED,
+        entityType: "message",
+        entityId: message.id,
+        metadata: {
+          conversationId,
+          reason: "legacy_binding_failed",
+          metaCalled: false,
+        },
+      });
+      // Claimed + unbound: leave non-sendable. Never call Meta.
+      return {
+        httpStatus: 202,
+        messageId: message.id,
+        status: MESSAGE_STATUSES.QUEUED,
+        persistenceStatus: "incomplete",
+        error:
+          "Outbound message queued but Inbox binding incomplete; not sent to provider",
+      };
+    }
   }
 
   await safeAudit(deps.repo, {
@@ -223,6 +371,38 @@ export async function sendOutboundPlainText(
   if (graphResult.ok === true) {
     const providerMessageId = graphResult.providerMessageId;
     const sentAt = new Date().toISOString();
+
+    let normalizedAcceptedPersisted = !messagingBridge || !messagingMessageId;
+    if (messagingBridge && messagingMessageId) {
+      try {
+        await bridgeRecordOutboundProviderResult(messagingBridge, {
+          messageId: messagingMessageId,
+          outcome: "accepted",
+          providerMessageId,
+        });
+        normalizedAcceptedPersisted = true;
+      } catch {
+        normalizedAcceptedPersisted = false;
+        console.error(
+          JSON.stringify({
+            scope: "unified-messaging-runtime",
+            event: "normalized_persistence_failed",
+            code: "provider_accepted_status_persist",
+            messageId: messagingMessageId,
+          })
+        );
+        // Best-effort: associate provider id so later status webhooks can resolve.
+        try {
+          await bridgeAssociateOutboundProviderExternalId(messagingBridge, {
+            messageId: messagingMessageId,
+            providerMessageId,
+          });
+        } catch {
+          /* association failure remains observable via logs; legacy binding still usable */
+        }
+      }
+    }
+
     const statusUpdate = await updateStatusWithRetry(deps, {
       messageId: message.id,
       status: MESSAGE_STATUSES.SENT,
@@ -231,20 +411,23 @@ export async function sendOutboundPlainText(
       providerError: null,
     });
 
-    if (statusUpdate.ok === false) {
-      console.error(
-        "[whatsapp-transport] Meta accepted message but DB status update failed",
-        {
-          messageId: message.id,
-          providerMessageId,
-          error: statusUpdate.error,
-        }
-      );
+    if (statusUpdate.ok === false || !normalizedAcceptedPersisted) {
+      if (statusUpdate.ok === false) {
+        console.error(
+          "[whatsapp-transport] Meta accepted message but DB status update failed",
+          {
+            messageId: message.id,
+            providerMessageId,
+          }
+        );
+      }
       await recordPersistenceDegraded(deps, {
         messageId: message.id,
         conversationId,
         providerOutcome: "accepted",
-        persistError: statusUpdate.error,
+        persistError: !normalizedAcceptedPersisted
+          ? "normalized_accepted_status_incomplete"
+          : "legacy_status_incomplete",
       });
       await safeAudit(deps.repo, {
         eventType: AUDIT_EVENTS.OUTBOUND_SENT,
@@ -254,7 +437,7 @@ export async function sendOutboundPlainText(
           conversationId,
           providerMessageId,
           degraded: true,
-          persistError: statusUpdate.error,
+          normalizedAcceptedPersisted,
         },
       });
       return {
@@ -289,6 +472,17 @@ export async function sendOutboundPlainText(
 
   const failure = graphResult;
   if (failure.kind === "timeout") {
+    if (messagingBridge && messagingMessageId) {
+      try {
+        await bridgeRecordOutboundProviderResult(messagingBridge, {
+          messageId: messagingMessageId,
+          outcome: "timeout",
+          errorCategory: "timeout",
+        });
+      } catch {
+        /* logged inside bridge */
+      }
+    }
     const statusUpdate = await updateStatusWithRetry(deps, {
       messageId: message.id,
       status: MESSAGE_STATUSES.TIMEOUT,
@@ -327,6 +521,18 @@ export async function sendOutboundPlainText(
       status: MESSAGE_STATUSES.TIMEOUT,
       error: failure.sanitizedError,
     };
+  }
+
+  if (messagingBridge && messagingMessageId) {
+    try {
+      await bridgeRecordOutboundProviderResult(messagingBridge, {
+        messageId: messagingMessageId,
+        outcome: "failed",
+        errorCategory: "provider_rejected",
+      });
+    } catch {
+      /* logged inside bridge */
+    }
   }
 
   const statusUpdate = await updateStatusWithRetry(deps, {

@@ -1,0 +1,783 @@
+/**
+ * Single-organization WhatsApp Web (Baileys) connection manager.
+ *
+ * Lifecycle hardening (QR-1A):
+ * - Explicit connectionDesired / manual-stop state
+ * - Terminal vs retryable disconnect classification
+ * - Capped exponential reconnect (one timer at a time)
+ * - Startup resume from saved credentials
+ * - QR race + connected-phone resolution on open
+ *
+ * Credentials stay on disk under WHATSAPP_WEB_AUTH_DIR only.
+ */
+import QRCode from "qrcode";
+import {
+  assertWhatsAppWebAuthDirReady,
+  readWhatsAppWebConfig,
+  WHATSAPP_WEB_QR_TTL_MS,
+  type WhatsAppWebConfig,
+} from "./whatsappWebConfig.ts";
+import {
+  deleteWhatsAppWebSessionDir,
+  ensureWhatsAppWebAuthDirWritable,
+  hasSavedBaileysCredentials,
+  resolveWhatsAppWebAuthPaths,
+  type ResolvedAuthPaths,
+} from "./whatsappWebAuthDir.ts";
+import { createSilentBaileysLogger, logWhatsAppWeb } from "./whatsappWebLog.ts";
+import {
+  maskPhoneNumber,
+  type WhatsAppWebLifecycleState,
+  type WhatsAppWebQrPayload,
+  type WhatsAppWebSafeStatus,
+} from "./whatsappWebTypes.ts";
+
+/** Capped exponential-ish reconnect delays (ms). */
+export const WHATSAPP_WEB_RECONNECT_DELAYS_MS = [
+  2_000, 5_000, 10_000, 30_000, 60_000,
+] as const;
+
+/** Baileys DisconnectReason values we treat as non-retryable. */
+export const WHATSAPP_WEB_TERMINAL_STATUS_CODES = new Set<number>([
+  401, // loggedOut
+  403, // forbidden
+  411, // multideviceMismatch
+  440, // connectionReplaced
+  500, // badSession
+]);
+
+export type DisconnectClassification =
+  | "logged_out"
+  | "terminal"
+  | "retryable";
+
+export function classifyDisconnect(
+  statusCode: number | undefined | null
+): DisconnectClassification {
+  if (statusCode === 401) return "logged_out";
+  if (statusCode != null && WHATSAPP_WEB_TERMINAL_STATUS_CODES.has(statusCode)) {
+    return "terminal";
+  }
+  return "retryable";
+}
+
+export function reconnectDelayMs(
+  attemptIndex: number,
+  delays: readonly number[] = WHATSAPP_WEB_RECONNECT_DELAYS_MS
+): number {
+  if (delays.length === 0) return 60_000;
+  if (attemptIndex <= 0) return delays[0]!;
+  if (attemptIndex >= delays.length) return delays[delays.length - 1]!;
+  return delays[attemptIndex]!;
+}
+
+export type WhatsAppWebInboundHandler = (message: {
+  providerMessageId: string;
+  remoteJid: string;
+  fromMe: boolean;
+  text: string | null;
+  pushName: string | null;
+  occurredAt: string;
+  isGroup: boolean;
+  isStatusOrNewsletter: boolean;
+  rawType: string | null;
+}) => Promise<void>;
+
+export type WhatsAppWebConnectionUpdate = {
+  connection?: "open" | "close" | "connecting" | "logged_out";
+  statusCode?: number;
+  /** Resolved at open time — not captured before connect. */
+  userId?: string | null;
+};
+
+export type WhatsAppWebSocketHandle = {
+  end: () => void;
+  logout: () => Promise<void>;
+  sendText: (jid: string, text: string) => Promise<{ providerMessageId: string }>;
+  /** Current Baileys user id; call after connection opens. */
+  getUserId?: () => string | null;
+};
+
+export type WhatsAppWebSocketFactory = (input: {
+  sessionDir: string;
+  onQr: (qr: string) => void;
+  onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
+  onCredentialsSaved: () => void;
+  onInbound: WhatsAppWebInboundHandler;
+}) => Promise<WhatsAppWebSocketHandle>;
+
+export type WhatsAppWebSessionOptions = {
+  env?: NodeJS.ProcessEnv;
+  config?: WhatsAppWebConfig;
+  socketFactory?: WhatsAppWebSocketFactory;
+  now?: () => Date;
+  qrTtlMs?: number;
+  inboundHandler?: WhatsAppWebInboundHandler | null;
+  /** Injectable reconnect delay sequence (tests). */
+  reconnectDelaysMs?: readonly number[];
+  setTimeoutFn?: typeof setTimeout;
+  clearTimeoutFn?: typeof clearTimeout;
+};
+
+async function defaultSocketFactory(input: {
+  sessionDir: string;
+  onQr: (qr: string) => void;
+  onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
+  onCredentialsSaved: () => void;
+  onInbound: WhatsAppWebInboundHandler;
+}): Promise<WhatsAppWebSocketHandle> {
+  const baileys = await import("@whiskeysockets/baileys");
+  const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+  } = baileys;
+
+  const { state, saveCreds } = await useMultiFileAuthState(input.sessionDir);
+  const { version } = await fetchLatestBaileysVersion();
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: createSilentBaileysLogger() as never,
+    printQRInTerminal: false,
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+  });
+
+  sock.ev.on("creds.update", () => {
+    void saveCreds().then(() => input.onCredentialsSaved());
+  });
+
+  sock.ev.on("connection.update", (update) => {
+    const qr = (update as { qr?: string }).qr;
+    if (typeof qr === "string" && qr.trim()) {
+      input.onQr(qr);
+    }
+
+    if (update.connection === "open") {
+      input.onConnectionUpdate({
+        connection: "open",
+        userId: sock.user?.id ?? null,
+      });
+      return;
+    }
+
+    if (update.connection === "close") {
+      const statusCode = (
+        update.lastDisconnect as { error?: { output?: { statusCode?: number } } }
+      )?.error?.output?.statusCode;
+
+      // Logged-out is exclusive — never also emit ordinary "close".
+      if (statusCode === DisconnectReason.loggedOut) {
+        input.onConnectionUpdate({
+          connection: "logged_out",
+          statusCode,
+        });
+        return;
+      }
+
+      input.onConnectionUpdate({
+        connection: "close",
+        statusCode,
+      });
+    }
+  });
+
+  sock.ev.on("messages.upsert", (upsert) => {
+    const messages = upsert.messages ?? [];
+    for (const msg of messages) {
+      void (async () => {
+        const remoteJid = String(msg.key?.remoteJid ?? "");
+        const providerMessageId = String(msg.key?.id ?? "");
+        if (!remoteJid || !providerMessageId) return;
+        const fromMe = msg.key?.fromMe === true;
+        const isGroup = remoteJid.endsWith("@g.us");
+        const isStatusOrNewsletter =
+          remoteJid === "status@broadcast" ||
+          remoteJid.endsWith("@newsletter") ||
+          remoteJid.includes("broadcast");
+        const text =
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          null;
+        const occurredAt = msg.messageTimestamp
+          ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
+          : new Date().toISOString();
+        await input.onInbound({
+          providerMessageId,
+          remoteJid,
+          fromMe,
+          text: text ? String(text) : null,
+          pushName: msg.pushName ? String(msg.pushName) : null,
+          occurredAt,
+          isGroup,
+          isStatusOrNewsletter,
+          rawType: msg.message ? Object.keys(msg.message)[0] ?? null : null,
+        });
+      })().catch(() => {
+        logWhatsAppWeb("warn", "inbound_handler_failed");
+      });
+    }
+  });
+
+  return {
+    end: () => {
+      try {
+        sock.end(undefined);
+      } catch {
+        /* ignore */
+      }
+    },
+    logout: async () => {
+      await sock.logout();
+    },
+    sendText: async (jid, text) => {
+      const sent = await sock.sendMessage(jid, { text });
+      const providerMessageId = String(sent?.key?.id ?? "");
+      if (!providerMessageId) {
+        throw new Error("Baileys send did not return a provider message id");
+      }
+      return { providerMessageId };
+    },
+    getUserId: () => sock.user?.id ?? null,
+  };
+}
+
+export class WhatsAppWebSession {
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly socketFactory: WhatsAppWebSocketFactory;
+  private readonly now: () => Date;
+  private readonly qrTtlMs: number;
+  private readonly reconnectDelaysMs: readonly number[];
+  private readonly setTimeoutFn: typeof setTimeout;
+  private readonly clearTimeoutFn: typeof clearTimeout;
+  private inboundHandler: WhatsAppWebInboundHandler | null;
+
+  private state: WhatsAppWebLifecycleState = "DISCONNECTED";
+  private phoneRaw: string | null = null;
+  private updatedAt: string;
+  private safeMessage: string | null = null;
+  private qrRaw: string | null = null;
+  private qrExpiresAt: string | null = null;
+  private qrDataUrl: string | null = null;
+  private qrGeneration = 0;
+
+  private socket: WhatsAppWebSocketHandle | null = null;
+  private startLock = false;
+  /** Process-level shutdown (SIGTERM) or explicit stop. */
+  private shuttingDown = false;
+  /** Operator wants an active connection (connect/resume). */
+  private connectionDesired = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private paths: ResolvedAuthPaths | null = null;
+  /** Test observability: delays scheduled for reconnect. */
+  private readonly scheduledReconnectDelays: number[] = [];
+
+  constructor(options: WhatsAppWebSessionOptions = {}) {
+    this.env = options.env ?? process.env;
+    this.socketFactory = options.socketFactory ?? defaultSocketFactory;
+    this.now = options.now ?? (() => new Date());
+    this.qrTtlMs = options.qrTtlMs ?? WHATSAPP_WEB_QR_TTL_MS;
+    this.inboundHandler = options.inboundHandler ?? null;
+    this.reconnectDelaysMs =
+      options.reconnectDelaysMs ?? WHATSAPP_WEB_RECONNECT_DELAYS_MS;
+    this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
+    this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+    this.updatedAt = this.now().toISOString();
+  }
+
+  setInboundHandler(handler: WhatsAppWebInboundHandler | null): void {
+    this.inboundHandler = handler;
+  }
+
+  getConfig(): WhatsAppWebConfig {
+    return readWhatsAppWebConfig(this.env);
+  }
+
+  getSafeStatus(): WhatsAppWebSafeStatus {
+    const config = this.getConfig();
+    const qrAvailable = Boolean(
+      this.qrDataUrl &&
+        this.qrExpiresAt &&
+        Date.parse(this.qrExpiresAt) > this.now().getTime() &&
+        this.state === "QR_READY"
+    );
+    return {
+      enabled: config.enabled,
+      state: this.state,
+      phoneMasked: maskPhoneNumber(this.phoneRaw),
+      updatedAt: this.updatedAt,
+      qrAvailable,
+      qrExpiresAt: qrAvailable ? this.qrExpiresAt : null,
+      safeMessage: this.safeMessage,
+    };
+  }
+
+  async getQrPayload(): Promise<WhatsAppWebQrPayload | null> {
+    const status = this.getSafeStatus();
+    if (!status.qrAvailable || !this.qrDataUrl || !this.qrExpiresAt) {
+      return null;
+    }
+    return {
+      qrDataUrl: this.qrDataUrl,
+      expiresAt: this.qrExpiresAt,
+      state: this.state,
+    };
+  }
+
+  /**
+   * Startup init for Render/process boot.
+   * - Flag off → no-op (current behavior).
+   * - Flag on → validate writable auth dir; resume if creds exist; else stay DISCONNECTED.
+   * Fail closed when enabled but auth directory is unusable.
+   */
+  async initializeAtStartup(): Promise<{
+    resumed: boolean;
+    state: WhatsAppWebLifecycleState;
+  }> {
+    const config = this.getConfig();
+    if (!config.enabled) {
+      return { resumed: false, state: this.state };
+    }
+
+    assertWhatsAppWebAuthDirReady(config);
+    this.paths = resolveWhatsAppWebAuthPaths(config);
+    await ensureWhatsAppWebAuthDirWritable(this.paths);
+
+    const hasCreds = await hasSavedBaileysCredentials(this.paths.sessionDir);
+    if (!hasCreds) {
+      this.connectionDesired = false;
+      this.setState("DISCONNECTED", "Waiting for Admin to generate QR");
+      logWhatsAppWeb("info", "startup_awaiting_admin_qr");
+      return { resumed: false, state: this.state };
+    }
+
+    this.connectionDesired = true;
+    this.shuttingDown = false;
+    await this.startSocket("CONNECTING");
+    logWhatsAppWeb("info", "startup_resume_attempted");
+    return { resumed: true, state: this.state };
+  }
+
+  /**
+   * Start / resume connection. Marks connection as desired.
+   */
+  async connect(): Promise<WhatsAppWebSafeStatus> {
+    const config = this.getConfig();
+    if (!config.enabled) {
+      throw Object.assign(new Error("WhatsApp Web QR is disabled"), {
+        code: "feature_disabled",
+      });
+    }
+    assertWhatsAppWebAuthDirReady(config);
+    this.paths = resolveWhatsAppWebAuthPaths(config);
+    await ensureWhatsAppWebAuthDirWritable(this.paths);
+
+    this.connectionDesired = true;
+    this.shuttingDown = false;
+
+    if (this.startLock) {
+      throw Object.assign(new Error("Connection start already in progress"), {
+        code: "start_in_progress",
+      });
+    }
+
+    if (
+      this.state === "CONNECTED" ||
+      this.state === "QR_READY" ||
+      this.state === "CONNECTING" ||
+      this.state === "RECONNECTING"
+    ) {
+      return this.getSafeStatus();
+    }
+
+    await this.startSocket("CONNECTING");
+    return this.getSafeStatus();
+  }
+
+  /** Soft disconnect — not desired; never auto-reconnect; keep credentials. */
+  async disconnect(): Promise<WhatsAppWebSafeStatus> {
+    this.connectionDesired = false;
+    this.clearReconnectTimer();
+    this.reconnectAttempt = 0;
+    if (this.socket) {
+      try {
+        this.socket.end();
+      } catch {
+        /* ignore */
+      }
+      this.socket = null;
+    }
+    this.clearQr();
+    this.setState("DISCONNECTED", "Disconnected (session retained)");
+    return this.getSafeStatus();
+  }
+
+  /**
+   * Logout — not desired; never reconnect; delete only contained session dir.
+   */
+  async logout(): Promise<WhatsAppWebSafeStatus> {
+    this.connectionDesired = false;
+    this.clearReconnectTimer();
+    this.reconnectAttempt = 0;
+
+    const config = this.getConfig();
+    if (!config.enabled && !config.authDir) {
+      this.phoneRaw = null;
+      this.clearQr();
+      this.setState("LOGGED_OUT", "Logged out");
+      return this.getSafeStatus();
+    }
+    assertWhatsAppWebAuthDirReady({
+      ...config,
+      enabled: true,
+      authDir: config.authDir,
+    });
+    const paths = resolveWhatsAppWebAuthPaths(config);
+
+    if (this.socket) {
+      try {
+        await this.socket.logout();
+      } catch {
+        logWhatsAppWeb("warn", "logout_remote_failed");
+      }
+      try {
+        this.socket.end();
+      } catch {
+        /* ignore */
+      }
+      this.socket = null;
+    }
+
+    await deleteWhatsAppWebSessionDir(paths);
+    this.paths = paths;
+    this.phoneRaw = null;
+    this.clearQr();
+    this.setState("LOGGED_OUT", "Logged out; session removed");
+    return this.getSafeStatus();
+  }
+
+  async sendText(
+    jid: string,
+    text: string
+  ): Promise<{ providerMessageId: string }> {
+    if (this.state !== "CONNECTED" || !this.socket) {
+      throw Object.assign(new Error("WhatsApp Web is not connected"), {
+        code: "not_connected",
+      });
+    }
+    return this.socket.sendText(jid, text);
+  }
+
+  isConnected(): boolean {
+    return this.state === "CONNECTED" && this.socket != null;
+  }
+
+  /** Graceful shutdown — not desired; cancel reconnect; preserve credentials. */
+  async shutdown(): Promise<void> {
+    this.connectionDesired = false;
+    this.shuttingDown = true;
+    this.clearReconnectTimer();
+    this.reconnectAttempt = 0;
+    if (this.socket) {
+      try {
+        this.socket.end();
+      } catch {
+        /* ignore */
+      }
+      this.socket = null;
+    }
+    this.clearQr();
+    if (
+      this.state === "CONNECTED" ||
+      this.state === "RECONNECTING" ||
+      this.state === "CONNECTING" ||
+      this.state === "QR_READY"
+    ) {
+      this.setState("DISCONNECTED", "Shutdown");
+    }
+  }
+
+  /** Test seam: inject lifecycle/QR without Baileys. */
+  __testSetState(
+    state: WhatsAppWebLifecycleState,
+    opts?: {
+      phoneRaw?: string | null;
+      qrRaw?: string | null;
+      safeMessage?: string | null;
+      connectionDesired?: boolean;
+    }
+  ): void {
+    if (opts?.connectionDesired !== undefined) {
+      this.connectionDesired = opts.connectionDesired;
+    }
+    if (opts?.phoneRaw !== undefined) this.phoneRaw = opts.phoneRaw;
+    if (opts?.safeMessage !== undefined) this.safeMessage = opts.safeMessage;
+    if (opts?.qrRaw) {
+      void this.acceptQr(opts.qrRaw);
+    } else if (opts?.qrRaw === null) {
+      this.clearQr();
+    }
+    this.setState(state, opts?.safeMessage ?? this.safeMessage);
+  }
+
+  __testIsConnectionDesired(): boolean {
+    return this.connectionDesired;
+  }
+
+  __testHasReconnectTimer(): boolean {
+    return this.reconnectTimer != null;
+  }
+
+  __testGetReconnectAttempt(): number {
+    return this.reconnectAttempt;
+  }
+
+  __testGetScheduledReconnectDelays(): readonly number[] {
+    return this.scheduledReconnectDelays;
+  }
+
+  __testHandleConnectionUpdate(update: WhatsAppWebConnectionUpdate): Promise<void> {
+    return this.handleConnectionUpdate(update);
+  }
+
+  __testAcceptQr(qr: string): Promise<void> {
+    return this.acceptQr(qr);
+  }
+
+  private setState(
+    state: WhatsAppWebLifecycleState,
+    safeMessage?: string | null
+  ): void {
+    this.state = state;
+    this.updatedAt = this.now().toISOString();
+    if (safeMessage !== undefined) this.safeMessage = safeMessage;
+    logWhatsAppWeb("info", "lifecycle", { state });
+  }
+
+  private clearQr(): void {
+    this.qrGeneration += 1;
+    this.qrRaw = null;
+    this.qrExpiresAt = null;
+    this.qrDataUrl = null;
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      this.clearTimeoutFn(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private shouldReconnect(): boolean {
+    return (
+      this.connectionDesired === true &&
+      this.shuttingDown === false &&
+      this.getConfig().enabled === true
+    );
+  }
+
+  private async acceptQr(qr: string): Promise<void> {
+    // Invalidate older in-flight QR conversions.
+    const generation = ++this.qrGeneration;
+    const expires = new Date(this.now().getTime() + this.qrTtlMs);
+    const dataUrl = await QRCode.toDataURL(qr, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 320,
+    });
+
+    // Stale conversion must not overwrite CONNECTED or a newer QR.
+    if (generation !== this.qrGeneration) return;
+    if (this.state === "CONNECTED") return;
+    if (!this.connectionDesired || this.shuttingDown) return;
+
+    this.qrRaw = qr;
+    this.qrExpiresAt = expires.toISOString();
+    this.qrDataUrl = dataUrl;
+    this.setState("QR_READY", "Scan the QR code in WhatsApp Linked Devices");
+  }
+
+  private async startSocket(
+    initialState: "CONNECTING" | "RECONNECTING"
+  ): Promise<void> {
+    if (this.startLock) {
+      throw Object.assign(new Error("Connection start already in progress"), {
+        code: "start_in_progress",
+      });
+    }
+    if (this.shuttingDown || !this.connectionDesired) {
+      throw Object.assign(new Error("WhatsApp Web connection is not desired"), {
+        code: "not_desired",
+      });
+    }
+    if (!this.paths) {
+      throw new Error("Auth paths not resolved");
+    }
+
+    this.startLock = true;
+    this.clearReconnectTimer();
+    this.setState(initialState, "Starting WhatsApp Web connection");
+
+    try {
+      if (this.socket) {
+        try {
+          this.socket.end();
+        } catch {
+          /* ignore */
+        }
+        this.socket = null;
+      }
+
+      const sessionDir = this.paths.sessionDir;
+      this.socket = await this.socketFactory({
+        sessionDir,
+        onQr: (qr) => {
+          void this.acceptQr(qr);
+        },
+        onConnectionUpdate: (update) => {
+          void this.handleConnectionUpdate(update);
+        },
+        onCredentialsSaved: () => {
+          logWhatsAppWeb("info", "credentials_saved");
+        },
+        onInbound: async (message) => {
+          if (this.inboundHandler) {
+            await this.inboundHandler(message);
+          }
+        },
+      });
+    } catch (err) {
+      this.socket = null;
+      this.setState("ERROR", "Connection failed");
+      // Reconnect scheduling is owned by the reconnect timer callback / close handler
+      // (avoids double-scheduling when startSocket rejects).
+      throw err;
+    } finally {
+      this.startLock = false;
+    }
+  }
+
+  private async handleConnectionUpdate(
+    update: WhatsAppWebConnectionUpdate
+  ): Promise<void> {
+    if (update.connection === "open") {
+      this.clearReconnectTimer();
+      this.reconnectAttempt = 0;
+      this.clearQr();
+      const userId =
+        update.userId ??
+        this.socket?.getUserId?.() ??
+        null;
+      this.phoneRaw = jidToPhone(userId);
+      this.setState("CONNECTED", "WhatsApp Web connected");
+      return;
+    }
+
+    if (update.connection === "logged_out") {
+      // Terminal: clear timer first; never reconnect.
+      this.connectionDesired = false;
+      this.clearReconnectTimer();
+      this.reconnectAttempt = 0;
+      this.clearQr();
+      this.phoneRaw = null;
+      this.socket = null;
+      this.setState("LOGGED_OUT", "WhatsApp session logged out");
+      if (this.paths) {
+        try {
+          await deleteWhatsAppWebSessionDir(this.paths);
+        } catch {
+          logWhatsAppWeb("warn", "session_dir_cleanup_failed");
+        }
+      }
+      return;
+    }
+
+    if (update.connection === "close") {
+      this.socket = null;
+      this.clearQr();
+
+      // Manual stop / shutdown: close events must not reconnect.
+      if (!this.connectionDesired || this.shuttingDown) {
+        if (this.state !== "LOGGED_OUT" && this.state !== "DISCONNECTED") {
+          this.setState("DISCONNECTED", "Disconnected");
+        }
+        return;
+      }
+
+      const classification = classifyDisconnect(update.statusCode);
+      if (classification === "logged_out") {
+        // Safety if factory mis-emits close+loggedOut code.
+        await this.handleConnectionUpdate({
+          connection: "logged_out",
+          statusCode: update.statusCode,
+        });
+        return;
+      }
+      if (classification === "terminal") {
+        this.connectionDesired = false;
+        this.clearReconnectTimer();
+        this.reconnectAttempt = 0;
+        this.phoneRaw = null;
+        this.setState("ERROR", "WhatsApp Web session ended");
+        return;
+      }
+
+      // Temporary / retryable network loss.
+      this.setState("RECONNECTING", "Reconnecting after network loss");
+      this.scheduleReconnect();
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.shouldReconnect()) return;
+    // Only one reconnect timer/socket start may exist.
+    if (this.reconnectTimer != null || this.startLock) return;
+
+    const delay = reconnectDelayMs(
+      this.reconnectAttempt,
+      this.reconnectDelaysMs
+    );
+    this.scheduledReconnectDelays.push(delay);
+    this.reconnectAttempt += 1;
+
+    this.reconnectTimer = this.setTimeoutFn(() => {
+      this.reconnectTimer = null;
+      if (!this.shouldReconnect()) return;
+      if (this.startLock) return;
+      void this.startSocket("RECONNECTING").catch(() => {
+        // startSocket already scheduled next retry when desired.
+        if (this.shouldReconnect() && this.reconnectTimer == null) {
+          this.setState("RECONNECTING", "Reconnect failed; retrying");
+          this.scheduleReconnect();
+        }
+      });
+    }, delay) as ReturnType<typeof setTimeout>;
+  }
+}
+
+function jidToPhone(jid: string | null | undefined): string | null {
+  if (!jid) return null;
+  const user = String(jid).split("@")[0] ?? "";
+  const digits = user.split(":")[0]?.replace(/\D/g, "") ?? "";
+  return digits || null;
+}
+
+/** Process-wide singleton used by production wiring. */
+let sharedSession: WhatsAppWebSession | null = null;
+
+export function getSharedWhatsAppWebSession(
+  options?: WhatsAppWebSessionOptions
+): WhatsAppWebSession {
+  if (!sharedSession) {
+    sharedSession = new WhatsAppWebSession(options);
+  }
+  return sharedSession;
+}
+
+/** Test-only reset of the process singleton. */
+export function __resetSharedWhatsAppWebSession(): void {
+  sharedSession = null;
+}

@@ -1,12 +1,27 @@
-import { AlertTriangle, CheckCircle2, Phone, RefreshCw, Shield, Smartphone, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Phone,
+  RefreshCw,
+  Shield,
+  Smartphone,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
+  connectWhatsAppWeb,
   disconnectWhatsAppConnection,
+  disconnectWhatsAppWeb,
   fetchEmbeddedSignupState,
   fetchWhatsAppConnectionStatus,
   fetchWhatsAppOnboardingDiagnostics,
+  fetchWhatsAppWebQr,
+  fetchWhatsAppWebStatus,
+  logoutWhatsAppWeb,
   submitEmbeddedSignup,
   testWhatsAppConnection,
+  type WhatsAppWebQrPayload,
+  type WhatsAppWebSafeStatus,
 } from "../api/inboxApi";
 import {
   extractEmbeddedSignupProviderError,
@@ -24,7 +39,28 @@ type WhatsAppConnectionPanelProps = {
   onClose?: () => void;
 };
 
-function statusLabel(status: WhatsAppConnectionStatusPayload["status"]): string {
+function webStatusLabel(state: WhatsAppWebSafeStatus["state"]): string {
+  switch (state) {
+    case "DISCONNECTED":
+      return "Disconnected";
+    case "QR_READY":
+      return "QR Ready";
+    case "CONNECTING":
+      return "Connecting";
+    case "CONNECTED":
+      return "Connected";
+    case "RECONNECTING":
+      return "Reconnecting";
+    case "LOGGED_OUT":
+      return "Logged Out";
+    case "ERROR":
+      return "Error";
+    default:
+      return state;
+  }
+}
+
+function metaStatusLabel(status: WhatsAppConnectionStatusPayload["status"]): string {
   switch (status) {
     case "DISCONNECTED":
       return "Disconnected";
@@ -47,43 +83,145 @@ export default function WhatsAppConnectionPanel({
   isAdmin,
   onClose,
 }: WhatsAppConnectionPanelProps) {
-  const [status, setStatus] = useState<WhatsAppConnectionStatusPayload | null>(null);
+  const [webStatus, setWebStatus] = useState<WhatsAppWebSafeStatus | null>(null);
+  const [qr, setQr] = useState<WhatsAppWebQrPayload | null>(null);
+  const [webLoading, setWebLoading] = useState(true);
+  const [webBusy, setWebBusy] = useState(false);
+  const [webError, setWebError] = useState<string | null>(null);
+
+  // Meta Embedded Signup — retained as secondary/disabled restore path.
+  const [metaStatus, setMetaStatus] = useState<WhatsAppConnectionStatusPayload | null>(
+    null
+  );
   const [webhookCallbackUrl, setWebhookCallbackUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [metaLoading, setMetaLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<WhatsAppConnectionTestResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  /** Attempt-scoped OAuth state — never localStorage. */
+  const [testResult, setTestResult] = useState<WhatsAppConnectionTestResult | null>(
+    null
+  );
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [showMetaAdvanced, setShowMetaAdvanced] = useState(false);
   const activeStateRef = useRef<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadStatus = async () => {
+  const loadWebStatus = async () => {
     try {
-      setLoading(true);
-      setError(null);
+      setWebLoading(true);
+      setWebError(null);
+      const status = await fetchWhatsAppWebStatus();
+      setWebStatus(status);
+      if (status.qrAvailable) {
+        try {
+          setQr(await fetchWhatsAppWebQr());
+        } catch {
+          setQr(null);
+        }
+      } else {
+        setQr(null);
+      }
+    } catch (err) {
+      setWebError(err instanceof Error ? err.message : "Failed to load WhatsApp Web status");
+    } finally {
+      setWebLoading(false);
+    }
+  };
+
+  const loadMetaStatus = async () => {
+    try {
+      setMetaLoading(true);
+      setMetaError(null);
       const [data, diagnostics] = await Promise.all([
         fetchWhatsAppConnectionStatus(),
         fetchWhatsAppOnboardingDiagnostics().catch(() => null),
       ]);
-      setStatus(data);
+      setMetaStatus(data);
       if (diagnostics) {
         setWebhookCallbackUrl(diagnostics.webhookCallbackUrl);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load connection status");
+      setMetaError(err instanceof Error ? err.message : "Failed to load Meta status");
     } finally {
-      setLoading(false);
+      setMetaLoading(false);
     }
   };
 
   useEffect(() => {
-    void loadStatus();
+    void loadWebStatus();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
+
+  useEffect(() => {
+    if (
+      webStatus?.state === "QR_READY" ||
+      webStatus?.state === "CONNECTING" ||
+      webStatus?.state === "RECONNECTING"
+    ) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(() => {
+        void loadWebStatus();
+      }, 2500);
+    } else if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, [webStatus?.state]);
+
+  const handleGenerateQr = async () => {
+    setWebBusy(true);
+    setWebError(null);
+    try {
+      const status = await connectWhatsAppWeb();
+      setWebStatus(status);
+      if (status.qrAvailable || status.state === "QR_READY") {
+        setQr(await fetchWhatsAppWebQr());
+      }
+    } catch (err) {
+      setWebError(err instanceof Error ? err.message : "Failed to generate QR");
+    } finally {
+      setWebBusy(false);
+    }
+  };
+
+  const handleWebDisconnect = async () => {
+    setWebBusy(true);
+    setWebError(null);
+    try {
+      setWebStatus(await disconnectWhatsAppWeb());
+      setQr(null);
+    } catch (err) {
+      setWebError(err instanceof Error ? err.message : "Disconnect failed");
+    } finally {
+      setWebBusy(false);
+    }
+  };
+
+  const handleWebLogout = async () => {
+    if (
+      !window.confirm(
+        "Remove this WhatsApp device link? You will need to scan a new QR code to reconnect."
+      )
+    ) {
+      return;
+    }
+    setWebBusy(true);
+    setWebError(null);
+    try {
+      setWebStatus(await logoutWhatsAppWeb());
+      setQr(null);
+    } catch (err) {
+      setWebError(err instanceof Error ? err.message : "Logout failed");
+    } finally {
+      setWebBusy(false);
+    }
+  };
 
   const handleLaunchEmbeddedSignup = async () => {
     setConnecting(true);
-    setError(null);
+    setMetaError(null);
     activeStateRef.current = null;
 
     try {
@@ -106,29 +244,28 @@ export default function WhatsAppConnectionPanel({
         phoneNumberId: signup.phoneNumberId,
         state: attemptState,
       });
-      setStatus(updated);
+      setMetaStatus(updated);
     } catch (err) {
-      // TEMPORARY DEBUG — fresh sanitized allowlisted providerError only.
       logMetaEmbeddedSignupDebug(
         "WhatsAppConnectionPanel.handleLaunchEmbeddedSignup.catch",
         extractEmbeddedSignupProviderError(err)
       );
-      setError(sanitizeEmbeddedSignupError(err));
+      setMetaError(sanitizeEmbeddedSignupError(err));
     } finally {
       activeStateRef.current = null;
       setConnecting(false);
     }
   };
 
-  const handleDisconnect = async () => {
+  const handleMetaDisconnect = async () => {
     setDisconnecting(true);
-    setError(null);
+    setMetaError(null);
     try {
       const updated = await disconnectWhatsAppConnection();
-      setStatus(updated);
+      setMetaStatus(updated);
       setTestResult(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Disconnect failed");
+      setMetaError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setDisconnecting(false);
     }
@@ -136,13 +273,13 @@ export default function WhatsAppConnectionPanel({
 
   const handleTestConnection = async () => {
     setTesting(true);
-    setError(null);
+    setMetaError(null);
     try {
       const result = await testWhatsAppConnection();
       setTestResult(result);
-      setStatus(result.status);
+      setMetaStatus(result.status);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Connection test failed");
+      setMetaError(err instanceof Error ? err.message : "Connection test failed");
     } finally {
       setTesting(false);
     }
@@ -151,23 +288,23 @@ export default function WhatsAppConnectionPanel({
   if (!isAdmin) {
     return (
       <div className="p-4 text-xs text-[var(--inbox-muted)]">
-        Only Admin users can view and manage WhatsApp Business App Connection settings.
+        Only Admin users can view and manage WhatsApp connection settings.
       </div>
     );
   }
 
-  const showDisconnect =
-    status?.status === "CONNECTED" ||
-    status?.status === "WEBHOOK_PENDING" ||
-    status?.status === "TOKEN_EXPIRED" ||
-    status?.status === "ERROR";
+  const showMetaDisconnect =
+    metaStatus?.status === "CONNECTED" ||
+    metaStatus?.status === "WEBHOOK_PENDING" ||
+    metaStatus?.status === "TOKEN_EXPIRED" ||
+    metaStatus?.status === "ERROR";
 
   return (
     <div className="space-y-4 rounded-xl border border-[var(--inbox-border)] bg-[var(--inbox-surface)] p-5 text-[var(--inbox-fg)] shadow-lg">
       <div className="flex items-center justify-between border-b border-[var(--inbox-border)] pb-3">
         <div className="flex items-center gap-2">
           <Smartphone className="h-5 w-5 text-emerald-500" />
-          <h2 className="text-sm font-semibold">WhatsApp Business App Coexistence</h2>
+          <h2 className="text-sm font-semibold">WhatsApp Connection</h2>
         </div>
         {onClose && (
           <button
@@ -180,165 +317,224 @@ export default function WhatsAppConnectionPanel({
         )}
       </div>
 
-      {loading ? (
-        <div className="flex items-center gap-2 py-4 text-xs text-[var(--inbox-muted)]">
-          <RefreshCw className="h-4 w-4 animate-spin" />
-          Checking Meta Cloud API connection...
+      {/* Primary: WhatsApp Web QR */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+            Connect with WhatsApp QR
+          </h3>
+          <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
+            Primary
+          </span>
         </div>
-      ) : error ? (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
-          <div className="flex items-center gap-1.5 font-medium">
-            <XCircle className="h-4 w-4" />
-            Connection Error
+
+        {webLoading ? (
+          <div className="flex items-center gap-2 py-3 text-xs text-[var(--inbox-muted)]">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            Checking WhatsApp Web status...
           </div>
-          <p className="mt-1 text-[11px] opacity-90">{error}</p>
-          <button
-            type="button"
-            onClick={() => void loadStatus()}
-            className="mt-2 text-xs font-semibold underline hover:no-underline"
-          >
-            Retry Check
-          </button>
-        </div>
-      ) : status ? (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--inbox-surface-2)] p-3">
-            <div>
-              <div className="text-[11px] uppercase tracking-wider text-[var(--inbox-muted)]">
-                Status
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--inbox-surface-2)] p-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-[var(--inbox-muted)]">
+                  Status
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 font-semibold">
+                  {webStatus?.state === "CONNECTED" ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      <span className="text-emerald-400">
+                        {webStatusLabel(webStatus.state)}
+                      </span>
+                    </>
+                  ) : webStatus?.state === "QR_READY" ||
+                    webStatus?.state === "RECONNECTING" ? (
+                    <>
+                      <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      <span className="text-amber-400">
+                        {webStatusLabel(webStatus.state)}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-4 w-4 text-zinc-400" />
+                      <span className="text-zinc-400">
+                        {webStatus ? webStatusLabel(webStatus.state) : "Unknown"}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5 font-semibold">
-                {status.status === "CONNECTED" ? (
+              {webStatus?.phoneMasked ? (
+                <div className="flex items-center gap-1 font-mono text-[11px]">
+                  <Phone className="h-3 w-3 text-emerald-400" />
+                  {webStatus.phoneMasked}
+                </div>
+              ) : null}
+            </div>
+
+            {webStatus && !webStatus.enabled ? (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
+                WhatsApp Web QR is disabled on the server
+                (WHATSAPP_WEB_QR_ENABLED=false).
+              </div>
+            ) : null}
+
+            {webError ? (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
+                {webError}
+              </div>
+            ) : null}
+
+            {qr?.qrDataUrl ? (
+              <div className="flex flex-col items-center gap-2 rounded-lg border border-[var(--inbox-border)] p-4">
+                <img
+                  src={qr.qrDataUrl}
+                  alt="WhatsApp link QR code"
+                  className="h-56 w-56 rounded bg-white p-2"
+                />
+                <p className="max-w-sm text-center text-[11px] text-[var(--inbox-muted)]">
+                  WhatsApp → Linked Devices → Link a Device → Scan this QR
+                </p>
+                {qr.expiresAt ? (
+                  <p className="text-[10px] text-[var(--inbox-muted)]">
+                    QR expires at {new Date(qr.expiresAt).toLocaleTimeString()}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <button
+                type="button"
+                disabled={webBusy || webStatus?.enabled === false}
+                onClick={() => void handleGenerateQr()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 shadow-md"
+              >
+                {webBusy ? (
                   <>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    <span className="text-emerald-400">{statusLabel(status.status)}</span>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Working...
                   </>
-                ) : status.status === "TOKEN_EXPIRED" ||
-                  status.status === "WEBHOOK_PENDING" ? (
+                ) : webStatus?.state === "CONNECTED" ? (
                   <>
-                    <AlertTriangle className="h-4 w-4 text-amber-400" />
-                    <span className="text-amber-400">{statusLabel(status.status)}</span>
+                    <RefreshCw className="h-4 w-4" />
+                    Reconnect
                   </>
                 ) : (
                   <>
-                    <XCircle className="h-4 w-4 text-zinc-400" />
-                    <span className="text-zinc-400">{statusLabel(status.status)}</span>
+                    <Smartphone className="h-4 w-4" />
+                    Generate QR Code
                   </>
                 )}
-              </div>
+              </button>
+              {webStatus?.state === "CONNECTED" ||
+              webStatus?.state === "RECONNECTING" ||
+              webStatus?.state === "QR_READY" ? (
+                <button
+                  type="button"
+                  disabled={webBusy}
+                  onClick={() => void handleWebDisconnect()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)] disabled:opacity-50"
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={webBusy}
+                onClick={() => void handleWebLogout()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+              >
+                Logout / Remove device
+              </button>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-400 border border-emerald-500/20">
-                Mode: {status.connectionMode}
-              </span>
-            </div>
-          </div>
 
-          {status.revokeWarning ? (
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
-              {status.revokeWarning}
+            <div className="flex items-center gap-1.5 text-[11px] text-[var(--inbox-muted)]">
+              <Shield className="h-3.5 w-3.5 text-emerald-400" />
+              Session credentials stay on the server. Never stored in the browser.
             </div>
-          ) : null}
+          </>
+        )}
+      </section>
 
-          {testResult ? (
-            <div
-              className={`rounded-lg border p-2.5 text-[11px] ${
-                testResult.ok
-                  ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-                  : "border-amber-500/20 bg-amber-500/10 text-amber-300"
-              }`}
-            >
-              {testResult.summary}
-            </div>
-          ) : null}
+      {/* Secondary: Meta Embedded Signup (retained, not primary) */}
+      <section className="space-y-2 border-t border-[var(--inbox-border)] pt-3">
+        <button
+          type="button"
+          onClick={() => {
+            const next = !showMetaAdvanced;
+            setShowMetaAdvanced(next);
+            if (next && !metaStatus) void loadMetaStatus();
+          }}
+          className="flex w-full items-center justify-between text-left text-[11px] text-[var(--inbox-muted)] hover:text-[var(--inbox-fg)]"
+        >
+          <span>Advanced: Meta Cloud API (secondary / restore path)</span>
+          <span>{showMetaAdvanced ? "Hide" : "Show"}</span>
+        </button>
 
-          <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-            <div className="rounded-lg border border-[var(--inbox-border)] p-2.5">
-              <div className="text-[11px] text-[var(--inbox-muted)]">WABA Account ID</div>
-              <div className="font-mono text-[11px]">
-                {status.wabaIdMasked || "Not configured"}
+        {showMetaAdvanced ? (
+          <div className="space-y-3 opacity-80">
+            {metaLoading ? (
+              <div className="text-xs text-[var(--inbox-muted)]">Loading Meta status...</div>
+            ) : metaError ? (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-400">
+                {metaError}
               </div>
-            </div>
-            <div className="rounded-lg border border-[var(--inbox-border)] p-2.5">
-              <div className="text-[11px] text-[var(--inbox-muted)]">Phone Number ID</div>
-              <div className="font-mono text-[11px]">
-                {status.phoneNumberIdMasked || "Not configured"}
-              </div>
-            </div>
-            <div className="rounded-lg border border-[var(--inbox-border)] p-2.5">
-              <div className="text-[11px] text-[var(--inbox-muted)]">Connected Phone</div>
-              <div className="flex items-center gap-1 font-mono text-[11px]">
-                <Phone className="h-3 w-3 text-emerald-400" />
-                {status.phoneNumberMasked || "Not configured"}
-              </div>
-            </div>
-            <div className="rounded-lg border border-[var(--inbox-border)] p-2.5">
-              <div className="text-[11px] text-[var(--inbox-muted)]">Webhook Health</div>
-              <div className="capitalize text-[11px]">
-                {status.webhookHealth} {status.lastWebhookAt ? `(Active)` : "(No pings yet)"}
-              </div>
-            </div>
-          </div>
+            ) : metaStatus ? (
+              <>
+                <div className="text-xs">
+                  Meta status: <strong>{metaStatusLabel(metaStatus.status)}</strong>
+                </div>
+                {testResult ? (
+                  <div className="text-[11px] text-[var(--inbox-muted)]">{testResult.summary}</div>
+                ) : null}
+                {webhookCallbackUrl ? (
+                  <div className="space-y-1 text-[10px] text-[var(--inbox-muted)]">
+                    <div>Webhook callback URL</div>
+                    <div className="break-all font-mono">{webhookCallbackUrl}</div>
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-[var(--inbox-muted)]">
+                    Webhook callback URL is shown after Meta diagnostics load.
+                  </div>
+                )}
+              </>
+            ) : null}
 
-          {webhookCallbackUrl ? (
-            <div className="space-y-2 rounded-lg border border-[var(--inbox-border)] p-2.5 text-[11px]">
-              <div>
-                <div className="text-[var(--inbox-muted)]">Webhook callback URL</div>
-                <div className="break-all font-mono">{webhookCallbackUrl}</div>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="flex items-center gap-1.5 text-[11px] text-[var(--inbox-muted)]">
-            <Shield className="h-3.5 w-3.5 text-emerald-400" />
-            Secrets & Access Tokens are securely stored server-side and redacted.
-          </div>
-
-          <div className="space-y-2 border-t border-[var(--inbox-border)] pt-2">
             <button
               type="button"
               disabled={connecting || disconnecting || testing}
               onClick={() => void handleLaunchEmbeddedSignup()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 shadow-md"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold disabled:opacity-50"
             >
-              {connecting ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Connecting to Meta Cloud API...
-                </>
-              ) : (
-                <>
-                  <Smartphone className="h-4 w-4" />
-                  {showDisconnect
-                    ? "Reconnect WhatsApp Business Number"
-                    : "Connect Existing WhatsApp Business Number"}
-                </>
-              )}
+              {connecting ? "Connecting to Meta..." : "Connect via Meta Embedded Signup"}
             </button>
             <button
               type="button"
               disabled={connecting || disconnecting || testing}
               onClick={() => void handleTestConnection()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)] disabled:opacity-50"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold disabled:opacity-50"
             >
-              {testing ? "Testing Connection..." : "Test Connection"}
+              {testing ? "Testing..." : "Test Meta Connection"}
             </button>
-            {showDisconnect ? (
+            {showMetaDisconnect ? (
               <button
                 type="button"
                 disabled={connecting || disconnecting || testing}
-                onClick={() => void handleDisconnect()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface-2)] disabled:opacity-50"
+                onClick={() => void handleMetaDisconnect()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--inbox-border)] px-4 py-2 text-xs font-semibold disabled:opacity-50"
               >
-                {disconnecting ? "Disconnecting..." : "Disconnect WhatsApp"}
+                {disconnecting ? "Disconnecting..." : "Disconnect Meta"}
               </button>
             ) : null}
-            <p className="mt-1.5 text-center text-[10px] text-[var(--inbox-muted)]">
-              Launches Meta Embedded Signup in Coexistence mode. The WhatsApp Business iPhone app remains active.
+            <p className="text-center text-[10px] text-[var(--inbox-muted)]">
+              Meta Embedded Signup is kept for restore only. Prefer WhatsApp QR above.
             </p>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </section>
     </div>
   );
 }
