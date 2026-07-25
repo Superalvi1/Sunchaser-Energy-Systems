@@ -1,5 +1,10 @@
 /**
  * Per-IP rate limiter for WhatsApp Web QR Admin API.
+ *
+ * IP resolution uses the same first X-Forwarded-For hop helper as public leads.
+ * This server does not enable Express `trust proxy`; production deployments that
+ * terminate TLS at a trusted reverse proxy should set trust proxy only for that
+ * hop (not open trust of arbitrary clients). Tests inject getClientIp / now.
  */
 import type { NextFunction, Request, Response } from "express";
 import { clientIpFromRequest } from "../publicLeads/publicLeadRateLimit.ts";
@@ -13,6 +18,8 @@ export type WhatsAppWebRateLimitOptions = {
   maxAttempts?: number;
   store?: Map<string, Bucket>;
   now?: () => number;
+  /** Test seam — override IP key derivation. */
+  getClientIp?: (req: Request) => string;
 };
 
 export function createWhatsAppWebRateLimit(
@@ -20,6 +27,7 @@ export function createWhatsAppWebRateLimit(
 ) {
   const store = options.store ?? buckets;
   const nowFn = options.now ?? Date.now;
+  const getIp = options.getClientIp ?? clientIpFromRequest;
 
   return function whatsappWebRateLimit(
     req: Request,
@@ -33,7 +41,7 @@ export function createWhatsAppWebRateLimit(
       options.maxAttempts ??
       Number(process.env.WHATSAPP_WEB_RATE_LIMIT_MAX || 30);
 
-    const key = `wa_web:${clientIpFromRequest(req)}`;
+    const key = `wa_web:${getIp(req)}`;
     const now = nowFn();
     const bucket = store.get(key);
 

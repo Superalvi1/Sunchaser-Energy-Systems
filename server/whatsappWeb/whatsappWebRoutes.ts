@@ -6,6 +6,11 @@
  * GET  /api/whatsapp-web/qr
  * POST /api/whatsapp-web/disconnect
  * POST /api/whatsapp-web/logout
+ *
+ * Authorization (JWT-hydrated actor only — never body/headers):
+ * - Missing actor → 401
+ * - accountStatus !== "Approved" → 403
+ * - Role not Admin/Super Admin → 403
  */
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { RequestActor } from "../middleware/actor.ts";
@@ -17,13 +22,26 @@ import {
   FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS,
   type WhatsAppWebSafeStatus,
 } from "./whatsappWebTypes.ts";
-import { createWhatsAppWebRateLimit } from "./whatsappWebRateLimit.ts";
+import { canManageWhatsAppWebQr } from "./whatsappWebPermissions.ts";
+import {
+  createWhatsAppWebRateLimit,
+  type WhatsAppWebRateLimitOptions,
+} from "./whatsappWebRateLimit.ts";
 import {
   getSharedWhatsAppWebSession,
   type WhatsAppWebSession,
 } from "./whatsappWebSession.ts";
 
-function requireWhatsAppWebAdmin(
+/** All WhatsApp Web Admin routes — used by tests to prove limiter coverage. */
+export const WHATSAPP_WEB_ADMIN_ROUTES = [
+  { method: "GET", path: "/status" },
+  { method: "POST", path: "/connect" },
+  { method: "GET", path: "/qr" },
+  { method: "POST", path: "/disconnect" },
+  { method: "POST", path: "/logout" },
+] as const;
+
+export function requireWhatsAppWebAdmin(
   req: Request,
   res: Response,
   next: NextFunction
@@ -33,7 +51,8 @@ function requireWhatsAppWebAdmin(
     inboxFail(res, 401, "unauthorized", "Unauthorized");
     return;
   }
-  if (actor.role !== "Super Admin" && actor.role !== "Admin") {
+  // Ignore any spoofed status/role from body or headers — actor is JWT-hydrated.
+  if (!canManageWhatsAppWebQr(actor)) {
     inboxFail(res, 403, "forbidden", "Admin access required");
     return;
   }
@@ -48,6 +67,7 @@ function noStore(res: Response): void {
 function assertNoCredentialLeak(payload: unknown): void {
   const json = JSON.stringify(payload);
   for (const field of FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS) {
+    // Match JSON object keys only — safeMessage may mention "session" in prose.
     if (json.includes(`"${field}"`)) {
       throw new Error(`Refusing to return forbidden field: ${field}`);
     }
@@ -57,6 +77,7 @@ function assertNoCredentialLeak(payload: unknown): void {
 export type WhatsAppWebRouterDeps = {
   session?: WhatsAppWebSession;
   rateLimitStore?: Map<string, { count: number; resetAt: number }>;
+  rateLimit?: WhatsAppWebRateLimitOptions;
 };
 
 export function createWhatsAppWebRouter(
@@ -66,8 +87,10 @@ export function createWhatsAppWebRouter(
   const session = deps.session ?? getSharedWhatsAppWebSession();
   const rateLimit = createWhatsAppWebRateLimit({
     store: deps.rateLimitStore,
+    ...(deps.rateLimit ?? {}),
   });
 
+  // Limiter runs first; auth still required for any successful response.
   router.use(rateLimit);
   router.use(requireWhatsAppWebAdmin);
 

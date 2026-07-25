@@ -7,7 +7,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer } from "node:http";
 import express from "express";
 import {
   assertPathInsideRoot,
@@ -25,8 +25,16 @@ import {
   normalizeBaileysInbound,
   waIdToChatJid,
 } from "./whatsappWebNormalize.ts";
-import { persistWhatsAppWebInbound } from "./whatsappWebInbound.ts";
-import { createWhatsAppWebRouter } from "./whatsappWebRoutes.ts";
+import {
+  createWhatsAppWebMessagingBridge,
+  persistWhatsAppWebInbound,
+} from "./whatsappWebInbound.ts";
+import {
+  createWhatsAppWebRouter,
+  WHATSAPP_WEB_ADMIN_ROUTES,
+  type WhatsAppWebRouterDeps,
+} from "./whatsappWebRoutes.ts";
+import { canManageWhatsAppWebQr } from "./whatsappWebPermissions.ts";
 import {
   WhatsAppWebSession,
   classifyDisconnect,
@@ -47,24 +55,34 @@ function tmpAuthDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wa-web-auth-"));
 }
 
-function adminActor(role: string = "Admin"): RequestActor {
+function staffActor(opts: {
+  role?: string;
+  accountStatus?: string;
+  id?: string;
+} = {}): RequestActor {
   return {
-    id: "admin-1",
-    username: "admin",
-    name: "Admin",
-    email: "admin@example.com",
-    role,
-    accountStatus: "Approved",
+    id: opts.id ?? "staff-1",
+    username: "staff",
+    name: "Staff",
+    email: "staff@example.com",
+    role: opts.role ?? "Admin",
+    accountStatus: opts.accountStatus ?? "Approved",
     emailVerified: true,
     onboardingCompleted: true,
     authMethod: "jwt",
   };
 }
 
+/** Backward-compatible helper used by earlier tests. */
+function adminActor(role: string = "Admin"): RequestActor {
+  return staffActor({ role, accountStatus: "Approved" });
+}
+
 async function withApp(
   session: WhatsAppWebSession,
   actor: RequestActor | null,
-  run: (base: string) => Promise<void>
+  run: (base: string) => Promise<void>,
+  routerDeps: Omit<WhatsAppWebRouterDeps, "session"> = {}
 ): Promise<void> {
   const app = express();
   app.use(express.json());
@@ -72,7 +90,10 @@ async function withApp(
     (req as express.Request & { actor?: RequestActor | null }).actor = actor;
     next();
   });
-  app.use("/api/whatsapp-web", createWhatsAppWebRouter({ session }));
+  app.use(
+    "/api/whatsapp-web",
+    createWhatsAppWebRouter({ session, ...routerDeps })
+  );
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const addr = server.address();
@@ -85,6 +106,15 @@ async function withApp(
       server.close((err) => (err ? reject(err) : resolve()))
     );
   }
+}
+
+function assertNoSensitiveLeak(payload: unknown): void {
+  const json = JSON.stringify(payload);
+  for (const field of FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS) {
+    assert.equal(json.includes(`"${field}"`), false, field);
+  }
+  assert.equal(/\bcreds\b|\bnoiseKey\b/i.test(json), false);
+  assert.equal(json.includes("data:image/png"), false);
 }
 
 function mockSocketFactory(opts?: {
@@ -917,5 +947,307 @@ console.log("PASS: startup resume / await-admin / fail-closed / flag-off");
 }
 
 console.log("PASS: stale QR cannot overwrite CONNECTED; phone masked after open");
+
+// ---------------------------------------------------------------------------
+// QR-5 — Approved-staff authorization + rate limiter + dual-write-off
+// ---------------------------------------------------------------------------
+
+{
+  assert.equal(canManageWhatsAppWebQr(null), false);
+  assert.equal(
+    canManageWhatsAppWebQr(staffActor({ role: "Admin", accountStatus: "Pending" })),
+    false
+  );
+  assert.equal(
+    canManageWhatsAppWebQr(staffActor({ role: "Admin", accountStatus: "Rejected" })),
+    false
+  );
+  assert.equal(
+    canManageWhatsAppWebQr(staffActor({ role: "Admin", accountStatus: "Suspended" })),
+    false
+  );
+  assert.equal(
+    canManageWhatsAppWebQr(
+      staffActor({ role: "Sales Manager", accountStatus: "Approved" })
+    ),
+    false
+  );
+  assert.equal(
+    canManageWhatsAppWebQr(staffActor({ role: "Admin", accountStatus: "Approved" })),
+    true
+  );
+  assert.equal(
+    canManageWhatsAppWebQr(
+      staffActor({ role: "Super Admin", accountStatus: "Approved" })
+    ),
+    true
+  );
+}
+
+{
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    socketFactory: mockSocketFactory({}),
+  });
+
+  await withApp(session, null, async (base) => {
+    const res = await fetch(`${base}/api/whatsapp-web/status`);
+    assert.equal(res.status, 401);
+  });
+
+  await withApp(
+    session,
+    staffActor({ role: "Sales Executive", accountStatus: "Approved" }),
+    async (base) => {
+      const res = await fetch(`${base}/api/whatsapp-web/status`);
+      assert.equal(res.status, 403);
+    }
+  );
+
+  for (const status of ["Pending", "Rejected", "Suspended", "Inactive"]) {
+    await withApp(
+      session,
+      staffActor({ role: "Admin", accountStatus: status }),
+      async (base) => {
+        const res = await fetch(`${base}/api/whatsapp-web/connect`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ accountStatus: "Approved", role: "Admin" }),
+        });
+        assert.equal(res.status, 403, status);
+        const body = await res.json();
+        assertNoSensitiveLeak(body);
+      }
+    );
+  }
+
+  await withApp(
+    session,
+    staffActor({ role: "Admin", accountStatus: "Approved" }),
+    async (base) => {
+      // Spoof headers/body must not elevate privileges (actor already Approved Admin).
+      const res = await fetch(`${base}/api/whatsapp-web/status`, {
+        headers: {
+          "x-account-status": "Rejected",
+          "x-role": "Customer",
+        },
+      });
+      assert.equal(res.status, 200);
+    }
+  );
+
+  await withApp(
+    session,
+    staffActor({ role: "Super Admin", accountStatus: "Approved" }),
+    async (base) => {
+      const res = await fetch(`${base}/api/whatsapp-web/status`);
+      assert.equal(res.status, 200);
+    }
+  );
+
+  // Feature flag off: Approved Admin reaches handler, connect fails closed.
+  const disabled = new WhatsAppWebSession({
+    env: { WHATSAPP_WEB_QR_ENABLED: "false", WHATSAPP_WEB_AUTH_DIR: authDir },
+    socketFactory: mockSocketFactory({}),
+  });
+  await withApp(
+    disabled,
+    staffActor({ role: "Admin", accountStatus: "Approved" }),
+    async (base) => {
+      const statusRes = await fetch(`${base}/api/whatsapp-web/status`);
+      assert.equal(statusRes.status, 200);
+      const statusBody = (await statusRes.json()) as {
+        data: { enabled: boolean };
+      };
+      assert.equal(statusBody.data.enabled, false);
+      const connectRes = await fetch(`${base}/api/whatsapp-web/connect`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      assert.equal(connectRes.status, 503);
+    }
+  );
+
+  await session.shutdown();
+  await disabled.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: Approved-staff authorization + spoof resistance + flag-off");
+
+{
+  assert.equal(WHATSAPP_WEB_ADMIN_ROUTES.length, 5);
+
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    socketFactory: mockSocketFactory({ qr: "rate-qr" }),
+  });
+
+  let clock = 1_000_000;
+  const store = new Map<string, { count: number; resetAt: number }>();
+  const ipForRequest = { current: "10.0.0.1" };
+
+  await withApp(
+    session,
+    staffActor({ role: "Admin", accountStatus: "Approved" }),
+    async (base) => {
+      const hit = async (path: string, method: string) =>
+        fetch(`${base}/api/whatsapp-web${path}`, {
+          method,
+          headers: { "content-type": "application/json" },
+          body: method === "GET" ? undefined : "{}",
+        });
+
+      // Below limit
+      for (let i = 0; i < 3; i += 1) {
+        const res = await hit("/status", "GET");
+        assert.equal(res.status, 200, `allowed #${i + 1}`);
+      }
+
+      // 4th exceeds max=3
+      const limited = await hit("/status", "GET");
+      assert.equal(limited.status, 429);
+      assert.equal(limited.headers.get("cache-control"), "no-store");
+      const limitedBody = await limited.json();
+      assert.equal(limitedBody.success, false);
+      assert.equal(limitedBody.error.code, "rate_limited");
+      assertNoSensitiveLeak(limitedBody);
+
+      // Separate IP bucket is independent
+      ipForRequest.current = "10.0.0.2";
+      const otherIp = await hit("/status", "GET");
+      assert.equal(otherIp.status, 200);
+
+      // Window reset
+      ipForRequest.current = "10.0.0.1";
+      clock += 60_001;
+      const afterReset = await hit("/status", "GET");
+      assert.equal(afterReset.status, 200);
+    },
+    {
+      rateLimitStore: store,
+      rateLimit: {
+        windowMs: 60_000,
+        maxAttempts: 3,
+        now: () => clock,
+        getClientIp: () => ipForRequest.current,
+      },
+    }
+  );
+
+  // All five routes pass through the limiter (max=1 → second call 429)
+  await withApp(
+    session,
+    staffActor({ role: "Admin", accountStatus: "Approved" }),
+    async (base) => {
+      for (const route of WHATSAPP_WEB_ADMIN_ROUTES) {
+        clock += 60_001;
+        store.clear();
+        const first = await fetch(`${base}/api/whatsapp-web${route.path}`, {
+          method: route.method,
+          headers: { "content-type": "application/json" },
+          body: route.method === "GET" ? undefined : "{}",
+        });
+        assert.ok(
+          first.status !== 429,
+          `${route.method} ${route.path} first should not be 429 (got ${first.status})`
+        );
+        const second = await fetch(`${base}/api/whatsapp-web${route.path}`, {
+          method: route.method,
+          headers: { "content-type": "application/json" },
+          body: route.method === "GET" ? undefined : "{}",
+        });
+        assert.equal(
+          second.status,
+          429,
+          `${route.method} ${route.path} second should be 429`
+        );
+        assertNoSensitiveLeak(await second.json());
+      }
+    },
+    {
+      rateLimitStore: store,
+      rateLimit: {
+        windowMs: 60_000,
+        maxAttempts: 1,
+        now: () => clock,
+        getClientIp: () => "10.0.0.8",
+      },
+    }
+  );
+
+  // Limiter does not weaken auth — unauthenticated still 401 under limit
+  clock += 60_001;
+  store.clear();
+  await withApp(
+    session,
+    null,
+    async (base) => {
+      const res = await fetch(`${base}/api/whatsapp-web/status`);
+      assert.equal(res.status, 401);
+    },
+    {
+      rateLimitStore: store,
+      rateLimit: {
+        windowMs: 60_000,
+        maxAttempts: 10,
+        now: () => clock,
+        getClientIp: () => "10.9.9.9",
+      },
+    }
+  );
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: WhatsApp Web rate-limiter regression coverage");
+
+{
+  // QR Inbox path works while Postgres dual-write is disabled.
+  const repo = new InMemoryWhatsAppRepository();
+  assert.equal(createWhatsAppWebMessagingBridge({ repository: null }), null);
+  assert.equal(
+    createWhatsAppWebMessagingBridge({ repository: undefined }),
+    null
+  );
+
+  const msg = {
+    providerMessageId: "PG_OFF_1",
+    remoteJid: "923001112233@s.whatsapp.net",
+    fromMe: false,
+    text: "Hello with postgres dual-write off",
+    pushName: "Customer",
+    occurredAt: new Date().toISOString(),
+    isGroup: false,
+    isStatusOrNewsletter: false,
+    rawType: "conversation",
+  };
+  const stored = await persistWhatsAppWebInbound(msg, {
+    repo,
+    messagingRepository: null,
+  });
+  assert.equal(stored.kind, "stored");
+  if (stored.kind === "stored") {
+    assert.equal(stored.created, true);
+    const bundle = await repo.getConversationBundle(stored.conversationId);
+    assert.ok(bundle);
+    assert.equal(
+      bundle!.channel.phoneNumberId,
+      WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID
+    );
+  }
+}
+
+console.log("PASS: QR Inbox path works with Postgres dual-write off");
 
 console.log("\nAll WhatsApp Web QR tests passed.");
