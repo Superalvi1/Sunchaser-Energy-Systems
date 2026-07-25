@@ -348,23 +348,18 @@ async function defaultSocketFactory(input: {
     }
   });
 
-  // Bounded persist pool — avoids unbounded fire-and-forget write storms.
-  const contactPersistQueue = new ContactIdentityPersistQueue({
-    concurrency: WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
-    onTaskError: () => {
-      logWhatsAppWeb("warn", "contact_identity_persist_failed");
-    },
-  });
+  // Persistence queue is owned by WhatsAppWebSession (reconnect-safe).
+  // Socket factory only forwards resolved contacts; it never creates a queue.
   const persistContactBatch = (
     contacts: Array<Record<string, unknown>> | null | undefined
   ) => {
     const resolved = syncSource.ingestContacts(contacts ?? []);
     if (!input.onContactIdentity || resolved.length === 0) return;
     for (const contact of resolved) {
-      // Per-contact isolation: one failure never rejects the batch or socket.
-      void contactPersistQueue.enqueue(() =>
-        input.onContactIdentity!(contact)
-      );
+      // Isolate failures — never reject into the Baileys event loop.
+      void Promise.resolve(input.onContactIdentity(contact)).catch(() => {
+        logWhatsAppWeb("warn", "contact_identity_persist_failed");
+      });
     }
   };
   sock.ev.on("contacts.upsert", (contacts) => {
@@ -496,6 +491,14 @@ export class WhatsAppWebSession {
   private inboundHandler: WhatsAppWebInboundHandler | null;
   private readonly syncRepo: WhatsAppRepository;
   private readonly historySync: WhatsAppWebHistorySyncService;
+  /**
+   * Single session-owned persist queue reused across socket reconnects.
+   * Per-phone generation drops stale queued writes after newer events arrive.
+   */
+  private contactPersistQueue: ContactIdentityPersistQueue;
+  private readonly contactPersistGeneration = new Map<string, number>();
+  /** Test observability: how many queue instances this session has created. */
+  private contactPersistQueueEpoch = 0;
 
   private state: WhatsAppWebLifecycleState = "DISCONNECTED";
   private phoneRaw: string | null = null;
@@ -525,6 +528,7 @@ export class WhatsAppWebSession {
     this.qrTtlMs = options.qrTtlMs ?? WHATSAPP_WEB_QR_TTL_MS;
     this.inboundHandler = options.inboundHandler ?? null;
     this.syncRepo = options.syncRepo ?? createDefaultWhatsAppRepository();
+    this.contactPersistQueue = this.createContactPersistQueue();
     this.reconnectDelaysMs =
       options.reconnectDelaysMs ?? WHATSAPP_WEB_RECONNECT_DELAYS_MS;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
@@ -543,6 +547,84 @@ export class WhatsAppWebSession {
 
   setInboundHandler(handler: WhatsAppWebInboundHandler | null): void {
     this.inboundHandler = handler;
+  }
+
+  /** Test/helper: queue instances created (increments only on recreate after close). */
+  getContactPersistQueueEpoch(): number {
+    return this.contactPersistQueueEpoch;
+  }
+
+  /** Test/helper: peak concurrency observed on the current queue. */
+  getContactPersistPeakActive(): number {
+    return this.contactPersistQueue.peakActive;
+  }
+
+  /** Test/helper: whether the session persist queue is closed. */
+  isContactPersistQueueClosed(): boolean {
+    return this.contactPersistQueue.isClosed;
+  }
+
+  private createContactPersistQueue(): ContactIdentityPersistQueue {
+    this.contactPersistQueueEpoch += 1;
+    return new ContactIdentityPersistQueue({
+      concurrency: WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
+      onTaskError: () => {
+        logWhatsAppWeb("warn", "contact_identity_persist_failed");
+      },
+    });
+  }
+
+  /** Reuse the same queue across reconnects; recreate only after logout/shutdown close. */
+  private ensureContactPersistQueueOpen(): void {
+    if (this.contactPersistQueue.isClosed) {
+      this.contactPersistQueue = this.createContactPersistQueue();
+    }
+  }
+
+  /**
+   * Close the session persist queue: drop pending work, refuse new enqueues.
+   * Active tasks finish without unhandled rejection; writers no-op when closed/shutting down.
+   */
+  private closeContactPersistQueue(reason: string): void {
+    this.contactPersistGeneration.clear();
+    if (!this.contactPersistQueue.isClosed) {
+      this.contactPersistQueue.close();
+      logWhatsAppWeb("info", "contact_identity_persist_queue_closed", {
+        reason,
+      });
+    }
+  }
+
+  /**
+   * Enqueue contact identity persistence on the session-owned bounded queue.
+   * Per-phone generation prevents stale reconnect work from overwriting newer metadata.
+   */
+  private enqueueContactIdentityPersist(
+    contact: import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncContact
+  ): Promise<void> {
+    if (this.shuttingDown || this.contactPersistQueue.isClosed) {
+      return Promise.resolve();
+    }
+    const phoneKey = contact.phoneE164;
+    const generation =
+      (this.contactPersistGeneration.get(phoneKey) ?? 0) + 1;
+    this.contactPersistGeneration.set(phoneKey, generation);
+
+    const isCurrent = () =>
+      !this.shuttingDown &&
+      !this.contactPersistQueue.isClosed &&
+      this.contactPersistGeneration.get(phoneKey) === generation;
+
+    return this.contactPersistQueue
+      .enqueue(async () => {
+        if (!isCurrent()) return;
+        await syncWhatsAppWebContact(contact, {
+          repo: this.syncRepo,
+          now: this.now,
+          shouldContinue: isCurrent,
+        });
+      })
+      .then(() => undefined);
   }
 
   getConfig(): WhatsAppWebConfig {
@@ -609,6 +691,7 @@ export class WhatsAppWebSession {
 
     this.connectionDesired = true;
     this.shuttingDown = false;
+    this.ensureContactPersistQueueOpen();
     await this.startSocket("CONNECTING");
     logWhatsAppWeb("info", "startup_resume_attempted");
     return { resumed: true, state: this.state };
@@ -627,6 +710,8 @@ export class WhatsAppWebSession {
     assertWhatsAppWebAuthDirReady(config);
     this.paths = resolveWhatsAppWebAuthPaths(config);
     await ensureWhatsAppWebAuthDirWritable(this.paths);
+    this.shuttingDown = false;
+    this.ensureContactPersistQueueOpen();
 
     this.connectionDesired = true;
     this.shuttingDown = false;
@@ -656,6 +741,7 @@ export class WhatsAppWebSession {
     this.cancelHistorySync("disconnect");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
+    // Keep the same persist queue across soft disconnect/reconnect; do not close.
     if (this.socket) {
       try {
         this.socket.end();
@@ -677,6 +763,7 @@ export class WhatsAppWebSession {
     this.cancelHistorySync("logout");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
+    this.closeContactPersistQueue("logout");
 
     const config = this.getConfig();
     if (!config.enabled && !config.authDir) {
@@ -763,6 +850,7 @@ export class WhatsAppWebSession {
     this.cancelHistorySync("shutdown");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
+    this.closeContactPersistQueue("shutdown");
     if (this.socket) {
       try {
         this.socket.end();
@@ -901,6 +989,8 @@ export class WhatsAppWebSession {
 
     this.startLock = true;
     this.clearReconnectTimer();
+    // Reconnect reuses the same queue; recreate only if logout/shutdown closed it.
+    this.ensureContactPersistQueueOpen();
     this.setState(initialState, "Starting WhatsApp Web connection");
 
     try {
@@ -931,12 +1021,8 @@ export class WhatsAppWebSession {
             await this.inboundHandler(message);
           }
         },
-        onContactIdentity: async (contact) => {
-          await syncWhatsAppWebContact(contact, {
-            repo: this.syncRepo,
-            now: this.now,
-          });
-        },
+        onContactIdentity: (contact) =>
+          this.enqueueContactIdentityPersist(contact),
       });
     } catch (err) {
       this.socket = null;
@@ -971,6 +1057,7 @@ export class WhatsAppWebSession {
       this.cancelHistorySync("logged_out");
       this.clearReconnectTimer();
       this.reconnectAttempt = 0;
+      this.closeContactPersistQueue("logged_out");
       this.clearQr();
       this.phoneRaw = null;
       this.socket = null;

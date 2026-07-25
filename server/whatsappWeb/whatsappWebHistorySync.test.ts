@@ -13,6 +13,7 @@ import {
   ContactIdentityPersistQueue,
   WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
 } from "./whatsappWebContactIdentityQueue.ts";
+import { resolveWhatsAppBusinessProof } from "./whatsappWebBaileysSyncSource.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "../whatsappTransport/whatsappInboxRepository.ts";
 import { createWhatsAppInboxServices } from "../whatsappTransport/whatsappInboxServices.ts";
 import type { RequestActor } from "../middleware/actor.ts";
@@ -41,6 +42,7 @@ import {
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import {
   WhatsAppWebSession,
+  type WhatsAppWebContactIdentityHandler,
   type WhatsAppWebSocketFactory,
 } from "./whatsappWebSession.ts";
 import { createWhatsAppWebRouter } from "./whatsappWebRoutes.ts";
@@ -2751,5 +2753,277 @@ console.log("PASS: SYNC-14B-R1 bounded contact persist queue + failure isolation
   );
 }
 console.log("PASS: SYNC-14B-R1 partial update preserves business flag");
+
+// ---------------------------------------------------------------------------
+// SYNC-14B-R2 — business proof + session-owned queue lifecycle
+// ---------------------------------------------------------------------------
+{
+  assert.deepEqual(resolveWhatsAppBusinessProof({}, true), {
+    persist: null,
+    memory: true,
+  });
+  assert.deepEqual(
+    resolveWhatsAppBusinessProof({ isBusiness: undefined }, true),
+    { persist: null, memory: true }
+  );
+  assert.deepEqual(resolveWhatsAppBusinessProof({ isBusiness: null }, true), {
+    persist: null,
+    memory: true,
+  });
+  assert.deepEqual(resolveWhatsAppBusinessProof({ isBusiness: true }, false), {
+    persist: true,
+    memory: true,
+  });
+  assert.deepEqual(resolveWhatsAppBusinessProof({ isBusiness: false }, true), {
+    persist: false,
+    memory: false,
+  });
+  assert.deepEqual(
+    resolveWhatsAppBusinessProof({ verifiedName: "Biz Co" }, false),
+    { persist: true, memory: true }
+  );
+  // Invalid non-boolean must not prove false.
+  assert.deepEqual(
+    resolveWhatsAppBusinessProof({ isBusiness: "yes" as unknown as boolean }, true),
+    { persist: null, memory: true }
+  );
+
+  const source = new BaileysInMemorySyncSource();
+  source.setConnected(true, "923001112233@s.whatsapp.net");
+  source.ingestContacts([
+    {
+      id: "923009991014@s.whatsapp.net",
+      name: "Keep Biz",
+      isBusiness: true,
+    },
+  ]);
+  assert.equal((await source.listContacts())[0]?.isBusiness, true);
+
+  for (const partial of [
+    { id: "923009991014@s.whatsapp.net", notify: "n1" },
+    { id: "923009991014@s.whatsapp.net", isBusiness: undefined },
+    { id: "923009991014@s.whatsapp.net", isBusiness: null },
+    { id: "923009991014@s.whatsapp.net", isBusiness: "no" },
+  ]) {
+    const payload = source.ingestContacts([partial]);
+    assert.equal(payload[0]?.isBusiness, null);
+    assert.equal((await source.listContacts())[0]?.isBusiness, true);
+  }
+
+  const explicitFalse = source.ingestContacts([
+    { id: "923009991014@s.whatsapp.net", isBusiness: false },
+  ]);
+  assert.equal(explicitFalse[0]?.isBusiness, false);
+  assert.equal((await source.listContacts())[0]?.isBusiness, false);
+
+  const viaVerified = source.ingestContacts([
+    { id: "923009991014@s.whatsapp.net", verifiedName: "Again Biz" },
+  ]);
+  assert.equal(viaVerified[0]?.isBusiness, true);
+  assert.equal((await source.listContacts())[0]?.isBusiness, true);
+}
+console.log("PASS: SYNC-14B-R2 business-field provider proof");
+
+{
+  type SocketWithIdentity = {
+    __onContactIdentity: WhatsAppWebContactIdentityHandler;
+  };
+  const contactOf = (
+    phone: string,
+    isBusiness: boolean | null
+  ): WhatsAppWebSyncContact => ({
+    jid: `${phone}@s.whatsapp.net`,
+    phoneE164: phone,
+    savedName: "Name",
+    verifiedName: null,
+    pushName: null,
+    shortName: null,
+    isBusiness,
+  });
+  const openFactory = (): {
+    factory: WhatsAppWebSocketFactory;
+    getCalls: () => number;
+    getHandler: (session: WhatsAppWebSession) => WhatsAppWebContactIdentityHandler;
+  } => {
+    let calls = 0;
+    const factory: WhatsAppWebSocketFactory = async (input) => {
+      calls += 1;
+      queueMicrotask(() =>
+        input.onConnectionUpdate({
+          connection: "open",
+          userId: "923001112233@s.whatsapp.net",
+        })
+      );
+      return {
+        end: () => {},
+        logout: async () => {},
+        sendText: async () => ({ providerMessageId: "x" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+        getSyncSource: () => null,
+        __onContactIdentity: input.onContactIdentity!,
+      };
+    };
+    return {
+      factory,
+      getCalls: () => calls,
+      getHandler: (session) => {
+        const sock = (session as unknown as { socket: SocketWithIdentity | null })
+          .socket;
+        assert.ok(sock?.__onContactIdentity);
+        return sock.__onContactIdentity;
+      },
+    };
+  };
+
+  // --- Reconnect reuses one queue; stale work cannot overwrite newer business ---
+  {
+    const authDir = tmpAuthDir();
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    const repo = new InMemoryWhatsAppRepository();
+    await repo.resolveOrCreateContact({ phoneE164: "923009991015" });
+
+    let releaseOldFind: (() => void) | null = null;
+    const oldFindGate = new Promise<void>((resolve) => {
+      releaseOldFind = resolve;
+    });
+    let stallNextFind = false;
+    const realFind = repo.findContactByPhoneE164!.bind(repo);
+    repo.findContactByPhoneE164 = async (phone, companyId) => {
+      const row = await realFind(phone, companyId);
+      if (stallNextFind && phone === "923009991015") {
+        stallNextFind = false;
+        await oldFindGate;
+      }
+      return row;
+    };
+
+    const { factory, getCalls, getHandler } = openFactory();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: factory,
+      syncRepo: repo,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    });
+
+    assert.equal(session.getContactPersistQueueEpoch(), 1);
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(getCalls(), 1);
+    assert.equal(session.getContactPersistQueueEpoch(), 1);
+
+    await session.disconnect();
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(getCalls(), 2);
+    // Soft reconnect must not create a competing queue.
+    assert.equal(session.getContactPersistQueueEpoch(), 1);
+
+    const onContact = getHandler(session);
+    stallNextFind = true;
+    const stale = onContact(contactOf("923009991015", false));
+    await new Promise((r) => setTimeout(r, 10));
+    const fresh = onContact(contactOf("923009991015", true));
+    await fresh;
+    releaseOldFind!();
+    await stale;
+
+    const final = await repo.findContactByPhoneE164!("923009991015");
+    assert.equal(final?.isBusinessContact, true);
+    assert.ok(session.getContactPersistPeakActive() <= 3);
+    await session.shutdown();
+  }
+
+  // --- Concurrency stays ≤3 across reconnect ---
+  {
+    const authDir = tmpAuthDir();
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    const repo = new InMemoryWhatsAppRepository();
+    const realUpdate = repo.updateContactSyncFields!.bind(repo);
+    repo.updateContactSyncFields = async (id, fields, companyId) => {
+      await new Promise((r) => setTimeout(r, 25));
+      return realUpdate(id, fields, companyId);
+    };
+    const { factory, getHandler } = openFactory();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: factory,
+      syncRepo: repo,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    });
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    const onContact = getHandler(session);
+    const batch1 = Array.from({ length: 8 }, (_, i) =>
+      onContact(contactOf(`9230099911${20 + i}`, i % 2 === 0))
+    );
+    await session.disconnect();
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(session.getContactPersistQueueEpoch(), 1);
+    const onContact2 = getHandler(session);
+    const batch2 = Array.from({ length: 8 }, (_, i) =>
+      onContact2(contactOf(`9230099911${40 + i}`, true))
+    );
+    await Promise.all([...batch1, ...batch2]);
+    assert.ok(session.getContactPersistPeakActive() <= 3);
+    await session.shutdown();
+  }
+
+  // --- Failure isolation + shutdown/logout with no unhandled rejection ---
+  {
+    const authDir = tmpAuthDir();
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    const boomRepo = new InMemoryWhatsAppRepository();
+    let failures = 0;
+    boomRepo.resolveOrCreateContact = async () => {
+      failures += 1;
+      throw new Error("persist boom");
+    };
+    const { factory, getHandler } = openFactory();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: factory,
+      syncRepo: boomRepo,
+      now: () => new Date("2026-07-24T12:00:00.000Z"),
+    });
+    await session.connect();
+    await new Promise((r) => setTimeout(r, 15));
+    const onContact = getHandler(session);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    await Promise.all([
+      onContact(contactOf("923009991016", true)),
+      onContact(contactOf("923009991017", false)),
+    ]);
+    assert.equal(failures, 2);
+    assert.equal(session.getSafeStatus().state, "CONNECTED");
+
+    await session.logout();
+    assert.equal(session.isContactPersistQueueClosed(), true);
+    await onContact(contactOf("923009991018", true));
+
+    // Shutdown after logout also stays quiet.
+    await session.shutdown();
+    await onContact(contactOf("923009991019", true));
+    await new Promise((r) => setTimeout(r, 20));
+    process.off("unhandledRejection", onUnhandled);
+    assert.equal(unhandled.length, 0);
+  }
+}
+console.log("PASS: SYNC-14B-R2 session queue lifecycle + stale write guard");
 
 console.log("ALL PASS: whatsappWebHistorySync");

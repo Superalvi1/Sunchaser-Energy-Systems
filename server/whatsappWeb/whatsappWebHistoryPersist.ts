@@ -26,6 +26,12 @@ export const WHATSAPP_WEB_BACKFILL_SOURCE = "history_backfill";
 export type WhatsAppWebHistoryPersistDeps = {
   repo?: WhatsAppRepository;
   now?: () => Date;
+  /**
+   * Optional abort for session queue generation/shutdown.
+   * Checked immediately before DB writes so stale in-flight work cannot
+   * overwrite newer contact metadata after an await.
+   */
+  shouldContinue?: () => boolean;
 };
 
 export type ContactSyncResult = {
@@ -71,9 +77,20 @@ export async function syncWhatsAppWebContact(
   });
 
   const companyId = DEFAULT_COMPANY_ID;
+  const stillCurrent = () =>
+    !deps.shouldContinue || deps.shouldContinue() === true;
+
   const existing = repo.findContactByPhoneE164
     ? await repo.findContactByPhoneE164(phone, companyId)
     : null;
+
+  if (!stillCurrent()) {
+    return {
+      contact: existing ?? ({ phoneE164: phone } as WhatsAppContact),
+      created: false,
+      updated: false,
+    };
+  }
 
   const nowIso = (deps.now ?? (() => new Date))().toISOString();
 
@@ -83,12 +100,19 @@ export async function syncWhatsAppWebContact(
       : { isBusinessContact: contact.isBusiness };
 
   if (!existing) {
+    if (!stillCurrent()) {
+      return {
+        contact: { phoneE164: phone } as WhatsAppContact,
+        created: false,
+        updated: false,
+      };
+    }
     const created = await repo.resolveOrCreateContact({
       phoneE164: phone,
       profileName: resolved.name,
       nameSource: resolved.source,
     });
-    if (repo.updateContactSyncFields) {
+    if (repo.updateContactSyncFields && stillCurrent()) {
       await repo.updateContactSyncFields(
         created.id,
         {
@@ -121,6 +145,10 @@ export async function syncWhatsAppWebContact(
   if (repo.updateContactSyncFields) {
     // Metadata (wa_jid / last_synced_at) never blindly writes weaker names —
     // updateContactSyncFields applies upgrade-only CAS for profile fields.
+    // Re-check generation after awaits so stale queue work cannot overwrite newer metadata.
+    if (!stillCurrent()) {
+      return { contact: existing, created: false, updated: false };
+    }
     await repo.updateContactSyncFields(
       existing.id,
       {
@@ -141,6 +169,9 @@ export async function syncWhatsAppWebContact(
           contact.isBusiness !== Boolean(existing.isBusinessContact))
     );
   } else {
+    if (!stillCurrent()) {
+      return { contact: existing, created: false, updated: false };
+    }
     await repo.resolveOrCreateContact({
       phoneE164: phone,
       profileName: resolved.name,

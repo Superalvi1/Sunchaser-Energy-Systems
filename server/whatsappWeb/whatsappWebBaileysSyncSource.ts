@@ -125,6 +125,26 @@ function nonEmptyString(value: unknown): string | null {
   return s ? s : null;
 }
 
+/**
+ * Prove business status from a Baileys contact event.
+ * Only a real boolean `isBusiness` or a non-empty verifiedName proves a value.
+ * Missing / undefined / null / invalid `isBusiness` → persist null (no DB patch).
+ */
+export function resolveWhatsAppBusinessProof(
+  raw: Record<string, unknown>,
+  previousMemoryBusiness: boolean | null | undefined
+): { persist: boolean | null; memory: boolean } {
+  let persist: boolean | null = null;
+  if (typeof raw.isBusiness === "boolean") {
+    persist = raw.isBusiness;
+  } else if (nonEmptyString(raw.verifiedName)) {
+    persist = true;
+  }
+  const memory =
+    persist !== null ? persist : Boolean(previousMemoryBusiness);
+  return { persist, memory };
+}
+
 function keyFields(msg: Record<string, unknown>): Record<string, unknown> {
   return (msg.key as Record<string, unknown> | undefined) ?? {};
 }
@@ -225,21 +245,11 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         nonEmptyString(c.verifiedName) ?? prev?.verifiedName ?? null;
       const pushName = nonEmptyString(c.notify) ?? prev?.pushName ?? null;
       const shortName = nonEmptyString(c.short) ?? prev?.shortName ?? null;
-      // Partial contacts.update: only change business when provider proves a value.
-      const hasBusinessField = Object.prototype.hasOwnProperty.call(
+      // Partial contacts.update: only proven boolean / verifiedName may change business.
+      const businessProof = resolveWhatsAppBusinessProof(
         c,
-        "isBusiness"
+        prev?.isBusiness ?? null
       );
-      let isBusiness: boolean | null = null;
-      if (hasBusinessField) {
-        isBusiness = Boolean(c.isBusiness);
-      } else if (nonEmptyString(c.verifiedName)) {
-        isBusiness = true;
-      }
-      const memoryBusiness =
-        isBusiness !== null
-          ? isBusiness
-          : (prev?.isBusiness ?? false);
       const entry: WhatsAppWebSyncContact = {
         jid,
         phoneE164: identity.phoneE164,
@@ -248,13 +258,13 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
         pushName,
         shortName,
         // Memory keeps a concrete flag; persist payload uses null when unproven.
-        isBusiness: memoryBusiness,
+        isBusiness: businessProof.memory,
       };
       this.contacts.set(jid, entry);
       resolved.push({
         ...entry,
         // Downstream persistence: null means "do not patch business flag".
-        isBusiness,
+        isBusiness: businessProof.persist,
       });
     }
     return resolved;
