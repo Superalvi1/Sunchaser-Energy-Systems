@@ -25,6 +25,8 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   // Canonical path: /api/whatsapp/webhook (GET verify + POST inbound).
   { method: "GET", path: "/api/whatsapp/webhook" },
   { method: "POST", path: "/api/whatsapp/webhook" },
+  // Marketplace public + guest possession-token APIs (handler-gated + MARKETPLACE_ENABLED).
+  { pathPrefix: "/api/marketplace/" },
 ];
 
 export function normalizeHttpMethod(method: string): HttpMethod {

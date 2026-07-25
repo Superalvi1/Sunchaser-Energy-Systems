@@ -13,7 +13,10 @@ const CUSTOMER_ALLOWED_EXACT = new Set([
   "/api/ai/chat",
 ]);
 
-const CUSTOMER_ALLOWED_PREFIXES = ["/api/customer-portal/"];
+const CUSTOMER_ALLOWED_PREFIXES = [
+  "/api/customer-portal/",
+  "/api/marketplace/",
+];
 
 /** Staff PDF routes that customers may access when handler enforces ownership. */
 const CUSTOMER_ALLOWED_STAFF_PDF_PREFIXES = [
