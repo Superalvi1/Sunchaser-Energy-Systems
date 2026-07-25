@@ -29,6 +29,12 @@ import {
   logMetaEmbeddedSignupDebug,
   sanitizeEmbeddedSignupError,
 } from "../lib/metaEmbeddedSignup";
+import {
+  applyFailedWebStatusPoll,
+  applySuccessfulWebStatusPoll,
+  shouldShowInitialWebLoading,
+  type WhatsAppWebDisplaySnapshot,
+} from "../lib/whatsappWebQrDisplay";
 import type {
   WhatsAppConnectionStatusPayload,
   WhatsAppConnectionTestResult,
@@ -85,9 +91,18 @@ export default function WhatsAppConnectionPanel({
 }: WhatsAppConnectionPanelProps) {
   const [webStatus, setWebStatus] = useState<WhatsAppWebSafeStatus | null>(null);
   const [qr, setQr] = useState<WhatsAppWebQrPayload | null>(null);
-  const [webLoading, setWebLoading] = useState(true);
+  const [hasLoadedWebStatus, setHasLoadedWebStatus] = useState(false);
+  const [initialWebLoading, setInitialWebLoading] = useState(true);
+  const [isRefreshingWeb, setIsRefreshingWeb] = useState(false);
   const [webBusy, setWebBusy] = useState(false);
   const [webError, setWebError] = useState<string | null>(null);
+  const hasLoadedWebStatusRef = useRef(false);
+  const displaySnapshotRef = useRef<WhatsAppWebDisplaySnapshot>({
+    status: null,
+    qr: null,
+    hasLoadedOnce: false,
+    error: null,
+  });
 
   // Meta Embedded Signup — retained as secondary/disabled restore path.
   const [metaStatus, setMetaStatus] = useState<WhatsAppConnectionStatusPayload | null>(
@@ -106,25 +121,50 @@ export default function WhatsAppConnectionPanel({
   const activeStateRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadWebStatus = async () => {
+  const commitWebDisplay = (next: WhatsAppWebDisplaySnapshot) => {
+    displaySnapshotRef.current = next;
+    setWebStatus(next.status);
+    setQr(next.qr);
+    setWebError(next.error);
+    setHasLoadedWebStatus(next.hasLoadedOnce);
+    hasLoadedWebStatusRef.current = next.hasLoadedOnce;
+  };
+
+  const loadWebStatus = async (mode: "initial" | "background" = "initial") => {
+    const isBackground = mode === "background" && hasLoadedWebStatusRef.current;
     try {
-      setWebLoading(true);
-      setWebError(null);
+      if (isBackground) {
+        setIsRefreshingWeb(true);
+      } else if (!hasLoadedWebStatusRef.current) {
+        setInitialWebLoading(true);
+      }
       const status = await fetchWhatsAppWebStatus();
-      setWebStatus(status);
+      let fetchedQr: WhatsAppWebQrPayload | null = null;
       if (status.qrAvailable) {
         try {
-          setQr(await fetchWhatsAppWebQr());
+          fetchedQr = await fetchWhatsAppWebQr();
         } catch {
-          setQr(null);
+          // Keep previous QR on QR fetch failure; status still applies below.
+          fetchedQr = null;
         }
-      } else {
-        setQr(null);
       }
+      commitWebDisplay(
+        applySuccessfulWebStatusPoll(
+          displaySnapshotRef.current,
+          status,
+          fetchedQr
+        )
+      );
     } catch (err) {
-      setWebError(err instanceof Error ? err.message : "Failed to load WhatsApp Web status");
+      commitWebDisplay(
+        applyFailedWebStatusPoll(
+          displaySnapshotRef.current,
+          err instanceof Error ? err.message : "Failed to load WhatsApp Web status"
+        )
+      );
     } finally {
-      setWebLoading(false);
+      setInitialWebLoading(false);
+      setIsRefreshingWeb(false);
     }
   };
 
@@ -148,9 +188,12 @@ export default function WhatsAppConnectionPanel({
   };
 
   useEffect(() => {
-    void loadWebStatus();
+    void loadWebStatus("initial");
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
     };
   }, []);
 
@@ -162,12 +205,18 @@ export default function WhatsAppConnectionPanel({
     ) {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(() => {
-        void loadWebStatus();
+        void loadWebStatus("background");
       }, 2500);
     } else if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
   }, [webStatus?.state]);
 
   const handleGenerateQr = async () => {
@@ -175,10 +224,21 @@ export default function WhatsAppConnectionPanel({
     setWebError(null);
     try {
       const status = await connectWhatsAppWeb();
-      setWebStatus(status);
+      let fetchedQr: WhatsAppWebQrPayload | null = null;
       if (status.qrAvailable || status.state === "QR_READY") {
-        setQr(await fetchWhatsAppWebQr());
+        try {
+          fetchedQr = await fetchWhatsAppWebQr();
+        } catch {
+          fetchedQr = null;
+        }
       }
+      commitWebDisplay(
+        applySuccessfulWebStatusPoll(
+          displaySnapshotRef.current,
+          status,
+          fetchedQr
+        )
+      );
     } catch (err) {
       setWebError(err instanceof Error ? err.message : "Failed to generate QR");
     } finally {
@@ -190,8 +250,10 @@ export default function WhatsAppConnectionPanel({
     setWebBusy(true);
     setWebError(null);
     try {
-      setWebStatus(await disconnectWhatsAppWeb());
-      setQr(null);
+      const status = await disconnectWhatsAppWeb();
+      commitWebDisplay(
+        applySuccessfulWebStatusPoll(displaySnapshotRef.current, status, null)
+      );
     } catch (err) {
       setWebError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
@@ -210,14 +272,21 @@ export default function WhatsAppConnectionPanel({
     setWebBusy(true);
     setWebError(null);
     try {
-      setWebStatus(await logoutWhatsAppWeb());
-      setQr(null);
+      const status = await logoutWhatsAppWeb();
+      commitWebDisplay(
+        applySuccessfulWebStatusPoll(displaySnapshotRef.current, status, null)
+      );
     } catch (err) {
       setWebError(err instanceof Error ? err.message : "Logout failed");
     } finally {
       setWebBusy(false);
     }
   };
+
+  const showInitialWebLoading = shouldShowInitialWebLoading(
+    hasLoadedWebStatus,
+    initialWebLoading
+  );
 
   const handleLaunchEmbeddedSignup = async () => {
     setConnecting(true);
@@ -328,7 +397,7 @@ export default function WhatsAppConnectionPanel({
           </span>
         </div>
 
-        {webLoading ? (
+        {showInitialWebLoading ? (
           <div className="flex items-center gap-2 py-3 text-xs text-[var(--inbox-muted)]">
             <RefreshCw className="h-4 w-4 animate-spin" />
             Checking WhatsApp Web status...
@@ -366,12 +435,20 @@ export default function WhatsAppConnectionPanel({
                   )}
                 </div>
               </div>
-              {webStatus?.phoneMasked ? (
-                <div className="flex items-center gap-1 font-mono text-[11px]">
-                  <Phone className="h-3 w-3 text-emerald-400" />
-                  {webStatus.phoneMasked}
-                </div>
-              ) : null}
+              <div className="flex items-center gap-2">
+                {isRefreshingWeb ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-[var(--inbox-muted)]">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Refreshing…
+                  </span>
+                ) : null}
+                {webStatus?.phoneMasked ? (
+                  <div className="flex items-center gap-1 font-mono text-[11px]">
+                    <Phone className="h-3 w-3 text-emerald-400" />
+                    {webStatus.phoneMasked}
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {webStatus && !webStatus.enabled ? (

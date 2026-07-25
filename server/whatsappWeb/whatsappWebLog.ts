@@ -6,7 +6,7 @@
 export type WhatsAppWebLogLevel = "info" | "warn" | "error";
 
 const FORBIDDEN_KEY_PATTERN =
-  /(cred|secret|token|key|auth|session|qr|password|cookie|noise|identity|prekey)/i;
+  /(cred|secret|token|key|auth|session|qr|password|cookie|noise|identity|prekey|phone|jid|msisdn|waid|header|cookie|stack|error)/i;
 
 export function logWhatsAppWeb(
   level: WhatsAppWebLogLevel,
@@ -17,8 +17,19 @@ export function logWhatsAppWeb(
   if (safeMeta) {
     for (const [k, v] of Object.entries(safeMeta)) {
       if (FORBIDDEN_KEY_PATTERN.test(k)) continue;
+      // Only fixed primitives — never objects, arrays, Error stacks, or URLs blobs.
+      if (v !== null && typeof v === "object") continue;
+      if (typeof v === "function" || typeof v === "symbol") continue;
       if (typeof v === "string" && v.length > 200) {
         meta[k] = `[redacted:${v.length}chars]`;
+        continue;
+      }
+      if (
+        typeof v !== "string" &&
+        typeof v !== "number" &&
+        typeof v !== "boolean" &&
+        v !== null
+      ) {
         continue;
       }
       meta[k] = v;
