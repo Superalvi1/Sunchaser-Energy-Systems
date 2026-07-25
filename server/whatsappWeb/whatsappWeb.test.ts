@@ -275,6 +275,9 @@ console.log("PASS: auth-directory containment + logout delete");
     "ignore"
   );
   assert.equal(jidToWaId("923001112233@s.whatsapp.net"), "923001112233");
+  assert.equal(jidToWaId("923001112233:7@s.whatsapp.net"), "923001112233");
+  assert.equal(jidToWaId("123456789012345@lid"), null);
+  assert.equal(jidToWaId("923001112233@unknown.host"), null);
   assert.equal(waIdToChatJid("923001112233"), "923001112233@s.whatsapp.net");
   assert.equal(isWhatsAppWebQrChannel(WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID), true);
   assert.equal(isWhatsAppWebQrChannel("meta-phone"), false);
@@ -1084,7 +1087,7 @@ console.log("PASS: stale QR cannot overwrite CONNECTED; phone masked after open"
 console.log("PASS: Approved-staff authorization + spoof resistance + flag-off");
 
 {
-  assert.equal(WHATSAPP_WEB_ADMIN_ROUTES.length, 5);
+  assert.equal(WHATSAPP_WEB_ADMIN_ROUTES.length, 7);
 
   const authDir = tmpAuthDir();
   const session = new WhatsAppWebSession({

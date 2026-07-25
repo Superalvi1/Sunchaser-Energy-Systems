@@ -31,15 +31,27 @@ export type NormalizeBaileysResult =
         | "missing_provider_id";
     };
 
+/** Hosts that may yield a phoneE164 identity. Never treat @lid / unknown hosts as phones. */
+export const WHATSAPP_PHONE_JID_HOSTS = new Set(["s.whatsapp.net"]);
+
 /**
  * Convert a remote JID (e.g. 92300...@s.whatsapp.net) to digits-only phone id.
+ * Only @s.whatsapp.net user JIDs are accepted. Device suffixes (user:device@host) are stripped.
+ * @lid, groups, status/broadcast, newsletters, and unknown hosts return null.
  */
 export function jidToWaId(remoteJid: string): string | null {
-  const bare = String(remoteJid || "").trim();
-  if (!bare || bare.endsWith("@g.us")) return null;
-  if (bare === "status@broadcast" || bare.endsWith("@newsletter")) return null;
-  const user = bare.split("@")[0] ?? "";
-  const digits = digitsOnlyPhone(user.split(":")[0] ?? "");
+  const bare = String(remoteJid || "").trim().split("/")[0] ?? "";
+  if (!bare) return null;
+  const at = bare.lastIndexOf("@");
+  if (at <= 0) return null;
+  const userPart = bare.slice(0, at);
+  const host = bare.slice(at + 1).toLowerCase();
+  if (!WHATSAPP_PHONE_JID_HOSTS.has(host)) return null;
+  if (bare.endsWith("@g.us")) return null;
+  if (bare === "status@broadcast" || host.includes("broadcast")) return null;
+  if (host.endsWith("newsletter") || bare.endsWith("@newsletter")) return null;
+  const user = userPart.split(":")[0] ?? "";
+  const digits = digitsOnlyPhone(user);
   return digits.length >= 6 ? digits : null;
 }
 

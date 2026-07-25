@@ -15,13 +15,16 @@ import {
   fetchEmbeddedSignupState,
   fetchWhatsAppConnectionStatus,
   fetchWhatsAppOnboardingDiagnostics,
+  fetchWhatsAppWebHistorySync,
   fetchWhatsAppWebQr,
   fetchWhatsAppWebStatus,
   logoutWhatsAppWeb,
+  startWhatsAppWebHistorySync,
   submitEmbeddedSignup,
   testWhatsAppConnection,
   type WhatsAppWebQrPayload,
   type WhatsAppWebSafeStatus,
+  type WhatsAppWebSyncJobSnapshot,
 } from "../api/inboxApi";
 import {
   extractEmbeddedSignupProviderError,
@@ -97,6 +100,10 @@ export default function WhatsAppConnectionPanel({
   const [isRefreshingWeb, setIsRefreshingWeb] = useState(false);
   const [webBusy, setWebBusy] = useState(false);
   const [webError, setWebError] = useState<string | null>(null);
+  const [syncJob, setSyncJob] = useState<WhatsAppWebSyncJobSnapshot | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasLoadedWebStatusRef = useRef(false);
   const displaySnapshotRef = useRef<WhatsAppWebDisplaySnapshot>({
     status: null,
@@ -224,6 +231,10 @@ export default function WhatsAppConnectionPanel({
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
+      if (syncPollRef.current) {
+        clearInterval(syncPollRef.current);
+        syncPollRef.current = null;
+      }
       gate.unmount();
     };
   }, []);
@@ -331,6 +342,62 @@ export default function WhatsAppConnectionPanel({
     } finally {
       if (requestGateRef.current.isMounted()) {
         setWebBusy(false);
+      }
+    }
+  };
+
+  const stopSyncPolling = () => {
+    if (syncPollRef.current) {
+      clearInterval(syncPollRef.current);
+      syncPollRef.current = null;
+    }
+  };
+
+  const pollSyncStatus = async () => {
+    try {
+      const snapshot = await fetchWhatsAppWebHistorySync();
+      if (!requestGateRef.current.isMounted()) return;
+      setSyncJob(snapshot);
+      if (snapshot.status === "completed" || snapshot.status === "failed") {
+        stopSyncPolling();
+        setSyncBusy(false);
+        if (snapshot.status === "failed" && snapshot.errorSummary) {
+          setSyncError(snapshot.errorSummary);
+        }
+      }
+    } catch {
+      // Background sync poll must not affect Inbox / QR status loading.
+      if (requestGateRef.current.isMounted()) {
+        stopSyncPolling();
+        setSyncBusy(false);
+      }
+    }
+  };
+
+  const handleSyncContactsHistory = async () => {
+    setSyncBusy(true);
+    setSyncError(null);
+    try {
+      const snapshot = await startWhatsAppWebHistorySync();
+      if (!requestGateRef.current.isMounted()) return;
+      setSyncJob(snapshot);
+      if (snapshot.status === "starting" || snapshot.status === "running") {
+        stopSyncPolling();
+        syncPollRef.current = setInterval(() => {
+          void pollSyncStatus();
+        }, 2000);
+      } else {
+        setSyncBusy(false);
+        if (snapshot.status === "failed" && snapshot.errorSummary) {
+          setSyncError(snapshot.errorSummary);
+        }
+      }
+    } catch (err) {
+      if (requestGateRef.current.isMounted()) {
+        setSyncBusy(false);
+        setSyncError(
+          err instanceof Error ? err.message : "Failed to start contact sync"
+        );
       }
     }
   };
@@ -558,6 +625,76 @@ export default function WhatsAppConnectionPanel({
                   </>
                 )}
               </button>
+              {webStatus?.state === "CONNECTED" ? (
+                <button
+                  type="button"
+                  disabled={webBusy || syncBusy}
+                  onClick={() => void handleSyncContactsHistory()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                >
+                  {syncBusy ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Syncing contacts &amp; history…
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4" />
+                      Sync contacts &amp; last 7 days
+                    </>
+                  )}
+                </button>
+              ) : null}
+              {syncError ? (
+                <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-400">
+                  {syncError}
+                </div>
+              ) : null}
+              {syncJob && syncJob.status !== "idle" ? (
+                <div className="space-y-1 rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-3 text-[11px] text-[var(--inbox-muted)]">
+                  <div className="font-semibold text-[var(--inbox-fg)]">
+                    Sync: {syncJob.status}
+                  </div>
+                  <div>
+                    Contacts: {syncJob.contactsDiscovered} discovered ·{" "}
+                    {syncJob.contactsCreated} created · {syncJob.contactsUpdated}{" "}
+                    updated
+                  </div>
+                  <div>
+                    Chats: {syncJob.chatsInspected} inspected ·{" "}
+                    {syncJob.conversationsCreated} conversations created ·{" "}
+                    {syncJob.conversationsUpdated} updated
+                  </div>
+                  <div>
+                    Messages: {syncJob.messagesImported} imported ·{" "}
+                    {syncJob.duplicatesSkipped} duplicates skipped ·{" "}
+                    {syncJob.failedChats} failed chats
+                  </div>
+                  <div>
+                    History coverage: {syncJob.historyCoverage}
+                    {syncJob.historySourceReady ? "" : " · source not ready"}
+                    {syncJob.historyProviderEventObserved
+                      ? " · provider history event observed"
+                      : " · no provider history event"}
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-[var(--inbox-muted)]">
+                    Only history supplied to the current WhatsApp Web session is
+                    imported. This is not a guaranteed full 7-day archive from
+                    WhatsApp.
+                  </p>
+                  {syncJob.startedAt ? (
+                    <div>Started: {new Date(syncJob.startedAt).toLocaleString()}</div>
+                  ) : null}
+                  {syncJob.completedAt ? (
+                    <div>
+                      Completed: {new Date(syncJob.completedAt).toLocaleString()}
+                    </div>
+                  ) : null}
+                  {syncJob.errorSummary ? (
+                    <div className="text-amber-300">{syncJob.errorSummary}</div>
+                  ) : null}
+                </div>
+              ) : null}
               {webStatus?.state === "CONNECTED" ||
               webStatus?.state === "RECONNECTING" ||
               webStatus?.state === "QR_READY" ? (

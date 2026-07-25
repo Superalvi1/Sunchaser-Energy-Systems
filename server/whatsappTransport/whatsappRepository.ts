@@ -30,6 +30,10 @@ export type WhatsAppContact = {
   profileName: string | null;
   createdAt: string;
   updatedAt: string;
+  waJid?: string | null;
+  nameSource?: string | null;
+  isBusinessContact?: boolean;
+  lastSyncedAt?: string | null;
 };
 
 export type WhatsAppConversation = {
@@ -69,6 +73,8 @@ export type WhatsAppMessage = {
   address?: string | null;
   placeName?: string | null;
   rawMetadata?: Record<string, unknown> | null;
+  /** Historical sync marker — never drives unread/AI/live automation. */
+  isBackfill?: boolean;
 };
 
 export type WhatsAppWebhookEventRow = {
@@ -143,6 +149,9 @@ export interface WhatsAppRepository {
     address?: string | null;
     placeName?: string | null;
     rawMetadata?: Record<string, unknown> | null;
+    isBackfill?: boolean;
+    /** When set (backfill), used for created_at so history does not look "new". */
+    createdAt?: string;
   }): Promise<InsertResult<WhatsAppMessage>>;
   insertStatusEvent(
     input: NormalizedStatusEvent
@@ -157,19 +166,60 @@ export interface WhatsAppRepository {
     conversationId: string,
     at: string
   ): Promise<void>;
+  /**
+   * Atomic last_message_at maximum — never reduces.
+   * Implementations must scope by company_id and use a single compare/update.
+   */
+  advanceConversationLastMessageAt?(
+    conversationId: string,
+    at: string,
+    companyId?: string
+  ): Promise<boolean>;
   insertAuditEvent(input: {
     eventType: AuditEventType | string;
     entityType?: string | null;
     entityId?: string | null;
     metadata?: Record<string, unknown>;
   }): Promise<WhatsAppAuditEvent>;
-  getConversationBundle(conversationId: string): Promise<ConversationBundle | null>;
+  getConversationBundle(
+    conversationId: string,
+    companyId?: string
+  ): Promise<ConversationBundle | null>;
   /** Resolve legacy whatsapp_messages.id by Meta wa_message_id (for normalized binding recovery). */
   findMessageIdByWaMessageId(waMessageId: string): Promise<string | null>;
+  findContactByPhoneE164?(
+    phoneE164: string,
+    companyId?: string
+  ): Promise<WhatsAppContact | null>;
+  updateContactSyncFields?(
+    contactId: string,
+    fields: {
+      waJid?: string | null;
+      nameSource?: string | null;
+      isBusinessContact?: boolean;
+      lastSyncedAt?: string | null;
+      profileName?: string | null;
+    },
+    companyId?: string
+  ): Promise<WhatsAppContact | null>;
   insertOutboundMessage(input: {
     conversationId: string;
     textBody: string;
   }): Promise<WhatsAppMessage>;
+  insertHistoricalOutboundMessage?(input: {
+    conversationId: string;
+    waMessageId: string;
+    textBody: string;
+    occurredAt: string;
+    status?: string;
+    messageType?: string;
+    mimeType?: string | null;
+    caption?: string | null;
+    filename?: string | null;
+    rawMetadata?: Record<string, unknown> | null;
+    isBackfill?: boolean;
+    createdAt?: string;
+  }): Promise<InsertResult<WhatsAppMessage>>;
   updateMessageStatus(input: {
     messageId: string;
     status: string;
@@ -361,6 +411,8 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
     address?: string | null;
     placeName?: string | null;
     rawMetadata?: Record<string, unknown> | null;
+    isBackfill?: boolean;
+    createdAt?: string;
   }): Promise<InsertResult<WhatsAppMessage>> {
     if (this.failPersistAfterClaim) {
       throw new Error(this.failPersistAfterClaim);
@@ -373,6 +425,7 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
         return { ok: true, row: message, created: false };
       }
     }
+    const createdAt = input.createdAt ?? nowIso();
     const row: WhatsAppMessage = {
       id: newId("wmsg"),
       companyId: DEFAULT_COMPANY_ID,
@@ -384,8 +437,8 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       providerError: null,
       occurredAt: input.occurredAt,
       sentAt: null,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
+      createdAt,
+      updatedAt: createdAt,
       rawPayload: input.rawPayload,
       messageType: input.messageType ?? "text",
       metaMediaId: input.metaMediaId ?? null,
@@ -399,6 +452,7 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       address: input.address ?? null,
       placeName: input.placeName ?? null,
       rawMetadata: input.rawMetadata ?? input.rawPayload,
+      isBackfill: input.isBackfill === true,
     };
     this.messages.set(row.id, row);
     return { ok: true, row, created: true };
@@ -462,6 +516,62 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
     conversation.updatedAt = nowIso();
   }
 
+  async advanceConversationLastMessageAt(
+    conversationId: string,
+    at: string,
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<boolean> {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation || conversation.companyId !== companyId) return false;
+    // Single synchronous max — no await between read and write.
+    if (conversation.lastMessageAt && conversation.lastMessageAt >= at) {
+      return false;
+    }
+    conversation.lastMessageAt = at;
+    conversation.updatedAt = nowIso();
+    return true;
+  }
+
+  async findContactByPhoneE164(
+    phoneE164: string,
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<WhatsAppContact | null> {
+    for (const contact of this.contacts.values()) {
+      if (contact.companyId === companyId && contact.phoneE164 === phoneE164) {
+        return contact;
+      }
+    }
+    return null;
+  }
+
+  async updateContactSyncFields(
+    contactId: string,
+    fields: {
+      waJid?: string | null;
+      nameSource?: string | null;
+      isBusinessContact?: boolean;
+      lastSyncedAt?: string | null;
+      profileName?: string | null;
+    },
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<WhatsAppContact | null> {
+    const contact = this.contacts.get(contactId);
+    if (!contact || contact.companyId !== companyId) return null;
+    if (fields.waJid !== undefined) contact.waJid = fields.waJid;
+    if (fields.nameSource !== undefined) contact.nameSource = fields.nameSource;
+    if (fields.isBusinessContact !== undefined) {
+      contact.isBusinessContact = fields.isBusinessContact;
+    }
+    if (fields.lastSyncedAt !== undefined) {
+      contact.lastSyncedAt = fields.lastSyncedAt;
+    }
+    if (fields.profileName !== undefined) {
+      contact.profileName = fields.profileName;
+    }
+    contact.updatedAt = nowIso();
+    return contact;
+  }
+
   async insertAuditEvent(input: {
     eventType: AuditEventType | string;
     entityType?: string | null;
@@ -482,13 +592,17 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
   }
 
   async getConversationBundle(
-    conversationId: string
+    conversationId: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<ConversationBundle | null> {
     const conversation = this.conversations.get(conversationId);
-    if (!conversation) return null;
+    if (!conversation || conversation.companyId !== companyId) return null;
     const contact = this.contacts.get(conversation.contactId);
     const channel = this.channels.get(conversation.channelId);
     if (!contact || !channel) return null;
+    if (contact.companyId !== companyId || channel.companyId !== companyId) {
+      return null;
+    }
     return { conversation, contact, channel };
   }
 
@@ -528,9 +642,58 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
       createdAt: nowIso(),
       updatedAt: nowIso(),
       rawPayload: null,
+      isBackfill: false,
     };
     this.messages.set(row.id, row);
     return row;
+  }
+
+  async insertHistoricalOutboundMessage(input: {
+    conversationId: string;
+    waMessageId: string;
+    textBody: string;
+    occurredAt: string;
+    status?: string;
+    messageType?: string;
+    mimeType?: string | null;
+    caption?: string | null;
+    filename?: string | null;
+    rawMetadata?: Record<string, unknown> | null;
+    isBackfill?: boolean;
+    createdAt?: string;
+  }): Promise<InsertResult<WhatsAppMessage>> {
+    for (const message of this.messages.values()) {
+      if (
+        message.companyId === DEFAULT_COMPANY_ID &&
+        message.waMessageId === input.waMessageId
+      ) {
+        return { ok: true, row: message, created: false };
+      }
+    }
+    const createdAt = input.createdAt ?? input.occurredAt;
+    const row: WhatsAppMessage = {
+      id: newId("wmsg"),
+      companyId: DEFAULT_COMPANY_ID,
+      conversationId: input.conversationId,
+      direction: MESSAGE_DIRECTIONS.OUTBOUND,
+      status: input.status ?? MESSAGE_STATUSES.SENT,
+      textBody: input.textBody,
+      waMessageId: input.waMessageId,
+      providerError: null,
+      occurredAt: input.occurredAt,
+      sentAt: input.occurredAt,
+      createdAt,
+      updatedAt: createdAt,
+      rawPayload: input.rawMetadata ?? null,
+      messageType: input.messageType ?? "text",
+      mimeType: input.mimeType ?? null,
+      caption: input.caption ?? null,
+      filename: input.filename ?? null,
+      rawMetadata: input.rawMetadata ?? null,
+      isBackfill: input.isBackfill !== false,
+    };
+    this.messages.set(row.id, row);
+    return { ok: true, row, created: true };
   }
 
   async updateMessageStatus(input: {
@@ -581,6 +744,10 @@ function mapContact(row: Record<string, unknown>): WhatsAppContact {
     profileName: (row.profile_name as string) ?? null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    waJid: (row.wa_jid as string) ?? null,
+    nameSource: (row.name_source as string) ?? null,
+    isBusinessContact: Boolean(row.is_business_contact),
+    lastSyncedAt: (row.last_synced_at as string) ?? null,
   };
 }
 
@@ -623,6 +790,7 @@ function mapMessage(row: Record<string, unknown>): WhatsAppMessage {
     longitude: typeof row.longitude === "number" ? row.longitude : null,
     address: (row.address as string) ?? null,
     placeName: (row.place_name as string) ?? null,
+    isBackfill: Boolean(row.is_backfill),
     rawMetadata: (row.raw_metadata as Record<string, unknown>) ?? null,
   };
 }
@@ -911,6 +1079,8 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
     address?: string | null;
     placeName?: string | null;
     rawMetadata?: Record<string, unknown> | null;
+    isBackfill?: boolean;
+    createdAt?: string;
   }): Promise<InsertResult<WhatsAppMessage>> {
     const supabase = this.client();
     const { data: existing } = await supabase
@@ -927,7 +1097,8 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       };
     }
 
-    const row = {
+    const createdAt = input.createdAt ?? undefined;
+    const row: Record<string, unknown> = {
       id: newId("wmsg"),
       company_id: DEFAULT_COMPANY_ID,
       conversation_id: input.conversationId,
@@ -949,7 +1120,12 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       address: input.address ?? null,
       place_name: input.placeName ?? null,
       raw_metadata: input.rawMetadata ?? input.rawPayload,
+      is_backfill: input.isBackfill === true,
     };
+    if (createdAt) {
+      row.created_at = createdAt;
+      row.updated_at = createdAt;
+    }
     const { data, error } = await supabase
       .from("whatsapp_messages")
       .insert(row)
@@ -1108,6 +1284,152 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
     if (error) throw new Error(error.message);
   }
 
+  async advanceConversationLastMessageAt(
+    conversationId: string,
+    at: string,
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<boolean> {
+    const supabase = this.client();
+    // Atomic DB-side maximum (SYNC-1A). Never read-modify-write in app code.
+    const { data, error } = await supabase.rpc(
+      "whatsapp_advance_conversation_last_message_at",
+      {
+        p_company_id: companyId,
+        p_conversation_id: conversationId,
+        p_at: at,
+      }
+    );
+    if (error) throw new Error(error.message);
+    return data === true;
+  }
+
+  async findContactByPhoneE164(
+    phoneE164: string,
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<WhatsAppContact | null> {
+    const { data, error } = await this.client()
+      .from("whatsapp_contacts")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("phone_e164", phoneE164)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ? mapContact(data as Record<string, unknown>) : null;
+  }
+
+  async updateContactSyncFields(
+    contactId: string,
+    fields: {
+      waJid?: string | null;
+      nameSource?: string | null;
+      isBusinessContact?: boolean;
+      lastSyncedAt?: string | null;
+      profileName?: string | null;
+    },
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<WhatsAppContact | null> {
+    const patch: Record<string, unknown> = { updated_at: nowIso() };
+    if (fields.waJid !== undefined) patch.wa_jid = fields.waJid;
+    if (fields.nameSource !== undefined) patch.name_source = fields.nameSource;
+    if (fields.isBusinessContact !== undefined) {
+      patch.is_business_contact = fields.isBusinessContact;
+    }
+    if (fields.lastSyncedAt !== undefined) {
+      patch.last_synced_at = fields.lastSyncedAt;
+    }
+    if (fields.profileName !== undefined) {
+      patch.profile_name = fields.profileName;
+    }
+    const { data, error } = await this.client()
+      .from("whatsapp_contacts")
+      .update(patch)
+      .eq("company_id", companyId)
+      .eq("id", contactId)
+      .select("*")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ? mapContact(data as Record<string, unknown>) : null;
+  }
+
+  async insertHistoricalOutboundMessage(input: {
+    conversationId: string;
+    waMessageId: string;
+    textBody: string;
+    occurredAt: string;
+    status?: string;
+    messageType?: string;
+    mimeType?: string | null;
+    caption?: string | null;
+    filename?: string | null;
+    rawMetadata?: Record<string, unknown> | null;
+    isBackfill?: boolean;
+    createdAt?: string;
+  }): Promise<InsertResult<WhatsAppMessage>> {
+    const supabase = this.client();
+    const { data: existing } = await supabase
+      .from("whatsapp_messages")
+      .select("*")
+      .eq("company_id", DEFAULT_COMPANY_ID)
+      .eq("wa_message_id", input.waMessageId)
+      .maybeSingle();
+    if (existing) {
+      return {
+        ok: true,
+        row: mapMessage(existing as Record<string, unknown>),
+        created: false,
+      };
+    }
+    const createdAt = input.createdAt ?? input.occurredAt;
+    const row = {
+      id: newId("wmsg"),
+      company_id: DEFAULT_COMPANY_ID,
+      conversation_id: input.conversationId,
+      direction: MESSAGE_DIRECTIONS.OUTBOUND,
+      status: input.status ?? MESSAGE_STATUSES.SENT,
+      text_body: input.textBody,
+      wa_message_id: input.waMessageId,
+      occurred_at: input.occurredAt,
+      sent_at: input.occurredAt,
+      created_at: createdAt,
+      updated_at: createdAt,
+      message_type: input.messageType ?? "text",
+      mime_type: input.mimeType ?? null,
+      caption: input.caption ?? null,
+      filename: input.filename ?? null,
+      raw_metadata: input.rawMetadata ?? null,
+      raw_payload: input.rawMetadata ?? null,
+      is_backfill: input.isBackfill !== false,
+    };
+    const { data, error } = await supabase
+      .from("whatsapp_messages")
+      .insert(row)
+      .select("*")
+      .single();
+    if (error) {
+      if (isUniqueViolation(error)) {
+        const { data: raced } = await supabase
+          .from("whatsapp_messages")
+          .select("*")
+          .eq("company_id", DEFAULT_COMPANY_ID)
+          .eq("wa_message_id", input.waMessageId)
+          .maybeSingle();
+        if (raced) {
+          return {
+            ok: true,
+            row: mapMessage(raced as Record<string, unknown>),
+            created: false,
+          };
+        }
+      }
+      return { ok: false, error: error.message };
+    }
+    return {
+      ok: true,
+      row: mapMessage(data as Record<string, unknown>),
+      created: true,
+    };
+  }
+
   async insertAuditEvent(input: {
     eventType: AuditEventType | string;
     entityType?: string | null;
@@ -1140,12 +1462,14 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
   }
 
   async getConversationBundle(
-    conversationId: string
+    conversationId: string,
+    companyId: string = DEFAULT_COMPANY_ID
   ): Promise<ConversationBundle | null> {
     const supabase = this.client();
     const { data: conversation, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
+      .eq("company_id", companyId)
       .eq("id", conversationId)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -1153,8 +1477,18 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
 
     const conv = mapConversation(conversation as Record<string, unknown>);
     const [{ data: contact }, { data: channel }] = await Promise.all([
-      supabase.from("whatsapp_contacts").select("*").eq("id", conv.contactId).maybeSingle(),
-      supabase.from("whatsapp_channels").select("*").eq("id", conv.channelId).maybeSingle(),
+      supabase
+        .from("whatsapp_contacts")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", conv.contactId)
+        .maybeSingle(),
+      supabase
+        .from("whatsapp_channels")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", conv.channelId)
+        .maybeSingle(),
     ]);
     if (!contact || !channel) return null;
     return {

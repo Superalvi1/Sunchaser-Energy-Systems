@@ -366,3 +366,45 @@ export async function logoutWhatsAppWeb(): Promise<WhatsAppWebSafeStatus> {
   );
   return data;
 }
+
+/** Admin contact sync + available-history backfill job snapshot. */
+export type WhatsAppWebSyncJobSnapshot = {
+  jobId: string | null;
+  status: "idle" | "starting" | "running" | "completed" | "failed";
+  contactsDiscovered: number;
+  contactsCreated: number;
+  contactsUpdated: number;
+  chatsInspected: number;
+  conversationsCreated: number;
+  conversationsUpdated: number;
+  messagesImported: number;
+  duplicatesSkipped: number;
+  failedChats: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  errorSummary: string | null;
+  windowDays: number;
+  joinedExisting?: boolean;
+  historySourceReady: boolean;
+  historyCoverage: "unknown" | "empty" | "available_only" | "partial";
+  historyProviderEventObserved: boolean;
+  historyOldestAvailableAt: string | null;
+  historyNewestAvailableAt: string | null;
+  historyOnDemandSupported: boolean;
+};
+
+export async function startWhatsAppWebHistorySync(): Promise<WhatsAppWebSyncJobSnapshot> {
+  const { data } = await inboxRequest<WhatsAppWebSyncJobSnapshot>(
+    "/api/whatsapp-web/sync",
+    { method: "POST", body: JSON.stringify({}) }
+  );
+  return data;
+}
+
+export async function fetchWhatsAppWebHistorySync(): Promise<WhatsAppWebSyncJobSnapshot> {
+  const { data } = await inboxRequest<WhatsAppWebSyncJobSnapshot>(
+    "/api/whatsapp-web/sync",
+    { method: "GET" }
+  );
+  return data;
+}

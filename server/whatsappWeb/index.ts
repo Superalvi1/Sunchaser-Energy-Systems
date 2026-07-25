@@ -71,3 +71,24 @@ export {
   createWhatsAppWebRateLimit,
   resetWhatsAppWebRateLimitStore,
 } from "./whatsappWebRateLimit.ts";
+
+export {
+  WHATSAPP_WEB_SYNC_WINDOW_DAYS,
+  resolveWhatsAppDisplayName,
+  shouldApplyWhatsAppContactName,
+  isEligibleSyncChat,
+  isEligibleSyncContact,
+  type WhatsAppWebSyncJobSnapshot,
+  type WhatsAppWebSyncSource,
+} from "./whatsappWebSyncTypes.ts";
+export { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
+export {
+  persistWhatsAppWebBackfillMessage,
+  syncWhatsAppWebContact,
+  isBackfillMetadata,
+  WHATSAPP_WEB_BACKFILL_SOURCE,
+} from "./whatsappWebHistoryPersist.ts";
+export {
+  BaileysInMemorySyncSource,
+  type BaileysHistorySetPayload,
+} from "./whatsappWebBaileysSyncSource.ts";

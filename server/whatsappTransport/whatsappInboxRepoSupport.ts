@@ -174,6 +174,8 @@ export type InboxMessageRef = {
   longitude?: number | null;
   address?: string | null;
   placeName?: string | null;
+  /** Historical sync — excluded from unread counts. */
+  isBackfill?: boolean;
 };
 
 export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
@@ -197,6 +199,7 @@ export function mapMessageRef(row: Record<string, unknown>): InboxMessageRef {
     longitude: typeof row.longitude === "number" ? row.longitude : null,
     address: (row.address as string) ?? null,
     placeName: (row.place_name as string) ?? null,
+    isBackfill: Boolean(row.is_backfill),
   };
 }
 

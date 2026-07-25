@@ -6,6 +6,8 @@
  * GET  /api/whatsapp-web/qr
  * POST /api/whatsapp-web/disconnect
  * POST /api/whatsapp-web/logout
+ * POST /api/whatsapp-web/sync
+ * GET  /api/whatsapp-web/sync
  *
  * Authorization (JWT-hydrated actor only — never body/headers):
  * - Missing actor → 401
@@ -39,6 +41,8 @@ export const WHATSAPP_WEB_ADMIN_ROUTES = [
   { method: "GET", path: "/qr" },
   { method: "POST", path: "/disconnect" },
   { method: "POST", path: "/logout" },
+  { method: "POST", path: "/sync" },
+  { method: "GET", path: "/sync" },
 ] as const;
 
 export function requireWhatsAppWebAdmin(
@@ -170,6 +174,31 @@ export function createWhatsAppWebRouter(
         "Failed to logout WhatsApp Web session"
       );
     }
+  });
+
+  router.get("/sync", (_req, res) => {
+    noStore(res);
+    const snapshot = session.getHistorySyncSnapshot();
+    assertNoCredentialLeak(snapshot);
+    return inboxOk(res, snapshot);
+  });
+
+  router.post("/sync", (_req, res) => {
+    noStore(res);
+    const result = session.startHistorySync();
+    assertNoCredentialLeak(result.snapshot);
+    if (!result.accepted && result.snapshot.status === "failed") {
+      return inboxFail(
+        res,
+        409,
+        "sync_unavailable",
+        result.snapshot.errorSummary || "Sync unavailable"
+      );
+    }
+    return inboxOk(res, {
+      ...result.snapshot,
+      joinedExisting: result.joinedExisting,
+    });
   });
 
   return router;

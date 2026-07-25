@@ -20,6 +20,7 @@
     "test:whatsapp-inbox-ui": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/hooks/inboxMutations.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/lib/metaEmbeddedSignup.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/components/whatsappVerifyTokenBrowserExposure.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/inbox/lib/whatsappWebQrDisplay.test.ts",
     "test:whatsapp-inbox-production-wiring": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxProductionWiring.test.ts",
     "test:whatsapp-web-qr": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWeb.test.ts",
+    "test:whatsapp-web-history-sync": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWebHistorySync.test.ts",
     "test:ai-shadow-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiEngine/aiEngine.test.ts",
     "test:unified-messaging-baseline": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/unifiedMessagingBaseline.test.ts",
     "test:unified-messaging-contract": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/unifiedMessaging/transportContract.test.ts",
