@@ -493,15 +493,19 @@ export class WhatsAppWebSession {
   private readonly historySync: WhatsAppWebHistorySyncService;
   /**
    * Single session-owned persist queue reused across socket reconnects.
-   * Per-phone generation + key serialization; monotonic epoch blocks ABA reuse.
+   * Per-phone FIFO serialization; monotonic epoch + drain on hard close.
    */
   private contactPersistQueue: ContactIdentityPersistQueue;
-  private readonly contactPersistGeneration = new Map<string, number>();
   /**
    * Monotonic queue/session epoch. Bumped on create and on close so closed-epoch
-   * tasks can never become current again after generation maps are cleared.
+   * tasks that have not yet issued a DB write cannot become current again.
    */
   private contactPersistQueueEpoch = 0;
+  /**
+   * Settles when a hard-closed queue has no active tasks left. Replacement
+   * queues must await this before executing persistence.
+   */
+  private contactPersistClosedDrain: Promise<void> | null = null;
   /**
    * Test seam: awaited inside guarded updateContactSyncFields after the final
    * pre-write isCurrent check and before the real repository mutate.
@@ -603,7 +607,6 @@ export class WhatsAppWebSession {
 
   private createContactPersistQueue(): ContactIdentityPersistQueue {
     this.contactPersistQueueEpoch += 1;
-    this.contactPersistGeneration.clear();
     return new ContactIdentityPersistQueue({
       concurrency: WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
       onTaskError: () => {
@@ -612,34 +615,44 @@ export class WhatsAppWebSession {
     });
   }
 
-  /** Reuse the same queue across reconnects; recreate only after logout/shutdown close. */
-  private ensureContactPersistQueueOpen(): void {
+  /**
+   * Reuse the same queue across soft reconnects. After hard close, wait for the
+   * closed queue's active tasks to settle before creating a replacement queue.
+   */
+  private async ensureContactPersistQueueOpen(): Promise<void> {
+    if (!this.contactPersistQueue.isClosed) return;
+    if (this.contactPersistClosedDrain) {
+      await this.contactPersistClosedDrain;
+      this.contactPersistClosedDrain = null;
+    }
     if (this.contactPersistQueue.isClosed) {
       this.contactPersistQueue = this.createContactPersistQueue();
     }
   }
 
   /**
-   * Close the session persist queue: drop pending work, refuse new enqueues.
-   * Bumps epoch so in-flight tasks from this epoch can never become current again
-   * (including after generation maps are cleared and a new queue is created).
+   * Hard-close: drop pending work, bump epoch (invalidates not-yet-issued writes),
+   * and begin draining active tasks. Replacement queues must await the drain.
    */
   private closeContactPersistQueue(reason: string): void {
-    this.contactPersistGeneration.clear();
-    // Invalidate every task that captured the prior epoch (ABA protection).
+    if (this.contactPersistQueue.isClosed) return;
+    this.contactPersistQueue.close();
+    // Invalidate not-yet-issued work from this epoch (ABA / hard-close).
     this.contactPersistQueueEpoch += 1;
-    if (!this.contactPersistQueue.isClosed) {
-      this.contactPersistQueue.close();
-      logWhatsAppWeb("info", "contact_identity_persist_queue_closed", {
-        reason,
-      });
-    }
+    this.contactPersistClosedDrain = this.contactPersistQueue
+      .whenIdle()
+      .then(() => undefined);
+    logWhatsAppWeb("info", "contact_identity_persist_queue_closed", {
+      reason,
+    });
   }
 
   /**
    * Enqueue contact identity persistence on the session-owned bounded queue.
-   * Same phone is strictly serialized; global concurrency stays ≤3 across phones.
-   * Captured epoch + queue identity prevent ABA revival after close/recreate.
+   * Same phone is strictly FIFO-serialized; global concurrency stays ≤3.
+   * Same-epoch tasks are not cancelled when a newer event is enqueued — FIFO
+   * preserves proven business metadata. Epoch/queue identity still invalidate
+   * work that has not yet issued a repository write after hard close.
    */
   private enqueueContactIdentityPersist(
     contact: import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncContact
@@ -652,16 +665,14 @@ export class WhatsAppWebSession {
 
     const epochAtEnqueue = this.contactPersistQueueEpoch;
     const queueAtEnqueue = this.contactPersistQueue;
-    const generation =
-      (this.contactPersistGeneration.get(phoneKey) ?? 0) + 1;
-    this.contactPersistGeneration.set(phoneKey, generation);
 
+    // Valid until hard-close bumps epoch / closes this queue instance.
+    // Do NOT cancel same-epoch FIFO peers when a newer event arrives.
     const isCurrent = () =>
       !this.shuttingDown &&
       this.contactPersistQueueEpoch === epochAtEnqueue &&
       this.contactPersistQueue === queueAtEnqueue &&
-      !queueAtEnqueue.isClosed &&
-      this.contactPersistGeneration.get(phoneKey) === generation;
+      !queueAtEnqueue.isClosed;
 
     const baseRepo = this.syncRepo;
     const guardedRepo: WhatsAppRepository = new Proxy(baseRepo, {
@@ -671,20 +682,23 @@ export class WhatsAppWebSession {
           if (!underlying) return undefined;
           return async (
             id: string,
-            fields: Parameters<NonNullable<WhatsAppRepository["updateContactSyncFields"]>>[1],
+            fields: Parameters<
+              NonNullable<WhatsAppRepository["updateContactSyncFields"]>
+            >[1],
             companyId?: string
           ) => {
-            // Final pre-write check (inside updateContactSyncFields).
+            // Final pre-write check — invalidates only work not yet issued.
             if (!isCurrent()) {
               return null as never;
             }
             if (this.contactPersistTestBeforeWrite) {
               await this.contactPersistTestBeforeWrite({ id, fields });
             }
-            // Re-check after any await so logout/newer-epoch cannot overwrite.
             if (!isCurrent()) {
               return null as never;
             }
+            // Point of no return: once the repository call starts, drain must
+            // wait for it; epoch checks cannot safely cancel it mid-flight.
             return underlying.call(target, id, fields, companyId);
           };
         }
@@ -774,7 +788,7 @@ export class WhatsAppWebSession {
 
     this.connectionDesired = true;
     this.shuttingDown = false;
-    this.ensureContactPersistQueueOpen();
+    await this.ensureContactPersistQueueOpen();
     await this.startSocket("CONNECTING");
     logWhatsAppWeb("info", "startup_resume_attempted");
     return { resumed: true, state: this.state };
@@ -794,7 +808,7 @@ export class WhatsAppWebSession {
     this.paths = resolveWhatsAppWebAuthPaths(config);
     await ensureWhatsAppWebAuthDirWritable(this.paths);
     this.shuttingDown = false;
-    this.ensureContactPersistQueueOpen();
+    await this.ensureContactPersistQueueOpen();
 
     this.connectionDesired = true;
     this.shuttingDown = false;
@@ -1072,8 +1086,8 @@ export class WhatsAppWebSession {
 
     this.startLock = true;
     this.clearReconnectTimer();
-    // Reconnect reuses the same queue; recreate only if logout/shutdown closed it.
-    this.ensureContactPersistQueueOpen();
+    // Soft reconnect reuses the same queue; hard-close recreates only after drain.
+    await this.ensureContactPersistQueueOpen();
     this.setState(initialState, "Starting WhatsApp Web connection");
 
     try {
