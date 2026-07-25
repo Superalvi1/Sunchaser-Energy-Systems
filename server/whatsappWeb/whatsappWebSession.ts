@@ -31,6 +31,52 @@ import {
   type WhatsAppWebQrPayload,
   type WhatsAppWebSafeStatus,
 } from "./whatsappWebTypes.ts";
+import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
+import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
+import type {
+  WhatsAppWebSyncJobSnapshot,
+  WhatsAppWebSyncSource,
+} from "./whatsappWebSyncTypes.ts";
+import {
+  createDefaultWhatsAppRepository,
+  type WhatsAppRepository,
+} from "../whatsappTransport/whatsappRepository.ts";
+
+/** Delegates to the active socket sync source (or disconnected stub). */
+class SessionBoundSyncSource implements WhatsAppWebSyncSource {
+  constructor(
+    private readonly getLive: () => WhatsAppWebSyncSource | null
+  ) {}
+
+  private live(): WhatsAppWebSyncSource | null {
+    return this.getLive();
+  }
+
+  isConnected(): boolean {
+    return this.live()?.isConnected() ?? false;
+  }
+
+  getSelfJid(): string | null {
+    return this.live()?.getSelfJid() ?? null;
+  }
+
+  listContacts() {
+    return this.live()?.listContacts() ?? Promise.resolve([]);
+  }
+
+  listChats() {
+    return this.live()?.listChats() ?? Promise.resolve([]);
+  }
+
+  fetchMessages(
+    chatJid: string,
+    opts: { limit: number; sinceMs: number }
+  ) {
+    return (
+      this.live()?.fetchMessages(chatJid, opts) ?? Promise.resolve([])
+    );
+  }
+}
 
 /** Capped exponential-ish reconnect delays (ms). */
 export const WHATSAPP_WEB_RECONNECT_DELAYS_MS = [
@@ -161,6 +207,8 @@ export type WhatsAppWebSocketHandle = {
   sendText: (jid: string, text: string) => Promise<{ providerMessageId: string }>;
   /** Current Baileys user id; call after connection opens. */
   getUserId?: () => string | null;
+  /** Contact/chat/history source for admin sync (Baileys in-memory). */
+  getSyncSource?: () => import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncSource;
 };
 
 export type WhatsAppWebSocketFactory = (input: {
@@ -182,6 +230,8 @@ export type WhatsAppWebSessionOptions = {
   reconnectDelaysMs?: readonly number[];
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
+  /** Repository used by admin contact/history sync (defaults to createDefault). */
+  syncRepo?: WhatsAppRepository;
 };
 
 async function defaultSocketFactory(input: {
@@ -209,6 +259,7 @@ async function defaultSocketFactory(input: {
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });
+  const syncSource = new BaileysInMemorySyncSource();
 
   sock.ev.on("creds.update", () => {
     void saveCreds().then(() => input.onCredentialsSaved());
@@ -221,6 +272,7 @@ async function defaultSocketFactory(input: {
     }
 
     if (update.connection === "open") {
+      syncSource.setConnected(true, sock.user?.id ?? null);
       input.onConnectionUpdate({
         connection: "open",
         userId: sock.user?.id ?? null,
@@ -229,6 +281,7 @@ async function defaultSocketFactory(input: {
     }
 
     if (update.connection === "close") {
+      syncSource.setConnected(false);
       const statusCode = (
         update.lastDisconnect as { error?: { output?: { statusCode?: number } } }
       )?.error?.output?.statusCode;
@@ -249,8 +302,47 @@ async function defaultSocketFactory(input: {
     }
   });
 
+  sock.ev.on("contacts.upsert", (contacts) => {
+    syncSource.ingestContacts(
+      (contacts ?? []) as unknown as Array<Record<string, unknown>>
+    );
+  });
+  sock.ev.on("contacts.update", (contacts) => {
+    syncSource.ingestContacts(
+      (contacts ?? []) as unknown as Array<Record<string, unknown>>
+    );
+  });
+  sock.ev.on("chats.upsert", (chats) => {
+    syncSource.ingestChats(
+      (chats ?? []) as unknown as Array<Record<string, unknown>>
+    );
+  });
+  sock.ev.on("chats.update", (chats) => {
+    syncSource.ingestChats(
+      (chats ?? []) as unknown as Array<Record<string, unknown>>
+    );
+  });
+  sock.ev.on("messaging-history.set", (payload) => {
+    const p = payload as unknown as {
+      chats?: Array<Record<string, unknown>>;
+      contacts?: Array<Record<string, unknown>>;
+      messages?: Array<Record<string, unknown>>;
+    };
+    if (p.contacts) syncSource.ingestContacts(p.contacts);
+    if (p.chats) syncSource.ingestChats(p.chats);
+    if (p.messages) syncSource.ingestMessages(p.messages);
+  });
+
   sock.ev.on("messages.upsert", (upsert) => {
     const messages = upsert.messages ?? [];
+    // Keep history/append traffic out of the live inbound pipeline (AI/auto-link).
+    const upsertType = String((upsert as { type?: string }).type || "notify");
+    syncSource.ingestMessages(
+      messages as unknown as Array<Record<string, unknown>>
+    );
+    if (upsertType !== "notify") {
+      return;
+    }
     for (const msg of messages) {
       void (async () => {
         const remoteJid = String(msg.key?.remoteJid ?? "");
@@ -288,6 +380,7 @@ async function defaultSocketFactory(input: {
 
   return {
     end: () => {
+      syncSource.setConnected(false);
       try {
         sock.end(undefined);
       } catch {
@@ -295,6 +388,7 @@ async function defaultSocketFactory(input: {
       }
     },
     logout: async () => {
+      syncSource.setConnected(false);
       await sock.logout();
     },
     sendText: async (jid, text) => {
@@ -306,6 +400,7 @@ async function defaultSocketFactory(input: {
       return { providerMessageId };
     },
     getUserId: () => sock.user?.id ?? null,
+    getSyncSource: () => syncSource,
   };
 }
 
@@ -318,6 +413,7 @@ export class WhatsAppWebSession {
   private readonly setTimeoutFn: typeof setTimeout;
   private readonly clearTimeoutFn: typeof clearTimeout;
   private inboundHandler: WhatsAppWebInboundHandler | null;
+  private readonly historySync: WhatsAppWebHistorySyncService;
 
   private state: WhatsAppWebLifecycleState = "DISCONNECTED";
   private phoneRaw: string | null = null;
@@ -351,6 +447,14 @@ export class WhatsAppWebSession {
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
     this.updatedAt = this.now().toISOString();
+    const boundSource = new SessionBoundSyncSource(
+      () => this.socket?.getSyncSource?.() ?? null
+    );
+    this.historySync = new WhatsAppWebHistorySyncService({
+      source: boundSource,
+      repo: options.syncRepo ?? createDefaultWhatsAppRepository(),
+      now: this.now,
+    });
   }
 
   setInboundHandler(handler: WhatsAppWebInboundHandler | null): void {
@@ -465,6 +569,7 @@ export class WhatsAppWebSession {
   /** Soft disconnect — not desired; never auto-reconnect; keep credentials. */
   async disconnect(): Promise<WhatsAppWebSafeStatus> {
     this.connectionDesired = false;
+    this.cancelHistorySync("disconnect");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
     if (this.socket) {
@@ -485,6 +590,7 @@ export class WhatsAppWebSession {
    */
   async logout(): Promise<WhatsAppWebSafeStatus> {
     this.connectionDesired = false;
+    this.cancelHistorySync("logout");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
 
@@ -540,10 +646,37 @@ export class WhatsAppWebSession {
     return this.state === "CONNECTED" && this.socket != null;
   }
 
+  /**
+   * Admin contact + 7-day history sync (single-flight).
+   * Never sends messages or triggers AI.
+   */
+  startHistorySync(): {
+    accepted: boolean;
+    joinedExisting: boolean;
+    snapshot: WhatsAppWebSyncJobSnapshot;
+  } {
+    const result = this.historySync.startOrJoin();
+    return {
+      accepted: result.accepted,
+      joinedExisting: result.joinedExisting,
+      snapshot: result.snapshot,
+    };
+  }
+
+  getHistorySyncSnapshot(): WhatsAppWebSyncJobSnapshot {
+    return this.historySync.getSnapshot();
+  }
+
+  private cancelHistorySync(reason: string): void {
+    this.historySync.requestCancel();
+    logWhatsAppWeb("info", "history_sync_cancel_requested", { reason });
+  }
+
   /** Graceful shutdown — not desired; cancel reconnect; preserve credentials. */
   async shutdown(): Promise<void> {
     this.connectionDesired = false;
     this.shuttingDown = true;
+    this.cancelHistorySync("shutdown");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
     if (this.socket) {
@@ -688,6 +821,7 @@ export class WhatsAppWebSession {
 
     try {
       if (this.socket) {
+        this.cancelHistorySync("socket_replace");
         try {
           this.socket.end();
         } catch {
@@ -744,6 +878,7 @@ export class WhatsAppWebSession {
     if (update.connection === "logged_out") {
       // Terminal: clear timer first; never reconnect.
       this.connectionDesired = false;
+      this.cancelHistorySync("logged_out");
       this.clearReconnectTimer();
       this.reconnectAttempt = 0;
       this.clearQr();
@@ -766,6 +901,7 @@ export class WhatsAppWebSession {
     }
 
     if (update.connection === "close") {
+      this.cancelHistorySync("connection_close");
       this.socket = null;
       this.clearQr();
 

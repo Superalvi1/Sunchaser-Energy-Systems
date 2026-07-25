@@ -1084,7 +1084,7 @@ console.log("PASS: stale QR cannot overwrite CONNECTED; phone masked after open"
 console.log("PASS: Approved-staff authorization + spoof resistance + flag-off");
 
 {
-  assert.equal(WHATSAPP_WEB_ADMIN_ROUTES.length, 5);
+  assert.equal(WHATSAPP_WEB_ADMIN_ROUTES.length, 7);
 
   const authDir = tmpAuthDir();
   const session = new WhatsAppWebSession({

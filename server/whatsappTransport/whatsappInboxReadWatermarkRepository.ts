@@ -137,6 +137,7 @@ export class InMemoryWhatsAppInboxReadWatermarkRepository
       (m) =>
         m.conversationId === conversationId &&
         m.direction === "inbound" &&
+        m.isBackfill !== true &&
         isNewerThanWatermark(m, watermark)
     ).length;
   }
@@ -246,7 +247,8 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
       .select("id", { count: "exact", head: true })
       .eq("company_id", this.access.companyId(companyId))
       .eq("conversation_id", conversationId)
-      .eq("direction", "inbound");
+      .eq("direction", "inbound")
+      .eq("is_backfill", false);
 
     if (
       watermark?.lastReadInboundMessageCreatedAt &&
@@ -273,7 +275,8 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
       .select("id")
       .eq("company_id", this.access.companyId(companyId))
       .eq("conversation_id", conversationId)
-      .eq("direction", "inbound");
+      .eq("direction", "inbound")
+      .eq("is_backfill", false);
 
     if (
       watermark?.lastReadInboundMessageCreatedAt &&
