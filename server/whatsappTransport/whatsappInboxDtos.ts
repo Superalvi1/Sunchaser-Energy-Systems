@@ -619,3 +619,40 @@ export function parseConversationIdParam(
 ): DtoResult<string> {
   return requireNonEmptyString(value, "conversationId");
 }
+
+export type AiDraftBody = {
+  messageText: string;
+  messageId?: string;
+  locale?: string;
+};
+
+const AI_DRAFT_BODY_KEYS = ["messageText", "messageId", "locale"] as const;
+
+/** POST /conversations/:id/ai-draft — never includes a send flag. */
+export function parseAiDraftBody(body: unknown): DtoResult<AiDraftBody> {
+  const rec = asRecord(body);
+  if (!rec) return { ok: false, message: "JSON body is required" };
+  const unknown = rejectUnknownKeys(rec, AI_DRAFT_BODY_KEYS);
+  if (unknown) return unknown;
+  const messageText = requireNonEmptyString(rec.messageText, "messageText");
+  if (isDtoErr(messageText)) return messageText;
+  if (messageText.value.length > 4096) {
+    return {
+      ok: false,
+      message: "messageText must be at most 4096 characters",
+      field: "messageText",
+    };
+  }
+  const messageId = optionalNonEmptyString(rec.messageId, "messageId");
+  if (isDtoErr(messageId)) return messageId;
+  const locale = optionalNonEmptyString(rec.locale, "locale");
+  if (isDtoErr(locale)) return locale;
+  return {
+    ok: true,
+    value: {
+      messageText: messageText.value,
+      messageId: messageId.value,
+      locale: locale.value,
+    },
+  };
+}

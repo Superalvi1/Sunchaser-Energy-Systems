@@ -6,6 +6,7 @@ import type { Request, Response } from "express";
 import type { RequestActor } from "../middleware/actor.ts";
 import {
   encodeInboxCursor,
+  parseAiDraftBody,
   parseAssignBody,
   parseConversationIdBody,
   parseConversationIdParam,
@@ -36,6 +37,14 @@ import {
   type WhatsAppInboxListAvailabilityResolver,
   type WhatsAppQrListStatus,
 } from "./whatsappInboxListAvailability.ts";
+import {
+  createInboxAiDraftAdapter,
+  isAiDraftEnabled,
+  readAiDraftConfig,
+  type AiDraftConfig,
+  type InboxAiDraftAdapter,
+} from "./aiDraft/index.ts";
+import { canGenerateAiDraft } from "./whatsappInboxPermissions.ts";
 
 export type InboxSendPort = (input: {
   conversationId: string;
@@ -87,6 +96,13 @@ export type InboxControllerDeps = {
    * Combined Meta + QR list availability. Prefer injecting this in production.
    */
   resolveListAvailability?: WhatsAppInboxListAvailabilityResolver;
+  /**
+   * AI-03 draft adapter. Defaults to mock (no live provider).
+   * Must never be wired to InboxSendPort.
+   */
+  aiDraftAdapter?: InboxAiDraftAdapter;
+  /** AI-03 config override (tests). */
+  aiDraftConfig?: AiDraftConfig;
 };
 
 /**
@@ -114,6 +130,10 @@ export function createInboxControllers(
       getMetaConnectionStatus: resolveConnectionStatus,
       getQrConnectionStatus: deps.getQrConnectionStatus,
     });
+  const aiDraftConfig = deps.aiDraftConfig ?? readAiDraftConfig();
+  const aiDraftAdapter =
+    deps.aiDraftAdapter ??
+    createInboxAiDraftAdapter({ config: aiDraftConfig });
 
   return {
     async listConversations(req: Request, res: Response) {
@@ -569,6 +589,104 @@ export function createInboxControllers(
         return inboxOk(res, payload);
       } catch (err) {
         return sendInboxError(res, err);
+      }
+    },
+
+    /**
+     * AI-03: generate a human-reviewed draft. Never calls sendPort.
+     * Automatic replies remain impossible in this phase.
+     */
+    async generateAiDraft(req: Request, res: Response) {
+      try {
+        const actor = actorOf(req);
+        if (!canGenerateAiDraft(actor)) {
+          return inboxFail(res, 403, "forbidden", "AI draft access denied");
+        }
+
+        if (!isAiDraftEnabled(aiDraftConfig)) {
+          return inboxFail(
+            res,
+            503,
+            "feature_disabled",
+            "AI draft generation is disabled",
+            {
+              requiresHumanReview: true,
+              autoSendBlocked: true,
+            }
+          );
+        }
+
+        const conversationId = parseConversationIdParam(
+          req.params.conversationId
+        );
+        if (isDtoErr(conversationId)) {
+          return validationFail(res, conversationId);
+        }
+        const parsed = parseAiDraftBody(req.body);
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
+        }
+
+        // Load conversation for tenant isolation (and 404 if missing).
+        // Does not trigger generation on conversation open — only this POST does.
+        const detail = await services.conversations.getDetail(
+          conversationId.value,
+          actor
+        );
+        const conversation = detail.conversation;
+
+        const controller = new AbortController();
+        const timeoutMs = aiDraftConfig.timeoutMs;
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          // Invariant: this handler must never call deps.sendPort / outbound.
+          const outcome = await aiDraftAdapter.generateDraft({
+            companyId: conversation.companyId || DEFAULT_COMPANY_ID,
+            conversationId: conversation.id,
+            conversationCompanyId: conversation.companyId || DEFAULT_COMPANY_ID,
+            actorUserId: actor.id,
+            messageText: parsed.value.messageText,
+            messageId: parsed.value.messageId,
+            locale: parsed.value.locale,
+            abortSignal: controller.signal,
+          });
+
+          if (outcome.status === "denied") {
+            const status =
+              outcome.reasonCode === "feature_disabled"
+                ? 503
+                : outcome.reasonCode === "tenant_mismatch"
+                  ? 403
+                  : outcome.reasonCode === "timeout" ||
+                      outcome.reasonCode === "provider_unavailable" ||
+                      outcome.reasonCode === "config_unavailable"
+                    ? 503
+                    : outcome.reasonCode === "rate_limited"
+                      ? 429
+                      : 422;
+            return inboxFail(res, status, outcome.reasonCode, outcome.message, {
+              status: outcome.status,
+              requiresHumanReview: true,
+              autoSendBlocked: true,
+              escalate: outcome.escalate,
+              escalationReasons: outcome.escalationReasons,
+              audit: outcome.audit,
+            });
+          }
+
+          return inboxOk(res, outcome);
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (err) {
+        // Provider/adapter failures are safe — never escalate to send.
+        const message =
+          err instanceof Error ? err.message : "AI draft generation failed";
+        return inboxFail(res, 503, "provider_unavailable", message, {
+          requiresHumanReview: true,
+          autoSendBlocked: true,
+        });
       }
     },
   };

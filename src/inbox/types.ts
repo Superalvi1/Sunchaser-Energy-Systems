@@ -177,3 +177,38 @@ export type WhatsAppConnectionTestResult = {
     phoneNumberIdMasked: string | null;
   };
 };
+
+/** AI-03 draft outcome from POST /conversations/:id/ai-draft */
+export type InboxAiDraftResult = {
+  status: "draft";
+  companyId: string;
+  conversationId: string;
+  draftId: string;
+  answer: string;
+  intent: string;
+  confidence: number;
+  warnings: string[];
+  requiresHumanReview: true;
+  autoSendBlocked: true;
+  escalate: boolean;
+  escalationReasons: string[];
+  safeSources: Array<{
+    sourceId: string;
+    title: string;
+    publicUrl?: string;
+  }>;
+};
+
+export type InboxAiDraftDenied = {
+  status: "denied";
+  companyId: string;
+  conversationId: string;
+  reasonCode: string;
+  message: string;
+  requiresHumanReview: true;
+  autoSendBlocked: true;
+  escalate: true;
+  escalationReasons: string[];
+};
+
+export type InboxAiDraftOutcome = InboxAiDraftResult | InboxAiDraftDenied;

@@ -1,6 +1,7 @@
 import { authorizedFetch } from "../../services/api";
 import {
   InboxClientError,
+  type InboxAiDraftOutcome,
   type InboxConversation,
   type InboxConversationDetail,
   type InboxCrmLink,
@@ -164,6 +165,47 @@ export async function sendInboxMessage(input: {
     body: JSON.stringify(input),
   });
   return data;
+}
+
+/**
+ * AI-03: request a human-reviewed draft. Never sends a WhatsApp message.
+ * Separate from sendInboxMessage — callers must not auto-send the result.
+ */
+export async function generateInboxAiDraft(input: {
+  conversationId: string;
+  messageText: string;
+  messageId?: string;
+  locale?: string;
+}): Promise<InboxAiDraftOutcome> {
+  const { conversationId, ...body } = input;
+  try {
+    const { data } = await inboxRequest<InboxAiDraftOutcome>(
+      `/api/inbox/conversations/${encodeURIComponent(conversationId)}/ai-draft`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return data;
+  } catch (err) {
+    // Denied outcomes may arrive as error envelopes with draft metadata.
+    if (err instanceof InboxClientError && err.details?.status === "denied") {
+      return {
+        status: "denied",
+        companyId: String(err.details.companyId ?? ""),
+        conversationId,
+        reasonCode: err.code,
+        message: err.message,
+        requiresHumanReview: true,
+        autoSendBlocked: true,
+        escalate: true,
+        escalationReasons: Array.isArray(err.details.escalationReasons)
+          ? (err.details.escalationReasons as string[])
+          : [err.code],
+      };
+    }
+    throw err;
+  }
 }
 
 export async function markInboxRead(input: {
