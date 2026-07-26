@@ -341,6 +341,7 @@ import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
 import { createMarketplaceAdminRouter } from "./server/marketplace/admin/adminRoutes.ts";
 import { createMarketplacePricingRouter } from "./server/marketplace/pricing/pricingRoutes.ts";
 import { createMarketplaceSupplierRouter } from "./server/marketplace/suppliers/index.ts";
+import { createMarketplaceAutoImportRouter } from "./server/marketplace/autoImport/index.ts";
 import { createCartRouter } from "./server/marketplace/cart/index.ts";
 import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
 import { createCodRouter } from "./server/marketplace/cod/index.ts";
@@ -705,6 +706,8 @@ app.use("/api/marketplace/admin", createMarketplaceAdminRouter());
 app.use("/api/marketplace/admin", createMarketplacePricingRouter());
 // Marketplace WS4 supplier ingestion / price-check / alerts (marketplace staff; mappings Super Admin).
 app.use("/api/marketplace/admin", createMarketplaceSupplierRouter());
+// CEO-authorized automatic supplier catalogue import + sync health (Super Admin).
+app.use("/api/marketplace/admin", createMarketplaceAutoImportRouter());
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
