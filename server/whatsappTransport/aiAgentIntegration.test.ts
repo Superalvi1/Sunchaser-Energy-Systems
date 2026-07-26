@@ -579,6 +579,9 @@ await test("customer query → approved knowledge → safe draft (never sends)",
       WHATSAPP_AI_AUTO_REPLY_ENABLED: "false",
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
       WHATSAPP_AI_LIVE_PROVIDER_ENABLED: "false",
+      // Explicit fixtures mode for demo-pack assertion (never silent fallback).
+      WHATSAPP_AI_KNOWLEDGE_SOURCE: "fixtures",
+      NODE_ENV: "test",
       GEMINI_API_KEY: undefined,
     },
     async () => {
@@ -639,6 +642,8 @@ await test("unsafe engineering question → escalation", async () => {
     {
       WHATSAPP_AI_QUERY_DRAFT_ENABLED: "true",
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
+      WHATSAPP_AI_KNOWLEDGE_SOURCE: "production",
+      NODE_ENV: "test",
       GEMINI_API_KEY: undefined,
     },
     async () => {
@@ -900,8 +905,8 @@ await test("tenant separation — company B cannot see company A knowledge", asy
     engine: createFixtureKnowledgeEngine(),
     asOfIso: fixtureAsOfIso(),
   });
-  assert.equal(resolveKnowledgeTenantId("sunchaser"), FIXTURE_TENANT_A);
-  assert.equal(resolveKnowledgeTenantId(FIXTURE_TENANT_B), FIXTURE_TENANT_B);
+  assert.equal(resolveKnowledgeTenantId("sunchaser", "fixtures"), FIXTURE_TENANT_A);
+  assert.equal(resolveKnowledgeTenantId(FIXTURE_TENANT_B, "fixtures"), FIXTURE_TENANT_B);
 
   const forA = knowledge.retrieve({
     companyId: FIXTURE_TENANT_A,

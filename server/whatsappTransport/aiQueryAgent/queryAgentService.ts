@@ -208,11 +208,12 @@ export class QueryAgentService {
       });
     // Knowledge is opt-in via createQueryAgentService / explicit port.
     // Unit tests constructing QueryAgentService directly stay policy-only.
+    // AI-05: source selected via WHATSAPP_AI_KNOWLEDGE_SOURCE (fail-closed).
     this.knowledge =
       options.knowledge !== undefined
         ? options.knowledge
         : options.enableKnowledge
-          ? createQueryKnowledgeAdapter()
+          ? createQueryKnowledgeAdapter({ env: options.env })
           : null;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
@@ -660,7 +661,7 @@ export function createQueryAgentService(
 ): QueryAgentService {
   return new QueryAgentService({
     ...options,
-    // Integrated path: AI-02 knowledge on by default (fixture-backed; no live AI).
+    // Integrated path: AI-02 knowledge on by default (source via env; no live AI).
     enableKnowledge: options.enableKnowledge ?? true,
   });
 }

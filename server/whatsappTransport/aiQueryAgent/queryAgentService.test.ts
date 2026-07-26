@@ -72,6 +72,8 @@ await test("feature flags: draft and auto-reply default OFF (fail closed)", () =
   assert.equal(config.autoReplyEnabled, false);
   assert.equal(config.provider, "mock");
   assert.equal(config.liveProviderEnabled, false);
+  // AI-05: knowledge source fails closed — never silent fixture fallback.
+  assert.equal(config.knowledgeSource, "unavailable");
 });
 
 await test("feature flags: draft can enable while auto-reply stays OFF", () => {

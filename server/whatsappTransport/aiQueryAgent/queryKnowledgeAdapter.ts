@@ -1,20 +1,31 @@
 /**
- * AI-04 — single clean adapter from AI-01 query agent → AI-02 knowledge engine.
+ * AI-04/AI-05 — adapter from AI-01 query agent → AI-02 knowledge engine.
  *
  * Tenant isolation: companyId maps to knowledge tenantId; retrieval is always
  * scoped by tenant. No WhatsApp send, no CRM writes, no live provider calls.
+ *
+ * AI-05: production never loads fixture knowledge. Source is selected via
+ * WHATSAPP_AI_KNOWLEDGE_SOURCE (fail-closed; no silent fixture fallback).
  */
 
 import {
   FIXTURE_TENANT_A,
+  KNOWLEDGE_UNAVAILABLE_MESSAGE,
   KnowledgeAnswerEngine,
+  PRODUCTION_TENANT_SUNCHASER,
   createFixtureKnowledgeEngine,
+  createProductionKnowledgeEngine,
   fixtureAsOfIso,
   omitEmbeddedPriceAmounts,
+  productionAsOfIso,
   type KnowledgeAnswerDraft,
   type KnowledgeAnswerFact,
   type KnowledgeQueryCategory,
 } from "../../whatsappAiKnowledge/index.ts";
+import {
+  readKnowledgeSource,
+  type KnowledgeSourceMode,
+} from "./queryAgentConfig.ts";
 import type { QueryIntent } from "./queryAgentTypes.ts";
 
 export type QueryKnowledgeRetrieveRequest = {
@@ -70,14 +81,95 @@ export function mapIntentToKnowledgeCategory(
 
 /**
  * Resolve knowledge tenant id from company id.
- * Fixture aliases keep demo packs isolated; unknown companies keep their id
- * (empty bucket → unavailable → human escalation).
+ * Fixture aliases apply only in fixtures mode; production maps sunchaser to
+ * the launch tenant. Unknown companies keep their id (empty bucket → escalate).
  */
-export function resolveKnowledgeTenantId(companyId: string): string {
+export function resolveKnowledgeTenantId(
+  companyId: string,
+  mode: KnowledgeSourceMode = "fixtures"
+): string {
   const id = String(companyId || "").trim();
   if (!id) return "";
-  if (id === "sunchaser" || id === FIXTURE_TENANT_A) return FIXTURE_TENANT_A;
+  if (mode === "fixtures") {
+    if (id === "sunchaser" || id === FIXTURE_TENANT_A) return FIXTURE_TENANT_A;
+    return id;
+  }
+  if (mode === "production") {
+    if (id === "sunchaser" || id === PRODUCTION_TENANT_SUNCHASER) {
+      return PRODUCTION_TENANT_SUNCHASER;
+    }
+    return id;
+  }
   return id;
+}
+
+function buildUnavailableDraft(
+  tenantId: string,
+  category: KnowledgeQueryCategory,
+  queryText: string,
+  reason: string
+): KnowledgeAnswerDraft {
+  return {
+    tenantId,
+    category,
+    disposition: "unavailable",
+    facts: [
+      {
+        id: "fact_missing",
+        text: KNOWLEDGE_UNAVAILABLE_MESSAGE,
+        confidence: "missing",
+        sourceId: "none",
+        sourceTitle: "No approved source",
+        sourceType: "human_handover",
+        freshness: "missing_timestamp",
+        publishedAt: null,
+        category,
+        containsPrice: false,
+        price: null,
+        rankScore: 0,
+      },
+    ],
+    missingTopics: ["approved answer"],
+    conflicts: [],
+    humanHandoverReason: reason,
+    safeReplyHints: [KNOWLEDGE_UNAVAILABLE_MESSAGE],
+    unavailableMessage: KNOWLEDGE_UNAVAILABLE_MESSAGE,
+    retrieval: {
+      tenantId,
+      category,
+      matchedRecordCount: 0,
+      consideredRecordCount: 0,
+      usedDeterministicRetrieval: true,
+      usedAiGeneration: false,
+      usedExternalWeb: false,
+      crmWrites: false,
+      queryFingerprint: `unavailable:${String(queryText || "").length}`,
+    },
+  };
+}
+
+/** Fail-closed port when knowledge source is missing/invalid or blocked. */
+export function createUnavailableKnowledgePort(
+  reason =
+    "Knowledge source unavailable or misconfigured — human review required."
+): QueryKnowledgePort {
+  return {
+    portId: "knowledge-unavailable",
+    retrieve(request) {
+      const category =
+        mapIntentToKnowledgeCategory(request.intent) ?? "unknown";
+      const tenantId = resolveKnowledgeTenantId(
+        request.companyId,
+        "unavailable"
+      );
+      return buildUnavailableDraft(
+        tenantId,
+        category,
+        request.queryText,
+        reason
+      );
+    },
+  };
 }
 
 /**
@@ -645,30 +737,111 @@ export function knowledgeFactsToSafeSources(
 }
 
 export type CreateQueryKnowledgeAdapterOptions = {
+  /**
+   * Explicit engine injection (tests). When set, skips env pack loading.
+   * Does not allow production runtime to load fixtures via env — only DI.
+   */
   engine?: KnowledgeAnswerEngine;
   /** Override as-of clock (tests). */
   asOfIso?: string;
+  /** Env for WHATSAPP_AI_KNOWLEDGE_SOURCE / NODE_ENV (defaults to process.env). */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Explicit source mode override (tests). When omitted with an injected
+   * engine, defaults to fixtures tenant mapping for backward-compatible tests.
+   */
+  knowledgeSource?: KnowledgeSourceMode;
+  /** Override port id (tests). */
+  portId?: string;
 };
+
+function portIdForSource(mode: KnowledgeSourceMode): string {
+  switch (mode) {
+    case "production":
+      return "knowledge-production";
+    case "fixtures":
+      return "knowledge-fixtures";
+    default:
+      return "knowledge-unavailable";
+  }
+}
+
+function engineForSource(mode: KnowledgeSourceMode): KnowledgeAnswerEngine | null {
+  if (mode === "production") return createProductionKnowledgeEngine();
+  if (mode === "fixtures") return createFixtureKnowledgeEngine();
+  return null;
+}
+
+function defaultAsOfForSource(mode: KnowledgeSourceMode): string {
+  if (mode === "production") return productionAsOfIso();
+  if (mode === "fixtures") return fixtureAsOfIso();
+  return new Date().toISOString();
+}
 
 /**
  * Build the AI-01←AI-02 knowledge port.
- * Uses fixture knowledge packs only in this phase (no Supabase / live AI).
+ *
+ * Production runtime never loads fixtures. Missing/blank/unknown
+ * WHATSAPP_AI_KNOWLEDGE_SOURCE fails closed to unavailable/escalation.
+ * Fixtures are available only via explicit "fixtures" outside production
+ * runtime, or via injected engine in tests.
  */
 export function createQueryKnowledgeAdapter(
   options: CreateQueryKnowledgeAdapterOptions = {}
 ): QueryKnowledgePort {
-  const engine = options.engine ?? createFixtureKnowledgeEngine();
-  const fixedAsOf = options.asOfIso;
+  const env = options.env ?? process.env;
 
+  // Explicit DI: tests may inject fixture/production engines without env.
+  if (options.engine) {
+    const mode = options.knowledgeSource ?? "fixtures";
+    const engine = options.engine;
+    const fixedAsOf = options.asOfIso;
+    return {
+      portId: options.portId ?? portIdForSource(mode),
+      retrieve(request) {
+        const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
+        return engine.retrieveAnswerDraft({
+          tenantId,
+          queryText: request.queryText,
+          categoryHint: mapIntentToKnowledgeCategory(request.intent),
+          asOfIso:
+            request.asOfIso ||
+            fixedAsOf ||
+            defaultAsOfForSource(mode),
+        });
+      },
+    };
+  }
+
+  const mode = options.knowledgeSource ?? readKnowledgeSource(env);
+  if (mode === "unavailable") {
+    return createUnavailableKnowledgePort(
+      "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+    );
+  }
+
+  const engine = engineForSource(mode);
+  if (!engine) {
+    return createUnavailableKnowledgePort(
+      "Knowledge engine unavailable — human review required."
+    );
+  }
+
+  const fixedAsOf = options.asOfIso;
   return {
-    portId: "knowledge-fixtures",
+    portId: options.portId ?? portIdForSource(mode),
     retrieve(request) {
-      const tenantId = resolveKnowledgeTenantId(request.companyId);
+      const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
       return engine.retrieveAnswerDraft({
         tenantId,
         queryText: request.queryText,
         categoryHint: mapIntentToKnowledgeCategory(request.intent),
-        asOfIso: request.asOfIso || fixedAsOf || fixtureAsOfIso(),
+        asOfIso:
+          request.asOfIso ||
+          fixedAsOf ||
+          (mode === "production"
+            ? new Date().toISOString()
+            : fixtureAsOfIso()),
       });
     },
   };

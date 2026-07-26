@@ -16,6 +16,10 @@ import {
   KNOWLEDGE_FIXTURE_AS_OF_ISO,
   KNOWLEDGE_FIXTURE_RECORDS,
 } from "./knowledgeFixtures.ts";
+import {
+  KNOWLEDGE_PRODUCTION_AS_OF_ISO,
+  KNOWLEDGE_PRODUCTION_RECORDS,
+} from "./knowledgeProduction.ts";
 import { InMemoryKnowledgeStore } from "./knowledgeStore.ts";
 import {
   KNOWLEDGE_UNAVAILABLE_MESSAGE,
@@ -23,6 +27,7 @@ import {
   type KnowledgeAnswerDraft,
   type KnowledgeAnswerFact,
   type KnowledgeQueryCategory,
+  type KnowledgeRecord,
   type KnowledgeRetrievalRequest,
 } from "./knowledgeTypes.ts";
 
@@ -242,12 +247,29 @@ export class KnowledgeAnswerEngine {
   }
 }
 
-/** Factory wired to mock fixtures — never production Supabase. */
+/** Factory wired to mock fixtures — tests / explicit fixtures mode only. */
 export function createFixtureKnowledgeEngine(): KnowledgeAnswerEngine {
   const store = new InMemoryKnowledgeStore(KNOWLEDGE_FIXTURE_RECORDS);
   return new KnowledgeAnswerEngine(store);
 }
 
+/** Factory wired to the approved Sunchaser launch pack (no prices / fixtures). */
+export function createProductionKnowledgeEngine(): KnowledgeAnswerEngine {
+  const store = new InMemoryKnowledgeStore(KNOWLEDGE_PRODUCTION_RECORDS);
+  return new KnowledgeAnswerEngine(store);
+}
+
+/** Build an engine from an explicit record set (tests / DI). */
+export function createKnowledgeEngineFromRecords(
+  records: readonly KnowledgeRecord[],
+): KnowledgeAnswerEngine {
+  return new KnowledgeAnswerEngine(new InMemoryKnowledgeStore(records));
+}
+
 export function fixtureAsOfIso(): string {
   return KNOWLEDGE_FIXTURE_AS_OF_ISO;
+}
+
+export function productionAsOfIso(): string {
+  return KNOWLEDGE_PRODUCTION_AS_OF_ISO;
 }
