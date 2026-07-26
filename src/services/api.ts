@@ -3173,3 +3173,65 @@ export async function submitPublicLead(payload: {
   return res.json() as Promise<{ success: boolean; leadId: string; message: string }>;
 }
 
+
+// ---------------------------------------------------------------------------
+// Marketplace CEO auto-import (Super Admin JWT)
+// ---------------------------------------------------------------------------
+
+export async function fetchMarketplaceAutoImportHealth(_staff?: {
+  id: string;
+  username: string;
+  role: string;
+}) {
+  const res = await authorizedFetch("/api/marketplace/admin/suppliers/auto-import/health");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as any)?.error?.message || (data as any)?.error || "Failed to load sync health.",
+    );
+  }
+  return ((data as any).data || data) as {
+    lastSyncAt: string | null;
+    lastSyncStatus: string;
+    lastRunId: string | null;
+    kamalDiscovered: number;
+    alladinDiscovered: number;
+    acceptedVariants: number;
+    rejectedVariants: number;
+    exactMatches: number;
+    conflictKeptSeparate: number;
+    productsCreated: number;
+    productsUpdated: number;
+    lowestPriceSelections: number;
+    rolledBackPrices: number;
+    errors: string[];
+    note: string;
+  };
+}
+
+export async function runMarketplaceAutoImport(_staff?: {
+  id: string;
+  username: string;
+  role: string;
+}) {
+  const res = await authorizedFetch("/api/marketplace/admin/suppliers/auto-import/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as any)?.error?.message || (data as any)?.error || "Auto-import sync failed.",
+    );
+  }
+  return ((data as any).data || data) as {
+    runId: string;
+    status: string;
+    health: Awaited<ReturnType<typeof fetchMarketplaceAutoImportHealth>>;
+    sampleLowestPrice: unknown[];
+    automaticPublication: true;
+    ceoDiscountApplied: false;
+    legacyMappingBypassUsed: false;
+  };
+}

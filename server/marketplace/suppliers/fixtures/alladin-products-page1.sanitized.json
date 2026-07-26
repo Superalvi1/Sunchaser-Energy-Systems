@@ -1,0 +1,650 @@
+{
+  "products": [
+    {
+      "id": 10431121293591,
+      "title": "PRIMAX FOTON 18.0 12kw Hybrid Solar Inverter 48V | Dual MPPT",
+      "handle": "foton-18-0-hybrid-solar-inverter",
+      "vendor": "Primax",
+      "product_type": "Hybrid Solar Inverter",
+      "tags": [
+        "hybrid inverter",
+        "Hybrid Solar Inverter",
+        "primax",
+        "Primax Foton Series"
+      ],
+      "body_html": "<p>The PRIMAX FOTON 18.0 Hybrid Solar Inverter is a powerful 12kW single-phase hybrid inverter designed for residential, commercial, and industrial solar energy systems. Featuring Dual MPPT technology , support for up to 18,000W PV input , and a 48V battery system , it maximizes solar energy harvesting while delivering reliable backup power. With pure sine wave output , 98% peak DC/AC efficiency , an</p>",
+      "variants": [
+        {
+          "id": 54265785483543,
+          "title": "Default Title",
+          "price": "280000.00",
+          "compare_at_price": "295000.00",
+          "available": true,
+          "sku": "AR-003377",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53555857719575,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/foton18.png?v=1784621703",
+          "width": 665,
+          "height": 665,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10428690268439,
+      "title": "PRIMAX FOTON 16.0 10kW Hybrid Solar Inverter 48V | Dual MPPT",
+      "handle": "primax-foton-16-0-hybrid-solar-inverter",
+      "vendor": "Primax",
+      "product_type": "Hybrid Solar Inverter",
+      "tags": [
+        "hybrid inverter",
+        "Hybrid Solar Inverter",
+        "primax",
+        "Primax Foton Series"
+      ],
+      "body_html": "<p>The PRIMAX FOTON 16.0 Hybrid Solar Inverter is a high-performance 10kW single-phase hybrid inverter designed for residential and commercial solar energy systems. Featuring Dual MPPT technology , support for up to 16,000W PV input , and a 48V battery system , it delivers maximum solar energy harvesting and reliable backup power. With 98% peak efficiency , pure sine wave output, and fast transfer ti</p>",
+      "variants": [
+        {
+          "id": 54180310155543,
+          "title": "Default Title",
+          "price": "260000.00",
+          "compare_at_price": "275000.00",
+          "available": true,
+          "sku": "AR-003376",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53555263340823,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/foton16_1_1.png?v=1784619148",
+          "width": 699,
+          "height": 699,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10428533866775,
+      "title": "PRIMAX FOTON 10.0 10kw Hybrid Solar Inverter 48V | Single MPPT",
+      "handle": "primax-foton-10-0-hybrid-solar-inverter",
+      "vendor": "Primax",
+      "product_type": "Hybrid Solar Inverter",
+      "tags": [
+        "primax",
+        "Primax Foton Series"
+      ],
+      "body_html": "<p>Built with 98% DC/AC conversion efficiency , dual output functionality, and fast transfer times, the FOTON 10.0 ensures uninterrupted power for sensitive electronics and household appliances. Its intelligent battery charging system, adjustable charging voltages, and WiFi monitoring support make it an ideal solution for modern energy storage and backup applications. Whether you're looking to reduce</p>",
+      "variants": [
+        {
+          "id": 54173653926167,
+          "title": "Default Title",
+          "price": "150000.00",
+          "compare_at_price": "165000.00",
+          "available": true,
+          "sku": "AR-003371",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53540617617687,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/foton10.jpg?v=1784619296",
+          "width": 765,
+          "height": 765,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10427992932631,
+      "title": "PRIMAX FOTON 8.0 8kw Hybrid Solar Inverter 24V | Single MPPT",
+      "handle": "primax-foton-8-0-hybrid-solar-inverter-8kw-pv-input-single-mppt-pure-sine-wave-24v",
+      "vendor": "Primax",
+      "product_type": "Hybrid Solar Inverter",
+      "tags": [
+        "primax",
+        "Primax Foton Series"
+      ],
+      "body_html": "<p>The PRIMAX FOTON 8.0 Hybrid Solar Inverter is a high-performance single-phase inverter designed to deliver reliable power for residential and small commercial solar systems. Supporting up to 8000W PV input , 24V battery systems , and Pure Sine Wave output , it ensures efficient energy conversion with up to 98% DC/AC efficiency . Equipped with Single MPPT technology , WiFi monitoring support , BMS </p>",
+      "variants": [
+        {
+          "id": 54158959575319,
+          "title": "Default Title",
+          "price": "125000.00",
+          "compare_at_price": "135000.00",
+          "available": true,
+          "sku": "AR-003368",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53540607459607,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/foton8.png?v=1784619501",
+          "width": 760,
+          "height": 760,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10310303973655,
+      "title": "Green Energy Bold Series 6.2KW PV9000 Solar Inverter | 48V Hybrid On/Off Grid Pure Sine Wave with MPPT, WiFi & Dual Output",
+      "handle": "green-energy-6-2kw-bold-pv9000-solar-inverter",
+      "vendor": "Green Energy",
+      "product_type": "solar inverter",
+      "tags": [
+        "Green Energy",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Upgrade your solar power system with the Green Energy 6.2KW BOLD PV9000 Solar Inverter , a high-performance hybrid inverter designed for both on-grid and off-grid applications . Built with advanced technology, this inverter delivers pure sine wave output , ensuring stable and efficient performance for homes, offices, and commercial setups. With a wide PV input range (60V\u2013500VDC) and built-in MPPT </p>",
+      "variants": [
+        {
+          "id": 53033658351895,
+          "title": "Default Title",
+          "price": "100000.00",
+          "compare_at_price": "115000.00",
+          "available": true,
+          "sku": "AR-003204",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53405992845591,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/GreenEnergyBoldSeries6.2KWPV9000SolarInverter48VHybridOnOffGridPureSineWavewithMPPT_WiFi_DualOutput.png?v=1783594591",
+          "width": 982,
+          "height": 982,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10431836684567,
+      "title": "SUNFLX FlxStation 32.0 30kW 51.2V LiFePO4 Lithium-Ion Battery",
+      "handle": "sunflx-flxstation-32-0-30-72kwh-51-2v-lifepo4-lithium-ion-battery",
+      "vendor": "sunflx",
+      "product_type": "lithium battery",
+      "tags": [
+        "Lithium Battery",
+        "Lithium ion Battery",
+        "sunflx"
+      ],
+      "body_html": "<p>The SunFLX FlxStation 32.0 Lithium-ion Battery is a premium 30.72kWh (600Ah) LiFePO4 energy storage system designed for residential, commercial, and industrial solar applications. Built with advanced LiFePO4 prismatic cells , it delivers exceptional safety, long service life, and high charging/discharging efficiency. Featuring a 51.2V DC battery system, a 4.3-inch touch screen display , integrated</p>",
+      "variants": [
+        {
+          "id": 54293798125847,
+          "title": "Default Title",
+          "price": "1285000.00",
+          "compare_at_price": "1295000.00",
+          "available": true,
+          "sku": "AR-003379",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53557605957911,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/sulflx_9d2232bc-6ddc-4d32-8c5c-6b1f6b15f7d1.png?v=1784636651",
+          "width": 861,
+          "height": 861,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10431516147991,
+      "title": "SUNFLX FlxStation 20.0 20kW 51.2V LiFePO\u2084 Lithium-Ion Battery",
+      "handle": "sunflx-flxstation-20-0-lithium-ion-battery",
+      "vendor": "sunflx",
+      "product_type": "lithium ion battery",
+      "tags": [
+        "flxstation",
+        "Lithium Battery",
+        "Lithium ion Battery",
+        "sunflx"
+      ],
+      "body_html": "<p>The Sunflx FlxStation 20.0 Lithium-Ion Battery is a high-capacity 20.99kWh energy storage solution designed for residential, commercial, and off-grid solar power systems. Built with advanced LiFePO\u2084 (Lithium Iron Phosphate) prismatic cells , it delivers exceptional safety, long service life, and reliable performance for daily energy storage applications. Featuring a 51.2V, 410Ah battery configurat</p>",
+      "variants": [
+        {
+          "id": 54289126850839,
+          "title": "Default Title",
+          "price": "845000.00",
+          "compare_at_price": "865000.00",
+          "available": true,
+          "sku": "AR-003378",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53557428945175,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/sulflx20.0.png?v=1784635115",
+          "width": 879,
+          "height": 879,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10424712659223,
+      "title": "Solar Panel Water Drain Clips PV Module Stainless Steel  Water Drain Cleaning Clip",
+      "handle": "solar-panel-water-drain-clips-pv-module-stainless-steel-water-drain-cleaning-clip",
+      "vendor": "Alladin Store",
+      "product_type": "",
+      "tags": [],
+      "body_html": "<p>Solar Panel Water Drain Clips \u2013 Small Clip, Big Difference! Ever noticed dirty water marks and mud stains on the lower edge of your solar panels after rain? That happens because rainwater gets trapped along the panel frame. As it dries, it leaves behind dirt, dust, and stubborn stains that block sunlight and slowly reduce your panel's power output. The solution is simpler than you think \u2013 Stainles</p>",
+      "variants": [
+        {
+          "id": 54068000653591,
+          "title": "30mm / 1",
+          "price": "99.00",
+          "compare_at_price": "100.00",
+          "available": true,
+          "sku": "AR-003350",
+          "option1": "30mm"
+        },
+        {
+          "id": 54068000686359,
+          "title": "30mm / 24",
+          "price": "2290.00",
+          "compare_at_price": "2999.00",
+          "available": true,
+          "sku": "AR-003351",
+          "option1": "30mm"
+        }
+      ],
+      "images": [
+        {
+          "id": 45702041010455,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/final_ef166345-e93c-4546-b165-b3d729264648.jpg?v=1720779517",
+          "width": 1000,
+          "height": 1000,
+          "position": 1
+        },
+        {
+          "id": 45702005326103,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/metal_drainage_clip.jpg?v=1720778366",
+          "width": 1000,
+          "height": 1000,
+          "position": 2
+        },
+        {
+          "id": 45702005358871,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/Water-Clips-metal-3_3_11zon.jpg?v=1720778211",
+          "width": 800,
+          "height": 800,
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": 10420660011287,
+      "title": "TOMZN 400A DC MCCB 2P Circuit Breaker \u2013 DC 1500V Molded Case Circuit Breaker",
+      "handle": "tomzn-400a-breaker-mccb-dc-2p",
+      "vendor": "Tomzn",
+      "product_type": "mccb",
+      "tags": [
+        "circuit breaker",
+        "MCCB",
+        "tomzn"
+      ],
+      "body_html": "<p>Protect your high-voltage DC electrical systems with the TOMZN 400A DC MCCB 2P Circuit Breaker , engineered for reliable circuit protection in demanding solar photovoltaic (PV), battery storage, EV charging, and industrial DC power applications. Rated for DC 1500V with a 400A current capacity , this molded case circuit breaker (MCCB) provides dependable protection against overloads and short circu</p>",
+      "variants": [
+        {
+          "id": 54037217444119,
+          "title": "Default Title",
+          "price": "45000.00",
+          "compare_at_price": "48000.00",
+          "available": true,
+          "sku": "AR-003345",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53555633586455,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/TOMZN400ADCMCCB2PCircuitBreaker_DC1500VMoldedCaseCircuitBreaker.png?v=1784620713",
+          "width": 926,
+          "height": 926,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10420645101847,
+      "title": "TOMZN 300A DC MCCB 2 Pole Circuit Breaker DC1500V | TOM7Z-400/2300 Molded Case Circuit Breaker",
+      "handle": "tomzn-300a-breaker-mccb-dc-2p",
+      "vendor": "Tomzn",
+      "product_type": "mccb",
+      "tags": [
+        "circuit breaker",
+        "MCCB",
+        "tomzn"
+      ],
+      "body_html": "<p>The TOMZN 300A DC MCCB 2 Pole Circuit Breaker (TOM7Z-400/2300) is a premium-quality molded case circuit breaker engineered to provide dependable protection for high-voltage DC electrical systems. With a 300A rated current and DC1500V operating voltage , it effectively safeguards circuits against overloads and short circuits, ensuring maximum safety and equipment protection. Its 2-pole (2P) configu</p>",
+      "variants": [
+        {
+          "id": 54036598194455,
+          "title": "Default Title",
+          "price": "40000.00",
+          "compare_at_price": "42000.00",
+          "available": true,
+          "sku": "AR-003344",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53554397380887,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/TOMZN300ADCMCCB2PoleCircuitBreakerDC1500VTOM7Z-4002300MoldedCaseCircuitBreaker.png?v=1784615702",
+          "width": 938,
+          "height": 938,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10427496825111,
+      "title": "Volnex Alpha 16 Residential Low Voltage LiFePO4 Battery 16.08kWh 51.2V 314Ah",
+      "handle": "volnex-alpha-16-residential-battery-low-voltage",
+      "vendor": "volnex",
+      "product_type": "Battery",
+      "tags": [
+        "energy storage battery",
+        "low voltage battery",
+        "volex"
+      ],
+      "body_html": "<p>The Volnex Alpha 16 Residential Low Voltage Battery is a premium 16.08kWh LiFePO4 (Lithium Iron Phosphate) energy storage battery designed for residential and light commercial solar energy systems. With a 51.2V, 314Ah capacity, advanced Battery Management System (BMS), and support for up to 15 batteries in parallel , it provides reliable backup power, long service life, and excellent compatibility</p>",
+      "variants": [
+        {
+          "id": 54143621759255,
+          "title": "Default Title",
+          "price": "620000.00",
+          "compare_at_price": "650000.00",
+          "available": true,
+          "sku": "AR-003366",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53537475756311,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/Gemini_Generated_Image_dp0clodp0clodp0c.png?v=1784530544",
+          "width": 941,
+          "height": 941,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10410710794519,
+      "title": "SR 100A 2P Changeover Switch | 500V Manual Transfer Switch for Residential & Industrial Power Systems",
+      "handle": "sr-changeover-100a-2p",
+      "vendor": "Alladin Store",
+      "product_type": "changeover",
+      "tags": [
+        "changeover",
+        "sr"
+      ],
+      "body_html": "<p>The SR 100A 2P Changeover Switch is a reliable manual transfer switch designed for safe and efficient power source switching between the main supply and backup power systems. With a 100 Amp rated current and 500V rated voltage , this durable 2-pole changeover switch is ideal for residential, commercial, industrial, and solar power applications. Its robust construction ensures smooth operation, lon</p>",
+      "variants": [
+        {
+          "id": 53676715344151,
+          "title": "Default Title",
+          "price": "9999.00",
+          "compare_at_price": "9999.00",
+          "available": true,
+          "sku": "AR-003316",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53494827352343,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/SR100A2PChangeoverSwitch500VManualTransferSwitchforResidential_IndustrialPowerSystems_4.png?v=1784188681",
+          "width": 878,
+          "height": 878,
+          "position": 1
+        },
+        {
+          "id": 53494850748695,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/SR_100A_2P_Changeover_Switch_500V_Manual_Transfer_Switch_for_Residential_Industrial_Power_Systems_1.png?v=1784188731",
+          "width": 1024,
+          "height": 1024,
+          "position": 2
+        },
+        {
+          "id": 53494850093335,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/SR_100A_2P_Changeover_Switch_500V_Manual_Transfer_Switch_for_Residential_Industrial_Power_Systems_2.png?v=1784188728",
+          "width": 1024,
+          "height": 1024,
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": 10442725589271,
+      "title": "UKC1 3-Pole AC Contactor 150A | DIN Rail & Screw Mount Industrial Contactor",
+      "handle": "ukc1-3-pole-ac-contactor-150a-24v-110v-220v-380v-ac-coil-din-rail-screw-mount-industrial-contactor",
+      "vendor": "Kripal",
+      "product_type": "Contactor",
+      "tags": [
+        "contactor",
+        "Kripal"
+      ],
+      "body_html": "<p>The UKC1 3-Pole 150A AC Contactor is a high-performance industrial switching solution designed for reliable control of motors, pumps, compressors, HVAC systems, and other heavy-duty electrical equipment. Available with 24V, 110V, 220V, or 380V AC coil voltages , this contactor delivers dependable performance in commercial and industrial automation applications. Key Features 150A 3-Pole AC Contacto</p>",
+      "variants": [
+        {
+          "id": 54540126126359,
+          "title": "Default Title",
+          "price": "32000.00",
+          "compare_at_price": null,
+          "available": false,
+          "sku": "AR-003382",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53615645917463,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/UKC1-150-4.png?v=1784967357",
+          "width": 800,
+          "height": 800,
+          "position": 1
+        },
+        {
+          "id": 53615645950231,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/UKC1-150-2.png?v=1784967357",
+          "width": 800,
+          "height": 800,
+          "position": 2
+        },
+        {
+          "id": 53615645982999,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/UKC1-150-1.png?v=1784967357",
+          "width": 800,
+          "height": 800,
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": 999000001,
+      "title": "Synthetic Zero Price Fixture",
+      "handle": "synthetic-zero-price-fixture",
+      "vendor": "Primax",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "hybrid inverter",
+        "Hybrid Solar Inverter",
+        "primax",
+        "Primax Foton Series"
+      ],
+      "body_html": "<p>The PRIMAX FOTON 18.0 Hybrid Solar Inverter is a powerful 12kW single-phase hybrid inverter designed for residential, commercial, and industrial solar energy systems. Featuring Dual MPPT technology , support for up to 18,000W PV input , and a 48V battery system , it maximizes solar energy harvesting while delivering reliable backup power. With pure sine wave output , 98% peak DC/AC efficiency , an</p>",
+      "variants": [
+        {
+          "id": 9990000011,
+          "title": "Default Title",
+          "price": "0.00",
+          "compare_at_price": "50000.00",
+          "available": true,
+          "sku": "SYN-ZERO",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53555857719575,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/foton18.png?v=1784621703",
+          "width": 665,
+          "height": 665,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 999000002,
+      "title": "Synthetic Malformed Price Fixture",
+      "handle": "synthetic-malformed-price-fixture",
+      "vendor": "Primax",
+      "product_type": "Lithium Battery",
+      "tags": [
+        "hybrid inverter",
+        "Hybrid Solar Inverter",
+        "primax",
+        "Primax Foton Series"
+      ],
+      "body_html": "<p>The PRIMAX FOTON 18.0 Hybrid Solar Inverter is a powerful 12kW single-phase hybrid inverter designed for residential, commercial, and industrial solar energy systems. Featuring Dual MPPT technology , support for up to 18,000W PV input , and a 48V battery system , it maximizes solar energy harvesting while delivering reliable backup power. With pure sine wave output , 98% peak DC/AC efficiency , an</p>",
+      "variants": [
+        {
+          "id": 9990000021,
+          "title": "Default Title",
+          "price": "N/A",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "SYN-BAD",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53555857719575,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/foton18.png?v=1784621703",
+          "width": 665,
+          "height": 665,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 10439472382231,
+      "title": "IMOU Cruiser-2 Pro Dual Lens 6MP (3MP+3MP) PTZ Security Camera IPC-S7XEP-3M0WED",
+      "handle": "imou-cruiser-2-pro-dual-lens-6mp-3mp-3mp-ptz-security-camera-ipc-s7xep-3m0wed",
+      "vendor": "imou",
+      "product_type": "Security Camera",
+      "tags": [
+        "IMOU",
+        "security camera"
+      ],
+      "body_html": "<p>Enhance your home or business security with the IMOU Cruiser-2 Pro Dual Lens 6MP PTZ Security Camera (IPC-S7XEP-3M0WED) . Featuring dual 3MP lenses for a combined 6MP ultra-clear resolution , this advanced surveillance camera provides wider coverage with both a fixed lens and a pan &amp; tilt lens. Equipped with Wi-Fi 6 connectivity , AI-powered detection , color night vision , two-way audio , and</p>",
+      "variants": [
+        {
+          "id": 54522261995799,
+          "title": "Default Title",
+          "price": "16999.00",
+          "compare_at_price": "19999.00",
+          "available": true,
+          "sku": "AR-003380",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 53592936612119,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/imoucruiser.webp?v=1784791866",
+          "width": 1024,
+          "height": 1024,
+          "position": 1
+        },
+        {
+          "id": 53592976818455,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/f77f3db1-6739-4805-b17c-ebbf33925b7e.webp?v=1784792014",
+          "width": 976,
+          "height": 976,
+          "position": 2
+        },
+        {
+          "id": 53592966070551,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/04968eb2-a192-4808-85b7-96b92e3e77a6.webp?v=1784792032",
+          "width": 1410,
+          "height": 1410,
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": 999000101,
+      "title": "APC UPS Pure Sine Wave Inverter 1500VA",
+      "handle": "apc-ups-pure-sine-wave-inverter-1500va",
+      "vendor": "APC",
+      "product_type": "UPS",
+      "tags": [
+        "UPS",
+        "Inverter"
+      ],
+      "body_html": "<p>Home UPS inverter \u2014 not a solar hybrid.</p>",
+      "variants": [
+        {
+          "id": 9990001011,
+          "title": "Default Title",
+          "price": "45000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "UPS-1500"
+        }
+      ],
+      "images": [
+        {
+          "id": 1,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/ups.png",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 999000102,
+      "title": "Car Power Inverter 12V to 220V 2000W",
+      "handle": "car-power-inverter-12v-220v-2000w",
+      "vendor": "Generic",
+      "product_type": "Power Inverter",
+      "tags": [
+        "Car",
+        "Inverter"
+      ],
+      "body_html": "<p>Automotive power inverter.</p>",
+      "variants": [
+        {
+          "id": 9990001021,
+          "title": "Default Title",
+          "price": "8500.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "CAR-INV"
+        }
+      ],
+      "images": [
+        {
+          "id": 1,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/car.png",
+          "position": 1
+        }
+      ]
+    }
+  ]
+}

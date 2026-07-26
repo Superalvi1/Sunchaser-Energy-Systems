@@ -338,6 +338,13 @@ import {
   type PersistedPublicLead,
 } from "./server/publicLeads/index.ts";
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
+import { createMarketplaceAdminRouter } from "./server/marketplace/admin/adminRoutes.ts";
+import { createMarketplacePricingRouter } from "./server/marketplace/pricing/pricingRoutes.ts";
+import { createMarketplaceSupplierRouter } from "./server/marketplace/suppliers/index.ts";
+import { createMarketplaceAutoImportRouter } from "./server/marketplace/autoImport/index.ts";
+import { createCartRouter } from "./server/marketplace/cart/index.ts";
+import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
+import { createCodRouter } from "./server/marketplace/cod/index.ts";
 import {
   createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
@@ -676,6 +683,32 @@ app.use(
 
 // Marketplace public catalogue (requires MARKETPLACE_ENABLED=true; defaults off).
 app.use("/api/marketplace/catalogue", createCatalogueRouter());
+// Marketplace cart / delivery quote / checkout (handler-gated; guest header tokens).
+app.use(
+  "/api/marketplace",
+  createCartRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace bank-transfer payments (customer/guest + admin finance lockdown).
+// Mounted before catalogue/pricing admin so /admin/payments* uses finance lockdown.
+app.use(
+  "/api/marketplace",
+  createPaymentRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace cash-on-delivery lifecycle (customer/guest + ops/finance lockdown).
+// Mounted before catalogue/pricing admin so /admin/cod* uses ops/finance lockdown.
+app.use(
+  "/api/marketplace",
+  createCodRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace admin taxonomy (JWT + marketplace permission + MARKETPLACE_ENABLED).
+// After payment/COD; unmatched /admin paths fall through to pricing admin below.
+app.use("/api/marketplace/admin", createMarketplaceAdminRouter());
+// Marketplace Super-Admin pricing engine (MARKETPLACE_ENABLED + marketplace + Super Admin).
+app.use("/api/marketplace/admin", createMarketplacePricingRouter());
+// Marketplace WS4 supplier ingestion / price-check / alerts (marketplace staff; mappings Super Admin).
+app.use("/api/marketplace/admin", createMarketplaceSupplierRouter());
+// CEO-authorized automatic supplier catalogue import + sync health (Super Admin).
+app.use("/api/marketplace/admin", createMarketplaceAutoImportRouter());
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
