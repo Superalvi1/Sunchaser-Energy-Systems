@@ -340,6 +340,7 @@ import {
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
 import { createCartRouter } from "./server/marketplace/cart/index.ts";
 import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
+import { createCodRouter } from "./server/marketplace/cod/index.ts";
 import {
   createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
@@ -685,6 +686,11 @@ app.use(
 app.use(
   "/api/marketplace",
   createPaymentRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace cash-on-delivery lifecycle (customer/guest + ops/finance lockdown).
+app.use(
+  "/api/marketplace",
+  createCodRouter({ resolveLocalDb: resolveAuthLocalDb }),
 );
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
