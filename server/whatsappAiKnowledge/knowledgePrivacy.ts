@@ -26,12 +26,27 @@ const INJECTION_PATTERNS: RegExp[] = [
   /act\s+as\s+(if\s+you\s+are|a)\s+/gi,
 ];
 
-/** Currency-marked monetary amounts (always treated as customer-facing prices). */
-const CURRENCY_MARKED_PRICE_RE =
-  /\b(?:PKR|Rs\.?)\s*[\d,]+(?:\.\d+)?\b/gi;
+/**
+ * Currency markers with common whitespace / punctuation separators
+ * (PKR-900000, PKR: 900000, Rs/-900000, Rs.900000, PKR 900,000/-).
+ */
+const CURRENCY_PREFIX_PRICE_RE =
+  /\b(?:PKR|Rs)(?:\.?\s*[:=\-\/]*\s*|[:=\-\/]+\s*)-?[\d,]+(?:\.\d+)?(?:\s*\/-)?/gi;
 
-/** Comma-grouped amounts such as 900,000 — monetary in this product domain. */
-const COMMA_GROUPED_AMOUNT_RE = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b/g;
+/** Amount followed by a currency marker (e.g. 900000 PKR, 900,000/- Rs). */
+const CURRENCY_SUFFIX_PRICE_RE =
+  /\b[\d,]+(?:\.\d+)?(?:\s*\/-)?\s*(?:PKR|Rs\.?)\b/gi;
+
+/**
+ * Price-word prefixes with separators (price-900000, rate: 900000).
+ * Catches "package price 900,000/-" via the `price` token.
+ */
+const PRICE_WORD_AMOUNT_RE =
+  /\b(?:price|cost|rate|amount|fee|tariff)(?:\s*[:=\-\/]+\s*|\s+)-?[\d,]+(?:\.\d+)?(?:\s*\/-)?/gi;
+
+/** Comma-grouped amounts such as 900,000 or 900,000/-. */
+const COMMA_GROUPED_AMOUNT_RE =
+  /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:\s*\/-)?/g;
 
 /** Bare large numbers that may be unformatted PKR amounts (e.g. 900000). */
 const BARE_LARGE_AMOUNT_RE = /\b\d{5,}(?:\.\d+)?\b/g;
@@ -43,9 +58,46 @@ const BARE_LARGE_AMOUNT_RE = /\b\d{5,}(?:\.\d+)?\b/g;
 const TECHNICAL_UNIT_SUFFIX_RE =
   /^(?:\s*)(?:k?w(?:p)?|v(?:olts?)?|a(?:mps?)?|ah|hz|mm|cm|m\b|kg|cells?|modules?|panels?|pcs|pieces|cycles?)\b/i;
 
+/** Tokens that look like currency/price labels, not model identifiers. */
+const MONETARY_TOKEN_PREFIX_RE =
+  /^(?:PKR|Rs\.?|price|cost|rate|amount|fee|tariff)(?:$|[\s:=\-\/.])/i;
+
 /**
- * True when a numeric match is part of a model token or technical rating
- * (e.g. `550W`, `LONGi-LR5-72HPH-550M`) rather than a monetary amount.
+ * Validated hyphenated model token:
+ * starts with a letter, contains a digit, and has 2+ alphanumeric segments
+ * (e.g. LONGi-LR5-72HPH-550M). Arbitrary letter/hyphen adjacency is not enough.
+ */
+const VALIDATED_MODEL_TOKEN_RE =
+  /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)+$/;
+
+function expandToModelTokenBounds(
+  text: string,
+  start: number,
+  end: number,
+): { tokenStart: number; tokenEnd: number; token: string } {
+  let tokenStart = start;
+  let tokenEnd = end;
+  while (tokenStart > 0 && /[A-Za-z0-9._-]/.test(text.charAt(tokenStart - 1))) {
+    tokenStart -= 1;
+  }
+  while (tokenEnd < text.length && /[A-Za-z0-9._-]/.test(text.charAt(tokenEnd))) {
+    tokenEnd += 1;
+  }
+  return {
+    tokenStart,
+    tokenEnd,
+    token: text.slice(tokenStart, tokenEnd),
+  };
+}
+
+function isValidatedModelToken(token: string): boolean {
+  if (!token || MONETARY_TOKEN_PREFIX_RE.test(token)) return false;
+  return VALIDATED_MODEL_TOKEN_RE.test(token);
+}
+
+/**
+ * True when a bare numeric match is a technical rating or validated model token.
+ * Adjacency to an arbitrary letter/hyphen alone is NOT sufficient.
  */
 function isTechnicalNumberContext(
   text: string,
@@ -56,12 +108,8 @@ function isTechnicalNumberContext(
   const after = text.slice(end, end + 24);
   if (TECHNICAL_UNIT_SUFFIX_RE.test(after)) return true;
 
-  // Digits glued into alphanumeric / hyphenated model identifiers.
-  const before = text.slice(Math.max(0, start - 1), start);
-  const afterChar = text.slice(end, end + 1);
-  if (/[A-Za-z-]/.test(before) || /[A-Za-z-]/.test(afterChar)) return true;
-
-  return false;
+  const { token } = expandToModelTokenBounds(text, start, end);
+  return isValidatedModelToken(token);
 }
 
 function collectEmbeddedPriceMatches(text: string): Array<{
@@ -90,8 +138,12 @@ function collectEmbeddedPriceMatches(text: string): Array<{
     }
   };
 
-  pushAll(CURRENCY_MARKED_PRICE_RE, false);
+  // Monetary markers first (no technical escape).
+  pushAll(CURRENCY_PREFIX_PRICE_RE, false);
+  pushAll(CURRENCY_SUFFIX_PRICE_RE, false);
+  pushAll(PRICE_WORD_AMOUNT_RE, false);
   pushAll(COMMA_GROUPED_AMOUNT_RE, false);
+  // Bare amounts may escape only via wattage units or validated model tokens.
   pushAll(BARE_LARGE_AMOUNT_RE, true);
 
   matches.sort((a, b) => a.start - b.start || b.end - a.end);

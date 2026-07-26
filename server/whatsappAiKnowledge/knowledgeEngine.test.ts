@@ -853,4 +853,117 @@ await test("AI-02-R2: false non-price monetary body is stripped if it bypasses i
   assert.match(fact.text, /\[price-omitted\]/);
 });
 
+await test("AI-02-R3: currency separators and price-word forms cannot escape as model tokens", () => {
+  const store = new InMemoryKnowledgeStore([]);
+  const rejectionBodies = [
+    "PKR-900000",
+    "PKR: 900000",
+    "Rs/-900000",
+    "Rs.900000",
+    "price-900000",
+    "package price 900,000/-",
+    "starting from 900000 PKR",
+  ];
+
+  for (const [index, body] of rejectionBodies.entries()) {
+    assert.equal(
+      hasEmbeddedPriceAmount(body),
+      true,
+      `scanner must reject: ${body}`,
+    );
+    assert.throws(
+      () =>
+        store.ingest(
+          baseNonPriceRecord({
+            id: `r3-reject-${index}`,
+            sourceType: "solar_package",
+            categories: ["solar_packages"],
+            containsPrice: false,
+            price: null,
+            body: `Copy embeds ${body} outside the price payload.`,
+          }),
+        ),
+      /must not embed numeric price amounts/i,
+      body,
+    );
+
+    // Same scanner used for retrieval defense-in-depth.
+    const leaked = baseNonPriceRecord({
+      id: `r3-leak-${index}`,
+      sourceType: "solar_package",
+      categories: ["solar_packages"],
+      containsPrice: false,
+      price: null,
+      body: `Copy embeds ${body} outside the price payload.`,
+    });
+    const fact = toAnswerFact({
+      record: leaked,
+      rankScore: 40,
+      freshness: "current",
+      priceFreshness: "current",
+      priceAllowed: false,
+    });
+    assert.match(fact.text, /\[price-omitted\]/, body);
+    assert.doesNotMatch(fact.text, /900,?000/, body);
+  }
+});
+
+await test("AI-02-R3: wattage, validated model tokens, and structured price payloads still pass", () => {
+  const store = new InMemoryKnowledgeStore([]);
+
+  assert.equal(hasEmbeddedPriceAmount("LONGi-LR5-72HPH-550M"), false);
+  assert.equal(hasEmbeddedPriceAmount("550W"), false);
+  assert.equal(hasEmbeddedPriceAmount("5kW"), false);
+
+  assert.doesNotThrow(() =>
+    store.ingest(
+      baseNonPriceRecord({
+        id: "r3-model-ok",
+        body: "Supported module: LONGi-LR5-72HPH-550M at 550W for 5kW packages.",
+        containsPrice: false,
+        price: null,
+      }),
+    ),
+  );
+
+  const publishedAt = hoursAgoIso(6);
+  assert.doesNotThrow(() =>
+    store.ingest(
+      basePricedRecord({
+        id: "r3-structured-price",
+        title: "Structured Price Control",
+        body: "Approved package overview without embedded amounts.",
+        publishedAt,
+        containsPrice: true,
+        price: {
+          amountPkr: 900000,
+          currency: "PKR",
+          unitLabel: "starting package",
+          publishedAt,
+          freshness: "current",
+          sourceId: "r3-structured-price",
+          sourceTitle: "Structured Price Control",
+        },
+      }),
+    ),
+  );
+
+  const priced = store.getById(FIXTURE_TENANT_A, "r3-structured-price");
+  assert.ok(priced);
+  assert.equal(priced!.containsPrice, true);
+  assert.equal(priced!.price!.amountPkr, 900000);
+  assert.doesNotMatch(priced!.body, /900000|PKR/);
+
+  const draft = new KnowledgeAnswerEngine(store).retrieveAnswerDraft({
+    tenantId: FIXTURE_TENANT_A,
+    queryText: "Structured Price Control package price",
+    asOfIso: AS_OF,
+    limit: 5,
+  });
+  const fact = draft.facts.find((f) => f.sourceId === "r3-structured-price");
+  assert.ok(fact);
+  assert.equal(fact!.containsPrice, true);
+  assert.equal(fact!.price!.amountPkr, 900000);
+});
+
 console.log("AI-02 knowledge engine tests completed.");
