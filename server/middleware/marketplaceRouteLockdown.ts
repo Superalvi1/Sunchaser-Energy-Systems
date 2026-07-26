@@ -38,6 +38,8 @@ function sendLockdownError(
 /**
  * Express middleware: marketplace feature gate + JWT actor + marketplace permission.
  * Mount after global authorization middleware so req.actor is already hydrated.
+ * Catalogue-admin and pricing-admin share this gate; pricing adds Super Admin checks in-route.
+ * Payment/COD finance-ops lockdown remains in server/marketplace/payments|cod (not replaced here).
  */
 export function createMarketplaceRouteLockdown(
   deps: MarketplaceLockdownDeps = {},

@@ -331,6 +331,8 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   );
 
   // ---- Admin / finance -----------------------------------------------------
+  // Mounted at /admin/payments only so catalogue/pricing/COD /admin/* paths
+  // are not intercepted by finance lockdown (pre-WS4 admin composition).
 
   const admin = express.Router();
   admin.use((req, res, next) => {
@@ -340,7 +342,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
     })(req, res, next);
   });
 
-  admin.get("/payments", async (req: Request, res: Response) => {
+  admin.get("/", async (req: Request, res: Response) => {
     try {
       const actor = req.actor!;
       const status =
@@ -355,7 +357,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
     }
   });
 
-  admin.post("/payments/:id/verify", async (req: Request, res: Response) => {
+  admin.post("/:id/verify", async (req: Request, res: Response) => {
     try {
       const empty = parseEmptyBody(req.body);
       if (!empty.ok) {
@@ -385,7 +387,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
     }
   });
 
-  admin.post("/payments/:id/reject", async (req: Request, res: Response) => {
+  admin.post("/:id/reject", async (req: Request, res: Response) => {
     try {
       const parsed = parseRejectBody(req.body);
       if (!parsed.ok) {
@@ -420,7 +422,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
     }
   });
 
-  admin.post("/payments/:id/refund", async (req: Request, res: Response) => {
+  admin.post("/:id/refund", async (req: Request, res: Response) => {
     try {
       const parsed = parseRefundBody(req.body);
       if (!parsed.ok) {
@@ -459,6 +461,6 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
     }
   });
 
-  router.use("/admin", admin);
+  router.use("/admin/payments", admin);
   return router;
 }
