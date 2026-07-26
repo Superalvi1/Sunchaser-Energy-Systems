@@ -120,6 +120,8 @@ function isPrivateOrLocalIp(ip: string): boolean {
   // IPv6
   const normalized = ip.toLowerCase();
   if (normalized === "::1") return true;
+  // Unspecified address (equivalent forms)
+  if (normalized === "::" || normalized === "0:0:0:0:0:0:0:0") return true;
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true; // ULA
   if (normalized.startsWith("fe80")) return true; // link-local
   if (normalized.startsWith("ff")) return true; // multicast
