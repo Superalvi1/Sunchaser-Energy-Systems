@@ -38,7 +38,8 @@ export type AiDraftEscalationReason =
   | "rate_limited"
   | "timeout"
   | "tenant_mismatch"
-  | "config_unavailable";
+  | "config_unavailable"
+  | "unsafe_output";
 
 export type AiDraftSafeSource = {
   sourceId: string;

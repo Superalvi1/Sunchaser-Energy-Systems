@@ -29,6 +29,13 @@ import {
 } from "./queryOutputValidation.ts";
 import { QueryPolicyLayer } from "./queryPolicyLayer.ts";
 import { QueryRateLimiter } from "./queryRateLimiter.ts";
+import {
+  createQueryKnowledgeAdapter,
+  enrichOutlineWithKnowledge,
+  knowledgeFactsToSafeSources,
+  knowledgeRequiresHumanEscalation,
+  type QueryKnowledgePort,
+} from "./queryKnowledgeAdapter.ts";
 import type {
   EscalationReason,
   QueryAgentGateway,
@@ -43,6 +50,10 @@ export type QueryAgentServiceOptions = {
   gateway?: QueryAgentGateway;
   policyLayer?: QueryPolicyLayer;
   rateLimiter?: QueryRateLimiter;
+  /** AI-02 knowledge retrieval port (tenant-scoped). */
+  knowledge?: QueryKnowledgePort;
+  /** When false, skip knowledge retrieval (unit tests for policy-only paths). */
+  enableKnowledge?: boolean;
   /** Test seam for time. */
   now?: () => number;
   /** Test seam — override sleep between retries. */
@@ -163,6 +174,7 @@ export class QueryAgentService {
   private readonly gateway: QueryAgentGateway;
   private readonly policyLayer: QueryPolicyLayer;
   private readonly rateLimiter: QueryRateLimiter;
+  private readonly knowledge: QueryKnowledgePort | null;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
 
@@ -183,6 +195,14 @@ export class QueryAgentService {
         windowMs: this.config.rateLimitWindowMs,
         maxAttempts: this.config.rateLimitMax,
       });
+    // Knowledge is opt-in via createQueryAgentService / explicit port.
+    // Unit tests constructing QueryAgentService directly stay policy-only.
+    this.knowledge =
+      options.knowledge !== undefined
+        ? options.knowledge
+        : options.enableKnowledge
+          ? createQueryKnowledgeAdapter()
+          : null;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
     assertNoWhatsAppSendCapability();
@@ -284,14 +304,83 @@ export class QueryAgentService {
     // Deterministic policy BEFORE AI phrasing.
     const policy = this.policyLayer.evaluate(request.messageText);
 
-    // For high-risk / injection / human-request / complaint: return a safe
-    // escalation draft without requiring (or trusting) provider creativity.
+    // AI-02 knowledge retrieval (tenant-scoped) — before provider phrasing.
+    let policyAnswerOutline = policy.policyAnswerOutline;
+    let safeSources = [...policy.safeSources];
+    let knowledgeEscalationReasons: EscalationReason[] = [];
+    let knowledgeWarnings: string[] = [];
+
+    // Skip knowledge for pure greetings — empty packs must not force escalation.
+    const shouldRetrieveKnowledge =
+      this.knowledge != null && policy.intent !== "greeting";
+
+    if (shouldRetrieveKnowledge && this.knowledge) {
+      try {
+        const knowledgeDraft = this.knowledge.retrieve({
+          companyId,
+          queryText: policy.sanitizedUserText,
+          intent: policy.intent,
+        });
+        if (knowledgeRequiresHumanEscalation(knowledgeDraft)) {
+          knowledgeEscalationReasons = ["uncertain"];
+          if (knowledgeDraft.category === "unsafe_engineering") {
+            knowledgeEscalationReasons = ["dangerous"];
+          }
+          knowledgeWarnings = [
+            knowledgeDraft.humanHandoverReason ||
+              knowledgeDraft.unavailableMessage ||
+              "Approved knowledge unavailable or requires human review.",
+          ];
+        } else {
+          policyAnswerOutline = enrichOutlineWithKnowledge(
+            policy.policyAnswerOutline,
+            knowledgeDraft
+          );
+          const kSources = knowledgeFactsToSafeSources(knowledgeDraft);
+          const seen = new Set(safeSources.map((s) => s.sourceId));
+          for (const src of kSources) {
+            if (!seen.has(src.sourceId)) {
+              seen.add(src.sourceId);
+              safeSources.push(src);
+            }
+          }
+          if (knowledgeDraft.disposition === "partial") {
+            knowledgeWarnings.push(
+              "Knowledge answer is partial — staff must verify before send."
+            );
+          }
+        }
+        logQueryAgent("info", "knowledge_retrieved", {
+          disposition: knowledgeDraft.disposition,
+          category: knowledgeDraft.category,
+          matchedRecordCount: knowledgeDraft.retrieval.matchedRecordCount,
+        });
+      } catch {
+        // Fail closed to human escalation — never invent facts.
+        knowledgeEscalationReasons = ["uncertain"];
+        knowledgeWarnings = [
+          "Knowledge retrieval failed closed; human review required.",
+        ];
+        logQueryAgent("warn", "knowledge_retrieval_failed", {
+          companyIdHash: hashOpaqueId(companyId),
+        });
+      }
+    }
+
+    const combinedEscalationReasons = [
+      ...new Set([...policy.escalationReasons, ...knowledgeEscalationReasons]),
+    ];
+    const combinedWarnings = [...policy.warnings, ...knowledgeWarnings];
+
+    // For high-risk / injection / knowledge gaps: safe escalation draft
+    // without requiring (or trusting) provider creativity.
     if (
       policy.intent === "unsupported_high_risk" ||
       policy.injectionSuspected ||
-      policy.escalationReasons.includes("dangerous") ||
-      policy.escalationReasons.includes("legal") ||
-      policy.escalationReasons.includes("medical")
+      combinedEscalationReasons.includes("dangerous") ||
+      combinedEscalationReasons.includes("legal") ||
+      combinedEscalationReasons.includes("medical") ||
+      knowledgeEscalationReasons.length > 0
     ) {
       const answer =
         "Thank you for your message. A Sunchaser team member will review this and follow up with you shortly.";
@@ -303,12 +392,14 @@ export class QueryAgentService {
         answer,
         intent: policy.intent,
         confidence: policy.confidence,
-        warnings: policy.warnings,
+        warnings: combinedWarnings,
         requiresHumanReview: true,
         autoSendBlocked: true,
         escalate: true,
-        escalationReasons: policy.escalationReasons,
-        safeSources: policy.safeSources,
+        escalationReasons: combinedEscalationReasons.length
+          ? combinedEscalationReasons
+          : policy.escalationReasons,
+        safeSources,
         audit: buildAuditMetadata({
           draftId,
           companyId,
@@ -318,7 +409,9 @@ export class QueryAgentService {
           intent: policy.intent,
           confidence: policy.confidence,
           escalate: true,
-          escalationReasons: policy.escalationReasons,
+          escalationReasons: combinedEscalationReasons.length
+            ? combinedEscalationReasons
+            : policy.escalationReasons,
           injectionSuspected: policy.injectionSuspected,
           providerId: this.gateway.providerId,
           providerConfigured: true,
@@ -334,6 +427,7 @@ export class QueryAgentService {
         intent: policy.intent,
         escalate: true,
         injectionSuspected: policy.injectionSuspected,
+        knowledgeEscalated: knowledgeEscalationReasons.length > 0,
       });
       return result;
     }
@@ -348,9 +442,9 @@ export class QueryAgentService {
             this.gateway.phraseDraft({
               companyId,
               intent: policy.intent,
-              policyAnswerOutline: policy.policyAnswerOutline,
+              policyAnswerOutline,
               sanitizedUserText: policy.sanitizedUserText,
-              warnings: policy.warnings,
+              warnings: combinedWarnings,
               allowedToolNames: policy.allowedToolNames,
               locale: request.locale,
               abortSignal: signal,
@@ -405,7 +499,7 @@ export class QueryAgentService {
             intent: policy.intent,
             confidence: Math.min(policy.confidence, phrase.confidence, 0.4),
             warnings: [
-              ...policy.warnings,
+              ...combinedWarnings,
               "Provider draft failed safety validation — escalated for human review.",
               "Automatic WhatsApp replies are disabled — staff must send manually.",
             ],
@@ -413,7 +507,7 @@ export class QueryAgentService {
             autoSendBlocked: true,
             escalate: true,
             escalationReasons: [...new Set(escalationReasons)],
-            safeSources: policy.safeSources,
+            safeSources,
             audit: buildAuditMetadata({
               draftId,
               companyId,
@@ -460,14 +554,14 @@ export class QueryAgentService {
           intent: policy.intent,
           confidence,
           warnings: [
-            ...policy.warnings,
+            ...combinedWarnings,
             "Automatic WhatsApp replies are disabled — staff must send manually.",
           ],
           requiresHumanReview: true,
           autoSendBlocked: true,
           escalate,
           escalationReasons: [...new Set(escalationReasons)],
-          safeSources: policy.safeSources,
+          safeSources,
           audit: buildAuditMetadata({
             draftId,
             companyId,
@@ -546,5 +640,9 @@ export class QueryAgentService {
 export function createQueryAgentService(
   options: QueryAgentServiceOptions = {}
 ): QueryAgentService {
-  return new QueryAgentService(options);
+  return new QueryAgentService({
+    ...options,
+    // Integrated path: AI-02 knowledge on by default (fixture-backed; no live AI).
+    enableKnowledge: options.enableKnowledge ?? true,
+  });
 }

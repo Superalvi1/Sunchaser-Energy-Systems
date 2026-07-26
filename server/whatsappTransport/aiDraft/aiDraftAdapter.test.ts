@@ -125,7 +125,11 @@ await test("provider failure throws safely (no send side effect)", async () => {
   );
 });
 
-await test("factory defaults to mock adapter (no live provider)", () => {
+await test("factory defaults to query-agent adapter (no live provider)", () => {
+  const prevProvider = process.env.WHATSAPP_AI_QUERY_PROVIDER;
+  const prevGemini = process.env.GEMINI_API_KEY;
+  process.env.WHATSAPP_AI_QUERY_PROVIDER = "mock";
+  delete process.env.GEMINI_API_KEY;
   const adapter = createInboxAiDraftAdapter({
     config: {
       draftEnabled: true,
@@ -134,7 +138,11 @@ await test("factory defaults to mock adapter (no live provider)", () => {
       timeoutMs: 1000,
     },
   });
-  assert.equal(adapter.adapterId, "mock-ai-draft");
+  assert.equal(adapter.adapterId, "query-agent");
+  if (prevProvider === undefined) delete process.env.WHATSAPP_AI_QUERY_PROVIDER;
+  else process.env.WHATSAPP_AI_QUERY_PROVIDER = prevProvider;
+  if (prevGemini === undefined) delete process.env.GEMINI_API_KEY;
+  else process.env.GEMINI_API_KEY = prevGemini;
 });
 
 await test("timeout maps to denied timeout", async () => {

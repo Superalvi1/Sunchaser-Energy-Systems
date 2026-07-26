@@ -7,7 +7,8 @@ Inbox UX + HTTP contract for **staff-initiated**, **human-reviewed** AI response
 - Automatic replies are impossible (`WHATSAPP_AI_AUTO_REPLY_ENABLED` is ignored for send).
 - Generation never calls `InboxSendPort` / `POST /messages/send`.
 - Feature flag `WHATSAPP_AI_QUERY_DRAFT_ENABLED` defaults **OFF**.
-- No OpenAI / Gemini / Anthropic calls from AI-03 — mock adapter only until AI-01 lands.
+- AI-04 wires `createInboxAiDraftAdapter` → AI-01 `QueryAgentService` (+ AI-02 knowledge).
+  Live provider calls require `GEMINI_API_KEY` and `WHATSAPP_AI_QUERY_PROVIDER=env`; default is mock phrasing.
 - Draft text is held in React memory only (never `localStorage` / `sessionStorage`).
 
 ## HTTP contract

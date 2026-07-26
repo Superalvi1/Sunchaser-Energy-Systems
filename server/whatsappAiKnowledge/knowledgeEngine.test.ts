@@ -66,7 +66,7 @@ function basePricedRecord(
           sourceTitle: title,
           ...(priceOverrides ?? {}),
         };
-  return {
+  const base: KnowledgeRecord = {
     id,
     tenantId: FIXTURE_TENANT_A,
     sourceType: "solar_package",
@@ -81,6 +81,10 @@ function basePricedRecord(
     priority: 50,
     active: true,
     ...overrides,
+  };
+  // Re-assert call-site identity after overrides (spread form avoids duplicate keys).
+  return {
+    ...base,
     id,
     title,
     publishedAt,

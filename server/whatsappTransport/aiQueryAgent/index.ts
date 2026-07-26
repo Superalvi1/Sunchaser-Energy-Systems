@@ -16,4 +16,5 @@ export * from "./queryAgentAudit.ts";
 export * from "./queryAgentLogger.ts";
 export * from "./mockQueryAgentProvider.ts";
 export * from "./queryAgentGateway.ts";
+export * from "./queryKnowledgeAdapter.ts";
 export * from "./queryAgentService.ts";
