@@ -23,8 +23,8 @@ import {
 } from "./whatsappWebConfig.ts";
 import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
 import {
-  rememberVerifiedLidMapping,
   resolveWhatsAppIdentityDurable,
+  scheduleRememberVerifiedLidMapping,
 } from "./whatsappWebLidMapping.ts";
 import {
   defaultWhatsAppLidMappingScope,
@@ -148,7 +148,7 @@ export async function persistWhatsAppWebInbound(
         message.participantPn ||
         null;
       if (altPhone) {
-        void rememberVerifiedLidMapping(message.remoteJid, altPhone, {
+        scheduleRememberVerifiedLidMapping(message.remoteJid, altPhone, {
           repo: lidMappingRepo,
           scope: lidMappingScope,
           memory: lidMap,

@@ -1,5 +1,5 @@
 /**
- * SYNC-14C-B — durable LID→phone mapping tests.
+ * SYNC-14C-B / R1 — durable LID→phone mapping tests.
  * Run: npm run test:whatsapp-web-lid-mapping
  */
 import assert from "node:assert/strict";
@@ -9,6 +9,7 @@ import {
 } from "../whatsappTransport/whatsappRepository.ts";
 import { attachContactDisplayFields } from "../whatsappTransport/whatsappInboxRepoSupport.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
+import { ContactIdentityPersistQueue } from "./whatsappWebContactIdentityQueue.ts";
 import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
 import { persistWhatsAppWebInbound } from "./whatsappWebInbound.ts";
 import {
@@ -16,11 +17,15 @@ import {
   hydrateWhatsAppLidPhoneMap,
   rememberVerifiedLidMapping,
   resolveWhatsAppIdentityDurable,
+  scheduleRememberVerifiedLidMapping,
+  WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
 } from "./whatsappWebLidMapping.ts";
 import {
   defaultWhatsAppLidMappingScope,
   InMemoryWhatsAppLidPhoneMappingRepository,
+  normalizeMappingPhoneE164,
   SupabaseWhatsAppLidPhoneMappingRepository,
+  WHATSAPP_UPSERT_VERIFIED_LID_PHONE_MAPPING_RPC,
   type UpsertVerifiedLidMappingResult,
   type WhatsAppLidPhoneMappingRepository,
 } from "./whatsappWebLidMappingRepository.ts";
@@ -31,6 +36,7 @@ const LID_A = "123456789012345@lid";
 const LID_B = "999888777666555@lid";
 const PHONE_A = "923001112233";
 const PHONE_B = "923009998877";
+const PHONE_C = "923007776655";
 const PHONE_A_JID = `${PHONE_A}@s.whatsapp.net`;
 const PHONE_B_JID = `${PHONE_B}@s.whatsapp.net`;
 
@@ -71,9 +77,28 @@ function assertNoRawIdsInValue(value: unknown, path = "root"): void {
   }
 }
 
-/** In-memory table implementing the Supabase query surface used by the repo. */
-function createLidMappingFakeSupabase() {
+type FakeLidClient = {
+  from: (table: string) => unknown;
+  rpc: (
+    name: string,
+    params: Record<string, unknown>
+  ) => Promise<{ data: unknown; error: unknown }>;
+  __rows: Map<string, Record<string, unknown>>;
+  __failNextRemapInsert: boolean;
+  __rpcHold: Map<string, { release: () => void; promise: Promise<void> }>;
+  __beginRpcHold: (key: string) => Promise<void>;
+  __releaseRpcHold: (key: string) => void;
+};
+
+/**
+ * In-memory table + atomic RPC twin of
+ * public.whatsapp_upsert_verified_lid_phone_mapping.
+ */
+function createLidMappingFakeSupabase(): FakeLidClient {
   const rows = new Map<string, Record<string, unknown>>();
+  const lidLocks = new Map<string, Promise<void>>();
+  const rpcHold = new Map<string, { release: () => void; promise: Promise<void> }>();
+  let failNextRemapInsert = false;
 
   function liveKey(row: Record<string, unknown>): string {
     return [
@@ -82,6 +107,31 @@ function createLidMappingFakeSupabase() {
       row.session_key,
       row.lid_normalized,
     ].join("\0");
+  }
+
+  function scopeLidKey(
+    companyId: string,
+    channel: string,
+    session: string,
+    lid: string
+  ): string {
+    return [companyId, channel, session, lid].join("\0");
+  }
+
+  async function withLidLock<T>(key: string, fn: () => Promise<T> | T): Promise<T> {
+    const prev = lidLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    lidLocks.set(key, next);
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (lidLocks.get(key) === next) lidLocks.delete(key);
+    }
   }
 
   function findLive(filters: Record<string, unknown>): Record<string, unknown> | null {
@@ -137,6 +187,140 @@ function createLidMappingFakeSupabase() {
       out.push(row);
     }
     return out;
+  }
+
+  async function atomicUpsertRpc(
+    params: Record<string, unknown>
+  ): Promise<{ data: unknown; error: unknown }> {
+    const companyId = String(params.p_company_id || "").trim();
+    const channel = String(params.p_channel_phone_number_id || "").trim();
+    const session = String(params.p_session_key || "").trim();
+    const lid = String(params.p_lid_normalized || "").trim();
+    const phone = String(params.p_phone_e164 || "").trim();
+    const mappingId = String(params.p_mapping_id || "").trim() || `wlid_${rows.size + 1}`;
+
+    if (!companyId || !channel || !session) {
+      return {
+        data: { kind: "rejected", reason: "invalid_scope", mapping: null },
+        error: null,
+      };
+    }
+    if (!lid || !/@lid$/i.test(lid)) {
+      return {
+        data: { kind: "rejected", reason: "invalid_lid", mapping: null },
+        error: null,
+      };
+    }
+    if (!/^[0-9]{6,}$/.test(phone)) {
+      return {
+        data: { kind: "rejected", reason: "invalid_phone", mapping: null },
+        error: null,
+      };
+    }
+
+    const key = scopeLidKey(companyId, channel, session, lid);
+    return withLidLock(key, async () => {
+      const hold = rpcHold.get(key);
+      if (hold) await hold.promise;
+
+      const now = new Date().toISOString();
+      const live = findLive({
+        company_id: companyId,
+        channel_phone_number_id: channel,
+        session_key: session,
+        lid_normalized: lid,
+        status_in: ["active", "stale"],
+      });
+
+      if (!live) {
+        const created = {
+          id: mappingId,
+          company_id: companyId,
+          channel_phone_number_id: channel,
+          session_key: session,
+          lid_normalized: lid,
+          phone_e164: phone,
+          status: "active",
+          verified_at: now,
+          last_resolved_at: now,
+          conflict_count: 0,
+          superseded_at: null,
+          created_at: now,
+          updated_at: now,
+        };
+        // Cross-process-style unique race on live key.
+        const conflict = [...rows.values()].find(
+          (r) =>
+            liveKey(r) === liveKey(created) &&
+            (r.status === "active" || r.status === "stale")
+        );
+        if (conflict) {
+          return {
+            data: { kind: "error", error_code: "insert_unique_race", mapping: null },
+            error: null,
+          };
+        }
+        rows.set(String(created.id), created);
+        return { data: { kind: "created", mapping: { ...created } }, error: null };
+      }
+
+      if (live.phone_e164 === phone) {
+        Object.assign(live, {
+          status: live.status === "stale" ? "active" : live.status,
+          last_resolved_at: now,
+          updated_at: now,
+          superseded_at: null,
+        });
+        return { data: { kind: "unchanged", mapping: { ...live } }, error: null };
+      }
+
+      if (live.status === "stale") {
+        // Atomic remap: stage supersede + insert; roll back on insert failure.
+        const prior = { ...live };
+        if (failNextRemapInsert) {
+          failNextRemapInsert = false;
+          // Do not mutate durable state — stale remains resolvable.
+          Object.assign(live, prior);
+          return {
+            data: {
+              kind: "error",
+              error_code: "remap_insert_failed",
+              mapping: null,
+            },
+            error: null,
+          };
+        }
+        Object.assign(live, {
+          status: "superseded",
+          superseded_at: now,
+          updated_at: now,
+        });
+        const created = {
+          id: mappingId,
+          company_id: companyId,
+          channel_phone_number_id: channel,
+          session_key: session,
+          lid_normalized: lid,
+          phone_e164: phone,
+          status: "active",
+          verified_at: now,
+          last_resolved_at: now,
+          conflict_count: 0,
+          superseded_at: null,
+          created_at: now,
+          updated_at: now,
+        };
+        rows.set(String(created.id), created);
+        return { data: { kind: "remapped", mapping: { ...created } }, error: null };
+      }
+
+      // Atomic conflict_count increment under the same lock.
+      Object.assign(live, {
+        conflict_count: Number(live.conflict_count ?? 0) + 1,
+        updated_at: now,
+      });
+      return { data: { kind: "conflict", mapping: { ...live } }, error: null };
+    });
   }
 
   const from = (_table: string) => {
@@ -195,7 +379,6 @@ function createLidMappingFakeSupabase() {
 
     function execute(): { data: unknown; error: unknown } {
       if (op === "insert" && insertPayload) {
-        // Enforce live unique index.
         const conflict = [...rows.values()].find(
           (r) =>
             liveKey(r) === liveKey(insertPayload!) &&
@@ -246,7 +429,6 @@ function createLidMappingFakeSupabase() {
         return { data: null, error: null };
       }
 
-      // select
       if (wantSingle || wantMaybe) {
         const row = findLive(filters);
         return { data: row ? { ...row } : null, error: null };
@@ -257,13 +439,36 @@ function createLidMappingFakeSupabase() {
     return api;
   };
 
-  return {
+  const client: FakeLidClient = {
     from,
+    rpc: async (name, params) => {
+      assert.equal(name, WHATSAPP_UPSERT_VERIFIED_LID_PHONE_MAPPING_RPC);
+      return atomicUpsertRpc(params);
+    },
     __rows: rows,
-  } as unknown as {
-    from: (table: string) => unknown;
-    __rows: Map<string, Record<string, unknown>>;
+    get __failNextRemapInsert() {
+      return failNextRemapInsert;
+    },
+    set __failNextRemapInsert(v: boolean) {
+      failNextRemapInsert = v;
+    },
+    __rpcHold: rpcHold,
+    __beginRpcHold: async (key: string) => {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      rpcHold.set(key, { release, promise });
+    },
+    __releaseRpcHold: (key: string) => {
+      const hold = rpcHold.get(key);
+      if (!hold) return;
+      hold.release();
+      rpcHold.delete(key);
+    },
   };
+
+  return client;
 }
 
 async function runRepoSuite(
@@ -416,8 +621,8 @@ await runRepoSuite("supabase-fake", () => {
     { repo: waRepo, lidMap, lidMappingRepo: lidRepo, lidMappingScope: scopeA }
   );
   assert.equal(mapped.kind, "stored");
-  // Allow async remember to settle.
-  await new Promise((r) => setTimeout(r, 20));
+  // Drain bounded persist queue.
+  await new Promise((r) => setTimeout(r, 30));
   assert.equal(await lidRepo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
 
   // Simulate restart: new lidMap, same durable + contact repo.
@@ -471,7 +676,7 @@ await runRepoSuite("supabase-fake", () => {
       notify: "Push",
     },
   ]);
-  await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 30));
   assert.equal(await lidRepo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
 
   // Restart sync source memory via hydrate.
@@ -666,14 +871,270 @@ await runRepoSuite("supabase-fake", () => {
   console.log("PASS: no raw identifier in DTO/log/UI");
 }
 
-// Reject invalid LID-as-phone writes.
+// Reject invalid LID-as-phone writes + alphanumeric stripping.
 {
   const repo = new InMemoryWhatsAppLidPhoneMappingRepository();
   const bad = await repo.upsertVerifiedMapping(scopeA, PHONE_A_JID, PHONE_A);
   assert.equal(bad.kind, "rejected");
   const badPhone = await repo.upsertVerifiedMapping(scopeA, LID_A, LID_A);
   assert.equal(badPhone.kind, "rejected");
-  console.log("PASS: reject non-LID / LID-as-phone writes");
+  assert.equal(normalizeMappingPhoneE164("abc123def456"), null);
+  assert.equal(normalizeMappingPhoneE164("+923001112233"), null);
+  assert.equal(normalizeMappingPhoneE164(PHONE_A), PHONE_A);
+  assert.equal(normalizeMappingPhoneE164(PHONE_A_JID), PHONE_A);
+  const alpha = await repo.upsertVerifiedMapping(scopeA, LID_A, "abc123def456");
+  assert.equal(alpha.kind, "rejected");
+  if (alpha.kind === "rejected") assert.equal(alpha.reason, "invalid_phone");
+  console.log("PASS: reject non-LID / LID-as-phone / alphanumeric phone writes");
 }
 
-console.log("PASS: SYNC-14C-B durable LID mapping suite complete");
+// ---------------------------------------------------------------------------
+// SYNC-14C-B-R1 — atomic remap / concurrency (Supabase-fake)
+// ---------------------------------------------------------------------------
+
+// Insert failure after attempted stale remap preserves old mapping.
+{
+  const client = createLidMappingFakeSupabase();
+  const repo = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+  await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+  assert.equal(await repo.markStale(scopeA, LID_A), true);
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
+
+  client.__failNextRemapInsert = true;
+  const failed = await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_B);
+  assert.equal(failed.kind, "error");
+  if (failed.kind === "error") {
+    assert.equal(failed.errorCode, "remap_insert_failed");
+  }
+  // Old stale mapping remains the sole live/resolvable row.
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
+  const live = [...client.__rows.values()].filter(
+    (r) =>
+      r.lid_normalized === LID_A &&
+      (r.status === "active" || r.status === "stale")
+  );
+  assert.equal(live.length, 1);
+  assert.equal(live[0]?.status, "stale");
+  assert.equal(live[0]?.phone_e164, PHONE_A);
+  console.log("PASS: insert failure after stale remap preserves old mapping");
+}
+
+// In-memory twin: failed remap also preserves stale.
+{
+  const repo = new InMemoryWhatsAppLidPhoneMappingRepository();
+  await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+  await repo.markStale(scopeA, LID_A);
+  repo.__failNextRemapInsert = true;
+  const failed = await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_B);
+  assert.equal(failed.kind, "error");
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
+  const live = repo.__all().filter(
+    (r) => r.lidNormalized === LID_A && r.status !== "superseded"
+  );
+  assert.equal(live.length, 1);
+  assert.equal(live[0]?.status, "stale");
+  console.log("PASS: in-memory failed remap preserves old mapping");
+}
+
+// Two concurrent different-phone remaps → one remapped winner, no dual-live.
+{
+  const client = createLidMappingFakeSupabase();
+  const repo = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+  await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+  await repo.markStale(scopeA, LID_A);
+
+  const holdKey = [
+    scopeA.companyId,
+    scopeA.channelPhoneNumberId,
+    scopeA.sessionKey,
+    LID_A,
+  ].join("\0");
+  await client.__beginRpcHold(holdKey);
+
+  const p1 = repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_B);
+  const p2 = repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_C);
+  // Let both enter the RPC and queue on the lid lock / hold.
+  await new Promise((r) => setTimeout(r, 10));
+  client.__releaseRpcHold(holdKey);
+
+  const results = await Promise.all([p1, p2]);
+  const kinds = results.map((r) => r.kind).sort();
+  // First remap wins; second sees active winner → conflict (or rare error).
+  assert.equal(kinds.includes("remapped"), true);
+  assert.equal(
+    kinds.includes("conflict") || kinds.includes("error"),
+    true
+  );
+  const resolved = await repo.resolvePhoneByLid(scopeA, LID_A);
+  assert.equal(resolved === PHONE_B || resolved === PHONE_C, true);
+  const live = [...client.__rows.values()].filter(
+    (r) =>
+      r.lid_normalized === LID_A &&
+      (r.status === "active" || r.status === "stale")
+  );
+  assert.equal(live.length, 1);
+  assert.equal(live[0]?.status, "active");
+  console.log("PASS: concurrent different-phone remaps → single live winner");
+}
+
+// Concurrent conflict_count increments are not lost.
+{
+  const client = createLidMappingFakeSupabase();
+  const repo = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+  await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+
+  const holdKey = [
+    scopeA.companyId,
+    scopeA.channelPhoneNumberId,
+    scopeA.sessionKey,
+    LID_A,
+  ].join("\0");
+  await client.__beginRpcHold(holdKey);
+
+  const n = 8;
+  const pending = Array.from({ length: n }, (_, i) =>
+    repo.upsertVerifiedMapping(
+      scopeA,
+      LID_A,
+      i % 2 === 0 ? PHONE_B : PHONE_C
+    )
+  );
+  await new Promise((r) => setTimeout(r, 10));
+  client.__releaseRpcHold(holdKey);
+  const results = await Promise.all(pending);
+  assert.equal(results.every((r) => r.kind === "conflict"), true);
+  const last = results[results.length - 1];
+  assert.equal(last?.kind, "conflict");
+  if (last?.kind === "conflict") {
+    assert.equal(last.mapping.conflictCount, n);
+  }
+  // Direct row check — atomic increments under lock.
+  const live = [...client.__rows.values()].find(
+    (r) => r.lid_normalized === LID_A && r.status === "active"
+  );
+  assert.equal(Number(live?.conflict_count), n);
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
+  console.log("PASS: concurrent conflict_count increments are atomic");
+}
+
+// Cross-process-style competing inserts → one created, others re-decide.
+{
+  const client = createLidMappingFakeSupabase();
+  const repoA = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+  const repoB = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+
+  const holdKey = [
+    scopeA.companyId,
+    scopeA.channelPhoneNumberId,
+    scopeA.sessionKey,
+    LID_A,
+  ].join("\0");
+  await client.__beginRpcHold(holdKey);
+
+  const p1 = repoA.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+  const p2 = repoB.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+  await new Promise((r) => setTimeout(r, 10));
+  client.__releaseRpcHold(holdKey);
+  const [r1, r2] = await Promise.all([p1, p2]);
+  const kinds = [r1.kind, r2.kind].sort();
+  assert.deepEqual(kinds, ["created", "unchanged"]);
+  const live = [...client.__rows.values()].filter(
+    (r) =>
+      r.lid_normalized === LID_A &&
+      (r.status === "active" || r.status === "stale")
+  );
+  assert.equal(live.length, 1);
+  assert.equal(live[0]?.phone_e164, PHONE_A);
+  console.log("PASS: cross-process-style competing inserts → one live row");
+}
+
+// Malformed alphanumeric phone rejected via Supabase RPC path too.
+{
+  const client = createLidMappingFakeSupabase();
+  const repo = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+  const rejected = await repo.upsertVerifiedMapping(
+    scopeA,
+    LID_A,
+    "user_abc123def456"
+  );
+  assert.equal(rejected.kind, "rejected");
+  if (rejected.kind === "rejected") {
+    assert.equal(rejected.reason, "invalid_phone");
+  }
+  assert.equal(client.__rows.size, 0);
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), null);
+  console.log("PASS: malformed alphanumeric phone rejected (supabase-fake)");
+}
+
+// Old mapping remains resolvable after every failed remap (multi-fail).
+{
+  const client = createLidMappingFakeSupabase();
+  const repo = new SupabaseWhatsAppLidPhoneMappingRepository(client as never);
+  await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_A);
+  await repo.markStale(scopeA, LID_A);
+
+  for (let i = 0; i < 3; i++) {
+    client.__failNextRemapInsert = true;
+    const failed = await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_B);
+    assert.equal(failed.kind, "error");
+    assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
+  }
+  // Successful remap after failures.
+  const ok = await repo.upsertVerifiedMapping(scopeA, LID_A, PHONE_B);
+  assert.equal(ok.kind, "remapped");
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_B);
+  console.log("PASS: old mapping resolvable after every failed remap");
+}
+
+// Bounded fire-and-forget persist queue is failure-isolated + concurrency-capped.
+{
+  assert.equal(WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY >= 1, true);
+  const repo = new InMemoryWhatsAppLidPhoneMappingRepository();
+  let inflight = 0;
+  let peak = 0;
+  let failures = 0;
+  const slowRepo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: (s, l) => repo.resolvePhoneByLid(s, l),
+    markStale: (s, l) => repo.markStale(s, l),
+    listActiveForHydration: (s) => repo.listActiveForHydration(s),
+    upsertVerifiedMapping: async (s, l, p) => {
+      inflight += 1;
+      if (inflight > peak) peak = inflight;
+      await new Promise((r) => setTimeout(r, 15));
+      inflight -= 1;
+      if (p === PHONE_C) {
+        failures += 1;
+        throw new Error("injected");
+      }
+      return repo.upsertVerifiedMapping(s, l, p);
+    },
+  };
+  const queue = new ContactIdentityPersistQueue({
+    concurrency: WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
+  });
+  const memory = new WhatsAppLidPhoneMap();
+  for (let i = 0; i < 5; i++) {
+    scheduleRememberVerifiedLidMapping(LID_A, PHONE_A, {
+      repo: slowRepo,
+      scope: scopeA,
+      memory,
+      persistQueue: queue,
+    });
+  }
+  scheduleRememberVerifiedLidMapping(LID_B, PHONE_C, {
+    repo: slowRepo,
+    scope: scopeA,
+    memory,
+    persistQueue: queue,
+  });
+  await queue.whenIdle();
+  assert.equal(peak <= WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY, true);
+  assert.equal(failures >= 1, true);
+  assert.equal(await repo.resolvePhoneByLid(scopeA, LID_A), PHONE_A);
+  // Failure-isolated: LID_A still mapped despite LID_B throw.
+  assert.equal(memory.resolvePhoneJid(LID_A), PHONE_A_JID);
+  console.log("PASS: bounded failure-isolated durable persist queue");
+}
+
+console.log("PASS: SYNC-14C-B-R1 durable LID mapping suite complete");

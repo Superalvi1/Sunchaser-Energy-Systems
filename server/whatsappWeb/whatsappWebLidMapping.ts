@@ -3,7 +3,9 @@
  *
  * Combines ephemeral WhatsAppLidPhoneMap with a durable repository.
  * Mapping failures are swallowed into structured outcomes — never disconnect.
+ * Fire-and-forget durable writes are bounded and failure-isolated.
  */
+import { ContactIdentityPersistQueue } from "./whatsappWebContactIdentityQueue.ts";
 import {
   collectLidJid,
   resolveWhatsAppIdentity,
@@ -29,7 +31,26 @@ export type WhatsAppLidMappingRuntime = {
   scope: WhatsAppLidMappingScope;
 };
 
+/** Cap concurrent durable LID persist tasks; isolate failures per task. */
+export const WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY = 2;
+
 let sharedLidMappingRuntime: WhatsAppLidMappingRuntime | null = null;
+let sharedLidMappingPersistQueue: ContactIdentityPersistQueue | null = null;
+
+function getLidMappingPersistQueue(): ContactIdentityPersistQueue {
+  if (!sharedLidMappingPersistQueue) {
+    sharedLidMappingPersistQueue = new ContactIdentityPersistQueue({
+      concurrency: WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
+      onTaskError: () => {
+        logWhatsAppWeb("warn", "lid_mapping_persist_failed", {
+          outcome: "lid_mapping_persist_failed",
+          phase: "queue",
+        });
+      },
+    });
+  }
+  return sharedLidMappingPersistQueue;
+}
 
 /**
  * Process-wide LID mapping runtime shared by inbound + sync source.
@@ -46,15 +67,26 @@ export function getSharedWhatsAppLidMappingRuntime(): WhatsAppLidMappingRuntime 
   return sharedLidMappingRuntime;
 }
 
-/** Test-only reset of the shared runtime. */
+/** Test-only reset of the shared runtime and persist queue. */
 export function __resetSharedWhatsAppLidMappingRuntime(): void {
   sharedLidMappingRuntime = null;
+  if (sharedLidMappingPersistQueue) {
+    sharedLidMappingPersistQueue.close();
+    sharedLidMappingPersistQueue = null;
+  }
+}
+
+/** Test helper: observe the shared persist queue. */
+export function __getSharedLidMappingPersistQueueForTests(): ContactIdentityPersistQueue {
+  return getLidMappingPersistQueue();
 }
 
 export type DurableLidResolveDeps = {
   repo: WhatsAppLidPhoneMappingRepository;
   scope?: WhatsAppLidMappingScope;
   memory?: WhatsAppLidPhoneMap;
+  /** Optional injectible queue (tests). Defaults to process-shared bounded queue. */
+  persistQueue?: ContactIdentityPersistQueue;
 };
 
 function logMappingOutcome(
@@ -153,6 +185,32 @@ export async function rememberVerifiedLidMapping(
 }
 
 /**
+ * Schedule a bounded, failure-isolated durable write. Never throws to callers.
+ * Same scoped LID is serialized; global concurrency is capped.
+ */
+export function scheduleRememberVerifiedLidMapping(
+  lidJid: string | null | undefined,
+  phoneE164OrJid: string | null | undefined,
+  deps: DurableLidResolveDeps
+): void {
+  const scope = deps.scope ?? defaultWhatsAppLidMappingScope();
+  const lid = normalizeLidJid(lidJid);
+  const queue = deps.persistQueue ?? getLidMappingPersistQueue();
+  const key = lid
+    ? `${scope.companyId}\0${scope.channelPhoneNumberId}\0${scope.sessionKey}\0${lid}`
+    : undefined;
+  void queue
+    .enqueue(
+      () => rememberVerifiedLidMapping(lidJid, phoneE164OrJid, deps),
+      key ? { key } : undefined
+    )
+    .catch(() => {
+      // Queue already isolates; this is belt-and-suspenders.
+      logMappingOutcome("lid_mapping_persist_failed", { phase: "schedule" });
+    });
+}
+
+/**
  * Resolve identity using direct Baileys fields → ephemeral map → durable store.
  * Never throws; durable failures degrade to null (caller skips LID-only).
  */
@@ -167,10 +225,11 @@ export async function resolveWhatsAppIdentityDurable(
   if (direct) {
     if (direct.lidJid) {
       // Fire-and-forget durable write; never block inbound on persist.
-      void rememberVerifiedLidMapping(direct.lidJid, direct.phoneE164, {
+      scheduleRememberVerifiedLidMapping(direct.lidJid, direct.phoneE164, {
         repo: deps.repo,
         scope,
         memory,
+        persistQueue: deps.persistQueue,
       });
     }
     return direct;

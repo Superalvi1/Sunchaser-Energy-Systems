@@ -9,14 +9,13 @@ import {
 } from "./whatsappWebIdentity.ts";
 import {
   hydrateWhatsAppLidPhoneMap,
-  rememberVerifiedLidMapping,
+  scheduleRememberVerifiedLidMapping,
 } from "./whatsappWebLidMapping.ts";
 import {
   defaultWhatsAppLidMappingScope,
   type WhatsAppLidMappingScope,
   type WhatsAppLidPhoneMappingRepository,
 } from "./whatsappWebLidMappingRepository.ts";
-import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import { jidToWaId, waIdToChatJid } from "./whatsappWebNormalize.ts";
 import {
   isExcludedSyncRemoteJid,
@@ -209,13 +208,11 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
 
   private noteVerifiedIdentity(identity: ResolvedWhatsAppIdentity): void {
     if (!this.lidMappingRepo || !identity.lidJid) return;
-    void rememberVerifiedLidMapping(identity.lidJid, identity.phoneE164, {
+    // Bounded + failure-isolated; never affects sync/socket lifecycle.
+    scheduleRememberVerifiedLidMapping(identity.lidJid, identity.phoneE164, {
       repo: this.lidMappingRepo,
       scope: this.lidMappingScope,
       memory: this.lidMap,
-    }).catch(() => {
-      // Mapping failure must never affect sync/socket lifecycle.
-      logWhatsAppWeb("warn", "lid_mapping_persist_failed");
     });
   }
 

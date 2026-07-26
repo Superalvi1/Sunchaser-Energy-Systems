@@ -19,18 +19,26 @@
 --   lid_normalized — normalized user@lid
 --   phone_e164     — digits-only phone identity (matches whatsapp_contacts.phone_e164)
 --
--- Conflict / remap / stale policy (enforced by app + constraints):
+-- Conflict / remap / stale policy (enforced by atomic RPC + constraints):
 --   1. First verified (company, channel, session, lid) → status=active.
 --   2. Identical phone re-verify → touch last_resolved_at (idempotent).
 --   3. Same active LID with a different phone → CONFLICT: keep first phone,
---      increment conflict_count; do not overwrite; do not create contacts.
---   4. Remap only when the active row is status=stale: mark superseded, insert
---      a new active row for the new verified phone.
+--      increment conflict_count atomically; do not overwrite; do not create contacts.
+--   4. Remap only when the live row is status=stale: mark superseded AND insert
+--      a new active row in ONE transaction (FOR UPDATE on the live row).
+--      If the insert fails, the transaction rolls back — the stale mapping stays
+--      resolvable. Never leave a LID with no live mapping after a failed remap.
 --   5. Stale mappings still resolve until superseded (resolution prefers active,
 --      then stale). Superseded rows never resolve.
 --
+-- Atomic write path:
+--   public.whatsapp_upsert_verified_lid_phone_mapping(...) — single DB decision
+--   for created / unchanged / conflict / remapped. Application must call this
+--   RPC (not select-then-update) for verified upserts.
+--
 -- Privacy / access:
 --   Backend service_role only. RLS enabled with NO anon/authenticated policies.
+--   RPC execute is service_role-only with fixed search_path = public.
 --   Application must never expose lid_normalized / JIDs via inbox DTOs or logs.
 -- =============================================================================
 
@@ -123,3 +131,241 @@ begin
     raise notice 'service_role missing — skip table grant (local/non-Supabase)';
   end if;
 end $$;
+
+-- -----------------------------------------------------------------------------
+-- Atomic verified upsert (created / unchanged / conflict / remapped)
+-- Locks the scoped live row; remaps supersede+insert in one transaction.
+-- -----------------------------------------------------------------------------
+create or replace function public.whatsapp_upsert_verified_lid_phone_mapping(
+  p_company_id text,
+  p_channel_phone_number_id text,
+  p_session_key text,
+  p_lid_normalized text,
+  p_phone_e164 text,
+  p_mapping_id text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_now timestamptz := timezone('utc'::text, now());
+  v_live public.whatsapp_lid_phone_mappings%rowtype;
+  v_created public.whatsapp_lid_phone_mappings%rowtype;
+  v_id text;
+  v_company_id text := nullif(trim(coalesce(p_company_id, '')), '');
+  v_channel text := nullif(trim(coalesce(p_channel_phone_number_id, '')), '');
+  v_session text := nullif(trim(coalesce(p_session_key, '')), '');
+  v_lid text := nullif(trim(coalesce(p_lid_normalized, '')), '');
+  v_phone text := nullif(trim(coalesce(p_phone_e164, '')), '');
+begin
+  if v_company_id is null or v_channel is null or v_session is null then
+    return jsonb_build_object(
+      'kind', 'rejected',
+      'reason', 'invalid_scope',
+      'mapping', null
+    );
+  end if;
+
+  if v_lid is null or v_lid !~* '@lid$' then
+    return jsonb_build_object(
+      'kind', 'rejected',
+      'reason', 'invalid_lid',
+      'mapping', null
+    );
+  end if;
+
+  -- Digits-only phone identity; never strip/normalize alphanumeric junk here.
+  if v_phone is null or v_phone !~ '^[0-9]{6,}$' then
+    return jsonb_build_object(
+      'kind', 'rejected',
+      'reason', 'invalid_phone',
+      'mapping', null
+    );
+  end if;
+
+  -- Serialize decisions for this scoped LID (covers create races with no live row).
+  perform pg_advisory_xact_lock(
+    hashtextextended(
+      v_company_id || chr(0) || v_channel || chr(0) || v_session || chr(0) || v_lid,
+      0
+    )
+  );
+
+  select *
+  into v_live
+  from public.whatsapp_lid_phone_mappings as m
+  where m.company_id = v_company_id
+    and m.channel_phone_number_id = v_channel
+    and m.session_key = v_session
+    and m.lid_normalized = v_lid
+    and m.status in ('active', 'stale')
+  for update;
+
+  if not found then
+    v_id := coalesce(
+      nullif(trim(coalesce(p_mapping_id, '')), ''),
+      'wlid_' || gen_random_uuid()::text
+    );
+    insert into public.whatsapp_lid_phone_mappings (
+      id,
+      company_id,
+      channel_phone_number_id,
+      session_key,
+      lid_normalized,
+      phone_e164,
+      status,
+      verified_at,
+      last_resolved_at,
+      conflict_count,
+      superseded_at,
+      created_at,
+      updated_at
+    ) values (
+      v_id,
+      v_company_id,
+      v_channel,
+      v_session,
+      v_lid,
+      v_phone,
+      'active',
+      v_now,
+      v_now,
+      0,
+      null,
+      v_now,
+      v_now
+    )
+    returning * into v_created;
+
+    return jsonb_build_object(
+      'kind', 'created',
+      'mapping', to_jsonb(v_created)
+    );
+  end if;
+
+  if v_live.phone_e164 = v_phone then
+    update public.whatsapp_lid_phone_mappings as m
+    set
+      status = case when m.status = 'stale' then 'active' else m.status end,
+      last_resolved_at = v_now,
+      updated_at = v_now,
+      superseded_at = null
+    where m.company_id = v_company_id
+      and m.id = v_live.id
+    returning * into v_created;
+
+    return jsonb_build_object(
+      'kind', 'unchanged',
+      'mapping', to_jsonb(v_created)
+    );
+  end if;
+
+  if v_live.status = 'stale' then
+    -- Atomic remap: supersede + insert. Any failure rolls back; stale stays live.
+    update public.whatsapp_lid_phone_mappings as m
+    set
+      status = 'superseded',
+      superseded_at = v_now,
+      updated_at = v_now
+    where m.company_id = v_company_id
+      and m.id = v_live.id
+      and m.status = 'stale';
+
+    if not found then
+      return jsonb_build_object(
+        'kind', 'error',
+        'error_code', 'remap_cas_failed',
+        'mapping', null
+      );
+    end if;
+
+    v_id := coalesce(
+      nullif(trim(coalesce(p_mapping_id, '')), ''),
+      'wlid_' || gen_random_uuid()::text
+    );
+
+    insert into public.whatsapp_lid_phone_mappings (
+      id,
+      company_id,
+      channel_phone_number_id,
+      session_key,
+      lid_normalized,
+      phone_e164,
+      status,
+      verified_at,
+      last_resolved_at,
+      conflict_count,
+      superseded_at,
+      created_at,
+      updated_at
+    ) values (
+      v_id,
+      v_company_id,
+      v_channel,
+      v_session,
+      v_lid,
+      v_phone,
+      'active',
+      v_now,
+      v_now,
+      0,
+      null,
+      v_now,
+      v_now
+    )
+    returning * into v_created;
+
+    return jsonb_build_object(
+      'kind', 'remapped',
+      'mapping', to_jsonb(v_created)
+    );
+  end if;
+
+  -- Active + different phone → conflict; atomic increment (no lost updates).
+  update public.whatsapp_lid_phone_mappings as m
+  set
+    conflict_count = m.conflict_count + 1,
+    updated_at = v_now
+  where m.company_id = v_company_id
+    and m.id = v_live.id
+    and m.status = 'active'
+  returning * into v_created;
+
+  if not found then
+    return jsonb_build_object(
+      'kind', 'error',
+      'error_code', 'conflict_cas_failed',
+      'mapping', null
+    );
+  end if;
+
+  return jsonb_build_object(
+    'kind', 'conflict',
+    'mapping', to_jsonb(v_created)
+  );
+end;
+$$;
+
+revoke all on function public.whatsapp_upsert_verified_lid_phone_mapping(
+  text, text, text, text, text, text
+) from public;
+
+revoke all on function public.whatsapp_upsert_verified_lid_phone_mapping(
+  text, text, text, text, text, text
+) from anon, authenticated;
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.whatsapp_upsert_verified_lid_phone_mapping(
+      text, text, text, text, text, text
+    ) to service_role;
+  else
+    raise notice 'service_role missing — skip LID mapping RPC grant (local/non-Supabase)';
+  end if;
+end $$;
+
+comment on function public.whatsapp_upsert_verified_lid_phone_mapping is
+  'SYNC-14C-B-R1 atomic LID→phone upsert (created/unchanged/conflict/remapped). Locks scoped live row; failed remap preserves stale. Backend/service_role only.';

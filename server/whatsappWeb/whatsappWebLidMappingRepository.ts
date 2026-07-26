@@ -1,9 +1,10 @@
 /**
- * Durable WhatsApp LID → phone mapping repository (SYNC-14C-B).
+ * Durable WhatsApp LID → phone mapping repository (SYNC-14C-B / R1).
  *
  * Company/channel/session isolation is enforced on every read/write.
- * Mapping failures must never throw into WhatsApp socket lifecycle callers —
- * methods return structured results; callers log outcome codes only.
+ * Verified upserts go through one atomic decision (DB RPC or in-memory lock):
+ * created / unchanged / conflict / remapped. Failed remaps preserve the stale
+ * live mapping. Mapping failures never throw into WhatsApp socket callers.
  */
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -51,6 +52,9 @@ export type UpsertVerifiedLidMappingResult =
   | { kind: "rejected"; reason: "invalid_lid" | "invalid_phone" }
   | { kind: "error"; errorCode: string };
 
+export const WHATSAPP_UPSERT_VERIFIED_LID_PHONE_MAPPING_RPC =
+  "whatsapp_upsert_verified_lid_phone_mapping";
+
 export interface WhatsAppLidPhoneMappingRepository {
   isActive(): boolean;
   resolvePhoneByLid(
@@ -88,18 +92,22 @@ export function normalizeLidJid(value: string | null | undefined): string | null
   return jid;
 }
 
+/**
+ * Strict phone identity for durable mapping writes.
+ * Accepts digits-only (6+) OR a validated @s.whatsapp.net phone JID.
+ * Does NOT strip non-digits from alphanumeric junk (e.g. "abc123def456").
+ */
 export function normalizeMappingPhoneE164(
   value: string | null | undefined
 ): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
-  // Accept phone JID or digits; never accept @lid hosts.
   if (raw.includes("@")) {
     if (raw.toLowerCase().endsWith("@lid")) return null;
     return jidToWaId(raw);
   }
-  const digits = raw.replace(/\D/g, "");
-  return digits.length >= 6 ? digits : null;
+  if (!/^[0-9]{6,}$/.test(raw)) return null;
+  return raw;
 }
 
 function newMappingId(): string {
@@ -139,11 +147,51 @@ function matchesScope(
   );
 }
 
-/** In-memory durable store — behavioral twin of Supabase constraint policy. */
+function parseUpsertRpcPayload(
+  data: unknown
+): UpsertVerifiedLidMappingResult {
+  if (!data || typeof data !== "object") {
+    return { kind: "error", errorCode: "rpc_empty" };
+  }
+  const payload = data as Record<string, unknown>;
+  const kind = String(payload.kind || "");
+  if (kind === "rejected") {
+    const reason = String(payload.reason || "");
+    if (reason === "invalid_lid" || reason === "invalid_phone") {
+      return { kind: "rejected", reason };
+    }
+    return { kind: "error", errorCode: reason || "rejected" };
+  }
+  if (kind === "error") {
+    return {
+      kind: "error",
+      errorCode: String(payload.error_code || "rpc_error"),
+    };
+  }
+  const mappingRaw = payload.mapping;
+  if (
+    (kind === "created" ||
+      kind === "unchanged" ||
+      kind === "conflict" ||
+      kind === "remapped") &&
+    mappingRaw &&
+    typeof mappingRaw === "object"
+  ) {
+    return {
+      kind,
+      mapping: rowToRecord(mappingRaw as Record<string, unknown>),
+    };
+  }
+  return { kind: "error", errorCode: "rpc_malformed" };
+}
+
+/** In-memory durable store — behavioral twin of the atomic Supabase RPC. */
 export class InMemoryWhatsAppLidPhoneMappingRepository
   implements WhatsAppLidPhoneMappingRepository
 {
   private readonly byId = new Map<string, WhatsAppLidMappingRecord>();
+  /** Per scoped-LID mutex so concurrent upserts share one atomic decision. */
+  private readonly locks = new Map<string, Promise<void>>();
 
   isActive(): boolean {
     return true;
@@ -152,12 +200,32 @@ export class InMemoryWhatsAppLidPhoneMappingRepository
   /** Test helper: wipe all rows. */
   __reset(): void {
     this.byId.clear();
+    this.locks.clear();
   }
 
   /** Test helper: inspect rows (never for production DTOs). */
   __all(): WhatsAppLidMappingRecord[] {
     return [...this.byId.values()];
   }
+
+  private async withLidLock<T>(key: string, fn: () => Promise<T> | T): Promise<T> {
+    const prev = this.locks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.locks.set(key, next);
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.locks.get(key) === next) this.locks.delete(key);
+    }
+  }
+
+  /** Test-only: fail the next stale→active insert after supersede is staged. */
+  __failNextRemapInsert = false;
 
   private liveForLid(
     scope: WhatsAppLidMappingScope,
@@ -205,74 +273,92 @@ export class InMemoryWhatsAppLidPhoneMappingRepository
       ...scope,
       companyId: resolveCompanyId(scope.companyId),
     };
-    const now = new Date().toISOString();
-    const live = this.liveForLid(scoped, lid);
+    const lockKey = scopeKey(scoped, lid);
 
-    if (!live) {
-      const created: WhatsAppLidMappingRecord = {
-        id: newMappingId(),
-        companyId: scoped.companyId,
-        channelPhoneNumberId: scoped.channelPhoneNumberId,
-        sessionKey: scoped.sessionKey,
-        lidNormalized: lid,
-        phoneE164: phone,
-        status: "active",
-        verifiedAt: now,
-        lastResolvedAt: now,
-        conflictCount: 0,
-        supersededAt: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.byId.set(created.id, created);
-      return { kind: "created", mapping: created };
-    }
+    return this.withLidLock(lockKey, () => {
+      const now = new Date().toISOString();
+      const live = this.liveForLid(scoped, lid);
 
-    if (live.phoneE164 === phone) {
-      const touched = {
+      if (!live) {
+        const created: WhatsAppLidMappingRecord = {
+          id: newMappingId(),
+          companyId: scoped.companyId,
+          channelPhoneNumberId: scoped.channelPhoneNumberId,
+          sessionKey: scoped.sessionKey,
+          lidNormalized: lid,
+          phoneE164: phone,
+          status: "active",
+          verifiedAt: now,
+          lastResolvedAt: now,
+          conflictCount: 0,
+          supersededAt: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        this.byId.set(created.id, created);
+        return { kind: "created", mapping: created };
+      }
+
+      if (live.phoneE164 === phone) {
+        const touched = {
+          ...live,
+          status: live.status === "stale" ? ("active" as const) : live.status,
+          lastResolvedAt: now,
+          updatedAt: now,
+        };
+        this.byId.set(touched.id, touched);
+        return { kind: "unchanged", mapping: touched };
+      }
+
+      if (live.status === "stale") {
+        // Atomic remap: stage supersede, insert, commit — or roll back on insert fail.
+        const prior = { ...live };
+        const createdId = newMappingId();
+        try {
+          if (this.__failNextRemapInsert) {
+            this.__failNextRemapInsert = false;
+            throw new Error("injected_remap_insert_failed");
+          }
+          const superseded: WhatsAppLidMappingRecord = {
+            ...live,
+            status: "superseded",
+            supersededAt: now,
+            updatedAt: now,
+          };
+          const created: WhatsAppLidMappingRecord = {
+            id: createdId,
+            companyId: scoped.companyId,
+            channelPhoneNumberId: scoped.channelPhoneNumberId,
+            sessionKey: scoped.sessionKey,
+            lidNormalized: lid,
+            phoneE164: phone,
+            status: "active",
+            verifiedAt: now,
+            lastResolvedAt: now,
+            conflictCount: 0,
+            supersededAt: null,
+            createdAt: now,
+            updatedAt: now,
+          };
+          this.byId.set(superseded.id, superseded);
+          this.byId.set(created.id, created);
+          return { kind: "remapped", mapping: created };
+        } catch {
+          // Preserve old stale mapping — never leave LID unresolvable.
+          this.byId.set(prior.id, prior);
+          this.byId.delete(createdId);
+          return { kind: "error", errorCode: "remap_insert_failed" };
+        }
+      }
+
+      const conflicted = {
         ...live,
-        status: live.status === "stale" ? ("active" as const) : live.status,
-        lastResolvedAt: now,
+        conflictCount: live.conflictCount + 1,
         updatedAt: now,
       };
-      this.byId.set(touched.id, touched);
-      return { kind: "unchanged", mapping: touched };
-    }
-
-    if (live.status === "stale") {
-      const superseded: WhatsAppLidMappingRecord = {
-        ...live,
-        status: "superseded",
-        supersededAt: now,
-        updatedAt: now,
-      };
-      this.byId.set(superseded.id, superseded);
-      const created: WhatsAppLidMappingRecord = {
-        id: newMappingId(),
-        companyId: scoped.companyId,
-        channelPhoneNumberId: scoped.channelPhoneNumberId,
-        sessionKey: scoped.sessionKey,
-        lidNormalized: lid,
-        phoneE164: phone,
-        status: "active",
-        verifiedAt: now,
-        lastResolvedAt: now,
-        conflictCount: 0,
-        supersededAt: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.byId.set(created.id, created);
-      return { kind: "remapped", mapping: created };
-    }
-
-    const conflicted = {
-      ...live,
-      conflictCount: live.conflictCount + 1,
-      updatedAt: now,
-    };
-    this.byId.set(conflicted.id, conflicted);
-    return { kind: "conflict", mapping: conflicted };
+      this.byId.set(conflicted.id, conflicted);
+      return { kind: "conflict", mapping: conflicted };
+    });
   }
 
   async markStale(
@@ -285,15 +371,18 @@ export class InMemoryWhatsAppLidPhoneMappingRepository
       ...scope,
       companyId: resolveCompanyId(scope.companyId),
     };
-    const live = this.liveForLid(scoped, lid);
-    if (!live || live.status !== "active") return false;
-    const now = new Date().toISOString();
-    this.byId.set(live.id, {
-      ...live,
-      status: "stale",
-      updatedAt: now,
+    const lockKey = scopeKey(scoped, lid);
+    return this.withLidLock(lockKey, () => {
+      const live = this.liveForLid(scoped, lid);
+      if (!live || live.status !== "active") return false;
+      const now = new Date().toISOString();
+      this.byId.set(live.id, {
+        ...live,
+        status: "stale",
+        updatedAt: now,
+      });
+      return true;
     });
-    return true;
   }
 
   async listActiveForHydration(
@@ -314,7 +403,8 @@ export class InMemoryWhatsAppLidPhoneMappingRepository
 }
 
 /**
- * Supabase-backed durable store. Always filters by company_id (+ channel/session).
+ * Supabase-backed durable store. Verified upserts use the atomic RPC only.
+ * Always filters by company_id (+ channel/session) on reads.
  */
 export class SupabaseWhatsAppLidPhoneMappingRepository
   implements WhatsAppLidPhoneMappingRepository
@@ -362,159 +452,26 @@ export class SupabaseWhatsAppLidPhoneMappingRepository
     if (!lid) return { kind: "rejected", reason: "invalid_lid" };
     if (!phone) return { kind: "rejected", reason: "invalid_phone" };
     const companyId = resolveCompanyId(scope.companyId);
-    const now = new Date().toISOString();
 
-    const { data: existing, error: selectError } = await this.client
-      .from("whatsapp_lid_phone_mappings")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("channel_phone_number_id", scope.channelPhoneNumberId)
-      .eq("session_key", scope.sessionKey)
-      .eq("lid_normalized", lid)
-      .in("status", ["active", "stale"])
-      .maybeSingle();
-
-    if (selectError) {
-      return { kind: "error", errorCode: "select_failed" };
-    }
-
-    if (!existing) {
-      const id = newMappingId();
-      const payload = {
-        id,
-        company_id: companyId,
-        channel_phone_number_id: scope.channelPhoneNumberId,
-        session_key: scope.sessionKey,
-        lid_normalized: lid,
-        phone_e164: phone,
-        status: "active",
-        verified_at: now,
-        last_resolved_at: now,
-        conflict_count: 0,
-        superseded_at: null,
-        created_at: now,
-        updated_at: now,
-      };
-      const { data, error } = await this.client
-        .from("whatsapp_lid_phone_mappings")
-        .insert(payload)
-        .select("*")
-        .single();
-      if (error || !data) {
-        // Unique race: reselect live row and re-apply policy.
-        const { data: raced } = await this.client
-          .from("whatsapp_lid_phone_mappings")
-          .select("*")
-          .eq("company_id", companyId)
-          .eq("channel_phone_number_id", scope.channelPhoneNumberId)
-          .eq("session_key", scope.sessionKey)
-          .eq("lid_normalized", lid)
-          .in("status", ["active", "stale"])
-          .maybeSingle();
-        if (!raced) return { kind: "error", errorCode: "insert_failed" };
-        return this.applyAgainstExisting(
-          rowToRecord(raced as Record<string, unknown>),
-          phone,
-          now,
-          companyId
-        );
+    try {
+      const { data, error } = await this.client.rpc(
+        WHATSAPP_UPSERT_VERIFIED_LID_PHONE_MAPPING_RPC,
+        {
+          p_company_id: companyId,
+          p_channel_phone_number_id: scope.channelPhoneNumberId,
+          p_session_key: scope.sessionKey,
+          p_lid_normalized: lid,
+          p_phone_e164: phone,
+          p_mapping_id: newMappingId(),
+        }
+      );
+      if (error) {
+        return { kind: "error", errorCode: "rpc_failed" };
       }
-      return {
-        kind: "created",
-        mapping: rowToRecord(data as Record<string, unknown>),
-      };
+      return parseUpsertRpcPayload(data);
+    } catch {
+      return { kind: "error", errorCode: "rpc_threw" };
     }
-
-    return this.applyAgainstExisting(
-      rowToRecord(existing as Record<string, unknown>),
-      phone,
-      now,
-      companyId
-    );
-  }
-
-  private async applyAgainstExisting(
-    live: WhatsAppLidMappingRecord,
-    phone: string,
-    now: string,
-    companyId: string
-  ): Promise<UpsertVerifiedLidMappingResult> {
-    if (live.phoneE164 === phone) {
-      const nextStatus = live.status === "stale" ? "active" : live.status;
-      const { data, error } = await this.client
-        .from("whatsapp_lid_phone_mappings")
-        .update({
-          status: nextStatus,
-          last_resolved_at: now,
-          updated_at: now,
-          superseded_at: null,
-        })
-        .eq("company_id", companyId)
-        .eq("id", live.id)
-        .select("*")
-        .single();
-      if (error || !data) return { kind: "error", errorCode: "touch_failed" };
-      return {
-        kind: "unchanged",
-        mapping: rowToRecord(data as Record<string, unknown>),
-      };
-    }
-
-    if (live.status === "stale") {
-      const { error: supersedeError } = await this.client
-        .from("whatsapp_lid_phone_mappings")
-        .update({
-          status: "superseded",
-          superseded_at: now,
-          updated_at: now,
-        })
-        .eq("company_id", companyId)
-        .eq("id", live.id);
-      if (supersedeError) {
-        return { kind: "error", errorCode: "supersede_failed" };
-      }
-      const payload = {
-        id: newMappingId(),
-        company_id: companyId,
-        channel_phone_number_id: live.channelPhoneNumberId,
-        session_key: live.sessionKey,
-        lid_normalized: live.lidNormalized,
-        phone_e164: phone,
-        status: "active",
-        verified_at: now,
-        last_resolved_at: now,
-        conflict_count: 0,
-        superseded_at: null,
-        created_at: now,
-        updated_at: now,
-      };
-      const { data, error } = await this.client
-        .from("whatsapp_lid_phone_mappings")
-        .insert(payload)
-        .select("*")
-        .single();
-      if (error || !data) return { kind: "error", errorCode: "remap_insert_failed" };
-      return {
-        kind: "remapped",
-        mapping: rowToRecord(data as Record<string, unknown>),
-      };
-    }
-
-    const { data, error } = await this.client
-      .from("whatsapp_lid_phone_mappings")
-      .update({
-        conflict_count: live.conflictCount + 1,
-        updated_at: now,
-      })
-      .eq("company_id", companyId)
-      .eq("id", live.id)
-      .select("*")
-      .single();
-    if (error || !data) return { kind: "error", errorCode: "conflict_update_failed" };
-    return {
-      kind: "conflict",
-      mapping: rowToRecord(data as Record<string, unknown>),
-    };
   }
 
   async markStale(

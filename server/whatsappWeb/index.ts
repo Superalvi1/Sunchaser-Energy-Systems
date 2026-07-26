@@ -60,6 +60,8 @@ export {
   rememberVerifiedLidMapping,
   resolveWhatsAppIdentityDurable,
   resolveWhatsAppIdentityWithOptionalMap,
+  scheduleRememberVerifiedLidMapping,
+  WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
 } from "./whatsappWebLidMapping.ts";
 
 export {
@@ -69,6 +71,7 @@ export {
   normalizeLidJid,
   normalizeMappingPhoneE164,
   SupabaseWhatsAppLidPhoneMappingRepository,
+  WHATSAPP_UPSERT_VERIFIED_LID_PHONE_MAPPING_RPC,
   type UpsertVerifiedLidMappingResult,
   type WhatsAppLidMappingRecord,
   type WhatsAppLidMappingScope,
