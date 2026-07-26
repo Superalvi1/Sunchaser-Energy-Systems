@@ -54,6 +54,8 @@
     "test:vercel-spa": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/vercelSpaConfig.test.ts",
     "test:marketplace-ws0": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceConfig.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWs0Schema.test.ts",
     "test:marketplace-ws1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/catalogueRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/marketplaceWs1Catalogue.test.ts",
+    "test:marketplace-ws2": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/admin/adminRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/admin/adminProducts.test.ts",
+    "test:marketplace-ws2-atomicity": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/admin/adminAtomicity.pg.test.ts",
     "test:marketplace-ws5": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/cartRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/marketplaceWs5Cart.test.ts",
     "test:marketplace-ws6a": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/receiptValidation.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/paymentRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/marketplaceWs6aPayments.test.ts",
     "test:marketplace-ws6b": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/codRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/marketplaceWs6bCod.test.ts"
