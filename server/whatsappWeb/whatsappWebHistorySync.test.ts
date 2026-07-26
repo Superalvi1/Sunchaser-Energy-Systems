@@ -1836,16 +1836,24 @@ console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
       occurredAt: `2026-07-20T12:0${i}:00.000Z`,
     }))
   );
-  // Slow persist so cancel lands after at least one import.
+  // Deterministic mid-import hold so cancel is accepted during active work.
   const repo = new InMemoryWhatsAppRepository();
   const origInsert = repo.insertInboundMessage.bind(repo);
   let imports = 0;
+  let resolveReachedSecondImport: (() => void) | undefined;
+  const reachedSecondImport = new Promise<void>((resolve) => {
+    resolveReachedSecondImport = resolve;
+  });
+  let releaseSecondImportHold: (() => void) | undefined;
+  const secondImportHold = new Promise<void>((resolve) => {
+    releaseSecondImportHold = resolve;
+  });
   repo.insertInboundMessage = async (input) => {
     imports += 1;
     const result = await origInsert(input);
     if (imports === 2) {
-      // Allow the service cancel hook to fire mid-job.
-      await new Promise((r) => setTimeout(r, 5));
+      resolveReachedSecondImport?.();
+      await secondImportHold;
     }
     return result;
   };
@@ -1857,9 +1865,11 @@ console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
     chatConcurrency: 1,
   });
   const started = service.startOrJoin();
-  // Cancel after starting state is queued; small delay lets first imports begin.
-  await new Promise((r) => setTimeout(r, 15));
+  await reachedSecondImport;
+  assert.equal(service.getSnapshot().status, "running");
   service.requestCancel();
+  assert.equal(service.getSnapshot().cancelled, true);
+  releaseSecondImportHold?.();
   const snap = await started.done;
   assert.equal(snap.cancelled, true);
   assert.ok(
@@ -1868,6 +1878,8 @@ console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
   assert.notEqual(snap.outcome, "completed_with_imports");
   assert.ok(statuses.includes("starting"));
   assert.ok(statuses.includes("completed") || statuses.includes("failed"));
+  assert.ok(imports >= 2);
+  assert.ok(snap.messagesImported < 8);
   void fetchCount;
 }
 console.log("PASS: SYNC-8R cancel/disconnect not ordinary success; start+terminal durable");
@@ -2061,5 +2073,231 @@ console.log("PASS: SYNC-8R backfill invokes neither AI nor outbound transport");
   );
 }
 console.log("PASS: SYNC-8R deriveSyncOutcome cancel semantics");
+
+// ---------------------------------------------------------------------------
+// Deterministic cancellation contract
+// ---------------------------------------------------------------------------
+
+function makeCancelFixture(messageCount: number) {
+  const source = new FakeSyncSource();
+  source.chats = [
+    {
+      jid: "923009991122@s.whatsapp.net",
+      phoneE164: "923009991122",
+      name: "CancelFixture",
+      isGroup: false,
+      isStatusOrBroadcast: false,
+      isChannel: false,
+    },
+  ];
+  source.messagesByChat.set(
+    "923009991122@s.whatsapp.net",
+    Array.from({ length: messageCount }, (_, i) => ({
+      providerMessageId: `CF_${i}`,
+      chatJid: "923009991122@s.whatsapp.net",
+      fromMe: false,
+      text: `cf ${i}`,
+      messageType: "text",
+      occurredAt: `2026-07-20T13:${String(i).padStart(2, "0")}:00.000Z`,
+    })),
+  );
+  return source;
+}
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  const source = makeCancelFixture(20);
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+    chatConcurrency: 1,
+  });
+  const started = service.startOrJoin();
+  service.requestCancel();
+  service.requestCancel();
+  service.requestCancel();
+  const snap = await started.done;
+  assert.equal(snap.cancelled, true);
+  assert.notEqual(snap.outcome, "completed_with_imports");
+  assert.notEqual(snap.outcome, "failed");
+}
+console.log("PASS: cancel contract — cancelled=true; repeated cancel safe; not success/error");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  const source = makeCancelFixture(12);
+  const origInsert = repo.insertInboundMessage.bind(repo);
+  let imports = 0;
+  let resolveGate: (() => void) | undefined;
+  const atSecond = new Promise<void>((r) => {
+    resolveGate = r;
+  });
+  let release: (() => void) | undefined;
+  const hold = new Promise<void>((r) => {
+    release = r;
+  });
+  repo.insertInboundMessage = async (input) => {
+    imports += 1;
+    const result = await origInsert(input);
+    if (imports === 2) {
+      resolveGate?.();
+      await hold;
+    }
+    return result;
+  };
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+    chatConcurrency: 1,
+  });
+  const started = service.startOrJoin();
+  await atSecond;
+  service.requestCancel();
+  assert.equal(service.getSnapshot().cancelled, true);
+  // Simulate a late "success-shaped" mutation attempt after cancel acceptance:
+  // further imports must stop and terminal outcome must remain cancelled.
+  release?.();
+  const snap = await started.done;
+  assert.equal(snap.cancelled, true);
+  assert.ok(snap.messagesImported < 12);
+  assert.ok(
+    snap.outcome === "partial" || snap.outcome === "history_not_available",
+  );
+  assert.notEqual(snap.outcome, "completed_with_imports");
+}
+console.log("PASS: cancel contract — active batch cancel stays cancelled");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  const source = makeCancelFixture(6);
+  const origInsert = repo.insertInboundMessage.bind(repo);
+  let imports = 0;
+  let resolveGate: (() => void) | undefined;
+  const atFirst = new Promise<void>((r) => {
+    resolveGate = r;
+  });
+  let release: (() => void) | undefined;
+  const hold = new Promise<void>((r) => {
+    release = r;
+  });
+  let threw = false;
+  repo.insertInboundMessage = async (input) => {
+    imports += 1;
+    if (imports === 1) {
+      resolveGate?.();
+      await hold;
+    }
+    if (imports >= 3) {
+      threw = true;
+      throw new Error("late failure after cancel");
+    }
+    return origInsert(input);
+  };
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+    chatConcurrency: 1,
+  });
+  const started = service.startOrJoin();
+  await atFirst;
+  service.requestCancel();
+  assert.equal(service.getSnapshot().cancelled, true);
+  release?.();
+  const snap = await started.done;
+  assert.equal(snap.cancelled, true);
+  // Cancel wins: must not surface as operational failed outcome.
+  assert.notEqual(snap.outcome, "failed");
+  assert.ok(
+    snap.outcome === "partial" || snap.outcome === "history_not_available",
+  );
+  void threw;
+}
+console.log("PASS: cancel contract — late failure cannot overwrite cancellation");
+
+{
+  const repo = new InMemoryWhatsAppRepository();
+  const source = makeCancelFixture(10);
+  const origInsert = repo.insertInboundMessage.bind(repo);
+  let imports = 0;
+  let resolveGate: (() => void) | undefined;
+  const atSecond = new Promise<void>((r) => {
+    resolveGate = r;
+  });
+  let release: (() => void) | undefined;
+  const hold = new Promise<void>((r) => {
+    release = r;
+  });
+  repo.insertInboundMessage = async (input) => {
+    imports += 1;
+    const result = await origInsert(input);
+    if (imports === 2) {
+      resolveGate?.();
+      await hold;
+    }
+    return result;
+  };
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+    chatConcurrency: 1,
+  });
+  const started = service.startOrJoin();
+  const firstJobId = started.snapshot.jobId;
+  await atSecond;
+  // Disconnect-equivalent: cancel in-flight sync.
+  source.connected = false;
+  service.requestCancel();
+  assert.equal(service.getSnapshot().cancelled, true);
+  release?.();
+  const cancelledSnap = await started.done;
+  assert.equal(cancelledSnap.cancelled, true);
+  assert.equal(cancelledSnap.jobId, firstJobId);
+
+  // Reconnect must not resume the cancelled operation.
+  source.connected = true;
+  assert.equal(service.getSnapshot().cancelled, true);
+  assert.notEqual(service.getSnapshot().status, "running");
+
+  // A new sync uses a new operation identity and does not inherit cancel.
+  const next = service.startOrJoin();
+  assert.equal(next.joinedExisting, false);
+  assert.notEqual(next.snapshot.jobId, firstJobId);
+  assert.equal(next.snapshot.cancelled, false);
+  const nextSnap = await next.done;
+  assert.equal(nextSnap.cancelled, false);
+  assert.ok(
+    nextSnap.outcome === "completed_with_imports" ||
+      nextSnap.outcome === "completed_no_changes" ||
+      nextSnap.outcome === "partial" ||
+      nextSnap.outcome === "history_not_available",
+  );
+}
+console.log(
+  "PASS: cancel contract — disconnect cancel; no resume; new sync independent",
+);
+
+{
+  // Post-terminal cancel must not rewrite a finished success.
+  const repo = new InMemoryWhatsAppRepository();
+  const source = makeCancelFixture(3);
+  const service = new WhatsAppWebHistorySyncService({
+    source,
+    repo,
+    now: () => new Date("2026-07-24T12:00:00.000Z"),
+    chatConcurrency: 1,
+  });
+  const snap = await service.startOrJoin().done;
+  assert.equal(snap.cancelled, false);
+  assert.equal(snap.outcome, "completed_with_imports");
+  service.requestCancel();
+  service.requestCancel();
+  assert.equal(service.getSnapshot().cancelled, false);
+  assert.equal(service.getSnapshot().outcome, "completed_with_imports");
+}
+console.log("PASS: cancel contract — post-terminal cancel is idempotent no-op");
 
 console.log("ALL PASS: whatsappWebHistorySync");
