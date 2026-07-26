@@ -51,14 +51,34 @@ export type QueryKnowledgeRetrieveRequest = {
 
 /**
  * Port consumed by QueryAgentService. Implementations must enforce tenant scope.
- * `provenance` is factory-assigned and immutable; callers cannot forge it.
+ *
+ * AI-05-R3: `provenance` is decorative for logs/tests only. Production trust is
+ * established solely via module-private WeakSet membership assigned by the
+ * internal factory — never by a public string callers can forge or mutate.
  */
 export type QueryKnowledgePort = {
   readonly portId: string;
-  /** Factory-sealed trust mark — never derived from caller portId overrides. */
+  /** Decorative label only — do not use for production trust decisions. */
   readonly provenance: KnowledgePortProvenance;
   retrieve(request: QueryKnowledgeRetrieveRequest): KnowledgeAnswerDraft;
 };
+
+/**
+ * Module-private registry of ports constructed by the approved production
+ * factory path. Not exported for registration — membership is unforgeable.
+ */
+const INTERNALLY_TRUSTED_PRODUCTION_PORTS: WeakSet<QueryKnowledgePort> =
+  new WeakSet();
+
+/**
+ * True only for ports constructed internally with the approved production
+ * engine. Object literals, mutated ports, and injected fakes never match.
+ */
+export function isInternallyTrustedProductionKnowledgePort(
+  port: QueryKnowledgePort | null | undefined
+): boolean {
+  return port != null && INTERNALLY_TRUSTED_PRODUCTION_PORTS.has(port);
+}
 
 /** Map AI-01 intents onto AI-02 category hints. */
 export function mapIntentToKnowledgeCategory(
@@ -162,12 +182,34 @@ function buildUnavailableDraft(
   };
 }
 
+function freezeKnowledgePort(port: QueryKnowledgePort): QueryKnowledgePort {
+  Object.defineProperty(port, "portId", {
+    value: port.portId,
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  Object.defineProperty(port, "provenance", {
+    value: port.provenance,
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  Object.defineProperty(port, "retrieve", {
+    value: port.retrieve.bind(port),
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  return Object.freeze(port);
+}
+
 /** Fail-closed port when knowledge source is missing/invalid or blocked. */
 export function createUnavailableKnowledgePort(
   reason =
     "Knowledge source unavailable or misconfigured — human review required."
 ): QueryKnowledgePort {
-  return {
+  return freezeKnowledgePort({
     portId: "knowledge-unavailable",
     provenance: "unavailable",
     retrieve(request) {
@@ -184,7 +226,7 @@ export function createUnavailableKnowledgePort(
         reason
       );
     },
-  };
+  });
 }
 
 /**
@@ -963,9 +1005,11 @@ function buildEnginePort(input: {
   provenance: KnowledgePortProvenance;
   portId: string;
   asOfIso?: string;
+  /** Only true when engine was constructed internally as the approved pack. */
+  sealTrustedProduction?: boolean;
 }): QueryKnowledgePort {
   const { engine, mode, provenance, portId, asOfIso: fixedAsOf } = input;
-  return {
+  const port: QueryKnowledgePort = {
     portId,
     provenance,
     retrieve(request) {
@@ -983,14 +1027,22 @@ function buildEnginePort(input: {
       });
     },
   };
+  const sealed = freezeKnowledgePort(port);
+  if (input.sealTrustedProduction === true) {
+    INTERNALLY_TRUSTED_PRODUCTION_PORTS.add(sealed);
+  }
+  return sealed;
 }
 
 const PRODUCTION_OVERRIDE_BLOCK_REASON =
   "Production knowledge trust boundary rejected caller override — human review required.";
 
 /**
- * Locked production path: ignore caller env/engine/portId, construct the
- * approved production engine internally, seal provenance=production.
+ * Locked production path for actual production runtime.
+ *
+ * AI-05-R3: real process.env.WHATSAPP_AI_KNOWLEDGE_SOURCE must be exactly
+ * "production". Caller knowledgeSource cannot activate production when the
+ * real variable is missing/blank/invalid/fixtures.
  */
 function createLockedProductionKnowledgePort(
   knowledgeSource?: KnowledgeSourceMode
@@ -998,21 +1050,30 @@ function createLockedProductionKnowledgePort(
   if (knowledgeSource === "fixtures" || knowledgeSource === "unavailable") {
     return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
   }
-  // Source must come from the real process env — caller env cannot downgrade.
-  const mode = knowledgeSource ?? readKnowledgeSource(process.env);
-  if (mode !== "production") {
+
+  // Real process env is authoritative — never options.env / caller override alone.
+  const realMode = readKnowledgeSource(process.env);
+  if (realMode !== "production") {
     return createUnavailableKnowledgePort(
-      mode === "fixtures"
-        ? PRODUCTION_OVERRIDE_BLOCK_REASON
-        : "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+      "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
     );
   }
+
+  // Explicit production override is allowed only when the real env also matches.
+  if (
+    knowledgeSource !== undefined &&
+    knowledgeSource !== "production"
+  ) {
+    return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+  }
+
   const engine = createProductionKnowledgeEngine();
   return buildEnginePort({
     engine,
     mode: "production",
     provenance: "production",
     portId: "knowledge-production",
+    sealTrustedProduction: true,
   });
 }
 
@@ -1062,6 +1123,7 @@ export function createQueryKnowledgeAdapter(
     mode,
     provenance: provenanceForMode(mode),
     portId: portIdForSource(mode),
+    sealTrustedProduction: mode === "production",
   });
 }
 
@@ -1069,8 +1131,8 @@ export function createQueryKnowledgeAdapter(
  * Test-only knowledge port factory with engine/asOf/portId DI.
  *
  * - Fail-closed when the actual process runtime is production.
- * - Injected engines never receive provenance "production".
- * - Only an internally constructed production engine can seal production provenance.
+ * - Injected engines never receive internal production trust.
+ * - Only an internally constructed production engine is WeakSet-registered.
  */
 export function createTestQueryKnowledgeAdapter(
   options: CreateTestQueryKnowledgeAdapterOptions = {}
@@ -1080,10 +1142,11 @@ export function createTestQueryKnowledgeAdapter(
     if (options.engine || options.knowledgeSource === "fixtures") {
       return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
     }
+    // Still requires real process.env.WHATSAPP_AI_KNOWLEDGE_SOURCE=production.
     return createLockedProductionKnowledgePort(options.knowledgeSource);
   }
 
-  // Injected engines: never mint production provenance (portId cannot impersonate).
+  // Injected engines: never mint internal production trust (portId cannot impersonate).
   if (options.engine) {
     const requested = options.knowledgeSource ?? "fixtures";
     if (requested === "unavailable") {
@@ -1110,6 +1173,7 @@ export function createTestQueryKnowledgeAdapter(
       provenance,
       portId,
       asOfIso: options.asOfIso,
+      sealTrustedProduction: false,
     });
   }
 
@@ -1121,7 +1185,7 @@ export function createTestQueryKnowledgeAdapter(
     );
   }
 
-  // Internal construction only — production provenance when mode is production.
+  // Internal construction only — trusted when mode is production.
   const engine = engineForSource(mode);
   if (!engine) {
     return createUnavailableKnowledgePort(
@@ -1141,5 +1205,6 @@ export function createTestQueryKnowledgeAdapter(
           ? options.portId
           : portIdForSource(mode),
     asOfIso: options.asOfIso,
+    sealTrustedProduction: mode === "production",
   });
 }

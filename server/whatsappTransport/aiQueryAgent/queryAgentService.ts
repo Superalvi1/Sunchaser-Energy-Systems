@@ -15,6 +15,7 @@ import {
   newDraftId,
 } from "./queryAgentAudit.ts";
 import {
+  isActualProductionRuntime,
   isQueryAutoReplyEnabled,
   isQueryDraftEnabled,
   readQueryAgentConfig,
@@ -35,6 +36,7 @@ import { QueryRateLimiter } from "./queryRateLimiter.ts";
 import {
   createQueryKnowledgeAdapter,
   enrichOutlineWithKnowledge,
+  isInternallyTrustedProductionKnowledgePort,
   knowledgeFactsToSafeSources,
   knowledgeRequiresHumanEscalation,
   prepareKnowledgeDraftForPhrasing,
@@ -208,13 +210,28 @@ export class QueryAgentService {
       });
     // Knowledge is opt-in via createQueryAgentService / explicit port.
     // Unit tests constructing QueryAgentService directly stay policy-only.
-    // AI-05: source selected via WHATSAPP_AI_KNOWLEDGE_SOURCE (fail-closed).
-    this.knowledge =
-      options.knowledge !== undefined
-        ? options.knowledge
-        : options.enableKnowledge
-          ? createQueryKnowledgeAdapter({ env: options.env })
-          : null;
+    // AI-05-R3: actual production ignores caller-injected knowledge ports and
+    // constructs from the real process environment only.
+    if (isActualProductionRuntime()) {
+      if (options.enableKnowledge === false) {
+        this.knowledge = null;
+      } else if (
+        options.knowledge !== undefined ||
+        options.enableKnowledge === true
+      ) {
+        // Reject/ignore forged or injected ports — construct internally.
+        this.knowledge = createQueryKnowledgeAdapter();
+      } else {
+        this.knowledge = null;
+      }
+    } else {
+      this.knowledge =
+        options.knowledge !== undefined
+          ? options.knowledge
+          : options.enableKnowledge
+            ? createQueryKnowledgeAdapter({ env: options.env })
+            : null;
+    }
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
     assertNoWhatsAppSendCapability();
@@ -354,8 +371,10 @@ export class QueryAgentService {
             knowledgeDraft,
             policy.sanitizedUserText
           );
-          // AI-05-R2: production-safe outline trusts sealed provenance only.
-          const productionSafe = this.knowledge.provenance === "production";
+          // AI-05-R3: production-safe outline requires unforgeable internal trust.
+          const productionSafe = isInternallyTrustedProductionKnowledgePort(
+            this.knowledge
+          );
           policyAnswerOutline = enrichOutlineWithKnowledge(
             policy.policyAnswerOutline,
             phrasingDraft,
