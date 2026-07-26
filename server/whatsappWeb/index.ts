@@ -55,13 +55,16 @@ export {
 export {
   __resetSharedWhatsAppLidMappingRuntime,
   containsRawWhatsAppIdentifier,
+  createLidMappingPersistQueue,
   getSharedWhatsAppLidMappingRuntime,
   hydrateWhatsAppLidPhoneMap,
+  LID_MAPPING_PERSIST_OVERFLOW_OUTCOME,
   rememberVerifiedLidMapping,
   resolveWhatsAppIdentityDurable,
   resolveWhatsAppIdentityWithOptionalMap,
   scheduleRememberVerifiedLidMapping,
   WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
+  WHATSAPP_LID_MAPPING_PERSIST_MAX_PENDING,
 } from "./whatsappWebLidMapping.ts";
 
 export {

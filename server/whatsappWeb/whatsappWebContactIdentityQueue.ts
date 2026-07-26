@@ -1,7 +1,8 @@
 /**
- * Bounded, session-safe queue for WhatsApp contact identity persistence.
- * Limits concurrent DB writes; isolates per-contact failures.
+ * Bounded, session-safe queue for WhatsApp contact / LID persistence.
+ * Limits concurrent DB writes; isolates per-task failures.
  * Optional per-key serialization: same key never runs concurrently.
+ * Optional maxPending + coalesceKey bound memory for high-churn paths.
  */
 
 export const WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY = 3;
@@ -11,17 +12,30 @@ export type ContactIdentityPersistTask<T> = () => Promise<T>;
 export type ContactIdentityPersistEnqueueOptions = {
   /** When set, at most one task with this key runs at a time (FIFO among that key). */
   key?: string;
+  /**
+   * When set, duplicate pending/in-flight work with the same coalesce key shares
+   * one execution. Callers all settle with that single result.
+   */
+  coalesceKey?: string;
 };
 
 export type ContactIdentityPersistQueueOptions = {
   concurrency?: number;
   onTaskError?: () => void;
+  /**
+   * Hard cap on pending[] length. When at capacity and the new work cannot be
+   * coalesced, enqueue settles immediately (fail-closed overflow) and calls
+   * onOverflow. Undefined = unlimited (legacy contact-identity path).
+   */
+  maxPending?: number;
+  onOverflow?: () => void;
 };
 
 type PendingItem = {
   run: ContactIdentityPersistTask<unknown>;
-  resolve: (value: unknown) => void;
+  resolvers: Array<(value: unknown) => void>;
   key: string | null;
+  coalesceKey: string | null;
 };
 
 /**
@@ -32,23 +46,37 @@ type PendingItem = {
  */
 export class ContactIdentityPersistQueue {
   private readonly concurrency: number;
+  private readonly maxPending: number | null;
   private readonly onTaskError?: () => void;
+  private readonly onOverflow?: () => void;
   private readonly pending: PendingItem[] = [];
   private readonly activeKeys = new Set<string>();
   private readonly activePerKey = new Map<string, number>();
   private readonly peakPerKey = new Map<string, number>();
+  private readonly activeCoalesce = new Map<string, Promise<unknown>>();
   private readonly idleWaiters: Array<() => void> = [];
   private active = 0;
   private closed = false;
   /** Test observability: peak observed global concurrency. */
   peakActive = 0;
+  /** Test observability: peak pending[] length. */
+  peakPending = 0;
+  /** Test observability: overflow drop count. */
+  overflowCount = 0;
+  /** Test observability: how many enqueues joined an existing coalesce slot. */
+  coalesceCount = 0;
 
   constructor(options: ContactIdentityPersistQueueOptions = {}) {
     this.concurrency = Math.max(
       1,
       options.concurrency ?? WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY
     );
+    this.maxPending =
+      typeof options.maxPending === "number" && Number.isFinite(options.maxPending)
+        ? Math.max(0, Math.floor(options.maxPending))
+        : null;
     this.onTaskError = options.onTaskError;
+    this.onOverflow = options.onOverflow;
   }
 
   get pendingCount(): number {
@@ -83,12 +111,14 @@ export class ContactIdentityPersistQueue {
    * Drop pending tasks and refuse new work. Active tasks finish but callers
    * should no-op themselves when the session is shutting down for work not
    * yet issued to the repository.
+   * Every pending enqueue promise settles.
    */
   close(): void {
     this.closed = true;
     while (this.pending.length > 0) {
       const next = this.pending.shift();
-      next?.resolve(undefined);
+      if (!next) break;
+      for (const resolve of next.resolvers) resolve(undefined);
     }
     this.notifyIdleIfNeeded();
   }
@@ -100,9 +130,9 @@ export class ContactIdentityPersistQueue {
   }
 
   /**
-   * Schedule work. Resolves when the task finishes (success or failure).
-   * Failures are swallowed after onTaskError — callers may still await outcome.
-   * After close(), resolves immediately with undefined.
+   * Schedule work. Resolves when the task finishes (success or failure), when
+   * coalesced onto existing work, when overflow-dropped, or when the queue is
+   * closed. Failures are swallowed after onTaskError — callers may still await.
    * Same `key` tasks never run concurrently; different keys share the global cap.
    */
   enqueue<T>(
@@ -116,18 +146,61 @@ export class ContactIdentityPersistQueue {
       typeof options.key === "string" && options.key.trim()
         ? options.key.trim()
         : null;
+    const coalesceKey =
+      typeof options.coalesceKey === "string" && options.coalesceKey.trim()
+        ? options.coalesceKey.trim()
+        : null;
+
     return new Promise<T | undefined>((resolve) => {
       if (this.closed) {
         resolve(undefined);
         return;
       }
+
+      if (coalesceKey) {
+        const pendingMatch = this.pending.find(
+          (item) => item.coalesceKey === coalesceKey
+        );
+        if (pendingMatch) {
+          this.coalesceCount += 1;
+          pendingMatch.resolvers.push((value) =>
+            resolve(value as T | undefined)
+          );
+          return;
+        }
+        const activeMatch = this.activeCoalesce.get(coalesceKey);
+        if (activeMatch) {
+          this.coalesceCount += 1;
+          void activeMatch.then(
+            (value) => resolve(value as T | undefined),
+            () => resolve(undefined)
+          );
+          return;
+        }
+      }
+
+      if (this.maxPending != null && this.pending.length >= this.maxPending) {
+        this.overflowCount += 1;
+        this.onOverflow?.();
+        resolve(undefined);
+        return;
+      }
+
       this.pending.push({
         run: task as ContactIdentityPersistTask<unknown>,
-        resolve: (value) => resolve(value as T | undefined),
+        resolvers: [(value) => resolve(value as T | undefined)],
         key,
+        coalesceKey,
       });
+      if (this.pending.length > this.peakPending) {
+        this.peakPending = this.pending.length;
+      }
       this.pump();
     });
+  }
+
+  private settleItem(item: PendingItem, value: unknown): void {
+    for (const resolve of item.resolvers) resolve(value);
   }
 
   private notifyIdleIfNeeded(): void {
@@ -156,20 +229,34 @@ export class ContactIdentityPersistQueue {
         if (per > peak) this.peakPerKey.set(next.key, per);
       }
 
+      let settleActiveCoalesce: ((value: unknown) => void) | null = null;
+      if (next.coalesceKey) {
+        const coalescePromise = new Promise<unknown>((resolve) => {
+          settleActiveCoalesce = resolve;
+        });
+        this.activeCoalesce.set(next.coalesceKey, coalescePromise);
+      }
+
       void (async () => {
+        let result: unknown = undefined;
         try {
           // Active work that already started continues even if close() races
           // after dequeue; only skip run() when closed before invocation.
           if (this.closed) {
-            next.resolve(undefined);
+            this.settleItem(next, undefined);
             return;
           }
-          const result = await next.run();
-          next.resolve(result);
+          result = await next.run();
+          this.settleItem(next, result);
         } catch {
           this.onTaskError?.();
-          next.resolve(undefined);
+          result = undefined;
+          this.settleItem(next, undefined);
         } finally {
+          if (next.coalesceKey) {
+            settleActiveCoalesce?.(result);
+            this.activeCoalesce.delete(next.coalesceKey);
+          }
           if (next.key) {
             this.activeKeys.delete(next.key);
             const per = (this.activePerKey.get(next.key) ?? 1) - 1;

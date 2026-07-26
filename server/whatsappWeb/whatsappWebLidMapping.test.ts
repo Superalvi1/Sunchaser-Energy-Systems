@@ -9,16 +9,18 @@ import {
 } from "../whatsappTransport/whatsappRepository.ts";
 import { attachContactDisplayFields } from "../whatsappTransport/whatsappInboxRepoSupport.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
-import { ContactIdentityPersistQueue } from "./whatsappWebContactIdentityQueue.ts";
 import { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
 import { persistWhatsAppWebInbound } from "./whatsappWebInbound.ts";
 import {
   containsRawWhatsAppIdentifier,
+  createLidMappingPersistQueue,
   hydrateWhatsAppLidPhoneMap,
+  LID_MAPPING_PERSIST_OVERFLOW_OUTCOME,
   rememberVerifiedLidMapping,
   resolveWhatsAppIdentityDurable,
   scheduleRememberVerifiedLidMapping,
   WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
+  WHATSAPP_LID_MAPPING_PERSIST_MAX_PENDING,
 } from "./whatsappWebLidMapping.ts";
 import {
   defaultWhatsAppLidMappingScope,
@@ -1089,6 +1091,7 @@ await runRepoSuite("supabase-fake", () => {
 // Bounded fire-and-forget persist queue is failure-isolated + concurrency-capped.
 {
   assert.equal(WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY >= 1, true);
+  assert.equal(WHATSAPP_LID_MAPPING_PERSIST_MAX_PENDING >= 1, true);
   const repo = new InMemoryWhatsAppLidPhoneMappingRepository();
   let inflight = 0;
   let peak = 0;
@@ -1110,8 +1113,9 @@ await runRepoSuite("supabase-fake", () => {
       return repo.upsertVerifiedMapping(s, l, p);
     },
   };
-  const queue = new ContactIdentityPersistQueue({
+  const queue = createLidMappingPersistQueue({
     concurrency: WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
+    maxPending: WHATSAPP_LID_MAPPING_PERSIST_MAX_PENDING,
   });
   const memory = new WhatsAppLidPhoneMap();
   for (let i = 0; i < 5; i++) {
@@ -1137,4 +1141,338 @@ await runRepoSuite("supabase-fake", () => {
   console.log("PASS: bounded failure-isolated durable persist queue");
 }
 
-console.log("PASS: SYNC-14C-B-R1 durable LID mapping suite complete");
+// ---------------------------------------------------------------------------
+// SYNC-14C-B-R2 — pending bound, coalesce, fail-closed overflow
+// ---------------------------------------------------------------------------
+
+// Pending work never exceeds configured maximum.
+{
+  const maxPending = 3;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let upserts = 0;
+  const blockingRepo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: async () => null,
+    markStale: async () => false,
+    listActiveForHydration: async () => [],
+    upsertVerifiedMapping: async () => {
+      upserts += 1;
+      await gate;
+      return {
+        kind: "created",
+        mapping: {
+          id: `wlid_${upserts}`,
+          companyId: scopeA.companyId,
+          channelPhoneNumberId: scopeA.channelPhoneNumberId,
+          sessionKey: scopeA.sessionKey,
+          lidNormalized: LID_A,
+          phoneE164: PHONE_A,
+          status: "active",
+          verifiedAt: new Date().toISOString(),
+          lastResolvedAt: new Date().toISOString(),
+          conflictCount: 0,
+          supersededAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    },
+  };
+  const queue = createLidMappingPersistQueue({
+    concurrency: 1,
+    maxPending,
+  });
+  // Fill active (1) + pending (maxPending) with distinct LIDs.
+  const lids = Array.from({ length: maxPending + 4 }, (_, i) => `${1000 + i}@lid`);
+  const promises = lids.map((lid) =>
+    queue.enqueue(
+      () =>
+        rememberVerifiedLidMapping(lid, `${923000000000 + Number(lid.split("@")[0])}`, {
+          repo: blockingRepo,
+          scope: scopeA,
+        }),
+      {
+        key: `${scopeA.companyId}\0${scopeA.channelPhoneNumberId}\0${scopeA.sessionKey}\0${lid}`,
+        coalesceKey: `${scopeA.companyId}\0${scopeA.channelPhoneNumberId}\0${scopeA.sessionKey}\0${lid}\0phone`,
+      }
+    )
+  );
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(queue.pendingCount <= maxPending, true);
+  assert.equal(queue.peakPending <= maxPending, true);
+  assert.equal(queue.overflowCount >= 1, true);
+  release();
+  await Promise.all(promises);
+  await queue.whenIdle();
+  console.log("PASS: pending work never exceeds configured maximum");
+}
+
+// Hundreds of duplicate mapping events are coalesced.
+{
+  let upsertCalls = 0;
+  const repo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: async () => null,
+    markStale: async () => false,
+    listActiveForHydration: async () => [],
+    upsertVerifiedMapping: async (s, l, p) => {
+      upsertCalls += 1;
+      await new Promise((r) => setTimeout(r, 20));
+      return {
+        kind: "created",
+        mapping: {
+          id: "wlid_coalesce",
+          companyId: s.companyId,
+          channelPhoneNumberId: s.channelPhoneNumberId,
+          sessionKey: s.sessionKey,
+          lidNormalized: l,
+          phoneE164: p,
+          status: "active",
+          verifiedAt: new Date().toISOString(),
+          lastResolvedAt: new Date().toISOString(),
+          conflictCount: 0,
+          supersededAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    },
+  };
+  const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending: 8 });
+  const memory = new WhatsAppLidPhoneMap();
+  for (let i = 0; i < 250; i++) {
+    scheduleRememberVerifiedLidMapping(LID_A, PHONE_A, {
+      repo,
+      scope: scopeA,
+      memory,
+      persistQueue: queue,
+    });
+  }
+  await new Promise((r) => setTimeout(r, 5));
+  // At most one pending slot for the duplicate key (+ possibly active).
+  assert.equal(queue.pendingCount <= 1, true);
+  assert.equal(queue.coalesceCount >= 200, true);
+  await queue.whenIdle();
+  // One in-flight start + coalesced joiners; upserts must be tiny (1, or 2 if
+  // a post-active coalesce raced a second slot before join).
+  assert.equal(upsertCalls <= 2, true);
+  assert.equal(upsertCalls >= 1, true);
+  console.log("PASS: hundreds of duplicate mapping events are coalesced");
+}
+
+// Distinct-key overflow remains memory-bounded.
+{
+  const maxPending = 5;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const repo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: async () => null,
+    markStale: async () => false,
+    listActiveForHydration: async () => [],
+    upsertVerifiedMapping: async () => {
+      await gate;
+      return { kind: "error", errorCode: "blocked" };
+    },
+  };
+  const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending });
+  const n = 80;
+  for (let i = 0; i < n; i++) {
+    scheduleRememberVerifiedLidMapping(`${200000 + i}@lid`, `92301${String(i).padStart(7, "0")}`, {
+      repo,
+      scope: scopeA,
+      persistQueue: queue,
+    });
+  }
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(queue.pendingCount <= maxPending, true);
+  assert.equal(queue.peakPending <= maxPending, true);
+  assert.equal(queue.overflowCount, n - maxPending - 1); // 1 active + maxPending pending
+  release();
+  await queue.whenIdle();
+  console.log("PASS: distinct-key overflow remains memory-bounded");
+}
+
+// Overflow does not affect inbound processing / socket lifecycle.
+{
+  const maxPending = 2;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const lidRepo = new InMemoryWhatsAppLidPhoneMappingRepository();
+  const blockingRepo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: (s, l) => lidRepo.resolvePhoneByLid(s, l),
+    markStale: (s, l) => lidRepo.markStale(s, l),
+    listActiveForHydration: (s) => lidRepo.listActiveForHydration(s),
+    upsertVerifiedMapping: async () => {
+      await gate;
+      return { kind: "error", errorCode: "blocked" };
+    },
+  };
+  const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending });
+  for (let i = 0; i < 20; i++) {
+    scheduleRememberVerifiedLidMapping(`${300000 + i}@lid`, `92302${String(i).padStart(7, "0")}`, {
+      repo: blockingRepo,
+      scope: scopeA,
+      persistQueue: queue,
+    });
+  }
+  assert.equal(queue.overflowCount >= 1, true);
+
+  const waRepo = new InMemoryWhatsAppRepository();
+  const lidMap = new WhatsAppLidPhoneMap();
+  // Inbound with phone identity must still store despite overflowed durable queue.
+  const stored = await persistWhatsAppWebInbound(
+    {
+      providerMessageId: "m-overflow-ok",
+      remoteJid: PHONE_A_JID,
+      fromMe: false,
+      text: "still stores",
+      pushName: "Ada",
+      occurredAt: "2026-07-26T00:10:00.000Z",
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "text",
+    },
+    {
+      repo: waRepo,
+      lidMap,
+      lidMappingRepo: blockingRepo,
+      lidMappingScope: scopeA,
+    }
+  );
+  assert.equal(stored.kind, "stored");
+  assert.equal(waRepo.contacts.size, 1);
+
+  // Sync-source connect path must not throw under overflow pressure.
+  const source = new BaileysInMemorySyncSource();
+  source.setLidMappingStore(blockingRepo, scopeA);
+  source.setConnected(true, PHONE_A_JID);
+  source.ingestContacts([{ id: LID_B, jid: PHONE_B_JID, lid: LID_B, name: "X" }]);
+
+  release();
+  await queue.whenIdle();
+  console.log("PASS: overflow does not affect inbound/socket lifecycle");
+}
+
+// No identifier appears in overflow logs.
+{
+  const logs: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (line: string) => {
+    logs.push(String(line));
+  };
+  try {
+    // Default onOverflow path — fixed allow-listed outcome only.
+    const queue = createLidMappingPersistQueue({
+      concurrency: 1,
+      maxPending: 0,
+    });
+    scheduleRememberVerifiedLidMapping(LID_A, PHONE_A, {
+      repo: new InMemoryWhatsAppLidPhoneMappingRepository(),
+      scope: scopeA,
+      persistQueue: queue,
+    });
+    await queue.whenIdle();
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(logs.length >= 1, true);
+  for (const line of logs) {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    assert.equal(parsed.outcome, LID_MAPPING_PERSIST_OVERFLOW_OUTCOME);
+    assert.equal(parsed.event, LID_MAPPING_PERSIST_OVERFLOW_OUTCOME);
+    // Only fixed allow-listed fields (+ scope/level/at envelope).
+    for (const key of Object.keys(parsed)) {
+      assert.equal(
+        ["scope", "level", "event", "outcome", "at"].includes(key),
+        true,
+        `unexpected overflow log key: ${key}`
+      );
+    }
+    assert.equal(line.includes("@lid"), false);
+    assert.equal(line.includes("@s.whatsapp.net"), false);
+    assert.equal(line.includes(PHONE_A), false);
+    assert.equal(line.includes(LID_A), false);
+    assert.equal(line.includes(scopeA.companyId), false);
+    assert.equal(line.includes(scopeA.channelPhoneNumberId), false);
+    assert.equal(line.includes(scopeA.sessionKey), false);
+  }
+  console.log("PASS: no identifier in overflow logs");
+}
+
+// Queue close settles all callers (pending + coalesced waiters).
+{
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const repo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: async () => null,
+    markStale: async () => false,
+    listActiveForHydration: async () => [],
+    upsertVerifiedMapping: async () => {
+      await gate;
+      return { kind: "error", errorCode: "blocked" };
+    },
+  };
+  const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending: 10 });
+  const settled: Array<unknown> = [];
+  const p1 = queue.enqueue(
+    () => rememberVerifiedLidMapping(LID_A, PHONE_A, { repo, scope: scopeA }),
+    { key: "k-a", coalesceKey: "c-a" }
+  ).then((v) => settled.push(["p1", v]));
+  // Coalesced waiter on same in-flight key.
+  const p2 = queue.enqueue(
+    () => rememberVerifiedLidMapping(LID_A, PHONE_A, { repo, scope: scopeA }),
+    { key: "k-a", coalesceKey: "c-a" }
+  ).then((v) => settled.push(["p2", v]));
+  // Distinct pending item — must settle on close() without running.
+  const p3 = queue.enqueue(
+    () => rememberVerifiedLidMapping(LID_B, PHONE_B, { repo, scope: scopeA }),
+    { key: "k-b", coalesceKey: "c-b" }
+  ).then((v) => settled.push(["p3", v]));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(queue.pendingCount, 1);
+  assert.equal(queue.coalesceCount >= 1, true);
+  queue.close();
+  await p3;
+  assert.equal(queue.pendingCount, 0);
+  assert.equal(
+    settled.some((row) => Array.isArray(row) && row[0] === "p3" && row[1] === undefined),
+    true
+  );
+  // Active + coalesced-on-active settle when the in-flight task ends.
+  release();
+  await Promise.all([p1, p2]);
+  await queue.closeAndDrain();
+  assert.equal(settled.length, 3);
+  // Pending close → undefined; in-flight remember returns structured error.
+  assert.equal(
+    settled.some((row) => Array.isArray(row) && row[0] === "p1"),
+    true
+  );
+  assert.equal(
+    settled.some((row) => Array.isArray(row) && row[0] === "p2"),
+    true
+  );
+  const p1Val = settled.find((row) => Array.isArray(row) && row[0] === "p1") as
+    | [string, { kind?: string } | undefined]
+    | undefined;
+  const p2Val = settled.find((row) => Array.isArray(row) && row[0] === "p2") as
+    | [string, { kind?: string } | undefined]
+    | undefined;
+  assert.equal(p1Val?.[1]?.kind, "error");
+  assert.equal(p2Val?.[1]?.kind, "error");
+  console.log("PASS: queue close settles all callers");
+}
+
+console.log("PASS: SYNC-14C-B-R2 durable LID mapping suite complete");

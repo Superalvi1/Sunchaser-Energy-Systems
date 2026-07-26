@@ -34,20 +34,50 @@ export type WhatsAppLidMappingRuntime = {
 /** Cap concurrent durable LID persist tasks; isolate failures per task. */
 export const WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY = 2;
 
+/**
+ * Hard cap on pending LID persist slots (after coalesce). Overflow drops only
+ * durable persistence — never inbound, socket lifecycle, or fake phone contacts.
+ */
+export const WHATSAPP_LID_MAPPING_PERSIST_MAX_PENDING = 64;
+
+/** Allow-listed overflow outcome — never include scope/LID/phone. */
+export const LID_MAPPING_PERSIST_OVERFLOW_OUTCOME =
+  "lid_mapping_persist_overflow" as const;
+
 let sharedLidMappingRuntime: WhatsAppLidMappingRuntime | null = null;
 let sharedLidMappingPersistQueue: ContactIdentityPersistQueue | null = null;
 
-function getLidMappingPersistQueue(): ContactIdentityPersistQueue {
-  if (!sharedLidMappingPersistQueue) {
-    sharedLidMappingPersistQueue = new ContactIdentityPersistQueue({
-      concurrency: WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
-      onTaskError: () => {
+function logLidMappingPersistOverflow(): void {
+  // Fixed allow-listed outcome only — no scope, LID, phone, or counts.
+  logWhatsAppWeb("warn", LID_MAPPING_PERSIST_OVERFLOW_OUTCOME, {
+    outcome: LID_MAPPING_PERSIST_OVERFLOW_OUTCOME,
+  });
+}
+
+export function createLidMappingPersistQueue(options?: {
+  concurrency?: number;
+  maxPending?: number;
+  onTaskError?: () => void;
+  onOverflow?: () => void;
+}): ContactIdentityPersistQueue {
+  return new ContactIdentityPersistQueue({
+    concurrency: options?.concurrency ?? WHATSAPP_LID_MAPPING_PERSIST_CONCURRENCY,
+    maxPending: options?.maxPending ?? WHATSAPP_LID_MAPPING_PERSIST_MAX_PENDING,
+    onTaskError:
+      options?.onTaskError ??
+      (() => {
         logWhatsAppWeb("warn", "lid_mapping_persist_failed", {
           outcome: "lid_mapping_persist_failed",
           phase: "queue",
         });
-      },
-    });
+      }),
+    onOverflow: options?.onOverflow ?? logLidMappingPersistOverflow,
+  });
+}
+
+function getLidMappingPersistQueue(): ContactIdentityPersistQueue {
+  if (!sharedLidMappingPersistQueue) {
+    sharedLidMappingPersistQueue = createLidMappingPersistQueue();
   }
   return sharedLidMappingPersistQueue;
 }
@@ -97,6 +127,7 @@ function logMappingOutcome(
     | "lid_mapping_remapped"
     | "lid_mapping_rejected"
     | "lid_mapping_persist_failed"
+    | "lid_mapping_persist_overflow"
     | "lid_mapping_resolve_miss"
     | "lid_mapping_hydrate_failed"
     | "lid_mapping_hydrate_ok",
@@ -107,6 +138,23 @@ function logMappingOutcome(
     outcome: event,
     ...extra,
   });
+}
+
+/** Serialization key: one durable write lane per scoped LID. */
+export function lidMappingPersistSerializeKey(
+  scope: WhatsAppLidMappingScope,
+  lidNormalized: string
+): string {
+  return `${scope.companyId}\0${scope.channelPhoneNumberId}\0${scope.sessionKey}\0${lidNormalized}`;
+}
+
+/** Coalesce key: identical scoped LID+phone mapping events share one slot. */
+export function lidMappingPersistCoalesceKey(
+  scope: WhatsAppLidMappingScope,
+  lidNormalized: string,
+  phoneE164: string
+): string {
+  return `${lidMappingPersistSerializeKey(scope, lidNormalized)}\0${phoneE164}`;
 }
 
 export function mappingResultToOutcomeEvent(
@@ -185,8 +233,10 @@ export async function rememberVerifiedLidMapping(
 }
 
 /**
- * Schedule a bounded, failure-isolated durable write. Never throws to callers.
- * Same scoped LID is serialized; global concurrency is capped.
+ * Schedule a bounded, coalesced, failure-isolated durable write.
+ * Never throws to callers. Overflow drops only durable persistence.
+ * Same scoped LID is serialized; identical LID+phone work coalesces;
+ * global DB concurrency and pending depth are capped.
  */
 export function scheduleRememberVerifiedLidMapping(
   lidJid: string | null | undefined,
@@ -195,14 +245,17 @@ export function scheduleRememberVerifiedLidMapping(
 ): void {
   const scope = deps.scope ?? defaultWhatsAppLidMappingScope();
   const lid = normalizeLidJid(lidJid);
+  const phone = normalizeMappingPhoneE164(phoneE164OrJid);
+  // Invalid inputs never consume a pending slot (fail-closed for schedule).
+  if (!lid || !phone) return;
+
   const queue = deps.persistQueue ?? getLidMappingPersistQueue();
-  const key = lid
-    ? `${scope.companyId}\0${scope.channelPhoneNumberId}\0${scope.sessionKey}\0${lid}`
-    : undefined;
+  const key = lidMappingPersistSerializeKey(scope, lid);
+  const coalesceKey = lidMappingPersistCoalesceKey(scope, lid, phone);
   void queue
     .enqueue(
-      () => rememberVerifiedLidMapping(lidJid, phoneE164OrJid, deps),
-      key ? { key } : undefined
+      () => rememberVerifiedLidMapping(lid, phone, deps),
+      { key, coalesceKey }
     )
     .catch(() => {
       // Queue already isolates; this is belt-and-suspenders.
