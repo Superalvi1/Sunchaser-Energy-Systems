@@ -359,6 +359,65 @@ await test("AI-04-R3: mixed technical + package price intent => true", () => {
   }
 });
 
+await test("AI-04-R4: price-first mixed must not be swallowed by technical spans", () => {
+  const priceFirst = [
+    "battery package ریٹ aur charging ریٹ?",
+    "10kW system ریٹ aur battery charging ریٹ?",
+    "solar package rate aur battery charging ریٹ?",
+  ];
+  for (const sample of priceFirst) {
+    const stripped = stripTechnicalRateSpans(sample);
+    assert.equal(
+      queryRequestsPrice(sample),
+      true,
+      `price-first mixed must be true: ${sample} (remainder=${JSON.stringify(stripped.rawRemainder)})`
+    );
+    assert.match(
+      stripped.rawRemainder,
+      /package|system|rate|ریٹ/i,
+      `commercial wording must remain after tech strip: ${sample}`
+    );
+  }
+});
+
+await test("AI-04-R4: price-first Urdu must not be swallowed by technical spans", () => {
+  const priceFirstUrdu = [
+    "بیٹری پیکیج کا ریٹ اور چارجنگ ریٹ کیا ہے؟",
+    "بیٹری پیکیج کا ریٹ اور بیٹری کا چارجنگ ریٹ کیا ہے؟",
+    "بیٹری پیکیج کی قیمت اور discharge rate کیا ہے؟",
+    "سولر پیکیج کا ریٹ اور بیٹری کا discharge ریٹ؟",
+  ];
+  for (const sample of priceFirstUrdu) {
+    const stripped = stripTechnicalRateSpans(sample);
+    assert.equal(
+      queryRequestsPrice(sample),
+      true,
+      `price-first Urdu must be true: ${sample} (remainder=${JSON.stringify(stripped.rawRemainder)})`
+    );
+    assert.match(
+      stripped.rawRemainder,
+      /پیکیج|قیمت|ریٹ/,
+      `Urdu commercial wording must remain: ${sample}`
+    );
+  }
+});
+
+await test("AI-04-R4: technical Urdu with safe descriptive words stays non-price", () => {
+  const technicalUrdu = [
+    "بیٹری بینک کا چارجنگ ریٹ بتائیں",
+    "lithium battery pack charging rate kya hai",
+    "بیٹری پیک کا discharge ریٹ کیا ہے؟",
+  ];
+  for (const sample of technicalUrdu) {
+    assert.equal(
+      queryRequestsPrice(sample),
+      false,
+      `descriptive technical-only must be false: ${sample}`
+    );
+    assert.equal(isTechnicalRateContext(sample), true, sample);
+  }
+});
+
 await test("AI-04-R2: informal conflicting/stale/missing price requests escalate", async () => {
   const { gateway, calls } = recordingGateway();
   const service = createQueryAgentService({

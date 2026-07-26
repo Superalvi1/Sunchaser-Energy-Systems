@@ -115,6 +115,29 @@ export function normalizePriceIntentText(queryText: string): string {
 }
 
 /**
+ * Intervening words allowed between battery ↔ charge/charging in a technical
+ * span. Must NOT cross package/system/product/commercial-rate wording or
+ * conjunctions (and/aur/اور), or price-first clauses get swallowed.
+ *
+ * Note: JS `\b` is ASCII-word based and does not bound Urdu tokens reliably, so
+ * forbidden/safe tokens use an explicit end look-ahead instead.
+ */
+const TECH_SPAN_TOKEN_END = String.raw`(?=$|[\s؟!?.،,;:\/\-])`;
+
+const TECH_SPAN_FORBIDDEN_GAP_TOKEN = String.raw`(?:package|packages|pakej|pakege|پیکیج|system|systems|سسٹم|product|products|price|pricing|cost|costs|charges|rate|rates|ریٹ|قیمت|kitne|kitnay|kitni|kia|kya|bata|aur|and|اور|or|یا)`;
+
+/**
+ * Allowlisted descriptive connectors only (no arbitrary multiword / Urdu catch-all).
+ * This keeps “بیٹری بینک کا چارجنگ ریٹ” technical while refusing to leap across
+ * “بیٹری پیکیج کا ریٹ اور …”.
+ */
+const TECH_SPAN_SAFE_GAP_TOKEN = String.raw`(?:(?!${TECH_SPAN_FORBIDDEN_GAP_TOKEN}${TECH_SPAN_TOKEN_END})(?:the|a|an|this|our|ka|ki|ke|کا|کی|کے|bank|banks|pack|packs|cell|cells|lithium|storage|بینک|پیک|سیل|لیتھیم|والا|والی|والے))`;
+
+function techSpanSafeGap(maxWords: number): string {
+  return String.raw`(?:\s+${TECH_SPAN_SAFE_GAP_TOKEN}){0,${maxWords}}`;
+}
+
+/**
  * Technical-rate span patterns (English / Roman-Urdu), applied after
  * normalizePriceIntentText. Spans are removed before price-intent checks so a
  * technical phrase cannot suppress a separate product/package rate request.
@@ -122,7 +145,7 @@ export function normalizePriceIntentText(queryText: string): string {
  * Each pattern is rebuilt per call (global + stateful lastIndex).
  */
 function technicalRateSpanPatternsEn(): RegExp[] {
-  const gap = String.raw`(?:\s+\w+){0,6}`;
+  const gap = techSpanSafeGap(4);
   // Optional slash form: charge/discharge (raw) or charge discharge (normalized).
   const chargeWord = String.raw`(?:charge|charging|discharge)`;
   const chargePair = String.raw`${chargeWord}(?:\s*[\/]\s*${chargeWord}|\s+${chargeWord})?`;
@@ -134,7 +157,7 @@ function technicalRateSpanPatternsEn(): RegExp[] {
       String.raw`\b${chargeWord}\s+rate(?:\s+(?:for|of|on|in)\s+(?:the\s+|this\s+|a\s+|an\s+)?(?:\w+\s+){0,3}batter(?:y|ies))?\b`,
       "g"
     ),
-    // battery … charging rate (intervening words)
+    // battery … charging rate (safe descriptive intervening words only)
     new RegExp(
       String.raw`\bbatter(?:y|ies)${gap}\s+${chargeWord}\s+rate\b`,
       "g"
@@ -149,22 +172,18 @@ function technicalRateSpanPatternsEn(): RegExp[] {
 
 /** Urdu / mixed technical-rate spans (ریٹ as technical rate). */
 function technicalRateSpanPatternsUrdu(): RegExp[] {
-  const gap = String.raw`(?:\s+\S+){0,8}`;
+  const gap = techSpanSafeGap(4);
+  const chargeUr = String.raw`(?:charging|charge|discharge|چارجنگ|چارج)`;
   return [
-    // بیٹری کا چارجنگ ریٹ
-    new RegExp(String.raw`بیٹری${gap}\s*چارج(?:نگ)?\s*ریٹ`, "g"),
-    // battery charging ریٹ / battery … ریٹ with charge words nearby
+    // Tight: بیٹری کا چارجنگ ریٹ / بیٹری بینک کا چارجنگ ریٹ (no commercial gap)
+    new RegExp(String.raw`بیٹری${gap}\s*${chargeUr}\s*ریٹ`, "g"),
+    // Tight mixed: battery charging ریٹ / battery bank charging ریٹ
     new RegExp(
-      String.raw`\bbatter(?:y|ies)${gap}\s*(?:charging|charge|discharge|چارجنگ|چارج)\s*ریٹ`,
+      String.raw`\bbatter(?:y|ies)${gap}\s*${chargeUr}\s*ریٹ`,
       "gi"
     ),
-    // charging ریٹ / چارجنگ ریٹ (technical)
-    /(?:charging|charge|discharge|چارجنگ|چارج)\s*ریٹ/gi,
-    // بیٹری … ریٹ when charge/charging appears in the same short window
-    new RegExp(
-      String.raw`بیٹری${gap}\s*(?:charging|charge|discharge|چارجنگ|چارج)${gap}\s*ریٹ`,
-      "g"
-    ),
+    // Tip-only technical ریٹ (does not reach backward into package ریٹ)
+    new RegExp(String.raw`${chargeUr}\s*ریٹ`, "gi"),
   ];
 }
 
