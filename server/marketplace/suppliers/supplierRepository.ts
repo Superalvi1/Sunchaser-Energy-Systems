@@ -159,12 +159,16 @@ export function createSupabaseSupplierRepository(
     },
 
     async startJob(trigger, actorScope, meta = {}) {
+      const jobName =
+        typeof meta.jobName === "string" && meta.jobName.trim()
+          ? meta.jobName.trim()
+          : "marketplace_supplier_price_check";
       const data = await rpc<{ runId?: string; ok?: boolean }>(
         getClient(),
         "mp_ws4_job_start",
         {
           p_actor_scope: actorScope,
-          p_job_name: "marketplace_supplier_price_check",
+          p_job_name: jobName,
           p_trigger: trigger,
           p_meta: meta,
         },
