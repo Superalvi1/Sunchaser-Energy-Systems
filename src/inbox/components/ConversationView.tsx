@@ -6,13 +6,12 @@ import {
   UserRoundMinus,
   ExternalLink,
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { InboxConversationDetail, InboxMessage } from "../types";
-import {
-  displayContactLabel,
-  formatPhoneDisplay,
-  initialsFromContact,
-  initialsFromId,
-} from "../utils/format";
+import { useAiDraft } from "../hooks/useAiDraft";
+import { isAiDraftUiEnabled } from "../lib/aiDraftFeature";
+import { displayContactLabel, initialsFromId } from "../utils/format";
+import AiDraftPanel from "./AiDraftPanel";
 import Composer from "./Composer";
 import MessageTimeline from "./MessageTimeline";
 import InboxEmptyState from "./InboxEmptyState";
@@ -63,6 +62,27 @@ export default function ConversationView({
   currentUserId,
   mutating,
 }: ConversationViewProps) {
+  const conversationId = detail?.conversation.id ?? null;
+  const aiDraftEnabled = isAiDraftUiEnabled();
+  const aiDraft = useAiDraft(conversationId);
+  const [composerSeed, setComposerSeed] = useState<{
+    text: string;
+    token: number;
+  }>({ text: "", token: 0 });
+
+  // Reset composer seed when switching threads (no cross-customer draft leak).
+  useEffect(() => {
+    setComposerSeed({ text: "", token: 0 });
+  }, [conversationId]);
+
+  const latestInbound = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m.direction === "inbound" && m.textBody?.trim()) return m;
+    }
+    return null;
+  }, [messages]);
+
   if (!detail && !detailLoading) {
     return (
       <section
@@ -90,9 +110,16 @@ export default function ConversationView({
   }
 
   const conversation = detail!.conversation;
-  const contact = displayContactLabel(conversation);
-  const phone = formatPhoneDisplay(conversation.phoneE164);
+  const contact = displayContactLabel(conversation.contactId);
   const assignedToMe = conversation.assignedUserId === currentUserId;
+
+  const runGenerate = () => {
+    // Prefer messageId only — server loads authoritative stored text.
+    // When absent, server resolves the latest eligible inbound itself.
+    void aiDraft.generate({
+      messageId: latestInbound?.id,
+    });
+  };
 
   return (
     <section
@@ -105,14 +132,14 @@ export default function ConversationView({
             className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--inbox-surface-2)] text-xs font-semibold"
             aria-hidden
           >
-            {initialsFromContact(conversation)}
+            {initialsFromId(conversation.contactId)}
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-[var(--inbox-fg)]">
               {contact}
             </h2>
             <p className="truncate text-xs text-[var(--inbox-muted)]">
-              {phone ? `${phone} · ` : ""}Channel{" "}
+              Phone · contact {conversation.contactId.slice(-8)} · Channel{" "}
               {conversation.channelId.slice(-6)}
             </p>
             <p className="mt-0.5 text-xs text-[var(--inbox-muted)]">
@@ -217,11 +244,34 @@ export default function ConversationView({
         }
       />
 
+      {aiDraftEnabled ? (
+        <AiDraftPanel
+          state={aiDraft.state}
+          disabled={mutating || sending}
+          canGenerate={Boolean(conversationId)}
+          onGenerate={runGenerate}
+          onRegenerate={runGenerate}
+          onDiscard={aiDraft.discard}
+          onEditableTextChange={aiDraft.setEditableText}
+          onCopyToComposer={() => {
+            const text = aiDraft.state.editableText.trim();
+            if (!text) return;
+            // Copy only — never calls onSend.
+            setComposerSeed((prev) => ({
+              text,
+              token: prev.token + 1,
+            }));
+          }}
+        />
+      ) : null}
+
       <Composer
         freeForm={detail?.freeForm}
         sending={sending}
         disabled={mutating}
         onSend={onSend}
+        seedText={composerSeed.text}
+        seedToken={composerSeed.token}
       />
     </section>
   );
