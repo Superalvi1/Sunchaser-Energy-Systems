@@ -119,6 +119,28 @@ where table_schema = 'public'
 order by grantee, privilege_type;
 
 -- -----------------------------------------------------------------------------
+-- 4b. Schema guard before any direct table row queries
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if to_regclass('public.whatsapp_contacts') is null then
+    raise exception 'STOP: public.whatsapp_contacts does not exist';
+  end if;
+
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'whatsapp_contacts'
+      and column_name = 'name_source'
+  ) then
+    raise exception 'STOP: whatsapp_contacts.name_source column missing';
+  end if;
+
+  raise notice 'PASS: SYNC-14C-A preflight schema guard — table/column present';
+end $$;
+
+-- -----------------------------------------------------------------------------
 -- 5. Distinct name_source values and counts
 -- -----------------------------------------------------------------------------
 select
@@ -352,21 +374,57 @@ begin
     end if;
   end if;
 
-  select pg_get_constraintdef(con.oid, true)
-  into constraint_def
-  from pg_constraint con
-  join pg_class rel on rel.oid = con.conrelid
-  join pg_namespace nsp on nsp.oid = rel.relnamespace
-  where nsp.nspname = 'public'
-    and rel.relname = 'whatsapp_contacts'
-    and con.conname = 'whatsapp_contacts_name_source_check'
-  limit 1;
+  declare
+    expected text[] := array[
+      'manual',
+      'phone',
+      'whatsapp_legacy',
+      'whatsapp_push',
+      'whatsapp_saved',
+      'whatsapp_short',
+      'whatsapp_verified'
+    ];
+    parsed text[];
+    def_norm text;
+    is_validated boolean;
+  begin
+    select pg_get_constraintdef(con.oid, true), con.convalidated
+    into constraint_def, is_validated
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    where nsp.nspname = 'public'
+      and rel.relname = 'whatsapp_contacts'
+      and con.conname = 'whatsapp_contacts_name_source_check'
+    limit 1;
 
-  if constraint_def is not null
-     and constraint_def ilike '%whatsapp_verified%'
-     and constraint_def ilike '%whatsapp_legacy%' then
-    already_expanded := true;
-  end if;
+    -- Exact allow-list + validated (R1). Partial ILIKE substring checks are insufficient.
+    if constraint_def is not null then
+      def_norm := lower(constraint_def);
+      if def_norm ~ 'check\s*\('
+         and def_norm ~ 'name_source\s+is\s+null'
+         and (
+           def_norm ~ 'name_source\s*=\s*any\s*\(\s*array\s*\['
+           or def_norm ~ 'name_source\s+in\s*\('
+         )
+         and def_norm !~ '\bor\s+true\b'
+         and def_norm !~ '=\s*true\b'
+         and def_norm !~ '\bsimilar\s+to\b'
+         and def_norm !~ '\slike\s'
+         and def_norm !~ '~'
+         and def_norm !~ '\bin\s*\(\s*select\b'
+         and coalesce(is_validated, false)
+      then
+        select coalesce(array_agg(x order by x), array[]::text[])
+        into parsed
+        from (
+          select distinct m[1] as x
+          from regexp_matches(constraint_def, '''([^'']+)''', 'g') as m
+        ) s;
+        already_expanded := parsed is not distinct from expected;
+      end if;
+    end if;
+  end;
 
   if coalesce(array_length(stop_reasons, 1), 0) > 0 then
     raise notice 'STOP: SYNC-14C-A preflight failed: %', array_to_string(stop_reasons, '; ');

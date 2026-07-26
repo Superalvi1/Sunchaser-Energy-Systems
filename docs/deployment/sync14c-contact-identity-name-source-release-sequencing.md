@@ -108,6 +108,16 @@ If expanded values already exist in data, SQL rollback **fails closed** — requ
 
 ---
 
+## Idempotency / fail-closed (SYNC-14C-A-R1)
+
+- Forward and rollback decide no-op / promote / rebuild using **exact allow-list semantic equality** (quoted value set + explicit `name_source IS NULL` + trusted `IN` / `= ANY(ARRAY[...])` form), not partial `ILIKE` substring checks.
+- Final no-op and post-verify require `convalidated = true`.
+- Temporary constraints (`*_v14c`, `*_rollback`) are **never trusted by name alone**. Unknown or mismatched temporary definitions **STOP fail-closed** (no validate/promote/drop of foreign definitions).
+- If canonical equality cannot be proven, scripts **rebuild** the exact desired constraint (`NOT VALID` → `VALIDATE` → swap).
+- Repeat forward / repeat rollback are idempotent no-ops only after exact validated proof.
+
+---
+
 ## Lock / downtime risks
 
 | Step | Lock / impact | Notes |
