@@ -340,6 +340,7 @@ import {
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
 import { createMarketplaceAdminRouter } from "./server/marketplace/admin/adminRoutes.ts";
 import { createMarketplacePricingRouter } from "./server/marketplace/pricing/pricingRoutes.ts";
+import { createMarketplaceSupplierRouter } from "./server/marketplace/suppliers/index.ts";
 import { createCartRouter } from "./server/marketplace/cart/index.ts";
 import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
 import { createCodRouter } from "./server/marketplace/cod/index.ts";
@@ -702,6 +703,8 @@ app.use(
 app.use("/api/marketplace/admin", createMarketplaceAdminRouter());
 // Marketplace Super-Admin pricing engine (MARKETPLACE_ENABLED + marketplace + Super Admin).
 app.use("/api/marketplace/admin", createMarketplacePricingRouter());
+// Marketplace WS4 supplier ingestion / price-check / alerts (marketplace staff; mappings Super Admin).
+app.use("/api/marketplace/admin", createMarketplaceSupplierRouter());
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
