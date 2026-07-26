@@ -111,6 +111,40 @@ function chooseDisposition(input: {
     };
   }
 
+  if (input.category === "after_sales_support") {
+    return {
+      disposition: "escalate_human",
+      humanHandoverReason:
+        "After-sales and maintenance enquiries must be handed to the support team.",
+      unavailableMessage: null,
+      safeReplyHints: input.facts.slice(0, 1).map((f) => f.text),
+    };
+  }
+
+  if (input.category === "net_metering_general") {
+    return {
+      disposition: "escalate_human",
+      humanHandoverReason:
+        "Net-metering eligibility and site-specific utility steps require human engineering review.",
+      unavailableMessage: null,
+      safeReplyHints: [
+        "A human specialist must review net-metering eligibility for your site.",
+      ],
+    };
+  }
+
+  if (input.category === "warranty" || input.category === "installation_process") {
+    return {
+      disposition: "escalate_human",
+      humanHandoverReason:
+        "Warranty duration and installation timeline questions require human confirmation.",
+      unavailableMessage: null,
+      safeReplyHints: [
+        "A human team member will confirm warranty and timeline details.",
+      ],
+    };
+  }
+
   if (input.facts.length === 0) {
     return {
       disposition: "unavailable",

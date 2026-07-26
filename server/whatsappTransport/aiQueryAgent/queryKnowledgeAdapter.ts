@@ -23,6 +23,7 @@ import {
   type KnowledgeQueryCategory,
 } from "../../whatsappAiKnowledge/index.ts";
 import {
+  isProductionRuntime,
   readKnowledgeSource,
   type KnowledgeSourceMode,
 } from "./queryAgentConfig.ts";
@@ -551,11 +552,78 @@ function hasStaleOrMissingPriceSignal(
   return false;
 }
 
+/** Categories that always require human handover (AI-05-R1). */
+const HUMAN_HANDOVER_CATEGORIES: ReadonlySet<KnowledgeQueryCategory> = new Set([
+  "unsafe_engineering",
+  "human_handover",
+  "complaints",
+  "after_sales_support",
+  "net_metering_general",
+  "warranty",
+  "installation_process",
+]);
+
+/** Off-grid is outside approved AI-05 launch scope (on-grid + hybrid only). */
+export function queryRequestsUnsupportedOffGrid(queryText: string): boolean {
+  const t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+  return (
+    /\boff[\s-]?grid\b/.test(t) ||
+    /\boffgrid\b/.test(t) ||
+    /آف\s*گرڈ/.test(String(queryText || "").normalize("NFKC"))
+  );
+}
+
+/** Site-specific net-metering eligibility always needs human engineering review. */
+export function queryRequestsNetMeteringEligibility(queryText: string): boolean {
+  const t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+  if (!/(net[\s-]?meter|netmeter|green\s*meter|export)/i.test(t)) {
+    return false;
+  }
+  return (
+    /\beligib/.test(t) ||
+    /\bqualify\b/.test(t) ||
+    /\bam i\b/.test(t) ||
+    /\bcan i\b/.test(t) ||
+    /\bdo i\b/.test(t) ||
+    /\bmy (site|house|home|property)\b/.test(t) ||
+    /اہل|eligible/i.test(String(queryText || ""))
+  );
+}
+
+/** Unsupported warranty-duration or install-timeline questions. */
+export function queryRequestsUnsupportedWarrantyOrTimeline(
+  queryText: string
+): boolean {
+  const t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+  if (
+    /\b(warranty|guarantee)\b/.test(t) &&
+    /\b(year|years|month|months|how long|duration|period)\b/.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(install|installation|timeline|how long|delivery|complete)\b/.test(t) &&
+    /\b(day|days|week|weeks|month|months|how long|timeline|when)\b/.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * True when knowledge requires a human-escalation draft (no provider phrasing
  * of uncertain facts). Price uncertainty escalates only when a price was
  * requested — non-price package questions are not broadly escalated merely
  * because a price was not asked.
+ *
+ * AI-05-R1: off-grid, net-metering eligibility, after-sales, complaints,
+ * warranty/timeline, and other human-handover categories always escalate.
  */
 export function knowledgeRequiresHumanEscalation(
   draft: KnowledgeAnswerDraft,
@@ -567,12 +635,27 @@ export function knowledgeRequiresHumanEscalation(
   ) {
     return true;
   }
-  if (draft.category === "unsafe_engineering") return true;
+  if (HUMAN_HANDOVER_CATEGORIES.has(draft.category)) return true;
   if (draft.conflicts.some((c) => c.resolution === "escalate_human")) {
     return true;
   }
 
   const queryText = options.queryText ?? "";
+  if (queryRequestsUnsupportedOffGrid(queryText)) return true;
+  if (queryRequestsNetMeteringEligibility(queryText)) return true;
+  if (queryRequestsUnsupportedWarrantyOrTimeline(queryText)) return true;
+
+  // Fact rows that explicitly require human handover / support team.
+  if (
+    draft.facts.some((f) =>
+      /human review|support team|handed to the support|human specialist|human coordinator/i.test(
+        f.text
+      )
+    )
+  ) {
+    return true;
+  }
+
   const priceRequested = queryRequestsPrice(queryText);
   if (!priceRequested) {
     // Non-price path: still escalate stale priced facts that somehow remain
@@ -691,18 +774,72 @@ export function prepareKnowledgeDraftForPhrasing(
   };
 }
 
+/**
+ * AI-05-R1 production-safe conversational shell.
+ * Contains no unsupported product claims (no off-grid availability, no
+ * eligibility promises, no prices/warranties/timelines).
+ */
+export function productionSafePolicyOutline(intent: QueryIntent): string {
+  switch (intent) {
+    case "greeting":
+      return (
+        "Greet the customer politely as Sunchaser Energy Systems. " +
+        "Invite them to share their city or system interest. " +
+        "Use only approved knowledge facts below. Do not invent offerings."
+      );
+    case "sales":
+    case "system_selection":
+    case "product_question":
+      return (
+        "Acknowledge interest politely. State only approved knowledge facts below. " +
+        "Approved launch scope is on-grid and hybrid enquiries only — never claim off-grid availability. " +
+        "Do not invent prices, warranties, timelines, savings, or eligibility."
+      );
+    case "quotation_request":
+    case "billing_payment":
+      return (
+        "Acknowledge the request. Ask only for quotation details listed in approved knowledge. " +
+        "Do not invent prices, balances, or payment outcomes."
+      );
+    case "complaint":
+    case "after_sales":
+    case "human_request":
+      return (
+        "Hand the conversation to the human support team. Keep the draft short. " +
+        "Do not invent repair timelines, warranty outcomes, or liability admissions."
+      );
+    case "net_metering":
+    case "technical_question":
+    case "unsupported_high_risk":
+      return (
+        "Do not answer the substance. State that a human specialist must review this request. " +
+        "Do not invent eligibility, engineering limits, approvals, or DIY guidance."
+      );
+    default:
+      return (
+        "Respond briefly using only approved knowledge facts below. " +
+        "Escalate anything unsupported. Do not invent facts."
+      );
+  }
+}
+
 /** Merge approved knowledge hints into the policy outline for phrasing. */
 export function enrichOutlineWithKnowledge(
   policyOutline: string,
-  draft: KnowledgeAnswerDraft
+  draft: KnowledgeAnswerDraft,
+  options: { productionSafe?: boolean; intent?: QueryIntent } = {}
 ): string {
+  const baseOutline = options.productionSafe
+    ? productionSafePolicyOutline(options.intent ?? "sales")
+    : policyOutline.trim();
+
   const hints = draft.safeReplyHints.filter((h) => String(h || "").trim());
   const factLines = draft.facts
     .filter((f) => f.confidence === "approved")
     .slice(0, 5)
     .map((f) => `- [${f.sourceTitle}] ${f.text}`);
 
-  const parts = [policyOutline.trim()];
+  const parts = [baseOutline.trim()];
   if (hints.length) {
     parts.push(
       `Approved knowledge hints:\n${hints.map((h) => `- ${h}`).join("\n")}`
@@ -738,8 +875,8 @@ export function knowledgeFactsToSafeSources(
 
 export type CreateQueryKnowledgeAdapterOptions = {
   /**
-   * Explicit engine injection (tests). When set, skips env pack loading.
-   * Does not allow production runtime to load fixtures via env — only DI.
+   * Explicit engine injection (non-production / test runtime only for fixtures).
+   * Production runtime rejects fixture engines and fixture source overrides.
    */
   engine?: KnowledgeAnswerEngine;
   /** Override as-of clock (tests). */
@@ -747,8 +884,8 @@ export type CreateQueryKnowledgeAdapterOptions = {
   /** Env for WHATSAPP_AI_KNOWLEDGE_SOURCE / NODE_ENV (defaults to process.env). */
   env?: NodeJS.ProcessEnv;
   /**
-   * Explicit source mode override (tests). When omitted with an injected
-   * engine, defaults to fixtures tenant mapping for backward-compatible tests.
+   * Explicit source mode override.
+   * In production runtime, "fixtures" is always rejected (even as an override).
    */
   knowledgeSource?: KnowledgeSourceMode;
   /** Override port id (tests). */
@@ -778,39 +915,91 @@ function defaultAsOfForSource(mode: KnowledgeSourceMode): string {
   return new Date().toISOString();
 }
 
+/** True when an injected engine carries fixture-tenant records. */
+export function isFixtureBackedEngine(engine: KnowledgeAnswerEngine): boolean {
+  try {
+    return engine.storeSnapshot(FIXTURE_TENANT_A).recordCount > 0;
+  } catch {
+    return false;
+  }
+}
+
+function buildEnginePort(
+  engine: KnowledgeAnswerEngine,
+  mode: KnowledgeSourceMode,
+  options: CreateQueryKnowledgeAdapterOptions
+): QueryKnowledgePort {
+  const fixedAsOf = options.asOfIso;
+  return {
+    portId: options.portId ?? portIdForSource(mode),
+    retrieve(request) {
+      const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
+      return engine.retrieveAnswerDraft({
+        tenantId,
+        queryText: request.queryText,
+        categoryHint: mapIntentToKnowledgeCategory(request.intent),
+        asOfIso:
+          request.asOfIso ||
+          fixedAsOf ||
+          (mode === "production"
+            ? new Date().toISOString()
+            : defaultAsOfForSource(mode)),
+      });
+    },
+  };
+}
+
+const PRODUCTION_FIXTURE_BLOCK_REASON =
+  "Fixture knowledge is blocked in production runtime — human review required.";
+
 /**
  * Build the AI-01←AI-02 knowledge port.
  *
- * Production runtime never loads fixtures. Missing/blank/unknown
- * WHATSAPP_AI_KNOWLEDGE_SOURCE fails closed to unavailable/escalation.
- * Fixtures are available only via explicit "fixtures" outside production
- * runtime, or via injected engine in tests.
+ * AI-05-R1: production runtime never loads fixtures — including via
+ * knowledgeSource override or injected fixture engines. Fixtures are allowed
+ * only in non-production/test runtimes with explicit selection or DI.
  */
 export function createQueryKnowledgeAdapter(
   options: CreateQueryKnowledgeAdapterOptions = {}
 ): QueryKnowledgePort {
   const env = options.env ?? process.env;
+  const productionRuntime = isProductionRuntime(env);
 
-  // Explicit DI: tests may inject fixture/production engines without env.
+  // Production guard: reject fixtures from env, override, or injected engine.
+  if (productionRuntime) {
+    if (options.knowledgeSource === "fixtures") {
+      return createUnavailableKnowledgePort(PRODUCTION_FIXTURE_BLOCK_REASON);
+    }
+    if (options.engine) {
+      if (
+        options.knowledgeSource !== "production" ||
+        isFixtureBackedEngine(options.engine)
+      ) {
+        return createUnavailableKnowledgePort(PRODUCTION_FIXTURE_BLOCK_REASON);
+      }
+      return buildEnginePort(options.engine, "production", options);
+    }
+    const mode = options.knowledgeSource ?? readKnowledgeSource(env);
+    if (mode !== "production") {
+      return createUnavailableKnowledgePort(
+        mode === "fixtures"
+          ? PRODUCTION_FIXTURE_BLOCK_REASON
+          : "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+      );
+    }
+    const engine = engineForSource("production");
+    if (!engine) {
+      return createUnavailableKnowledgePort(
+        "Knowledge engine unavailable — human review required."
+      );
+    }
+    return buildEnginePort(engine, "production", options);
+  }
+
+  // Non-production / test runtime: explicit DI allowed (including fixtures).
   if (options.engine) {
     const mode = options.knowledgeSource ?? "fixtures";
-    const engine = options.engine;
-    const fixedAsOf = options.asOfIso;
-    return {
-      portId: options.portId ?? portIdForSource(mode),
-      retrieve(request) {
-        const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
-        return engine.retrieveAnswerDraft({
-          tenantId,
-          queryText: request.queryText,
-          categoryHint: mapIntentToKnowledgeCategory(request.intent),
-          asOfIso:
-            request.asOfIso ||
-            fixedAsOf ||
-            defaultAsOfForSource(mode),
-        });
-      },
-    };
+    return buildEnginePort(options.engine, mode, options);
   }
 
   const mode = options.knowledgeSource ?? readKnowledgeSource(env);
@@ -827,22 +1016,5 @@ export function createQueryKnowledgeAdapter(
     );
   }
 
-  const fixedAsOf = options.asOfIso;
-  return {
-    portId: options.portId ?? portIdForSource(mode),
-    retrieve(request) {
-      const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
-      return engine.retrieveAnswerDraft({
-        tenantId,
-        queryText: request.queryText,
-        categoryHint: mapIntentToKnowledgeCategory(request.intent),
-        asOfIso:
-          request.asOfIso ||
-          fixedAsOf ||
-          (mode === "production"
-            ? new Date().toISOString()
-            : fixtureAsOfIso()),
-      });
-    },
-  };
+  return buildEnginePort(engine, mode, options);
 }

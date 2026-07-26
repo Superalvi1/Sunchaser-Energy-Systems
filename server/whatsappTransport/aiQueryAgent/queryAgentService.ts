@@ -339,7 +339,10 @@ export class QueryAgentService {
           })
         ) {
           knowledgeEscalationReasons = ["uncertain"];
-          if (knowledgeDraft.category === "unsafe_engineering") {
+          if (
+            knowledgeDraft.category === "unsafe_engineering" ||
+            knowledgeDraft.category === "net_metering_general"
+          ) {
             knowledgeEscalationReasons = ["dangerous"];
           }
           // Never surface stale/conflicting monetary amounts in warnings.
@@ -351,9 +354,16 @@ export class QueryAgentService {
             knowledgeDraft,
             policy.sanitizedUserText
           );
+          // AI-05-R1: production port must not append unapproved legacy claims.
+          const productionSafe =
+            this.knowledge.portId === "knowledge-production";
           policyAnswerOutline = enrichOutlineWithKnowledge(
             policy.policyAnswerOutline,
-            phrasingDraft
+            phrasingDraft,
+            {
+              productionSafe,
+              intent: policy.intent,
+            }
           );
           const kSources = knowledgeFactsToSafeSources(phrasingDraft);
           const seen = new Set(safeSources.map((s) => s.sourceId));
@@ -391,14 +401,15 @@ export class QueryAgentService {
     ];
     const combinedWarnings = [...policy.warnings, ...knowledgeWarnings];
 
-    // For high-risk / injection / knowledge gaps: safe escalation draft
-    // without requiring (or trusting) provider creativity.
+    // For high-risk / injection / knowledge gaps / unsupported scope:
+    // safe escalation draft without requiring (or trusting) provider creativity.
     if (
       policy.intent === "unsupported_high_risk" ||
       policy.injectionSuspected ||
       combinedEscalationReasons.includes("dangerous") ||
       combinedEscalationReasons.includes("legal") ||
       combinedEscalationReasons.includes("medical") ||
+      combinedEscalationReasons.includes("unsupported") ||
       knowledgeEscalationReasons.length > 0
     ) {
       const answer =

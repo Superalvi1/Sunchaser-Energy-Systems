@@ -11,16 +11,21 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  QueryPolicyLayer,
   createQueryAgentService,
   createQueryKnowledgeAdapter,
   createUnavailableKnowledgePort,
+  enrichOutlineWithKnowledge,
+  isFixtureBackedEngine,
   knowledgeRequiresHumanEscalation,
   prepareKnowledgeDraftForPhrasing,
+  productionSafePolicyOutline,
   queryRequestsPrice,
   readKnowledgeSource,
   readQueryAgentConfig,
   resolveKnowledgeTenantId,
   type QueryAgentGateway,
+  type QueryProviderPhraseRequest,
 } from "../whatsappTransport/aiQueryAgent/index.ts";
 import {
   FIXTURE_TENANT_A,
@@ -488,4 +493,249 @@ await test("no WhatsApp transport/send import in production knowledge modules", 
       `${rel} must not import/call WhatsApp send`
     );
   }
+});
+
+function recordingGateway(): {
+  gateway: QueryAgentGateway;
+  calls: QueryProviderPhraseRequest[];
+} {
+  const calls: QueryProviderPhraseRequest[] = [];
+  return {
+    calls,
+    gateway: {
+      providerId: "mock-ai05-r1",
+      isConfigured: () => true,
+      async phraseDraft(request) {
+        calls.push(request);
+        return {
+          phrasedAnswer:
+            "Recorded production-safe draft for staff review. A human must edit before send.",
+          confidence: 0.8,
+          providerId: "mock-ai05-r1",
+          model: "mock",
+        };
+      },
+    },
+  };
+}
+
+function productionService(gateway: QueryAgentGateway) {
+  return createQueryAgentService({
+    config: readQueryAgentConfig({
+      WHATSAPP_AI_QUERY_DRAFT_ENABLED: "true",
+      WHATSAPP_AI_QUERY_PROVIDER: "mock",
+      WHATSAPP_AI_AUTO_REPLY_ENABLED: "false",
+      WHATSAPP_AI_KNOWLEDGE_SOURCE: "production",
+      NODE_ENV: "test",
+    }),
+    gateway,
+    knowledge: createQueryKnowledgeAdapter({
+      knowledgeSource: "production",
+      asOfIso: productionAsOfIso(),
+      env: { NODE_ENV: "test", WHATSAPP_AI_KNOWLEDGE_SOURCE: "production" },
+    }),
+  });
+}
+
+await test("AI-05-R1: production + knowledgeSource override fixtures => unavailable", () => {
+  const port = createQueryKnowledgeAdapter({
+    env: { NODE_ENV: "production" },
+    knowledgeSource: "fixtures",
+  });
+  assert.equal(port.portId, "knowledge-unavailable");
+  const draft = port.retrieve({
+    companyId: "sunchaser",
+    queryText: "5kW hybrid package",
+    intent: "sales",
+  });
+  assert.equal(draft.disposition, "unavailable");
+  assert.ok(knowledgeRequiresHumanEscalation(draft, { queryText: "5kW hybrid package" }));
+});
+
+await test("AI-05-R1: production + injected fixture engine/source => unavailable", () => {
+  const fixtureEngine = createFixtureKnowledgeEngine();
+  assert.equal(isFixtureBackedEngine(fixtureEngine), true);
+  assert.equal(isFixtureBackedEngine(createProductionKnowledgeEngine()), false);
+
+  const viaSource = createQueryKnowledgeAdapter({
+    env: { NODE_ENV: "production", WHATSAPP_AI_KNOWLEDGE_SOURCE: "production" },
+    engine: fixtureEngine,
+    knowledgeSource: "fixtures",
+  });
+  assert.equal(viaSource.portId, "knowledge-unavailable");
+
+  const viaEngine = createQueryKnowledgeAdapter({
+    env: { NODE_ENV: "production", WHATSAPP_AI_KNOWLEDGE_SOURCE: "production" },
+    engine: fixtureEngine,
+    knowledgeSource: "production",
+  });
+  assert.equal(viaEngine.portId, "knowledge-unavailable");
+
+  const viaDefaultDi = createQueryKnowledgeAdapter({
+    env: { NODE_ENV: "production" },
+    engine: fixtureEngine,
+  });
+  assert.equal(viaDefaultDi.portId, "knowledge-unavailable");
+});
+
+await test("AI-05-R1: test runtime + explicit fixture DI => allowed", () => {
+  const port = createQueryKnowledgeAdapter({
+    env: { NODE_ENV: "test" },
+    engine: createFixtureKnowledgeEngine(),
+    knowledgeSource: "fixtures",
+    asOfIso: fixtureAsOfIso(),
+  });
+  assert.equal(port.portId, "knowledge-fixtures");
+  const draft = port.retrieve({
+    companyId: "sunchaser",
+    queryText: "5kW hybrid residential package",
+    intent: "sales",
+  });
+  assert.ok(draft.facts.some((f) => f.sourceId === "pkg-5kw-hybrid-a"));
+});
+
+await test("AI-05-R1: off-grid enquiry escalates with no availability claim", async () => {
+  const policy = new QueryPolicyLayer().evaluate("Do you provide off-grid solar?");
+  assert.equal(policy.escalate, true);
+  assert.doesNotMatch(policy.policyAnswerOutline, /off-grid options exist/i);
+  assert.match(policy.policyAnswerOutline, /do not claim|never claim|outside approved/i);
+
+  const { gateway, calls } = recordingGateway();
+  const outcome = await productionService(gateway).generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_offgrid",
+    actorUserId: "staff_1",
+    messageText: "Do you provide off-grid solar?",
+  });
+  assert.equal(outcome.status, "draft");
+  if (outcome.status === "draft") {
+    assert.equal(outcome.escalate, true);
+    assert.equal(outcome.requiresHumanReview, true);
+    assert.equal(outcome.autoSendBlocked, true);
+    assert.doesNotMatch(
+      outcome.answer,
+      /provide off-grid|offers? off-grid|off-grid (systems?|options?) exist/i
+    );
+    assertNoFixtureLeak(outcome.answer, "off-grid answer");
+  }
+  // Provider must not receive a legacy outline claiming off-grid availability.
+  assert.equal(calls.length, 0);
+  for (const call of calls) {
+    assert.doesNotMatch(call.policyAnswerOutline, /off-grid options exist/i);
+    assertNoFixtureLeak(call.policyAnswerOutline, "off-grid provider outline");
+  }
+});
+
+await test("AI-05-R1: net-metering eligibility escalates to human engineering review", async () => {
+  const { gateway, calls } = recordingGateway();
+  const outcome = await productionService(gateway).generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_nm_elig",
+    actorUserId: "staff_1",
+    messageText: "Am I eligible for net metering?",
+  });
+  assert.equal(outcome.status, "draft");
+  if (outcome.status === "draft") {
+    assert.equal(outcome.escalate, true);
+    assert.equal(outcome.requiresHumanReview, true);
+    assert.equal(outcome.autoSendBlocked, true);
+    assert.ok(
+      outcome.escalationReasons.includes("dangerous") ||
+        outcome.escalationReasons.includes("uncertain")
+    );
+  }
+  assert.equal(calls.length, 0);
+});
+
+await test("AI-05-R1: after-sales/maintenance and complaints escalate to support handover", async () => {
+  const { gateway, calls } = recordingGateway();
+  const service = productionService(gateway);
+
+  const afterSales = await service.generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_after",
+    actorUserId: "staff_1",
+    messageText: "I need after-sales maintenance for my installed system",
+  });
+  assert.equal(afterSales.status, "draft");
+  if (afterSales.status === "draft") {
+    assert.equal(afterSales.escalate, true);
+    assert.equal(afterSales.requiresHumanReview, true);
+    assert.equal(afterSales.autoSendBlocked, true);
+  }
+
+  const complaint = await service.generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_complaint",
+    actorUserId: "staff_1",
+    messageText: "I want to file a complaint about bad service",
+  });
+  assert.equal(complaint.status, "draft");
+  if (complaint.status === "draft") {
+    assert.equal(complaint.escalate, true);
+    assert.equal(complaint.requiresHumanReview, true);
+    assert.equal(complaint.autoSendBlocked, true);
+  }
+  assert.equal(calls.length, 0);
+});
+
+await test("AI-05-R1: approved on-grid/hybrid company enquiry remains usable", async () => {
+  const { gateway, calls } = recordingGateway();
+  const outcome = await productionService(gateway).generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_hybrid",
+    actorUserId: "staff_1",
+    messageText:
+      "Does Sunchaser Energy Systems provide residential and commercial on-grid and hybrid solar solutions in Lahore?",
+  });
+  assert.equal(outcome.status, "draft");
+  if (outcome.status === "draft") {
+    assert.equal(outcome.requiresHumanReview, true);
+    assert.equal(outcome.autoSendBlocked, true);
+    assert.equal(outcome.escalate, false);
+    assert.ok(outcome.answer.length > 0);
+  }
+  assert.ok(calls.length >= 1);
+  const outline = calls.map((c) => c.policyAnswerOutline).join("\n");
+  assert.match(outline, /Sunchaser Energy Systems|on-grid|hybrid|Lahore/i);
+  assert.doesNotMatch(outline, /off-grid options exist/i);
+  assertNoFixtureLeak(outline, "usable company provider outline");
+  // Production-safe shell must be used (not legacy off-grid claim outline).
+  assert.match(
+    productionSafePolicyOutline("sales"),
+    /on-grid and hybrid|never claim off-grid/i
+  );
+  const enriched = enrichOutlineWithKnowledge(
+    "LEGACY: on-grid, hybrid, and off-grid options exist",
+    {
+      tenantId: PRODUCTION_TENANT_SUNCHASER,
+      category: "solar_packages",
+      disposition: "answer",
+      facts: [],
+      missingTopics: [],
+      conflicts: [],
+      humanHandoverReason: null,
+      safeReplyHints: ["Sunchaser Energy Systems supports on-grid and hybrid enquiries."],
+      unavailableMessage: null,
+      retrieval: {
+        tenantId: PRODUCTION_TENANT_SUNCHASER,
+        category: "solar_packages",
+        matchedRecordCount: 1,
+        consideredRecordCount: 1,
+        usedDeterministicRetrieval: true,
+        usedAiGeneration: false,
+        usedExternalWeb: false,
+        crmWrites: false,
+        queryFingerprint: "test",
+      },
+    },
+    { productionSafe: true, intent: "sales" }
+  );
+  assert.doesNotMatch(enriched, /off-grid options exist/i);
+  assert.match(enriched, /never claim off-grid|on-grid and hybrid/i);
 });
