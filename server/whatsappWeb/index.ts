@@ -47,9 +47,15 @@ export {
 } from "./whatsappWebNormalize.ts";
 
 export {
+  collectLidJid,
   resolveWhatsAppIdentity,
   WhatsAppLidPhoneMap,
 } from "./whatsappWebIdentity.ts";
+
+export {
+  getSharedWhatsAppLidPhoneMap,
+  __resetSharedWhatsAppLidPhoneMap,
+} from "./whatsappWebSharedLidMap.ts";
 
 export {
   persistWhatsAppWebInbound,

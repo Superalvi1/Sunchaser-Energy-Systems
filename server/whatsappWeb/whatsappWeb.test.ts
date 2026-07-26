@@ -30,6 +30,15 @@ import {
   persistWhatsAppWebInbound,
 } from "./whatsappWebInbound.ts";
 import {
+  WhatsAppLidPhoneMap,
+} from "./whatsappWebIdentity.ts";
+import {
+  __resetSharedWhatsAppLidPhoneMap,
+  getSharedWhatsAppLidPhoneMap,
+} from "./whatsappWebSharedLidMap.ts";
+import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
+import { readQueryAgentConfig } from "../whatsappTransport/aiQueryAgent/queryAgentConfig.ts";
+import {
   createWhatsAppWebRouter,
   WHATSAPP_WEB_ADMIN_ROUTES,
   type WhatsAppWebRouterDeps,
@@ -1448,5 +1457,387 @@ console.log("PASS: QR Inbox path works with Postgres dual-write off");
 }
 
 console.log("PASS: safe disconnect diagnostics + unchanged reconnect policy");
+
+// ---------------------------------------------------------------------------
+// INBOX-HOTFIX-01 — shared LID map + live inbound + privacy-safe diagnostics
+// ---------------------------------------------------------------------------
+
+{
+  const lidDigits = "123456789012345";
+  const lidJid = `${lidDigits}@lid`;
+  const phone = "923001112233";
+  const phoneJid = `${phone}@s.whatsapp.net`;
+
+  // Normal @s.whatsapp.net inbound persists.
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    let outboundCalls = 0;
+    const origOutbound = repo.insertOutboundMessage.bind(repo);
+    repo.insertOutboundMessage = async (input) => {
+      outboundCalls += 1;
+      return origOutbound(input);
+    };
+    let shadowCalls = 0;
+    let draftCalls = 0;
+    const stored = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "HF_PHONE_1",
+        remoteJid: phoneJid,
+        fromMe: false,
+        text: "Need a solar quote",
+        pushName: "Customer",
+        occurredAt: "2026-07-26T12:00:00.000Z",
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo }
+    );
+    assert.equal(stored.kind, "stored");
+    if (stored.kind === "stored") {
+      assert.equal(stored.created, true);
+      const bundle = await repo.getConversationBundle(stored.conversationId);
+      assert.ok(bundle, "conversation must be visible to Inbox bundle/list path");
+      assert.equal(bundle!.contact.phoneE164, phone);
+      assert.equal(bundle!.conversation.lastMessageAt, "2026-07-26T12:00:00.000Z");
+    }
+    assert.equal(outboundCalls, 0, "no outbound WhatsApp send");
+    assert.equal(shadowCalls, 0, "AI shadow not triggered without evaluateShadow");
+    assert.equal(draftCalls, 0, "AI draft generation not triggered automatically");
+  }
+
+  // @lid + verified remoteJidAlt persists (no map required).
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    const accepted = normalizeBaileysInbound({
+      providerMessageId: "HF_ALT_1",
+      remoteJid: lidJid,
+      remoteJidAlt: phoneJid,
+      fromMe: false,
+      text: "Alt mapping",
+      pushName: null,
+      occurredAt: new Date().toISOString(),
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    });
+    assert.equal(accepted.kind, "accept");
+    if (accepted.kind === "accept") {
+      assert.equal(accepted.event.fromWaId, phone);
+      assert.notEqual(accepted.event.fromWaId, lidDigits);
+    }
+    const stored = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "HF_ALT_1",
+        remoteJid: lidJid,
+        remoteJidAlt: phoneJid,
+        fromMe: false,
+        text: "Alt mapping",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo }
+    );
+    assert.equal(stored.kind, "stored");
+  }
+
+  // @lid resolved from the shared in-memory map persists + reaches Inbox.
+  {
+    __resetSharedWhatsAppLidPhoneMap();
+    const shared = getSharedWhatsAppLidPhoneMap();
+    const sync = new BaileysInMemorySyncSource({ lidMap: shared });
+    assert.equal(sync.getLidMap(), shared);
+    sync.ingestContacts([
+      {
+        id: lidJid,
+        jid: phoneJid,
+        lid: lidJid,
+        name: "Mapped",
+        notify: "Push",
+      },
+    ]);
+    // Later LID-only notify (no alt/Pn on the event) must use the shared map.
+    const lidOnly = {
+      providerMessageId: "HF_MAP_1",
+      remoteJid: lidJid,
+      fromMe: false,
+      text: "Hello from LID-only notify",
+      pushName: "Customer",
+      occurredAt: "2026-07-26T13:00:00.000Z",
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    };
+    const withoutMap = normalizeBaileysInbound(lidOnly);
+    assert.equal(withoutMap.kind, "ignore");
+    if (withoutMap.kind === "ignore") {
+      assert.equal(withoutMap.reason, "bad_jid");
+    }
+    const withMap = normalizeBaileysInbound(lidOnly, { lidMap: shared });
+    assert.equal(withMap.kind, "accept");
+    if (withMap.kind === "accept") {
+      assert.equal(withMap.event.fromWaId, phone);
+      assert.notEqual(withMap.event.fromWaId, lidDigits);
+    }
+
+    const repo = new InMemoryWhatsAppRepository();
+    let outboundCalls = 0;
+    const origOutbound = repo.insertOutboundMessage.bind(repo);
+    repo.insertOutboundMessage = async (input) => {
+      outboundCalls += 1;
+      return origOutbound(input);
+    };
+    const stored = await persistWhatsAppWebInbound(lidOnly, {
+      repo,
+      lidMap: shared,
+    });
+    assert.equal(stored.kind, "stored");
+    if (stored.kind === "stored") {
+      const bundle = await repo.getConversationBundle(stored.conversationId);
+      assert.ok(bundle);
+      assert.equal(bundle!.contact.phoneE164, phone);
+      assert.notEqual(bundle!.contact.phoneE164, lidDigits);
+      assert.ok(
+        await repo.findMessageIdByWaMessageId("HF_MAP_1"),
+        "inbound message must exist for Inbox"
+      );
+    }
+    assert.equal(outboundCalls, 0);
+
+    // Duplicate provider id remains idempotent.
+    const dup = await persistWhatsAppWebInbound(lidOnly, {
+      repo,
+      lidMap: shared,
+    });
+    assert.equal(dup.kind, "stored");
+    if (dup.kind === "stored") assert.equal(dup.created, false);
+  }
+
+  // Unresolved @lid is safely ignored and never converted into a fake phone.
+  {
+    const repo = new InMemoryWhatsAppRepository();
+    const emptyMap = new WhatsAppLidPhoneMap();
+    const ignored = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "HF_UNRESOLVED_1",
+        remoteJid: lidJid,
+        fromMe: false,
+        text: "orphan LID",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo, lidMap: emptyMap }
+    );
+    assert.equal(ignored.kind, "ignored");
+    if (ignored.kind === "ignored") {
+      assert.equal(ignored.reason, "bad_jid");
+    }
+    assert.equal(jidToWaId(lidJid), null);
+    assert.equal(
+      await repo.findMessageIdByWaMessageId("HF_UNRESOLVED_1"),
+      null
+    );
+  }
+
+  // Groups / status / newsletters / fromMe remain ignored.
+  for (const [label, msg] of [
+    [
+      "group",
+      {
+        providerMessageId: "HF_IGN_G",
+        remoteJid: "120363@g.us",
+        fromMe: false,
+        text: "g",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: true,
+        isStatusOrNewsletter: false,
+        rawType: null,
+      },
+    ],
+    [
+      "status",
+      {
+        providerMessageId: "HF_IGN_S",
+        remoteJid: "status@broadcast",
+        fromMe: false,
+        text: "s",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: true,
+        rawType: null,
+      },
+    ],
+    [
+      "fromMe",
+      {
+        providerMessageId: "HF_IGN_ME",
+        remoteJid: phoneJid,
+        fromMe: true,
+        text: "me",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: null,
+      },
+    ],
+  ] as const) {
+    const result = normalizeBaileysInbound(msg);
+    assert.equal(result.kind, "ignore", label);
+  }
+
+  // Privacy-safe diagnostics for every inbound outcome (reason/code only).
+  {
+    const events: Array<{ event: string; meta: Record<string, unknown> }> = [];
+    const origInfo = console.info;
+    const origError = console.error;
+    console.info = (...args: unknown[]) => {
+      try {
+        const parsed = JSON.parse(String(args[0])) as {
+          event?: string;
+          reason?: string;
+          code?: string;
+        };
+        if (parsed.event) {
+          events.push({
+            event: String(parsed.event),
+            meta: {
+              ...(parsed.reason != null ? { reason: parsed.reason } : {}),
+              ...(parsed.code != null ? { code: parsed.code } : {}),
+            },
+          });
+        }
+      } catch {
+        /* ignore non-JSON */
+      }
+    };
+    console.error = console.info;
+    try {
+      const repo = new InMemoryWhatsAppRepository();
+      const map = new WhatsAppLidPhoneMap();
+      map.remember(lidJid, phoneJid);
+
+      await persistWhatsAppWebInbound(
+        {
+          providerMessageId: "HF_LOG_STORE",
+          remoteJid: lidJid,
+          fromMe: false,
+          text: "store me",
+          pushName: "Secret Name",
+          occurredAt: new Date().toISOString(),
+          isGroup: false,
+          isStatusOrNewsletter: false,
+          rawType: "conversation",
+        },
+        { repo, lidMap: map }
+      );
+      await persistWhatsAppWebInbound(
+        {
+          providerMessageId: "HF_LOG_STORE",
+          remoteJid: lidJid,
+          fromMe: false,
+          text: "store me again",
+          pushName: "Secret Name",
+          occurredAt: new Date().toISOString(),
+          isGroup: false,
+          isStatusOrNewsletter: false,
+          rawType: "conversation",
+        },
+        { repo, lidMap: map }
+      );
+      await persistWhatsAppWebInbound(
+        {
+          providerMessageId: "HF_LOG_IGN",
+          remoteJid: "999888777666555@lid",
+          fromMe: false,
+          text: "ignore me",
+          pushName: null,
+          occurredAt: new Date().toISOString(),
+          isGroup: false,
+          isStatusOrNewsletter: false,
+          rawType: "conversation",
+        },
+        { repo, lidMap: new WhatsAppLidPhoneMap() }
+      );
+      const inactive = new InMemoryWhatsAppRepository();
+      inactive.isActive = () => false;
+      await persistWhatsAppWebInbound(
+        {
+          providerMessageId: "HF_LOG_FAIL",
+          remoteJid: phoneJid,
+          fromMe: false,
+          text: "fail",
+          pushName: null,
+          occurredAt: new Date().toISOString(),
+          isGroup: false,
+          isStatusOrNewsletter: false,
+          rawType: "conversation",
+        },
+        { repo: inactive }
+      );
+    } finally {
+      console.info = origInfo;
+      console.error = origError;
+    }
+
+    const names = events.map((e) => e.event);
+    assert.ok(names.includes("inbound_stored"));
+    assert.ok(names.includes("inbound_duplicate"));
+    assert.ok(names.includes("inbound_ignored"));
+    assert.ok(names.includes("inbound_persist_failed"));
+    const ignored = events.find((e) => e.event === "inbound_ignored");
+    assert.equal(ignored?.meta.reason, "bad_jid");
+    const failed = events.find((e) => e.event === "inbound_persist_failed");
+    assert.equal(failed?.meta.code, "persistence_unavailable");
+    // Never leak phone/JID/text/name into diagnostic meta keys/values.
+    const blob = JSON.stringify(events);
+    assert.equal(blob.includes(phone), false);
+    assert.equal(blob.includes(lidJid), false);
+    assert.equal(blob.includes("Secret Name"), false);
+    assert.equal(blob.includes("store me"), false);
+  }
+
+  // Automatic replies remain disabled; AI generation is not auto-triggered.
+  {
+    const config = readQueryAgentConfig({
+      WHATSAPP_AI_AUTO_REPLY_ENABLED: "false",
+    });
+    assert.equal(config.autoReplyEnabled, false);
+    let aiDraftCalls = 0;
+    const repo = new InMemoryWhatsAppRepository();
+    await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "HF_NO_AI_1",
+        remoteJid: phoneJid,
+        fromMe: false,
+        text: "Do not auto draft",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      {
+        repo,
+        // Intentionally omit evaluateShadow — inbound must not invent AI calls.
+      }
+    );
+    assert.equal(aiDraftCalls, 0);
+  }
+
+  __resetSharedWhatsAppLidPhoneMap();
+}
+
+console.log(
+  "PASS: INBOX-HOTFIX-01 shared LID map inbound + diagnostics + safety invariants"
+);
 
 console.log("\nAll WhatsApp Web QR tests passed.");

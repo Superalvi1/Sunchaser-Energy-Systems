@@ -33,6 +33,7 @@ import {
 } from "./whatsappWebTypes.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
+import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
   WhatsAppWebSyncSource,
@@ -280,7 +281,11 @@ async function defaultSocketFactory(input: {
     shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false,
   });
-  const syncSource = new BaileysInMemorySyncSource();
+  // Share one process-local LID→phone map with live inbound persist so
+  // contacts/chats/history can resolve later @lid notify events.
+  const syncSource = new BaileysInMemorySyncSource({
+    lidMap: getSharedWhatsAppLidPhoneMap(),
+  });
   syncSource.setHistoryFetcher(async (count, oldestMsgKey, oldestMsgTimestamp) =>
     sock.fetchMessageHistory(count, oldestMsgKey as never, oldestMsgTimestamp)
   );

@@ -134,7 +134,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private selfJid: string | null = null;
   private readonly contacts = new Map<string, InternalContact>();
   private readonly chats = new Map<string, InternalChat>();
-  private readonly lidMap = new WhatsAppLidPhoneMap();
+  private readonly lidMap: WhatsAppLidPhoneMap;
   private historyFetcher: BaileysHistoryFetchFn | null = null;
   private providerHistoryEventObserved = false;
   private lastAvailability: WhatsAppWebHistoryAvailability = "unknown";
@@ -142,6 +142,16 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private readonly inFlightByChat = new Map<string, Promise<boolean>>();
   private readonly pendingByRequestId = new Map<string, PendingHistoryWait>();
   private readonly earlyMatchedRequestIds = new Set<string>();
+
+  constructor(options?: { lidMap?: WhatsAppLidPhoneMap }) {
+    // Prefer an injected process-shared map so live inbound can resolve LIDs
+    // learned from contacts/chats/history in the same runtime.
+    this.lidMap = options?.lidMap ?? new WhatsAppLidPhoneMap();
+  }
+
+  getLidMap(): WhatsAppLidPhoneMap {
+    return this.lidMap;
+  }
 
   setConnected(connected: boolean, selfJid?: string | null): void {
     this.connected = connected;

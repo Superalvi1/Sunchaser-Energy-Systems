@@ -1836,16 +1836,19 @@ console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
       occurredAt: `2026-07-20T12:0${i}:00.000Z`,
     }))
   );
-  // Slow persist so cancel lands after at least one import.
+  // Deterministic mid-job cancel: request cancel after the second import starts
+  // so the job cannot race to completed_with_imports before cancel is observed.
   const repo = new InMemoryWhatsAppRepository();
   const origInsert = repo.insertInboundMessage.bind(repo);
   let imports = 0;
+  let serviceRef: WhatsAppWebHistorySyncService | null = null;
   repo.insertInboundMessage = async (input) => {
     imports += 1;
     const result = await origInsert(input);
-    if (imports === 2) {
-      // Allow the service cancel hook to fire mid-job.
-      await new Promise((r) => setTimeout(r, 5));
+    if (imports === 2 && serviceRef) {
+      serviceRef.requestCancel();
+      // Yield so the cancel flag is observed before remaining imports finish.
+      await new Promise((r) => setTimeout(r, 0));
     }
     return result;
   };
@@ -1856,10 +1859,8 @@ console.log("PASS: SYNC-8R genuine oldest cursor retained without fabrication");
     now: () => new Date("2026-07-24T12:00:00.000Z"),
     chatConcurrency: 1,
   });
+  serviceRef = service;
   const started = service.startOrJoin();
-  // Cancel after starting state is queued; small delay lets first imports begin.
-  await new Promise((r) => setTimeout(r, 15));
-  service.requestCancel();
   const snap = await started.done;
   assert.equal(snap.cancelled, true);
   assert.ok(
