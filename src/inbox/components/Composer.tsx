@@ -1,5 +1,5 @@
 import { Loader2, Paperclip, Send, Smile } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { FreeFormEligibility } from "../types";
 
 const QUICK_EMOJI = ["👍", "✅", "🙏", "😊", "☀️"];
@@ -9,6 +9,12 @@ type ComposerProps = {
   sending?: boolean;
   disabled?: boolean;
   onSend: (text: string) => void;
+  /**
+   * When this token changes, replace the composer text with `seedText`.
+   * Used by AI-03 “Copy to composer” — does not send.
+   */
+  seedText?: string | null;
+  seedToken?: number;
 };
 
 export default function Composer({
@@ -16,12 +22,21 @@ export default function Composer({
   sending,
   disabled,
   onSend,
+  seedText,
+  seedToken,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const textId = useId();
   const allowed = freeForm?.freeFormAllowed !== false || freeForm == null;
   const closed = freeForm != null && !freeForm.freeFormAllowed;
+
+  useEffect(() => {
+    if (seedToken == null || seedToken <= 0) return;
+    if (typeof seedText === "string") {
+      setText(seedText);
+    }
+  }, [seedToken, seedText]);
 
   const submit = () => {
     const trimmed = text.trim();
