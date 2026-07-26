@@ -12,7 +12,8 @@ export const MAX_DRAFT_CHARS = 1_500;
 /**
  * Strong certainty / promise markers used for combinatorial detection with
  * outcome topics. Broad "we will / you will" alone is not enough — those are
- * handled via targeted bridges so benign scheduling language can pass.
+ * handled via targeted future+outcome bridges so benign operational language
+ * (arrange / ask / review) can pass.
  */
 const STRONG_CERTAINTY_PATTERNS: readonly RegExp[] = [
   /\bguarantee(d|s)?\b/i,
@@ -24,7 +25,7 @@ const STRONG_CERTAINTY_PATTERNS: readonly RegExp[] = [
   /\bsurely\b/i,
 ];
 
-/** Outcome topics that must not be promised with certainty language. */
+/** Outcome topics that must not be promised with strong certainty language. */
 const OUTCOME_PATTERNS: readonly RegExp[] = [
   /\bsavings?\b/i,
   /\bsave\s+money\b/i,
@@ -33,15 +34,14 @@ const OUTCOME_PATTERNS: readonly RegExp[] = [
   /\bpayback\b/i,
   /\brecover\s+your\s+investment\b/i,
   /\binvestment\b/i,
-  /\bapproval\b/i,
-  /\bapproved\b/i,
+  /\bapprov(?:e|ed|al|als)\b/i,
   /\bgranted\b/i,
   /\bnet[\s-]*metering\b/i,
-  /\binstallation\b/i,
+  /\binstall(?:s|ed|ing|ation|ations)?\b/i,
 ];
 
 /**
- * Explicit outcome-promise phrases (Codex R2 examples and close variants).
+ * Explicit outcome-promise phrases (R2 examples and close variants).
  */
 const STANDALONE_OUTCOME_PROMISES: readonly RegExp[] = [
   /\bguarantee(d)?\s+you\s+will\s+save\b/i,
@@ -65,18 +65,48 @@ const STANDALONE_OUTCOME_PROMISES: readonly RegExp[] = [
 ];
 
 /**
- * Flexible bridges: certainty / future-promise near an outcome topic.
+ * Plain future/promise + protected-outcome combinations (R3).
+ * Targets install/installed/installation and approve/approved/approval
+ * morphology without broadly blocking safe operational "we will …" wording.
+ */
+const FUTURE_PROTECTED_OUTCOME_BRIDGES: readonly RegExp[] = [
+  // Installation completion promises
+  /\bwill\s+be\s+installed\b/i,
+  /\bwill\s+install\b/i,
+  /\bwill\s+(?:be\s+)?(?:fully\s+)?installed\b/i,
+  /\bwill\s+(complete|finish|deliver|finalize)\b[\s\S]{0,40}\binstall(?:s|ed|ing|ation|ations)?\b/i,
+  /\binstall(?:s|ed|ing|ation|ations)?\b[\s\S]{0,40}\bwill\s+be\s+(completed|finished|done|installed)\b/i,
+  /\b(system|systems|plant|setup)\b[\s\S]{0,40}\bwill\s+be\s+installed\b/i,
+  /\bwill\s+have\s+(?:your\s+)?(?:system\s+)?installed\b/i,
+
+  // Approval granting promises (not "approval is decided by…")
+  /\bwill\s+(secure|receive|get|grant|obtain|give|provide|ensure)\b[\s\S]{0,40}\bapprov(?:e|ed|al|als)\b/i,
+  /\bwill\s+be\s+approved\b/i,
+  /\bapprov(?:e|ed|al|als)\b[\s\S]{0,40}\bwill\s+be\s+(granted|given|secured|approved|received)\b/i,
+  /\bwill\s+receive\s+approval\b/i,
+  /\bapplication\b[\s\S]{0,40}\bwill\s+(receive|get|secure|obtain)\s+approval\b/i,
+  /\bwill\s+secure\s+(?:your\s+)?approval\b/i,
+
+  // Investment / payback future promises
+  /\binvestment\b[\s\S]{0,40}\bwill\s+pay\s*back\b/i,
+  /\bwill\s+pay\s*back\b[\s\S]{0,40}\b(investment|years?|months?)\b/i,
+  /\bwill\s+(recover|return)\b[\s\S]{0,40}\binvestment\b/i,
+  /\binvestment\b[\s\S]{0,40}\bwill\s+(recover|return|pay)\b/i,
+];
+
+/**
+ * Flexible bridges: strong certainty near an outcome topic.
  * Windowed so intervening wording still fails closed.
  */
 const CERTAINTY_OUTCOME_BRIDGES: readonly RegExp[] = [
-  /\b(guarantee|promised?|assur(?:e|ed|es|ance)|definitely|surely|certainly)\b[\s\S]{0,80}\b(save|savings?|roi|payback|approval|approved|granted|net[\s-]*metering|installation|investment)\b/i,
-  /\b(save|savings?|roi|payback|approval|approved|granted|net[\s-]*metering|installation|investment)\b[\s\S]{0,80}\b(guarantee|promised?|assured|definitely|surely|certainly)\b/i,
-  /\b(you|we|your\s+\w+)\s+will\b[\s\S]{0,40}\b(save|recover|be\s+approved|be\s+granted|be\s+completed)\b/i,
-  /\bwill\s+(definitely|surely|certainly)\b[\s\S]{0,40}\b(granted|approved|completed|save)\b/i,
-  /\binstallation\b[\s\S]{0,40}\b(will\s+be\s+completed|completed\s+tomorrow|guaranteed)\b/i,
+  /\b(guarantee|promised?|assur(?:e|ed|es|ance)|definitely|surely|certainly)\b[\s\S]{0,80}\b(save|savings?|roi|payback|approv(?:e|ed|al)|granted|net[\s-]*metering|install(?:s|ed|ing|ation)?|investment)\b/i,
+  /\b(save|savings?|roi|payback|approv(?:e|ed|al)|granted|net[\s-]*metering|install(?:s|ed|ing|ation)?|investment)\b[\s\S]{0,80}\b(guarantee|promised?|assured|definitely|surely|certainly)\b/i,
+  /\b(you|we|your\s+\w+)\s+will\b[\s\S]{0,40}\b(save|recover|be\s+approved|be\s+granted|be\s+completed|be\s+installed)\b/i,
+  /\bwill\s+(definitely|surely|certainly)\b[\s\S]{0,40}\b(granted|approved|completed|installed|save)\b/i,
+  /\binstall(?:ation|ed)?\b[\s\S]{0,40}\b(will\s+be\s+completed|completed\s+tomorrow|guaranteed)\b/i,
   /\bnet[\s-]*metering\b[\s\S]{0,40}\b(will\s+.{0,30}approved|approved)\b/i,
-  /\bapproval\b[\s\S]{0,40}\b(will\s+.{0,30}granted|definitely|surely|guaranteed)\b/i,
-  /\binvestment\b[\s\S]{0,40}\b(recover|payback|roi)\b/i,
+  /\bapprov(?:e|ed|al)\b[\s\S]{0,40}\b(will\s+.{0,30}granted|definitely|surely|guaranteed)\b/i,
+  /\binvestment\b[\s\S]{0,40}\b(recover|pay\s*back|payback|roi)\b/i,
   /\brecover\b[\s\S]{0,40}\binvestment\b/i,
 ];
 
@@ -124,14 +154,15 @@ function hasMatch(patterns: readonly RegExp[], text: string): boolean {
 }
 
 /**
- * True when certainty/promise language is combined with a savings/ROI/payback/
- * approval/net-metering/installation outcome — including intervening words.
+ * True when certainty/promise/future language is combined with a protected
+ * outcome (savings, ROI, payback, approval, net-metering, installation).
  */
 export function containsForbiddenGuaranteeLanguage(text: string): boolean {
   const normalized = String(text ?? "");
   if (!normalized.trim()) return false;
 
   if (hasMatch(STANDALONE_OUTCOME_PROMISES, normalized)) return true;
+  if (hasMatch(FUTURE_PROTECTED_OUTCOME_BRIDGES, normalized)) return true;
   if (hasMatch(CERTAINTY_OUTCOME_BRIDGES, normalized)) return true;
 
   const hasCertainty = hasMatch(STRONG_CERTAINTY_PATTERNS, normalized);

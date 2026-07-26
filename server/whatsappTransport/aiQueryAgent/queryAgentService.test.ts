@@ -589,6 +589,79 @@ await test("R2: unsafe guarantee text is never returned by the service", async (
   }
 });
 
+await test("R3: reject plain future install/approval/payback outcome promises", () => {
+  const bypassAttempts = [
+    "Your system will be installed tomorrow.",
+    "We will install your system tomorrow.",
+    "We will complete the installation tomorrow.",
+    "We will secure your approval.",
+    "Your application will receive approval.",
+    "Your investment will pay back within two years.",
+    "The plant will be fully installed next week.",
+    "We will finish installing your system on Monday.",
+    "Your net metering will be approved shortly.",
+    "We will obtain approval for your application.",
+  ];
+
+  for (const example of bypassAttempts) {
+    assert.equal(
+      containsForbiddenGuaranteeLanguage(example),
+      true,
+      `expected forbidden future outcome: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, false, `expected reject: ${example}`);
+    if (!result.ok) {
+      assert.equal(result.violation, "forbidden_guarantee");
+      assert.equal(result.action, "escalate");
+    }
+  }
+});
+
+await test("R3: safe operational future wording still passes", () => {
+  const safeControls = [
+    "We will arrange a site survey.",
+    "We will ask a specialist to review your documents.",
+    "Installation timing depends on stock and site conditions.",
+    "Approval is decided by the relevant authority.",
+    "We will discuss installation options after the survey.",
+    "We will share the approval checklist for your DISCO.",
+  ];
+
+  for (const example of safeControls) {
+    assert.equal(
+      containsForbiddenGuaranteeLanguage(example),
+      false,
+      `expected safe control: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, true, `expected pass: ${example}`);
+    if (result.ok) {
+      assert.equal(result.text, example);
+    }
+  }
+});
+
+await test("R3: future outcome promise never appears in returned service result", async () => {
+  const unsafe = "Your system will be installed tomorrow.";
+  const service = new QueryAgentService({
+    config: enabledConfig(),
+    gateway: new MockQueryAgentProvider({ phrasedAnswer: unsafe }),
+  });
+  const result = await service.generateDraft(
+    baseRequest({ messageText: "When will my system be ready?" })
+  );
+  assert.equal(result.status, "draft");
+  if (result.status === "draft") {
+    assert.equal(result.escalate, true);
+    assert.equal(result.answer, SAFE_ESCALATION_DRAFT);
+  }
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /will be installed tomorrow/i);
+  assert.doesNotMatch(serialized, /Your system will be installed/i);
+  assert.equal(serialized.includes(unsafe), false);
+});
+
 await test("unsafe provider output is denied — never a clean draft", async () => {
   const service = new QueryAgentService({
     config: enabledConfig(),
