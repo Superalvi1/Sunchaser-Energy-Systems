@@ -2,6 +2,8 @@
  * Provider-neutral AI gateway for customer-query draft phrasing.
  * Keys remain server-side env vars. Tests must inject MockQueryAgentProvider
  * and must never call a live network provider.
+ *
+ * Default live implementation supports Gemini only (GEMINI_API_KEY).
  */
 
 import type { QueryAgentConfig } from "./queryAgentConfig.ts";
@@ -22,12 +24,13 @@ export type LivePhraseCompleteFn = (input: {
   abortSignal?: AbortSignal;
 }) => Promise<{ text: string; model: string; providerId: string }>;
 
+/**
+ * True only when the supported live provider (Gemini) has a usable key.
+ * OpenAI/Anthropic keys alone must not report configured — default live
+ * complete only calls Gemini.
+ */
 function hasServerSideProviderKey(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(
-    String(env.GEMINI_API_KEY ?? "").trim() ||
-      String(env.OPENAI_API_KEY ?? "").trim() ||
-      String(env.ANTHROPIC_API_KEY ?? "").trim()
-  );
+  return Boolean(String(env.GEMINI_API_KEY ?? "").trim());
 }
 
 function buildSystemPrompt(request: QueryProviderPhraseRequest): string {
@@ -61,7 +64,7 @@ function buildUserPrompt(request: QueryProviderPhraseRequest): string {
 }
 
 /**
- * Live gateway — only constructed when server-side keys exist.
+ * Live gateway — only constructed when server-side Gemini key exists.
  * Network calls go through an injectable complete fn (tests inject fakes).
  */
 export class LiveQueryAgentGateway implements QueryAgentGateway {
@@ -112,8 +115,20 @@ export class LiveQueryAgentGateway implements QueryAgentGateway {
   }
 }
 
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = String((err as { name?: string }).name ?? "");
+  const message = String((err as { message?: string }).message ?? "");
+  return (
+    name === "AbortError" ||
+    /aborted|abort/i.test(name) ||
+    /aborted|timed?\s*out/i.test(message)
+  );
+}
+
 /**
  * Default live complete — uses Gemini when GEMINI_API_KEY is set.
+ * Passes abortSignal into generateContent so timeout cancellation is real.
  * Not used by unit tests (tests inject Mock or fake complete).
  */
 export async function defaultLivePhraseComplete(input: {
@@ -121,6 +136,12 @@ export async function defaultLivePhraseComplete(input: {
   user: string;
   abortSignal?: AbortSignal;
 }): Promise<{ text: string; model: string; providerId: string }> {
+  if (input.abortSignal?.aborted) {
+    throw Object.assign(new Error("Query agent provider timed out"), {
+      code: "timeout",
+    });
+  }
+
   const apiKey = String(process.env.GEMINI_API_KEY ?? "").trim();
   if (!apiKey) {
     throw Object.assign(new Error("GEMINI_API_KEY is not configured"), {
@@ -133,21 +154,41 @@ export async function defaultLivePhraseComplete(input: {
   const client = new GoogleGenAI({ apiKey });
   const model = "gemini-2.0-flash";
 
-  if (input.abortSignal?.aborted) {
-    throw Object.assign(new Error("Query agent provider timed out"), { code: "timeout" });
+  try {
+    const response = await client.models.generateContent({
+      model,
+      contents: `${input.system}\n\n${input.user}`,
+      config: {
+        abortSignal: input.abortSignal,
+        // Bound the HTTP wait even if the outer race loses a close finish.
+        httpOptions: { timeout: 30_000 },
+      },
+    });
+
+    if (input.abortSignal?.aborted) {
+      throw Object.assign(new Error("Query agent provider timed out"), {
+        code: "timeout",
+      });
+    }
+
+    const text =
+      typeof response.text === "string"
+        ? response.text
+        : String((response as { text?: string }).text ?? "");
+
+    return { text, model, providerId: "gemini" };
+  } catch (err) {
+    if (
+      input.abortSignal?.aborted ||
+      isAbortError(err) ||
+      (err as { code?: string })?.code === "timeout"
+    ) {
+      throw Object.assign(new Error("Query agent provider timed out"), {
+        code: "timeout",
+      });
+    }
+    throw err;
   }
-
-  const response = await client.models.generateContent({
-    model,
-    contents: `${input.system}\n\n${input.user}`,
-  });
-
-  const text =
-    typeof response.text === "string"
-      ? response.text
-      : String((response as { text?: string }).text ?? "");
-
-  return { text, model, providerId: "gemini" };
 }
 
 export type CreateQueryAgentGatewayOptions = {

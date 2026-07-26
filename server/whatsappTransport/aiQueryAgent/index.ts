@@ -10,6 +10,7 @@ export * from "./queryInjectionGuard.ts";
 export * from "./queryToolAllowlist.ts";
 export * from "./querySafeSources.ts";
 export * from "./queryPolicyLayer.ts";
+export * from "./queryOutputValidation.ts";
 export * from "./queryRateLimiter.ts";
 export * from "./queryAgentAudit.ts";
 export * from "./queryAgentLogger.ts";

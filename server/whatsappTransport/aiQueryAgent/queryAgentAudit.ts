@@ -19,7 +19,15 @@ export function newDraftId(): string {
 export function hashMessageId(messageId: string | null | undefined): string | null {
   const id = String(messageId ?? "").trim();
   if (!id) return null;
-  return createHash("sha256").update(id).digest("hex").slice(0, 16);
+  return hashOpaqueId(id);
+}
+
+/**
+ * True SHA-256 digest (truncated) for opaque ids in logs.
+ * Never log raw prefixes of company/user ids as a "hash".
+ */
+export function hashOpaqueId(value: string): string {
+  return createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 }
 
 export function confidenceBucket(

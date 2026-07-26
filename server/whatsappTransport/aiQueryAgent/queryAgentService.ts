@@ -11,6 +11,7 @@
 
 import {
   buildAuditMetadata,
+  hashOpaqueId,
   newDraftId,
 } from "./queryAgentAudit.ts";
 import {
@@ -21,6 +22,11 @@ import {
 } from "./queryAgentConfig.ts";
 import { createQueryAgentGateway } from "./queryAgentGateway.ts";
 import { logQueryAgent } from "./queryAgentLogger.ts";
+import {
+  MAX_DRAFT_CHARS,
+  SAFE_ESCALATION_DRAFT,
+  validateProviderDraftOutput,
+} from "./queryOutputValidation.ts";
 import { QueryPolicyLayer } from "./queryPolicyLayer.ts";
 import { QueryRateLimiter } from "./queryRateLimiter.ts";
 import type {
@@ -236,7 +242,7 @@ export class QueryAgentService {
       );
       logQueryAgent("warn", "draft_denied", {
         reasonCode: "tenant_mismatch",
-        companyIdHash: companyId.slice(0, 6),
+        companyIdHash: hashOpaqueId(companyId),
       });
       return denied;
     }
@@ -353,6 +359,89 @@ export class QueryAgentService {
           this.sleep
         );
 
+        const validation = validateProviderDraftOutput(phrase.phrasedAnswer, {
+          maxChars: MAX_DRAFT_CHARS,
+        });
+
+        if (validation.ok === false) {
+          const failure = validation;
+          if (failure.action === "deny") {
+            const denied = deny(
+              request,
+              failure.reasonCode,
+              failure.message,
+              {
+                ...baseAudit,
+                latencyMs: this.now() - started,
+                retries,
+                intent: policy.intent,
+                confidence: policy.confidence,
+                injectionSuspected: policy.injectionSuspected,
+                escalationReasons: [
+                  ...policy.escalationReasons,
+                  failure.reasonCode,
+                ],
+              }
+            );
+            logQueryAgent("warn", "draft_denied", {
+              reasonCode: failure.reasonCode,
+              violation: failure.violation,
+              retries,
+            });
+            return denied;
+          }
+
+          // Escalate with a safe replacement — never return unsafe provider text.
+          const escalationReasons = [
+            ...policy.escalationReasons,
+            failure.reasonCode,
+          ];
+          const result: QueryDraftResult = {
+            status: "draft",
+            companyId,
+            conversationId,
+            draftId,
+            answer: SAFE_ESCALATION_DRAFT,
+            intent: policy.intent,
+            confidence: Math.min(policy.confidence, phrase.confidence, 0.4),
+            warnings: [
+              ...policy.warnings,
+              "Provider draft failed safety validation — escalated for human review.",
+              "Automatic WhatsApp replies are disabled — staff must send manually.",
+            ],
+            requiresHumanReview: true,
+            autoSendBlocked: true,
+            escalate: true,
+            escalationReasons: [...new Set(escalationReasons)],
+            safeSources: policy.safeSources,
+            audit: buildAuditMetadata({
+              draftId,
+              companyId,
+              conversationId,
+              actorUserId,
+              messageId: request.messageId,
+              intent: policy.intent,
+              confidence: Math.min(policy.confidence, phrase.confidence, 0.4),
+              escalate: true,
+              escalationReasons: [...new Set(escalationReasons)],
+              injectionSuspected: policy.injectionSuspected,
+              providerId: phrase.providerId,
+              providerConfigured: true,
+              draftEnabled,
+              autoReplyEnabled: false,
+              latencyMs: this.now() - started,
+              retries,
+              outcome: "draft",
+              reasonCode: failure.reasonCode,
+            }),
+          };
+          logQueryAgent("warn", "draft_escalated_unsafe_output", {
+            violation: failure.violation,
+            retries,
+          });
+          return result;
+        }
+
         const confidence = Math.min(policy.confidence, phrase.confidence);
         const escalate =
           policy.escalate || confidence < this.config.minConfidence;
@@ -367,7 +456,7 @@ export class QueryAgentService {
           companyId,
           conversationId,
           draftId,
-          answer: String(phrase.phrasedAnswer || "").trim(),
+          answer: validation.text,
           intent: policy.intent,
           confidence,
           warnings: [

@@ -5,6 +5,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createHash } from "node:crypto";
+
 import {
   QUERY_AGENT_CAN_SEND_WHATSAPP,
   QUERY_AGENT_ALLOWED_TOOLS,
@@ -16,6 +18,8 @@ import {
   UnconfiguredQueryAgentProvider,
   LiveQueryAgentGateway,
   createQueryAgentGateway,
+  hasServerSideProviderKey,
+  defaultLivePhraseComplete,
   readQueryAgentConfig,
   isQueryDraftEnabled,
   isQueryAutoReplyEnabled,
@@ -25,6 +29,10 @@ import {
   auditContainsForbiddenFields,
   sanitizeQueryAgentLogMeta,
   assertNoWhatsAppSendCapability,
+  validateProviderDraftOutput,
+  MAX_DRAFT_CHARS,
+  SAFE_ESCALATION_DRAFT,
+  hashOpaqueId,
   type QueryDraftRequest,
 } from "./index.ts";
 
@@ -390,4 +398,212 @@ await test("quotation and net-metering intents carry safety warnings", () => {
   assert.equal(nm.intent, "net_metering");
   assert.ok(nm.warnings.some((w) => /net-metering|approval/i.test(w)));
   assert.match(nm.policyAnswerOutline, /Do not promise approval/i);
+});
+
+await test("hasServerSideProviderKey: only Gemini counts as configured", () => {
+  assert.equal(hasServerSideProviderKey({}), false);
+  assert.equal(
+    hasServerSideProviderKey({ OPENAI_API_KEY: "sk-test-openai" }),
+    false
+  );
+  assert.equal(
+    hasServerSideProviderKey({ ANTHROPIC_API_KEY: "sk-ant-test" }),
+    false
+  );
+  assert.equal(
+    hasServerSideProviderKey({
+      OPENAI_API_KEY: "sk-test-openai",
+      ANTHROPIC_API_KEY: "sk-ant-test",
+    }),
+    false
+  );
+  assert.equal(
+    hasServerSideProviderKey({ GEMINI_API_KEY: "AIza-test-key" }),
+    true
+  );
+});
+
+await test("gateway factory: OpenAI/Anthropic keys alone fail closed", () => {
+  const gateway = createQueryAgentGateway({
+    config: enabledConfig({ WHATSAPP_AI_QUERY_PROVIDER: "env" }),
+    env: {
+      OPENAI_API_KEY: "sk-test-openai",
+      ANTHROPIC_API_KEY: "sk-ant-test",
+    },
+  });
+  assert.equal(gateway.isConfigured(), false);
+  assert.equal(gateway.providerId, "unconfigured");
+});
+
+await test("defaultLivePhraseComplete wires abortSignal into Gemini config", async () => {
+  const src = String(defaultLivePhraseComplete);
+  assert.match(src, /abortSignal/);
+  assert.match(src, /generateContent/);
+  assert.match(src, /httpOptions/);
+  // Must not call generateContent without config.abortSignal path.
+  assert.match(src, /config:\s*\{/);
+});
+
+await test("post-generation validation: empty / leak / excess / guarantees", () => {
+  const empty = validateProviderDraftOutput("   ");
+  assert.equal(empty.ok, false);
+  if (!empty.ok) {
+    assert.equal(empty.violation, "empty");
+    assert.equal(empty.action, "deny");
+  }
+
+  const leak = validateProviderDraftOutput(
+    "Call us at +923001234567 or jid 923001234567@s.whatsapp.net"
+  );
+  assert.equal(leak.ok, false);
+  if (!leak.ok) {
+    assert.equal(leak.violation, "token_jid_lid_leak");
+    assert.equal(leak.action, "deny");
+  }
+
+  const tokenLeak = validateProviderDraftOutput(
+    "Here is the key sk-abcdefghijklmnopqrstuvwxyz"
+  );
+  assert.equal(tokenLeak.ok, false);
+  if (!tokenLeak.ok) {
+    assert.equal(tokenLeak.violation, "token_jid_lid_leak");
+  }
+
+  const excess = validateProviderDraftOutput("x".repeat(MAX_DRAFT_CHARS + 1));
+  assert.equal(excess.ok, false);
+  if (!excess.ok) {
+    assert.equal(excess.violation, "excessive_output");
+    assert.equal(excess.action, "deny");
+  }
+
+  const guarantee = validateProviderDraftOutput(
+    "We guarantee savings of 40% ROI and net metering approved installation."
+  );
+  assert.equal(guarantee.ok, false);
+  if (!guarantee.ok) {
+    assert.equal(guarantee.violation, "forbidden_guarantee");
+    assert.equal(guarantee.action, "escalate");
+  }
+
+  const ok = validateProviderDraftOutput(
+    "Thanks for your interest. A consultant can discuss options after a site review."
+  );
+  assert.equal(ok.ok, true);
+});
+
+await test("unsafe provider output is denied — never a clean draft", async () => {
+  const service = new QueryAgentService({
+    config: enabledConfig(),
+    gateway: new MockQueryAgentProvider({
+      phrasedAnswer:
+        "Please reply to 923001234567@s.whatsapp.net with token sk-abcdefghijklmnopqrstu",
+    }),
+  });
+  const result = await service.generateDraft(
+    baseRequest({ messageText: "Tell me about solar packages" })
+  );
+  assert.equal(result.status, "denied");
+  if (result.status === "denied") {
+    assert.equal(result.reasonCode, "unsafe_output");
+    assert.equal(result.requiresHumanReview, true);
+    assert.equal(result.autoSendBlocked, true);
+  }
+});
+
+await test("forbidden guarantee provider output escalates with safe draft", async () => {
+  const unsafe =
+    "We guarantee savings and promise net metering approved by Friday.";
+  const service = new QueryAgentService({
+    config: enabledConfig(),
+    gateway: new MockQueryAgentProvider({ phrasedAnswer: unsafe }),
+  });
+  const result = await service.generateDraft(
+    baseRequest({ messageText: "What solar packages do you offer?" })
+  );
+  assert.equal(result.status, "draft");
+  if (result.status === "draft") {
+    assert.equal(result.escalate, true);
+    assert.ok(result.escalationReasons.includes("unsafe_output"));
+    assert.equal(result.answer, SAFE_ESCALATION_DRAFT);
+    assert.notEqual(result.answer, unsafe);
+    assert.doesNotMatch(result.answer, /guarantee/i);
+    assert.equal(result.requiresHumanReview, true);
+    assert.equal(result.autoSendBlocked, true);
+  }
+});
+
+await test("empty provider output is denied", async () => {
+  const service = new QueryAgentService({
+    config: enabledConfig(),
+    gateway: new MockQueryAgentProvider({ phrasedAnswer: "   " }),
+  });
+  const result = await service.generateDraft(
+    baseRequest({ messageText: "hi there interested in solar" })
+  );
+  assert.equal(result.status, "denied");
+  if (result.status === "denied") {
+    assert.equal(result.reasonCode, "unsafe_output");
+  }
+});
+
+await test("rate limiter sweeps expired buckets and enforces maxKeys bound", () => {
+  let now = 1_000;
+  const limiter = new QueryRateLimiter({
+    windowMs: 100,
+    maxAttempts: 5,
+    maxKeys: 3,
+    now: () => now,
+  });
+
+  assert.equal(limiter.check("c1", "u1").allowed, true);
+  assert.equal(limiter.check("c2", "u2").allowed, true);
+  assert.equal(limiter.check("c3", "u3").allowed, true);
+  assert.equal(limiter.size(), 3);
+
+  // Force overflow — should evict oldest after sweep/bound.
+  assert.equal(limiter.check("c4", "u4").allowed, true);
+  assert.ok(limiter.size() <= 3);
+
+  // Expire all windows and verify cleanup.
+  now = 10_000;
+  assert.equal(limiter.check("c5", "u5").allowed, true);
+  const removed = limiter.sweepExpired(now);
+  assert.ok(removed >= 0);
+  assert.equal(limiter.size(), 1);
+});
+
+await test("companyIdHash uses true sha256 digest, not prefix slice", () => {
+  const companyId = "company_abcdef_tenant";
+  const digest = hashOpaqueId(companyId);
+  const expected = createHash("sha256")
+    .update(companyId)
+    .digest("hex")
+    .slice(0, 16);
+  assert.equal(digest, expected);
+  assert.notEqual(digest, companyId.slice(0, 6));
+  assert.doesNotMatch(digest, /^company/);
+});
+
+await test("live complete abort: aborted signal fails as timeout without network", async () => {
+  const previous = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = "test-key-not-used-for-network";
+  const controller = new AbortController();
+  controller.abort();
+  try {
+    await assert.rejects(
+      () =>
+        defaultLivePhraseComplete({
+          system: "sys",
+          user: "user",
+          abortSignal: controller.signal,
+        }),
+      (err: unknown) => {
+        assert.equal((err as { code?: string }).code, "timeout");
+        return true;
+      }
+    );
+  } finally {
+    if (previous === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previous;
+  }
 });

@@ -37,7 +37,8 @@ export type EscalationReason =
   | "rate_limited"
   | "timeout"
   | "tenant_mismatch"
-  | "config_unavailable";
+  | "config_unavailable"
+  | "unsafe_output";
 
 export type SafeSourceReference = {
   /** Stable catalogue id — never a raw customer document. */
