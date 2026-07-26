@@ -58,7 +58,10 @@ export class WhatsAppWebHistorySyncService {
   private readonly companyId: string;
   private snapshot: WhatsAppWebSyncJobSnapshot = emptySyncJobSnapshot();
   private running: Promise<WhatsAppWebSyncJobSnapshot> | null = null;
+  /** True when cancel was accepted for the active operation. */
   private cancelRequested = false;
+  /** Operation identity for the in-flight (or last accepted) job. */
+  private activeOperationId: string | null = null;
   private durableLoaded = false;
 
   constructor(deps: WhatsAppWebHistorySyncDeps) {
@@ -97,8 +100,28 @@ export class WhatsAppWebHistorySyncService {
     return this.getSnapshot();
   }
 
+  /**
+   * Request cancellation of the in-flight sync.
+   * Idempotent; safe to call repeatedly. No-ops when idle or already terminal.
+   * Once accepted while starting/running, observable snapshot.cancelled becomes
+   * true immediately and cannot later be overwritten by a success outcome.
+   */
   requestCancel(): void {
+    if (!this.running) return;
+    // Do not rewrite a job that already finalized without cancellation.
+    if (
+      this.snapshot.status !== "starting" &&
+      this.snapshot.status !== "running"
+    ) {
+      return;
+    }
     this.cancelRequested = true;
+    if (
+      this.snapshot.jobId &&
+      this.snapshot.jobId === this.activeOperationId
+    ) {
+      this.snapshot.cancelled = true;
+    }
   }
 
   startOrJoin(): {
@@ -138,6 +161,7 @@ export class WhatsAppWebHistorySyncService {
 
     this.cancelRequested = false;
     const jobId = `wa_sync_${randomUUID()}`;
+    this.activeOperationId = jobId;
     this.snapshot = {
       ...emptySyncJobSnapshot(),
       jobId,
@@ -146,8 +170,11 @@ export class WhatsAppWebHistorySyncService {
       windowDays: this.windowDays,
     };
 
-    this.running = this.runJob().finally(() => {
-      this.running = null;
+    const operationId = jobId;
+    this.running = this.runJob(operationId).finally(() => {
+      if (this.activeOperationId === operationId) {
+        this.running = null;
+      }
     });
 
     return {
@@ -156,6 +183,17 @@ export class WhatsAppWebHistorySyncService {
       snapshot: this.getSnapshot(),
       done: this.running,
     };
+  }
+
+  private isActiveOperation(operationId: string): boolean {
+    return this.activeOperationId === operationId;
+  }
+
+  private isCancelAccepted(operationId: string): boolean {
+    return (
+      this.isActiveOperation(operationId) &&
+      (this.cancelRequested || this.snapshot.cancelled)
+    );
   }
 
   private applyCoverage(meta: WhatsAppWebHistoryCoverageMeta): void {
@@ -198,21 +236,44 @@ export class WhatsAppWebHistorySyncService {
     return "unknown";
   }
 
-  private async persistDurable(): Promise<void> {
+  private async persistDurable(operationId: string): Promise<void> {
+    if (!this.isActiveOperation(operationId)) return;
     const record = snapshotToJobRecord(this.snapshot, this.companyId);
     if (!record) return;
     const result = await this.jobStore.saveLatest(record);
+    if (!this.isActiveOperation(operationId)) return;
     if (result.warning) {
       this.snapshot.durabilityWarning = result.warning;
     }
   }
 
-  private finalizeTerminal(): void {
-    if (this.cancelRequested) {
+  private finalizeTerminal(operationId: string): void {
+    if (!this.isActiveOperation(operationId)) return;
+
+    if (this.cancelRequested || this.snapshot.cancelled) {
       this.snapshot.cancelled = true;
     }
+
     this.snapshot.historyAvailability = this.readAvailability();
     this.snapshot.outcome = deriveSyncOutcome(this.snapshot);
+
+    // Cancelled jobs must never be reported as ordinary success.
+    if (
+      this.snapshot.cancelled &&
+      (this.snapshot.outcome === "completed_with_imports" ||
+        this.snapshot.outcome === "completed_no_changes")
+    ) {
+      this.snapshot.outcome =
+        this.snapshot.messagesImported > 0 ||
+        this.snapshot.contactsCreated > 0 ||
+        this.snapshot.contactsUpdated > 0 ||
+        this.snapshot.conversationsCreated > 0 ||
+        this.snapshot.conversationsUpdated > 0 ||
+        this.snapshot.duplicatesSkipped > 0 ||
+        this.snapshot.failedChats > 0
+          ? "partial"
+          : "history_not_available";
+    }
 
     if (this.snapshot.cancelled) {
       this.snapshot.errorSummary =
@@ -242,9 +303,18 @@ export class WhatsAppWebHistorySyncService {
     }
   }
 
-  private async runJob(): Promise<WhatsAppWebSyncJobSnapshot> {
+  private async runJob(
+    operationId: string,
+  ): Promise<WhatsAppWebSyncJobSnapshot> {
     // Persist starting state before any contact/message processing.
-    await this.persistDurable();
+    await this.persistDurable(operationId);
+    if (!this.isActiveOperation(operationId)) {
+      return this.getSnapshot();
+    }
+    if (this.isCancelAccepted(operationId)) {
+      return this.finishCancelled(operationId);
+    }
+
     this.snapshot.status = "running";
     logWhatsAppWeb("info", "history_sync_started", {
       windowDays: this.windowDays,
@@ -257,35 +327,44 @@ export class WhatsAppWebHistorySyncService {
       this.applyCoverage(this.resolveCoverage(sinceMs));
 
       const contacts = (await this.source.listContacts()).filter((c) =>
-        isEligibleSyncContact(c, selfJid)
+        isEligibleSyncContact(c, selfJid),
       );
+      if (!this.isActiveOperation(operationId)) return this.getSnapshot();
       this.snapshot.contactsDiscovered = contacts.length;
 
       for (const contact of contacts) {
-        if (this.cancelRequested) break;
+        if (this.isCancelAccepted(operationId)) break;
         try {
           const result = await syncWhatsAppWebContact(contact, {
             repo: this.repo,
             now: this.now,
           });
+          if (!this.isActiveOperation(operationId)) return this.getSnapshot();
           if (result.created) this.snapshot.contactsCreated += 1;
           else if (result.updated) this.snapshot.contactsUpdated += 1;
           else this.snapshot.contactsSkipped += 1;
         } catch {
+          if (!this.isActiveOperation(operationId)) return this.getSnapshot();
           this.snapshot.contactsSkipped += 1;
           logWhatsAppWeb("warn", "history_sync_contact_failed");
         }
       }
 
+      if (this.isCancelAccepted(operationId)) {
+        return this.finishCancelled(operationId);
+      }
+
       const chats = (await this.source.listChats()).filter((c) =>
-        isEligibleSyncChat(c, selfJid)
+        isEligibleSyncChat(c, selfJid),
       );
+      if (!this.isActiveOperation(operationId)) return this.getSnapshot();
 
       for (let i = 0; i < chats.length; i += this.chatBatchSize) {
-        if (this.cancelRequested) break;
+        if (this.isCancelAccepted(operationId)) break;
         const batch = chats.slice(i, i + this.chatBatchSize);
         await mapPool(batch, this.chatConcurrency, async (chat) => {
-          if (this.cancelRequested) return;
+          if (this.isCancelAccepted(operationId)) return;
+          if (!this.isActiveOperation(operationId)) return;
           this.snapshot.chatsInspected += 1;
           try {
             if (chat.phoneE164) {
@@ -298,8 +377,9 @@ export class WhatsAppWebHistorySyncService {
                   shortName: null,
                   isBusiness: false,
                 },
-                { repo: this.repo, now: this.now }
+                { repo: this.repo, now: this.now },
               );
+              if (!this.isActiveOperation(operationId)) return;
               if (synced.created) this.snapshot.contactsCreated += 1;
               else if (synced.updated) this.snapshot.contactsUpdated += 1;
             }
@@ -308,23 +388,25 @@ export class WhatsAppWebHistorySyncService {
               limit: this.messageLimitPerChat,
               sinceMs,
             });
+            if (!this.isActiveOperation(operationId)) return;
             this.snapshot.messagesDiscovered += messages.length;
             const inWindow = messages.filter((m) => {
               const ts = Date.parse(m.occurredAt);
               return Number.isFinite(ts) && ts >= sinceMs;
             });
             inWindow.sort(
-              (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt)
+              (a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt),
             );
 
             let touchedConversation = false;
             let createdConversation = false;
             for (const message of inWindow) {
-              if (this.cancelRequested) break;
+              if (this.isCancelAccepted(operationId)) break;
               const result = await persistWhatsAppWebBackfillMessage(message, {
                 repo: this.repo,
                 now: this.now,
               });
+              if (!this.isActiveOperation(operationId)) return;
               if (result.kind === "imported") {
                 this.snapshot.messagesImported += 1;
                 touchedConversation = true;
@@ -344,17 +426,29 @@ export class WhatsAppWebHistorySyncService {
               }
             }
           } catch {
+            if (!this.isActiveOperation(operationId)) return;
             this.snapshot.failedChats += 1;
             logWhatsAppWeb("warn", "history_sync_chat_failed");
           }
         });
       }
 
+      if (!this.isActiveOperation(operationId)) return this.getSnapshot();
+
+      if (this.isCancelAccepted(operationId)) {
+        return this.finishCancelled(operationId);
+      }
+
       this.applyCoverage(this.resolveCoverage(sinceMs));
+
+      // Re-check cancel after coverage work — late cancel must win over success.
+      if (this.isCancelAccepted(operationId)) {
+        return this.finishCancelled(operationId);
+      }
 
       this.snapshot.status = "completed";
       this.snapshot.completedAt = this.now().toISOString();
-      this.finalizeTerminal();
+      this.finalizeTerminal(operationId);
 
       logWhatsAppWeb("info", "history_sync_completed", {
         messagesImported: this.snapshot.messagesImported,
@@ -364,26 +458,51 @@ export class WhatsAppWebHistorySyncService {
         outcome: this.snapshot.outcome,
         cancelled: this.snapshot.cancelled,
       });
-      await this.persistDurable();
+      await this.persistDurable(operationId);
       return this.getSnapshot();
     } catch {
+      if (!this.isActiveOperation(operationId)) return this.getSnapshot();
+      // Prefer cancel semantics over operational failure when cancel was accepted.
+      if (this.isCancelAccepted(operationId)) {
+        return this.finishCancelled(operationId);
+      }
       this.snapshot.status = "failed";
       this.snapshot.outcome = "failed";
       this.snapshot.completedAt = this.now().toISOString();
       this.snapshot.errorSummary = "Sync failed";
       this.snapshot.historyAvailability = "history_not_available";
-      if (this.cancelRequested) this.snapshot.cancelled = true;
       logWhatsAppWeb("error", "history_sync_failed");
-      await this.persistDurable();
+      await this.persistDurable(operationId);
       return this.getSnapshot();
     }
+  }
+
+  private async finishCancelled(
+    operationId: string,
+  ): Promise<WhatsAppWebSyncJobSnapshot> {
+    if (!this.isActiveOperation(operationId)) return this.getSnapshot();
+    this.snapshot.cancelled = true;
+    // Cancellation is not an operational failure — terminal status stays completed.
+    this.snapshot.status = "completed";
+    this.snapshot.completedAt = this.now().toISOString();
+    this.finalizeTerminal(operationId);
+    logWhatsAppWeb("info", "history_sync_completed", {
+      messagesImported: this.snapshot.messagesImported,
+      failedChats: this.snapshot.failedChats,
+      duplicatesSkipped: this.snapshot.duplicatesSkipped,
+      historyCoverage: this.snapshot.historyCoverage,
+      outcome: this.snapshot.outcome,
+      cancelled: this.snapshot.cancelled,
+    });
+    await this.persistDurable(operationId);
+    return this.getSnapshot();
   }
 }
 
 async function mapPool<T>(
   items: T[],
   concurrency: number,
-  worker: (item: T) => Promise<void>
+  worker: (item: T) => Promise<void>,
 ): Promise<void> {
   const queue = [...items];
   const runners = Array.from(
@@ -394,7 +513,7 @@ async function mapPool<T>(
         if (next === undefined) return;
         await worker(next);
       }
-    }
+    },
   );
   await Promise.all(runners);
 }
