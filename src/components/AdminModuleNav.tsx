@@ -27,6 +27,7 @@ import {
   Users,
   Wrench,
   Zap,
+  Store,
 } from "lucide-react";
 import { isKnowledgeMockUiEnabled } from "../lib/knowledgeFeatureFlag";
 
@@ -40,6 +41,7 @@ export type AdminSegmentId =
   | "finance-dashboard"
   | "project-finance"
   | "internal-costing"
+  | "marketplace-auto-import"
   | "project-delivery"
   | "project-operations"
   | "asset-maintenance"
@@ -87,6 +89,7 @@ type AdminModuleNavProps = {
   showBranding: boolean;
   showUserManagement: boolean;
   showInternalCosting: boolean;
+  showMarketplaceAutoImport: boolean;
   onQuickAction?: (action: AdminQuickAction) => void;
 };
 
@@ -173,8 +176,18 @@ export function buildAdminNavGroups(opts: {
   showBranding: boolean;
   showUserManagement: boolean;
   showInternalCosting: boolean;
+  showMarketplaceAutoImport: boolean;
 }): NavGroup[] {
-  const { showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting } = opts;
+  const {
+    showFinanceAdmin,
+    showFinanceDashboard,
+    showProjectOperations,
+    showInvoices,
+    showBranding,
+    showUserManagement,
+    showInternalCosting,
+    showMarketplaceAutoImport,
+  } = opts;
 
   return [
     {
@@ -254,6 +267,16 @@ export function buildAdminNavGroups(opts: {
                 title: "Internal Costing",
                 description: "Purchase costs, investors, profit (Super Admin)",
                 icon: Lock,
+              },
+            ]
+          : []),
+        ...(showMarketplaceAutoImport
+          ? [
+              {
+                id: "marketplace-auto-import" as const,
+                title: "Supplier Catalogue Sync",
+                description: "Kamal/Aladin auto-import health & last sync",
+                icon: Store,
               },
             ]
           : []),
@@ -448,6 +471,7 @@ export default function AdminModuleNav({
   showBranding,
   showUserManagement,
   showInternalCosting,
+  showMarketplaceAutoImport,
   onQuickAction,
 }: AdminModuleNavProps) {
   const [query, setQuery] = useState("");
@@ -463,8 +487,9 @@ export default function AdminModuleNav({
         showBranding,
         showUserManagement,
         showInternalCosting,
+        showMarketplaceAutoImport,
       }),
-    [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting]
+    [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting, showMarketplaceAutoImport]
   );
 
   const q = query.trim().toLowerCase();

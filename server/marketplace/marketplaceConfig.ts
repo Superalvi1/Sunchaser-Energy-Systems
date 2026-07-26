@@ -7,6 +7,12 @@
 export type MarketplaceConfig = {
   enabled: boolean;
   gatewayEnabled: boolean;
+  /** WS5 cart/checkout/delivery. Default false; independent of auto-import. */
+  cartEnabled: boolean;
+  /** WS6a bank-transfer payments. Default false; independent of auto-import. */
+  paymentsEnabled: boolean;
+  /** WS6b COD lifecycle. Default false; independent of auto-import. */
+  codEnabled: boolean;
   catalogueSource: "static" | "database";
   idempotencyStaleSeconds: number;
   uploadIntentStaleSeconds: number;
@@ -60,6 +66,9 @@ export function readMarketplaceConfig(
   return {
     enabled: readFlag(env, "MARKETPLACE_ENABLED", false),
     gatewayEnabled: readFlag(env, "MARKETPLACE_GATEWAY_ENABLED", false),
+    cartEnabled: readFlag(env, "MARKETPLACE_CART_ENABLED", false),
+    paymentsEnabled: readFlag(env, "MARKETPLACE_PAYMENTS_ENABLED", false),
+    codEnabled: readFlag(env, "MARKETPLACE_COD_ENABLED", false),
     catalogueSource: readCatalogueSource(env),
     idempotencyStaleSeconds: readInt(env, "MARKETPLACE_IDEMPOTENCY_STALE_SECONDS", 300, 30),
     uploadIntentStaleSeconds: readInt(env, "MARKETPLACE_UPLOAD_INTENT_STALE_SECONDS", 300, 30),
@@ -80,6 +89,21 @@ export function isMarketplaceEnabled(config: MarketplaceConfig): boolean {
 
 export function isMarketplaceGatewayEnabled(config: MarketplaceConfig): boolean {
   return config.enabled === true && config.gatewayEnabled === true;
+}
+
+/** WS5 cart/checkout — requires MARKETPLACE_ENABLED and MARKETPLACE_CART_ENABLED. */
+export function isMarketplaceCartEnabled(config: MarketplaceConfig): boolean {
+  return config.enabled === true && config.cartEnabled === true;
+}
+
+/** WS6a payments — requires MARKETPLACE_ENABLED and MARKETPLACE_PAYMENTS_ENABLED. */
+export function isMarketplacePaymentsEnabled(config: MarketplaceConfig): boolean {
+  return config.enabled === true && config.paymentsEnabled === true;
+}
+
+/** WS6b COD — requires MARKETPLACE_ENABLED and MARKETPLACE_COD_ENABLED. */
+export function isMarketplaceCodEnabled(config: MarketplaceConfig): boolean {
+  return config.enabled === true && config.codEnabled === true;
 }
 
 export function isDatabaseCatalogueSource(config: MarketplaceConfig): boolean {

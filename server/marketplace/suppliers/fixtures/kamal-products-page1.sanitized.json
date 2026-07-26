@@ -1,0 +1,486 @@
+{
+  "products": [
+    {
+      "id": 8483847045290,
+      "title": "Knox Zapher 11.2kW PV18000 Single Phase Hybrid Inverter",
+      "handle": "knox-zapher-11-2kw-pv18000-single-phase-hybrid-inverter",
+      "vendor": "Knox",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "hybrid",
+        "Knox",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet Zapher 11.2kW Single Phase Hybrid Inverter (XZ-11.2kW-18000pV) Single Phase Hybrid Inverter with Grid Feeding &amp; IP66 Protection Key Features: Rated Output Power: 11200VA/11200W Max. PV Input Power: 18000W Dual MPPT (2 trackers) Dual Input (GEN/AC) for automatic switching between generator and utility mains In-built WiFi + HMI touchscreen Parallel operation with up to</p>",
+      "variants": [
+        {
+          "id": 48796641099946,
+          "title": "Default Title",
+          "price": "335000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 45164755714218,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/11.2kWPV18000IP66.png?v=1783945087",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8483845963946,
+      "title": "Knox Zapher 9.2kW PV16000 Single Phase Hybrid Inverter",
+      "handle": "knox-zapher-9-2kw-pv16000-single-phase-hybrid-inverter",
+      "vendor": "Knox",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "hybrid",
+        "Knox",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet Zapher 9.2kW Single Phase Hybrid Inverter: Single Phase Hybrid Inverter with Grid Feeding &amp; IP66 Protection Key Features: Rated Output Power: 9200VA/9200W Max. PV Input Power: 16000W Dual MPPT (2 trackers) Dual Input (GEN/AC) for automatic switching between generator and utility mains In-built WiFi + HMI touchscreen Parallel operation with up to 9 units IP65 &amp; IP</p>",
+      "variants": [
+        {
+          "id": 48796638249130,
+          "title": "Default Title",
+          "price": "300000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 45164749848746,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/9.2kWPV16000IP66.png?v=1783944969",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8483845537962,
+      "title": "Knox Zapher 6.6kW PV12000 Single Phase Hybrid Inverter",
+      "handle": "knox-zapher-6-6kw-pv12000-single-phase-hybrid-inverter",
+      "vendor": "Knox",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "hybrid",
+        "Knox",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet Zapher 6.6kW Single Phase Hybrid Inverter: Single Phase Hybrid Inverter with Grid Feeding &amp; IP66 Protection Key Features: Rated Output Power: 6600W Max. PV Input Power: 12000W Dual MPPT (2 trackers) Dual Input (GEN/AC) for automatic switching between generator and utility mains In-built WiFi + HMI touchscreen Parallel operation with up to 9 units IP65 &amp; IP66 wate</p>",
+      "variants": [
+        {
+          "id": 48796637626538,
+          "title": "Default Title",
+          "price": "200000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 45164731138218,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/6.6kWPV12000IP66.png?v=1783944574",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8500645494954,
+      "title": "Knox Powerbase 32kW 51.2v 628A Lithium battery",
+      "handle": "knox-powerbase-32kw-51-2v-628a-lithium-battery",
+      "vendor": "Knox",
+      "product_type": "Lithium Battery",
+      "tags": [
+        "Knox",
+        "Lithium Battery"
+      ],
+      "body_html": "<p>Download Product Datasheet Powerbase 32 - 51.2V 628Ah LiFePO4 Battery Overview The Powerbase 32 is a high-capacity Lithium Iron Phosphate (LiFePO4) battery built for reliable, long-term energy storage. With a 628Ah capacity and A-grade brand new prismatic LFP cells, it delivers safe, stable power backed by an intelligent BMS and an easy-to-read touchscreen display. Key Features A-Grade Prismatic L</p>",
+      "variants": [
+        {
+          "id": 48852196458666,
+          "title": "Default Title",
+          "price": "1110000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 45275782381738,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/32kW628AIP65_2.png?v=1784728066",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8463546056874,
+      "title": "Volnex Alpha 2.56 (2.5kW) 100A Lithium Battery",
+      "handle": "volnex-alpha-2-56-2-5kw-100a-lithium-battery",
+      "vendor": "Volnex",
+      "product_type": "Lithium Battery",
+      "tags": [
+        "Lithium Battery",
+        "Volnex"
+      ],
+      "body_html": "<p>Download Product Datasheet Alpha 2.56 (2.56kWh): Battery Model: Alpha 2.56 Battery Type: LiFePO4 (LFP) Usable Energy: 2560Wh (2.56kWh) Nominal Voltage: 25.6V Operating Voltage: 22.4V \u2013 28.08V Max Charge/Discharge Current: 100A Communication CAN RS485 RS232 Wi-Fi Display LCD Display LED Indicators SOC Indicator Physical Dimensions: 360 \u00d7 160 \u00d7 473 mm Weight: 25kg Installation: Wall Mount / Floor St</p>",
+      "variants": [
+        {
+          "id": 48435059851434,
+          "title": "Default Title",
+          "price": "145000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 44991789138090,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/IP-2025.6v100A.png?v=1781783666",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8071241007274,
+      "title": "Longi Horizon 225 Watt Solar Panel A Grade 12V",
+      "handle": "longi-horizon-225-watt-solar-panel-a-grade-12v",
+      "vendor": "LONGI",
+      "product_type": "Solar Panels",
+      "tags": [
+        "Solar Panels"
+      ],
+      "body_html": "<p>Longi Horizon Solar Panel 225W: Your Trusted Off-Grid Companion The Longi Horizon Solar Panel 225W is a premium solar panel designed specifically for off-grid applications. With its efficient 225W power output, durable build, and compatibility with 12V systems, it provides reliable energy for essential appliances in areas without consistent grid power. Backed by a five-year warranty, this solar pa</p>",
+      "variants": [
+        {
+          "id": 46480837705898,
+          "title": "Default Title",
+          "price": "12000.00",
+          "compare_at_price": "10000.00",
+          "available": true,
+          "sku": "P01120",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 39295803162794,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/Knox6KWpv8000Hybrid_2_1.png?v=1738082522",
+          "width": 1088,
+          "height": 1088,
+          "position": 1
+        },
+        {
+          "id": 39295803130026,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/longi-horizon-225W-front.png?v=1738082522",
+          "width": 900,
+          "height": 900,
+          "position": 2
+        },
+        {
+          "id": 39295803097258,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/longi-horizon-225W-back_1.png?v=1738082522",
+          "width": 900,
+          "height": 900,
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": 8070447235242,
+      "title": "Original China VFD Solar Inverter",
+      "handle": "original-china-vfd-solar-inverter",
+      "vendor": "Original China",
+      "product_type": "VFD Inverter",
+      "tags": [
+        "vfd inverter"
+      ],
+      "body_html": "<p>Invt VFD Solar Inverters Optimizing Efficiency and Performance for Modern Solar Energy Systems The Invt VFD Solar Inverters are designed to maximize the efficiency and reliability of solar energy systems. These high-performance inverters convert the DC energy generated by solar panels into AC energy for household and commercial use. With their advanced features, durability, and user-friendly opera</p>",
+      "variants": [
+        {
+          "id": 46475933974698,
+          "title": "5/7",
+          "price": "27000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "P11447",
+          "option1": "5/7"
+        },
+        {
+          "id": 46475934007466,
+          "title": "7/11",
+          "price": "34000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "P11446",
+          "option1": "7/11"
+        }
+      ],
+      "images": [
+        {
+          "id": 39285821538474,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/Knox6KWpv8000Hybrid_1_5ead75e2-117f-465b-86d7-dbe843ccabf1.png?v=1737954491",
+          "width": 1088,
+          "height": 1088,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8069273551018,
+      "title": "L3 Solar Stands for Solar Panels",
+      "handle": "l3-solar-stands-for-solar-panels",
+      "vendor": "Kamal Solar House",
+      "product_type": "Solar Stands",
+      "tags": [
+        "Solar Stands"
+      ],
+      "body_html": "<p>L3 Solar Stands for Solar Panels 14 Gauge 16 Gauge</p>",
+      "variants": [
+        {
+          "id": 46468415422634,
+          "title": "14G",
+          "price": "6500.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "P00149",
+          "option1": "14G"
+        },
+        {
+          "id": 46468415455402,
+          "title": "16G",
+          "price": "6500.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "16G"
+        }
+      ],
+      "images": [
+        {
+          "id": 39282117968042,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/Knox6KWpv8000Hybrid_1.png?v=1737898387",
+          "width": 1088,
+          "height": 1088,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8334379450538,
+      "title": "Eve Power Fire Extinguishing Device for Distribution box",
+      "handle": "eve-power-fire-extinguishing-device-for-distribution-box",
+      "vendor": "Fire Extinguishing Device",
+      "product_type": "Breaker",
+      "tags": [
+        "Fire Extinguisher"
+      ],
+      "body_html": "<p>EVE Power Cabinet Fire Extinguishing DIN Rail Device Protect your solar power systems and electrical equipment with the Tiger Solar Energy Distribution Cabinet Fire Extinguishing DIN Rail Device \u2014 a smart, automatic fire suppression solution specially designed for enclosed electrical cabinets and solar distribution boxes . This compact DIN-rail-mounted fire extinguishing device uses advanced activ</p>",
+      "variants": [
+        {
+          "id": 47825064591530,
+          "title": "Default Title",
+          "price": "2000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 43829901721770,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/FireExtinguisher.png?v=1767616949",
+          "width": 1088,
+          "height": 1088,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8369154883754,
+      "title": "Huawei Smart Power Sensor \u2013 Zero Export Device",
+      "handle": "huawei-smart-power-sensor-zero-export-solution",
+      "vendor": "HUAWEI",
+      "product_type": "Zero Export Device",
+      "tags": [
+        "Huawei",
+        "Zero Export deivce"
+      ],
+      "body_html": "<p>Product Description The Huawei Smart Power Sensor (smart power meter) is a device that ensures the solar PV system generates only the amount of electricity needed by the load, preventing excess energy from being exported to the utility grid. Main Product Keywords Huawei Smart Power Sensor Smart Power Meter Smart Sensor Huawei Huawei Energy Meter Huawei Smart Meter DTSU666-H Huawei Smart Meter DDSU</p>",
+      "variants": [
+        {
+          "id": 47991667065002,
+          "title": "Default Title",
+          "price": "32000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 44154098352298,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/ZeroExportDevice_ced91b3a-0a0a-4934-865f-7625291db4d0.png?v=1770460145",
+          "width": 1088,
+          "height": 1088,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8207541502122,
+      "title": "Fronus Meta 6KW PV9000 With Netmetering Battery Less Solar Inverter",
+      "handle": "fronus-6kw-pv6000-with-netmetering-battery-less-solar-inverter",
+      "vendor": "FRONUS",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "Fronus",
+        "OffGrid",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet Fronus META-6KW PV Inverter (Single Phase) Technical Specifications Model: META-6KW Rated Power: 6KVA / 6KW Phase: 1-phase in / 1-phase out Maximum PV Input Power: 4500W \u00d7 2 = 9000W Maximum DC Voltage: 500VDC Start-up Voltage: 90VDC MPPT Voltage Range: 60V \u2013 450VDC MPPT Trackers / Max Input Current: 2 / 18A Grid-Tied Operation Grid Feed Output: 3000W Nominal Output Volta</p>",
+      "variants": [
+        {
+          "id": 47292913615018,
+          "title": "Default Title",
+          "price": "36500.00",
+          "compare_at_price": "40000.00",
+          "available": true,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 41405969137834,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/Fronus6KWPV6000WithNetmeteringOffGridSolarInverter.png?v=1754204638",
+          "width": 1088,
+          "height": 1088,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 8452625399978,
+      "title": "CoreTECH MaxGen 6.5kW PV12000 Solar Inverter",
+      "handle": "coretech-maxgen-6-5kw-pv12000-solar-inverter",
+      "vendor": "CoreTech",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "coretech",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet CoreTECH MaxGen 6.5KW PV12000: Basic: Model: PV12000 Rated Power: 6.5kW Type: Pure Sine Wave Solar Inverter Output Voltage: 230V AC Frequency: 50Hz / 60Hz Solar (PV) Input Maximum PV Input Power: 12,000W (6000W + 6000W) Maximum PV Voltage: 500V DC Startup Voltage: 120V DC MPPT Voltage Range: 70V \u2013 400V DC Rated PV Voltage: 370V DC Maximum PV Input Current: 18A + 18A MPPT</p>",
+      "variants": [
+        {
+          "id": 48379858518186,
+          "title": "Default Title",
+          "price": "52000.00",
+          "compare_at_price": null,
+          "available": false,
+          "sku": null,
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 44895205556394,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/IP-216.5kWPV-12000.png?v=1780745976",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 999000001,
+      "title": "Synthetic Zero Price Fixture",
+      "handle": "synthetic-zero-price-fixture",
+      "vendor": "Knox",
+      "product_type": "Solar Inverter",
+      "tags": [
+        "hybrid",
+        "Knox",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet Zapher 11.2kW Single Phase Hybrid Inverter (XZ-11.2kW-18000pV) Single Phase Hybrid Inverter with Grid Feeding &amp; IP66 Protection Key Features: Rated Output Power: 11200VA/11200W Max. PV Input Power: 18000W Dual MPPT (2 trackers) Dual Input (GEN/AC) for automatic switching between generator and utility mains In-built WiFi + HMI touchscreen Parallel operation with up to</p>",
+      "variants": [
+        {
+          "id": 9990000011,
+          "title": "Default Title",
+          "price": "0.00",
+          "compare_at_price": "50000.00",
+          "available": true,
+          "sku": "SYN-ZERO",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 45164755714218,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/11.2kWPV18000IP66.png?v=1783945087",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 999000002,
+      "title": "Synthetic Malformed Price Fixture",
+      "handle": "synthetic-malformed-price-fixture",
+      "vendor": "Knox",
+      "product_type": "Lithium Battery",
+      "tags": [
+        "hybrid",
+        "Knox",
+        "Solar Inverter"
+      ],
+      "body_html": "<p>Download Product Datasheet Zapher 11.2kW Single Phase Hybrid Inverter (XZ-11.2kW-18000pV) Single Phase Hybrid Inverter with Grid Feeding &amp; IP66 Protection Key Features: Rated Output Power: 11200VA/11200W Max. PV Input Power: 18000W Dual MPPT (2 trackers) Dual Input (GEN/AC) for automatic switching between generator and utility mains In-built WiFi + HMI touchscreen Parallel operation with up to</p>",
+      "variants": [
+        {
+          "id": 9990000021,
+          "title": "Default Title",
+          "price": "N/A",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "SYN-BAD",
+          "option1": "Default Title"
+        }
+      ],
+      "images": [
+        {
+          "id": 45164755714218,
+          "src": "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/11.2kWPV18000IP66.png?v=1783945087",
+          "width": 1080,
+          "height": 1080,
+          "position": 1
+        }
+      ]
+    }
+  ]
+}

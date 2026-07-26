@@ -29,6 +29,7 @@ import EnergyMonitoringStaff from "./EnergyMonitoringStaff";
 import ProjectDeliveryStaff from "./ProjectDeliveryStaff";
 import ProjectFinanceStaff from "./ProjectFinanceStaff";
 import InternalCostingStaff from "./InternalCostingStaff";
+import MarketplaceAutoImportStaff from "./MarketplaceAutoImportStaff";
 import { canViewInternalCosting } from "../lib/internalCosting";
 import InvoiceStaff from "./InvoiceStaff";
 import PartyLedgerStaff from "./PartyLedgerStaff";
@@ -154,6 +155,7 @@ export default function AdminApp({
   const showUserManagement = isSuperAdmin(staffUser.username, staffUser.role);
   const showBranding = isSuperAdmin(staffUser.username, staffUser.role);
   const showInternalCosting = canViewInternalCosting(staffUser.username, staffUser.role);
+  const showMarketplaceAutoImport = isSuperAdmin(staffUser.username, staffUser.role);
 
   const [profitabilitySummary, setProfitabilitySummary] = useState<{
     monthLabel: string;
@@ -328,6 +330,7 @@ export default function AdminApp({
           showBranding={showBranding}
           showUserManagement={showUserManagement}
           showInternalCosting={showInternalCosting}
+          showMarketplaceAutoImport={showMarketplaceAutoImport}
           onQuickAction={onQuickAction}
         />
 
@@ -1630,6 +1633,9 @@ export default function AdminApp({
         )}
         {activeSegment === 'project-finance' && showFinanceAdmin && (
           <ProjectFinanceStaff staffUser={staffUser} leads={leads} />
+        )}
+        {activeSegment === "marketplace-auto-import" && showMarketplaceAutoImport && (
+          <MarketplaceAutoImportStaff staffUser={staffUser} />
         )}
         {activeSegment === 'internal-costing' && showInternalCosting && (
           <InternalCostingStaff staffUser={staffUser} leads={leads} />

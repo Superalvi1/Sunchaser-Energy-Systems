@@ -57,6 +57,7 @@ export const ALL_PERMISSION_KEYS = [
   "products",
   "reports",
   "settings",
+  "marketplace",
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSION_KEYS)[number];
@@ -76,6 +77,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   products: "Products",
   reports: "Reports",
   settings: "Settings",
+  marketplace: "Marketplace Admin",
 };
 
 export const ROLE_PERMISSIONS: Record<AppRole, PermissionKey[]> = {
@@ -94,6 +96,7 @@ export const ROLE_PERMISSIONS: Record<AppRole, PermissionKey[]> = {
     "products",
     "reports",
     "settings",
+    "marketplace",
   ],
   Admin: [
     "crm_leads",
@@ -108,8 +111,16 @@ export const ROLE_PERMISSIONS: Record<AppRole, PermissionKey[]> = {
     "invoices",
     "reports",
     "settings",
+    "marketplace",
   ],
-  "Accounts Manager": ["admin_dashboard", "project_finance", "invoices", "crm_leads", "reports"],
+  "Accounts Manager": [
+    "admin_dashboard",
+    "project_finance",
+    "invoices",
+    "crm_leads",
+    "reports",
+    "marketplace",
+  ],
   "Sales Manager": ["crm_leads", "sales_quotes", "admin_dashboard", "invoices", "reports"],
   "Sales Executive": ["crm_leads", "sales_quotes", "invoices"],
   "Survey Engineer": ["technical_field"],
