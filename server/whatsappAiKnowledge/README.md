@@ -17,9 +17,12 @@ messages, write CRM, call production Supabase, or browse the web.
 ### Freshness
 
 - Every priced record carries `publishedAt` + `maxAgeHours` (default **36h**, aligned with marketplace `staleness_hours`).
-- `evaluateFreshness` → `current` \| `stale` \| `unknown` \| `missing_timestamp`.
-- **Prices may only be quoted** when source type is price-eligible (`pricing_approved` / `solar_package`) **and** freshness is `current`.
-- Stale prices are omitted with an explicit warning; disposition becomes `partial` / human confirm.
+- **Authoritative price timestamp** is `price.publishedAt` (must match `record.publishedAt` at ingest). Price quoting never trusts a newer record timestamp over a stale price payload.
+- `price.sourceId` / `price.sourceTitle` must match the record id/title at ingest.
+- `evaluateFreshness` / `evaluatePriceFreshness` → `current` \| `stale` \| `unknown` \| `missing_timestamp`.
+- **Prices may only be quoted** when source type is price-eligible (`pricing_approved` / `solar_package`) **and** price freshness is `current`.
+- Stale prices are omitted with an explicit warning; embedded numeric price copy in body text is prohibited at ingest and stripped when omitting stale prices.
+- Ingest validates source types, categories, IDs, timestamps, priority, maxAgeHours, and price payloads at runtime (not TypeScript-only). Stored records are deep-copied and deeply frozen.
 
 ### Retrieval / ranking
 
@@ -42,6 +45,7 @@ Missing knowledge → `information unavailable—ask human`.
 ## Privacy / security
 
 - No full customer message in indexes/logs — only `queryFingerprint`
+- `queryFingerprint` is an HMAC-SHA256 digest requiring `WHATSAPP_AI_KNOWLEDGE_FINGERPRINT_SECRET`; without the secret it returns `qfp_unconfigured` (no weak unsalted digest of query content)
 - PII redaction on ingest and fingerprints
 - Prompt-injection phrases in CMS/knowledge bodies are sanitized
 - Fixtures contain **no** customer PII

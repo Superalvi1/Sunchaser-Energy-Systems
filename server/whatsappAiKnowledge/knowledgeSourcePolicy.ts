@@ -176,6 +176,24 @@ export function evaluateFreshness(
   return ageHours <= maxHours ? "current" : "stale";
 }
 
+/**
+ * Authoritative price freshness uses `price.publishedAt` only.
+ * Record-level publishedAt is not consulted for quoting prices.
+ */
+export function evaluatePriceFreshness(
+  record: KnowledgeRecord,
+  asOfIso: string,
+): KnowledgeFreshnessStatus {
+  if (!record.containsPrice || !record.price) {
+    return evaluateFreshness(record.publishedAt, record.maxAgeHours, asOfIso);
+  }
+  return evaluateFreshness(
+    record.price.publishedAt,
+    record.maxAgeHours,
+    asOfIso,
+  );
+}
+
 export function isPriceAllowed(
   record: KnowledgeRecord,
   freshness: KnowledgeFreshnessStatus,

@@ -3,7 +3,9 @@
  *
  * Covers: relevant retrieval, stale price rejection, tenant isolation,
  * conflicting sources, missing knowledge, unsafe engineering escalation,
- * prompt injection in knowledge content, and no PII leakage.
+ * prompt injection in knowledge content, no PII leakage, ingest validation,
+ * deep freeze, authoritative price freshness, body price sanitization,
+ * and fingerprint HMAC safety.
  *
  * Run: npm run test:whatsapp-ai-knowledge
  */
@@ -15,6 +17,9 @@ import {
   InMemoryKnowledgeStore,
   KNOWLEDGE_FIXTURE_RECORDS,
   KNOWLEDGE_UNAVAILABLE_MESSAGE,
+  KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV,
+  FINGERPRINT_UNCONFIGURED,
+  DEFAULT_PRICE_MAX_AGE_HOURS,
   FIXTURE_TENANT_A,
   FIXTURE_TENANT_B,
   createFixtureKnowledgeEngine,
@@ -23,11 +28,65 @@ import {
   containsLikelyPii,
   redactPii,
   sanitizeKnowledgeContent,
+  omitEmbeddedPriceAmounts,
+  hasEmbeddedPriceAmount,
   evaluateFreshness,
+  evaluatePriceFreshness,
   classifyQueryCategory,
+  toAnswerFact,
+  type KnowledgeRecord,
 } from "./index.ts";
 
+process.env[KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV] =
+  "test-fixture-hmac-secret-not-for-production";
+
 const AS_OF = fixtureAsOfIso();
+
+function hoursAgoIso(hours: number, asOf = AS_OF): string {
+  return new Date(Date.parse(asOf) - hours * 60 * 60 * 1000).toISOString();
+}
+
+function basePricedRecord(
+  overrides: Partial<KnowledgeRecord> = {},
+): KnowledgeRecord {
+  const id = overrides.id ?? "pkg-test-priced";
+  const title = overrides.title ?? "Test Priced Package";
+  const publishedAt = overrides.publishedAt ?? hoursAgoIso(6);
+  const priceOverrides = overrides.price;
+  const price =
+    priceOverrides === null
+      ? null
+      : {
+          amountPkr: 875000,
+          currency: "PKR" as const,
+          unitLabel: "starting package",
+          publishedAt: typeof publishedAt === "string" ? publishedAt : hoursAgoIso(6),
+          freshness: "current" as const,
+          sourceId: id,
+          sourceTitle: title,
+          ...(priceOverrides ?? {}),
+        };
+  return {
+    id,
+    tenantId: FIXTURE_TENANT_A,
+    sourceType: "solar_package",
+    title,
+    body: "Approved package overview without embedded amounts.",
+    categories: ["solar_packages"],
+    keywords: ["5kw", "package", "price"],
+    publishedAt,
+    maxAgeHours: DEFAULT_PRICE_MAX_AGE_HOURS,
+    containsPrice: true,
+    price,
+    priority: 50,
+    active: true,
+    ...overrides,
+    id,
+    title,
+    publishedAt,
+    price,
+  };
+}
 
 function engine(): KnowledgeAnswerEngine {
   return createFixtureKnowledgeEngine();
@@ -327,6 +386,319 @@ await test("batteries / panels / inverters / after-sales / handover categories",
   });
   assert.equal(handoff.category, "human_handover");
   assert.equal(handoff.disposition, "escalate_human");
+});
+
+await test("AI-02-R1: deep-copy + deep-freeze blocks nested mutation after ingest", () => {
+  const categories: KnowledgeRecord["categories"] = ["solar_packages"];
+  const keywords = ["5kw", "package"];
+  const price = {
+    amountPkr: 875000,
+    currency: "PKR" as const,
+    unitLabel: "starting package",
+    publishedAt: hoursAgoIso(6),
+    freshness: "current" as const,
+    sourceId: "pkg-freeze-a",
+    sourceTitle: "Freeze Test Package",
+  };
+  const input = basePricedRecord({
+    id: "pkg-freeze-a",
+    title: "Freeze Test Package",
+    categories,
+    keywords,
+    price,
+  });
+
+  const store = new InMemoryKnowledgeStore([]);
+  store.ingest(input);
+
+  categories.push("unknown");
+  keywords.push("mutated");
+  price.amountPkr = 1;
+  price.sourceTitle = "mutated-title";
+
+  const stored = store.getById(FIXTURE_TENANT_A, "pkg-freeze-a");
+  assert.ok(stored);
+  assert.deepEqual([...stored!.categories], ["solar_packages"]);
+  assert.deepEqual([...stored!.keywords], ["5kw", "package"]);
+  assert.equal(stored!.price!.amountPkr, 875000);
+  assert.equal(stored!.price!.sourceTitle, "Freeze Test Package");
+
+  assert.throws(() => {
+    (stored!.categories as string[]).push("batteries");
+  }, TypeError);
+  assert.throws(() => {
+    (stored!.keywords as string[]).push("hack");
+  }, TypeError);
+  assert.throws(() => {
+    (stored!.price as { amountPkr: number }).amountPkr = 2;
+  }, TypeError);
+});
+
+await test("AI-02-R1: ingest rejects invalid source types and categories", () => {
+  const store = new InMemoryKnowledgeStore([]);
+  assert.throws(
+    () =>
+      store.ingest({
+        ...basePricedRecord(),
+        sourceType: "web_scrape" as KnowledgeRecord["sourceType"],
+      }),
+    /sourceType is unapproved/,
+  );
+  assert.throws(
+    () =>
+      store.ingest({
+        ...basePricedRecord({ id: "pkg-bad-cat" }),
+        categories: ["not_a_real_category" as KnowledgeRecord["categories"][number]],
+      }),
+    /categories contains unapproved/,
+  );
+  assert.throws(
+    () =>
+      store.ingest({
+        ...basePricedRecord({ id: "pkg-bad-id", title: "Bad Id" }),
+        id: "bad id with spaces",
+        price: {
+          amountPkr: 100,
+          currency: "PKR",
+          unitLabel: "x",
+          publishedAt: hoursAgoIso(6),
+          freshness: "current",
+          sourceId: "bad id with spaces",
+          sourceTitle: "Bad Id",
+        },
+      }),
+    /invalid format/,
+  );
+  assert.throws(
+    () =>
+      store.ingest({
+        ...basePricedRecord({ id: "pkg-bad-priority" }),
+        priority: Number.NaN,
+      }),
+    /priority must be a finite number/,
+  );
+  assert.throws(
+    () =>
+      store.ingest({
+        ...basePricedRecord({ id: "pkg-bad-max-age" }),
+        maxAgeHours: -12,
+      }),
+    /maxAgeHours must be a positive/,
+  );
+});
+
+await test("AI-02-R1: ingest rejects negative/NaN prices and mismatched attribution", () => {
+  const store = new InMemoryKnowledgeStore([]);
+  const publishedAt = hoursAgoIso(6);
+
+  assert.throws(
+    () =>
+      store.ingest(
+        basePricedRecord({
+          id: "pkg-neg-price",
+          price: {
+            amountPkr: -100,
+            currency: "PKR",
+            unitLabel: "starting package",
+            publishedAt,
+            freshness: "current",
+            sourceId: "pkg-neg-price",
+            sourceTitle: "Test Priced Package",
+          },
+        }),
+      ),
+    /amountPkr must be a positive/,
+  );
+
+  assert.throws(
+    () =>
+      store.ingest(
+        basePricedRecord({
+          id: "pkg-nan-price",
+          price: {
+            amountPkr: Number.NaN,
+            currency: "PKR",
+            unitLabel: "starting package",
+            publishedAt,
+            freshness: "current",
+            sourceId: "pkg-nan-price",
+            sourceTitle: "Test Priced Package",
+          },
+        }),
+      ),
+    /amountPkr must be a finite number/,
+  );
+
+  assert.throws(
+    () =>
+      store.ingest(
+        basePricedRecord({
+          id: "pkg-mismatch-ts",
+          publishedAt: hoursAgoIso(2),
+          price: {
+            amountPkr: 100000,
+            currency: "PKR",
+            unitLabel: "starting package",
+            publishedAt: hoursAgoIso(72),
+            freshness: "stale",
+            sourceId: "pkg-mismatch-ts",
+            sourceTitle: "Test Priced Package",
+          },
+        }),
+      ),
+    /publishedAt must match price\.publishedAt/,
+  );
+
+  assert.throws(
+    () =>
+      store.ingest(
+        basePricedRecord({
+          id: "pkg-mismatch-src",
+          price: {
+            amountPkr: 100000,
+            currency: "PKR",
+            unitLabel: "starting package",
+            publishedAt,
+            freshness: "current",
+            sourceId: "other-source-id",
+            sourceTitle: "Test Priced Package",
+          },
+        }),
+      ),
+    /price\.sourceId must match record\.id/,
+  );
+
+  assert.throws(
+    () =>
+      store.ingest(
+        basePricedRecord({
+          id: "pkg-mismatch-title",
+          title: "Correct Title",
+          price: {
+            amountPkr: 100000,
+            currency: "PKR",
+            unitLabel: "starting package",
+            publishedAt,
+            freshness: "current",
+            sourceId: "pkg-mismatch-title",
+            sourceTitle: "Wrong Title",
+          },
+        }),
+      ),
+    /price\.sourceTitle must match record\.title/,
+  );
+
+  assert.throws(
+    () =>
+      store.ingest(
+        basePricedRecord({
+          id: "pkg-body-price",
+          body: "Package starts at PKR 650000 today.",
+        }),
+      ),
+    /must not embed numeric price amounts/,
+  );
+});
+
+await test("AI-02-R1: authoritative price.publishedAt drives price freshness", () => {
+  // Hand-crafted record (bypasses ingest) where record timestamp looks current
+  // but the price payload timestamp is stale — price must not be quotable.
+  const inconsistent = {
+    ...basePricedRecord({ id: "pkg-inconsistent-ts" }),
+    publishedAt: hoursAgoIso(2),
+    price: {
+      amountPkr: 650000,
+      currency: "PKR" as const,
+      unitLabel: "starting package",
+      publishedAt: hoursAgoIso(72),
+      freshness: "stale" as const,
+      sourceId: "pkg-inconsistent-ts",
+      sourceTitle: "Test Priced Package",
+    },
+  };
+
+  assert.equal(
+    evaluateFreshness(inconsistent.publishedAt, inconsistent.maxAgeHours, AS_OF),
+    "current",
+  );
+  assert.equal(evaluatePriceFreshness(inconsistent, AS_OF), "stale");
+
+  const fact = toAnswerFact({
+    record: inconsistent,
+    rankScore: 80,
+    freshness: evaluateFreshness(
+      inconsistent.publishedAt,
+      inconsistent.maxAgeHours,
+      AS_OF,
+    ),
+    priceFreshness: evaluatePriceFreshness(inconsistent, AS_OF),
+    priceAllowed: false,
+  });
+  assert.equal(fact.containsPrice, false);
+  assert.equal(fact.price, null);
+  assert.equal(fact.freshness, "stale");
+  assert.equal(fact.publishedAt, hoursAgoIso(72));
+  assert.match(fact.text, /Price omitted|freshness=stale/i);
+  assert.doesNotMatch(fact.text, /650000/);
+});
+
+await test("AI-02-R1: stale price text in body is sanitized when price omitted", () => {
+  assert.equal(hasEmbeddedPriceAmount("Package is PKR 650,000 only"), true);
+  assert.match(
+    omitEmbeddedPriceAmounts("Legacy row quotes PKR 650000 and Rs 700000."),
+    /\[price-omitted\]/,
+  );
+  assert.doesNotMatch(
+    omitEmbeddedPriceAmounts("Legacy row quotes PKR 650000 and Rs 700000."),
+    /650000|700000/,
+  );
+
+  const leakedBody = {
+    ...basePricedRecord({ id: "pkg-stale-body" }),
+    publishedAt: hoursAgoIso(72),
+    body: "Older row still says PKR 650000 in the narrative.",
+    price: {
+      amountPkr: 650000,
+      currency: "PKR" as const,
+      unitLabel: "starting package",
+      publishedAt: hoursAgoIso(72),
+      freshness: "stale" as const,
+      sourceId: "pkg-stale-body",
+      sourceTitle: "Test Priced Package",
+    },
+  };
+
+  const fact = toAnswerFact({
+    record: leakedBody,
+    rankScore: 40,
+    freshness: "stale",
+    priceFreshness: "stale",
+    priceAllowed: false,
+  });
+  assert.equal(fact.containsPrice, false);
+  assert.doesNotMatch(fact.text, /650000|650,000/);
+  assert.match(fact.text, /\[price-omitted\]|Price omitted/i);
+});
+
+await test("AI-02-R1: fingerprintQuery requires HMAC secret (no unsalted digest)", () => {
+  const dirty =
+    "Call me Ali at +92 300 1234567 about 5kW hybrid package pricing";
+  const previous = process.env[KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV];
+
+  delete process.env[KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV];
+  assert.equal(fingerprintQuery(dirty), FINGERPRINT_UNCONFIGURED);
+  assert.equal(fingerprintQuery(dirty, null), FINGERPRINT_UNCONFIGURED);
+  assert.equal(fingerprintQuery(dirty, ""), FINGERPRINT_UNCONFIGURED);
+
+  const withSecret = fingerprintQuery(dirty, "unit-test-secret-a");
+  assert.match(withSecret, /^qfp_[a-f0-9]{32}_\d+$/);
+  assert.doesNotMatch(withSecret, /3001234567|ali|5kw|hybrid/i);
+  assert.notEqual(withSecret, fingerprintQuery(dirty, "unit-test-secret-b"));
+  assert.equal(withSecret, fingerprintQuery(dirty, "unit-test-secret-a"));
+  // Must not look like the old 8-hex FNV fingerprint shape alone.
+  assert.notEqual(withSecret.length, "qfp_deadbeef_3".length);
+
+  process.env[KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV] = previous;
 });
 
 console.log("AI-02 knowledge engine tests completed.");

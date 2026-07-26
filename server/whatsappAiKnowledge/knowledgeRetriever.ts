@@ -11,16 +11,22 @@
  * Prices are ranked only when freshness is current and source is price-eligible.
  */
 
-import { fingerprintQuery, redactPii } from "./knowledgePrivacy.ts";
+import {
+  fingerprintQuery,
+  omitEmbeddedPriceAmounts,
+  redactPii,
+} from "./knowledgePrivacy.ts";
 import {
   classifyQueryCategory,
   detectUnsafeEngineering,
   evaluateFreshness,
+  evaluatePriceFreshness,
   isPriceAllowed,
 } from "./knowledgeSourcePolicy.ts";
 import type { InMemoryKnowledgeStore } from "./knowledgeStore.ts";
 import type {
   KnowledgeAnswerFact,
+  KnowledgeFreshnessStatus,
   KnowledgeQueryCategory,
   KnowledgeRecord,
   KnowledgeRetrievalRequest,
@@ -30,7 +36,10 @@ import type {
 export type RankedKnowledgeHit = {
   record: KnowledgeRecord;
   rankScore: number;
-  freshness: ReturnType<typeof evaluateFreshness>;
+  /** Record-level freshness (from record.publishedAt). */
+  freshness: KnowledgeFreshnessStatus;
+  /** Authoritative price freshness (from price.publishedAt when priced). */
+  priceFreshness: KnowledgeFreshnessStatus;
   priceAllowed: boolean;
 };
 
@@ -80,7 +89,8 @@ export function rankRecordsForQuery(
       record.maxAgeHours,
       asOfIso,
     );
-    const priceAllowed = isPriceAllowed(record, freshness);
+    const priceFreshness = evaluatePriceFreshness(record, asOfIso);
+    const priceAllowed = isPriceAllowed(record, priceFreshness);
     const categoryMatch = record.categories.includes(category);
     let keywordHits = 0;
     for (const kw of record.keywords) {
@@ -104,13 +114,14 @@ export function rankRecordsForQuery(
       rankScore -= 25;
     }
 
-    // Freshness tie-breaker baked into score
-    if (freshness === "current") rankScore += 5;
-    if (freshness === "stale") rankScore -= 5;
+    // Freshness tie-breaker: prefer current prices / records.
+    const rankingFreshness = record.containsPrice ? priceFreshness : freshness;
+    if (rankingFreshness === "current") rankScore += 5;
+    if (rankingFreshness === "stale") rankScore -= 5;
 
     if (rankScore <= 0) continue;
 
-    hits.push({ record, rankScore, freshness, priceAllowed });
+    hits.push({ record, rankScore, freshness, priceFreshness, priceAllowed });
   }
 
   hits.sort((a, b) => {
@@ -127,12 +138,12 @@ export function rankRecordsForQuery(
 }
 
 export function toAnswerFact(hit: RankedKnowledgeHit): KnowledgeAnswerFact {
-  const { record, rankScore, freshness, priceAllowed } = hit;
+  const { record, rankScore, freshness, priceFreshness, priceAllowed } = hit;
   const includePrice = Boolean(record.containsPrice && priceAllowed && record.price);
   const price = includePrice
     ? {
         ...record.price!,
-        freshness,
+        freshness: priceFreshness,
       }
     : null;
 
@@ -140,7 +151,9 @@ export function toAnswerFact(hit: RankedKnowledgeHit): KnowledgeAnswerFact {
   if (includePrice && price) {
     text = `${record.body} Approved current price: PKR ${price.amountPkr.toLocaleString("en-PK")} (${price.unitLabel}).`;
   } else if (record.containsPrice && !priceAllowed) {
-    text = `${record.body} Price omitted: approved current price unavailable (freshness=${freshness}).`;
+    // Strip any embedded numeric price copy so stale amounts cannot leak via body.
+    const safeBody = omitEmbeddedPriceAmounts(record.body);
+    text = `${safeBody} Price omitted: approved current price unavailable (freshness=${priceFreshness}).`;
   }
 
   return {
@@ -150,8 +163,10 @@ export function toAnswerFact(hit: RankedKnowledgeHit): KnowledgeAnswerFact {
     sourceId: record.id,
     sourceTitle: record.title,
     sourceType: record.sourceType,
-    freshness,
-    publishedAt: record.publishedAt,
+    freshness: record.containsPrice ? priceFreshness : freshness,
+    publishedAt: record.containsPrice
+      ? (record.price?.publishedAt ?? record.publishedAt)
+      : record.publishedAt,
     category: record.categories[0] ?? "unknown",
     containsPrice: includePrice,
     price,
@@ -239,7 +254,10 @@ export class KnowledgeRetriever {
     }
 
     const stalePriceRejected = top.some(
-      (h) => h.record.containsPrice && !h.priceAllowed && h.freshness === "stale",
+      (h) =>
+        h.record.containsPrice &&
+        !h.priceAllowed &&
+        h.priceFreshness === "stale",
     );
 
     return {

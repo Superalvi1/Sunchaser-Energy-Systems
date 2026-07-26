@@ -33,14 +33,20 @@ export {
   classifyQueryCategory,
   detectUnsafeEngineering,
   evaluateFreshness,
+  evaluatePriceFreshness,
   isPriceAllowed,
 } from "./knowledgeSourcePolicy.ts";
 
 export {
+  FINGERPRINT_UNCONFIGURED,
+  KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV,
   assertSafeKnowledgeBody,
   containsLikelyPii,
   fingerprintQuery,
+  hasEmbeddedPriceAmount,
+  omitEmbeddedPriceAmounts,
   redactPii,
+  resolveFingerprintSecret,
   sanitizeKnowledgeContent,
 } from "./knowledgePrivacy.ts";
 
@@ -51,7 +57,10 @@ export {
   KNOWLEDGE_FIXTURE_RECORDS,
 } from "./knowledgeFixtures.ts";
 
-export { InMemoryKnowledgeStore } from "./knowledgeStore.ts";
+export {
+  InMemoryKnowledgeStore,
+  validateKnowledgeRecord,
+} from "./knowledgeStore.ts";
 
 export {
   KnowledgeRetriever,
