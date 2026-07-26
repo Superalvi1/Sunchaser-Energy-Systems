@@ -32,6 +32,7 @@ import {
   validateProviderDraftOutput,
   containsForbiddenGuaranteeLanguage,
   containsIdentifierOrTokenLeakage,
+  normalizeFuturePromiseForms,
   MAX_DRAFT_CHARS,
   SAFE_ESCALATION_DRAFT,
   hashOpaqueId,
@@ -660,6 +661,97 @@ await test("R3: future outcome promise never appears in returned service result"
   assert.doesNotMatch(serialized, /will be installed tomorrow/i);
   assert.doesNotMatch(serialized, /Your system will be installed/i);
   assert.equal(serialized.includes(unsafe), false);
+});
+
+await test("R4: normalize straight/curly contractions and going-to/shall", () => {
+  assert.match(normalizeFuturePromiseForms("We'll install it"), /we will install/i);
+  assert.match(
+    normalizeFuturePromiseForms("We’ll secure approval"), // curly apostrophe
+    /we will secure/i
+  );
+  assert.match(
+    normalizeFuturePromiseForms("you'll recover your investment"),
+    /you will recover/i
+  );
+  assert.match(
+    normalizeFuturePromiseForms("Your system is going to be installed"),
+    /your system will be installed/i
+  );
+  assert.match(
+    normalizeFuturePromiseForms("We shall obtain approval"),
+    /we will obtain approval/i
+  );
+});
+
+await test("R4: reject contraction / going-to / shall protected-outcome bypasses", () => {
+  const bypassAttempts = [
+    "We'll install your system tomorrow.",
+    "We’ll secure your approval.", // curly ’
+    "Your system is going to be installed tomorrow.",
+    "We shall obtain net-metering approval.",
+    "You'll recover your investment in two years.",
+    "We’re going to install your system next week.",
+    "They'll complete the installation tomorrow.",
+  ];
+
+  for (const example of bypassAttempts) {
+    assert.equal(
+      containsForbiddenGuaranteeLanguage(example),
+      true,
+      `expected forbidden normalized future: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, false, `expected reject: ${example}`);
+    if (!result.ok) {
+      assert.equal(result.violation, "forbidden_guarantee");
+      assert.equal(result.action, "escalate");
+    }
+  }
+});
+
+await test("R4: safe operational contraction / going-to wording still passes", () => {
+  const safeControls = [
+    "We’ll arrange a survey.",
+    "We'll arrange a survey.",
+    "We are going to ask a specialist to review this.",
+    "Installation timing depends on site conditions.",
+    "We’re going to share the checklist for your review.",
+    "I shall ask a consultant to follow up.",
+  ];
+
+  for (const example of safeControls) {
+    assert.equal(
+      containsForbiddenGuaranteeLanguage(example),
+      false,
+      `expected safe control: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, true, `expected pass: ${example}`);
+    if (result.ok) {
+      // Safe drafts return the original text — not a normalized rewrite.
+      assert.equal(result.text, example);
+    }
+  }
+});
+
+await test("R4: contraction promise text never appears in returned result", async () => {
+  const unsafe = "We'll install your system tomorrow.";
+  const service = new QueryAgentService({
+    config: enabledConfig(),
+    gateway: new MockQueryAgentProvider({ phrasedAnswer: unsafe }),
+  });
+  const result = await service.generateDraft(
+    baseRequest({ messageText: "When can you install?" })
+  );
+  assert.equal(result.status, "draft");
+  if (result.status === "draft") {
+    assert.equal(result.escalate, true);
+    assert.equal(result.answer, SAFE_ESCALATION_DRAFT);
+  }
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(unsafe), false);
+  assert.doesNotMatch(serialized, /We'll install your system/i);
+  assert.doesNotMatch(serialized, /install your system tomorrow/i);
 });
 
 await test("unsafe provider output is denied — never a clean draft", async () => {

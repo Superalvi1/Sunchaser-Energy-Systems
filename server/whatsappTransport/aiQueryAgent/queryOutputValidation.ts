@@ -154,12 +154,41 @@ function hasMatch(patterns: readonly RegExp[], text: string): boolean {
 }
 
 /**
+ * Normalize common future-promise surface forms so detectors can rely on
+ * canonical "will" phrasing:
+ * - straight/curly contractions: we'll / you’ll / it'll → will
+ * - "is/are/am going to" → will
+ * - "shall" → will
+ *
+ * Detection-only — never used to rewrite provider text returned to callers.
+ */
+export function normalizeFuturePromiseForms(text: string): string {
+  return String(text ?? "")
+    // Curly / typographic apostrophes → straight
+    .replace(/[\u2019\u2018\u02BC\u0060]/g, "'")
+    // Pronoun+'ll contractions → "<pronoun> will"
+    .replace(/\b(we|you|it|they|she|he|i)'ll\b/gi, "$1 will")
+    // we're/you're/they're going to → "<pronoun> will"
+    .replace(/\b(we|you|they|i)'re\s+going\s+to\b/gi, "$1 will")
+    // Colloquial / progressive future → will
+    .replace(/\bgonna\b/gi, "going to")
+    .replace(/\b(?:is|are|am|was|were)\s+going\s+to\b/gi, "will")
+    .replace(/\bgoing\s+to\b/gi, "will")
+    // shall → will
+    .replace(/\bshall\b/gi, "will");
+}
+
+/**
  * True when certainty/promise/future language is combined with a protected
  * outcome (savings, ROI, payback, approval, net-metering, installation).
  */
 export function containsForbiddenGuaranteeLanguage(text: string): boolean {
-  const normalized = String(text ?? "");
-  if (!normalized.trim()) return false;
+  const raw = String(text ?? "");
+  if (!raw.trim()) return false;
+
+  // Run detectors on normalized future forms so we'll / going to / shall
+  // cannot bypass "will"-based bridges.
+  const normalized = normalizeFuturePromiseForms(raw);
 
   if (hasMatch(STANDALONE_OUTCOME_PROMISES, normalized)) return true;
   if (hasMatch(FUTURE_PROTECTED_OUTCOME_BRIDGES, normalized)) return true;
