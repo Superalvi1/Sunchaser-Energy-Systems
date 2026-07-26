@@ -10,6 +10,9 @@ import {
   isMappingPublishEligible,
   mappingRejectionReason,
 } from "./evidenceBlockers.ts";
+import { SHOPIFY_STOREFRONT_PRODUCTS_JSON } from "./liveCatalogueTypes.ts";
+import { PHASE1_LIVE_PUBLICATION_ALLOWED } from "./liveCatalogueService.ts";
+import { isScheduledPublicationAllowed } from "./liveSupplierConfig.ts";
 import type { SupplierRepository } from "./supplierRepository.ts";
 import { createSupabaseSupplierRepository } from "./supplierRepository.ts";
 import { SupplierError, type PriceCheckRunResultDto } from "./supplierTypes.ts";
@@ -55,6 +58,14 @@ export function createSupplierIngestionService(
 
   async function assertScheduledAllowed(trigger: IngestionTrigger): Promise<void> {
     if (trigger !== "scheduled") return;
+    // Phase 1: scheduled production publication remains disabled.
+    if (!isScheduledPublicationAllowed(env)) {
+      throw new SupplierError(
+        503,
+        "ADAPTER_NOT_AUTHORIZED",
+        "Scheduled supplier publication is disabled in Phase 1 (preview-only). Use Super Admin live preview.",
+      );
+    }
     const anyLive = kamal.isLiveEnabled(env) || alladin.isLiveEnabled(env);
     if (!anyLive) {
       throw new SupplierError(
@@ -295,6 +306,22 @@ export function createSupplierIngestionService(
     }
 
     if (!isMappingPublishEligible(mapping)) {
+      return;
+    }
+
+    // Phase 1: never auto-publish live Shopify observations.
+    const evidenceSource = obs.evidence?.source;
+    if (
+      evidenceSource === SHOPIFY_STOREFRONT_PRODUCTS_JSON &&
+      !PHASE1_LIVE_PUBLICATION_ALLOWED
+    ) {
+      await ctxCreateAlert(
+        ctx,
+        mapping,
+        "no_safe_price",
+        "info",
+        "Live observation captured for preview only; publication disabled in Phase 1.",
+      );
       return;
     }
 

@@ -15,18 +15,24 @@ import {
   MARKETPLACE_API_VERSION,
   MARKETPLACE_API_VERSION_HEADER,
 } from "../catalogue/catalogueTypes.ts";
+import { createLiveCatalogueService } from "./liveCatalogueService.ts";
 import { createSupplierIngestionService } from "./supplierIngestionService.ts";
 import {
   createSupabaseSupplierRepository,
   type SupplierRepository,
 } from "./supplierRepository.ts";
 import { SupplierError } from "./supplierTypes.ts";
-import { parseMappingBody, parsePriceCheckBody } from "./supplierValidation.ts";
+import {
+  parseLivePreviewBody,
+  parseMappingBody,
+  parsePriceCheckBody,
+} from "./supplierValidation.ts";
 
 export type SupplierRouterDeps = {
   env?: NodeJS.ProcessEnv;
   repository?: SupplierRepository;
   ingestion?: ReturnType<typeof createSupplierIngestionService>;
+  liveCatalogue?: ReturnType<typeof createLiveCatalogueService>;
 };
 
 function setApiVersion(res: Response): void {
@@ -79,7 +85,7 @@ function requireSuperAdmin(req: Request, res: Response): RequestActor | null {
       res,
       403,
       "FORBIDDEN",
-      "Supplier mapping changes require Super Admin.",
+      "Supplier live preview and mapping changes require Super Admin.",
     );
     return null;
   }
@@ -95,6 +101,7 @@ function adminScope(actor: RequestActor): string {
  * Routes (relative to /api/marketplace/admin):
  * - GET  /price-alerts
  * - POST /price-check/run
+ * - POST /suppliers/live-preview   (Super Admin, Phase 1 preview-only)
  * - POST /suppliers/mappings
  */
 export function createMarketplaceSupplierRouter(
@@ -106,6 +113,9 @@ export function createMarketplaceSupplierRouter(
   const ingestion =
     deps.ingestion ??
     createSupplierIngestionService({ repository, env });
+  const liveCatalogue =
+    deps.liveCatalogue ??
+    createLiveCatalogueService({ repository, env });
 
   router.use(createMarketplaceRouteLockdown({ env }));
 
@@ -146,6 +156,29 @@ export function createMarketplaceSupplierRouter(
         trigger,
         actorScope: adminScope(actor),
         changedBy: actor.id,
+      });
+      return sendOk(res, result, 202);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.post("/suppliers/live-preview", async (req, res) => {
+    const actor = requireSuperAdmin(req, res);
+    if (!actor) return;
+    try {
+      if (req.headers["x-actor-role"] || req.headers["x-actor-scope"]) {
+        return sendError(
+          res,
+          400,
+          "FORBIDDEN_FIELD",
+          "Client-supplied actor headers are not allowed.",
+        );
+      }
+      const { suppliers } = parseLivePreviewBody(req.body);
+      const result = await liveCatalogue.runLivePreview({
+        actorScope: superAdminActorScope(actor),
+        suppliers,
       });
       return sendOk(res, result, 202);
     } catch (err) {

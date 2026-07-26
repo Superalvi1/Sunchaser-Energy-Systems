@@ -1,6 +1,7 @@
 /**
  * Adapter-neutral supplier observation contract (WS4).
- * Live HTTP/scrape adapters remain disabled until an authorized method is confirmed.
+ * Phase 1 live access uses authorized Shopify storefront products.json
+ * (`shopify_storefront_products_json`) and remains preview/publication-gated.
  */
 
 export type SupplierCode = "kamal" | "alladin";

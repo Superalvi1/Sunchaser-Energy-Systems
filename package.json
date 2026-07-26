@@ -60,6 +60,7 @@
     "test:marketplace-ws2-atomicity": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/admin/adminAtomicity.pg.test.ts",
     "test:marketplace-ws3": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/pricing/pricingRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/pricing/pricingEngine.pg.test.ts",
     "test:marketplace-ws4": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/supplierRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/marketplaceWs4Supplier.pg.test.ts",
+    "test:marketplace-live-suppliers-phase1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/liveCataloguePhase1.test.ts",
     "test:marketplace-ws5": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/cartRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/marketplaceWs5Cart.test.ts",
     "test:marketplace-ws6a": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/receiptValidation.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/paymentRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/marketplaceWs6aPayments.test.ts",
     "test:marketplace-ws6b": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/codRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/marketplaceWs6bCod.test.ts"

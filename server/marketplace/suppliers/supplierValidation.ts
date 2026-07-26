@@ -45,6 +45,45 @@ export function parsePriceCheckBody(body: unknown): {
   return { trigger };
 }
 
+export function parseLivePreviewBody(body: unknown): {
+  suppliers?: Array<"kamal" | "alladin">;
+} {
+  rejectSpoofedActorFields(body);
+  if (
+    body == null ||
+    (typeof body === "object" &&
+      !Array.isArray(body) &&
+      Object.keys(body as object).length === 0)
+  ) {
+    return {};
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw new SupplierError(400, "VALIDATION_ERROR", "Invalid body.");
+  }
+  const suppliers = (body as { suppliers?: unknown }).suppliers;
+  if (suppliers === undefined || suppliers === null) return {};
+  if (!Array.isArray(suppliers) || suppliers.length === 0) {
+    throw new SupplierError(
+      400,
+      "VALIDATION_ERROR",
+      "suppliers must be a non-empty array of kamal|alladin.",
+    );
+  }
+  const out: Array<"kamal" | "alladin"> = [];
+  for (const s of suppliers) {
+    const code = String(s || "").toLowerCase();
+    if (code !== "kamal" && code !== "alladin") {
+      throw new SupplierError(
+        400,
+        "VALIDATION_ERROR",
+        "suppliers must be kamal or alladin.",
+      );
+    }
+    if (!out.includes(code)) out.push(code);
+  }
+  return { suppliers: out };
+}
+
 export function parseMappingBody(body: unknown): {
   supplierCode: "kamal" | "alladin";
   productId: string;
