@@ -338,6 +338,9 @@ import {
   type PersistedPublicLead,
 } from "./server/publicLeads/index.ts";
 import { createCatalogueRouter } from "./server/marketplace/catalogue/index.ts";
+import { createCartRouter } from "./server/marketplace/cart/index.ts";
+import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
+import { createCodRouter } from "./server/marketplace/cod/index.ts";
 import {
   createWhatsAppInboxRouter,
   createWhatsAppOutboundRouter,
@@ -675,6 +678,21 @@ app.use(
 
 // Marketplace public catalogue (requires MARKETPLACE_ENABLED=true; defaults off).
 app.use("/api/marketplace/catalogue", createCatalogueRouter());
+// Marketplace cart / delivery quote / checkout (handler-gated; guest header tokens).
+app.use(
+  "/api/marketplace",
+  createCartRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace bank-transfer payments (customer/guest + admin finance lockdown).
+app.use(
+  "/api/marketplace",
+  createPaymentRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
+// Marketplace cash-on-delivery lifecycle (customer/guest + ops/finance lockdown).
+app.use(
+  "/api/marketplace",
+  createCodRouter({ resolveLocalDb: resolveAuthLocalDb }),
+);
 
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
