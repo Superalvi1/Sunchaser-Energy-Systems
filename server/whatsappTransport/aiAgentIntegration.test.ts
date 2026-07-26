@@ -25,7 +25,7 @@ import {
   QUERY_AGENT_CAN_SEND_WHATSAPP,
   createQueryAgentGateway,
   createQueryAgentService,
-  createQueryKnowledgeAdapter,
+  createTestQueryKnowledgeAdapter,
   isLiveQueryProviderOptedIn,
   isTechnicalRateContext,
   mapIntentToKnowledgeCategory,
@@ -426,7 +426,7 @@ await test("AI-04-R2: informal conflicting/stale/missing price requests escalate
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -481,7 +481,7 @@ await test("AI-04-R2: informal conflicting/stale/missing price requests escalate
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway: staleRecorder.gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: engineFromRecords([
         {
           id: "pkg-6kw-stale-informal",
@@ -546,7 +546,7 @@ await test("AI-04-R2: one approved informal price request remains normal", async
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -615,7 +615,7 @@ await test("missing knowledge → human escalation", async () => {
     },
     async () => {
       const service = createQueryAgentService({
-        knowledge: createQueryKnowledgeAdapter({
+        knowledge: createTestQueryKnowledgeAdapter({
           engine: createFixtureKnowledgeEngine(),
           asOfIso: fixtureAsOfIso(),
         }),
@@ -705,7 +705,7 @@ await test("explicitly requested stale price => escalation", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine,
       asOfIso: fixtureAsOfIso(),
     }),
@@ -742,7 +742,7 @@ await test("conflicting current prices => escalation", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -777,7 +777,7 @@ await test("missing approved current price => escalation", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -813,7 +813,7 @@ await test("one current approved price => safe editable draft", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -848,7 +848,7 @@ await test("non-price package question => normal safe behavior", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -879,7 +879,7 @@ await test("non-price package question => normal safe behavior", async () => {
 });
 
 await test("stale/conflicting monetary amounts absent from provider input and output", async () => {
-  const knowledge = createQueryKnowledgeAdapter({
+  const knowledge = createTestQueryKnowledgeAdapter({
     engine: createFixtureKnowledgeEngine(),
     asOfIso: fixtureAsOfIso(),
   });
@@ -901,7 +901,7 @@ await test("stale/conflicting monetary amounts absent from provider input and ou
 });
 
 await test("tenant separation — company B cannot see company A knowledge", async () => {
-  const knowledge = createQueryKnowledgeAdapter({
+  const knowledge = createTestQueryKnowledgeAdapter({
     engine: createFixtureKnowledgeEngine(),
     asOfIso: fixtureAsOfIso(),
   });

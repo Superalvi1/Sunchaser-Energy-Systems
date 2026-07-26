@@ -354,9 +354,8 @@ export class QueryAgentService {
             knowledgeDraft,
             policy.sanitizedUserText
           );
-          // AI-05-R1: production port must not append unapproved legacy claims.
-          const productionSafe =
-            this.knowledge.portId === "knowledge-production";
+          // AI-05-R2: production-safe outline trusts sealed provenance only.
+          const productionSafe = this.knowledge.provenance === "production";
           policyAnswerOutline = enrichOutlineWithKnowledge(
             policy.policyAnswerOutline,
             phrasingDraft,

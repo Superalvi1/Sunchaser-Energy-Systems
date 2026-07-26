@@ -23,11 +23,21 @@ import {
   type KnowledgeQueryCategory,
 } from "../../whatsappAiKnowledge/index.ts";
 import {
-  isProductionRuntime,
+  isActualProductionRuntime,
   readKnowledgeSource,
   type KnowledgeSourceMode,
 } from "./queryAgentConfig.ts";
 import type { QueryIntent } from "./queryAgentTypes.ts";
+
+/**
+ * Immutable knowledge-port provenance (AI-05-R2).
+ * Production-safe outline selection trusts this field only — never portId.
+ */
+export type KnowledgePortProvenance =
+  | "production"
+  | "fixtures"
+  | "unavailable"
+  | "test";
 
 export type QueryKnowledgeRetrieveRequest = {
   /** AI-01 company / tenant scope. */
@@ -41,9 +51,12 @@ export type QueryKnowledgeRetrieveRequest = {
 
 /**
  * Port consumed by QueryAgentService. Implementations must enforce tenant scope.
+ * `provenance` is factory-assigned and immutable; callers cannot forge it.
  */
 export type QueryKnowledgePort = {
   readonly portId: string;
+  /** Factory-sealed trust mark — never derived from caller portId overrides. */
+  readonly provenance: KnowledgePortProvenance;
   retrieve(request: QueryKnowledgeRetrieveRequest): KnowledgeAnswerDraft;
 };
 
@@ -156,6 +169,7 @@ export function createUnavailableKnowledgePort(
 ): QueryKnowledgePort {
   return {
     portId: "knowledge-unavailable",
+    provenance: "unavailable",
     retrieve(request) {
       const category =
         mapIntentToKnowledgeCategory(request.intent) ?? "unknown";
@@ -873,22 +887,27 @@ export function knowledgeFactsToSafeSources(
   return out;
 }
 
+/** Public production factory options — no engine/portId injection surface. */
 export type CreateQueryKnowledgeAdapterOptions = {
   /**
-   * Explicit engine injection (non-production / test runtime only for fixtures).
-   * Production runtime rejects fixture engines and fixture source overrides.
+   * Optional env for WHATSAPP_AI_KNOWLEDGE_SOURCE in non-production runtimes.
+   * Ignored for production trust decisions: actual process.env.NODE_ENV wins.
    */
-  engine?: KnowledgeAnswerEngine;
-  /** Override as-of clock (tests). */
-  asOfIso?: string;
-  /** Env for WHATSAPP_AI_KNOWLEDGE_SOURCE / NODE_ENV (defaults to process.env). */
   env?: NodeJS.ProcessEnv;
   /**
-   * Explicit source mode override.
-   * In production runtime, "fixtures" is always rejected (even as an override).
+   * Explicit source mode. In actual production runtime, only "production"
+   * is accepted; fixtures/unavailable fail closed.
    */
   knowledgeSource?: KnowledgeSourceMode;
-  /** Override port id (tests). */
+};
+
+/** Test-only DI options — never trusted in actual production runtime. */
+export type CreateTestQueryKnowledgeAdapterOptions = {
+  engine?: KnowledgeAnswerEngine;
+  asOfIso?: string;
+  env?: NodeJS.ProcessEnv;
+  knowledgeSource?: KnowledgeSourceMode;
+  /** Decorative only in tests — cannot mint production provenance. */
   portId?: string;
 };
 
@@ -900,6 +919,17 @@ function portIdForSource(mode: KnowledgeSourceMode): string {
       return "knowledge-fixtures";
     default:
       return "knowledge-unavailable";
+  }
+}
+
+function provenanceForMode(mode: KnowledgeSourceMode): KnowledgePortProvenance {
+  switch (mode) {
+    case "production":
+      return "production";
+    case "fixtures":
+      return "fixtures";
+    default:
+      return "unavailable";
   }
 }
 
@@ -915,7 +945,10 @@ function defaultAsOfForSource(mode: KnowledgeSourceMode): string {
   return new Date().toISOString();
 }
 
-/** True when an injected engine carries fixture-tenant records. */
+/**
+ * @deprecated Trust boundary no longer inspects engines. Kept for test diagnostics.
+ * Prefer createTestQueryKnowledgeAdapter for fixture DI.
+ */
 export function isFixtureBackedEngine(engine: KnowledgeAnswerEngine): boolean {
   try {
     return engine.storeSnapshot(FIXTURE_TENANT_A).recordCount > 0;
@@ -924,14 +957,17 @@ export function isFixtureBackedEngine(engine: KnowledgeAnswerEngine): boolean {
   }
 }
 
-function buildEnginePort(
-  engine: KnowledgeAnswerEngine,
-  mode: KnowledgeSourceMode,
-  options: CreateQueryKnowledgeAdapterOptions
-): QueryKnowledgePort {
-  const fixedAsOf = options.asOfIso;
+function buildEnginePort(input: {
+  engine: KnowledgeAnswerEngine;
+  mode: KnowledgeSourceMode;
+  provenance: KnowledgePortProvenance;
+  portId: string;
+  asOfIso?: string;
+}): QueryKnowledgePort {
+  const { engine, mode, provenance, portId, asOfIso: fixedAsOf } = input;
   return {
-    portId: options.portId ?? portIdForSource(mode),
+    portId,
+    provenance,
     retrieve(request) {
       const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
       return engine.retrieveAnswerDraft({
@@ -949,59 +985,64 @@ function buildEnginePort(
   };
 }
 
-const PRODUCTION_FIXTURE_BLOCK_REASON =
-  "Fixture knowledge is blocked in production runtime — human review required.";
+const PRODUCTION_OVERRIDE_BLOCK_REASON =
+  "Production knowledge trust boundary rejected caller override — human review required.";
 
 /**
- * Build the AI-01←AI-02 knowledge port.
+ * Locked production path: ignore caller env/engine/portId, construct the
+ * approved production engine internally, seal provenance=production.
+ */
+function createLockedProductionKnowledgePort(
+  knowledgeSource?: KnowledgeSourceMode
+): QueryKnowledgePort {
+  if (knowledgeSource === "fixtures" || knowledgeSource === "unavailable") {
+    return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+  }
+  // Source must come from the real process env — caller env cannot downgrade.
+  const mode = knowledgeSource ?? readKnowledgeSource(process.env);
+  if (mode !== "production") {
+    return createUnavailableKnowledgePort(
+      mode === "fixtures"
+        ? PRODUCTION_OVERRIDE_BLOCK_REASON
+        : "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+    );
+  }
+  const engine = createProductionKnowledgeEngine();
+  return buildEnginePort({
+    engine,
+    mode: "production",
+    provenance: "production",
+    portId: "knowledge-production",
+  });
+}
+
+/**
+ * Public AI-01←AI-02 knowledge port factory.
  *
- * AI-05-R1: production runtime never loads fixtures — including via
- * knowledgeSource override or injected fixture engines. Fixtures are allowed
- * only in non-production/test runtimes with explicit selection or DI.
+ * AI-05-R2 trust rules:
+ * - Actual process.env.NODE_ENV=production cannot be downgraded by options.env
+ * - Production rejects every caller-injected engine
+ * - Production ignores portId overrides
+ * - Production constructs the approved engine internally and seals provenance
+ * - Engine/portId DI lives only on createTestQueryKnowledgeAdapter
  */
 export function createQueryKnowledgeAdapter(
   options: CreateQueryKnowledgeAdapterOptions = {}
 ): QueryKnowledgePort {
+  // Strip any illicit DI fields if a JS caller smuggles them in.
+  const smuggled = options as CreateTestQueryKnowledgeAdapterOptions;
+
+  // Immutable trust boundary: real process runtime, not caller-supplied env.
+  if (isActualProductionRuntime()) {
+    // Reject every caller-injected engine. Ignore decorative portId/asOfIso.
+    if (smuggled.engine) {
+      return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+    }
+    return createLockedProductionKnowledgePort(options.knowledgeSource);
+  }
+
+  // Public factory never accepts engine/portId/asOfIso — construct internally.
   const env = options.env ?? process.env;
-  const productionRuntime = isProductionRuntime(env);
-
-  // Production guard: reject fixtures from env, override, or injected engine.
-  if (productionRuntime) {
-    if (options.knowledgeSource === "fixtures") {
-      return createUnavailableKnowledgePort(PRODUCTION_FIXTURE_BLOCK_REASON);
-    }
-    if (options.engine) {
-      if (
-        options.knowledgeSource !== "production" ||
-        isFixtureBackedEngine(options.engine)
-      ) {
-        return createUnavailableKnowledgePort(PRODUCTION_FIXTURE_BLOCK_REASON);
-      }
-      return buildEnginePort(options.engine, "production", options);
-    }
-    const mode = options.knowledgeSource ?? readKnowledgeSource(env);
-    if (mode !== "production") {
-      return createUnavailableKnowledgePort(
-        mode === "fixtures"
-          ? PRODUCTION_FIXTURE_BLOCK_REASON
-          : "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
-      );
-    }
-    const engine = engineForSource("production");
-    if (!engine) {
-      return createUnavailableKnowledgePort(
-        "Knowledge engine unavailable — human review required."
-      );
-    }
-    return buildEnginePort(engine, "production", options);
-  }
-
-  // Non-production / test runtime: explicit DI allowed (including fixtures).
-  if (options.engine) {
-    const mode = options.knowledgeSource ?? "fixtures";
-    return buildEnginePort(options.engine, mode, options);
-  }
-
   const mode = options.knowledgeSource ?? readKnowledgeSource(env);
   if (mode === "unavailable") {
     return createUnavailableKnowledgePort(
@@ -1016,5 +1057,89 @@ export function createQueryKnowledgeAdapter(
     );
   }
 
-  return buildEnginePort(engine, mode, options);
+  return buildEnginePort({
+    engine,
+    mode,
+    provenance: provenanceForMode(mode),
+    portId: portIdForSource(mode),
+  });
+}
+
+/**
+ * Test-only knowledge port factory with engine/asOf/portId DI.
+ *
+ * - Fail-closed when the actual process runtime is production.
+ * - Injected engines never receive provenance "production".
+ * - Only an internally constructed production engine can seal production provenance.
+ */
+export function createTestQueryKnowledgeAdapter(
+  options: CreateTestQueryKnowledgeAdapterOptions = {}
+): QueryKnowledgePort {
+  if (isActualProductionRuntime()) {
+    // No test DI downgrade path in a real production process.
+    if (options.engine || options.knowledgeSource === "fixtures") {
+      return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+    }
+    return createLockedProductionKnowledgePort(options.knowledgeSource);
+  }
+
+  // Injected engines: never mint production provenance (portId cannot impersonate).
+  if (options.engine) {
+    const requested = options.knowledgeSource ?? "fixtures";
+    if (requested === "unavailable") {
+      return createUnavailableKnowledgePort(
+        "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+      );
+    }
+    const claimingProduction = requested === "production";
+    const mode: KnowledgeSourceMode = claimingProduction
+      ? "production"
+      : "fixtures";
+    const provenance: KnowledgePortProvenance = claimingProduction
+      ? "test"
+      : "fixtures";
+    const portId =
+      options.portId && options.portId !== "knowledge-production"
+        ? options.portId
+        : provenance === "fixtures"
+          ? "knowledge-fixtures"
+          : "knowledge-test";
+    return buildEnginePort({
+      engine: options.engine,
+      mode,
+      provenance,
+      portId,
+      asOfIso: options.asOfIso,
+    });
+  }
+
+  const env = options.env ?? process.env;
+  const mode = options.knowledgeSource ?? readKnowledgeSource(env);
+  if (mode === "unavailable") {
+    return createUnavailableKnowledgePort(
+      "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+    );
+  }
+
+  // Internal construction only — production provenance when mode is production.
+  const engine = engineForSource(mode);
+  if (!engine) {
+    return createUnavailableKnowledgePort(
+      "Knowledge engine unavailable — human review required."
+    );
+  }
+
+  return buildEnginePort({
+    engine,
+    mode,
+    provenance: provenanceForMode(mode),
+    // Ignore caller portId when sealing production provenance.
+    portId:
+      mode === "production"
+        ? "knowledge-production"
+        : options.portId && options.portId !== "knowledge-production"
+          ? options.portId
+          : portIdForSource(mode),
+    asOfIso: options.asOfIso,
+  });
 }

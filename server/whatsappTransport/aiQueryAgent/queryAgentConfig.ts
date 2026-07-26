@@ -91,11 +91,19 @@ export function readProvider(env: NodeJS.ProcessEnv): "mock" | "env" {
   return "mock";
 }
 
-/** True when NODE_ENV is production (runtime must never load fixtures). */
+/** True when the given env object reports NODE_ENV=production. */
 export function isProductionRuntime(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   return String(env.NODE_ENV || "").trim().toLowerCase() === "production";
+}
+
+/**
+ * True when the actual process runtime is production.
+ * Caller-supplied env objects must never override this trust boundary.
+ */
+export function isActualProductionRuntime(): boolean {
+  return isProductionRuntime(process.env);
 }
 
 /**
