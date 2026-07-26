@@ -55,7 +55,7 @@ function onDiscard(prev: State): State {
 }
 
 function onGenerateStart(prev: State): State {
-  if (prev.status === "loading") return prev; // duplicate click guard
+  if (prev.status === "loading") return prev; // duplicate click guard (state)
   return { ...prev, status: "loading", errorMessage: null };
 }
 
@@ -101,6 +101,41 @@ function onFailure(prev: State, err: unknown): State {
   };
 }
 
+/** Mirrors the immediate ref/mutex guard in useAiDraft.generate. */
+function createGenerateMutex() {
+  let locked = false;
+  let generation = 0;
+  let activeConversation: string | null = "c1";
+  const applied: Array<{ generation: number; conversationId: string }> = [];
+
+  return {
+    applied,
+    switchConversation(next: string | null) {
+      activeConversation = next;
+      locked = false;
+      generation += 1;
+    },
+    generate(conversationId: string) {
+      if (locked) return false;
+      locked = true;
+      const generationId = ++generation;
+      const requestConversationId = conversationId;
+      // Simulate async completion scheduling.
+      queueMicrotask(() => {
+        if (
+          generationId !== generation ||
+          activeConversation !== requestConversationId
+        ) {
+          return; // stale — conversation switched
+        }
+        applied.push({ generation: generationId, conversationId });
+        if (generationId === generation) locked = false;
+      });
+      return true;
+    },
+  };
+}
+
 await test("generated text remains editable", () => {
   let state = initial("c1");
   state = onGenerateStart(state);
@@ -108,7 +143,6 @@ await test("generated text remains editable", () => {
     status: "draft",
     companyId: "sunchaser",
     conversationId: "c1",
-    draftId: "d1",
     answer: "Original AI text",
     intent: "sales",
     confidence: 0.8,
@@ -131,7 +165,6 @@ await test("discard removes the draft", () => {
     status: "draft",
     companyId: "sunchaser",
     conversationId: "c1",
-    draftId: "d1",
     answer: "to discard",
     intent: "sales",
     confidence: 0.7,
@@ -155,7 +188,6 @@ await test("conversation switching does not leak another customer’s draft", ()
     status: "draft",
     companyId: "sunchaser",
     conversationId: "customer-a",
-    draftId: "d-a",
     answer: "Secret reply for customer A phone +15550001111",
     intent: "sales",
     confidence: 0.9,
@@ -182,6 +214,25 @@ await test("duplicate generation clicks are ignored while loading", () => {
   assert.equal(again.status, "loading");
 });
 
+await test("two synchronous generate calls admit only one via mutex", async () => {
+  const mutex = createGenerateMutex();
+  const first = mutex.generate("c1");
+  const second = mutex.generate("c1");
+  assert.equal(first, true);
+  assert.equal(second, false);
+  await Promise.resolve();
+  assert.equal(mutex.applied.length, 1);
+  assert.equal(mutex.applied[0]?.conversationId, "c1");
+});
+
+await test("conversation switch drops in-flight result", async () => {
+  const mutex = createGenerateMutex();
+  assert.equal(mutex.generate("customer-a"), true);
+  mutex.switchConversation("customer-b");
+  await Promise.resolve();
+  assert.equal(mutex.applied.length, 0);
+});
+
 await test("provider/feature failure is safe (no draft retained)", () => {
   let state = initial("c1");
   state = onGenerateStart(state);
@@ -206,7 +257,8 @@ await test("hook source clears on conversation change and blocks duplicate loads
     "utf8"
   );
   assert.ok(source.includes("switching conversations"));
-  assert.ok(source.includes('status === "loading"'));
+  assert.ok(source.includes("generateLockRef"));
+  assert.ok(source.includes("Immediate mutex"));
   assert.equal(/localStorage|sessionStorage/.test(source), false);
   // Must never call send API from the draft hook.
   assert.equal(/sendInboxMessage|messages\/send/.test(source), false);

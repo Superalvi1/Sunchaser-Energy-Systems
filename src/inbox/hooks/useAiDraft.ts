@@ -77,10 +77,13 @@ export function useAiDraft(conversationId: string | null) {
   const [state, setState] = useState<AiDraftUiState>(INITIAL);
   const inflightRef = useRef(0);
   const activeConversationRef = useRef<string | null>(conversationId);
+  /** Immediate mutex — blocks duplicate calls before React re-renders. */
+  const generateLockRef = useRef(false);
 
   // Clear draft when switching conversations — prevents cross-customer leak.
   useEffect(() => {
     activeConversationRef.current = conversationId;
+    generateLockRef.current = false;
     setState({
       ...INITIAL,
       conversationId,
@@ -100,11 +103,15 @@ export function useAiDraft(conversationId: string | null) {
   }, []);
 
   const generate = useCallback(
-    async (input: { messageText: string; messageId?: string }) => {
+    async (input: { messageId?: string; messageText?: string } = {}) => {
       if (!conversationId) return;
-      if (state.status === "loading") return; // prevent duplicate clicks
+      // Ref/mutex guard must run before any await or setState so two synchronous
+      // clicks cannot both enter generation before status becomes "loading".
+      if (generateLockRef.current) return;
+      generateLockRef.current = true;
 
       const generationId = ++inflightRef.current;
+      const requestConversationId = conversationId;
       setState((prev) => ({
         ...prev,
         status: "loading",
@@ -114,14 +121,14 @@ export function useAiDraft(conversationId: string | null) {
 
       try {
         const outcome = await generateInboxAiDraft({
-          conversationId,
-          messageText: input.messageText,
+          conversationId: requestConversationId,
           messageId: input.messageId,
+          messageText: input.messageText,
         });
 
         if (
           generationId !== inflightRef.current ||
-          activeConversationRef.current !== conversationId
+          activeConversationRef.current !== requestConversationId
         ) {
           return; // stale — conversation switched
         }
@@ -147,7 +154,7 @@ export function useAiDraft(conversationId: string | null) {
 
         setState({
           status: "ready",
-          conversationId,
+          conversationId: requestConversationId,
           draft: outcome,
           editableText: outcome.answer,
           errorMessage: null,
@@ -156,7 +163,7 @@ export function useAiDraft(conversationId: string | null) {
       } catch (err) {
         if (
           generationId !== inflightRef.current ||
-          activeConversationRef.current !== conversationId
+          activeConversationRef.current !== requestConversationId
         ) {
           return;
         }
@@ -167,9 +174,15 @@ export function useAiDraft(conversationId: string | null) {
           draft: null,
           editableText: "",
         }));
+      } finally {
+        // Only the current generation releases the lock; stale generations leave
+        // the lock to the newer owner / conversation-switch reset.
+        if (generationId === inflightRef.current) {
+          generateLockRef.current = false;
+        }
       }
     },
-    [conversationId, state.status]
+    [conversationId]
   );
 
   return {

@@ -178,12 +178,11 @@ export type WhatsAppConnectionTestResult = {
   };
 };
 
-/** AI-03 draft outcome from POST /conversations/:id/ai-draft */
+/** AI-03 draft outcome from POST /conversations/:id/ai-draft (customer-safe fields only). */
 export type InboxAiDraftResult = {
   status: "draft";
   companyId: string;
   conversationId: string;
-  draftId: string;
   answer: string;
   intent: string;
   confidence: number;

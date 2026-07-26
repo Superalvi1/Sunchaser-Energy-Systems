@@ -621,7 +621,11 @@ export function parseConversationIdParam(
 }
 
 export type AiDraftBody = {
-  messageText: string;
+  /**
+   * Optional browser hint only. Server never trusts this for generation —
+   * stored message text under the authorized conversation is authoritative.
+   */
+  messageText?: string;
   messageId?: string;
   locale?: string;
 };
@@ -634,9 +638,11 @@ export function parseAiDraftBody(body: unknown): DtoResult<AiDraftBody> {
   if (!rec) return { ok: false, message: "JSON body is required" };
   const unknown = rejectUnknownKeys(rec, AI_DRAFT_BODY_KEYS);
   if (unknown) return unknown;
-  const messageText = requireNonEmptyString(rec.messageText, "messageText");
+  // messageText is accepted for backward compatibility but ignored by the
+  // controller when resolving draft context (server-verified stored text wins).
+  const messageText = optionalNonEmptyString(rec.messageText, "messageText");
   if (isDtoErr(messageText)) return messageText;
-  if (messageText.value.length > 4096) {
+  if (messageText.value && messageText.value.length > 4096) {
     return {
       ok: false,
       message: "messageText must be at most 4096 characters",

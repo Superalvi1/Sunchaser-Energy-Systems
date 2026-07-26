@@ -114,11 +114,9 @@ export default function ConversationView({
   const assignedToMe = conversation.assignedUserId === currentUserId;
 
   const runGenerate = () => {
-    const messageText =
-      latestInbound?.textBody?.trim() ||
-      "Customer asked a question about our solar products.";
+    // Prefer messageId only — server loads authoritative stored text.
+    // When absent, server resolves the latest eligible inbound itself.
     void aiDraft.generate({
-      messageText,
       messageId: latestInbound?.id,
     });
   };

@@ -173,11 +173,17 @@ export async function sendInboxMessage(input: {
  */
 export async function generateInboxAiDraft(input: {
   conversationId: string;
-  messageText: string;
+  /** Preferred: server loads stored text for this message under the conversation. */
   messageId?: string;
+  /** Ignored by server for generation context; kept for backward-compatible clients. */
+  messageText?: string;
   locale?: string;
 }): Promise<InboxAiDraftOutcome> {
-  const { conversationId, ...body } = input;
+  const { conversationId, messageId, messageText, locale } = input;
+  const body: Record<string, string> = {};
+  if (messageId) body.messageId = messageId;
+  if (messageText) body.messageText = messageText;
+  if (locale) body.locale = locale;
   try {
     const { data } = await inboxRequest<InboxAiDraftOutcome>(
       `/api/inbox/conversations/${encodeURIComponent(conversationId)}/ai-draft`,

@@ -22,6 +22,7 @@ import {
   isDtoErr,
 } from "./whatsappInboxDtos.ts";
 import { inboxFail, inboxOk, sendInboxError } from "./whatsappInboxHttp.ts";
+import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 import type { WhatsAppInboxServices } from "./whatsappInboxServices.ts";
 import {
   disconnectWhatsApp,
@@ -42,9 +43,83 @@ import {
   isAiDraftEnabled,
   readAiDraftConfig,
   type AiDraftConfig,
+  type AiDraftOutcome,
   type InboxAiDraftAdapter,
 } from "./aiDraft/index.ts";
 import { canGenerateAiDraft } from "./whatsappInboxPermissions.ts";
+
+/** Customer-safe draft payload — strips internal audit metadata/IDs. */
+function toClientAiDraftPayload(outcome: AiDraftOutcome): Record<string, unknown> {
+  if (outcome.status === "denied") {
+    return {
+      status: outcome.status,
+      companyId: outcome.companyId,
+      conversationId: outcome.conversationId,
+      reasonCode: outcome.reasonCode,
+      message: outcome.message,
+      requiresHumanReview: true,
+      autoSendBlocked: true,
+      escalate: true,
+      escalationReasons: outcome.escalationReasons,
+    };
+  }
+  return {
+    status: outcome.status,
+    companyId: outcome.companyId,
+    conversationId: outcome.conversationId,
+    answer: outcome.answer,
+    intent: outcome.intent,
+    confidence: outcome.confidence,
+    warnings: outcome.warnings,
+    requiresHumanReview: true,
+    autoSendBlocked: true,
+    escalate: outcome.escalate,
+    escalationReasons: outcome.escalationReasons,
+    safeSources: outcome.safeSources,
+  };
+}
+
+function aiDraftOutcomeCode(err: unknown): string {
+  if (err && typeof err === "object" && "code" in err) {
+    const code = String((err as { code: unknown }).code || "").trim();
+    if (code && /^[a-z][a-z0-9_]{0,63}$/i.test(code)) return code.toLowerCase();
+  }
+  if (err instanceof Error) {
+    if (/timed?\s*out/i.test(err.message)) return "timeout";
+  }
+  return "provider_unavailable";
+}
+
+/**
+ * Enforce a hard deadline even when the adapter ignores AbortSignal.
+ * Cooperative adapters still receive the abort for early cancellation.
+ */
+function raceAiDraftTimeout<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  abort: AbortController
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      abort.abort();
+      reject(
+        Object.assign(new Error("AI draft generation timed out"), {
+          code: "timeout",
+        })
+      );
+    }, timeoutMs);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
 
 export type InboxSendPort = (input: {
   conversationId: string;
@@ -597,6 +672,7 @@ export function createInboxControllers(
      * Automatic replies remain impossible in this phase.
      */
     async generateAiDraft(req: Request, res: Response) {
+      let conversationIdForLog: string | undefined;
       try {
         const actor = actorOf(req);
         if (!canGenerateAiDraft(actor)) {
@@ -622,6 +698,7 @@ export function createInboxControllers(
         if (isDtoErr(conversationId)) {
           return validationFail(res, conversationId);
         }
+        conversationIdForLog = conversationId.value;
         const parsed = parseAiDraftBody(req.body);
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
@@ -635,58 +712,95 @@ export function createInboxControllers(
         );
         const conversation = detail.conversation;
 
+        // Server-verified context: load stored inbound text under this conversation.
+        // Browser messageText is intentionally ignored.
+        const source = await services.messages.resolveAiDraftSourceMessage(
+          conversation.id,
+          actor,
+          parsed.value.messageId
+        );
+
         const controller = new AbortController();
         const timeoutMs = aiDraftConfig.timeoutMs;
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-        try {
-          // Invariant: this handler must never call deps.sendPort / outbound.
-          const outcome = await aiDraftAdapter.generateDraft({
+        // Invariant: this handler must never call deps.sendPort / outbound.
+        const outcome = await raceAiDraftTimeout(
+          aiDraftAdapter.generateDraft({
             companyId: conversation.companyId || DEFAULT_COMPANY_ID,
             conversationId: conversation.id,
             conversationCompanyId: conversation.companyId || DEFAULT_COMPANY_ID,
             actorUserId: actor.id,
-            messageText: parsed.value.messageText,
-            messageId: parsed.value.messageId,
+            messageText: source.messageText,
+            messageId: source.messageId,
             locale: parsed.value.locale,
             abortSignal: controller.signal,
-          });
+          }),
+          timeoutMs,
+          controller
+        );
 
-          if (outcome.status === "denied") {
-            const status =
-              outcome.reasonCode === "feature_disabled"
-                ? 503
-                : outcome.reasonCode === "tenant_mismatch"
-                  ? 403
-                  : outcome.reasonCode === "timeout" ||
-                      outcome.reasonCode === "provider_unavailable" ||
-                      outcome.reasonCode === "config_unavailable"
-                    ? 503
-                    : outcome.reasonCode === "rate_limited"
-                      ? 429
-                      : 422;
-            return inboxFail(res, status, outcome.reasonCode, outcome.message, {
-              status: outcome.status,
+        if (outcome.status === "denied") {
+          const status =
+            outcome.reasonCode === "feature_disabled"
+              ? 503
+              : outcome.reasonCode === "tenant_mismatch"
+                ? 403
+                : outcome.reasonCode === "timeout" ||
+                    outcome.reasonCode === "provider_unavailable" ||
+                    outcome.reasonCode === "config_unavailable"
+                  ? 503
+                  : outcome.reasonCode === "rate_limited"
+                    ? 429
+                    : 422;
+          const safe = toClientAiDraftPayload(outcome);
+          return inboxFail(res, status, outcome.reasonCode, outcome.message, {
+            status: safe.status,
+            requiresHumanReview: true,
+            autoSendBlocked: true,
+            escalate: safe.escalate,
+            escalationReasons: safe.escalationReasons,
+          });
+        }
+
+        return inboxOk(res, toClientAiDraftPayload(outcome));
+      } catch (err) {
+        // Re-surface structured inbox errors (e.g. not_found for bad messageId).
+        if (err instanceof InboxServiceError) {
+          return sendInboxError(res, err);
+        }
+
+        // Provider/adapter failures: generic client message; sanitized log only.
+        const outcomeCode = aiDraftOutcomeCode(err);
+        if (outcomeCode === "timeout") {
+          console.error("[ai-draft] generation failed", {
+            outcomeCode: "timeout",
+            conversationId: conversationIdForLog ?? null,
+          });
+          return inboxFail(
+            res,
+            503,
+            "timeout",
+            "AI draft generation timed out",
+            {
               requiresHumanReview: true,
               autoSendBlocked: true,
-              escalate: outcome.escalate,
-              escalationReasons: outcome.escalationReasons,
-              audit: outcome.audit,
-            });
-          }
-
-          return inboxOk(res, outcome);
-        } finally {
-          clearTimeout(timer);
+            }
+          );
         }
-      } catch (err) {
-        // Provider/adapter failures are safe — never escalate to send.
-        const message =
-          err instanceof Error ? err.message : "AI draft generation failed";
-        return inboxFail(res, 503, "provider_unavailable", message, {
-          requiresHumanReview: true,
-          autoSendBlocked: true,
+        console.error("[ai-draft] generation failed", {
+          outcomeCode,
+          conversationId: conversationIdForLog ?? null,
         });
+        return inboxFail(
+          res,
+          503,
+          "provider_unavailable",
+          "AI draft generation failed",
+          {
+            requiresHumanReview: true,
+            autoSendBlocked: true,
+          }
+        );
       }
     },
   };
