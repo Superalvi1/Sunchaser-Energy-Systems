@@ -38,11 +38,11 @@ const CURRENCY_SUFFIX_PRICE_RE =
   /\b[\d,]+(?:\.\d+)?(?:\s*\/-)?\s*(?:PKR|Rs\.?)\b/gi;
 
 /**
- * Price-word prefixes with separators (price-900000, rate: 900000).
- * Catches "package price 900,000/-" via the `price` token.
+ * Price/marketing-word prefixes with separators
+ * (price-900000, sale-900000, rate: 900000).
  */
 const PRICE_WORD_AMOUNT_RE =
-  /\b(?:price|cost|rate|amount|fee|tariff)(?:\s*[:=\-\/]+\s*|\s+)-?[\d,]+(?:\.\d+)?(?:\s*\/-)?/gi;
+  /\b(?:price|cost|rate|amount|fee|tariff|sale|offer|only|plan|deal|promo|discount|quote)(?:\s*[:=\-\/]+\s*|\s+)-?[\d,]+(?:\.\d+)?(?:\s*\/-)?/gi;
 
 /** Comma-grouped amounts such as 900,000 or 900,000/-. */
 const COMMA_GROUPED_AMOUNT_RE =
@@ -58,17 +58,23 @@ const BARE_LARGE_AMOUNT_RE = /\b\d{5,}(?:\.\d+)?\b/g;
 const TECHNICAL_UNIT_SUFFIX_RE =
   /^(?:\s*)(?:k?w(?:p)?|v(?:olts?)?|a(?:mps?)?|ah|hz|mm|cm|m\b|kg|cells?|modules?|panels?|pcs|pieces|cycles?)\b/i;
 
-/** Tokens that look like currency/price labels, not model identifiers. */
-const MONETARY_TOKEN_PREFIX_RE =
-  /^(?:PKR|Rs\.?|price|cost|rate|amount|fee|tariff)(?:$|[\s:=\-\/.])/i;
+/** Segment that is itself a technical rating (e.g. 645W, 12V, 100Ah). */
+const TECHNICAL_UNIT_SEGMENT_RE =
+  /^\d+(?:\.\d+)?(?:k?w(?:p)?|v|a|ah|hz|mm|cm|kg)$/i;
 
 /**
- * Validated hyphenated model token:
- * starts with a letter, contains a digit, and has 2+ alphanumeric segments
- * (e.g. LONGi-LR5-72HPH-550M). Arbitrary letter/hyphen adjacency is not enough.
+ * Marketing/price labels that must never count as model evidence
+ * (SALE-900000, OFFER-900000, ONLY-900000, PLAN-900000, …).
  */
-const VALIDATED_MODEL_TOKEN_RE =
-  /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)+$/;
+const MONETARY_OR_MARKETING_TOKEN_PREFIX_RE =
+  /^(?:PKR|Rs\.?|price|cost|rate|amount|fee|tariff|sale|offer|only|plan|deal|promo|discount|quote|package|from|now|just)(?:$|[\s:=\-\/.])/i;
+
+/**
+ * Hyphenated token shape only — not sufficient proof of a model id.
+ * Real evidence is checked separately in {@link isValidatedModelToken}.
+ */
+const HYPHENATED_TOKEN_SHAPE_RE =
+  /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)+$/;
 
 function expandToModelTokenBounds(
   text: string,
@@ -90,9 +96,32 @@ function expandToModelTokenBounds(
   };
 }
 
+function segmentHasMixedLetterDigit(segment: string): boolean {
+  return /[A-Za-z]/.test(segment) && /\d/.test(segment);
+}
+
+/**
+ * Require real technical evidence before treating a hyphen token as a model id.
+ * Letter + hyphen + digits alone is not enough (rejects SALE-900000 / ABC-900000).
+ *
+ * Accepted evidence:
+ * - a mixed letter-digit segment (LR5, 72HPH, 550M, X10)
+ * - an explicit technical-unit segment (645W)
+ */
 function isValidatedModelToken(token: string): boolean {
-  if (!token || MONETARY_TOKEN_PREFIX_RE.test(token)) return false;
-  return VALIDATED_MODEL_TOKEN_RE.test(token);
+  if (!token || MONETARY_OR_MARKETING_TOKEN_PREFIX_RE.test(token)) return false;
+  if (!HYPHENATED_TOKEN_SHAPE_RE.test(token)) return false;
+
+  const segments = token.split("-").filter(Boolean);
+  if (segments.length < 2) return false;
+
+  const hasMixedLetterDigitSegment = segments.some(segmentHasMixedLetterDigit);
+  const hasTechnicalUnitSegment = segments.some((segment) =>
+    TECHNICAL_UNIT_SEGMENT_RE.test(segment),
+  );
+
+  // Fail closed: marketing-like WORD-900000 forms have neither signal.
+  return hasMixedLetterDigitSegment || hasTechnicalUnitSegment;
 }
 
 /**

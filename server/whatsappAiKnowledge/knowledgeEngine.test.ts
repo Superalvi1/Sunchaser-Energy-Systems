@@ -966,4 +966,91 @@ await test("AI-02-R3: wattage, validated model tokens, and structured price payl
   assert.equal(fact!.price!.amountPkr, 900000);
 });
 
+await test("AI-02-R4: marketing WORD-amount tokens fail closed without real model evidence", () => {
+  const store = new InMemoryKnowledgeStore([]);
+  const rejectionBodies = [
+    "SALE-900000",
+    "OFFER-900000",
+    "ONLY-900000",
+    "PLAN-900000",
+    "ABC-900000",
+  ];
+
+  for (const [index, body] of rejectionBodies.entries()) {
+    assert.equal(
+      hasEmbeddedPriceAmount(body),
+      true,
+      `scanner must reject marketing/price-like token: ${body}`,
+    );
+    assert.throws(
+      () =>
+        store.ingest(
+          baseNonPriceRecord({
+            id: `r4-reject-${index}`,
+            sourceType: "solar_package",
+            categories: ["solar_packages"],
+            containsPrice: false,
+            price: null,
+            body: `Copy embeds ${body} outside the price payload.`,
+          }),
+        ),
+      /must not embed numeric price amounts/i,
+      body,
+    );
+
+    const fact = toAnswerFact({
+      record: baseNonPriceRecord({
+        id: `r4-leak-${index}`,
+        sourceType: "solar_package",
+        categories: ["solar_packages"],
+        containsPrice: false,
+        price: null,
+        body: `Copy embeds ${body} outside the price payload.`,
+      }),
+      rankScore: 40,
+      freshness: "current",
+      priceFreshness: "current",
+      priceAllowed: false,
+    });
+    assert.match(fact.text, /\[price-omitted\]/, body);
+    assert.doesNotMatch(fact.text, /900000/, body);
+  }
+});
+
+await test("AI-02-R4: real model evidence and wattage controls still pass", () => {
+  const store = new InMemoryKnowledgeStore([]);
+  const allowed = [
+    "LONGi-LR5-72HPH-550M",
+    "X10-645W",
+    "550W",
+    "5kW",
+  ];
+
+  for (const sample of allowed) {
+    assert.equal(
+      hasEmbeddedPriceAmount(sample),
+      false,
+      `scanner must allow technical sample: ${sample}`,
+    );
+  }
+
+  assert.doesNotThrow(() =>
+    store.ingest(
+      baseNonPriceRecord({
+        id: "r4-tech-ok",
+        body: "Modules: LONGi-LR5-72HPH-550M and X10-645W; ratings 550W for 5kW packages.",
+        containsPrice: false,
+        price: null,
+      }),
+    ),
+  );
+
+  const stored = store.getById(FIXTURE_TENANT_A, "r4-tech-ok");
+  assert.ok(stored);
+  assert.match(stored!.body, /LONGi-LR5-72HPH-550M/);
+  assert.match(stored!.body, /X10-645W/);
+  assert.match(stored!.body, /550W/);
+  assert.match(stored!.body, /5kW/);
+});
+
 console.log("AI-02 knowledge engine tests completed.");

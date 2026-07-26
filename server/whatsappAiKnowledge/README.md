@@ -21,7 +21,7 @@ messages, write CRM, call production Supabase, or browse the web.
 - `price.sourceId` / `price.sourceTitle` must match the record id/title at ingest.
 - `evaluateFreshness` / `evaluatePriceFreshness` → `current` \| `stale` \| `unknown` \| `missing_timestamp`.
 - **Prices may only be quoted** when source type is price-eligible (`pricing_approved` / `solar_package`) **and** price freshness is `current`.
-- Stale prices are omitted with an explicit warning; embedded numeric price copy in title/body is prohibited at ingest **regardless of `containsPrice`** (no false non-price bypass) and stripped when omitting stale prices. Currency markers honor common separators (`PKR-900000`, `Rs.900000`, `price-900000`, suffix `PKR`). Technical wattage and validated hyphenated model tokens remain allowed — arbitrary letter/hyphen adjacency is not enough to escape.
+- Stale prices are omitted with an explicit warning; embedded numeric price copy in title/body is prohibited at ingest **regardless of `containsPrice`** (no false non-price bypass) and stripped when omitting stale prices. Currency markers honor common separators (`PKR-900000`, `Rs.900000`, `price-900000`, suffix `PKR`). Technical wattage and model tokens remain allowed only with real evidence (mixed letter-digit segments like `LR5`/`550M`, or unit segments like `645W`) — `SALE-900000` / `ABC-900000` fail closed.
 - Ingest validates source types, categories, IDs, timestamps, priority, maxAgeHours, and price payloads at runtime (not TypeScript-only). Stored records are deep-copied and deeply frozen.
 
 ### Retrieval / ranking
