@@ -139,8 +139,11 @@ export class WhatsAppWebHistorySyncService {
       };
     }
     if (!this.source.isConnected()) {
+      const jobId = `wa_sync_${randomUUID()}`;
+      this.activeOperationId = jobId;
       this.snapshot = {
         ...emptySyncJobSnapshot(),
+        jobId,
         status: "failed",
         outcome: "failed",
         errorSummary: "WhatsApp Web is not connected",
@@ -150,7 +153,7 @@ export class WhatsAppWebHistorySyncService {
         historyAvailability: "history_not_available",
         historySourceReady: false,
       };
-      void this.persistDurable();
+      void this.persistDurable(jobId);
       return {
         accepted: false,
         joinedExisting: false,
