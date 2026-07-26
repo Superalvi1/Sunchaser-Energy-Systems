@@ -587,6 +587,64 @@
           "position": 3
         }
       ]
+    },
+    {
+      "id": 999000101,
+      "title": "APC UPS Pure Sine Wave Inverter 1500VA",
+      "handle": "apc-ups-pure-sine-wave-inverter-1500va",
+      "vendor": "APC",
+      "product_type": "UPS",
+      "tags": [
+        "UPS",
+        "Inverter"
+      ],
+      "body_html": "<p>Home UPS inverter \u2014 not a solar hybrid.</p>",
+      "variants": [
+        {
+          "id": 9990001011,
+          "title": "Default Title",
+          "price": "45000.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "UPS-1500"
+        }
+      ],
+      "images": [
+        {
+          "id": 1,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/ups.png",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 999000102,
+      "title": "Car Power Inverter 12V to 220V 2000W",
+      "handle": "car-power-inverter-12v-220v-2000w",
+      "vendor": "Generic",
+      "product_type": "Power Inverter",
+      "tags": [
+        "Car",
+        "Inverter"
+      ],
+      "body_html": "<p>Automotive power inverter.</p>",
+      "variants": [
+        {
+          "id": 9990001021,
+          "title": "Default Title",
+          "price": "8500.00",
+          "compare_at_price": null,
+          "available": true,
+          "sku": "CAR-INV"
+        }
+      ],
+      "images": [
+        {
+          "id": 1,
+          "src": "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/car.png",
+          "position": 1
+        }
+      ]
     }
   ]
 }

@@ -169,8 +169,18 @@ export function createLiveCatalogueService(
 
         try {
           const catalogue = await fetchShopifyCatalogue(supplier, deps.catalogueDeps);
+          // Totals use unique products only (post supplier-scoped dedupe).
           status.discovered = catalogue.products.length;
           productsDiscovered += catalogue.products.length;
+          if (catalogue.duplicateCount > 0) {
+            const msg = `${supplier}: removed ${catalogue.duplicateCount} duplicate page rows (raw=${catalogue.rawProductRows}, unique=${catalogue.products.length}).`;
+            status.warnings.push(msg);
+            warnings.push(msg);
+          }
+          for (const w of catalogue.dedupeWarnings) {
+            status.warnings.push(w);
+            if (warnings.length < 40) warnings.push(w);
+          }
 
           const { accepted, excluded } = normalizeCatalogueProducts(
             supplier,

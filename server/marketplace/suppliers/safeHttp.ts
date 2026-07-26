@@ -1,9 +1,19 @@
 /**
  * SSRF-safe HTTPS client for authorized supplier catalogue hosts.
+ *
+ * DNS TOCTOU mitigation: resolve + validate addresses once, then bind the
+ * outbound TCP connection to those validated IPs via a pinned dns.lookup
+ * override on node:https. TLS SNI / certificate hostname verification still
+ * use the original allowlisted hostname (rejectUnauthorized remains default).
+ *
  * No cookies, credentials, or embedded secrets.
  */
+import dnsCallback from "node:dns";
 import dns from "node:dns/promises";
+import https from "node:https";
 import net from "node:net";
+import { URL } from "node:url";
+import type { IncomingMessage } from "node:http";
 import { SUPPLIER_MONITOR_USER_AGENT } from "./liveCatalogueTypes.ts";
 
 export const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
@@ -11,6 +21,9 @@ export const DEFAULT_RESPONSE_TIMEOUT_MS = 20_000;
 export const DEFAULT_MAX_RESPONSE_BYTES = 2_500_000;
 export const DEFAULT_MAX_RETRIES = 2;
 export const DEFAULT_MAX_REDIRECTS = 3;
+
+/** Always true — TLS certificate verification is never disabled. */
+export const TLS_REJECT_UNAUTHORIZED = true as const;
 
 /** Exact hostname allowlist for catalogue fetches. */
 export const SUPPLIER_CATALOGUE_HOSTS = new Set([
@@ -36,12 +49,36 @@ export type SafeFetchOptions = {
   maxRedirects?: number;
   allowedHosts?: ReadonlySet<string>;
   userAgent?: string;
-  /** Injected fetch for tests. */
-  fetchImpl?: typeof fetch;
   /** Injected DNS lookup for tests. */
   lookupFn?: (hostname: string) => Promise<string[]>;
   sleepFn?: (ms: number) => Promise<void>;
+  /**
+   * Injected pinned request for tests. Receives the already-validated
+   * destination addresses — production path uses node:https with pinned lookup.
+   */
+  pinnedRequestFn?: PinnedHttpsRequestFn;
 };
+
+export type PinnedHttpsRequestArgs = {
+  url: URL;
+  /** Public IPs from the single validated DNS lookup for this hop. */
+  validatedAddresses: string[];
+  headers: Record<string, string>;
+  timeoutMs: number;
+  maxBytes: number;
+  /** Optional observer for tests (which IP the pinned lookup returned). */
+  onPinnedLookup?: (ip: string, family: number) => void;
+};
+
+export type PinnedHttpsRequestResult = {
+  status: number;
+  headers: globalThis.Headers;
+  body: string;
+};
+
+export type PinnedHttpsRequestFn = (
+  args: PinnedHttpsRequestArgs,
+) => Promise<PinnedHttpsRequestResult>;
 
 export class SafeHttpError extends Error {
   constructor(
@@ -85,6 +122,7 @@ function isPrivateOrLocalIp(ip: string): boolean {
   if (normalized === "::1") return true;
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true; // ULA
   if (normalized.startsWith("fe80")) return true; // link-local
+  if (normalized.startsWith("ff")) return true; // multicast
   if (normalized.startsWith("::ffff:")) {
     const v4 = normalized.slice("::ffff:".length);
     return isPrivateOrLocalIp(v4);
@@ -155,10 +193,64 @@ export function normalizeSupplierImageUrl(
   return absolute;
 }
 
-async function resolveAndAssertPublic(
+/**
+ * Prefer IPv4 then IPv6 from a validated address list (deterministic).
+ * Never invents addresses outside the provided validated set.
+ */
+export function selectPinnedAddress(validatedAddresses: string[]): {
+  address: string;
+  family: number;
+} {
+  const unique = [...new Set(validatedAddresses.filter((a) => net.isIP(a)))];
+  const v4 = unique.find((a) => net.isIP(a) === 4);
+  const v6 = unique.find((a) => net.isIP(a) === 6);
+  const pick = v4 || v6;
+  if (!pick) {
+    throw new SafeHttpError("DNS_ERROR", "No usable validated addresses.");
+  }
+  return { address: pick, family: net.isIP(pick) };
+}
+
+/**
+ * Build a dns.lookup-compatible function that only returns validated IPs.
+ * Supports both legacy `(err, address, family)` and `{ all: true }` forms
+ * used by Node's net/https connect path.
+ */
+export function createPinnedLookup(
+  validatedAddresses: string[],
+  onPinnedLookup?: (ip: string, family: number) => void,
+): (
+  hostname: string,
+  options: unknown,
+  callback?: (...args: any[]) => void,
+) => void {
+  const pinned = selectPinnedAddress(validatedAddresses);
+  return (hostname, options, callback) => {
+    let opts: { all?: boolean } = {};
+    let cb = callback as ((...args: any[]) => void) | undefined;
+    if (typeof options === "function") {
+      cb = options as (...args: any[]) => void;
+      opts = {};
+    } else if (options && typeof options === "object") {
+      opts = options as { all?: boolean };
+    }
+    if (typeof cb !== "function") {
+      throw new SafeHttpError("DNS_ERROR", "Pinned lookup missing callback.");
+    }
+    onPinnedLookup?.(pinned.address, pinned.family);
+    // Intentionally ignore hostname — connection is bound to validated IPs only.
+    if (opts.all) {
+      cb(null, [{ address: pinned.address, family: pinned.family }]);
+      return;
+    }
+    cb(null, pinned.address, pinned.family);
+  };
+}
+
+async function lookupPublicAddresses(
   hostname: string,
   lookupFn: (hostname: string) => Promise<string[]>,
-): Promise<void> {
+): Promise<string[]> {
   let addresses: string[];
   try {
     addresses = await lookupFn(hostname);
@@ -171,6 +263,7 @@ async function resolveAndAssertPublic(
   if (!addresses.length) {
     throw new SafeHttpError("DNS_ERROR", `No addresses for ${hostname}`);
   }
+  // DNS-rebinding safety: reject the hop if ANY answer is prohibited.
   for (const ip of addresses) {
     if (isPrivateOrLocalIp(ip)) {
       throw new SafeHttpError(
@@ -179,6 +272,7 @@ async function resolveAndAssertPublic(
       );
     }
   }
+  return [...new Set(addresses)];
 }
 
 async function defaultLookup(hostname: string): Promise<string[]> {
@@ -190,45 +284,120 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function readBodyWithLimit(
-  res: Response,
+function headersFromIncoming(msg: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(msg.headers)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) headers.append(key, v);
+    } else {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+}
+
+async function readIncomingBody(
+  res: IncomingMessage,
   maxBytes: number,
 ): Promise<string> {
-  if (!res.body) {
-    const text = await res.text();
-    if (Buffer.byteLength(text, "utf8") > maxBytes) {
-      throw new SafeHttpError("RESPONSE_TOO_LARGE", "Response exceeds max size.");
-    }
-    return text;
-  }
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    res.on("data", (chunk: Buffer | string) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.byteLength;
       if (total > maxBytes) {
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore */
-        }
-        throw new SafeHttpError(
-          "RESPONSE_TOO_LARGE",
-          "Response exceeds max size.",
+        res.destroy();
+        reject(
+          new SafeHttpError("RESPONSE_TOO_LARGE", "Response exceeds max size."),
         );
+        return;
       }
-      chunks.push(value);
-    }
-  }
-  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8");
+      chunks.push(buf);
+    });
+    res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    res.on("error", (err) =>
+      reject(
+        new SafeHttpError(
+          "NETWORK_ERROR",
+          err instanceof Error ? err.message : "Response stream error",
+        ),
+      ),
+    );
+  });
 }
 
 /**
- * Fetch an allowlisted HTTPS URL with DNS/private-IP checks, redirect validation,
- * timeouts, size limits, and bounded retries.
+ * Production pinned HTTPS request: connects only to validatedAddresses while
+ * presenting the original hostname for Host + TLS SNI / certificate checks.
+ */
+export async function pinnedHttpsRequest(
+  args: PinnedHttpsRequestArgs,
+): Promise<PinnedHttpsRequestResult> {
+  const { url, validatedAddresses, headers, timeoutMs, maxBytes, onPinnedLookup } =
+    args;
+  if (url.protocol !== "https:") {
+    throw new SafeHttpError("PROTOCOL_DENIED", "Only HTTPS is allowed.");
+  }
+
+  const pinnedLookup = createPinnedLookup(validatedAddresses, onPinnedLookup);
+
+  return await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        protocol: "https:",
+        hostname: url.hostname,
+        servername: url.hostname, // TLS SNI — keeps cert hostname verification
+        port: url.port ? Number(url.port) : 443,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        headers: {
+          ...headers,
+          Host: url.host,
+        },
+        // Never disable TLS verification / never set NODE_TLS_REJECT_UNAUTHORIZED=0.
+        rejectUnauthorized: TLS_REJECT_UNAUTHORIZED,
+        lookup: pinnedLookup as unknown as typeof dnsCallback.lookup,
+      },
+      (res) => {
+        readIncomingBody(res, maxBytes)
+          .then((body) =>
+            resolve({
+              status: res.statusCode || 0,
+              headers: headersFromIncoming(res),
+              body,
+            }),
+          )
+          .catch(reject);
+      },
+    );
+
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error("aborted"));
+    });
+    req.on("error", (err) => {
+      if (
+        err instanceof Error &&
+        (err.name === "AbortError" || /aborted|timeout/i.test(err.message))
+      ) {
+        reject(new SafeHttpError("TIMEOUT", "Request timed out."));
+        return;
+      }
+      reject(
+        new SafeHttpError(
+          "NETWORK_ERROR",
+          err instanceof Error ? err.message : "Network error",
+        ),
+      );
+    });
+    req.end();
+  });
+}
+
+/**
+ * Fetch an allowlisted HTTPS URL with DNS validation + connection pinning,
+ * redirect re-validation, timeouts, size limits, and bounded retries.
  */
 export async function safeFetchText(
   rawUrl: string,
@@ -239,10 +408,10 @@ export async function safeFetchText(
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  const fetchImpl = opts.fetchImpl ?? fetch;
   const lookupFn = opts.lookupFn ?? defaultLookup;
   const sleepFn = opts.sleepFn ?? defaultSleep;
   const userAgent = opts.userAgent ?? SUPPLIER_MONITOR_USER_AGENT;
+  const requestFn = opts.pinnedRequestFn ?? pinnedHttpsRequest;
 
   let attempt = 0;
   let lastError: unknown;
@@ -250,48 +419,35 @@ export async function safeFetchText(
   while (attempt <= maxRetries) {
     try {
       let current = assertSafeAbsoluteUrl(rawUrl, allowedHosts);
-      await resolveAndAssertPublic(current.hostname, lookupFn);
 
       for (let redirect = 0; redirect <= maxRedirects; redirect++) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-        let res: Response;
-        try {
-          res = await fetchImpl(current.toString(), {
-            method: "GET",
-            redirect: "manual",
-            signal: controller.signal,
-            headers: {
-              Accept: "application/json, text/plain, */*",
-              "User-Agent": userAgent,
-            },
-          });
-        } catch (err) {
-          if (
-            err instanceof Error &&
-            (err.name === "AbortError" || /aborted|timeout/i.test(err.message))
-          ) {
-            throw new SafeHttpError("TIMEOUT", "Request timed out.");
-          }
-          throw new SafeHttpError(
-            "NETWORK_ERROR",
-            err instanceof Error ? err.message : "Network error",
-          );
-        } finally {
-          clearTimeout(timer);
-        }
+        // Fresh DNS validation + pin for every hop (including redirects).
+        const validatedAddresses = await lookupPublicAddresses(
+          current.hostname,
+          lookupFn,
+        );
+
+        const res = await requestFn({
+          url: current,
+          validatedAddresses,
+          headers: {
+            Accept: "application/json, text/plain, */*",
+            "User-Agent": userAgent,
+          },
+          timeoutMs,
+          maxBytes,
+        });
 
         if ([301, 302, 303, 307, 308].includes(res.status)) {
           const loc = res.headers.get("location");
           if (!loc) {
             throw new SafeHttpError("REDIRECT_DENIED", "Redirect missing Location.");
           }
-          const next = new URL(loc, current);
-          current = assertSafeAbsoluteUrl(next.toString(), allowedHosts);
-          await resolveAndAssertPublic(current.hostname, lookupFn);
           if (redirect === maxRedirects) {
             throw new SafeHttpError("REDIRECT_DENIED", "Too many redirects.");
           }
+          const next = new URL(loc, current);
+          current = assertSafeAbsoluteUrl(next.toString(), allowedHosts);
           continue;
         }
 
@@ -308,11 +464,10 @@ export async function safeFetchText(
           );
         }
 
-        const body = await readBodyWithLimit(res, maxBytes);
         return {
           url: current.toString(),
           status: res.status,
-          body,
+          body: res.body,
           contentType: res.headers.get("content-type"),
         };
       }
