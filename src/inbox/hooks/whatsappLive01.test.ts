@@ -48,14 +48,14 @@ await test("live refresh interval is ~2 seconds", () => {
 await test("empty Inbox keeps checking via authoritative first-page refresh", () => {
   assert.ok(conversationsHook.includes("if (!since)"));
   assert.ok(conversationsHook.includes("applyAuthoritativeFirstPage"));
-  assert.ok(conversationsHook.includes("Empty Inbox / missing watermark"));
+  assert.ok(conversationsHook.includes("resetToAuthoritativeFirstPage"));
   assert.equal(conversationsHook.includes("DELTA_MS = 8_000"), false);
   assert.ok(conversationsHook.includes("INBOX_LIVE_REFRESH_MS"));
 });
 
 await test("delta failure falls back to authoritative first-page refresh", () => {
-  assert.ok(conversationsHook.includes("Delta failure"));
   assert.ok(conversationsHook.includes("applyAuthoritativeFirstPage"));
+  assert.ok(conversationsHook.includes("resetToAuthoritativeFirstPage"));
 });
 
 await test("selected thread refreshes latest messages on interval", () => {

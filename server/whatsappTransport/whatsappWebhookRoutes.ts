@@ -22,6 +22,7 @@ import {
   safeAudit,
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
+import { invalidateUnreadIndexCacheForCompany } from "./whatsappInboxUnreadIndexCache.ts";
 import { sha256Hex, verifyWhatsAppSignature } from "./whatsappSignature.ts";
 import { recordWebhookPing } from "./whatsappConnectionService.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
@@ -128,6 +129,7 @@ async function persistNormalizedEvents(
           conversation.id,
           event.occurredAt
         );
+        invalidateUnreadIndexCacheForCompany(conversation.companyId);
 
         // Dual-write to messaging_* when enabled — failure is not silent.
         if (messagingBridge) {

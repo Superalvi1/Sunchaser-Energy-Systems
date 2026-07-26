@@ -165,7 +165,6 @@ export class ConversationService {
 
     let page: ConversationListPage;
     if (resolved.unreadState) {
-      // Delta under unread/read: scan delta candidates then apply watermark filter.
       const delta = await this.conversations.listDelta(
         {
           companyId: this.companyId,
@@ -260,6 +259,11 @@ export class ConversationService {
     return { conversation, crmLink, freeForm, selfHealed };
   }
 
+  /**
+   * Unread/Read keyset page using the short-lived unread index.
+   * Warm path: conversation activity scan + map lookups only (no message history).
+   * Cold path: index build batches watermark/message work once, then serves pages.
+   */
   private async listWithUnreadFilter(
     actor: RequestActor,
     filters: ConversationListFilters & { unreadState?: "unread" | "read" },
@@ -268,9 +272,11 @@ export class ConversationService {
     const limit = Math.max(1, Math.min(100, opts?.limit ?? 40));
     const cursor = opts?.cursor ?? null;
     const wantUnread = filters.unreadState === "unread";
+    const index = await this.readState.getOrBuildUnreadIndex(actor);
 
-    const candidates: WhatsAppConversationInbox[] = [];
+    const matches: WhatsAppConversationInbox[] = [];
     let scanCursor: KeysetCursor | null = null;
+
     for (;;) {
       const page = await this.conversations.listByActivity(
         {
@@ -283,37 +289,42 @@ export class ConversationService {
         },
         { cursor: scanCursor, limit: 100 }
       );
-      candidates.push(...page.rows);
+
+      const missingIds = page.rows
+        .map((r) => r.id)
+        .filter((id) => !index.byId.has(id));
+      if (missingIds.length > 0) {
+        const fetched = await this.readState.batchUnreadState(missingIds, actor);
+        for (const [id, state] of fetched) {
+          index.byId.set(id, state);
+          if (state.isUnread) index.totalUnreadCount += 1;
+        }
+      }
+
+      for (const row of page.rows) {
+        const state = index.byId.get(row.id) ?? {
+          isUnread: false,
+          unreadCount: 0,
+        };
+        if (state.isUnread !== wantUnread) continue;
+        if (cursor && !isBeforeKeyset(activityAt(row), row.id, cursor)) {
+          continue;
+        }
+        matches.push(row);
+        if (matches.length > limit) break;
+      }
+
+      if (matches.length > limit) break;
       if (!page.nextCursor) break;
       scanCursor = page.nextCursor;
     }
 
-    const unreadMap = await this.readState.batchUnreadState(
-      candidates.map((r) => r.id),
-      actor
-    );
-
-    const filtered = candidates
-      .filter(
-        (row) => (unreadMap.get(row.id)?.isUnread ?? false) === wantUnread
-      )
-      .sort((a, b) => {
-        const aa = activityAt(a);
-        const ba = activityAt(b);
-        if (aa !== ba) return ba < aa ? -1 : 1;
-        return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
-      })
-      .filter((row) => {
-        if (!cursor) return true;
-        return isBeforeKeyset(activityAt(row), row.id, cursor);
-      });
-
-    const pageRows = filtered.slice(0, limit);
+    const pageRows = matches.slice(0, limit);
     const last = pageRows[pageRows.length - 1];
     return {
       rows: pageRows,
       nextCursor:
-        filtered.length > limit && last
+        matches.length > limit && last
           ? { at: activityAt(last), id: last.id }
           : null,
     };

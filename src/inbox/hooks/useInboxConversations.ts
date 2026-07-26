@@ -16,26 +16,40 @@ import {
   isDocumentVisible,
   subscribeImmediateRefresh,
 } from "./inboxLiveRefresh";
+import {
+  applyAllDeltaToConversationPages,
+  applyFilteredMembershipUpdate,
+  INBOX_CONVERSATION_PAGE_SIZE,
+  resetToAuthoritativeFirstPage,
+  type InfiniteConversationsData,
+} from "./inboxConversationCache";
 
-const PAGE_SIZE = 40;
+export {
+  resetToAuthoritativeFirstPage,
+  applyAllDeltaToConversationPages,
+  applyFilteredMembershipUpdate,
+  INBOX_CONVERSATION_PAGE_SIZE,
+} from "./inboxConversationCache";
+
+const PAGE_SIZE = INBOX_CONVERSATION_PAGE_SIZE;
+
+/**
+ * Filtered tabs: full authoritative first-page reset on this cadence.
+ * Between resets, ~2s membership deltas keep the UI live without rescanning
+ * the full unread index on every tick.
+ */
+export const FILTERED_AUTHORITATIVE_REFRESH_MS = 10_000;
 
 function activityAt(row: InboxConversation): string {
   return row.lastMessageAt ?? row.updatedAt ?? row.createdAt;
 }
 
-function mergeByActivity(
-  existing: InboxConversation[],
-  incoming: InboxConversation[]
-): InboxConversation[] {
-  const map = new Map<string, InboxConversation>();
-  for (const row of existing) map.set(row.id, row);
-  for (const row of incoming) map.set(row.id, row);
-  return [...map.values()].sort((a, b) => {
-    const atA = activityAt(a);
-    const atB = activityAt(b);
-    if (atA !== atB) return atB < atA ? -1 : 1;
-    return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
-  });
+function topWatermark(
+  rows: InboxConversation[]
+): { at: string; id: string } | null {
+  const first = rows[0];
+  if (!first) return null;
+  return { at: activityAt(first), id: first.id };
 }
 
 function matchesSearch(row: InboxConversation, search: string): boolean {
@@ -55,14 +69,6 @@ function matchesSearch(row: InboxConversation, search: string): boolean {
   );
 }
 
-function topWatermark(
-  rows: InboxConversation[]
-): { at: string; id: string } | null {
-  const first = rows[0];
-  if (!first) return null;
-  return { at: activityAt(first), id: first.id };
-}
-
 function normalizeServerFilters(filters: InboxListFilters): InboxListFilters {
   return {
     status: filters.status,
@@ -77,6 +83,28 @@ function normalizeServerFilters(filters: InboxListFilters): InboxListFilters {
 function usesServerExclusiveFilter(filters: InboxListFilters): boolean {
   const quick = filters.quickFilter ?? (filters.unreadOnly ? "unread" : "all");
   return quick !== "all";
+}
+
+function rowMatchesQuickFilter(
+  row: InboxConversation,
+  quick: InboxListFilters["quickFilter"]
+): boolean {
+  switch (quick) {
+    case "unread":
+      return row.isUnread === true || (row.unreadCount ?? 0) > 0;
+    case "read":
+      return row.isUnread !== true && (row.unreadCount ?? 0) === 0;
+    case "open":
+      return row.status === "open" || row.status === "pending";
+    case "resolved":
+      return row.status === "resolved";
+    case "archived":
+      return row.status === "archived";
+    case "all":
+    case undefined:
+    default:
+      return true;
+  }
 }
 
 export function useInboxConversations(filters: InboxListFilters) {
@@ -122,14 +150,14 @@ export function useInboxConversations(filters: InboxListFilters) {
     );
   }, [query.data, rawConversations]);
 
-  // Per-filter watermark — switching tabs resets via effect below.
   const watermarkRef = useRef<{ at: string; id: string } | null>(null);
   const inFlightRef = useRef(false);
+  const lastAuthoritativeAtRef = useRef(0);
   const filterKey = JSON.stringify(serverFilters);
 
   useEffect(() => {
-    // Switching quick filters must not reuse an incompatible cursor/cache watermark.
     watermarkRef.current = topWatermark(rawConversations);
+    lastAuthoritativeAtRef.current = 0;
   }, [filterKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on filter identity
 
   useEffect(() => {
@@ -149,24 +177,63 @@ export function useInboxConversations(filters: InboxListFilters) {
       cursor: null,
       limit: PAGE_SIZE,
     });
+    // R2: never keep incompatible older pages after an authoritative refresh.
     queryClient.setQueryData<InfiniteData<InboxListPage>>(
       inboxKeys.list(serverFilters),
-      (old) => {
-        const rest = old?.pages.slice(1) ?? [];
-        const nextFirst: InboxListPage = {
-          conversations: page.conversations,
-          nextCursor: page.nextCursor,
-          totalUnreadCount: page.totalUnreadCount,
-        };
-        // Preserve older pages when present; first page is authoritative.
-        return {
-          pageParams: old?.pageParams ?? [null],
-          pages: [nextFirst, ...rest],
-        };
-      }
+      () => resetToAuthoritativeFirstPage(page)
     );
     const top = topWatermark(page.conversations);
     if (top) watermarkRef.current = top;
+    lastAuthoritativeAtRef.current = Date.now();
+  };
+
+  const applyFilteredDeltaMembership = async () => {
+    const since = watermarkRef.current;
+    if (!since) {
+      await applyAuthoritativeFirstPage();
+      return;
+    }
+    // Unfiltered delta (same assignee/failure filters) + client membership check
+    // so rows leaving Unread/Read are removed even when they no longer match.
+    const baseFilters: InboxListFilters = {
+      status: serverFilters.status,
+      assignedTo: serverFilters.assignedTo,
+      hasFailedMessage: serverFilters.hasFailedMessage,
+      quickFilter: "all",
+    };
+    try {
+      const page = await fetchInboxDelta(baseFilters, {
+        sinceAt: since.at,
+        sinceId: since.id,
+      });
+      const quick = serverFilters.quickFilter ?? "all";
+      const upsert: InboxConversation[] = [];
+      const removeIds: string[] = [];
+      for (const row of page.conversations) {
+        if (rowMatchesQuickFilter(row, quick)) upsert.push(row);
+        else removeIds.push(row.id);
+      }
+      queryClient.setQueryData(
+        inboxKeys.list(serverFilters),
+        (old: InfiniteConversationsData | undefined) =>
+          applyFilteredMembershipUpdate(old, {
+            upsert,
+            removeIds,
+            pageSize: PAGE_SIZE,
+            totalUnreadCount: page.totalUnreadCount,
+          })
+      );
+      const top = topWatermark(
+        (
+          queryClient.getQueryData<InfiniteConversationsData>(
+            inboxKeys.list(serverFilters)
+          )?.pages[0]?.conversations ?? []
+        )
+      );
+      if (top) watermarkRef.current = top;
+    } catch {
+      await applyAuthoritativeFirstPage();
+    }
   };
 
   const refreshLive = async () => {
@@ -175,15 +242,19 @@ export function useInboxConversations(filters: InboxListFilters) {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      // Filtered tabs: authoritative first-page refresh so membership stays correct
-      // across the full Inbox (not just the previously loaded page).
       if (usesServerExclusiveFilter(serverFilters)) {
-        await applyAuthoritativeFirstPage();
+        const dueAuthoritative =
+          Date.now() - lastAuthoritativeAtRef.current >=
+          FILTERED_AUTHORITATIVE_REFRESH_MS;
+        if (dueAuthoritative || !watermarkRef.current) {
+          await applyAuthoritativeFirstPage();
+        } else {
+          await applyFilteredDeltaMembership();
+        }
         return;
       }
 
       const since = watermarkRef.current;
-      // Empty Inbox / missing watermark: keep checking via authoritative list.
       if (!since) {
         await applyAuthoritativeFirstPage();
         return;
@@ -199,34 +270,23 @@ export function useInboxConversations(filters: InboxListFilters) {
         ) {
           return;
         }
-        queryClient.setQueryData<InfiniteData<InboxListPage>>(
+        queryClient.setQueryData(
           inboxKeys.list(serverFilters),
-          (old) => {
-            if (!old) return old;
-            const [first, ...rest] = old.pages;
-            if (!first) return old;
-            const merged = mergeByActivity(
-              first.conversations,
-              page.conversations
+          (old: InfiniteConversationsData | undefined) => {
+            const next = applyAllDeltaToConversationPages(
+              page.conversations,
+              old,
+              {
+                pageSize: PAGE_SIZE,
+                totalUnreadCount: page.totalUnreadCount,
+              }
             );
-            const top = topWatermark(merged);
+            const top = topWatermark(next.pages[0]?.conversations ?? []);
             if (top) watermarkRef.current = top;
-            return {
-              ...old,
-              pages: [
-                {
-                  ...first,
-                  conversations: merged,
-                  totalUnreadCount:
-                    page.totalUnreadCount ?? first.totalUnreadCount,
-                },
-                ...rest,
-              ],
-            };
+            return next;
           }
         );
       } catch {
-        // Delta failure → safe authoritative first-page refresh.
         await applyAuthoritativeFirstPage();
       }
     } finally {
@@ -240,13 +300,14 @@ export function useInboxConversations(filters: InboxListFilters) {
       void refreshLive();
     }, INBOX_LIVE_REFRESH_MS);
     return () => window.clearInterval(timer);
-    // refreshLive closes over latest refs/filters; rebind when list identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional interval rebind
   }, [query.isSuccess, queryClient, filterKey]);
 
   useEffect(() => {
     if (!query.isSuccess) return;
     return subscribeImmediateRefresh(() => {
+      // Focus/visibility: force authoritative filtered reset.
+      lastAuthoritativeAtRef.current = 0;
       void refreshLive();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,7 +317,7 @@ export function useInboxConversations(filters: InboxListFilters) {
     ...query,
     conversations,
     totalUnreadCount,
-    /** Test/helper: expose configured live interval. */
     liveRefreshMs: INBOX_LIVE_REFRESH_MS,
+    filteredAuthoritativeRefreshMs: FILTERED_AUTHORITATIVE_REFRESH_MS,
   };
 }

@@ -314,6 +314,20 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
     return (data ?? []).length > 0;
   }
 
+  /**
+   * Batch unread for many conversations.
+   *
+   * Query count (typical):
+   * - 1 watermarks select for the id set
+   * - 1 inbound messages select bounded to rows that can affect unread
+   *   (created_at >= oldest watermark in the batch; conversations with no
+   *   watermark contribute only their inbound rows in that same select)
+   *
+   * Does NOT call countUnreadInbound per conversation (no N+1).
+   * Does NOT transfer the entire company message history — only inbound rows
+   * for the requested conversation ids that are at/after the oldest watermark
+   * threshold (or all inbound for those ids when every watermark is null).
+   */
   async batchUnreadState(
     conversationIds: string[],
     userId: string,
@@ -342,18 +356,63 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
       watermarksByConversationId.set(mapped.conversationId, mapped);
     }
 
-    const { data: messageRows, error: msgError } = await this.client()
-      .from("whatsapp_messages")
-      .select("id, conversation_id, direction, created_at, company_id, is_backfill")
-      .eq("company_id", company)
-      .in("conversation_id", conversationIds)
-      .eq("direction", "inbound")
-      .eq("is_backfill", false);
-    if (msgError) handleSupabaseError(msgError);
+    const withWmIds: string[] = [];
+    const noWmIds: string[] = [];
+    let oldestWatermarkAt: string | null = null;
+    for (const id of conversationIds) {
+      const wm = watermarksByConversationId.get(id) ?? null;
+      if (
+        wm?.lastReadInboundMessageCreatedAt &&
+        wm.lastReadInboundMessageId
+      ) {
+        withWmIds.push(id);
+        if (
+          oldestWatermarkAt == null ||
+          wm.lastReadInboundMessageCreatedAt < oldestWatermarkAt
+        ) {
+          oldestWatermarkAt = wm.lastReadInboundMessageCreatedAt;
+        }
+      } else {
+        noWmIds.push(id);
+      }
+    }
 
-    const inbound = ((messageRows ?? []) as Record<string, unknown>[]).map(
-      mapMessageRef
-    );
+    const inboundRows: Record<string, unknown>[] = [];
+
+    // No-watermark conversations: need their inbound rows for exact unread.
+    // Scoped to this id subset only — never the whole company history.
+    if (noWmIds.length > 0) {
+      const { data, error } = await this.client()
+        .from("whatsapp_messages")
+        .select(
+          "id, conversation_id, direction, created_at, company_id, is_backfill"
+        )
+        .eq("company_id", company)
+        .in("conversation_id", noWmIds)
+        .eq("direction", "inbound")
+        .eq("is_backfill", false);
+      if (error) handleSupabaseError(error);
+      inboundRows.push(...((data ?? []) as Record<string, unknown>[]));
+    }
+
+    // Watermarked conversations: only transfer rows at/after the oldest
+    // watermark in this chunk (older rows cannot be unread for any of them).
+    if (withWmIds.length > 0 && oldestWatermarkAt) {
+      const { data, error } = await this.client()
+        .from("whatsapp_messages")
+        .select(
+          "id, conversation_id, direction, created_at, company_id, is_backfill"
+        )
+        .eq("company_id", company)
+        .in("conversation_id", withWmIds)
+        .eq("direction", "inbound")
+        .eq("is_backfill", false)
+        .gte("created_at", oldestWatermarkAt);
+      if (error) handleSupabaseError(error);
+      inboundRows.push(...((data ?? []) as Record<string, unknown>[]));
+    }
+
+    const inbound = inboundRows.map(mapMessageRef);
     return batchUnreadStateFromSnapshots(
       conversationIds,
       watermarksByConversationId,

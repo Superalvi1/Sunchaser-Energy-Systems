@@ -12,6 +12,7 @@ import {
   type WhatsAppMessagingBridge,
 } from "../whatsappTransport/whatsappMessagingBridge.ts";
 import { AUDIT_EVENTS } from "../whatsappTransport/whatsappConstants.ts";
+import { invalidateUnreadIndexCacheForCompany } from "../whatsappTransport/whatsappInboxUnreadIndexCache.ts";
 import {
   createDefaultWhatsAppRepository,
   safeAudit,
@@ -182,6 +183,10 @@ export async function persistWhatsAppWebInbound(
     if (inserted.created) {
       noteInboundStored();
       logWhatsAppWeb("info", "inbound_stored");
+      // Bound unread-index cache must observe new inbound without waiting for TTL.
+      invalidateUnreadIndexCacheForCompany(
+        conversation.companyId ?? "sunchaser"
+      );
     } else {
       noteInboundStored();
       logWhatsAppWeb("info", "inbound_duplicate");

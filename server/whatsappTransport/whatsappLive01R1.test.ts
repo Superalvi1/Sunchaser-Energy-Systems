@@ -17,6 +17,7 @@ import type { InboxMessageRef } from "./whatsappInboxRepoSupport.ts";
 import { createWhatsAppInboxServices } from "./whatsappInboxServices.ts";
 import { encodeInboxCursor } from "./whatsappInboxDtos.ts";
 import { createInboxControllers } from "./whatsappInboxControllers.ts";
+import { __resetUnreadIndexCacheForTests } from "./whatsappInboxUnreadIndexCache.ts";
 import type { Request, Response } from "express";
 
 function seedConversation(
@@ -65,6 +66,7 @@ function seedMessage(
 let failed = 0;
 
 async function test(name: string, fn: () => void | Promise<void>) {
+  __resetUnreadIndexCacheForTests();
   try {
     await fn();
     console.log(`PASS: ${name}`);
