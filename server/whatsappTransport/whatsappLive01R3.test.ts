@@ -23,8 +23,8 @@ import {
   __resetUnreadIndexCacheForTests,
   UNREAD_INDEX_CACHE_TTL_MS,
   getUnreadIndexCache,
+  dirtyUnreadIndexForConversation,
   invalidateUnreadIndexCache,
-  invalidateUnreadIndexCacheForCompany,
   setUnreadIndexCache,
   writeBackUnreadIndexEntries,
 } from "./whatsappInboxUnreadIndexCache.ts";
@@ -446,14 +446,14 @@ await test("inbound invalidation refreshes the affected unread result", async ()
     lastMessageAt: later,
     updatedAt: later,
   });
-  // Company-wide inbound invalidation (Meta/Web paths call this).
-  invalidateUnreadIndexCacheForCompany("sunchaser");
+  // Targeted inbound dirty (Meta/Web paths call this).
+  dirtyUnreadIndexForConversation("sunchaser", "c1");
   page = await services.conversations.listByActivity(a, {
     quickFilter: "unread",
   });
   assert.ok(page.rows.some((r) => r.id === "c1"));
-  assert.ok(inboundSrc.includes("invalidateUnreadIndexCacheForCompany"));
-  assert.ok(webhookSrc.includes("invalidateUnreadIndexCacheForCompany"));
+  assert.ok(inboundSrc.includes("dirtyUnreadIndexForConversation"));
+  assert.ok(webhookSrc.includes("dirtyUnreadIndexForConversation"));
 });
 
 await test("mark-read invalidation refreshes only the actor’s index", async () => {

@@ -9,9 +9,13 @@ import { canViewInbox } from "./whatsappInboxPermissions.ts";
 import type { WhatsAppInboxReadWatermarkRepository } from "./whatsappInboxReadWatermarkRepository.ts";
 import type { ConversationUnreadState } from "./whatsappInboxUnreadBatch.ts";
 import {
+  beginUnreadIndexBuild,
+  endUnreadIndexBuild,
   getUnreadIndexCache,
   invalidateUnreadIndexCache,
-  setUnreadIndexCache,
+  MAX_UNREAD_INDEX_BUILD_ATTEMPTS,
+  takeDirtyConversationIds,
+  tryPublishUnreadIndex,
   writeBackUnreadIndexEntries,
   type UnreadIndexSnapshot,
 } from "./whatsappInboxUnreadIndexCache.ts";
@@ -177,8 +181,6 @@ export class ReadStateService {
         else missing.push(id);
       }
       if (missing.length === 0) return out;
-      // Partial miss: fetch missing only, then write back into the actor index
-      // so the same IDs are not re-queried on subsequent warm polls.
       const fetched = await this.watermarks.batchUnreadState(
         missing,
         actor.id,
@@ -196,10 +198,6 @@ export class ReadStateService {
     );
   }
 
-  /**
-   * Count unread conversations across the complete accessible Inbox.
-   * Uses the short-lived index (warm ≈ 0 message transfers).
-   */
   async countUnreadConversations(actor: RequestActor): Promise<number> {
     if (!canViewInbox(actor)) {
       throw new InboxServiceError("forbidden", "Inbox access denied");
@@ -209,15 +207,11 @@ export class ReadStateService {
   }
 
   /**
-   * Full per-actor unread index.
+   * Full per-actor unread index (race-safe publish).
    *
-   * Cold build: scan conversation ids once; batch watermark/message work in
-   * chunks of 100.
-   *
-   * Warm hit: do NOT rescan message history. Instead apply a bounded
-   * conversation delta since `builtAt` and re-batch only touched ids so new
-   * inbound (which bumps conversation updated_at) is reflected without
-   * reloading complete message history every ~2s.
+   * Warm hit: flush targeted dirty ids, then conversation delta refresh.
+   * Cold build: in-flight handle + publish sequence; invalidation during build
+   * cancels publish and retries up to MAX_UNREAD_INDEX_BUILD_ATTEMPTS.
    */
   async getOrBuildUnreadIndex(
     actor: RequestActor
@@ -225,11 +219,51 @@ export class ReadStateService {
     if (!canViewInbox(actor)) {
       throw new InboxServiceError("forbidden", "Inbox access denied");
     }
-    const hit = getUnreadIndexCache(this.companyId, actor.id);
-    if (hit) {
-      return this.refreshUnreadIndexFromDelta(actor, hit);
+
+    const warm = getUnreadIndexCache(this.companyId, actor.id);
+    if (warm) {
+      await this.flushDirtyConversationIds(actor, warm);
+      return this.refreshUnreadIndexFromDelta(actor, warm);
     }
 
+    for (let attempt = 0; attempt < MAX_UNREAD_INDEX_BUILD_ATTEMPTS; attempt++) {
+      const handle = beginUnreadIndexBuild(this.companyId, actor.id);
+      try {
+        const built = await this.coldBuildUnreadIndex(actor);
+        if (handle.cancelled) continue;
+
+        const published = tryPublishUnreadIndex(
+          this.companyId,
+          actor.id,
+          handle,
+          built
+        );
+        if (!published) continue;
+
+        await this.flushDirtyConversationIds(actor, published);
+        return published;
+      } finally {
+        endUnreadIndexBuild(handle);
+      }
+    }
+
+    // Bounded fallback: serve an ephemeral exact snapshot without caching so
+    // a stampeding invalidation stream cannot loop forever or publish stale.
+    const ephemeral = await this.coldBuildUnreadIndex(actor);
+    return {
+      ...ephemeral,
+      publishSeq: -1,
+      dirtyIds: new Set<string>(),
+      builtAt: Date.now(),
+    };
+  }
+
+  private async coldBuildUnreadIndex(actor: RequestActor): Promise<{
+    byId: Map<string, ConversationUnreadState>;
+    totalUnreadCount: number;
+    highWaterUpdatedAt: string;
+    highWaterId: string;
+  }> {
     const ids: string[] = [];
     let highWaterUpdatedAt = "1970-01-01T00:00:00.000Z";
     let highWaterId = "";
@@ -269,12 +303,30 @@ export class ReadStateService {
       if (state.isUnread) totalUnreadCount += 1;
     }
 
-    return setUnreadIndexCache(this.companyId, actor.id, {
+    return {
       byId,
       totalUnreadCount,
       highWaterUpdatedAt,
       highWaterId,
-    });
+    };
+  }
+
+  private async flushDirtyConversationIds(
+    actor: RequestActor,
+    hit: UnreadIndexSnapshot
+  ): Promise<void> {
+    const dirty = takeDirtyConversationIds(this.companyId, hit);
+    if (dirty.length === 0) return;
+
+    for (let i = 0; i < dirty.length; i += UNREAD_BATCH_CHUNK) {
+      const chunk = dirty.slice(i, i + UNREAD_BATCH_CHUNK);
+      const states = await this.watermarks.batchUnreadState(
+        chunk,
+        actor.id,
+        this.companyId
+      );
+      writeBackUnreadIndexEntries(this.companyId, actor.id, states);
+    }
   }
 
   private async refreshUnreadIndexFromDelta(
@@ -308,10 +360,13 @@ export class ReadStateService {
       since = delta.nextCursor;
     }
 
-    if (touchedIds.size === 0) return hit;
+    if (touchedIds.size === 0) {
+      hit.highWaterUpdatedAt = highWaterUpdatedAt;
+      hit.highWaterId = highWaterId;
+      return hit;
+    }
 
     const touched = [...touchedIds];
-    let totalUnreadCount = hit.totalUnreadCount;
     for (let i = 0; i < touched.length; i += UNREAD_BATCH_CHUNK) {
       const chunk = touched.slice(i, i + UNREAD_BATCH_CHUNK);
       const states = await this.watermarks.batchUnreadState(
@@ -319,21 +374,12 @@ export class ReadStateService {
         actor.id,
         this.companyId
       );
-      for (const [id, state] of states) {
-        const prev = hit.byId.get(id);
-        if (prev?.isUnread) totalUnreadCount -= 1;
-        hit.byId.set(id, state);
-        if (state.isUnread) totalUnreadCount += 1;
-      }
+      writeBackUnreadIndexEntries(this.companyId, actor.id, states);
     }
 
-    // Keep wall-clock TTL from original build; advance activity high-water only.
-    return setUnreadIndexCache(this.companyId, actor.id, {
-      byId: hit.byId,
-      totalUnreadCount,
-      highWaterUpdatedAt,
-      highWaterId,
-      builtAt: hit.builtAt,
-    });
+    const latest = getUnreadIndexCache(this.companyId, actor.id) ?? hit;
+    latest.highWaterUpdatedAt = highWaterUpdatedAt;
+    latest.highWaterId = highWaterId;
+    return latest;
   }
 }
