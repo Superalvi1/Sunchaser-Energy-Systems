@@ -1,22 +1,23 @@
 -- =============================================================================
--- SYNC-14C-A / R2 — rollback: restore pre-SYNC-14B name_source allow-list
+-- SYNC-14C-A / R3 — rollback: restore pre-SYNC-14B name_source allow-list
 -- =============================================================================
 -- REVIEW / MANUAL APPLY ONLY. Do NOT auto-apply.
 --
 -- Restores exactly:
 --   NULL | manual | whatsapp_saved | whatsapp_push | whatsapp_short | phone
 --
--- Safety (R2):
+-- Safety (R3):
 --   - Complete predicate proof via pg_constraint.conbin against an ephemeral
---     exact reference constraint (not regex/set-only matching).
---   - Temporary mismatches STOP fail-closed.
---   - If complete equality cannot be proven ⇒ rebuild (never false no-op).
+--     exact reference constraint created in this DO block.
+--   - If *_check_ref_rb or *_check_ref_fwd already exists ⇒ STOP (never drop
+--     unknown pre-existing reference names).
+--   - Only drop the reference oid created by this successful execution.
+--   - Canonical/temporary names occupied by non-CHECK constraints ⇒ STOP.
 --
 -- LIMITATIONS:
 -- 1. FAILS CLOSED if any row stores whatsapp_verified or whatsapp_legacy.
 -- 2. Does NOT rewrite profile_name / name_source data.
 -- 3. Roll back application writers before SQL rollback if they emit expanded values.
--- 4. Recommended abort order: stop deploy → roll back app → this SQL.
 -- =============================================================================
 
 do $$
@@ -29,8 +30,11 @@ declare
   forward_ref_name constant text := 'whatsapp_contacts_name_source_check_ref_fwd';
   blocking_count bigint;
   canonical_oid oid;
+  canonical_contype "char";
   temp_oid oid;
+  temp_contype "char";
   forward_temp_oid oid;
+  forward_temp_contype "char";
   canonical_validated boolean;
   temp_validated boolean;
   canonical_proven boolean := false;
@@ -38,6 +42,7 @@ declare
   forward_temp_proven boolean := false;
   action text;
   proof boolean;
+  session_ref_oid oid := null;
   comment_text constant text :=
     'manual | whatsapp_saved | whatsapp_push | whatsapp_short | phone — upgrade-only allow-list after SQL rollback. Application policy (SYNC-14B+): nonempty profile_name with null name_source is treated as whatsapp_legacy (not manual). phone is deprecated and must not be newly written as profile_name.';
 begin
@@ -74,28 +79,65 @@ begin
       blocking_count;
   end if;
 
-  -- Refuse unknown forward reference leftover (pack-owned ephemeral only may be dropped below)
-  if exists (
-    select 1 from pg_constraint
-    where conrelid = table_oid and conname = forward_ref_name
-  ) then
-    execute format(
-      'alter table public.whatsapp_contacts drop constraint %I',
-      forward_ref_name
-    );
-  end if;
-
+  -- Reference-name collisions: STOP (do not drop pre-existing unknowns)
   if exists (
     select 1 from pg_constraint
     where conrelid = table_oid and conname = ref_name
   ) then
-    execute format(
-      'alter table public.whatsapp_contacts drop constraint %I',
-      ref_name
-    );
+    raise exception
+      'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+      ref_name;
   end if;
 
-  -- Install rollback reference predicate
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = forward_ref_name
+  ) then
+    raise exception
+      'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+      forward_ref_name;
+  end if;
+
+  select con.oid, con.contype, con.convalidated
+  into canonical_oid, canonical_contype, canonical_validated
+  from pg_constraint con
+  where con.conrelid = table_oid
+    and con.conname = canonical_name;
+
+  if canonical_oid is not null and canonical_contype is distinct from 'c' then
+    raise exception
+      'STOP: canonical name % is occupied by a non-CHECK constraint (contype=%); will not replace',
+      canonical_name,
+      canonical_contype;
+  end if;
+
+  select con.oid, con.contype, con.convalidated
+  into temp_oid, temp_contype, temp_validated
+  from pg_constraint con
+  where con.conrelid = table_oid
+    and con.conname = temp_name;
+
+  if temp_oid is not null and temp_contype is distinct from 'c' then
+    raise exception
+      'STOP: temporary name % is occupied by a non-CHECK constraint (contype=%); will not validate/promote',
+      temp_name,
+      temp_contype;
+  end if;
+
+  select con.oid, con.contype
+  into forward_temp_oid, forward_temp_contype
+  from pg_constraint con
+  where con.conrelid = table_oid
+    and con.conname = forward_temp_name;
+
+  if forward_temp_oid is not null and forward_temp_contype is distinct from 'c' then
+    raise exception
+      'STOP: temporary name % is occupied by a non-CHECK constraint (contype=%); will not drop/promote',
+      forward_temp_name,
+      forward_temp_contype;
+  end if;
+
+  -- Install rollback reference predicate (session-owned)
   alter table public.whatsapp_contacts
     add constraint whatsapp_contacts_name_source_check_ref_rb
     check (
@@ -109,32 +151,42 @@ begin
       )
     ) not valid;
 
-  select c.oid, c.convalidated, (c.conbin is not null and c.conbin = r.conbin)
-  into canonical_oid, canonical_validated, canonical_proven
-  from pg_constraint r
-  left join pg_constraint c
-    on c.conrelid = r.conrelid
-   and c.conname = canonical_name
-   and c.contype = 'c'
-  where r.conrelid = table_oid
-    and r.conname = ref_name;
+  select con.oid into session_ref_oid
+  from pg_constraint con
+  where con.conrelid = table_oid
+    and con.conname = ref_name
+    and con.contype = 'c';
 
-  canonical_proven := coalesce(canonical_proven, false);
+  if session_ref_oid is null then
+    raise exception 'STOP: failed to create session reference constraint %', ref_name;
+  end if;
 
-  select c.oid, c.convalidated, (c.conbin is not null and c.conbin = r.conbin)
-  into temp_oid, temp_validated, temp_proven
-  from pg_constraint r
-  left join pg_constraint c
-    on c.conrelid = r.conrelid
-   and c.conname = temp_name
-   and c.contype = 'c'
-  where r.conrelid = table_oid
-    and r.conname = ref_name;
+  if canonical_oid is not null then
+    select (c.conbin is not null and c.conbin = r.conbin), c.convalidated
+    into canonical_proven, canonical_validated
+    from pg_constraint r
+    join pg_constraint c on c.oid = canonical_oid and c.contype = 'c'
+    where r.oid = session_ref_oid;
+    canonical_proven := coalesce(canonical_proven, false);
+  end if;
 
-  temp_proven := coalesce(temp_proven, false);
+  if temp_oid is not null then
+    select (c.conbin is not null and c.conbin = r.conbin), c.convalidated
+    into temp_proven, temp_validated
+    from pg_constraint r
+    join pg_constraint c on c.oid = temp_oid and c.contype = 'c'
+    where r.oid = session_ref_oid;
+    temp_proven := coalesce(temp_proven, false);
+  end if;
 
-  alter table public.whatsapp_contacts
-    drop constraint whatsapp_contacts_name_source_check_ref_rb;
+  if exists (
+    select 1 from pg_constraint
+    where oid = session_ref_oid and conname = ref_name
+  ) then
+    alter table public.whatsapp_contacts
+      drop constraint whatsapp_contacts_name_source_check_ref_rb;
+  end if;
+  session_ref_oid := null;
 
   if temp_oid is not null and not temp_proven then
     raise exception
@@ -143,13 +195,16 @@ begin
   end if;
 
   -- Forward temp may be dropped only when its conbin equals the *forward* reference
-  select c.oid into forward_temp_oid
-  from pg_constraint c
-  where c.conrelid = table_oid
-    and c.conname = forward_temp_name
-    and c.contype = 'c';
-
   if forward_temp_oid is not null then
+    if exists (
+      select 1 from pg_constraint
+      where conrelid = table_oid and conname = forward_ref_name
+    ) then
+      raise exception
+        'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+        forward_ref_name;
+    end if;
+
     alter table public.whatsapp_contacts
       add constraint whatsapp_contacts_name_source_check_ref_fwd
       check (
@@ -165,18 +220,26 @@ begin
         )
       ) not valid;
 
+    select con.oid into session_ref_oid
+    from pg_constraint con
+    where con.conrelid = table_oid
+      and con.conname = forward_ref_name
+      and con.contype = 'c';
+
     select (c.conbin = r.conbin)
     into forward_temp_proven
     from pg_constraint r
-    join pg_constraint c
-      on c.conrelid = r.conrelid
-     and c.conname = forward_temp_name
-     and c.contype = 'c'
-    where r.conrelid = table_oid
-      and r.conname = forward_ref_name;
+    join pg_constraint c on c.oid = forward_temp_oid and c.contype = 'c'
+    where r.oid = session_ref_oid;
 
-    alter table public.whatsapp_contacts
-      drop constraint whatsapp_contacts_name_source_check_ref_fwd;
+    if exists (
+      select 1 from pg_constraint
+      where oid = session_ref_oid and conname = forward_ref_name
+    ) then
+      alter table public.whatsapp_contacts
+        drop constraint whatsapp_contacts_name_source_check_ref_fwd;
+    end if;
+    session_ref_oid := null;
 
     if not coalesce(forward_temp_proven, false) then
       raise exception
@@ -236,6 +299,15 @@ begin
     alter table public.whatsapp_contacts
       validate constraint whatsapp_contacts_name_source_check;
 
+    if exists (
+      select 1 from pg_constraint
+      where conrelid = table_oid and conname = ref_name
+    ) then
+      raise exception
+        'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+        ref_name;
+    end if;
+
     alter table public.whatsapp_contacts
       add constraint whatsapp_contacts_name_source_check_ref_rb
       check (
@@ -249,6 +321,10 @@ begin
         )
       ) not valid;
 
+    select con.oid into session_ref_oid
+    from pg_constraint con
+    where con.conrelid = table_oid and con.conname = ref_name and con.contype = 'c';
+
     select (c.conbin = r.conbin), c.convalidated
     into proof, canonical_validated
     from pg_constraint r
@@ -256,11 +332,16 @@ begin
       on c.conrelid = r.conrelid
      and c.conname = canonical_name
      and c.contype = 'c'
-    where r.conrelid = table_oid
-      and r.conname = ref_name;
+    where r.oid = session_ref_oid;
 
-    alter table public.whatsapp_contacts
-      drop constraint whatsapp_contacts_name_source_check_ref_rb;
+    if exists (
+      select 1 from pg_constraint
+      where oid = session_ref_oid and conname = ref_name
+    ) then
+      alter table public.whatsapp_contacts
+        drop constraint whatsapp_contacts_name_source_check_ref_rb;
+    end if;
+    session_ref_oid := null;
 
     if not coalesce(proof, false) or not coalesce(canonical_validated, false) then
       raise exception 'STOP: canonical rollback constraint failed conbin proof and/or validation';
@@ -299,6 +380,15 @@ begin
   alter table public.whatsapp_contacts
     validate constraint whatsapp_contacts_name_source_check_rollback;
 
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = ref_name
+  ) then
+    raise exception
+      'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+      ref_name;
+  end if;
+
   alter table public.whatsapp_contacts
     add constraint whatsapp_contacts_name_source_check_ref_rb
     check (
@@ -312,6 +402,10 @@ begin
       )
     ) not valid;
 
+  select con.oid into session_ref_oid
+  from pg_constraint con
+  where con.conrelid = table_oid and con.conname = ref_name and con.contype = 'c';
+
   select (c.conbin = r.conbin), c.convalidated
   into proof, temp_validated
   from pg_constraint r
@@ -319,21 +413,37 @@ begin
     on c.conrelid = r.conrelid
    and c.conname = temp_name
    and c.contype = 'c'
-  where r.conrelid = table_oid
-    and r.conname = ref_name;
+  where r.oid = session_ref_oid;
 
-  alter table public.whatsapp_contacts
-    drop constraint whatsapp_contacts_name_source_check_ref_rb;
+  if exists (
+    select 1 from pg_constraint
+    where oid = session_ref_oid and conname = ref_name
+  ) then
+    alter table public.whatsapp_contacts
+      drop constraint whatsapp_contacts_name_source_check_ref_rb;
+  end if;
+  session_ref_oid := null;
 
   if not coalesce(proof, false) or not coalesce(temp_validated, false) then
     raise exception
       'STOP: temporary rollback constraint failed conbin proof + validated check before promotion';
   end if;
 
-  if exists (
+  if canonical_oid is not null or exists (
     select 1 from pg_constraint
     where conrelid = table_oid and conname = canonical_name
   ) then
+    select con.contype into canonical_contype
+    from pg_constraint con
+    where con.conrelid = table_oid and con.conname = canonical_name;
+
+    if canonical_contype is distinct from 'c' then
+      raise exception
+        'STOP: canonical name % is occupied by a non-CHECK constraint (contype=%); will not replace',
+        canonical_name,
+        canonical_contype;
+    end if;
+
     alter table public.whatsapp_contacts
       drop constraint whatsapp_contacts_name_source_check;
   end if;
@@ -347,6 +457,15 @@ begin
     rename constraint whatsapp_contacts_name_source_check_rollback
     to whatsapp_contacts_name_source_check;
 
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = ref_name
+  ) then
+    raise exception
+      'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+      ref_name;
+  end if;
+
   alter table public.whatsapp_contacts
     add constraint whatsapp_contacts_name_source_check_ref_rb
     check (
@@ -360,6 +479,10 @@ begin
       )
     ) not valid;
 
+  select con.oid into session_ref_oid
+  from pg_constraint con
+  where con.conrelid = table_oid and con.conname = ref_name and con.contype = 'c';
+
   select (c.conbin = r.conbin), c.convalidated
   into proof, canonical_validated
   from pg_constraint r
@@ -367,11 +490,16 @@ begin
     on c.conrelid = r.conrelid
    and c.conname = canonical_name
    and c.contype = 'c'
-  where r.conrelid = table_oid
-    and r.conname = ref_name;
+  where r.oid = session_ref_oid;
 
-  alter table public.whatsapp_contacts
-    drop constraint whatsapp_contacts_name_source_check_ref_rb;
+  if exists (
+    select 1 from pg_constraint
+    where oid = session_ref_oid and conname = ref_name
+  ) then
+    alter table public.whatsapp_contacts
+      drop constraint whatsapp_contacts_name_source_check_ref_rb;
+  end if;
+  session_ref_oid := null;
 
   if not coalesce(proof, false) or not coalesce(canonical_validated, false) then
     raise exception

@@ -1,12 +1,18 @@
 /**
- * Complete-predicate equality helpers for SYNC-14C-A-R2.
+ * Complete-predicate equality helpers for SYNC-14C-A-R2/R3.
  *
  * SQL migrations prove equality via PostgreSQL pg_constraint.conbin against an
- * ephemeral exact reference constraint. This module mirrors that fail-closed
- * posture for static/bypass tests (no database I/O): a candidate is proven only
- * when its predicate matches the complete reference forms — not merely because
- * it contains IS NULL + IN/ANY + the expected value set.
+ * ephemeral exact reference constraint created in the current DO block. This
+ * module mirrors that fail-closed posture for static/bypass tests (no database
+ * I/O). R3: pre-existing reference names and non-CHECK name collisions STOP;
+ * never silently drop unknown same-name objects.
  */
+
+export const FORWARD_REF_NAME = "whatsapp_contacts_name_source_check_ref_fwd";
+export const ROLLBACK_REF_NAME = "whatsapp_contacts_name_source_check_ref_rb";
+export const CANONICAL_NAME = "whatsapp_contacts_name_source_check";
+export const FORWARD_TEMP_NAME = "whatsapp_contacts_name_source_check_v14c";
+export const ROLLBACK_TEMP_NAME = "whatsapp_contacts_name_source_check_rollback";
 
 export const FORWARD_ALLOW_LIST = Object.freeze([
   "manual",
@@ -197,6 +203,48 @@ export function decideConstraintAction(mode, state) {
     action: "REBUILD",
     reason: "complete predicate not proven for canonical; rebuild exact reference",
   };
+}
+
+/**
+ * R3 name-collision gate. Mirrors SQL: pre-existing reference names and
+ * non-CHECK occupants of canonical/temporary names must STOP; never drop.
+ *
+ * @param {{
+ *   forwardRefExists?: boolean,
+ *   rollbackRefExists?: boolean,
+ *   canonicalContype?: string | null,
+ *   tempContype?: string | null,
+ *   mode?: 'forward'|'rollback'|'post-verify',
+ * }} state
+ */
+export function decideNameCollision(state = {}) {
+  if (state.forwardRefExists === true) {
+    return {
+      action: "STOP",
+      reason: `reference constraint name ${FORWARD_REF_NAME} already exists`,
+    };
+  }
+  if (state.rollbackRefExists === true) {
+    return {
+      action: "STOP",
+      reason: `reference constraint name ${ROLLBACK_REF_NAME} already exists`,
+    };
+  }
+  if (state.canonicalContype != null && state.canonicalContype !== "c") {
+    return {
+      action: "STOP",
+      reason: `canonical name ${CANONICAL_NAME} occupied by non-CHECK (${state.canonicalContype})`,
+    };
+  }
+  if (state.tempContype != null && state.tempContype !== "c") {
+    const tempName =
+      state.mode === "rollback" ? ROLLBACK_TEMP_NAME : FORWARD_TEMP_NAME;
+    return {
+      action: "STOP",
+      reason: `temporary name ${tempName} occupied by non-CHECK (${state.tempContype})`,
+    };
+  }
+  return { action: "CONTINUE", reason: "no name collisions" };
 }
 
 /**

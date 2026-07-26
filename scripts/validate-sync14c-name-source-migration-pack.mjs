@@ -1,5 +1,5 @@
 /**
- * Static validation for SYNC-14C-A / R2 name_source migration release pack.
+ * Static validation for SYNC-14C-A / R3 name_source migration release pack.
  * Run: node scripts/validate-sync14c-name-source-migration-pack.mjs
  * Does not connect to a database and does not apply SQL.
  */
@@ -11,6 +11,7 @@ import {
   ROLLBACK_ALLOW_LIST,
   constraintCompleteMatch,
   decideConstraintAction,
+  decideNameCollision,
   isCompletePredicateProven,
   pgNormalizedConstraintdef,
   pgNormalizedExpr,
@@ -179,6 +180,69 @@ function bypass(label, def, mode = "forward") {
 }
 
 // ---------------------------------------------------------------------------
+// R3 — reference-name / non-CHECK collision scenarios
+// ---------------------------------------------------------------------------
+
+{
+  const d = decideNameCollision({ forwardRefExists: true });
+  assert.equal(d.action, "STOP", "pre-existing forward reference name must STOP");
+  assert.match(d.reason, /ref_fwd|already exists/i);
+}
+{
+  const d = decideNameCollision({ rollbackRefExists: true });
+  assert.equal(d.action, "STOP", "pre-existing rollback reference name must STOP");
+  assert.match(d.reason, /ref_rb|already exists/i);
+}
+{
+  const d = decideNameCollision({ canonicalContype: "u" });
+  assert.equal(d.action, "STOP", "canonical non-CHECK occupant must STOP");
+  assert.match(d.reason, /non-CHECK/i);
+}
+{
+  const d = decideNameCollision({ tempContype: "u", mode: "forward" });
+  assert.equal(d.action, "STOP", "temporary non-CHECK occupant must STOP");
+  assert.match(d.reason, /non-CHECK/i);
+}
+{
+  const d = decideNameCollision({
+    forwardRefExists: false,
+    rollbackRefExists: false,
+    canonicalContype: "c",
+    tempContype: null,
+  });
+  assert.equal(d.action, "CONTINUE", "normal exact proof path must continue");
+}
+{
+  // Normal exact forward/rollback proof remains successful under collision gate
+  assert.equal(
+    isCompletePredicateProven(exactForward, "forward").proven,
+    true,
+    "exact forward predicate still proves"
+  );
+  assert.equal(
+    isCompletePredicateProven(exactRollback, "rollback").proven,
+    true,
+    "exact rollback predicate still proves"
+  );
+  assert.equal(
+    decideConstraintAction("forward", {
+      canonicalProven: true,
+      canonicalValidated: true,
+      tempPresent: false,
+    }).action,
+    "NOOP"
+  );
+  assert.equal(
+    decideConstraintAction("rollback", {
+      canonicalProven: true,
+      canonicalValidated: true,
+      tempPresent: false,
+    }).action,
+    "NOOP"
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SQL pack posture — conbin proof, fail-closed, exception on post-verify
 // ---------------------------------------------------------------------------
 
@@ -206,6 +270,22 @@ assert.match(
 );
 assert.match(
   forward,
+  /reference constraint name % already exists/i,
+  "forward must STOP on pre-existing reference name"
+);
+assert.match(
+  forward,
+  /canonical name % is occupied by a non-CHECK constraint/i,
+  "forward must STOP on canonical non-CHECK collision"
+);
+assert.match(
+  forward,
+  /temporary name % is occupied by a non-CHECK constraint/i,
+  "forward must STOP on temporary non-CHECK collision"
+);
+assert.match(forward, /session_ref_oid/i, "forward must track session-created reference oid");
+assert.match(
+  forward,
   /conbin does not equal the exact SYNC-14C-A forward reference/i,
   "forward must STOP on mismatched temporary"
 );
@@ -213,6 +293,16 @@ assert.match(forward, /action := 'REBUILD'/i);
 assert.match(forward, /action := 'NOOP'/i);
 assert.match(forward, /action := 'PROMOTE_TEMP'/i);
 assert.match(forward, /Schema guard/i);
+assert.doesNotMatch(
+  forward,
+  /Drop any leftover pack-owned reference artifact/i,
+  "forward must not document silent drop of pre-existing refs"
+);
+assert.doesNotMatch(
+  forward,
+  /if exists \(\s*select 1 from pg_constraint\s+where conrelid = table_oid and conname = ref_name\s*\) then\s*execute format/i,
+  "forward must not DROP pre-existing reference via execute format"
+);
 assert.doesNotMatch(forward, /is not distinct from expected/i, "forward must not use set-only equality");
 assert.doesNotMatch(forward, /old_def ilike /i);
 assert.doesNotMatch(forward, /\benable row level security\b/i);
@@ -223,6 +313,22 @@ assert.match(rollback, /conbin/i, "rollback must use conbin proof");
 assert.match(rollback, /ref_rb|check_ref_rb/i, "rollback must install reference constraint");
 assert.match(
   rollback,
+  /reference constraint name % already exists/i,
+  "rollback must STOP on pre-existing reference name"
+);
+assert.match(
+  rollback,
+  /canonical name % is occupied by a non-CHECK constraint/i,
+  "rollback must STOP on canonical non-CHECK collision"
+);
+assert.match(
+  rollback,
+  /temporary name % is occupied by a non-CHECK constraint/i,
+  "rollback must STOP on temporary non-CHECK collision"
+);
+assert.match(rollback, /session_ref_oid/i, "rollback must track session-created reference oid");
+assert.match(
+  rollback,
   /conbin does not equal the exact pre-expansion reference/i,
   "rollback must STOP on mismatched temporary"
 );
@@ -231,6 +337,11 @@ assert.match(rollback, /action := 'NOOP'/i);
 assert.match(rollback, /treated as whatsapp_legacy/i);
 assert.doesNotMatch(rollback, /treated as manual by the app/i);
 assert.doesNotMatch(rollback, /is not distinct from expected/i);
+assert.doesNotMatch(
+  rollback,
+  /if exists \(\s*select 1 from pg_constraint\s+where conrelid = table_oid and conname = (ref_name|forward_ref_name)\s*\) then\s*execute format/i,
+  "rollback must not DROP pre-existing reference via execute format"
+);
 
 assert.match(postVerify, /conbin/i, "post-verify must use conbin proof");
 assert.match(
@@ -238,12 +349,28 @@ assert.match(
   /raise exception 'STOP: SYNC-14C-A post-verify failed/i,
   "post-verify must RAISE EXCEPTION on failure"
 );
+assert.match(
+  postVerify,
+  /reference constraint name % already exists/i,
+  "post-verify must STOP on pre-existing reference name"
+);
+assert.match(
+  postVerify,
+  /canonical name % is occupied by a non-CHECK constraint/i,
+  "post-verify must STOP on canonical non-CHECK"
+);
+assert.match(postVerify, /session_ref_oid/i, "post-verify must track session-created reference oid");
 assert.match(postVerify, /PASS: SYNC-14C-A post-verify/i);
 assert.match(postVerify, /relrowsecurity|rls/i);
 assert.doesNotMatch(
   postVerify,
   /raise notice 'STOP: SYNC-14C-A post-verify failed/i,
   "post-verify must not NOTICE-only on failure"
+);
+assert.doesNotMatch(
+  postVerify,
+  /if exists \(\s*select 1 from pg_constraint\s+where conrelid = table_oid and conname = ref_name\s*\) then\s*execute format/i,
+  "post-verify must not DROP pre-existing reference via execute format"
 );
 
 assert.match(backfill, /DISABLED/i);
@@ -258,6 +385,8 @@ assert.match(sequencing, /deployment/i);
 assert.match(sequencing, /smoke test/i);
 assert.match(sequencing, /rollback/i);
 assert.match(sequencing, /conbin/i);
-assert.match(sequencing, /RAISE EXCEPTION|R2/i);
+assert.match(sequencing, /RAISE EXCEPTION|R3/i);
+assert.match(sequencing, /already exists/i);
+assert.match(sequencing, /non-CHECK/i);
 
-console.log("SYNC-14C-A-R2 name_source migration pack static validation passed.");
+console.log("SYNC-14C-A-R3 name_source migration pack static validation passed.");

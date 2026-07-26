@@ -108,9 +108,11 @@ If expanded values already exist in data, SQL rollback **fails closed** — requ
 
 ---
 
-## Idempotency / fail-closed (SYNC-14C-A-R2)
+## Idempotency / fail-closed (SYNC-14C-A-R3)
 
-- Forward, rollback, and post-verify prove the **complete CHECK predicate** via `pg_constraint.conbin` equality against an ephemeral exact reference constraint (not regex/set-only matching).
+- Forward, rollback, and post-verify prove the **complete CHECK predicate** via `pg_constraint.conbin` equality against an ephemeral exact reference constraint created in the **current** DO block (not regex/set-only matching).
+- If `*_check_ref_fwd` or `*_check_ref_rb` **already exists** ⇒ **STOP** (`RAISE EXCEPTION`). Never drop an unknown pre-existing reference name. Only the session-created reference oid is dropped after proof.
+- Canonical or temporary names occupied by a **non-CHECK** constraint ⇒ **STOP** (never silently replace).
 - Constraints that merely contain `IS NULL`, `IN`/`ANY`, and the expected values — but add `AND`/`OR` clauses, other columns, functions, or other shapes — are **not proven**.
 - Temporary mismatches **STOP fail-closed**. Unproven canonical ⇒ **rebuild** (never no-op/promote).
 - Final no-op / PASS require `convalidated = true` and conbin proof.
