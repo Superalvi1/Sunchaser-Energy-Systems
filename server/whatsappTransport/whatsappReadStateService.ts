@@ -12,6 +12,7 @@ import {
   getUnreadIndexCache,
   invalidateUnreadIndexCache,
   setUnreadIndexCache,
+  writeBackUnreadIndexEntries,
   type UnreadIndexSnapshot,
 } from "./whatsappInboxUnreadIndexCache.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
@@ -176,13 +177,15 @@ export class ReadStateService {
         else missing.push(id);
       }
       if (missing.length === 0) return out;
-      // Partial miss (new conversations since build): fetch missing only.
+      // Partial miss: fetch missing only, then write back into the actor index
+      // so the same IDs are not re-queried on subsequent warm polls.
       const fetched = await this.watermarks.batchUnreadState(
         missing,
         actor.id,
         this.companyId
       );
       for (const [id, state] of fetched) out.set(id, state);
+      writeBackUnreadIndexEntries(this.companyId, actor.id, fetched);
       return out;
     }
 

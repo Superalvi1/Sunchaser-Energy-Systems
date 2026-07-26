@@ -165,7 +165,7 @@ await test(
       0,
       "warm filtered polls must not rescan message history every 2s tick"
     );
-    assert.ok(UNREAD_INDEX_CACHE_TTL_MS >= 2_000);
+    assert.ok(UNREAD_INDEX_CACHE_TTL_MS >= 60_000);
     assert.ok(cacheSrc.includes("UNREAD_INDEX_CACHE_TTL_MS"));
   }
 );
