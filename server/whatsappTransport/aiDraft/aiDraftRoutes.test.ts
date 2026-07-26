@@ -196,12 +196,59 @@ function createCapturingAdapter(
   };
 }
 
+function captureAiDraftErrorLogs(): {
+  logs: string[];
+  restore: () => void;
+} {
+  const logs: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(
+      args
+        .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+        .join(" ")
+    );
+  };
+  return {
+    logs,
+    restore: () => {
+      console.error = originalError;
+    },
+  };
+}
+
+function assertSafeAiDraftFailureLog(
+  logs: string[],
+  opts: { secret: string; conversationId: string }
+): void {
+  const failureLogs = logs.filter((line) =>
+    line.includes("[ai-draft] generation failed")
+  );
+  assert.ok(failureLogs.length >= 1);
+  for (const line of failureLogs) {
+    assert.equal(line.includes(opts.secret), false);
+    assert.equal(line.includes(opts.conversationId), false);
+    assert.equal(line.includes("conversationId"), false);
+    // Fixed event + allow-listed outcomeCode payload only.
+    assert.ok(line.startsWith("[ai-draft] generation failed "));
+    const payload = JSON.parse(line.slice("[ai-draft] generation failed ".length));
+    assert.deepEqual(Object.keys(payload).sort(), ["outcomeCode"]);
+    assert.ok(
+      ["timeout", "provider_unavailable", "internal_failure"].includes(
+        payload.outcomeCode
+      )
+    );
+  }
+}
+
 async function withDraftServer(
   opts: {
     users?: unknown[];
     aiDraftConfig?: AiDraftConfig;
     failAdapter?: boolean;
     failWithSecret?: string;
+    /** Provider/adapter throw with arbitrary .code (must not be logged). */
+    failWithCodedError?: { message: string; code: string };
     ignoreAbortDelayMs?: number;
     sendCalls?: { count: number };
     capture?: { adapter?: CapturingAdapter };
@@ -246,23 +293,25 @@ async function withDraftServer(
     timeoutMs: 2_000,
   };
 
+  const codedFailure = opts.failWithCodedError
+    ? Object.assign(new Error(opts.failWithCodedError.message), {
+        code: opts.failWithCodedError.code,
+      })
+    : opts.failWithSecret
+      ? new Error(opts.failWithSecret)
+      : opts.failAdapter
+        ? new Error("simulated provider failure")
+        : undefined;
+
   const mock = createMockAiDraftAdapter({
     config: aiDraftConfig,
-    failWith: opts.failAdapter
-      ? new Error("simulated provider failure")
-      : opts.failWithSecret
-        ? new Error(opts.failWithSecret)
-        : undefined,
+    failWith: codedFailure,
   });
 
   const adapter = createCapturingAdapter(mock, {
     ignoreAbort: opts.ignoreAbortDelayMs != null,
     delayMs: opts.ignoreAbortDelayMs,
-    failWith: opts.failWithSecret
-      ? new Error(opts.failWithSecret)
-      : opts.failAdapter
-        ? new Error("simulated provider failure")
-        : undefined,
+    failWith: codedFailure,
   });
   if (opts.capture) opts.capture.adapter = adapter;
 
@@ -497,30 +546,23 @@ await test("provider failure is safe (503, no send)", async () => {
 
 await test("raw provider error containing a secret is not returned to client", async () => {
   const secret = "sk-live-SUPER_SECRET_PROVIDER_KEY_99";
-  const logs: string[] = [];
-  const originalError = console.error;
-  console.error = (...args: unknown[]) => {
-    logs.push(
-      args
-        .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
-        .join(" ")
-    );
-  };
+  const conversationId = "c_secret_msg";
+  const capture = captureAiDraftErrorLogs();
   try {
     await withDraftServer(
       { failWithSecret: `Provider rejected key ${secret}` },
       async (baseUrl, tokens, repos) => {
-        seedConversation(repos.store, { id: "c_secret" });
+        seedConversation(repos.store, { id: conversationId });
         seedMessage(repos.store, {
           id: "m_secret",
-          conversationId: "c_secret",
+          conversationId,
           direction: "inbound",
           textBody: "hello",
         });
         const res = await api(
           baseUrl,
           "POST",
-          "/api/inbox/conversations/c_secret/ai-draft",
+          `/api/inbox/conversations/${conversationId}/ai-draft`,
           {
             token: tokens.staff,
             body: { messageId: "m_secret" },
@@ -530,12 +572,59 @@ await test("raw provider error containing a secret is not returned to client", a
         assert.equal(res.body.error.code, "provider_unavailable");
         assert.equal(res.body.error.message, "AI draft generation failed");
         assert.equal(JSON.stringify(res.body).includes(secret), false);
-        assert.ok(logs.some((line) => line.includes('"outcomeCode"')));
-        assert.equal(logs.some((line) => line.includes(secret)), false);
+        assertSafeAiDraftFailureLog(capture.logs, { secret, conversationId });
       }
     );
   } finally {
-    console.error = originalError;
+    capture.restore();
+  }
+});
+
+await test("provider err.code containing alphanumeric secret is not logged", async () => {
+  const secret = "skliveSuperSecretProviderKey99abc";
+  const conversationId = "c_secret_code";
+  const capture = captureAiDraftErrorLogs();
+  try {
+    await withDraftServer(
+      {
+        failWithCodedError: {
+          message: "provider boom",
+          code: secret,
+        },
+      },
+      async (baseUrl, tokens, repos) => {
+        seedConversation(repos.store, { id: conversationId });
+        seedMessage(repos.store, {
+          id: "m_secret_code",
+          conversationId,
+          direction: "inbound",
+          textBody: "hello",
+        });
+        const res = await api(
+          baseUrl,
+          "POST",
+          `/api/inbox/conversations/${conversationId}/ai-draft`,
+          {
+            token: tokens.staff,
+            body: { messageId: "m_secret_code" },
+          }
+        );
+        assert.equal(res.status, 503);
+        assert.equal(res.body.error.code, "provider_unavailable");
+        assert.equal(res.body.error.message, "AI draft generation failed");
+        assert.equal(JSON.stringify(res.body).includes(secret), false);
+        assertSafeAiDraftFailureLog(capture.logs, { secret, conversationId });
+        const failure = capture.logs.find((line) =>
+          line.includes("[ai-draft] generation failed")
+        )!;
+        const payload = JSON.parse(
+          failure.slice("[ai-draft] generation failed ".length)
+        );
+        assert.equal(payload.outcomeCode, "provider_unavailable");
+      }
+    );
+  } finally {
+    capture.restore();
   }
 });
 

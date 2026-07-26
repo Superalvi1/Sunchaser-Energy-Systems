@@ -79,15 +79,41 @@ function toClientAiDraftPayload(outcome: AiDraftOutcome): Record<string, unknown
   };
 }
 
-function aiDraftOutcomeCode(err: unknown): string {
+type AiDraftSafeOutcomeCode =
+  | "timeout"
+  | "provider_unavailable"
+  | "internal_failure";
+
+/** Strict allow-list for AI-draft failure logs — never echo provider codes. */
+const AI_DRAFT_SAFE_OUTCOME_CODES: ReadonlySet<AiDraftSafeOutcomeCode> = new Set([
+  "timeout",
+  "provider_unavailable",
+  "internal_failure",
+]);
+
+function aiDraftOutcomeCode(err: unknown): AiDraftSafeOutcomeCode {
+  // Only our own timeout marker is trusted (set by raceAiDraftTimeout).
+  // Never accept arbitrary provider-controlled alphanumeric err.code values.
   if (err && typeof err === "object" && "code" in err) {
-    const code = String((err as { code: unknown }).code || "").trim();
-    if (code && /^[a-z][a-z0-9_]{0,63}$/i.test(code)) return code.toLowerCase();
+    const code = (err as { code: unknown }).code;
+    if (code === "timeout") return "timeout";
   }
-  if (err instanceof Error) {
-    if (/timed?\s*out/i.test(err.message)) return "timeout";
+  if (err instanceof Error && /timed?\s*out/i.test(err.message)) {
+    return "timeout";
   }
-  return "provider_unavailable";
+  // Unknown / provider-controlled codes collapse to a fixed safe bucket.
+  if (err instanceof Error) return "provider_unavailable";
+  return "internal_failure";
+}
+
+function logAiDraftGenerationFailure(outcomeCode: AiDraftSafeOutcomeCode): void {
+  const safeCode: AiDraftSafeOutcomeCode = AI_DRAFT_SAFE_OUTCOME_CODES.has(
+    outcomeCode
+  )
+    ? outcomeCode
+    : "provider_unavailable";
+  // Fixed event + allow-listed outcomeCode only — no conversationId, messages, or err.
+  console.error("[ai-draft] generation failed", { outcomeCode: safeCode });
 }
 
 /**
@@ -672,7 +698,6 @@ export function createInboxControllers(
      * Automatic replies remain impossible in this phase.
      */
     async generateAiDraft(req: Request, res: Response) {
-      let conversationIdForLog: string | undefined;
       try {
         const actor = actorOf(req);
         if (!canGenerateAiDraft(actor)) {
@@ -698,7 +723,6 @@ export function createInboxControllers(
         if (isDtoErr(conversationId)) {
           return validationFail(res, conversationId);
         }
-        conversationIdForLog = conversationId.value;
         const parsed = parseAiDraftBody(req.body);
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
@@ -769,13 +793,10 @@ export function createInboxControllers(
           return sendInboxError(res, err);
         }
 
-        // Provider/adapter failures: generic client message; sanitized log only.
+        // Provider/adapter failures: generic client message; allow-listed log only.
         const outcomeCode = aiDraftOutcomeCode(err);
+        logAiDraftGenerationFailure(outcomeCode);
         if (outcomeCode === "timeout") {
-          console.error("[ai-draft] generation failed", {
-            outcomeCode: "timeout",
-            conversationId: conversationIdForLog ?? null,
-          });
           return inboxFail(
             res,
             503,
@@ -787,10 +808,6 @@ export function createInboxControllers(
             }
           );
         }
-        console.error("[ai-draft] generation failed", {
-          outcomeCode,
-          conversationId: conversationIdForLog ?? null,
-        });
         return inboxFail(
           res,
           503,
