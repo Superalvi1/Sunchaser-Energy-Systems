@@ -89,6 +89,14 @@ export default function CRMPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
         <Row label="Customer" value={contact} />
         <Row
+          label="Lead status"
+          value={
+            crmLink?.linkedEntityType === "lead"
+              ? "Linked"
+              : "Not linked — auto-link runs on genuine inbound"
+          }
+        />
+        <Row
           label="Lead"
           value={
             crmLink?.linkedEntityType === "lead"
@@ -110,6 +118,20 @@ export default function CRMPanel({
         <Row label="Payment" value="—" />
         <Row label="Warranty" value="—" />
         <Row label="Tickets" value="—" />
+
+        <div
+          className="mt-3 rounded-xl border border-dashed border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-3"
+          data-testid="ai-qualification-follow-up"
+        >
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--inbox-muted)]">
+            Follow-up · AI qualification
+          </p>
+          <p className="mt-1 text-xs text-[var(--inbox-fg)]">
+            Next task: ask name → ask area/address → update confirmed lead
+            fields. Do not auto-overwrite customer names/addresses here. Never
+            treat @lid digits as a phone.
+          </p>
+        </div>
 
         <div className="mt-3 rounded-xl border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--inbox-muted)]">

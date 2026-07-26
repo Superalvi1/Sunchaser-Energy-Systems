@@ -1,15 +1,20 @@
-import type { InboxListFilters, InboxConversationStatus } from "../types";
+import type {
+  InboxListFilters,
+  InboxQuickFilter,
+} from "../types";
 
 type FiltersProps = {
   filters: InboxListFilters;
   onChange: (next: InboxListFilters) => void;
   currentUserId: string;
+  totalUnreadCount?: number;
 };
 
-const STATUSES: { value: "" | InboxConversationStatus; label: string }[] = [
-  { value: "", label: "All statuses" },
+const QUICK_FILTERS: { value: InboxQuickFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "unread", label: "Unread" },
+  { value: "read", label: "Read" },
   { value: "open", label: "Open" },
-  { value: "pending", label: "Pending" },
   { value: "resolved", label: "Resolved" },
   { value: "archived", label: "Archived" },
 ];
@@ -18,9 +23,68 @@ export default function Filters({
   filters,
   onChange,
   currentUserId,
+  totalUnreadCount = 0,
 }: FiltersProps) {
+  const active: InboxQuickFilter =
+    filters.quickFilter ??
+    (filters.unreadOnly ? "unread" : "all");
+
   return (
     <div className="space-y-2 border-b border-[var(--inbox-border)] p-3">
+      <div
+        className="flex flex-wrap gap-1"
+        role="tablist"
+        aria-label="Inbox quick filters"
+      >
+        {QUICK_FILTERS.map((tab) => {
+          const selected = active === tab.value;
+          const badge =
+            tab.value === "unread" && totalUnreadCount > 0
+              ? totalUnreadCount
+              : null;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() =>
+                onChange({
+                  ...filters,
+                  quickFilter: tab.value,
+                  unreadOnly: tab.value === "unread" ? true : undefined,
+                  // Status dropdown stays independent; quick tabs own status buckets.
+                  status:
+                    tab.value === "open" ||
+                    tab.value === "resolved" ||
+                    tab.value === "archived"
+                      ? undefined
+                      : filters.status,
+                })
+              }
+              className={`inline-flex min-h-9 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                selected
+                  ? "bg-[var(--inbox-accent)] text-neutral-950"
+                  : "bg-[var(--inbox-surface-2)] text-[var(--inbox-fg)] hover:opacity-90"
+              }`}
+            >
+              {tab.label}
+              {badge != null ? (
+                <span
+                  className={`rounded-full px-1.5 text-[10px] font-bold ${
+                    selected
+                      ? "bg-neutral-950/15 text-neutral-950"
+                      : "bg-[var(--inbox-accent)]/20 text-[var(--inbox-accent)]"
+                  }`}
+                >
+                  {badge > 99 ? "99+" : badge}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
       <div>
         <label
           htmlFor="inbox-search"
@@ -32,8 +96,8 @@ export default function Filters({
           id="inbox-search"
           name="inbox-search"
           type="search"
-          aria-label="Search conversations"
-          placeholder="Search contact, channel…"
+          aria-label="Search conversations by name or phone"
+          placeholder="Search name or phone…"
           value={filters.search ?? ""}
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
           className="w-full rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] px-3 py-2 text-sm text-[var(--inbox-fg)] outline-none ring-[var(--inbox-accent)] placeholder:text-[var(--inbox-muted)] focus:ring-2"
@@ -41,34 +105,6 @@ export default function Filters({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label
-            htmlFor="inbox-status-filter"
-            className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-[var(--inbox-muted)]"
-          >
-            Status
-          </label>
-          <select
-            id="inbox-status-filter"
-            name="inbox-status-filter"
-            aria-label="Filter by status"
-            value={filters.status ?? ""}
-            onChange={(e) =>
-              onChange({
-                ...filters,
-                status: e.target.value as InboxListFilters["status"],
-              })
-            }
-            className="w-full rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] px-2 py-2 text-sm text-[var(--inbox-fg)] outline-none focus:ring-2 focus:ring-[var(--inbox-accent)]"
-          >
-            {STATUSES.map((s) => (
-              <option key={s.value || "all"} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
         <div>
           <label
             htmlFor="inbox-assigned-filter"
@@ -91,46 +127,28 @@ export default function Filters({
             <option value="unassigned">Unassigned</option>
           </select>
         </div>
-      </div>
-
-      <div className="flex flex-wrap gap-3 pt-1">
-        <label
-          htmlFor="inbox-unread-filter"
-          className="inline-flex cursor-pointer items-center gap-2 text-xs text-[var(--inbox-fg)]"
-        >
-          <input
-            id="inbox-unread-filter"
-            name="inbox-unread-filter"
-            type="checkbox"
-            aria-label="Show attention-needed conversations"
-            checked={Boolean(filters.unreadOnly)}
-            onChange={(e) =>
-              onChange({ ...filters, unreadOnly: e.target.checked })
-            }
-            className="h-4 w-4 rounded border-[var(--inbox-border)]"
-          />
-          Unread / open
-        </label>
-        <label
-          htmlFor="inbox-failed-filter"
-          className="inline-flex cursor-pointer items-center gap-2 text-xs text-[var(--inbox-fg)]"
-        >
-          <input
-            id="inbox-failed-filter"
-            name="inbox-failed-filter"
-            type="checkbox"
-            aria-label="Show conversations with failed messages"
-            checked={Boolean(filters.hasFailedMessage)}
-            onChange={(e) =>
-              onChange({
-                ...filters,
-                hasFailedMessage: e.target.checked ? true : undefined,
-              })
-            }
-            className="h-4 w-4 rounded border-[var(--inbox-border)]"
-          />
-          Failures only
-        </label>
+        <div className="flex items-end">
+          <label
+            htmlFor="inbox-failed-filter"
+            className="inline-flex cursor-pointer items-center gap-2 pb-2 text-xs text-[var(--inbox-fg)]"
+          >
+            <input
+              id="inbox-failed-filter"
+              name="inbox-failed-filter"
+              type="checkbox"
+              aria-label="Show conversations with failed messages"
+              checked={Boolean(filters.hasFailedMessage)}
+              onChange={(e) =>
+                onChange({
+                  ...filters,
+                  hasFailedMessage: e.target.checked ? true : undefined,
+                })
+              }
+              className="h-4 w-4 rounded border-[var(--inbox-border)]"
+            />
+            Failures only
+          </label>
+        </div>
       </div>
     </div>
   );

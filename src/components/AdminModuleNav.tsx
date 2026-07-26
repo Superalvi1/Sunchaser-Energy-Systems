@@ -47,7 +47,8 @@ export type AdminSegmentId =
   | "tickets"
   | "support-desk"
   | "inbox"
-  | "whatsapp-setup"
+  | "whatsapp-connection"
+  | "whatsapp-setup" // legacy alias — maps to WhatsApp Connection
   | "inventory"
   | "products"
   | "client-portal"
@@ -362,9 +363,9 @@ export function buildAdminNavGroups(opts: {
           icon: Inbox,
         },
         {
-          id: "whatsapp-setup",
-          title: "WhatsApp Setup",
-          description: "Meta onboarding checklist",
+          id: "whatsapp-connection",
+          title: "WhatsApp Connection",
+          description: "QR, coexistence, sync and diagnostics",
           icon: Smartphone,
         },
         {

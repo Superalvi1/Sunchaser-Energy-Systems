@@ -30,6 +30,11 @@ export type WhatsAppWebSafeStatus = {
   qrExpiresAt: string | null;
   /** Non-secret operator hint (never credentials). */
   safeMessage: string | null;
+  /** Privacy-safe inbound ops diagnostics (timestamps + codes only). */
+  lastInboundEventAt: string | null;
+  lastInboundStoredAt: string | null;
+  lastIgnoredReason: string | null;
+  lastPersistFailureCode: string | null;
 };
 
 export type WhatsAppWebQrPayload = {

@@ -20,7 +20,7 @@ type ConversationListProps = {
   hasNextPage?: boolean;
   isFetchingNextPage?: boolean;
   fetchNextPage?: () => void;
-  unreadIds: Set<string>;
+  totalUnreadCount?: number;
 };
 
 export default function ConversationList({
@@ -37,7 +37,7 @@ export default function ConversationList({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
-  unreadIds,
+  totalUnreadCount = 0,
 }: ConversationListProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -64,6 +64,7 @@ export default function ConversationList({
       <div className="flex items-center justify-between px-3 pt-3">
         <h2 className="text-sm font-semibold text-[var(--inbox-fg)]">Inbox</h2>
         <span className="text-[11px] text-[var(--inbox-muted)]">
+          {totalUnreadCount > 0 ? `${totalUnreadCount} unread · ` : ""}
           {conversations.length}
         </span>
       </div>
@@ -71,6 +72,7 @@ export default function ConversationList({
         filters={filters}
         onChange={onFiltersChange}
         currentUserId={currentUserId}
+        totalUnreadCount={totalUnreadCount}
       />
       <div className="min-h-0 flex-1 overflow-y-auto" role="list">
         {isLoading ? <ConversationListSkeleton /> : null}
@@ -89,7 +91,9 @@ export default function ConversationList({
                 <ConversationItem
                   conversation={c}
                   selected={selectedId === c.id}
-                  unread={unreadIds.has(c.id)}
+                  unread={
+                    c.isUnread === true || (c.unreadCount ?? 0) > 0
+                  }
                   onSelect={() => onSelect(c.id)}
                 />
               </div>

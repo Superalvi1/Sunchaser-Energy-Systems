@@ -586,6 +586,36 @@ export default function WhatsAppConnectionPanel({
               </div>
             </div>
 
+            {webStatus ? (
+              <div
+                className="rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-2.5 text-[11px] text-[var(--inbox-muted)]"
+                data-testid="whatsapp-web-inbound-diagnostics"
+              >
+                <div className="font-semibold text-[var(--inbox-fg)]">
+                  Inbound diagnostics
+                </div>
+                <ul className="mt-1 space-y-0.5 font-mono">
+                  <li>state={webStatus.state}</li>
+                  <li>
+                    lastEvent=
+                    {webStatus.lastInboundEventAt
+                      ? new Date(webStatus.lastInboundEventAt).toLocaleString()
+                      : "—"}
+                  </li>
+                  <li>
+                    lastStored=
+                    {webStatus.lastInboundStoredAt
+                      ? new Date(webStatus.lastInboundStoredAt).toLocaleString()
+                      : "—"}
+                  </li>
+                  <li>lastIgnored={webStatus.lastIgnoredReason ?? "—"}</li>
+                  <li>
+                    lastPersistFail={webStatus.lastPersistFailureCode ?? "—"}
+                  </li>
+                </ul>
+              </div>
+            ) : null}
+
             {webStatus && !webStatus.enabled ? (
               <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
                 WhatsApp Web QR is disabled on the server

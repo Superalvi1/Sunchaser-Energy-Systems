@@ -137,6 +137,9 @@ export type WhatsAppConversationInbox = {
   /** Safe contact display fields (joined; never LID/raw JID). */
   profileName?: string | null;
   phoneE164?: string | null;
+  /** Server-backed unread vs actor read watermark. */
+  isUnread?: boolean;
+  unreadCount?: number;
 };
 
 export type WhatsAppConversationAssignmentEvent = {

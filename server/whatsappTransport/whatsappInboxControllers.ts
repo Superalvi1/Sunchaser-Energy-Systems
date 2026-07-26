@@ -47,6 +47,34 @@ import {
   type InboxAiDraftAdapter,
 } from "./aiDraft/index.ts";
 import { canGenerateAiDraft } from "./whatsappInboxPermissions.ts";
+import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
+import { readQueryAgentConfig } from "./aiQueryAgent/queryAgentConfig.ts";
+
+/** Attach server-backed unread fields from the actor read watermark. */
+async function enrichConversationsWithUnread(
+  rows: WhatsAppConversationInbox[],
+  actor: RequestActor,
+  services: WhatsAppInboxServices
+): Promise<WhatsAppConversationInbox[]> {
+  if (rows.length === 0) return rows;
+  return Promise.all(
+    rows.map(async (row) => {
+      try {
+        const unreadCount = await services.readState.getUnreadCount(
+          row.id,
+          actor
+        );
+        return {
+          ...row,
+          unreadCount,
+          isUnread: unreadCount > 0,
+        };
+      } catch {
+        return { ...row, unreadCount: 0, isUnread: false };
+      }
+    })
+  );
+}
 
 /** Customer-safe draft payload — strips internal audit metadata/IDs. */
 function toClientAiDraftPayload(outcome: AiDraftOutcome): Record<string, unknown> {
@@ -250,8 +278,9 @@ export function createInboxControllers(
             nextCursor: null,
           });
         }
+        const actor = actorOf(req);
         const page = await services.conversations.listByActivity(
-          actorOf(req),
+          actor,
           {
             status: parsed.value.status,
             assignedTo: parsed.value.assignedTo,
@@ -260,7 +289,12 @@ export function createInboxControllers(
           },
           { cursor: parsed.value.cursor, limit: parsed.value.limit }
         );
-        return inboxOk(res, { conversations: page.rows }, 200, {
+        const conversations = await enrichConversationsWithUnread(
+          page.rows,
+          actor,
+          services
+        );
+        return inboxOk(res, { conversations }, 200, {
           nextCursor: page.nextCursor
             ? encodeInboxCursor(page.nextCursor)
             : null,
@@ -276,11 +310,17 @@ export function createInboxControllers(
         if (isDtoErr(id)) {
           return validationFail(res, id);
         }
-        const detail = await services.conversations.getDetail(
-          id.value,
-          actorOf(req)
+        const actor = actorOf(req);
+        const detail = await services.conversations.getDetail(id.value, actor);
+        const [conversation] = await enrichConversationsWithUnread(
+          [detail.conversation],
+          actor,
+          services
         );
-        return inboxOk(res, detail);
+        return inboxOk(res, {
+          ...detail,
+          conversation: conversation ?? detail.conversation,
+        });
       } catch (err) {
         return sendInboxError(res, err);
       }
@@ -324,8 +364,9 @@ export function createInboxControllers(
             nextCursor: null,
           });
         }
+        const actor = actorOf(req);
         const page = await services.conversations.listDelta(
-          actorOf(req),
+          actor,
           {
             status: parsed.value.status,
             assignedTo: parsed.value.assignedTo,
@@ -334,7 +375,12 @@ export function createInboxControllers(
           },
           { since: parsed.value.since, limit: parsed.value.limit }
         );
-        return inboxOk(res, { conversations: page.rows }, 200, {
+        const conversations = await enrichConversationsWithUnread(
+          page.rows,
+          actor,
+          services
+        );
+        return inboxOk(res, { conversations }, 200, {
           nextCursor: page.nextCursor
             ? encodeInboxCursor(page.nextCursor)
             : null,
@@ -688,6 +734,30 @@ export function createInboxControllers(
         }
         const payload = await testWhatsAppConnection();
         return inboxOk(res, payload);
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
+
+    /**
+     * Booleans-only AI draft config for UI status (never secrets/values).
+     */
+    async getAiDraftConfigStatus(req: Request, res: Response) {
+      try {
+        const actor = actorOf(req);
+        if (!canGenerateAiDraft(actor)) {
+          return inboxFail(res, 403, "forbidden", "AI draft access denied");
+        }
+        const queryCfg = readQueryAgentConfig();
+        const geminiKeyConfigured = Boolean(
+          String(process.env.GEMINI_API_KEY || "").trim()
+        );
+        return inboxOk(res, {
+          draftFeatureEnabled: isAiDraftEnabled(aiDraftConfig),
+          liveProviderEnabled: queryCfg.liveProviderEnabled === true,
+          autoReplyEnabled: aiDraftConfig.autoReplyEnabled === true,
+          geminiKeyConfigured,
+        });
       } catch (err) {
         return sendInboxError(res, err);
       }

@@ -256,6 +256,40 @@ export function useInboxMutations() {
 
   const markRead = useMutation({
     mutationFn: markInboxRead,
+    onSuccess: (_data, input) => {
+      // Server watermark advanced — clear unread badges immediately.
+      const lists = queryClient.getQueriesData<InfiniteData<InboxListPage>>({
+        queryKey: inboxKeys.lists(),
+      });
+      for (const [key, data] of lists) {
+        if (!data) continue;
+        queryClient.setQueryData<InfiniteData<InboxListPage>>(key, {
+          ...data,
+          pages: data.pages.map((page) => ({
+            ...page,
+            conversations: page.conversations.map((c) =>
+              c.id === input.conversationId
+                ? { ...c, isUnread: false, unreadCount: 0 }
+                : c
+            ),
+          })),
+        });
+      }
+      queryClient.setQueryData<InboxConversationDetail>(
+        inboxKeys.detail(input.conversationId),
+        (old) =>
+          old
+            ? {
+                ...old,
+                conversation: {
+                  ...old.conversation,
+                  isUnread: false,
+                  unreadCount: 0,
+                },
+              }
+            : old
+      );
+    },
   });
 
   const createLead = useMutation({

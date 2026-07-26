@@ -10,6 +10,7 @@ import {
   type InboxMessage,
   type InboxMessagesPage,
   type InboxConversationStatus,
+  type InboxAiDraftConfigStatus,
   type WhatsAppConnectionStatusPayload,
   type WhatsAppConnectionTestResult,
   type WhatsAppOnboardingDiagnostics,
@@ -214,6 +215,14 @@ export async function generateInboxAiDraft(input: {
   }
 }
 
+/** Booleans-only AI draft configuration status (never secrets). */
+export async function fetchInboxAiDraftConfig(): Promise<InboxAiDraftConfigStatus> {
+  const { data } = await inboxRequest<InboxAiDraftConfigStatus>(
+    "/api/inbox/ai-draft/config"
+  );
+  return data;
+}
+
 export async function markInboxRead(input: {
   conversationId: string;
   lastSeenMessageId: string;
@@ -367,6 +376,11 @@ export type WhatsAppWebSafeStatus = {
   qrAvailable: boolean;
   qrExpiresAt: string | null;
   safeMessage: string | null;
+  /** Privacy-safe inbound ops diagnostics (codes/timestamps only). */
+  lastInboundEventAt?: string | null;
+  lastInboundStoredAt?: string | null;
+  lastIgnoredReason?: string | null;
+  lastPersistFailureCode?: string | null;
 };
 
 export type WhatsAppWebQrPayload = {

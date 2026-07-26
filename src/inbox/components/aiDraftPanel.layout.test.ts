@@ -25,8 +25,8 @@ const view = readFileSync(join(here, "ConversationView.tsx"), "utf8");
 const composer = readFileSync(join(here, "Composer.tsx"), "utf8");
 
 await test("panel exposes accessible labels and busy state", () => {
-  assert.ok(panel.includes('aria-label="AI draft assistant"'));
-  assert.ok(panel.includes("Generate AI draft"));
+  assert.ok(panel.includes('aria-label="AI Reply Assistant"'));
+  assert.ok(panel.includes("Generate AI Draft"));
   assert.ok(panel.includes("aria-busy"));
   assert.ok(panel.includes("Editable AI draft — human review required"));
   assert.ok(panel.includes("Copy draft to composer"));
@@ -38,7 +38,7 @@ await test("human-review label and escalation/confidence display present", () =>
   assert.ok(panel.includes("human review required"));
   assert.ok(panel.includes("Confidence:"));
   assert.ok(panel.includes("Escalation suggested"));
-  assert.ok(panel.includes("never sends automatically"));
+  assert.ok(panel.includes("never auto-sends"));
 });
 
 await test("mobile layout remains usable (touch targets + wrap)", () => {
@@ -52,14 +52,16 @@ await test("mobile layout remains usable (touch targets + wrap)", () => {
 await test("Send remains a separate Composer action", () => {
   assert.ok(composer.includes('aria-label={sending ? "Sending message" : "Send message"}'));
   assert.ok(composer.includes("Send"));
-  assert.equal(/Generate AI draft/.test(composer), false);
+  assert.equal(/Generate AI Draft/.test(composer), false);
   assert.ok(view.includes("<Composer"));
   assert.ok(view.includes("onSend={onSend}"));
 });
 
-await test("feature-flag gate wraps panel (default-off UI)", () => {
+await test("AI Reply Assistant always mounts for selected conversation", () => {
   assert.ok(view.includes("isAiDraftUiEnabled"));
-  assert.ok(view.includes("{aiDraftEnabled ? ("));
+  assert.ok(view.includes("<AiDraftPanel"));
+  assert.ok(view.includes("canGenerateDraft"));
+  assert.ok(view.includes("AI Reply Assistant") || panel.includes("AI Reply Assistant"));
 });
 
 if (failed > 0) {
