@@ -30,6 +30,8 @@ import {
   sanitizeQueryAgentLogMeta,
   assertNoWhatsAppSendCapability,
   validateProviderDraftOutput,
+  containsForbiddenGuaranteeLanguage,
+  containsIdentifierOrTokenLeakage,
   MAX_DRAFT_CHARS,
   SAFE_ESCALATION_DRAFT,
   hashOpaqueId,
@@ -489,6 +491,102 @@ await test("post-generation validation: empty / leak / excess / guarantees", () 
     "Thanks for your interest. A consultant can discuss options after a site review."
   );
   assert.equal(ok.ok, true);
+});
+
+await test("R2: reject common guarantee / outcome promise wording", () => {
+  const unsafeExamples = [
+    "We guarantee you will save money.",
+    "Your approval will definitely be granted.",
+    "Net metering will surely be approved.",
+    "Installation will be completed tomorrow.",
+    "You will recover your investment in two years.",
+    "We can definitely promise strong ROI and payback.",
+    "Your net-metering approval is assured after signup.",
+  ];
+
+  for (const example of unsafeExamples) {
+    assert.equal(
+      containsForbiddenGuaranteeLanguage(example),
+      true,
+      `expected forbidden: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, false, `expected reject: ${example}`);
+    if (!result.ok) {
+      assert.equal(result.violation, "forbidden_guarantee");
+      assert.equal(result.action, "escalate");
+      // Never return or partially clean the unsafe text.
+      assert.notEqual(result.message, example);
+    }
+  }
+});
+
+await test("R2: safe drafts without outcome promises still pass", () => {
+  const safeExamples = [
+    "Thanks for your interest. A consultant can discuss solar options after a site review.",
+    "Net metering is a utility process; timelines vary by DISCO and require documents.",
+    "We can arrange a site survey and share installation options for your review.",
+    "Savings and payback depend on your bill and site conditions — a specialist will advise.",
+    SAFE_ESCALATION_DRAFT,
+  ];
+
+  for (const example of safeExamples) {
+    assert.equal(
+      containsForbiddenGuaranteeLanguage(example),
+      false,
+      `expected safe: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, true, `expected pass: ${example}`);
+    if (result.ok) {
+      assert.equal(result.text, example);
+    }
+  }
+});
+
+await test("R2: reject JWT / bearer / API token and WhatsApp identifier leakage", () => {
+  const leakExamples = [
+    "Auth header Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepad",
+    "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123signature",
+    "api_key: sk-abcdefghijklmnopqrstuvwxyz0123",
+    "access_token=YA29.a0AfH6SMC-test-google-oauth-token-value",
+    "Contact 923001234567@s.whatsapp.net for details",
+    "Mapped lid 123456789012345@lid should never appear",
+    "Group jid 120363@g.us must not leak",
+  ];
+
+  for (const example of leakExamples) {
+    assert.equal(
+      containsIdentifierOrTokenLeakage(example),
+      true,
+      `expected leak: ${example}`
+    );
+    const result = validateProviderDraftOutput(example);
+    assert.equal(result.ok, false, `expected deny: ${example}`);
+    if (!result.ok) {
+      assert.equal(result.violation, "token_jid_lid_leak");
+      assert.equal(result.action, "deny");
+    }
+  }
+});
+
+await test("R2: unsafe guarantee text is never returned by the service", async () => {
+  const unsafe = "We guarantee you will save money.";
+  const service = new QueryAgentService({
+    config: enabledConfig(),
+    gateway: new MockQueryAgentProvider({ phrasedAnswer: unsafe }),
+  });
+  const result = await service.generateDraft(
+    baseRequest({ messageText: "Tell me about solar savings" })
+  );
+  assert.equal(result.status, "draft");
+  if (result.status === "draft") {
+    assert.equal(result.escalate, true);
+    assert.equal(result.answer, SAFE_ESCALATION_DRAFT);
+    assert.notEqual(result.answer, unsafe);
+    assert.doesNotMatch(result.answer, /guarantee|save money/i);
+    assert.doesNotMatch(JSON.stringify(result), /We guarantee you will save money/);
+  }
 });
 
 await test("unsafe provider output is denied — never a clean draft", async () => {
