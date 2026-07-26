@@ -34,6 +34,7 @@ import {
   queryRequestsPrice,
   readQueryAgentConfig,
   resolveKnowledgeTenantId,
+  stripTechnicalRateSpans,
   type QueryAgentGateway,
   type QueryProviderPhraseRequest,
 } from "./aiQueryAgent/index.ts";
@@ -307,6 +308,53 @@ await test("AI-04-R2: technical rate phrases are not price requests", () => {
       queryRequestsPrice(sample),
       false,
       `technical rate must not be price intent: ${sample}`
+    );
+  }
+});
+
+await test("AI-04-R3: span-safe technical-only rate intents => false", () => {
+  const technicalOnly = [
+    "What is the charge rate for this battery?",
+    "What is the rate of discharge?",
+    "Explain the rate of panel degradation.",
+    "Battery charge/discharge rate kya hai?",
+    "بیٹری کا چارجنگ ریٹ کیا ہے؟",
+  ];
+  for (const sample of technicalOnly) {
+    const stripped = stripTechnicalRateSpans(sample);
+    assert.equal(
+      stripped.removedTechnicalSpan,
+      true,
+      `expected technical span removed: ${sample}`
+    );
+    assert.equal(
+      queryRequestsPrice(sample),
+      false,
+      `technical-only must be false: ${sample} (remainder=${JSON.stringify(stripped.normalizedRemainder)})`
+    );
+  }
+});
+
+await test("AI-04-R3: mixed technical + package price intent => true", () => {
+  const mixed = [
+    "What is the battery charging rate and the 10kW system rate?",
+    "Tell me the discharge rate and 8kW package rate.",
+    "Battery charging rate kya hai aur 10kW kitne ka hai?",
+    "بیٹری کا چارجنگ ریٹ کیا ہے اور 10kW کی قیمت؟",
+    "Battery charging ریٹ kya hai aur solar package rate batao",
+  ];
+  for (const sample of mixed) {
+    assert.equal(
+      queryRequestsPrice(sample),
+      true,
+      `mixed intent must be price-positive: ${sample}`
+    );
+    // Explicit commercial wording must win even alongside technical rate.
+    assert.equal(
+      queryRequestsPrice(
+        `What is the battery charging rate and the package cost for 10kW?`
+      ),
+      true
     );
   }
 });

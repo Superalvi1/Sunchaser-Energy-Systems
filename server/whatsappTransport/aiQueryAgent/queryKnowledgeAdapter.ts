@@ -114,26 +114,112 @@ export function normalizePriceIntentText(queryText: string): string {
   return t.replace(/\s+/g, " ").trim();
 }
 
-/** Technical “rate” phrases that must not be treated as price requests. */
-const TECHNICAL_RATE_PATTERNS: RegExp[] = [
-  /\bbattery\s+charge\s+rate\b/,
-  /\bcharging\s+rate\b/,
-  /\bdischarge\s+rate\b/,
-  /\bdata\s+rate\b/,
-  /\brefresh\s+rate\b/,
-  /\bfailure\s+rate\b/,
-  /\bgeneration\s+rate\b/,
-  /\bdegradation\s+rate\b/,
-];
-
-export function isTechnicalRateContext(queryText: string): boolean {
-  const t = normalizePriceIntentText(queryText);
-  return TECHNICAL_RATE_PATTERNS.some((re) => re.test(t));
+/**
+ * Technical-rate span patterns (English / Roman-Urdu), applied after
+ * normalizePriceIntentText. Spans are removed before price-intent checks so a
+ * technical phrase cannot suppress a separate product/package rate request.
+ *
+ * Each pattern is rebuilt per call (global + stateful lastIndex).
+ */
+function technicalRateSpanPatternsEn(): RegExp[] {
+  const gap = String.raw`(?:\s+\w+){0,6}`;
+  // Optional slash form: charge/discharge (raw) or charge discharge (normalized).
+  const chargeWord = String.raw`(?:charge|charging|discharge)`;
+  const chargePair = String.raw`${chargeWord}(?:\s*[\/]\s*${chargeWord}|\s+${chargeWord})?`;
+  return [
+    // battery charge/charging/discharge rate (incl. charge/discharge)
+    new RegExp(String.raw`\bbatter(?:y|ies)\s+${chargePair}\s+rate\b`, "g"),
+    // charge rate for this battery / charging rate of the battery bank
+    new RegExp(
+      String.raw`\b${chargeWord}\s+rate(?:\s+(?:for|of|on|in)\s+(?:the\s+|this\s+|a\s+|an\s+)?(?:\w+\s+){0,3}batter(?:y|ies))?\b`,
+      "g"
+    ),
+    // battery … charging rate (intervening words)
+    new RegExp(
+      String.raw`\bbatter(?:y|ies)${gap}\s+${chargeWord}\s+rate\b`,
+      "g"
+    ),
+    // rate of discharge / rate of panel degradation
+    /\brate\s+of\s+(?:the\s+)?(?:panel\s+)?(?:discharge|degradation|charging|charge)\b/g,
+    // other technical * rate forms
+    /\b(?:data|refresh|failure|generation|degradation)\s+rate\b/g,
+    /\brate\s+of\s+(?:the\s+)?(?:data|refresh|failure|generation)\b/g,
+  ];
 }
 
-function hasUrduPriceIntent(queryText: string): boolean {
+/** Urdu / mixed technical-rate spans (ریٹ as technical rate). */
+function technicalRateSpanPatternsUrdu(): RegExp[] {
+  const gap = String.raw`(?:\s+\S+){0,8}`;
+  return [
+    // بیٹری کا چارجنگ ریٹ
+    new RegExp(String.raw`بیٹری${gap}\s*چارج(?:نگ)?\s*ریٹ`, "g"),
+    // battery charging ریٹ / battery … ریٹ with charge words nearby
+    new RegExp(
+      String.raw`\bbatter(?:y|ies)${gap}\s*(?:charging|charge|discharge|چارجنگ|چارج)\s*ریٹ`,
+      "gi"
+    ),
+    // charging ریٹ / چارجنگ ریٹ (technical)
+    /(?:charging|charge|discharge|چارجنگ|چارج)\s*ریٹ/gi,
+    // بیٹری … ریٹ when charge/charging appears in the same short window
+    new RegExp(
+      String.raw`بیٹری${gap}\s*(?:charging|charge|discharge|چارجنگ|چارج)${gap}\s*ریٹ`,
+      "g"
+    ),
+  ];
+}
+
+function applySpanRemovals(text: string, patterns: RegExp[]): string {
+  let out = text;
+  for (const re of patterns) {
+    out = out.replace(re, " ");
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Remove technical-rate spans from customer text. Price-intent detection runs
+ * on the remainder so mixed technical + commercial messages stay price-positive.
+ */
+export function stripTechnicalRateSpans(queryText: string): {
+  normalizedRemainder: string;
+  rawRemainder: string;
+  removedTechnicalSpan: boolean;
+} {
   const raw = String(queryText || "").normalize("NFKC");
-  // Urdu-script price / rate / “how much” equivalents.
+  const normalized = normalizePriceIntentText(raw);
+
+  const rawAfterUrdu = applySpanRemovals(raw, technicalRateSpanPatternsUrdu());
+  const enPatternsCi = technicalRateSpanPatternsEn().map(
+    (re) => new RegExp(re.source, "gi")
+  );
+  const rawRemainder = applySpanRemovals(rawAfterUrdu, enPatternsCi).replace(
+    /\s+/g,
+    " "
+  ).trim();
+
+  const normalizedRemainder = applySpanRemovals(
+    normalizePriceIntentText(rawAfterUrdu),
+    technicalRateSpanPatternsEn()
+  );
+
+  const removedTechnicalSpan =
+    normalizedRemainder !== normalized || rawAfterUrdu !== raw;
+
+  return {
+    normalizedRemainder,
+    rawRemainder,
+    removedTechnicalSpan,
+  };
+}
+
+/** True when the message contains at least one technical-rate span. */
+export function isTechnicalRateContext(queryText: string): boolean {
+  return stripTechnicalRateSpans(queryText).removedTechnicalSpan;
+}
+
+function hasUrduPriceIntent(text: string): boolean {
+  const raw = String(text || "").normalize("NFKC");
+  // Urdu-script price / commercial rate / “how much” equivalents.
   return (
     /قیمت/.test(raw) ||
     /ریٹ/.test(raw) ||
@@ -142,15 +228,7 @@ function hasUrduPriceIntent(queryText: string): boolean {
   );
 }
 
-/**
- * True when the customer text is asking for a price / cost / monetary quote.
- * Includes common Pakistani WhatsApp Roman-Urdu / Urdu phrasing, while
- * excluding technical “rate” uses (charge rate, data rate, etc.).
- */
-export function queryRequestsPrice(queryText: string): boolean {
-  if (hasUrduPriceIntent(queryText)) return true;
-
-  const t = normalizePriceIntentText(queryText);
+function hasLatinPriceIntent(t: string): boolean {
   if (!t) return false;
 
   // Formal English price wording.
@@ -179,11 +257,25 @@ export function queryRequestsPrice(queryText: string): boolean {
     return true;
   }
 
-  // Bare rate/rates — only when not a known technical-rate phrase.
-  if (/\brates?\b/.test(t) && !isTechnicalRateContext(t)) {
+  // Remaining commercial rate/rates after technical spans were removed.
+  if (/\brates?\b/.test(t)) {
     return true;
   }
 
+  return false;
+}
+
+/**
+ * True when the customer text is asking for a price / cost / monetary quote.
+ * Technical-rate spans are removed first; any independent price intent in the
+ * remainder still returns true.
+ */
+export function queryRequestsPrice(queryText: string): boolean {
+  const { normalizedRemainder, rawRemainder } =
+    stripTechnicalRateSpans(queryText);
+
+  if (hasUrduPriceIntent(rawRemainder)) return true;
+  if (hasLatinPriceIntent(normalizedRemainder)) return true;
   return false;
 }
 
