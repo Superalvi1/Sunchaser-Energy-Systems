@@ -1,5 +1,5 @@
 /**
- * Static validation for SYNC-14C-A / R3 name_source migration release pack.
+ * Static validation for SYNC-14C-A / R4 name_source migration release pack.
  * Run: node scripts/validate-sync14c-name-source-migration-pack.mjs
  * Does not connect to a database and does not apply SQL.
  */
@@ -8,7 +8,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   FORWARD_ALLOW_LIST,
+  FORWARD_REF_NAME,
   ROLLBACK_ALLOW_LIST,
+  ROLLBACK_REF_NAME,
   constraintCompleteMatch,
   decideConstraintAction,
   decideNameCollision,
@@ -180,7 +182,7 @@ function bypass(label, def, mode = "forward") {
 }
 
 // ---------------------------------------------------------------------------
-// R3 — reference-name / non-CHECK collision scenarios
+// R4 — cross-mode reference-name / non-CHECK collision scenarios
 // ---------------------------------------------------------------------------
 
 {
@@ -192,6 +194,45 @@ function bypass(label, def, mode = "forward") {
   const d = decideNameCollision({ rollbackRefExists: true });
   assert.equal(d.action, "STOP", "pre-existing rollback reference name must STOP");
   assert.match(d.reason, /ref_rb|already exists/i);
+}
+{
+  // Cross-mode: ref_rb exists before forward
+  const d = decideNameCollision({
+    rollbackRefExists: true,
+    forwardRefExists: false,
+    mode: "forward",
+  });
+  assert.equal(d.action, "STOP", "ref_rb before forward must STOP");
+  assert.match(d.reason, new RegExp(ROLLBACK_REF_NAME.replace(/_/g, "_")));
+}
+{
+  // Cross-mode: ref_fwd exists before rollback
+  const d = decideNameCollision({
+    forwardRefExists: true,
+    rollbackRefExists: false,
+    mode: "rollback",
+  });
+  assert.equal(d.action, "STOP", "ref_fwd before rollback must STOP");
+  assert.match(d.reason, new RegExp(FORWARD_REF_NAME.replace(/_/g, "_")));
+}
+{
+  // Either reference exists before post-verify
+  assert.equal(
+    decideNameCollision({
+      forwardRefExists: true,
+      mode: "post-verify",
+    }).action,
+    "STOP",
+    "ref_fwd before post-verify must STOP"
+  );
+  assert.equal(
+    decideNameCollision({
+      rollbackRefExists: true,
+      mode: "post-verify",
+    }).action,
+    "STOP",
+    "ref_rb before post-verify must STOP"
+  );
 }
 {
   const d = decideNameCollision({ canonicalContype: "u" });
@@ -213,7 +254,7 @@ function bypass(label, def, mode = "forward") {
   assert.equal(d.action, "CONTINUE", "normal exact proof path must continue");
 }
 {
-  // Normal exact forward/rollback proof remains successful under collision gate
+  // Normal exact forward/rollback/repeat behavior remains successful
   assert.equal(
     isCompletePredicateProven(exactForward, "forward").proven,
     true,
@@ -230,7 +271,8 @@ function bypass(label, def, mode = "forward") {
       canonicalValidated: true,
       tempPresent: false,
     }).action,
-    "NOOP"
+    "NOOP",
+    "repeat forward remains NOOP"
   );
   assert.equal(
     decideConstraintAction("rollback", {
@@ -238,7 +280,8 @@ function bypass(label, def, mode = "forward") {
       canonicalValidated: true,
       tempPresent: false,
     }).action,
-    "NOOP"
+    "NOOP",
+    "repeat rollback remains NOOP"
   );
 }
 
@@ -272,6 +315,16 @@ assert.match(
   forward,
   /reference constraint name % already exists/i,
   "forward must STOP on pre-existing reference name"
+);
+assert.match(
+  forward,
+  /whatsapp_contacts_name_source_check_ref_rb/,
+  "forward must declare/check rollback reference name (cross-mode)"
+);
+assert.match(
+  forward,
+  /rollback_ref_name/,
+  "forward must guard rollback_ref_name collision"
 );
 assert.match(
   forward,
@@ -318,6 +371,16 @@ assert.match(
 );
 assert.match(
   rollback,
+  /forward_ref_name/,
+  "rollback must guard forward_ref_name collision (cross-mode)"
+);
+assert.match(
+  rollback,
+  /whatsapp_contacts_name_source_check_ref_fwd/,
+  "rollback must check forward reference name"
+);
+assert.match(
+  rollback,
   /canonical name % is occupied by a non-CHECK constraint/i,
   "rollback must STOP on canonical non-CHECK collision"
 );
@@ -356,6 +419,21 @@ assert.match(
 );
 assert.match(
   postVerify,
+  /rollback_ref_name/,
+  "post-verify must guard rollback_ref_name (either reference)"
+);
+assert.match(
+  postVerify,
+  /whatsapp_contacts_name_source_check_ref_rb/,
+  "post-verify must check rollback reference name"
+);
+assert.match(
+  postVerify,
+  /whatsapp_contacts_name_source_check_ref_fwd/,
+  "post-verify must check forward reference name"
+);
+assert.match(
+  postVerify,
   /canonical name % is occupied by a non-CHECK constraint/i,
   "post-verify must STOP on canonical non-CHECK"
 );
@@ -385,8 +463,9 @@ assert.match(sequencing, /deployment/i);
 assert.match(sequencing, /smoke test/i);
 assert.match(sequencing, /rollback/i);
 assert.match(sequencing, /conbin/i);
-assert.match(sequencing, /RAISE EXCEPTION|R3/i);
+assert.match(sequencing, /RAISE EXCEPTION|R4/i);
+assert.match(sequencing, /Cross-mode|either/i);
 assert.match(sequencing, /already exists/i);
 assert.match(sequencing, /non-CHECK/i);
 
-console.log("SYNC-14C-A-R3 name_source migration pack static validation passed.");
+console.log("SYNC-14C-A-R4 name_source migration pack static validation passed.");

@@ -1,5 +1,5 @@
 -- =============================================================================
--- SYNC-14C-A / R3 — forward migration: expand whatsapp_contacts.name_source
+-- SYNC-14C-A / R4 — forward migration: expand whatsapp_contacts.name_source
 -- =============================================================================
 -- REVIEW / MANUAL APPLY ONLY (Supabase SQL Editor).
 -- Do NOT auto-apply from the application. Do NOT run until preflight PASSes.
@@ -9,10 +9,11 @@
 --     NULL | manual | whatsapp_verified | whatsapp_saved | whatsapp_legacy
 --          | whatsapp_push | whatsapp_short | phone
 --
--- Safety (R3):
+-- Safety (R4):
 --   - Prove complete CHECK predicate via pg_constraint.conbin against an
 --     ephemeral exact reference constraint created in this DO block.
---   - If *_check_ref_fwd already exists ⇒ STOP (never drop unknown pre-existing).
+--   - If *_check_ref_fwd OR *_check_ref_rb already exists ⇒ STOP
+--     (never drop unknown pre-existing reference-name occupants).
 --   - Only drop the reference oid created by this successful execution.
 --   - Canonical/temporary names occupied by non-CHECK constraints ⇒ STOP.
 --   - Unproven canonical ⇒ rebuild; mismatched temporary ⇒ STOP.
@@ -25,6 +26,7 @@ declare
   canonical_name constant text := 'whatsapp_contacts_name_source_check';
   temp_name constant text := 'whatsapp_contacts_name_source_check_v14c';
   ref_name constant text := 'whatsapp_contacts_name_source_check_ref_fwd';
+  rollback_ref_name constant text := 'whatsapp_contacts_name_source_check_ref_rb';
   canonical_oid oid;
   canonical_contype "char";
   temp_oid oid;
@@ -81,6 +83,7 @@ begin
 
   -- -------------------------------------------------------------------------
   -- Name collision guards (fail-closed; never silently drop unknowns)
+  -- Either pack reference name blocks forward (cross-mode R4).
   -- -------------------------------------------------------------------------
   if exists (
     select 1 from pg_constraint
@@ -89,6 +92,15 @@ begin
     raise exception
       'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
       ref_name;
+  end if;
+
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = rollback_ref_name
+  ) then
+    raise exception
+      'STOP: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+      rollback_ref_name;
   end if;
 
   select con.oid, con.contype, con.convalidated
@@ -465,7 +477,7 @@ begin
   if exists (
     select 1 from pg_constraint
     where conrelid = table_oid
-      and conname in (temp_name, ref_name)
+      and conname in (temp_name, ref_name, rollback_ref_name)
   ) then
     raise exception 'STOP: temporary/reference constraint still present after forward migration';
   end if;

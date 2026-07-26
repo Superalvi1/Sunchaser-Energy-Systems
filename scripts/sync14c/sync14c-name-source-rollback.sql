@@ -1,16 +1,16 @@
 -- =============================================================================
--- SYNC-14C-A / R3 — rollback: restore pre-SYNC-14B name_source allow-list
+-- SYNC-14C-A / R4 — rollback: restore pre-SYNC-14B name_source allow-list
 -- =============================================================================
 -- REVIEW / MANUAL APPLY ONLY. Do NOT auto-apply.
 --
 -- Restores exactly:
 --   NULL | manual | whatsapp_saved | whatsapp_push | whatsapp_short | phone
 --
--- Safety (R3):
+-- Safety (R4):
 --   - Complete predicate proof via pg_constraint.conbin against an ephemeral
 --     exact reference constraint created in this DO block.
---   - If *_check_ref_rb or *_check_ref_fwd already exists ⇒ STOP (never drop
---     unknown pre-existing reference names).
+--   - If *_check_ref_rb OR *_check_ref_fwd already exists ⇒ STOP (never drop
+--     unknown pre-existing reference-name occupants).
 --   - Only drop the reference oid created by this successful execution.
 --   - Canonical/temporary names occupied by non-CHECK constraints ⇒ STOP.
 --

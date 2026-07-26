@@ -1,10 +1,11 @@
 -- =============================================================================
--- SYNC-14C-A / R3 — post-migration verification
+-- SYNC-14C-A / R4 — post-migration verification
 -- =============================================================================
 -- Proves the complete forward CHECK predicate via pg_constraint.conbin against
 -- an ephemeral exact reference constraint created in this DO block.
 --
--- If *_check_ref_fwd already exists ⇒ STOP (never drop unknown pre-existing).
+-- If *_check_ref_fwd OR *_check_ref_rb already exists ⇒ STOP
+-- (never drop unknown pre-existing reference-name occupants).
 -- Only drop the reference oid created by this successful execution.
 -- Failure mode: RAISE EXCEPTION (non-zero / aborted script), not NOTICE-only.
 -- =============================================================================
@@ -75,6 +76,7 @@ declare
   canonical_name constant text := 'whatsapp_contacts_name_source_check';
   temp_name constant text := 'whatsapp_contacts_name_source_check_v14c';
   ref_name constant text := 'whatsapp_contacts_name_source_check_ref_fwd';
+  rollback_ref_name constant text := 'whatsapp_contacts_name_source_check_ref_rb';
   canonical_oid oid;
   canonical_contype "char";
   proven boolean := false;
@@ -95,6 +97,7 @@ begin
     raise exception 'STOP: SYNC-14C-A post-verify failed: public.whatsapp_contacts missing';
   end if;
 
+  -- Either pack reference name blocks post-verify (cross-mode R4).
   if exists (
     select 1 from pg_constraint
     where conrelid = table_oid and conname = ref_name
@@ -106,11 +109,11 @@ begin
 
   if exists (
     select 1 from pg_constraint
-    where conrelid = table_oid
-      and conname = 'whatsapp_contacts_name_source_check_ref_rb'
+    where conrelid = table_oid and conname = rollback_ref_name
   ) then
     raise exception
-      'STOP: SYNC-14C-A post-verify failed: reference constraint name whatsapp_contacts_name_source_check_ref_rb already exists (unknown pre-existing object; will not drop)';
+      'STOP: SYNC-14C-A post-verify failed: reference constraint name % already exists (unknown pre-existing object; will not drop)',
+      rollback_ref_name;
   end if;
 
   select con.oid, con.contype, con.convalidated
@@ -200,8 +203,8 @@ begin
       and conname in (
         temp_name,
         ref_name,
-        'whatsapp_contacts_name_source_check_rollback',
-        'whatsapp_contacts_name_source_check_ref_rb'
+        rollback_ref_name,
+        'whatsapp_contacts_name_source_check_rollback'
       )
   ) then
     stop_reasons := array_append(

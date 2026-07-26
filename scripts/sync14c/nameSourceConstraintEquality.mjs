@@ -206,8 +206,9 @@ export function decideConstraintAction(mode, state) {
 }
 
 /**
- * R3 name-collision gate. Mirrors SQL: pre-existing reference names and
- * non-CHECK occupants of canonical/temporary names must STOP; never drop.
+ * R4 cross-mode name-collision gate. Mirrors SQL: either pre-existing
+ * reference name (ref_fwd or ref_rb) and non-CHECK occupants of
+ * canonical/temporary names must STOP in every mode; never drop unknowns.
  *
  * @param {{
  *   forwardRefExists?: boolean,
@@ -218,6 +219,7 @@ export function decideConstraintAction(mode, state) {
  * }} state
  */
 export function decideNameCollision(state = {}) {
+  // Order does not matter for STOP; either reference blocks all modes.
   if (state.forwardRefExists === true) {
     return {
       action: "STOP",
