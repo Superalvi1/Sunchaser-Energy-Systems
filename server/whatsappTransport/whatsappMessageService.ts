@@ -52,6 +52,62 @@ export class MessageService {
     return row;
   }
 
+  /**
+   * AI-03: resolve authoritative inbound text for draft generation.
+   * Browser-supplied messageText is never trusted — only stored rows under the
+   * authorized conversation/tenant are used. When messageId is omitted, the
+   * latest eligible inbound message is selected server-side.
+   */
+  async resolveAiDraftSourceMessage(
+    conversationId: string,
+    actor: RequestActor,
+    messageId?: string
+  ): Promise<{ messageId: string; messageText: string }> {
+    this.assertViewer(actor);
+    await this.requireConversation(conversationId);
+
+    if (messageId) {
+      const row = await this.messages.getById(messageId, this.companyId);
+      if (!row || row.conversationId !== conversationId) {
+        // Same response for missing vs cross-conversation — avoid ID oracle.
+        throw new InboxServiceError("not_found", "Message not found");
+      }
+      if (row.direction !== "inbound") {
+        throw new InboxServiceError(
+          "invalid_argument",
+          "AI draft requires an inbound customer message"
+        );
+      }
+      const text = row.textBody?.trim();
+      if (!text) {
+        throw new InboxServiceError(
+          "invalid_argument",
+          "Message has no text available for AI draft"
+        );
+      }
+      return { messageId: row.id, messageText: text };
+    }
+
+    const latest = await this.messages.getLatestInbound(
+      conversationId,
+      this.companyId
+    );
+    if (!latest) {
+      throw new InboxServiceError(
+        "not_found",
+        "No inbound message available for AI draft"
+      );
+    }
+    const text = latest.textBody?.trim();
+    if (!text) {
+      throw new InboxServiceError(
+        "invalid_argument",
+        "Latest inbound message has no text available for AI draft"
+      );
+    }
+    return { messageId: latest.id, messageText: text };
+  }
+
   async listByConversation(
     conversationId: string,
     actor: RequestActor,

@@ -29,6 +29,7 @@ import {
 } from "./whatsappInboxServices.ts";
 import { createInboxOutboundSendPort } from "./whatsappInboxSendTransport.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
+import type { AiDraftConfig, InboxAiDraftAdapter } from "./aiDraft/index.ts";
 
 export type WhatsAppInboxRouterDeps = {
   /** Injected services (tests). When omitted, built from repositories. */
@@ -61,6 +62,10 @@ export type WhatsAppInboxRouterDeps = {
   resolveListAvailability?: InboxControllerDeps["resolveListAvailability"];
   /** Task 5B: normalized messaging dual-write for inbox outbound send. */
   messagingRepository?: MessagingRepository | null;
+  /** AI-03 draft adapter (tests / DI). Defaults to mock. */
+  aiDraftAdapter?: InboxAiDraftAdapter;
+  /** AI-03 config override (tests). */
+  aiDraftConfig?: AiDraftConfig;
 };
 
 /**
@@ -121,6 +126,8 @@ export function createWhatsAppInboxRouter(
       getConnectionStatus: deps.getConnectionStatus,
       getQrConnectionStatus: deps.getQrConnectionStatus,
       resolveListAvailability: deps.resolveListAvailability,
+      aiDraftAdapter: deps.aiDraftAdapter,
+      aiDraftConfig: deps.aiDraftConfig,
     });
     return controllers;
   };
@@ -167,6 +174,15 @@ export function createWhatsAppInboxRouter(
   router.post(
     "/messages/send",
     run((c, req, res) => c.sendMessage(req, res))
+  );
+
+  /**
+   * AI-03: staff-initiated AI draft. Separate from send — never auto-sends.
+   * Gated by WHATSAPP_AI_QUERY_DRAFT_ENABLED (default OFF) inside the controller.
+   */
+  router.post(
+    "/conversations/:conversationId/ai-draft",
+    run((c, req, res) => c.generateAiDraft(req, res))
   );
   router.post(
     "/messages/read",

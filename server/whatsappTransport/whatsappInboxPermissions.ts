@@ -58,3 +58,13 @@ export function canCreateLeadFromConversation(
 ): boolean {
   return canViewInbox(actor);
 }
+
+/**
+ * AI-03: staff-initiated AI draft generation.
+ * Same gate as inbox view (Approved + crm_leads). Does not grant send.
+ */
+export function canGenerateAiDraft(
+  actor: RequestActor | null | undefined
+): boolean {
+  return canViewInbox(actor);
+}
