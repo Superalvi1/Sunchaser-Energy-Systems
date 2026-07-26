@@ -351,6 +351,7 @@ import {
 import { createMessagingProductionWiring } from "./server/whatsappTransport/messagingProductionFactory.ts";
 import {
   createWhatsAppWebRouter,
+  getSharedWhatsAppLidPhoneMap,
   getSharedWhatsAppWebSession,
   persistWhatsAppWebInbound,
   readWhatsAppWebConfig,
@@ -693,6 +694,8 @@ const whatsappWebShadowEngine = new AiShadowEngine();
 whatsappWebSession.setInboundHandler(async (message) => {
   await persistWhatsAppWebInbound(message, {
     messagingRepository,
+    // Same process-local map populated by Baileys contact/chat/history ingest.
+    lidMap: getSharedWhatsAppLidPhoneMap(),
     autoLinkLead: async (conversationId) => {
       const result = await productionAutoLinkLead(conversationId);
       return result.leadId;

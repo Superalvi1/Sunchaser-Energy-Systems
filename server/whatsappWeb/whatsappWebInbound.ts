@@ -21,6 +21,7 @@ import {
   WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID,
   WHATSAPP_WEB_QR_CONNECTION_ID,
 } from "./whatsappWebConfig.ts";
+import type { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
 import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import {
   normalizeBaileysInbound,
@@ -30,6 +31,8 @@ import {
 export type WhatsAppWebInboundDeps = {
   repo?: WhatsAppRepository;
   messagingRepository?: MessagingRepository | null;
+  /** Optional shared LID map populated by contact/chat/history sync. */
+  lidMap?: WhatsAppLidPhoneMap | null;
   /** Optional AI shadow evaluate — must not send messages. */
   evaluateShadow?: ((input: {
     conversationId: string;
@@ -64,14 +67,21 @@ export async function persistWhatsAppWebInbound(
   | { kind: "ignored"; reason: string }
   | { kind: "error"; error: string }
 > {
-  const normalized = normalizeBaileysInbound(message);
+  const normalized = normalizeBaileysInbound(message, {
+    lidMap: deps.lidMap ?? null,
+  });
   if (normalized.kind === "ignore") {
+    // Privacy-safe: reason code only — never phone/JID/text/payload.
+    logWhatsAppWeb("info", "inbound_ignored", { reason: normalized.reason });
     return { kind: "ignored", reason: normalized.reason };
   }
 
   const event = normalized.event;
   const repo = deps.repo ?? createDefaultWhatsAppRepository();
   if (!repo.isActive()) {
+    logWhatsAppWeb("error", "inbound_persist_failed", {
+      code: "persistence_unavailable",
+    });
     return { kind: "error", error: "WhatsApp persistence unavailable" };
   }
 
@@ -106,6 +116,9 @@ export async function persistWhatsAppWebInbound(
       },
     });
     if (inserted.ok === false) {
+      logWhatsAppWeb("error", "inbound_persist_failed", {
+        code: "insert_failed",
+      });
       return { kind: "error", error: inserted.error };
     }
 
@@ -156,15 +169,22 @@ export async function persistWhatsAppWebInbound(
       },
     });
 
+    if (inserted.created) {
+      logWhatsAppWeb("info", "inbound_stored");
+    } else {
+      logWhatsAppWeb("info", "inbound_duplicate");
+    }
+
     return {
       kind: "stored",
       messageId: inserted.row.id,
       conversationId: conversation.id,
       created: inserted.created,
     };
-  } catch (err) {
-    const error = err instanceof Error ? err.message : "inbound persist failed";
-    logWhatsAppWeb("error", "inbound_persist_failed");
-    return { kind: "error", error };
+  } catch {
+    logWhatsAppWeb("error", "inbound_persist_failed", {
+      code: "unexpected_persist_failure",
+    });
+    return { kind: "error", error: "inbound persist failed" };
   }
 }
