@@ -7,10 +7,7 @@
  */
 
 import type { QueryAgentConfig } from "./queryAgentConfig.ts";
-import {
-  MockQueryAgentProvider,
-  UnconfiguredQueryAgentProvider,
-} from "./mockQueryAgentProvider.ts";
+import { MockQueryAgentProvider } from "./mockQueryAgentProvider.ts";
 import type {
   QueryAgentGateway,
   QueryProviderPhraseRequest,
@@ -202,20 +199,43 @@ export type CreateQueryAgentGatewayOptions = {
   forceMock?: boolean;
 };
 
+/**
+ * Live provider may be constructed only when ALL are true:
+ * 1) WHATSAPP_AI_QUERY_DRAFT_ENABLED / config.draftEnabled
+ * 2) WHATSAPP_AI_QUERY_PROVIDER=env explicitly (config.provider === "env")
+ * 3) GEMINI_API_KEY present
+ * 4) WHATSAPP_AI_LIVE_PROVIDER_ENABLED / config.liveProviderEnabled
+ *
+ * Without all four conditions, callers must use mock and make no network call.
+ */
+export function isLiveQueryProviderOptedIn(
+  env: NodeJS.ProcessEnv,
+  config: QueryAgentConfig
+): boolean {
+  return (
+    config.draftEnabled === true &&
+    config.provider === "env" &&
+    config.liveProviderEnabled === true &&
+    hasServerSideProviderKey(env) === true
+  );
+}
+
 export function createQueryAgentGateway(
   options: CreateQueryAgentGatewayOptions
 ): QueryAgentGateway {
   if (options.gateway) return options.gateway;
 
   const env = options.env ?? process.env;
-  if (options.forceMock || options.config.provider === "mock") {
+  if (
+    options.forceMock ||
+    options.config.provider === "mock" ||
+    !isLiveQueryProviderOptedIn(env, options.config)
+  ) {
+    // Fail closed to mock — never construct a live network gateway.
     return new MockQueryAgentProvider();
   }
 
-  if (!hasServerSideProviderKey(env)) {
-    return new UnconfiguredQueryAgentProvider();
-  }
-
+  // Fully opted in. Tests must inject liveComplete; production may use default.
   return new LiveQueryAgentGateway({
     complete: options.liveComplete ?? defaultLivePhraseComplete,
     configured: true,

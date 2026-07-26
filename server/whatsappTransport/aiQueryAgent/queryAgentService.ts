@@ -20,7 +20,10 @@ import {
   readQueryAgentConfig,
   type QueryAgentConfig,
 } from "./queryAgentConfig.ts";
-import { createQueryAgentGateway } from "./queryAgentGateway.ts";
+import {
+  createQueryAgentGateway,
+  type LivePhraseCompleteFn,
+} from "./queryAgentGateway.ts";
 import { logQueryAgent } from "./queryAgentLogger.ts";
 import {
   MAX_DRAFT_CHARS,
@@ -34,6 +37,8 @@ import {
   enrichOutlineWithKnowledge,
   knowledgeFactsToSafeSources,
   knowledgeRequiresHumanEscalation,
+  prepareKnowledgeDraftForPhrasing,
+  safeKnowledgeEscalationWarning,
   type QueryKnowledgePort,
 } from "./queryKnowledgeAdapter.ts";
 import type {
@@ -54,6 +59,10 @@ export type QueryAgentServiceOptions = {
   knowledge?: QueryKnowledgePort;
   /** When false, skip knowledge retrieval (unit tests for policy-only paths). */
   enableKnowledge?: boolean;
+  /** Env used for live-provider opt-in checks (defaults to process.env). */
+  env?: NodeJS.ProcessEnv;
+  /** Injected live complete fn — tests only; never a real network client. */
+  liveComplete?: LivePhraseCompleteFn;
   /** Test seam for time. */
   now?: () => number;
   /** Test seam — override sleep between retries. */
@@ -179,11 +188,13 @@ export class QueryAgentService {
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: QueryAgentServiceOptions = {}) {
-    this.config = options.config ?? readQueryAgentConfig();
+    this.config = options.config ?? readQueryAgentConfig(options.env);
     this.gateway =
       options.gateway ??
       createQueryAgentGateway({
         config: this.config,
+        env: options.env,
+        liveComplete: options.liveComplete,
         forceMock: this.config.provider === "mock",
       });
     this.policyLayer =
@@ -321,22 +332,29 @@ export class QueryAgentService {
           queryText: policy.sanitizedUserText,
           intent: policy.intent,
         });
-        if (knowledgeRequiresHumanEscalation(knowledgeDraft)) {
+        if (
+          knowledgeRequiresHumanEscalation(knowledgeDraft, {
+            queryText: policy.sanitizedUserText,
+          })
+        ) {
           knowledgeEscalationReasons = ["uncertain"];
           if (knowledgeDraft.category === "unsafe_engineering") {
             knowledgeEscalationReasons = ["dangerous"];
           }
+          // Never surface stale/conflicting monetary amounts in warnings.
           knowledgeWarnings = [
-            knowledgeDraft.humanHandoverReason ||
-              knowledgeDraft.unavailableMessage ||
-              "Approved knowledge unavailable or requires human review.",
+            safeKnowledgeEscalationWarning(knowledgeDraft),
           ];
         } else {
+          const phrasingDraft = prepareKnowledgeDraftForPhrasing(
+            knowledgeDraft,
+            policy.sanitizedUserText
+          );
           policyAnswerOutline = enrichOutlineWithKnowledge(
             policy.policyAnswerOutline,
-            knowledgeDraft
+            phrasingDraft
           );
-          const kSources = knowledgeFactsToSafeSources(knowledgeDraft);
+          const kSources = knowledgeFactsToSafeSources(phrasingDraft);
           const seen = new Set(safeSources.map((s) => s.sourceId));
           for (const src of kSources) {
             if (!seen.has(src.sourceId)) {
@@ -344,7 +362,7 @@ export class QueryAgentService {
               safeSources.push(src);
             }
           }
-          if (knowledgeDraft.disposition === "partial") {
+          if (phrasingDraft.disposition === "partial") {
             knowledgeWarnings.push(
               "Knowledge answer is partial — staff must verify before send."
             );

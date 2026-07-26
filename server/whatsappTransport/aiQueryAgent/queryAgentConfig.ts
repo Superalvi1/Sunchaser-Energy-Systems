@@ -12,8 +12,17 @@ export type QueryAgentConfig = {
    * AI-01 never sends outbound even if this is somehow true.
    */
   autoReplyEnabled: boolean;
-  /** Provider selection: mock | env-backed gateway. */
+  /**
+   * Provider selection: mock | env-backed gateway.
+   * Default mock. Unknown/blank/malformed values resolve to mock.
+   * Live construction still requires full opt-in (see isLiveQueryProviderOptedIn).
+   */
   provider: "mock" | "env";
+  /**
+   * Explicit controlled-release gate for constructing a live provider.
+   * Default false. Required together with draftEnabled, provider=env, and GEMINI_API_KEY.
+   */
+  liveProviderEnabled: boolean;
   timeoutMs: number;
   maxRetries: number;
   rateLimitWindowMs: number;
@@ -59,17 +68,25 @@ function readFloat(
   return Math.min(max, Math.max(min, n));
 }
 
-function readProvider(env: NodeJS.ProcessEnv): "mock" | "env" {
-  const raw = String(env.WHATSAPP_AI_QUERY_PROVIDER ?? "env")
-    .trim()
-    .toLowerCase();
-  return raw === "mock" ? "mock" : "env";
+/**
+ * Resolve provider selection. Fail closed to mock unless the value is
+ * exactly "env" (case-insensitive). Absence, blank, unknown, or malformed → mock.
+ */
+export function readProvider(env: NodeJS.ProcessEnv): "mock" | "env" {
+  const raw = env.WHATSAPP_AI_QUERY_PROVIDER;
+  if (raw === undefined || raw === null) return "mock";
+  const normalized = String(raw).trim().toLowerCase();
+  if (!normalized) return "mock";
+  if (normalized === "env") return "env";
+  return "mock";
 }
 
 /**
  * Resolve query-agent env. Defaults fail closed:
  * - draft OFF
  * - auto-reply OFF
+ * - provider mock
+ * - live provider OFF
  */
 export function readQueryAgentConfig(
   env: NodeJS.ProcessEnv = process.env
@@ -79,6 +96,7 @@ export function readQueryAgentConfig(
     // Hard default OFF — never treat auto-reply as enabled in AI-01 wiring.
     autoReplyEnabled: readFlag(env, "WHATSAPP_AI_AUTO_REPLY_ENABLED", false),
     provider: readProvider(env),
+    liveProviderEnabled: readFlag(env, "WHATSAPP_AI_LIVE_PROVIDER_ENABLED", false),
     timeoutMs: readInt(env, "WHATSAPP_AI_QUERY_TIMEOUT_MS", 8_000, 50, 60_000),
     maxRetries: readInt(env, "WHATSAPP_AI_QUERY_MAX_RETRIES", 1, 0, 3),
     rateLimitWindowMs: readInt(

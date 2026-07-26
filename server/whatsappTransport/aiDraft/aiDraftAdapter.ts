@@ -1,15 +1,19 @@
 /**
  * AI-04 adapter factory — wires AI-03 inbox draft API to AI-01 QueryAgentService.
  *
- * Default path uses the approved query-agent service (mock phrasing when no
- * live GEMINI key). Does not call WhatsApp send transport. Automatic replies
- * remain blocked. No second provider gateway is introduced here.
+ * Default path uses the approved query-agent service with mock phrasing.
+ * A live provider is constructed only when fully opted in (draft enabled +
+ * provider=env + GEMINI_API_KEY + WHATSAPP_AI_LIVE_PROVIDER_ENABLED).
+ * Does not call WhatsApp send transport. Automatic replies remain blocked.
  */
 
 import {
   createQueryAgentService,
+  isLiveQueryProviderOptedIn,
   readQueryAgentConfig,
+  type LivePhraseCompleteFn,
   type QueryAgentConfig,
+  type QueryAgentGateway,
   type QueryDraftOutcome,
 } from "../aiQueryAgent/index.ts";
 import {
@@ -28,11 +32,16 @@ export type CreateInboxAiDraftAdapterOptions = {
   adapter?: InboxAiDraftAdapter;
   /** Optional query-agent config override (tests). */
   queryAgentConfig?: QueryAgentConfig;
+  /** Env for provider opt-in checks (defaults to process.env). */
+  env?: NodeJS.ProcessEnv;
+  /** Injected gateway (tests). */
+  gateway?: QueryAgentGateway;
+  /**
+   * Injected fake live complete — only used when full live opt-in is true.
+   * Tests must inject this; never pass a real network client in tests.
+   */
+  liveComplete?: LivePhraseCompleteFn;
 };
-
-function hasLiveGeminiKey(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(String(env.GEMINI_API_KEY ?? "").trim());
-}
 
 function toAiDraftOutcome(outcome: QueryDraftOutcome): AiDraftOutcome {
   // AI-01 may emit unsafe_output; AI-03 union includes it after R4 alignment.
@@ -49,25 +58,32 @@ export function createInboxAiDraftAdapter(
 ): InboxAiDraftAdapter {
   if (options.adapter) return options.adapter;
 
-  const draftConfig = options.config ?? readAiDraftConfig();
-  const baseQuery = options.queryAgentConfig ?? readQueryAgentConfig();
-
-  // Prefer mock phrasing unless a live Gemini key is present AND provider=env.
-  // AI-04 must not call a live AI provider in default local/integration paths.
-  const useMock =
-    baseQuery.provider === "mock" || !hasLiveGeminiKey();
+  const env = options.env ?? process.env;
+  const draftConfig = options.config ?? readAiDraftConfig(env);
+  const baseQuery = options.queryAgentConfig ?? readQueryAgentConfig(env);
 
   const queryConfig: QueryAgentConfig = {
     ...baseQuery,
     draftEnabled: draftConfig.draftEnabled,
     autoReplyEnabled: false,
-    provider: useMock ? "mock" : "env",
     timeoutMs: draftConfig.timeoutMs || baseQuery.timeoutMs,
   };
 
+  const liveOptIn = isLiveQueryProviderOptedIn(env, queryConfig);
+
+  // Without full opt-in: force mock — no network call.
+  const effectiveConfig: QueryAgentConfig = {
+    ...queryConfig,
+    provider: liveOptIn ? "env" : "mock",
+    liveProviderEnabled: liveOptIn ? queryConfig.liveProviderEnabled : false,
+  };
+
   const service = createQueryAgentService({
-    config: queryConfig,
+    config: effectiveConfig,
+    env,
     enableKnowledge: true,
+    gateway: options.gateway,
+    liveComplete: liveOptIn ? options.liveComplete : undefined,
   });
 
   return {

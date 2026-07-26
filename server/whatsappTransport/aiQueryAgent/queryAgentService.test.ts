@@ -70,6 +70,8 @@ await test("feature flags: draft and auto-reply default OFF (fail closed)", () =
   assert.equal(isQueryDraftEnabled(config), false);
   assert.equal(isQueryAutoReplyEnabled(config), false);
   assert.equal(config.autoReplyEnabled, false);
+  assert.equal(config.provider, "mock");
+  assert.equal(config.liveProviderEnabled, false);
 });
 
 await test("feature flags: draft can enable while auto-reply stays OFF", () => {
@@ -336,12 +338,30 @@ await test("gateway factory: mock provider never requires live keys", () => {
   assert.equal(gateway.isConfigured(), true);
 });
 
-await test("gateway factory: env mode without keys fails closed", () => {
+await test("gateway factory: env mode without full opt-in uses mock (no network)", () => {
   const gateway = createQueryAgentGateway({
     config: enabledConfig({ WHATSAPP_AI_QUERY_PROVIDER: "env" }),
-    env: {},
+    env: { GEMINI_API_KEY: "AIza-test-key-not-used" },
   });
-  assert.equal(gateway.isConfigured(), false);
+  // Missing WHATSAPP_AI_LIVE_PROVIDER_ENABLED → mock, not live.
+  assert.equal(gateway.providerId, "mock");
+  assert.equal(gateway.isConfigured(), true);
+});
+
+await test("gateway factory: provider defaults and unknown values resolve to mock", () => {
+  assert.equal(readQueryAgentConfig({}).provider, "mock");
+  assert.equal(
+    readQueryAgentConfig({ WHATSAPP_AI_QUERY_PROVIDER: "" }).provider,
+    "mock"
+  );
+  assert.equal(
+    readQueryAgentConfig({ WHATSAPP_AI_QUERY_PROVIDER: "gemini" }).provider,
+    "mock"
+  );
+  assert.equal(
+    readQueryAgentConfig({ WHATSAPP_AI_QUERY_PROVIDER: "ENV" }).provider,
+    "env"
+  );
 });
 
 await test("live gateway uses injectable complete and never needs network in tests", async () => {
@@ -426,16 +446,50 @@ await test("hasServerSideProviderKey: only Gemini counts as configured", () => {
   );
 });
 
-await test("gateway factory: OpenAI/Anthropic keys alone fail closed", () => {
+await test("gateway factory: OpenAI/Anthropic keys alone stay on mock (no network)", () => {
   const gateway = createQueryAgentGateway({
-    config: enabledConfig({ WHATSAPP_AI_QUERY_PROVIDER: "env" }),
+    config: enabledConfig({
+      WHATSAPP_AI_QUERY_PROVIDER: "env",
+      WHATSAPP_AI_LIVE_PROVIDER_ENABLED: "true",
+    }),
     env: {
       OPENAI_API_KEY: "sk-test-openai",
       ANTHROPIC_API_KEY: "sk-ant-test",
     },
   });
-  assert.equal(gateway.isConfigured(), false);
-  assert.equal(gateway.providerId, "unconfigured");
+  assert.equal(gateway.providerId, "mock");
+  assert.equal(gateway.isConfigured(), true);
+});
+
+await test("gateway factory: full opt-in uses injected fake live complete only", async () => {
+  let called = 0;
+  const gateway = createQueryAgentGateway({
+    config: enabledConfig({
+      WHATSAPP_AI_QUERY_PROVIDER: "env",
+      WHATSAPP_AI_LIVE_PROVIDER_ENABLED: "true",
+    }),
+    env: { GEMINI_API_KEY: "AIza-test-key-not-for-network" },
+    liveComplete: async () => {
+      called += 1;
+      return {
+        text: "Injected fake live draft — staff must review before send.",
+        model: "fake-live",
+        providerId: "fake-live",
+      };
+    },
+  });
+  assert.equal(gateway.providerId, "live");
+  const phrased = await gateway.phraseDraft({
+    companyId: "sunchaser",
+    intent: "sales",
+    policyAnswerOutline: "Describe packages without inventing prices.",
+    sanitizedUserText: "Tell me about solar packages",
+    warnings: [],
+    allowedToolNames: [],
+  });
+  assert.equal(called, 1);
+  assert.match(phrased.phrasedAnswer, /Injected fake live draft/i);
+  assert.equal(phrased.providerId, "fake-live");
 });
 
 await test("defaultLivePhraseComplete wires abortSignal into Gemini config", async () => {
