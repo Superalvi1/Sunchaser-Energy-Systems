@@ -98,6 +98,16 @@ export {
   bridgePrepareOutboundMessage,
   type WhatsAppMessagingBridge,
 } from "./whatsappMessagingBridge.ts";
+export {
+  QueryAgentService,
+  createQueryAgentService,
+  readQueryAgentConfig,
+  createQueryAgentGateway,
+  QUERY_AGENT_CAN_SEND_WHATSAPP,
+  type QueryDraftRequest,
+  type QueryDraftOutcome,
+  type QueryAgentConfig,
+} from "./aiQueryAgent/index.ts";
 
 /**
  * Path-scoped raw-body middleware for Meta webhook signature verification.
