@@ -22,9 +22,9 @@ import {
   type SupplierRepository,
 } from "./supplierRepository.ts";
 import { SupplierError } from "./supplierTypes.ts";
+import { denyLegacySupplierMapping } from "../legacyMappingDisabled.ts";
 import {
   parseLivePreviewBody,
-  parseMappingBody,
   parsePriceCheckBody,
 } from "./supplierValidation.ts";
 
@@ -102,7 +102,7 @@ function adminScope(actor: RequestActor): string {
  * - GET  /price-alerts
  * - POST /price-check/run
  * - POST /suppliers/live-preview   (Super Admin, Phase 1 preview-only)
- * - POST /suppliers/mappings
+ * - POST /suppliers/mappings       (WS-MAP-0: permanently fail-closed)
  */
 export function createMarketplaceSupplierRouter(
   deps: SupplierRouterDeps = {},
@@ -186,27 +186,11 @@ export function createMarketplaceSupplierRouter(
     }
   });
 
-  router.post("/suppliers/mappings", async (req, res) => {
+  router.post("/suppliers/mappings", (req, res) => {
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
-    try {
-      if (req.headers["x-actor-role"] || req.headers["x-actor-scope"]) {
-        return sendError(
-          res,
-          400,
-          "FORBIDDEN_FIELD",
-          "Client-supplied actor headers are not allowed.",
-        );
-      }
-      const input = parseMappingBody(req.body);
-      const result = await repository.upsertMapping(
-        input,
-        superAdminActorScope(actor),
-      );
-      return sendOk(res, result, 201);
-    } catch (err) {
-      return handleError(res, err);
-    }
+    // WS-MAP-0: deny before body parse / repository / RPC. No audit payload.
+    return denyLegacySupplierMapping(req, res);
   });
 
   return router;

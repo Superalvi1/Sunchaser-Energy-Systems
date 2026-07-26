@@ -478,31 +478,13 @@ export function createSupabasePricingRepository(
       return this.getPricingConfig();
     },
 
-    async upsertSupplierMapping(input, actor) {
-      const supabase = requireClient();
-      const { data, error } = await supabase.rpc(
-        "mp_admin_upsert_supplier_mapping",
-        {
-          p_actor_scope: actorScope(actor),
-          p_supplier_code: input.supplierCode,
-          p_product_id: input.productId,
-          p_variant_id: input.variantId,
-          p_supplier_product_id: input.supplierProductId,
-          p_supplier_variant_id: input.supplierVariantId ?? null,
-          p_supplier_sku: input.supplierSku ?? null,
-          p_normalized_exact_model: input.normalizedExactModel,
-          p_match_confidence: input.matchConfidence,
-          p_match_locked: input.matchLocked ?? false,
-          p_active: input.active ?? true,
-          p_supplier_url: input.supplierUrl ?? null,
-        },
+    async upsertSupplierMapping(_input, _actor) {
+      // WS-MAP-0: repository path also fail-closed — never invoke legacy RPC.
+      throw new PricingError(
+        "LEGACY_MAPPING_DISABLED",
+        "Legacy supplier mapping is disabled.",
+        410,
       );
-      if (error) throw mapRpcError(error);
-      const row = (data || {}) as Record<string, unknown>;
-      return {
-        mappingId: String(row.mappingId || ""),
-        action: String(row.action || "supplier_mapping.created"),
-      };
     },
   };
 }

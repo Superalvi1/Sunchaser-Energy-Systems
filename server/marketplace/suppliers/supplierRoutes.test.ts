@@ -317,7 +317,7 @@ function memoryRepo(): SupplierRepository & {
       );
       assert.equal(mappingDenied.status, 403);
 
-      const mappingOk = await api(
+      const mappingClosed = await api(
         base,
         "/api/marketplace/admin/suppliers/mappings",
         {
@@ -333,7 +333,13 @@ function memoryRepo(): SupplierRepository & {
           }),
         },
       );
-      assert.equal(mappingOk.status, 201);
+      // WS-MAP-0: legacy mapping bypass permanently closed.
+      assert.equal(mappingClosed.status, 410);
+      assert.equal(mappingClosed.body?.error, "LEGACY_MAPPING_DISABLED");
+      assert.equal(
+        mappingClosed.body?.message,
+        "Legacy supplier mapping is disabled.",
+      );
 
       const scheduled = await api(base, "/api/marketplace/admin/price-check/run", {
         method: "POST",

@@ -16,13 +16,13 @@ import {
   type PricingRepository,
 } from "./pricingRepository.ts";
 import { PricingError } from "./pricingTypes.ts";
+import { denyLegacySupplierMapping } from "../legacyMappingDisabled.ts";
 import {
   parseCreateCostBody,
   parseCreateOverrideBody,
   parsePatchCostBody,
   parsePricingConfigPatch,
   parsePublishBody,
-  parseSupplierMappingBody,
 } from "./pricingValidation.ts";
 
 export type PricingRouterDeps = {
@@ -94,7 +94,7 @@ function actorRef(actor: RequestActor) {
  * - POST /overrides
  * - DELETE /overrides/:id  (soft revoke)
  * - GET/PATCH /pricing-config
- * - POST /suppliers/mappings
+ * - POST /suppliers/mappings  (WS-MAP-0: permanently fail-closed)
  */
 export function createMarketplacePricingRouter(
   deps: PricingRouterDeps = {},
@@ -226,19 +226,11 @@ export function createMarketplacePricingRouter(
     }
   });
 
-  router.post("/suppliers/mappings", async (req, res) => {
+  router.post("/suppliers/mappings", (req, res) => {
     const actor = requirePricingActor(req, res);
     if (!actor) return;
-    try {
-      const input = parseSupplierMappingBody(req.body);
-      return sendOk(
-        res,
-        await repo.upsertSupplierMapping(input, actorRef(actor)),
-        201,
-      );
-    } catch (err) {
-      return handleError(res, err);
-    }
+    // WS-MAP-0: deny before body parse / repository / RPC. No audit payload.
+    return denyLegacySupplierMapping(req, res);
   });
 
   return router;
