@@ -701,4 +701,156 @@ await test("AI-02-R1: fingerprintQuery requires HMAC secret (no unsalted digest)
   process.env[KNOWLEDGE_QUERY_FINGERPRINT_SECRET_ENV] = previous;
 });
 
+function baseNonPriceRecord(
+  overrides: Partial<KnowledgeRecord> = {},
+): KnowledgeRecord {
+  return {
+    id: "cat-panel-tech-a",
+    tenantId: FIXTURE_TENANT_A,
+    sourceType: "product_catalogue",
+    title: "Panel Technical Specs",
+    body: "Residential packages typically use 550W mono PERC modules such as LONGi-LR5-72HPH-550M.",
+    categories: ["panels"],
+    keywords: ["panel", "wattage", "model"],
+    publishedAt: hoursAgoIso(24),
+    maxAgeHours: 168,
+    containsPrice: false,
+    price: null,
+    priority: 60,
+    active: true,
+    ...overrides,
+  };
+}
+
+await test("AI-02-R2: containsPrice=false cannot embed PKR/Rs/comma/bare monetary amounts", () => {
+  const store = new InMemoryKnowledgeStore([]);
+
+  const cases: Array<{ id: string; body: string; sourceType?: KnowledgeRecord["sourceType"]; categories?: KnowledgeRecord["categories"] }> = [
+    {
+      id: "bypass-pkr",
+      body: "Approved package is available from PKR 900,000 after survey.",
+      sourceType: "solar_package",
+      categories: ["solar_packages"],
+    },
+    {
+      id: "bypass-rs-dot",
+      body: "Starting rate Rs. 900000 for the hybrid package.",
+      sourceType: "pricing_approved",
+      categories: ["solar_packages"],
+    },
+    {
+      id: "bypass-rs",
+      body: "Quote band begins at Rs 875000 in the brochure copy.",
+      sourceType: "solar_package",
+      categories: ["on_grid_hybrid"],
+    },
+    {
+      id: "bypass-comma",
+      body: "Marketing copy still lists 900,000 as the package figure.",
+      sourceType: "faq_cms",
+      categories: ["solar_packages"],
+    },
+    {
+      id: "bypass-bare",
+      body: "Do not quote 900000 from this non-price record.",
+      sourceType: "solar_package",
+      categories: ["solar_packages"],
+    },
+  ];
+
+  for (const entry of cases) {
+    assert.equal(hasEmbeddedPriceAmount(entry.body), true, entry.id);
+    assert.throws(
+      () =>
+        store.ingest(
+          baseNonPriceRecord({
+            id: entry.id,
+            sourceType: entry.sourceType ?? "product_catalogue",
+            categories: entry.categories ?? ["panels"],
+            containsPrice: false,
+            price: null,
+            body: entry.body,
+          }),
+        ),
+      /must not embed numeric price amounts|containsPrice=false cannot bypass/i,
+      entry.id,
+    );
+  }
+
+  assert.throws(
+    () =>
+      store.ingest(
+        baseNonPriceRecord({
+          id: "bypass-title-pkr",
+          title: "Package from PKR 900000",
+          body: "Technical overview without a monetary amount.",
+          sourceType: "solar_package",
+          categories: ["solar_packages"],
+          containsPrice: false,
+          price: null,
+        }),
+      ),
+    /title must not embed numeric price amounts/i,
+  );
+});
+
+await test("AI-02-R2: legitimate wattage and model numbers are allowed without price payload", () => {
+  const store = new InMemoryKnowledgeStore([]);
+  const technicalBodies = [
+    "Residential packages typically use 550W mono PERC panels.",
+    "Catalogue option: 540 W bifacial modules after survey confirmation.",
+    "Supported model example: LONGi-LR5-72HPH-550M for rooftop packages.",
+    "Hybrid inverter options commonly cover 5kW and 10kW system sizes.",
+    "72-cell modules are common; final BOQ is survey-driven.",
+  ];
+
+  for (const [index, body] of technicalBodies.entries()) {
+    assert.equal(
+      hasEmbeddedPriceAmount(body),
+      false,
+      `expected technical body to be non-monetary: ${body}`,
+    );
+    assert.doesNotThrow(() =>
+      store.ingest(
+        baseNonPriceRecord({
+          id: `tech-ok-${index}`,
+          body,
+          containsPrice: false,
+          price: null,
+        }),
+      ),
+    );
+  }
+
+  const stored = store.getById(FIXTURE_TENANT_A, "tech-ok-2");
+  assert.ok(stored);
+  assert.match(stored!.body, /LONGi-LR5-72HPH-550M/);
+  assert.match(stored!.body, /550M|550/);
+  assert.equal(stored!.containsPrice, false);
+  assert.equal(stored!.price, null);
+});
+
+await test("AI-02-R2: false non-price monetary body is stripped if it bypasses ingest", () => {
+  const leaked = baseNonPriceRecord({
+    id: "leaked-nonprice",
+    sourceType: "solar_package",
+    categories: ["solar_packages"],
+    containsPrice: false,
+    price: null,
+    body: "Brochure leftover still says PKR 900,000 / Rs. 900000.",
+  });
+
+  const fact = toAnswerFact({
+    record: leaked,
+    rankScore: 50,
+    freshness: "current",
+    priceFreshness: "current",
+    priceAllowed: false,
+  });
+  assert.equal(fact.containsPrice, false);
+  assert.equal(fact.price, null);
+  assert.doesNotMatch(fact.text, /900,?000|PKR|Rs/i);
+  assert.match(fact.text, /\[price-omitted\]/);
+});
+
 console.log("AI-02 knowledge engine tests completed.");

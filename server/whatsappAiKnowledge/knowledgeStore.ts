@@ -10,6 +10,7 @@ import {
   redactPii,
   sanitizeKnowledgeContent,
 } from "./knowledgePrivacy.ts";
+import { PRICE_ELIGIBLE_SOURCE_TYPES } from "./knowledgeSourcePolicy.ts";
 import {
   isApprovedKnowledgeSourceType,
   isKnowledgeQueryCategory,
@@ -18,6 +19,10 @@ import {
   type KnowledgeQueryCategory,
   type KnowledgeRecord,
 } from "./knowledgeTypes.ts";
+
+/** Categories where customer-facing package/pricing copy is especially sensitive. */
+export const PRICE_SENSITIVE_CATEGORIES: ReadonlySet<KnowledgeQueryCategory> =
+  new Set(["solar_packages", "on_grid_hybrid", "quotation_requirements"]);
 
 export type KnowledgeStoreSnapshot = {
   tenantId: string;
@@ -265,6 +270,32 @@ export function validateKnowledgeRecord(record: KnowledgeRecord): void {
     throw new Error("Knowledge record containsPrice must be a boolean");
   }
 
+  // Customer-facing monetary amounts may only live in the validated price payload.
+  // containsPrice=false cannot bypass this — especially for price-eligible sources
+  // and package/pricing categories.
+  const embeddedInBody = hasEmbeddedPriceAmount(record.body);
+  const embeddedInTitle = hasEmbeddedPriceAmount(record.title);
+  if (embeddedInBody || embeddedInTitle) {
+    const where = embeddedInBody && embeddedInTitle
+      ? "title and body"
+      : embeddedInTitle
+        ? "title"
+        : "body";
+    const sensitive =
+      PRICE_ELIGIBLE_SOURCE_TYPES.has(record.sourceType) ||
+      record.categories.some((c) => PRICE_SENSITIVE_CATEGORIES.has(c));
+    throw new Error(
+      `Knowledge record ${where} must not embed numeric price amounts` +
+        (sensitive
+          ? " (price-eligible source or pricing/package category)"
+          : "") +
+        "; put customer-facing prices only in the validated price payload" +
+        (record.containsPrice
+          ? ""
+          : " — containsPrice=false cannot bypass monetary-amount enforcement"),
+    );
+  }
+
   if (record.containsPrice) {
     if (publishedAt === null) {
       throw new Error(
@@ -276,11 +307,6 @@ export function validateKnowledgeRecord(record: KnowledgeRecord): void {
       title: String(record.title).trim(),
       publishedAt,
     });
-    if (hasEmbeddedPriceAmount(record.body)) {
-      throw new Error(
-        "Knowledge record body must not embed numeric price amounts for priced records; use the price payload",
-      );
-    }
   } else if (record.price !== null && record.price !== undefined) {
     throw new Error(
       "Knowledge record price must be null when containsPrice is false",

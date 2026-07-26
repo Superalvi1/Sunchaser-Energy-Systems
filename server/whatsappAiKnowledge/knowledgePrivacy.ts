@@ -26,13 +26,85 @@ const INJECTION_PATTERNS: RegExp[] = [
   /act\s+as\s+(if\s+you\s+are|a)\s+/gi,
 ];
 
-/** Currency / large-number patterns that can leak stale prices via body text. */
-const EMBEDDED_PRICE_PATTERNS: RegExp[] = [
-  /\bPKR\s*[\d,]+(?:\.\d+)?\b/gi,
-  /\bRs\.?\s*[\d,]+(?:\.\d+)?\b/gi,
-  /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b/g,
-  /\b\d{5,}(?:\.\d+)?\b/g,
-];
+/** Currency-marked monetary amounts (always treated as customer-facing prices). */
+const CURRENCY_MARKED_PRICE_RE =
+  /\b(?:PKR|Rs\.?)\s*[\d,]+(?:\.\d+)?\b/gi;
+
+/** Comma-grouped amounts such as 900,000 — monetary in this product domain. */
+const COMMA_GROUPED_AMOUNT_RE = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b/g;
+
+/** Bare large numbers that may be unformatted PKR amounts (e.g. 900000). */
+const BARE_LARGE_AMOUNT_RE = /\b\d{5,}(?:\.\d+)?\b/g;
+
+/**
+ * Technical unit suffixes that make a number non-monetary
+ * (panel wattage, electrical ratings, dimensions, counts).
+ */
+const TECHNICAL_UNIT_SUFFIX_RE =
+  /^(?:\s*)(?:k?w(?:p)?|v(?:olts?)?|a(?:mps?)?|ah|hz|mm|cm|m\b|kg|cells?|modules?|panels?|pcs|pieces|cycles?)\b/i;
+
+/**
+ * True when a numeric match is part of a model token or technical rating
+ * (e.g. `550W`, `LONGi-LR5-72HPH-550M`) rather than a monetary amount.
+ */
+function isTechnicalNumberContext(
+  text: string,
+  start: number,
+  matched: string,
+): boolean {
+  const end = start + matched.length;
+  const after = text.slice(end, end + 24);
+  if (TECHNICAL_UNIT_SUFFIX_RE.test(after)) return true;
+
+  // Digits glued into alphanumeric / hyphenated model identifiers.
+  const before = text.slice(Math.max(0, start - 1), start);
+  const afterChar = text.slice(end, end + 1);
+  if (/[A-Za-z-]/.test(before) || /[A-Za-z-]/.test(afterChar)) return true;
+
+  return false;
+}
+
+function collectEmbeddedPriceMatches(text: string): Array<{
+  start: number;
+  end: number;
+  value: string;
+}> {
+  const sample = String(text || "");
+  const matches: Array<{ start: number; end: number; value: string }> = [];
+
+  const pushAll = (re: RegExp, allowTechnicalEscape: boolean) => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sample)) !== null) {
+      if (
+        allowTechnicalEscape &&
+        isTechnicalNumberContext(sample, m.index, m[0])
+      ) {
+        continue;
+      }
+      matches.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        value: m[0],
+      });
+    }
+  };
+
+  pushAll(CURRENCY_MARKED_PRICE_RE, false);
+  pushAll(COMMA_GROUPED_AMOUNT_RE, false);
+  pushAll(BARE_LARGE_AMOUNT_RE, true);
+
+  matches.sort((a, b) => a.start - b.start || b.end - a.end);
+  // Drop overlaps (prefer earlier / longer).
+  const deduped: typeof matches = [];
+  let cursor = -1;
+  for (const match of matches) {
+    if (match.start < cursor) continue;
+    deduped.push(match);
+    cursor = match.end;
+  }
+  return deduped;
+}
 
 /**
  * Env var for the HMAC secret used by query fingerprints.
@@ -61,26 +133,32 @@ export function sanitizeKnowledgeContent(text: string): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-/** True when free text embeds numeric price copy (PKR/Rs/large amounts). */
+/**
+ * True when free text embeds customer-facing monetary amounts
+ * (PKR/Rs, comma-grouped, or bare large unformatted amounts).
+ * Technical ratings/model numbers are preserved.
+ */
 export function hasEmbeddedPriceAmount(text: string): boolean {
-  const sample = String(text || "");
-  for (const pattern of EMBEDDED_PRICE_PATTERNS) {
-    pattern.lastIndex = 0;
-    if (pattern.test(sample)) return true;
-  }
-  return false;
+  return collectEmbeddedPriceMatches(text).length > 0;
 }
 
 /**
- * Replace embedded numeric price copy so stale amounts cannot bypass
- * structured price omission.
+ * Replace embedded monetary amounts so they cannot bypass structured
+ * price controls. Technical wattage / model-number digits are kept.
  */
 export function omitEmbeddedPriceAmounts(text: string): string {
-  let out = String(text || "");
-  for (const pattern of EMBEDDED_PRICE_PATTERNS) {
-    pattern.lastIndex = 0;
-    out = out.replace(pattern, "[price-omitted]");
+  const sample = String(text || "");
+  const matches = collectEmbeddedPriceMatches(sample);
+  if (matches.length === 0) return sample.replace(/\s+/g, " ").trim();
+
+  let out = "";
+  let cursor = 0;
+  for (const match of matches) {
+    out += sample.slice(cursor, match.start);
+    out += "[price-omitted]";
+    cursor = match.end;
   }
+  out += sample.slice(cursor);
   return out.replace(/\s+/g, " ").trim();
 }
 

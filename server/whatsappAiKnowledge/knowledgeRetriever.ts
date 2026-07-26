@@ -13,6 +13,7 @@
 
 import {
   fingerprintQuery,
+  hasEmbeddedPriceAmount,
   omitEmbeddedPriceAmounts,
   redactPii,
 } from "./knowledgePrivacy.ts";
@@ -149,11 +150,18 @@ export function toAnswerFact(hit: RankedKnowledgeHit): KnowledgeAnswerFact {
 
   let text = record.body;
   if (includePrice && price) {
-    text = `${record.body} Approved current price: PKR ${price.amountPkr.toLocaleString("en-PK")} (${price.unitLabel}).`;
+    // Structured price is authoritative; still strip any residual body amounts.
+    const safeBody = hasEmbeddedPriceAmount(record.body)
+      ? omitEmbeddedPriceAmounts(record.body)
+      : record.body;
+    text = `${safeBody} Approved current price: PKR ${price.amountPkr.toLocaleString("en-PK")} (${price.unitLabel}).`;
   } else if (record.containsPrice && !priceAllowed) {
     // Strip any embedded numeric price copy so stale amounts cannot leak via body.
     const safeBody = omitEmbeddedPriceAmounts(record.body);
     text = `${safeBody} Price omitted: approved current price unavailable (freshness=${priceFreshness}).`;
+  } else if (hasEmbeddedPriceAmount(record.body)) {
+    // Defense in depth: containsPrice=false must still never surface monetary copy.
+    text = omitEmbeddedPriceAmounts(record.body);
   }
 
   return {

@@ -21,7 +21,7 @@ messages, write CRM, call production Supabase, or browse the web.
 - `price.sourceId` / `price.sourceTitle` must match the record id/title at ingest.
 - `evaluateFreshness` / `evaluatePriceFreshness` → `current` \| `stale` \| `unknown` \| `missing_timestamp`.
 - **Prices may only be quoted** when source type is price-eligible (`pricing_approved` / `solar_package`) **and** price freshness is `current`.
-- Stale prices are omitted with an explicit warning; embedded numeric price copy in body text is prohibited at ingest and stripped when omitting stale prices.
+- Stale prices are omitted with an explicit warning; embedded numeric price copy in title/body is prohibited at ingest **regardless of `containsPrice`** (no false non-price bypass) and stripped when omitting stale prices. Technical wattage/model numbers remain allowed.
 - Ingest validates source types, categories, IDs, timestamps, priority, maxAgeHours, and price payloads at runtime (not TypeScript-only). Stored records are deep-copied and deeply frozen.
 
 ### Retrieval / ranking

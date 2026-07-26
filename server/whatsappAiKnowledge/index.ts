@@ -59,6 +59,7 @@ export {
 
 export {
   InMemoryKnowledgeStore,
+  PRICE_SENSITIVE_CATEGORIES,
   validateKnowledgeRecord,
 } from "./knowledgeStore.ts";
 
