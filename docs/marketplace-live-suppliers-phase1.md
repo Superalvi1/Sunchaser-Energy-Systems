@@ -90,12 +90,14 @@ Denied for Guest, Customer, Sales, and ordinary Admin (Super Admin only).
 
 Products are deduplicated **per supplier** with key `${supplier}:${shopifyProductId}` before normalization and preview totals.
 
-- Deterministic policy: prefer the **newest/last** successfully parsed instance across pages.
-- Malformed rows (missing product id) never replace a valid entry.
-- Material price conflicts emit a bounded warning (no raw page bodies).
+- **Quality-aware selection**: a later duplicate replaces an earlier record only when it is at least as usable/complete for Phase 1 catalogue purposes (usable variants and usable current listed price are mandatory protections — a later row with missing/empty/zero/malformed price or no variants cannot erase an earlier complete product).
+- Compare-at / struck-through prices are never treated as the current listed price during selection.
+- **Deterministic tie-break**: when completeness ranks are equivalent, the later successfully keyed record wins (whole-record selection; no silent merge of contradictory prices, variants, or availability).
+- Malformed rows (missing product id) never replace a valid keyed entry.
+- Material price or availability conflicts emit a **bounded sanitized warning** (no raw supplier bodies).
 - Kamal and Alladin IDs never collide (supplier-scoped keys).
-- Preview totals (`discovered`, `accepted`, `excluded`, prices, images) use unique products only.
-- Safe pagination termination and the 40-page ceiling are unchanged.
+- Preview totals (`discovered`, `accepted`, `excluded`, prices, images) use unique products only; image counts are not inflated by duplicate page rows.
+- Safe pagination termination and the 40-page ceiling are unchanged. A non-empty duplicate-only page does not terminate pagination early solely because rows were already seen.
 
 ## Network / DNS pinning
 

@@ -20,6 +20,7 @@ import {
   assertSafeAbsoluteUrl,
   createPinnedLookup,
   isAllowedSupplierImageUrl,
+  isPrivateOrLocalIp,
   normalizeSupplierImageUrl,
   SafeHttpError,
   safeFetchText,
@@ -30,10 +31,15 @@ import {
 } from "./safeHttp.ts";
 import {
   buildProductsJsonUrl,
+  compareShopifyProductQuality,
   dedupeShopifyProducts,
   fetchShopifyCatalogue,
+  isUsableListedPrice,
   parseShopifyProductsJson,
+  scoreShopifyProductQuality,
+  SHOPIFY_MAX_PAGES,
   supplierProductSourceKey,
+  type ShopifyRawProduct,
 } from "./shopifyCatalogue.ts";
 import { classifyInverterToken } from "./categoryFilter.ts";
 import { createMarketplaceSupplierRouter } from "./supplierRoutes.ts";
@@ -384,19 +390,25 @@ async function withServer(
 }
 
 {
-  // Deduplication across pages
-  const page1 = {
+  // Deduplication across pages (equivalent-quality → later wins)
+  const page1: ShopifyRawProduct = {
     id: 42,
     title: "Solar Inverter A",
+    handle: "solar-inverter-a",
+    vendor: "Test",
     product_type: "Solar Inverter",
-    variants: [{ id: 1, price: "100.00", available: true }],
+    body_html: "<p>desc</p>",
+    variants: [{ id: 1, price: "100.00", available: true, sku: "SKU-A" }],
     images: [{ src: "https://cdn.shopify.com/s/files/1/a.png" }],
   };
-  const page2Newer = {
+  const page2Newer: ShopifyRawProduct = {
     id: 42,
     title: "Solar Inverter A v2",
+    handle: "solar-inverter-a",
+    vendor: "Test",
     product_type: "Solar Inverter",
-    variants: [{ id: 1, price: "120.00", available: true }],
+    body_html: "<p>desc</p>",
+    variants: [{ id: 1, price: "120.00", available: true, sku: "SKU-A" }],
     images: [{ src: "https://cdn.shopify.com/s/files/1/b.png" }],
   };
   const malformed = {
@@ -415,6 +427,7 @@ async function withServer(
   assert.equal(multi.duplicateCount, 2);
   assert.equal(String(multi.products.find((p) => String(p.id) === "42")?.title), "Solar Inverter A v2");
   assert.ok(multi.warnings.some((w) => w.includes("price conflict")));
+  assert.ok(multi.warnings.every((w) => !w.includes("body_html") && !/"products"/.test(w)));
 
   // Adjacent-page duplicates via fetchShopifyCatalogue
   const adj = await fetchShopifyCatalogue("kamal", {
@@ -441,12 +454,13 @@ async function withServer(
   assert.equal(kamalD.products[0].title, "Solar Inverter A");
   assert.equal(alladinD.products[0].title, "Alladin same numeric id");
 
-  // Valid then malformed duplicate — keep valid
+  // Complete then incomplete keyed duplicate — keep complete (quality-aware)
   const keepValid = dedupeShopifyProducts("kamal", [
     page1,
-    { id: 42 } as any, // malformed-ish empty variant ok but id present — newest wins if id present
+    { id: 42 } as any,
   ]);
   assert.equal(keepValid.products.length, 1);
+  assert.equal(keepValid.products[0].variants?.[0]?.price, "100.00");
   const keepValid2 = dedupeShopifyProducts("kamal", [page1, malformed, malformed]);
   assert.equal(keepValid2.products.length, 1);
   assert.equal(keepValid2.products[0].title, "Solar Inverter A");
@@ -491,6 +505,328 @@ async function withServer(
 }
 
 {
+  // Quality-aware duplicate selection — focused P2 cases
+  const complete: ShopifyRawProduct = {
+    id: 9001,
+    title: "Hybrid Solar Inverter Complete",
+    handle: "hybrid-solar-inverter-complete",
+    vendor: "Kamal",
+    product_type: "Solar Inverter",
+    body_html: "<p>Full hybrid inverter specs</p>",
+    variants: [
+      {
+        id: 1,
+        price: "250000.00",
+        compare_at_price: "275000.00",
+        available: true,
+        sku: "HYB-10K",
+      },
+    ],
+    images: [
+      { src: "https://cdn.shopify.com/s/files/1/primary.png" },
+      { src: "https://cdn.shopify.com/s/files/1/extra.png" },
+    ],
+  };
+
+  const incompleteCases: Array<{ name: string; product: ShopifyRawProduct }> = [
+    { name: "no variants", product: { id: 9001, title: complete.title, variants: undefined } },
+    { name: "empty variants", product: { ...complete, variants: [] } },
+    {
+      name: "missing price",
+      product: {
+        ...complete,
+        variants: [{ id: 1, price: null, available: true, sku: "X" }],
+      },
+    },
+    {
+      name: "zero price",
+      product: {
+        ...complete,
+        variants: [{ id: 1, price: "0", available: true, sku: "X" }],
+      },
+    },
+    {
+      name: "malformed price",
+      product: {
+        ...complete,
+        variants: [{ id: 1, price: "N/A", available: true, sku: "X" }],
+      },
+    },
+    {
+      name: "compare-at only (unusable current)",
+      product: {
+        ...complete,
+        variants: [
+          {
+            id: 1,
+            price: "",
+            compare_at_price: "275000.00",
+            available: true,
+            sku: "X",
+          },
+        ],
+      },
+    },
+    {
+      name: "missing title",
+      product: { ...complete, title: "" },
+    },
+    {
+      name: "incomplete images",
+      product: {
+        ...complete,
+        images: [{ src: "" }, { id: 2 }],
+      },
+    },
+    {
+      name: "partial description/model",
+      product: {
+        ...complete,
+        body_html: "",
+        vendor: "",
+        variants: [{ id: 1, price: "250000.00", available: true, sku: null }],
+      },
+    },
+  ];
+
+  for (const { name, product } of incompleteCases) {
+    const result = dedupeShopifyProducts("kamal", [complete, product]);
+    assert.equal(result.products.length, 1, name);
+    assert.equal(result.duplicateCount, 1, name);
+    assert.equal(result.products[0].variants?.[0]?.price, "250000.00", name);
+    assert.equal(result.products[0].title, complete.title, name);
+    assert.ok(
+      compareShopifyProductQuality(
+        scoreShopifyProductQuality(complete),
+        scoreShopifyProductQuality(product),
+      ) > 0,
+      `complete should outrank incomplete: ${name}`,
+    );
+  }
+
+  // Incomplete first, complete later — complete must replace
+  const incompleteFirst = dedupeShopifyProducts("kamal", [
+    { id: 9001, title: "Stub", variants: [] },
+    complete,
+  ]);
+  assert.equal(incompleteFirst.products[0].variants?.[0]?.price, "250000.00");
+  assert.equal(incompleteFirst.products[0].title, complete.title);
+
+  // Equivalent quality → later wins
+  const eqA: ShopifyRawProduct = {
+    ...complete,
+    title: "Eq A",
+    variants: [{ id: 1, price: "100.00", available: true, sku: "EQ" }],
+  };
+  const eqB: ShopifyRawProduct = {
+    ...complete,
+    title: "Eq B",
+    variants: [{ id: 1, price: "100.00", available: true, sku: "EQ" }],
+  };
+  assert.equal(
+    compareShopifyProductQuality(
+      scoreShopifyProductQuality(eqA),
+      scoreShopifyProductQuality(eqB),
+    ),
+    0,
+  );
+  const eqLater = dedupeShopifyProducts("kamal", [eqA, eqB]);
+  assert.equal(eqLater.products[0].title, "Eq B");
+
+  // Price conflict + availability conflict warnings (bounded, no raw body)
+  const pricedA: ShopifyRawProduct = {
+    ...complete,
+    variants: [{ id: 1, price: "100.00", available: true, sku: "P" }],
+  };
+  const pricedB: ShopifyRawProduct = {
+    ...complete,
+    variants: [{ id: 1, price: "200.00", available: false, sku: "P" }],
+  };
+  const conflict = dedupeShopifyProducts("kamal", [pricedA, pricedB]);
+  assert.equal(conflict.products[0].variants?.[0]?.price, "200.00"); // equal quality → later
+  assert.ok(conflict.warnings.some((w) => w.includes("price conflict") && w.includes("100.00") && w.includes("200.00")));
+  assert.ok(conflict.warnings.some((w) => w.includes("availability conflict") && w.includes("in_stock") && w.includes("sold_out")));
+  assert.ok(conflict.warnings.every((w) => !w.includes("<p>") && !w.includes("Full hybrid")));
+
+  // Higher-quality earlier keeps usable price when later has no variants
+  const keepEarlier = dedupeShopifyProducts("kamal", [
+    pricedA,
+    { id: 9001, title: "No variants later", variants: [] },
+  ]);
+  assert.equal(keepEarlier.products[0].variants?.[0]?.price, "100.00");
+
+  // Compare-at must never count as usable current price
+  assert.equal(isUsableListedPrice(""), false);
+  assert.equal(isUsableListedPrice("0"), false);
+  assert.equal(isUsableListedPrice("N/A"), false);
+  assert.equal(
+    scoreShopifyProductQuality({
+      id: 1,
+      variants: [{ price: "", compare_at_price: "500.00", available: true }],
+    }).usableCurrentPrice,
+    false,
+  );
+
+  // Isolation + unique counting + image totals not inflated
+  const kamalProd: ShopifyRawProduct = {
+    id: 55,
+    title: "Kamal Solar Panel 550W",
+    handle: "kamal-panel",
+    vendor: "Kamal",
+    product_type: "Solar Panel",
+    body_html: "<p>panel</p>",
+    variants: [{ price: "30000.00", available: true, sku: "P55" }],
+    images: [
+      { src: "https://cdn.shopify.com/s/files/1/k1.png" },
+      { src: "https://cdn.shopify.com/s/files/1/k2.png" },
+    ],
+  };
+  const alladinSameId: ShopifyRawProduct = {
+    ...kamalProd,
+    title: "Alladin Solar Panel 550W",
+    handle: "alladin-panel",
+  };
+  assert.equal(dedupeShopifyProducts("kamal", [kamalProd]).products.length, 1);
+  assert.equal(
+    dedupeShopifyProducts("alladin", [alladinSameId]).products.length,
+    1,
+  );
+
+  const countLive = createLiveCatalogueService({
+    repository: memoryRepo(),
+    env: {
+      MARKETPLACE_WS4_KAMAL_LIVE_ENABLED: "true",
+      MARKETPLACE_WS4_KAMAL_AUTHORIZED_METHOD: SHOPIFY_STOREFRONT_PRODUCTS_JSON,
+    } as any,
+    catalogueDeps: {
+      pageLimit: 2,
+      pageProvider: async (_s, page) => {
+        if (page === 1) {
+          return {
+            products: [
+              kamalProd,
+              {
+                id: 56,
+                title: "Kamal Battery Pack",
+                handle: "battery",
+                vendor: "Kamal",
+                product_type: "Lithium Battery",
+                body_html: "<p>bat</p>",
+                variants: [{ price: "0", available: true }], // invalid price on selected record
+                images: [{ src: "https://cdn.shopify.com/s/files/1/b.png" }],
+              },
+            ],
+          };
+        }
+        // Duplicate of 55 with same images — must not inflate image totals
+        if (page === 2) {
+          return {
+            products: [
+              { ...kamalProd, title: "Kamal Solar Panel 550W dup" },
+              {
+                id: 56,
+                title: "Kamal Battery Pack dup incomplete",
+                variants: [], // must not replace valid keyed record for 56... wait 56 has variants with zero price
+                // empty variants is worse than zero-price variant record → keep earlier
+              },
+            ],
+          };
+        }
+        return { products: [] };
+      },
+    },
+  });
+  const countPreview = await countLive.runLivePreview({
+    actorScope: "admin:super:u1",
+    suppliers: ["kamal"],
+  });
+  assert.equal(countPreview.productsDiscovered, 2);
+  assert.equal(countPreview.imageUrlsFound, 3); // 2 from panel + 1 from battery, not doubled
+  // Selected record for 56 still has zero/malformed price → invalidPrices includes it
+  assert.ok(countPreview.invalidPrices >= 1);
+  assert.equal(countPreview.publishedCount, 0);
+  assert.equal(countPreview.productionReady, false);
+
+  // Duplicate-only non-empty full page must not prematurely end pagination
+  let pagesSeen = 0;
+  const dupOnly = await fetchShopifyCatalogue("kamal", {
+    pageLimit: 1,
+    maxPages: 5,
+    pageProvider: async (_s, page) => {
+      pagesSeen += 1;
+      if (page === 1) return { products: [complete] };
+      if (page === 2) return { products: [{ ...complete, title: "dup page2" }] }; // full page (limit 1)
+      if (page === 3) {
+        return {
+          products: [
+            {
+              id: 9002,
+              title: "Another Solar Inverter",
+              handle: "another",
+              vendor: "X",
+              product_type: "Solar Inverter",
+              body_html: "<p>x</p>",
+              variants: [{ price: "10.00", available: true, sku: "Y" }],
+              images: [{ src: "https://cdn.shopify.com/s/files/1/y.png" }],
+            },
+          ],
+        };
+      }
+      return { products: [] };
+    },
+  });
+  assert.equal(dupOnly.pagesFetched, 4); // 3 data pages + empty terminator
+  assert.equal(dupOnly.products.length, 2);
+  assert.equal(dupOnly.duplicateCount, 1);
+  assert.ok(pagesSeen >= 4);
+
+  // 40-page ceiling
+  let ceilingPages = 0;
+  const ceiling = await fetchShopifyCatalogue("alladin", {
+    pageLimit: 1,
+    maxPages: SHOPIFY_MAX_PAGES,
+    pageProvider: async (_s, page) => {
+      ceilingPages += 1;
+      return {
+        products: [
+          {
+            id: page,
+            title: `Solar Item ${page}`,
+            product_type: "Solar Inverter",
+            variants: [{ price: "1.00", available: true }],
+          },
+        ],
+      };
+    },
+  });
+  assert.equal(ceiling.pagesFetched, SHOPIFY_MAX_PAGES);
+  assert.equal(ceilingPages, SHOPIFY_MAX_PAGES);
+  assert.equal(ceiling.products.length, SHOPIFY_MAX_PAGES);
+
+  // Malformed unrelated product does not abort supplier processing
+  const withJunk = await fetchShopifyCatalogue("kamal", {
+    pageLimit: 10,
+    pageProvider: async (_s, page) => {
+      if (page === 1) {
+        return {
+          products: [
+            { title: "no id junk", variants: [{ price: "1" }] } as any,
+            complete,
+            { id: 9003, title: "Solar Charger", product_type: "Charge Controller", variants: [{ price: "5000.00", available: true }] },
+          ],
+        };
+      }
+      return { products: [] };
+    },
+  });
+  assert.equal(withJunk.products.length, 2);
+  assert.ok(withJunk.products.some((p) => String(p.id) === "9001"));
+  assert.ok(withJunk.products.some((p) => String(p.id) === "9003"));
+
+  console.log("PASS: quality-aware duplicate selection / conflicts / counting / pagination regressions");
+}
+
+{
   assert.equal(
     buildProductsJsonUrl("https://kamalsolar.pk", 2),
     "https://kamalsolar.pk/products.json?limit=250&page=2",
@@ -531,6 +867,16 @@ async function withServer(
     () =>
       safeFetchText("https://kamalsolar.pk/products.json", {
         lookupFn: async () => ["::1"],
+      }),
+    (e: unknown) => e instanceof SafeHttpError && e.code === "PRIVATE_IP",
+  );
+  // IPv6 unspecified address must be rejected
+  assert.equal(isPrivateOrLocalIp("::"), true);
+  assert.equal(isPrivateOrLocalIp("0:0:0:0:0:0:0:0"), true);
+  await assert.rejects(
+    () =>
+      safeFetchText("https://kamalsolar.pk/products.json", {
+        lookupFn: async () => ["::"],
       }),
     (e: unknown) => e instanceof SafeHttpError && e.code === "PRIVATE_IP",
   );
