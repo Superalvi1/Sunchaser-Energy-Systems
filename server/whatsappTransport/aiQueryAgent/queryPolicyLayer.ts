@@ -47,12 +47,13 @@ function outlineForIntent(intent: QueryIntent): string {
       return (
         "Acknowledge interest in solar. Share that Sunchaser offers residential and commercial solutions. " +
         "Ask clarifying questions (city, monthly bill, roof type). " +
-        "Do not promise savings percentages, ROI, or payback periods."
+        "Do not promise savings percentages, ROI, or payback periods. " +
+        "Do not claim off-grid availability."
       );
     case "system_selection":
       return (
-        "Explain at a high level that on-grid, hybrid, and off-grid options exist and selection depends on load, backup needs, and site survey. " +
-        "Do not finalize an engineering design or claim a specific system is approved."
+        "Explain at a high level that on-grid and hybrid enquiries are supported and selection depends on load, backup needs, and site survey. " +
+        "Do not claim off-grid availability. Do not finalize an engineering design or claim a specific system is approved."
       );
     case "product_question":
       return (
@@ -76,7 +77,8 @@ function outlineForIntent(intent: QueryIntent): string {
       );
     case "after_sales":
       return (
-        "Acknowledge after-sales need. Collect non-sensitive context for a human agent (city/general issue type). " +
+        "Acknowledge after-sales or maintenance need and hand over to the human support team. " +
+        "Collect non-sensitive context (city/general issue type). " +
         "Do not promise repair timelines or warranty outcomes."
       );
     case "billing_payment":
@@ -86,8 +88,8 @@ function outlineForIntent(intent: QueryIntent): string {
       );
     case "net_metering":
       return (
-        "Explain that net metering is a utility process with documentation and inspection steps that vary by DISCO. " +
-        "Do not promise approval, timelines, or guaranteed export rates."
+        "State that net-metering eligibility and site-specific utility steps require human engineering review. " +
+        "Do not promise approval, eligibility, timelines, or guaranteed export rates."
       );
     case "human_request":
       return (
@@ -176,6 +178,28 @@ export class QueryPolicyLayer {
       escalationReasons.push("angry");
     }
 
+    if (intent === "after_sales") {
+      escalationReasons.push("uncertain");
+      warnings.push("After-sales and maintenance must be handed to the support team.");
+    }
+
+    if (intent === "net_metering") {
+      escalationReasons.push("dangerous");
+      warnings.push(
+        "Net-metering eligibility and site-specific utility steps require human engineering review."
+      );
+    }
+
+    const lowerMessage = String(messageText || "").toLowerCase();
+    const offGridAsked =
+      /\boff[\s-]?grid\b/.test(lowerMessage) || /\boffgrid\b/.test(lowerMessage);
+    if (offGridAsked) {
+      escalationReasons.push("unsupported");
+      warnings.push(
+        "Off-grid availability is outside approved launch scope — escalate; do not claim off-grid offerings."
+      );
+    }
+
     if (confidence < this.minConfidence) {
       escalationReasons.push("low_confidence");
       escalationReasons.push("uncertain");
@@ -197,9 +221,19 @@ export class QueryPolicyLayer {
       escalationReasons.length > 0 ||
       intent === "unsupported_high_risk" ||
       intent === "human_request" ||
-      intent === "complaint";
+      intent === "complaint" ||
+      intent === "after_sales" ||
+      intent === "net_metering";
 
     const allowedToolNames = escalate ? [] : toolsForIntent(intent);
+
+    let policyAnswerOutline = outlineForIntent(intent);
+    if (offGridAsked) {
+      policyAnswerOutline =
+        "Do not claim or imply that Sunchaser provides off-grid systems. " +
+        "Approved launch scope covers on-grid and hybrid enquiries only. " +
+        "State that a human specialist must review unsupported off-grid requests.";
+    }
 
     return {
       intent,
@@ -207,7 +241,7 @@ export class QueryPolicyLayer {
       escalate,
       escalationReasons: [...new Set(escalationReasons)],
       warnings,
-      policyAnswerOutline: outlineForIntent(intent),
+      policyAnswerOutline,
       allowedToolNames,
       safeSources: safeSourcesForIntent(intent),
       injectionSuspected: injection.suspected,

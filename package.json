@@ -24,7 +24,7 @@
     "test:whatsapp-web-history-sync": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWebHistorySync.test.ts",
     "test:ai-shadow-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiEngine/aiEngine.test.ts",
     "test:ai-query-agent": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiQueryAgent/queryAgentService.test.ts",
-    "test:whatsapp-ai-knowledge": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappAiKnowledge/knowledgeEngine.test.ts",
+    "test:whatsapp-ai-knowledge": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappAiKnowledge/knowledgeEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappAiKnowledge/knowledgeProduction.test.ts",
     "test:whatsapp-ai-agent-integration": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiAgentIntegration.test.ts",
     "test:unified-messaging-baseline": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/unifiedMessagingBaseline.test.ts",
     "test:unified-messaging-contract": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/unifiedMessaging/transportContract.test.ts",

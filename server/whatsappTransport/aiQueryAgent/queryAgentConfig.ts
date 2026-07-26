@@ -4,6 +4,9 @@
  * Automatic replies default OFF and must remain unusable in this phase.
  */
 
+/** Runtime knowledge pack selection (AI-05). */
+export type KnowledgeSourceMode = "production" | "fixtures" | "unavailable";
+
 export type QueryAgentConfig = {
   /** Enables staff-requested draft generation only. Default false. */
   draftEnabled: boolean;
@@ -23,6 +26,13 @@ export type QueryAgentConfig = {
    * Default false. Required together with draftEnabled, provider=env, and GEMINI_API_KEY.
    */
   liveProviderEnabled: boolean;
+  /**
+   * AI-05 knowledge pack selector from WHATSAPP_AI_KNOWLEDGE_SOURCE.
+   * - production runtime requires "production"
+   * - fixtures only when explicitly selected outside production runtime
+   * - missing/blank/unknown → unavailable (never silent fixture fallback)
+   */
+  knowledgeSource: KnowledgeSourceMode;
   timeoutMs: number;
   maxRetries: number;
   rateLimitWindowMs: number;
@@ -81,12 +91,53 @@ export function readProvider(env: NodeJS.ProcessEnv): "mock" | "env" {
   return "mock";
 }
 
+/** True when the given env object reports NODE_ENV=production. */
+export function isProductionRuntime(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return String(env.NODE_ENV || "").trim().toLowerCase() === "production";
+}
+
+/**
+ * True when the actual process runtime is production.
+ * Caller-supplied env objects must never override this trust boundary.
+ */
+export function isActualProductionRuntime(): boolean {
+  return isProductionRuntime(process.env);
+}
+
+/**
+ * Resolve WHATSAPP_AI_KNOWLEDGE_SOURCE.
+ *
+ * Rules:
+ * - production runtime requires exactly "production"; anything else → unavailable
+ * - non-production may select "fixtures" or "production" explicitly
+ * - missing/blank/unknown → unavailable (never silent fixture fallback)
+ */
+export function readKnowledgeSource(
+  env: NodeJS.ProcessEnv = process.env
+): KnowledgeSourceMode {
+  const raw = env.WHATSAPP_AI_KNOWLEDGE_SOURCE;
+  const normalized =
+    raw === undefined || raw === null ? "" : String(raw).trim().toLowerCase();
+  const productionRuntime = isProductionRuntime(env);
+
+  if (productionRuntime) {
+    return normalized === "production" ? "production" : "unavailable";
+  }
+
+  if (normalized === "production") return "production";
+  if (normalized === "fixtures") return "fixtures";
+  return "unavailable";
+}
+
 /**
  * Resolve query-agent env. Defaults fail closed:
  * - draft OFF
  * - auto-reply OFF
  * - provider mock
  * - live provider OFF
+ * - knowledge source unavailable unless explicitly configured
  */
 export function readQueryAgentConfig(
   env: NodeJS.ProcessEnv = process.env
@@ -97,6 +148,7 @@ export function readQueryAgentConfig(
     autoReplyEnabled: readFlag(env, "WHATSAPP_AI_AUTO_REPLY_ENABLED", false),
     provider: readProvider(env),
     liveProviderEnabled: readFlag(env, "WHATSAPP_AI_LIVE_PROVIDER_ENABLED", false),
+    knowledgeSource: readKnowledgeSource(env),
     timeoutMs: readInt(env, "WHATSAPP_AI_QUERY_TIMEOUT_MS", 8_000, 50, 60_000),
     maxRetries: readInt(env, "WHATSAPP_AI_QUERY_MAX_RETRIES", 1, 0, 3),
     rateLimitWindowMs: readInt(

@@ -16,6 +16,10 @@ import {
   KNOWLEDGE_FIXTURE_AS_OF_ISO,
   KNOWLEDGE_FIXTURE_RECORDS,
 } from "./knowledgeFixtures.ts";
+import {
+  KNOWLEDGE_PRODUCTION_AS_OF_ISO,
+  KNOWLEDGE_PRODUCTION_RECORDS,
+} from "./knowledgeProduction.ts";
 import { InMemoryKnowledgeStore } from "./knowledgeStore.ts";
 import {
   KNOWLEDGE_UNAVAILABLE_MESSAGE,
@@ -23,6 +27,7 @@ import {
   type KnowledgeAnswerDraft,
   type KnowledgeAnswerFact,
   type KnowledgeQueryCategory,
+  type KnowledgeRecord,
   type KnowledgeRetrievalRequest,
 } from "./knowledgeTypes.ts";
 
@@ -103,6 +108,40 @@ function chooseDisposition(input: {
       humanHandoverReason: "Complaints require human coordination.",
       unavailableMessage: null,
       safeReplyHints: input.facts.slice(0, 1).map((f) => f.text),
+    };
+  }
+
+  if (input.category === "after_sales_support") {
+    return {
+      disposition: "escalate_human",
+      humanHandoverReason:
+        "After-sales and maintenance enquiries must be handed to the support team.",
+      unavailableMessage: null,
+      safeReplyHints: input.facts.slice(0, 1).map((f) => f.text),
+    };
+  }
+
+  if (input.category === "net_metering_general") {
+    return {
+      disposition: "escalate_human",
+      humanHandoverReason:
+        "Net-metering eligibility and site-specific utility steps require human engineering review.",
+      unavailableMessage: null,
+      safeReplyHints: [
+        "A human specialist must review net-metering eligibility for your site.",
+      ],
+    };
+  }
+
+  if (input.category === "warranty" || input.category === "installation_process") {
+    return {
+      disposition: "escalate_human",
+      humanHandoverReason:
+        "Warranty duration and installation timeline questions require human confirmation.",
+      unavailableMessage: null,
+      safeReplyHints: [
+        "A human team member will confirm warranty and timeline details.",
+      ],
     };
   }
 
@@ -242,12 +281,29 @@ export class KnowledgeAnswerEngine {
   }
 }
 
-/** Factory wired to mock fixtures — never production Supabase. */
+/** Factory wired to mock fixtures — tests / explicit fixtures mode only. */
 export function createFixtureKnowledgeEngine(): KnowledgeAnswerEngine {
   const store = new InMemoryKnowledgeStore(KNOWLEDGE_FIXTURE_RECORDS);
   return new KnowledgeAnswerEngine(store);
 }
 
+/** Factory wired to the approved Sunchaser launch pack (no prices / fixtures). */
+export function createProductionKnowledgeEngine(): KnowledgeAnswerEngine {
+  const store = new InMemoryKnowledgeStore(KNOWLEDGE_PRODUCTION_RECORDS);
+  return new KnowledgeAnswerEngine(store);
+}
+
+/** Build an engine from an explicit record set (tests / DI). */
+export function createKnowledgeEngineFromRecords(
+  records: readonly KnowledgeRecord[],
+): KnowledgeAnswerEngine {
+  return new KnowledgeAnswerEngine(new InMemoryKnowledgeStore(records));
+}
+
 export function fixtureAsOfIso(): string {
   return KNOWLEDGE_FIXTURE_AS_OF_ISO;
+}
+
+export function productionAsOfIso(): string {
+  return KNOWLEDGE_PRODUCTION_AS_OF_ISO;
 }

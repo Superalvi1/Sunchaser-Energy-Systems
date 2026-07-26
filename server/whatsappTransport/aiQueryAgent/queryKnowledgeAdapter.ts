@@ -1,21 +1,43 @@
 /**
- * AI-04 — single clean adapter from AI-01 query agent → AI-02 knowledge engine.
+ * AI-04/AI-05 — adapter from AI-01 query agent → AI-02 knowledge engine.
  *
  * Tenant isolation: companyId maps to knowledge tenantId; retrieval is always
  * scoped by tenant. No WhatsApp send, no CRM writes, no live provider calls.
+ *
+ * AI-05: production never loads fixture knowledge. Source is selected via
+ * WHATSAPP_AI_KNOWLEDGE_SOURCE (fail-closed; no silent fixture fallback).
  */
 
 import {
   FIXTURE_TENANT_A,
+  KNOWLEDGE_UNAVAILABLE_MESSAGE,
   KnowledgeAnswerEngine,
+  PRODUCTION_TENANT_SUNCHASER,
   createFixtureKnowledgeEngine,
+  createProductionKnowledgeEngine,
   fixtureAsOfIso,
   omitEmbeddedPriceAmounts,
+  productionAsOfIso,
   type KnowledgeAnswerDraft,
   type KnowledgeAnswerFact,
   type KnowledgeQueryCategory,
 } from "../../whatsappAiKnowledge/index.ts";
+import {
+  isActualProductionRuntime,
+  readKnowledgeSource,
+  type KnowledgeSourceMode,
+} from "./queryAgentConfig.ts";
 import type { QueryIntent } from "./queryAgentTypes.ts";
+
+/**
+ * Immutable knowledge-port provenance (AI-05-R2).
+ * Production-safe outline selection trusts this field only — never portId.
+ */
+export type KnowledgePortProvenance =
+  | "production"
+  | "fixtures"
+  | "unavailable"
+  | "test";
 
 export type QueryKnowledgeRetrieveRequest = {
   /** AI-01 company / tenant scope. */
@@ -29,11 +51,34 @@ export type QueryKnowledgeRetrieveRequest = {
 
 /**
  * Port consumed by QueryAgentService. Implementations must enforce tenant scope.
+ *
+ * AI-05-R3: `provenance` is decorative for logs/tests only. Production trust is
+ * established solely via module-private WeakSet membership assigned by the
+ * internal factory — never by a public string callers can forge or mutate.
  */
 export type QueryKnowledgePort = {
   readonly portId: string;
+  /** Decorative label only — do not use for production trust decisions. */
+  readonly provenance: KnowledgePortProvenance;
   retrieve(request: QueryKnowledgeRetrieveRequest): KnowledgeAnswerDraft;
 };
+
+/**
+ * Module-private registry of ports constructed by the approved production
+ * factory path. Not exported for registration — membership is unforgeable.
+ */
+const INTERNALLY_TRUSTED_PRODUCTION_PORTS: WeakSet<QueryKnowledgePort> =
+  new WeakSet();
+
+/**
+ * True only for ports constructed internally with the approved production
+ * engine. Object literals, mutated ports, and injected fakes never match.
+ */
+export function isInternallyTrustedProductionKnowledgePort(
+  port: QueryKnowledgePort | null | undefined
+): boolean {
+  return port != null && INTERNALLY_TRUSTED_PRODUCTION_PORTS.has(port);
+}
 
 /** Map AI-01 intents onto AI-02 category hints. */
 export function mapIntentToKnowledgeCategory(
@@ -70,14 +115,118 @@ export function mapIntentToKnowledgeCategory(
 
 /**
  * Resolve knowledge tenant id from company id.
- * Fixture aliases keep demo packs isolated; unknown companies keep their id
- * (empty bucket → unavailable → human escalation).
+ * Fixture aliases apply only in fixtures mode; production maps sunchaser to
+ * the launch tenant. Unknown companies keep their id (empty bucket → escalate).
  */
-export function resolveKnowledgeTenantId(companyId: string): string {
+export function resolveKnowledgeTenantId(
+  companyId: string,
+  mode: KnowledgeSourceMode = "fixtures"
+): string {
   const id = String(companyId || "").trim();
   if (!id) return "";
-  if (id === "sunchaser" || id === FIXTURE_TENANT_A) return FIXTURE_TENANT_A;
+  if (mode === "fixtures") {
+    if (id === "sunchaser" || id === FIXTURE_TENANT_A) return FIXTURE_TENANT_A;
+    return id;
+  }
+  if (mode === "production") {
+    if (id === "sunchaser" || id === PRODUCTION_TENANT_SUNCHASER) {
+      return PRODUCTION_TENANT_SUNCHASER;
+    }
+    return id;
+  }
   return id;
+}
+
+function buildUnavailableDraft(
+  tenantId: string,
+  category: KnowledgeQueryCategory,
+  queryText: string,
+  reason: string
+): KnowledgeAnswerDraft {
+  return {
+    tenantId,
+    category,
+    disposition: "unavailable",
+    facts: [
+      {
+        id: "fact_missing",
+        text: KNOWLEDGE_UNAVAILABLE_MESSAGE,
+        confidence: "missing",
+        sourceId: "none",
+        sourceTitle: "No approved source",
+        sourceType: "human_handover",
+        freshness: "missing_timestamp",
+        publishedAt: null,
+        category,
+        containsPrice: false,
+        price: null,
+        rankScore: 0,
+      },
+    ],
+    missingTopics: ["approved answer"],
+    conflicts: [],
+    humanHandoverReason: reason,
+    safeReplyHints: [KNOWLEDGE_UNAVAILABLE_MESSAGE],
+    unavailableMessage: KNOWLEDGE_UNAVAILABLE_MESSAGE,
+    retrieval: {
+      tenantId,
+      category,
+      matchedRecordCount: 0,
+      consideredRecordCount: 0,
+      usedDeterministicRetrieval: true,
+      usedAiGeneration: false,
+      usedExternalWeb: false,
+      crmWrites: false,
+      queryFingerprint: `unavailable:${String(queryText || "").length}`,
+    },
+  };
+}
+
+function freezeKnowledgePort(port: QueryKnowledgePort): QueryKnowledgePort {
+  Object.defineProperty(port, "portId", {
+    value: port.portId,
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  Object.defineProperty(port, "provenance", {
+    value: port.provenance,
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  Object.defineProperty(port, "retrieve", {
+    value: port.retrieve.bind(port),
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  return Object.freeze(port);
+}
+
+/** Fail-closed port when knowledge source is missing/invalid or blocked. */
+export function createUnavailableKnowledgePort(
+  reason =
+    "Knowledge source unavailable or misconfigured — human review required."
+): QueryKnowledgePort {
+  return freezeKnowledgePort({
+    portId: "knowledge-unavailable",
+    provenance: "unavailable",
+    retrieve(request) {
+      const category =
+        mapIntentToKnowledgeCategory(request.intent) ?? "unknown";
+      const tenantId = resolveKnowledgeTenantId(
+        request.companyId,
+        "unavailable"
+      );
+      return buildUnavailableDraft(
+        tenantId,
+        category,
+        request.queryText,
+        reason
+      );
+    },
+  });
 }
 
 /**
@@ -459,11 +608,78 @@ function hasStaleOrMissingPriceSignal(
   return false;
 }
 
+/** Categories that always require human handover (AI-05-R1). */
+const HUMAN_HANDOVER_CATEGORIES: ReadonlySet<KnowledgeQueryCategory> = new Set([
+  "unsafe_engineering",
+  "human_handover",
+  "complaints",
+  "after_sales_support",
+  "net_metering_general",
+  "warranty",
+  "installation_process",
+]);
+
+/** Off-grid is outside approved AI-05 launch scope (on-grid + hybrid only). */
+export function queryRequestsUnsupportedOffGrid(queryText: string): boolean {
+  const t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+  return (
+    /\boff[\s-]?grid\b/.test(t) ||
+    /\boffgrid\b/.test(t) ||
+    /آف\s*گرڈ/.test(String(queryText || "").normalize("NFKC"))
+  );
+}
+
+/** Site-specific net-metering eligibility always needs human engineering review. */
+export function queryRequestsNetMeteringEligibility(queryText: string): boolean {
+  const t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+  if (!/(net[\s-]?meter|netmeter|green\s*meter|export)/i.test(t)) {
+    return false;
+  }
+  return (
+    /\beligib/.test(t) ||
+    /\bqualify\b/.test(t) ||
+    /\bam i\b/.test(t) ||
+    /\bcan i\b/.test(t) ||
+    /\bdo i\b/.test(t) ||
+    /\bmy (site|house|home|property)\b/.test(t) ||
+    /اہل|eligible/i.test(String(queryText || ""))
+  );
+}
+
+/** Unsupported warranty-duration or install-timeline questions. */
+export function queryRequestsUnsupportedWarrantyOrTimeline(
+  queryText: string
+): boolean {
+  const t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+  if (
+    /\b(warranty|guarantee)\b/.test(t) &&
+    /\b(year|years|month|months|how long|duration|period)\b/.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(install|installation|timeline|how long|delivery|complete)\b/.test(t) &&
+    /\b(day|days|week|weeks|month|months|how long|timeline|when)\b/.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * True when knowledge requires a human-escalation draft (no provider phrasing
  * of uncertain facts). Price uncertainty escalates only when a price was
  * requested — non-price package questions are not broadly escalated merely
  * because a price was not asked.
+ *
+ * AI-05-R1: off-grid, net-metering eligibility, after-sales, complaints,
+ * warranty/timeline, and other human-handover categories always escalate.
  */
 export function knowledgeRequiresHumanEscalation(
   draft: KnowledgeAnswerDraft,
@@ -475,12 +691,27 @@ export function knowledgeRequiresHumanEscalation(
   ) {
     return true;
   }
-  if (draft.category === "unsafe_engineering") return true;
+  if (HUMAN_HANDOVER_CATEGORIES.has(draft.category)) return true;
   if (draft.conflicts.some((c) => c.resolution === "escalate_human")) {
     return true;
   }
 
   const queryText = options.queryText ?? "";
+  if (queryRequestsUnsupportedOffGrid(queryText)) return true;
+  if (queryRequestsNetMeteringEligibility(queryText)) return true;
+  if (queryRequestsUnsupportedWarrantyOrTimeline(queryText)) return true;
+
+  // Fact rows that explicitly require human handover / support team.
+  if (
+    draft.facts.some((f) =>
+      /human review|support team|handed to the support|human specialist|human coordinator/i.test(
+        f.text
+      )
+    )
+  ) {
+    return true;
+  }
+
   const priceRequested = queryRequestsPrice(queryText);
   if (!priceRequested) {
     // Non-price path: still escalate stale priced facts that somehow remain
@@ -599,18 +830,72 @@ export function prepareKnowledgeDraftForPhrasing(
   };
 }
 
+/**
+ * AI-05-R1 production-safe conversational shell.
+ * Contains no unsupported product claims (no off-grid availability, no
+ * eligibility promises, no prices/warranties/timelines).
+ */
+export function productionSafePolicyOutline(intent: QueryIntent): string {
+  switch (intent) {
+    case "greeting":
+      return (
+        "Greet the customer politely as Sunchaser Energy Systems. " +
+        "Invite them to share their city or system interest. " +
+        "Use only approved knowledge facts below. Do not invent offerings."
+      );
+    case "sales":
+    case "system_selection":
+    case "product_question":
+      return (
+        "Acknowledge interest politely. State only approved knowledge facts below. " +
+        "Approved launch scope is on-grid and hybrid enquiries only — never claim off-grid availability. " +
+        "Do not invent prices, warranties, timelines, savings, or eligibility."
+      );
+    case "quotation_request":
+    case "billing_payment":
+      return (
+        "Acknowledge the request. Ask only for quotation details listed in approved knowledge. " +
+        "Do not invent prices, balances, or payment outcomes."
+      );
+    case "complaint":
+    case "after_sales":
+    case "human_request":
+      return (
+        "Hand the conversation to the human support team. Keep the draft short. " +
+        "Do not invent repair timelines, warranty outcomes, or liability admissions."
+      );
+    case "net_metering":
+    case "technical_question":
+    case "unsupported_high_risk":
+      return (
+        "Do not answer the substance. State that a human specialist must review this request. " +
+        "Do not invent eligibility, engineering limits, approvals, or DIY guidance."
+      );
+    default:
+      return (
+        "Respond briefly using only approved knowledge facts below. " +
+        "Escalate anything unsupported. Do not invent facts."
+      );
+  }
+}
+
 /** Merge approved knowledge hints into the policy outline for phrasing. */
 export function enrichOutlineWithKnowledge(
   policyOutline: string,
-  draft: KnowledgeAnswerDraft
+  draft: KnowledgeAnswerDraft,
+  options: { productionSafe?: boolean; intent?: QueryIntent } = {}
 ): string {
+  const baseOutline = options.productionSafe
+    ? productionSafePolicyOutline(options.intent ?? "sales")
+    : policyOutline.trim();
+
   const hints = draft.safeReplyHints.filter((h) => String(h || "").trim());
   const factLines = draft.facts
     .filter((f) => f.confidence === "approved")
     .slice(0, 5)
     .map((f) => `- [${f.sourceTitle}] ${f.text}`);
 
-  const parts = [policyOutline.trim()];
+  const parts = [baseOutline.trim()];
   if (hints.length) {
     parts.push(
       `Approved knowledge hints:\n${hints.map((h) => `- ${h}`).join("\n")}`
@@ -644,32 +929,282 @@ export function knowledgeFactsToSafeSources(
   return out;
 }
 
+/** Public production factory options — no engine/portId injection surface. */
 export type CreateQueryKnowledgeAdapterOptions = {
-  engine?: KnowledgeAnswerEngine;
-  /** Override as-of clock (tests). */
-  asOfIso?: string;
+  /**
+   * Optional env for WHATSAPP_AI_KNOWLEDGE_SOURCE in non-production runtimes.
+   * Ignored for production trust decisions: actual process.env.NODE_ENV wins.
+   */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Explicit source mode. In actual production runtime, only "production"
+   * is accepted; fixtures/unavailable fail closed.
+   */
+  knowledgeSource?: KnowledgeSourceMode;
 };
 
-/**
- * Build the AI-01←AI-02 knowledge port.
- * Uses fixture knowledge packs only in this phase (no Supabase / live AI).
- */
-export function createQueryKnowledgeAdapter(
-  options: CreateQueryKnowledgeAdapterOptions = {}
-): QueryKnowledgePort {
-  const engine = options.engine ?? createFixtureKnowledgeEngine();
-  const fixedAsOf = options.asOfIso;
+/** Test-only DI options — never trusted in actual production runtime. */
+export type CreateTestQueryKnowledgeAdapterOptions = {
+  engine?: KnowledgeAnswerEngine;
+  asOfIso?: string;
+  env?: NodeJS.ProcessEnv;
+  knowledgeSource?: KnowledgeSourceMode;
+  /** Decorative only in tests — cannot mint production provenance. */
+  portId?: string;
+};
 
-  return {
-    portId: "knowledge-fixtures",
+function portIdForSource(mode: KnowledgeSourceMode): string {
+  switch (mode) {
+    case "production":
+      return "knowledge-production";
+    case "fixtures":
+      return "knowledge-fixtures";
+    default:
+      return "knowledge-unavailable";
+  }
+}
+
+function provenanceForMode(mode: KnowledgeSourceMode): KnowledgePortProvenance {
+  switch (mode) {
+    case "production":
+      return "production";
+    case "fixtures":
+      return "fixtures";
+    default:
+      return "unavailable";
+  }
+}
+
+function engineForSource(mode: KnowledgeSourceMode): KnowledgeAnswerEngine | null {
+  if (mode === "production") return createProductionKnowledgeEngine();
+  if (mode === "fixtures") return createFixtureKnowledgeEngine();
+  return null;
+}
+
+function defaultAsOfForSource(mode: KnowledgeSourceMode): string {
+  if (mode === "production") return productionAsOfIso();
+  if (mode === "fixtures") return fixtureAsOfIso();
+  return new Date().toISOString();
+}
+
+/**
+ * @deprecated Trust boundary no longer inspects engines. Kept for test diagnostics.
+ * Prefer createTestQueryKnowledgeAdapter for fixture DI.
+ */
+export function isFixtureBackedEngine(engine: KnowledgeAnswerEngine): boolean {
+  try {
+    return engine.storeSnapshot(FIXTURE_TENANT_A).recordCount > 0;
+  } catch {
+    return false;
+  }
+}
+
+function buildEnginePort(input: {
+  engine: KnowledgeAnswerEngine;
+  mode: KnowledgeSourceMode;
+  provenance: KnowledgePortProvenance;
+  portId: string;
+  asOfIso?: string;
+  /** Only true when engine was constructed internally as the approved pack. */
+  sealTrustedProduction?: boolean;
+}): QueryKnowledgePort {
+  const { engine, mode, provenance, portId, asOfIso: fixedAsOf } = input;
+  const port: QueryKnowledgePort = {
+    portId,
+    provenance,
     retrieve(request) {
-      const tenantId = resolveKnowledgeTenantId(request.companyId);
+      const tenantId = resolveKnowledgeTenantId(request.companyId, mode);
       return engine.retrieveAnswerDraft({
         tenantId,
         queryText: request.queryText,
         categoryHint: mapIntentToKnowledgeCategory(request.intent),
-        asOfIso: request.asOfIso || fixedAsOf || fixtureAsOfIso(),
+        asOfIso:
+          request.asOfIso ||
+          fixedAsOf ||
+          (mode === "production"
+            ? new Date().toISOString()
+            : defaultAsOfForSource(mode)),
       });
     },
   };
+  const sealed = freezeKnowledgePort(port);
+  if (input.sealTrustedProduction === true) {
+    INTERNALLY_TRUSTED_PRODUCTION_PORTS.add(sealed);
+  }
+  return sealed;
+}
+
+const PRODUCTION_OVERRIDE_BLOCK_REASON =
+  "Production knowledge trust boundary rejected caller override — human review required.";
+
+/**
+ * Locked production path for actual production runtime.
+ *
+ * AI-05-R3: real process.env.WHATSAPP_AI_KNOWLEDGE_SOURCE must be exactly
+ * "production". Caller knowledgeSource cannot activate production when the
+ * real variable is missing/blank/invalid/fixtures.
+ */
+function createLockedProductionKnowledgePort(
+  knowledgeSource?: KnowledgeSourceMode
+): QueryKnowledgePort {
+  if (knowledgeSource === "fixtures" || knowledgeSource === "unavailable") {
+    return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+  }
+
+  // Real process env is authoritative — never options.env / caller override alone.
+  const realMode = readKnowledgeSource(process.env);
+  if (realMode !== "production") {
+    return createUnavailableKnowledgePort(
+      "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+    );
+  }
+
+  // Explicit production override is allowed only when the real env also matches.
+  if (
+    knowledgeSource !== undefined &&
+    knowledgeSource !== "production"
+  ) {
+    return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+  }
+
+  const engine = createProductionKnowledgeEngine();
+  return buildEnginePort({
+    engine,
+    mode: "production",
+    provenance: "production",
+    portId: "knowledge-production",
+    sealTrustedProduction: true,
+  });
+}
+
+/**
+ * Public AI-01←AI-02 knowledge port factory.
+ *
+ * AI-05-R2 trust rules:
+ * - Actual process.env.NODE_ENV=production cannot be downgraded by options.env
+ * - Production rejects every caller-injected engine
+ * - Production ignores portId overrides
+ * - Production constructs the approved engine internally and seals provenance
+ * - Engine/portId DI lives only on createTestQueryKnowledgeAdapter
+ */
+export function createQueryKnowledgeAdapter(
+  options: CreateQueryKnowledgeAdapterOptions = {}
+): QueryKnowledgePort {
+  // Strip any illicit DI fields if a JS caller smuggles them in.
+  const smuggled = options as CreateTestQueryKnowledgeAdapterOptions;
+
+  // Immutable trust boundary: real process runtime, not caller-supplied env.
+  if (isActualProductionRuntime()) {
+    // Reject every caller-injected engine. Ignore decorative portId/asOfIso.
+    if (smuggled.engine) {
+      return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+    }
+    return createLockedProductionKnowledgePort(options.knowledgeSource);
+  }
+
+  // Public factory never accepts engine/portId/asOfIso — construct internally.
+  const env = options.env ?? process.env;
+  const mode = options.knowledgeSource ?? readKnowledgeSource(env);
+  if (mode === "unavailable") {
+    return createUnavailableKnowledgePort(
+      "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+    );
+  }
+
+  const engine = engineForSource(mode);
+  if (!engine) {
+    return createUnavailableKnowledgePort(
+      "Knowledge engine unavailable — human review required."
+    );
+  }
+
+  return buildEnginePort({
+    engine,
+    mode,
+    provenance: provenanceForMode(mode),
+    portId: portIdForSource(mode),
+    sealTrustedProduction: mode === "production",
+  });
+}
+
+/**
+ * Test-only knowledge port factory with engine/asOf/portId DI.
+ *
+ * - Fail-closed when the actual process runtime is production.
+ * - Injected engines never receive internal production trust.
+ * - Only an internally constructed production engine is WeakSet-registered.
+ */
+export function createTestQueryKnowledgeAdapter(
+  options: CreateTestQueryKnowledgeAdapterOptions = {}
+): QueryKnowledgePort {
+  if (isActualProductionRuntime()) {
+    // No test DI downgrade path in a real production process.
+    if (options.engine || options.knowledgeSource === "fixtures") {
+      return createUnavailableKnowledgePort(PRODUCTION_OVERRIDE_BLOCK_REASON);
+    }
+    // Still requires real process.env.WHATSAPP_AI_KNOWLEDGE_SOURCE=production.
+    return createLockedProductionKnowledgePort(options.knowledgeSource);
+  }
+
+  // Injected engines: never mint internal production trust (portId cannot impersonate).
+  if (options.engine) {
+    const requested = options.knowledgeSource ?? "fixtures";
+    if (requested === "unavailable") {
+      return createUnavailableKnowledgePort(
+        "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+      );
+    }
+    const claimingProduction = requested === "production";
+    const mode: KnowledgeSourceMode = claimingProduction
+      ? "production"
+      : "fixtures";
+    const provenance: KnowledgePortProvenance = claimingProduction
+      ? "test"
+      : "fixtures";
+    const portId =
+      options.portId && options.portId !== "knowledge-production"
+        ? options.portId
+        : provenance === "fixtures"
+          ? "knowledge-fixtures"
+          : "knowledge-test";
+    return buildEnginePort({
+      engine: options.engine,
+      mode,
+      provenance,
+      portId,
+      asOfIso: options.asOfIso,
+      sealTrustedProduction: false,
+    });
+  }
+
+  const env = options.env ?? process.env;
+  const mode = options.knowledgeSource ?? readKnowledgeSource(env);
+  if (mode === "unavailable") {
+    return createUnavailableKnowledgePort(
+      "WHATSAPP_AI_KNOWLEDGE_SOURCE missing, invalid, or blocked for this runtime — human review required."
+    );
+  }
+
+  // Internal construction only — trusted when mode is production.
+  const engine = engineForSource(mode);
+  if (!engine) {
+    return createUnavailableKnowledgePort(
+      "Knowledge engine unavailable — human review required."
+    );
+  }
+
+  return buildEnginePort({
+    engine,
+    mode,
+    provenance: provenanceForMode(mode),
+    // Ignore caller portId when sealing production provenance.
+    portId:
+      mode === "production"
+        ? "knowledge-production"
+        : options.portId && options.portId !== "knowledge-production"
+          ? options.portId
+          : portIdForSource(mode),
+    asOfIso: options.asOfIso,
+    sealTrustedProduction: mode === "production",
+  });
 }

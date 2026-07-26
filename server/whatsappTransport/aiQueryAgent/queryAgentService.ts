@@ -15,6 +15,7 @@ import {
   newDraftId,
 } from "./queryAgentAudit.ts";
 import {
+  isActualProductionRuntime,
   isQueryAutoReplyEnabled,
   isQueryDraftEnabled,
   readQueryAgentConfig,
@@ -35,6 +36,7 @@ import { QueryRateLimiter } from "./queryRateLimiter.ts";
 import {
   createQueryKnowledgeAdapter,
   enrichOutlineWithKnowledge,
+  isInternallyTrustedProductionKnowledgePort,
   knowledgeFactsToSafeSources,
   knowledgeRequiresHumanEscalation,
   prepareKnowledgeDraftForPhrasing,
@@ -208,12 +210,28 @@ export class QueryAgentService {
       });
     // Knowledge is opt-in via createQueryAgentService / explicit port.
     // Unit tests constructing QueryAgentService directly stay policy-only.
-    this.knowledge =
-      options.knowledge !== undefined
-        ? options.knowledge
-        : options.enableKnowledge
-          ? createQueryKnowledgeAdapter()
-          : null;
+    // AI-05-R3: actual production ignores caller-injected knowledge ports and
+    // constructs from the real process environment only.
+    if (isActualProductionRuntime()) {
+      if (options.enableKnowledge === false) {
+        this.knowledge = null;
+      } else if (
+        options.knowledge !== undefined ||
+        options.enableKnowledge === true
+      ) {
+        // Reject/ignore forged or injected ports — construct internally.
+        this.knowledge = createQueryKnowledgeAdapter();
+      } else {
+        this.knowledge = null;
+      }
+    } else {
+      this.knowledge =
+        options.knowledge !== undefined
+          ? options.knowledge
+          : options.enableKnowledge
+            ? createQueryKnowledgeAdapter({ env: options.env })
+            : null;
+    }
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
     assertNoWhatsAppSendCapability();
@@ -338,7 +356,10 @@ export class QueryAgentService {
           })
         ) {
           knowledgeEscalationReasons = ["uncertain"];
-          if (knowledgeDraft.category === "unsafe_engineering") {
+          if (
+            knowledgeDraft.category === "unsafe_engineering" ||
+            knowledgeDraft.category === "net_metering_general"
+          ) {
             knowledgeEscalationReasons = ["dangerous"];
           }
           // Never surface stale/conflicting monetary amounts in warnings.
@@ -350,9 +371,17 @@ export class QueryAgentService {
             knowledgeDraft,
             policy.sanitizedUserText
           );
+          // AI-05-R3: production-safe outline requires unforgeable internal trust.
+          const productionSafe = isInternallyTrustedProductionKnowledgePort(
+            this.knowledge
+          );
           policyAnswerOutline = enrichOutlineWithKnowledge(
             policy.policyAnswerOutline,
-            phrasingDraft
+            phrasingDraft,
+            {
+              productionSafe,
+              intent: policy.intent,
+            }
           );
           const kSources = knowledgeFactsToSafeSources(phrasingDraft);
           const seen = new Set(safeSources.map((s) => s.sourceId));
@@ -390,14 +419,15 @@ export class QueryAgentService {
     ];
     const combinedWarnings = [...policy.warnings, ...knowledgeWarnings];
 
-    // For high-risk / injection / knowledge gaps: safe escalation draft
-    // without requiring (or trusting) provider creativity.
+    // For high-risk / injection / knowledge gaps / unsupported scope:
+    // safe escalation draft without requiring (or trusting) provider creativity.
     if (
       policy.intent === "unsupported_high_risk" ||
       policy.injectionSuspected ||
       combinedEscalationReasons.includes("dangerous") ||
       combinedEscalationReasons.includes("legal") ||
       combinedEscalationReasons.includes("medical") ||
+      combinedEscalationReasons.includes("unsupported") ||
       knowledgeEscalationReasons.length > 0
     ) {
       const answer =
@@ -660,7 +690,7 @@ export function createQueryAgentService(
 ): QueryAgentService {
   return new QueryAgentService({
     ...options,
-    // Integrated path: AI-02 knowledge on by default (fixture-backed; no live AI).
+    // Integrated path: AI-02 knowledge on by default (source via env; no live AI).
     enableKnowledge: options.enableKnowledge ?? true,
   });
 }

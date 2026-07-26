@@ -25,7 +25,7 @@ import {
   QUERY_AGENT_CAN_SEND_WHATSAPP,
   createQueryAgentGateway,
   createQueryAgentService,
-  createQueryKnowledgeAdapter,
+  createTestQueryKnowledgeAdapter,
   isLiveQueryProviderOptedIn,
   isTechnicalRateContext,
   mapIntentToKnowledgeCategory,
@@ -426,7 +426,7 @@ await test("AI-04-R2: informal conflicting/stale/missing price requests escalate
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -481,7 +481,7 @@ await test("AI-04-R2: informal conflicting/stale/missing price requests escalate
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway: staleRecorder.gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: engineFromRecords([
         {
           id: "pkg-6kw-stale-informal",
@@ -546,7 +546,7 @@ await test("AI-04-R2: one approved informal price request remains normal", async
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -579,6 +579,9 @@ await test("customer query → approved knowledge → safe draft (never sends)",
       WHATSAPP_AI_AUTO_REPLY_ENABLED: "false",
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
       WHATSAPP_AI_LIVE_PROVIDER_ENABLED: "false",
+      // Explicit fixtures mode for demo-pack assertion (never silent fallback).
+      WHATSAPP_AI_KNOWLEDGE_SOURCE: "fixtures",
+      NODE_ENV: "test",
       GEMINI_API_KEY: undefined,
     },
     async () => {
@@ -612,7 +615,7 @@ await test("missing knowledge → human escalation", async () => {
     },
     async () => {
       const service = createQueryAgentService({
-        knowledge: createQueryKnowledgeAdapter({
+        knowledge: createTestQueryKnowledgeAdapter({
           engine: createFixtureKnowledgeEngine(),
           asOfIso: fixtureAsOfIso(),
         }),
@@ -639,6 +642,8 @@ await test("unsafe engineering question → escalation", async () => {
     {
       WHATSAPP_AI_QUERY_DRAFT_ENABLED: "true",
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
+      WHATSAPP_AI_KNOWLEDGE_SOURCE: "production",
+      NODE_ENV: "test",
       GEMINI_API_KEY: undefined,
     },
     async () => {
@@ -700,7 +705,7 @@ await test("explicitly requested stale price => escalation", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine,
       asOfIso: fixtureAsOfIso(),
     }),
@@ -737,7 +742,7 @@ await test("conflicting current prices => escalation", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -772,7 +777,7 @@ await test("missing approved current price => escalation", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -808,7 +813,7 @@ await test("one current approved price => safe editable draft", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -843,7 +848,7 @@ await test("non-price package question => normal safe behavior", async () => {
       WHATSAPP_AI_QUERY_PROVIDER: "mock",
     }),
     gateway,
-    knowledge: createQueryKnowledgeAdapter({
+    knowledge: createTestQueryKnowledgeAdapter({
       engine: createFixtureKnowledgeEngine(),
       asOfIso: fixtureAsOfIso(),
     }),
@@ -874,7 +879,7 @@ await test("non-price package question => normal safe behavior", async () => {
 });
 
 await test("stale/conflicting monetary amounts absent from provider input and output", async () => {
-  const knowledge = createQueryKnowledgeAdapter({
+  const knowledge = createTestQueryKnowledgeAdapter({
     engine: createFixtureKnowledgeEngine(),
     asOfIso: fixtureAsOfIso(),
   });
@@ -896,12 +901,12 @@ await test("stale/conflicting monetary amounts absent from provider input and ou
 });
 
 await test("tenant separation — company B cannot see company A knowledge", async () => {
-  const knowledge = createQueryKnowledgeAdapter({
+  const knowledge = createTestQueryKnowledgeAdapter({
     engine: createFixtureKnowledgeEngine(),
     asOfIso: fixtureAsOfIso(),
   });
-  assert.equal(resolveKnowledgeTenantId("sunchaser"), FIXTURE_TENANT_A);
-  assert.equal(resolveKnowledgeTenantId(FIXTURE_TENANT_B), FIXTURE_TENANT_B);
+  assert.equal(resolveKnowledgeTenantId("sunchaser", "fixtures"), FIXTURE_TENANT_A);
+  assert.equal(resolveKnowledgeTenantId(FIXTURE_TENANT_B, "fixtures"), FIXTURE_TENANT_B);
 
   const forA = knowledge.retrieve({
     companyId: FIXTURE_TENANT_A,

@@ -58,6 +58,14 @@ export {
 } from "./knowledgeFixtures.ts";
 
 export {
+  FORBIDDEN_FIXTURE_PRICE_AMOUNTS,
+  FORBIDDEN_FIXTURE_SOURCE_IDS,
+  KNOWLEDGE_PRODUCTION_AS_OF_ISO,
+  KNOWLEDGE_PRODUCTION_RECORDS,
+  PRODUCTION_TENANT_SUNCHASER,
+} from "./knowledgeProduction.ts";
+
+export {
   InMemoryKnowledgeStore,
   PRICE_SENSITIVE_CATEGORIES,
   validateKnowledgeRecord,
@@ -73,5 +81,8 @@ export {
 export {
   KnowledgeAnswerEngine,
   createFixtureKnowledgeEngine,
+  createKnowledgeEngineFromRecords,
+  createProductionKnowledgeEngine,
   fixtureAsOfIso,
+  productionAsOfIso,
 } from "./knowledgeEngine.ts";
