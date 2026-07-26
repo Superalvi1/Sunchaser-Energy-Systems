@@ -159,21 +159,21 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
       try {
         if (rejectSmuggle(req, res)) return;
         const empty = parseEmptyBody(req.body);
-        if (!empty.ok) {
+        if (empty.ok === false) {
           return sendError(res, statusForCode(empty.code), empty.code, empty.message);
         }
         const ref = parsePublicRefParam(req.params.public_ref);
-        if (!ref.ok || !ref.value.startsWith("mporef_")) {
+        if (ref.ok === false || !ref.value.startsWith("mporef_")) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const idem = parseIdempotencyKey(
           req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
         );
-        if (!idem.ok) {
+        if (idem.ok === false) {
           return sendError(res, statusForCode(idem.code), idem.code, idem.message);
         }
         const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-        if (!identity.ok) {
+        if (identity.ok === false) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const data = await repository.confirm(
@@ -194,11 +194,11 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
       try {
         if (rejectSmuggle(req, res)) return;
         const ref = parsePublicRefParam(req.params.public_ref);
-        if (!ref.ok || !ref.value.startsWith("mporef_")) {
+        if (ref.ok === false || !ref.value.startsWith("mporef_")) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-        if (!identity.ok) {
+        if (identity.ok === false) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const data = await repository.get(identity.identity, ref.value);
@@ -236,20 +236,20 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
   ): Promise<Response | void> {
     try {
       const id = parseOrderRefParam(req.params.id);
-      if (!id.ok) {
+      if (id.ok === false) {
         return sendError(res, 404, id.code, id.message);
       }
       const idem = parseIdempotencyKey(
         req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
       );
-      if (!idem.ok) {
+      if (idem.ok === false) {
         return sendError(res, statusForCode(idem.code), idem.code, idem.message);
       }
 
       let reason: string | undefined;
       if (requireReason) {
         const parsed = parseReasonBody(req.body);
-        if (!parsed.ok) {
+        if (parsed.ok === false) {
           return sendError(
             res,
             statusForCode(parsed.code),
@@ -260,7 +260,7 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
         reason = parsed.value.reason;
       } else {
         const empty = parseEmptyBody(req.body);
-        if (!empty.ok) {
+        if (empty.ok === false) {
           return sendError(
             res,
             statusForCode(empty.code),
@@ -314,13 +314,13 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
   ops.post("/orders/:id/return-to-origin", async (req: Request, res: Response) => {
     try {
       const id = parseOrderRefParam(req.params.id);
-      if (!id.ok) {
+      if (id.ok === false) {
         return sendError(res, 404, id.code, id.message);
       }
       const idem = parseIdempotencyKey(
         req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
       );
-      if (!idem.ok) {
+      if (idem.ok === false) {
         return sendError(res, statusForCode(idem.code), idem.code, idem.message);
       }
 

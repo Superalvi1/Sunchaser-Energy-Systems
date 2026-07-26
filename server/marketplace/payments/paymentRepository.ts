@@ -424,7 +424,7 @@ export function createPaymentRepository(
         fileName: input.fileName,
         maxBytes,
       });
-      if (!validated.ok) {
+      if (validated.ok === false) {
         throw new PaymentRepositoryError(validated.code, validated.message);
       }
 

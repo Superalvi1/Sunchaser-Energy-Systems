@@ -210,8 +210,8 @@ export function normalizeCatalogueProducts(
     [];
   for (const product of products) {
     const result = normalizeShopifyProduct(product, cfg, fetchedAt);
-    if (result.ok) accepted.push(result.observation);
-    else
+    if (result.ok === true) accepted.push(result.observation);
+    else if (result.ok === false)
       excluded.push({
         productId: result.productId,
         title: result.title,

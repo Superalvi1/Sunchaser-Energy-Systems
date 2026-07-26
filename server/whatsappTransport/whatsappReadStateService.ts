@@ -9,12 +9,14 @@ import { canViewInbox } from "./whatsappInboxPermissions.ts";
 import type { WhatsAppInboxReadWatermarkRepository } from "./whatsappInboxReadWatermarkRepository.ts";
 import type { ConversationUnreadState } from "./whatsappInboxUnreadBatch.ts";
 import {
+  beginDirtyFlush,
   beginUnreadIndexBuild,
+  completeDirtyFlush,
   endUnreadIndexBuild,
   getUnreadIndexCache,
   invalidateUnreadIndexCache,
+  MAX_DIRTY_FLUSH_ATTEMPTS,
   MAX_UNREAD_INDEX_BUILD_ATTEMPTS,
-  takeDirtyConversationIds,
   tryPublishUnreadIndex,
   writeBackUnreadIndexEntries,
   type UnreadIndexSnapshot,
@@ -253,6 +255,10 @@ export class ReadStateService {
     return {
       ...ephemeral,
       publishSeq: -1,
+      dirtyGens: new Map(),
+      lastFlushedGen: new Map(),
+      entryFlushSeq: new Map(),
+      lastCompletedFlushSeq: 0,
       dirtyIds: new Set<string>(),
       builtAt: Date.now(),
     };
@@ -313,20 +319,29 @@ export class ReadStateService {
 
   private async flushDirtyConversationIds(
     actor: RequestActor,
-    hit: UnreadIndexSnapshot
+    _hit: UnreadIndexSnapshot
   ): Promise<void> {
-    const dirty = takeDirtyConversationIds(this.companyId, hit);
-    if (dirty.length === 0) return;
+    for (let attempt = 0; attempt < MAX_DIRTY_FLUSH_ATTEMPTS; attempt++) {
+      const ticket = beginDirtyFlush(this.companyId, actor.id);
+      if (!ticket) return;
 
-    for (let i = 0; i < dirty.length; i += UNREAD_BATCH_CHUNK) {
-      const chunk = dirty.slice(i, i + UNREAD_BATCH_CHUNK);
-      const states = await this.watermarks.batchUnreadState(
-        chunk,
-        actor.id,
-        this.companyId
-      );
-      writeBackUnreadIndexEntries(this.companyId, actor.id, states);
+      const dirtyIds = [...ticket.capturedGens.keys()];
+      const states = new Map<string, ConversationUnreadState>();
+      for (let i = 0; i < dirtyIds.length; i += UNREAD_BATCH_CHUNK) {
+        const chunk = dirtyIds.slice(i, i + UNREAD_BATCH_CHUNK);
+        const batch = await this.watermarks.batchUnreadState(
+          chunk,
+          actor.id,
+          this.companyId
+        );
+        for (const [id, state] of batch) states.set(id, state);
+      }
+
+      const { retainedDirtyIds } = completeDirtyFlush(ticket, states);
+      if (retainedDirtyIds.length === 0) return;
+      // Generation advanced during the query — bounded retry.
     }
+    // Remaining dirty gens stay pending for the next request (no infinite loop).
   }
 
   private async refreshUnreadIndexFromDelta(
