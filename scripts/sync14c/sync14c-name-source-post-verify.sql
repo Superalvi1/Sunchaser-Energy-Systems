@@ -1,12 +1,12 @@
 -- =============================================================================
--- SYNC-14C-A / R1 — post-migration verification (READ-ONLY)
+-- SYNC-14C-A / R2 — post-migration verification
 -- =============================================================================
--- Mode: SELECT / RAISE NOTICE only. NO DDL. NO DML.
--- Run after sync14c-name-source-forward-migration.sql.
--- Exact allow-list equality + convalidated=true required for PASS.
+-- Proves the complete forward CHECK predicate via pg_constraint.conbin against
+-- an ephemeral exact reference constraint. No row mutation.
+--
+-- Failure mode: RAISE EXCEPTION (non-zero / aborted script), not NOTICE-only.
 -- =============================================================================
 
--- Schema guard before any direct table row queries
 do $$
 begin
   if to_regclass('public.whatsapp_contacts') is null then
@@ -22,14 +22,13 @@ begin
   ) then
     raise exception 'STOP: whatsapp_contacts.name_source column missing';
   end if;
-
-  raise notice 'PASS: SYNC-14C-A post-verify schema guard — table/column present';
 end $$;
 
 select
   con.conname as constraint_name,
   con.convalidated as is_validated,
-  pg_get_constraintdef(con.oid, true) as constraint_def
+  pg_get_constraintdef(con.oid, true) as constraint_def,
+  pg_get_expr(con.conbin, con.conrelid) as constraint_expr
 from pg_constraint con
 join pg_class rel on rel.oid = con.conrelid
 join pg_namespace nsp on nsp.oid = rel.relnamespace
@@ -46,21 +45,6 @@ from public.whatsapp_contacts
 group by name_source
 order by row_count desc, name_source;
 
-select
-  count(*)::bigint as invalid_name_source_count
-from public.whatsapp_contacts
-where name_source is not null
-  and name_source not in (
-    'manual',
-    'whatsapp_verified',
-    'whatsapp_saved',
-    'whatsapp_legacy',
-    'whatsapp_push',
-    'whatsapp_short',
-    'phone'
-  );
-
--- RLS must still be enabled; no new permissive policies expected.
 select
   c.relname,
   c.relrowsecurity as rls_enabled,
@@ -85,83 +69,90 @@ order by grantee, privilege_type;
 
 do $$
 declare
-  def text;
-  is_validated boolean;
+  table_oid oid;
+  canonical_name constant text := 'whatsapp_contacts_name_source_check';
+  temp_name constant text := 'whatsapp_contacts_name_source_check_v14c';
+  ref_name constant text := 'whatsapp_contacts_name_source_check_ref_fwd';
+  proven boolean := false;
+  is_validated boolean := false;
   invalid_count bigint;
   rls_on boolean;
   anon_dml bigint;
   auth_dml bigint;
   stop_reasons text[] := array[]::text[];
-  expected text[] := array[
-    'manual',
-    'phone',
-    'whatsapp_legacy',
-    'whatsapp_push',
-    'whatsapp_saved',
-    'whatsapp_short',
-    'whatsapp_verified'
-  ];
-  parsed text[];
-  def_norm text;
-  exact boolean := false;
 begin
-  select pg_get_constraintdef(con.oid, true), con.convalidated
-  into def, is_validated
-  from pg_constraint con
-  join pg_class rel on rel.oid = con.conrelid
-  join pg_namespace nsp on nsp.oid = rel.relnamespace
-  where nsp.nspname = 'public'
-    and rel.relname = 'whatsapp_contacts'
-    and con.conname = 'whatsapp_contacts_name_source_check';
+  select c.oid into table_oid
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relname = 'whatsapp_contacts' and c.relkind = 'r';
 
-  if def is null then
-    stop_reasons := array_append(stop_reasons, 'canonical constraint missing');
-  else
-    def_norm := lower(def);
-    if def_norm ~ 'check\s*\('
-       and def_norm ~ 'name_source\s+is\s+null'
-       and (
-         def_norm ~ 'name_source\s*=\s*any\s*\(\s*array\s*\['
-         or def_norm ~ 'name_source\s+in\s*\('
-       )
-       and def_norm !~ '\bor\s+true\b'
-       and def_norm !~ '=\s*true\b'
-       and def_norm !~ '\bsimilar\s+to\b'
-       and def_norm !~ '\slike\s'
-       and def_norm !~ '~'
-       and def_norm !~ '\bin\s*\(\s*select\b'
-    then
-      select coalesce(array_agg(x order by x), array[]::text[])
-      into parsed
-      from (
-        select distinct m[1] as x
-        from regexp_matches(def, '''([^'']+)''', 'g') as m
-      ) s;
-      exact := parsed is not distinct from expected;
-    end if;
-
-    if not exact then
-      stop_reasons := array_append(
-        stop_reasons,
-        format('canonical constraint not exact expanded allow-list; def=%s', def)
-      );
-    end if;
-
-    if not coalesce(is_validated, false) then
-      stop_reasons := array_append(stop_reasons, 'canonical constraint not validated');
-    end if;
+  if table_oid is null then
+    raise exception 'STOP: SYNC-14C-A post-verify failed: public.whatsapp_contacts missing';
   end if;
 
   if exists (
-    select 1
-    from pg_constraint con
-    join pg_class rel on rel.oid = con.conrelid
-    join pg_namespace nsp on nsp.oid = rel.relnamespace
-    where nsp.nspname = 'public'
-      and rel.relname = 'whatsapp_contacts'
-      and con.conname = 'whatsapp_contacts_name_source_check_v14c'
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = ref_name
   ) then
-    stop_reasons := array_append(stop_reasons, 'temporary v14c constraint still present');
+    execute format(
+      'alter table public.whatsapp_contacts drop constraint %I',
+      ref_name
+    );
+  end if;
+
+  alter table public.whatsapp_contacts
+    add constraint whatsapp_contacts_name_source_check_ref_fwd
+    check (
+      name_source is null
+      or name_source in (
+        'manual',
+        'whatsapp_verified',
+        'whatsapp_saved',
+        'whatsapp_legacy',
+        'whatsapp_push',
+        'whatsapp_short',
+        'phone'
+      )
+    ) not valid;
+
+  select (c.conbin = r.conbin), c.convalidated
+  into proven, is_validated
+  from pg_constraint r
+  left join pg_constraint c
+    on c.conrelid = r.conrelid
+   and c.conname = canonical_name
+   and c.contype = 'c'
+  where r.conrelid = table_oid
+    and r.conname = ref_name;
+
+  alter table public.whatsapp_contacts
+    drop constraint whatsapp_contacts_name_source_check_ref_fwd;
+
+  if not coalesce(proven, false) then
+    stop_reasons := array_append(
+      stop_reasons,
+      'canonical constraint conbin does not equal exact forward reference predicate'
+    );
+  end if;
+
+  if not coalesce(is_validated, false) then
+    stop_reasons := array_append(stop_reasons, 'canonical constraint not validated');
+  end if;
+
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid
+      and conname in (
+        temp_name,
+        ref_name,
+        'whatsapp_contacts_name_source_check_rollback',
+        'whatsapp_contacts_name_source_check_ref_rb'
+      )
+  ) then
+    stop_reasons := array_append(
+      stop_reasons,
+      'temporary/reference name_source constraint still present'
+    );
   end if;
 
   select count(*) into invalid_count
@@ -186,8 +177,7 @@ begin
 
   select c.relrowsecurity into rls_on
   from pg_class c
-  join pg_namespace n on n.oid = c.relnamespace
-  where n.nspname = 'public' and c.relname = 'whatsapp_contacts';
+  where c.oid = table_oid;
 
   if coalesce(rls_on, false) is not true then
     stop_reasons := array_append(stop_reasons, 'RLS disabled on whatsapp_contacts');
@@ -215,8 +205,8 @@ begin
   end if;
 
   if coalesce(array_length(stop_reasons, 1), 0) > 0 then
-    raise notice 'STOP: SYNC-14C-A post-verify failed: %', array_to_string(stop_reasons, '; ');
-  else
-    raise notice 'PASS: SYNC-14C-A post-verify — expanded name_source constraint healthy';
+    raise exception 'STOP: SYNC-14C-A post-verify failed: %', array_to_string(stop_reasons, '; ');
   end if;
+
+  raise notice 'PASS: SYNC-14C-A post-verify — expanded name_source constraint healthy (conbin-proven)';
 end $$;

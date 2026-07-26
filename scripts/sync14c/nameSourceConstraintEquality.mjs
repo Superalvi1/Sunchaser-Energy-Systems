@@ -1,173 +1,217 @@
 /**
- * Shared semantic-equality helpers for SYNC-14C-A name_source check constraints.
- * Mirrors the SQL pack's fail-closed rules. No database I/O.
+ * Complete-predicate equality helpers for SYNC-14C-A-R2.
+ *
+ * SQL migrations prove equality via PostgreSQL pg_constraint.conbin against an
+ * ephemeral exact reference constraint. This module mirrors that fail-closed
+ * posture for static/bypass tests (no database I/O): a candidate is proven only
+ * when its predicate matches the complete reference forms — not merely because
+ * it contains IS NULL + IN/ANY + the expected value set.
  */
 
 export const FORWARD_ALLOW_LIST = Object.freeze([
   "manual",
-  "phone",
+  "whatsapp_verified",
+  "whatsapp_saved",
   "whatsapp_legacy",
   "whatsapp_push",
-  "whatsapp_saved",
   "whatsapp_short",
-  "whatsapp_verified",
+  "phone",
 ]);
 
 export const ROLLBACK_ALLOW_LIST = Object.freeze([
   "manual",
-  "phone",
-  "whatsapp_push",
   "whatsapp_saved",
+  "whatsapp_push",
   "whatsapp_short",
+  "phone",
 ]);
 
-/**
- * @param {string | null | undefined} def pg_get_constraintdef(...) text
- * @returns {{ ok: false, reason: string } | { ok: true, values: string[], allowsNull: true }}
- */
-export function parseNameSourceAllowList(def) {
-  if (def == null || typeof def !== "string" || def.trim() === "") {
-    return { ok: false, reason: "missing constraint definition" };
-  }
-
-  const defNorm = def.toLowerCase();
-
-  if (!/\bcheck\s*\(/.test(defNorm)) {
-    return { ok: false, reason: "not a CHECK constraint definition" };
-  }
-
-  if (!/name_source\s+is\s+null/.test(defNorm)) {
-    return { ok: false, reason: "NULL name_source not explicitly allowed" };
-  }
-
-  const hasAnyArray = /name_source\s*=\s*any\s*\(\s*array\s*\[/.test(defNorm);
-  const hasIn = /name_source\s+in\s*\(/.test(defNorm);
-  if (!hasAnyArray && !hasIn) {
-    return { ok: false, reason: "allow-list form not IN(...) or = ANY(ARRAY[...])" };
-  }
-
-  if (
-    /\bor\s+true\b/.test(defNorm) ||
-    /=\s*true\b/.test(defNorm) ||
-    /\bsimilar\s+to\b/.test(defNorm) ||
-    /\slike\s/.test(defNorm) ||
-    /~/.test(defNorm) ||
-    /\bin\s*\(\s*select\b/.test(defNorm)
-  ) {
-    return { ok: false, reason: "untrusted widening constructs present" };
-  }
-
-  const values = [...def.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  if (values.length === 0) {
-    return { ok: false, reason: "no quoted allow-list values found" };
-  }
-
-  const uniqueSorted = [...new Set(values)].sort((a, b) => a.localeCompare(b));
-  return { ok: true, values: uniqueSorted, allowsNull: true };
+/** Authoring form used in ADD CONSTRAINT (SQL pack). */
+export function authoringCheckSql(values) {
+  const list = values.map((v) => `        '${v}'`).join(",\n");
+  return (
+    "check (\n" +
+    "        name_source is null\n" +
+    "        or name_source in (\n" +
+    `${list}\n` +
+    "        )\n" +
+    "      )"
+  );
 }
 
 /**
- * Exact semantic equality: NULL allowed + exact value set + optionally validated.
- * @param {string | null | undefined} def
- * @param {readonly string[]} expectedSorted
+ * Typical pg_get_expr(conbin, conrelid) / pg_get_constraintdef normalized form
+ * for the authoring IN-list above (PostgreSQL rewrites IN → = ANY(ARRAY[...])).
+ */
+export function pgNormalizedExpr(values) {
+  const list = values.map((v) => `'${v}'::text`).join(", ");
+  return `(name_source IS NULL) OR (name_source = ANY (ARRAY[${list}]))`;
+}
+
+export function pgNormalizedConstraintdef(values) {
+  return `CHECK (${pgNormalizedExpr(values)})`;
+}
+
+function collapseWs(s) {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function stripCheckWrapper(s) {
+  const t = collapseWs(s);
+  const m = /^CHECK\s*\((.*)\)$/i.exec(t);
+  return m ? collapseWs(m[1]) : t;
+}
+
+/**
+ * Complete predicate proof (static stand-in for conbin equality).
+ * Accepts only the exact forward/rollback reference predicates.
+ *
+ * @param {string | null | undefined} defOrExpr
+ * @param {'forward'|'rollback'} mode
+ */
+export function isCompletePredicateProven(defOrExpr, mode) {
+  if (defOrExpr == null || typeof defOrExpr !== "string" || defOrExpr.trim() === "") {
+    return { proven: false, reason: "missing predicate" };
+  }
+
+  const values = mode === "forward" ? FORWARD_ALLOW_LIST : ROLLBACK_ALLOW_LIST;
+  const candidates = [
+    collapseWs(pgNormalizedExpr(values)),
+    collapseWs(pgNormalizedConstraintdef(values)),
+    collapseWs(authoringCheckSql(values)),
+    // Single-line authoring variant
+    collapseWs(
+      `CHECK (name_source IS NULL OR name_source IN (${values
+        .map((v) => `'${v}'`)
+        .join(", ")}))`
+    ),
+  ];
+
+  const normalized = collapseWs(defOrExpr);
+  const asExpr = stripCheckWrapper(defOrExpr);
+
+  for (const c of candidates) {
+    if (normalized === c || asExpr === stripCheckWrapper(c) || asExpr === c) {
+      return { proven: true, reason: "complete predicate matches reference" };
+    }
+  }
+
+  // Explicit rejection hints for common bypasses (still fail-closed).
+  const lower = normalized.toLowerCase();
+  if (/\band\b/.test(lower) && /name_source\s+is\s+null/.test(lower)) {
+    return { proven: false, reason: "additional AND predicate present" };
+  }
+  if (/is\s+not\s+null/.test(lower)) {
+    return { proven: false, reason: "IS NOT NULL / widening OR present" };
+  }
+  if (!/\bname_source\b/.test(lower)) {
+    return { proven: false, reason: "name_source column missing from predicate" };
+  }
+  if (
+    /\b(profile_name|phone_e164|wa_jid|company_id)\b/.test(lower) &&
+    /\bis\s+null\b/.test(lower)
+  ) {
+    return { proven: false, reason: "predicate references another column" };
+  }
+  if (/\b(lower|upper|coalesce|nullif|btrim|trim|substring)\s*\(/.test(lower)) {
+    return { proven: false, reason: "function/expression wrapper present" };
+  }
+
+  return { proven: false, reason: "predicate does not equal complete reference" };
+}
+
+/**
+ * @param {string | null | undefined} defOrExpr
+ * @param {'forward'|'rollback'} mode
  * @param {{ validated?: boolean, requireValidated?: boolean }} [opts]
  */
-export function constraintMatchesAllowList(def, expectedSorted, opts = {}) {
-  const parsed = parseNameSourceAllowList(def);
-  if (!parsed.ok) {
-    return { equal: false, reason: parsed.reason };
+export function constraintCompleteMatch(defOrExpr, mode, opts = {}) {
+  const proof = isCompletePredicateProven(defOrExpr, mode);
+  if (!proof.proven) {
+    return { equal: false, reason: proof.reason };
   }
-
-  const expected = [...expectedSorted].sort((a, b) => a.localeCompare(b));
-  const sameLength = parsed.values.length === expected.length;
-  const sameValues =
-    sameLength && parsed.values.every((v, i) => v === expected[i]);
-  if (!sameValues) {
-    return {
-      equal: false,
-      reason: `allow-list mismatch: got [${parsed.values.join(", ")}] want [${expected.join(", ")}]`,
-    };
-  }
-
   if (opts.requireValidated && opts.validated !== true) {
     return { equal: false, reason: "constraint not validated (convalidated=false)" };
   }
-
-  return { equal: true, reason: "exact allow-list match" };
+  return { equal: true, reason: "complete predicate proven" };
 }
 
 /**
- * Decision helper mirroring forward/rollback fail-closed promotion rules.
+ * Decision helper mirroring SQL conbin-proof actions.
+ * Proven flags must come from complete predicate / conbin equality — never
+ * from set-only or partial substring checks.
+ *
  * @param {'forward'|'rollback'} mode
  * @param {{
- *   canonicalDef?: string | null,
+ *   canonicalProven?: boolean,
  *   canonicalValidated?: boolean,
- *   tempDef?: string | null,
- *   tempValidated?: boolean,
+ *   tempProven?: boolean,
+ *   tempPresent?: boolean,
  *   tempName?: string,
  * }} state
  */
 export function decideConstraintAction(mode, state) {
-  const expected =
-    mode === "forward" ? FORWARD_ALLOW_LIST : ROLLBACK_ALLOW_LIST;
   const tempLabel = state.tempName || (mode === "forward" ? "v14c" : "rollback");
+  const tempPresent = state.tempPresent === true;
 
-  if (state.tempDef != null && state.tempDef !== "") {
-    const tempMatch = constraintMatchesAllowList(state.tempDef, expected, {
-      requireValidated: false,
-    });
-    if (!tempMatch.equal) {
-      return {
-        action: "STOP",
-        reason: `mismatched temporary ${tempLabel}: ${tempMatch.reason}`,
-      };
-    }
-  }
-
-  const canonicalExact = constraintMatchesAllowList(state.canonicalDef, expected, {
-    requireValidated: true,
-    validated: state.canonicalValidated === true,
-  });
-
-  if (canonicalExact.equal && (state.tempDef == null || state.tempDef === "")) {
-    return { action: "NOOP", reason: "canonical exact and validated" };
-  }
-
-  if (canonicalExact.equal && state.tempDef) {
-    // temp already proven exact above
+  if (tempPresent && state.tempProven !== true) {
     return {
-      action: "CLEANUP_TEMP",
-      reason: "canonical exact; drop proven temporary leftover",
+      action: "STOP",
+      reason: `mismatched temporary ${tempLabel}: complete predicate not proven`,
     };
   }
 
-  // Unvalidated but exact definition: validate in place when no rebuild needed
-  const canonicalDefExact = constraintMatchesAllowList(state.canonicalDef, expected, {
-    requireValidated: false,
-  });
+  const canonicalReady =
+    state.canonicalProven === true && state.canonicalValidated === true;
+
+  if (canonicalReady && !tempPresent) {
+    return { action: "NOOP", reason: "canonical complete predicate proven and validated" };
+  }
+
+  if (canonicalReady && tempPresent && state.tempProven === true) {
+    return {
+      action: "CLEANUP_TEMP",
+      reason: "canonical proven; drop proven temporary leftover",
+    };
+  }
+
   if (
-    canonicalDefExact.equal &&
+    state.canonicalProven === true &&
     state.canonicalValidated !== true &&
-    (state.tempDef == null || state.tempDef === "")
+    !tempPresent
   ) {
     return {
       action: "VALIDATE_CANONICAL",
-      reason: "canonical definition exact but convalidated=false",
+      reason: "canonical complete predicate proven but convalidated=false",
     };
   }
 
-  if (state.tempDef) {
+  if (tempPresent && state.tempProven === true) {
     return {
       action: "PROMOTE_TEMP",
-      reason: "promote proven temporary (validate if needed, swap canonical)",
-      tempValidated: state.tempValidated === true,
+      reason: "promote temporary with proven complete predicate",
     };
   }
 
   return {
     action: "REBUILD",
-    reason: canonicalDefExact.equal
-      ? "rebuild required"
-      : `rebuild: ${canonicalDefExact.reason || "canonical not exact"}`,
+    reason: "complete predicate not proven for canonical; rebuild exact reference",
   };
+}
+
+/**
+ * Intentionally weak set-only matcher (R1-style). Used only to show bypass
+ * predicates that contain IS NULL + IN/ANY + the expected value set but are
+ * NOT a complete reference predicate and must not be trusted.
+ */
+export function setOnlyAllowListMatch(def, expectedValues) {
+  if (def == null || typeof def !== "string") return false;
+  const lower = def.toLowerCase();
+  if (!/is\s+null/.test(lower)) return false;
+  if (!/\bin\s*\(|=\s*any\s*\(/.test(lower)) return false;
+  const values = [...def.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const relevant = values.filter((v) => expectedValues.includes(v));
+  const got = [...new Set(relevant)].sort().join("|");
+  const exp = [...new Set(expectedValues)].sort().join("|");
+  return got === exp;
 }

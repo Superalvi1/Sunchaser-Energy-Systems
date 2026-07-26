@@ -13,7 +13,7 @@
 |------|------|------|
 | Preflight | `scripts/sync14c/sync14c-name-source-preflight.sql` | Read-only |
 | Forward | `scripts/sync14c/sync14c-name-source-forward-migration.sql` | DDL (constraint only) |
-| Post-verify | `scripts/sync14c/sync14c-name-source-post-verify.sql` | Read-only |
+| Post-verify | `scripts/sync14c/sync14c-name-source-post-verify.sql` | Ephemeral conbin proof (add/drop reference check only); RAISE EXCEPTION on failure |
 | Rollback | `scripts/sync14c/sync14c-name-source-rollback.sql` | DDL (constraint only) |
 | Optional backfill | `scripts/sync14c/sync14c-name-source-backfill-optional-DISABLED.sql` | **Disabled** |
 | Static check | `scripts/validate-sync14c-name-source-migration-pack.mjs` | Local Node |
@@ -73,8 +73,8 @@ preflight
 ### 4. Post-migration verification
 
 1. Run `scripts/sync14c/sync14c-name-source-post-verify.sql`.
-2. Require NOTICE: `PASS: SYNC-14C-A post-verify`.
-3. Confirm canonical constraint includes `whatsapp_verified` + `whatsapp_legacy`, is validated, temp name gone, RLS still on, no anon/authenticated DML grants.
+2. Require NOTICE: `PASS: SYNC-14C-A post-verify` (any failure **RAISE EXCEPTION** / aborts).
+3. Confirm conbin equals the exact forward reference predicate, `convalidated=true`, temp/ref names gone, RLS still on, no anon/authenticated DML grants.
 
 ### 5. Code merge
 
@@ -108,13 +108,14 @@ If expanded values already exist in data, SQL rollback **fails closed** — requ
 
 ---
 
-## Idempotency / fail-closed (SYNC-14C-A-R1)
+## Idempotency / fail-closed (SYNC-14C-A-R2)
 
-- Forward and rollback decide no-op / promote / rebuild using **exact allow-list semantic equality** (quoted value set + explicit `name_source IS NULL` + trusted `IN` / `= ANY(ARRAY[...])` form), not partial `ILIKE` substring checks.
-- Final no-op and post-verify require `convalidated = true`.
-- Temporary constraints (`*_v14c`, `*_rollback`) are **never trusted by name alone**. Unknown or mismatched temporary definitions **STOP fail-closed** (no validate/promote/drop of foreign definitions).
-- If canonical equality cannot be proven, scripts **rebuild** the exact desired constraint (`NOT VALID` → `VALIDATE` → swap).
-- Repeat forward / repeat rollback are idempotent no-ops only after exact validated proof.
+- Forward, rollback, and post-verify prove the **complete CHECK predicate** via `pg_constraint.conbin` equality against an ephemeral exact reference constraint (not regex/set-only matching).
+- Constraints that merely contain `IS NULL`, `IN`/`ANY`, and the expected values — but add `AND`/`OR` clauses, other columns, functions, or other shapes — are **not proven**.
+- Temporary mismatches **STOP fail-closed**. Unproven canonical ⇒ **rebuild** (never no-op/promote).
+- Final no-op / PASS require `convalidated = true` and conbin proof.
+- Post-verify **RAISE EXCEPTION** on failure (not NOTICE-only).
+- Repeat forward / repeat rollback are idempotent no-ops only after conbin-proven validated equality.
 
 ---
 

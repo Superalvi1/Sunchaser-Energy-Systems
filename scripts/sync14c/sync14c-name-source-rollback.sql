@@ -1,72 +1,46 @@
 -- =============================================================================
--- SYNC-14C-A / R1 — rollback: restore pre-SYNC-14B name_source allow-list
+-- SYNC-14C-A / R2 — rollback: restore pre-SYNC-14B name_source allow-list
 -- =============================================================================
 -- REVIEW / MANUAL APPLY ONLY. Do NOT auto-apply.
 --
 -- Restores exactly:
 --   NULL | manual | whatsapp_saved | whatsapp_push | whatsapp_short | phone
 --
--- LIMITATIONS (read carefully):
--- 1. Rollback FAILS CLOSED if any row already stores:
---      whatsapp_verified OR whatsapp_legacy
---    Those values are valid only after the forward expansion. Removing them from
---    the check while rows exist is impossible without data mutation.
--- 2. This script does NOT delete, rewrite, or null-out profile_name / name_source.
--- 3. If SYNC-14B application code is already deployed and writing
---    whatsapp_verified, rolling back the constraint will cause those writes to
---    fail until code is rolled back first.
--- 4. Recommended order for abort: stop deploy → roll back app → then this SQL.
--- 5. Soft/no-op only when the canonical constraint is an exact validated match
---    to the pre-expansion allow-list (not partial ILIKE substring checks).
--- 6. Temporary constraints are never trusted by name alone; mismatched/unknown
---    temporary definitions STOP fail-closed.
+-- Safety (R2):
+--   - Complete predicate proof via pg_constraint.conbin against an ephemeral
+--     exact reference constraint (not regex/set-only matching).
+--   - Temporary mismatches STOP fail-closed.
+--   - If complete equality cannot be proven ⇒ rebuild (never false no-op).
+--
+-- LIMITATIONS:
+-- 1. FAILS CLOSED if any row stores whatsapp_verified or whatsapp_legacy.
+-- 2. Does NOT rewrite profile_name / name_source data.
+-- 3. Roll back application writers before SQL rollback if they emit expanded values.
+-- 4. Recommended abort order: stop deploy → roll back app → this SQL.
 -- =============================================================================
 
 do $$
 declare
   table_oid oid;
-  canonical_name text := 'whatsapp_contacts_name_source_check';
-  temp_name text := 'whatsapp_contacts_name_source_check_rollback';
-  forward_temp_name text := 'whatsapp_contacts_name_source_check_v14c';
-  expected text[] := array[
-    'manual',
-    'phone',
-    'whatsapp_push',
-    'whatsapp_saved',
-    'whatsapp_short'
-  ];
-  forward_expected text[] := array[
-    'manual',
-    'phone',
-    'whatsapp_legacy',
-    'whatsapp_push',
-    'whatsapp_saved',
-    'whatsapp_short',
-    'whatsapp_verified'
-  ];
+  canonical_name constant text := 'whatsapp_contacts_name_source_check';
+  temp_name constant text := 'whatsapp_contacts_name_source_check_rollback';
+  forward_temp_name constant text := 'whatsapp_contacts_name_source_check_v14c';
+  ref_name constant text := 'whatsapp_contacts_name_source_check_ref_rb';
+  forward_ref_name constant text := 'whatsapp_contacts_name_source_check_ref_fwd';
   blocking_count bigint;
   canonical_oid oid;
   temp_oid oid;
   forward_temp_oid oid;
-  canonical_def text;
-  temp_def text;
-  forward_temp_def text;
   canonical_validated boolean;
   temp_validated boolean;
-  forward_temp_validated boolean;
-  canonical_exact boolean;
-  canonical_exact_validated boolean;
-  temp_exact boolean;
-  forward_temp_exact_expanded boolean;
-  parsed text[];
-  def_norm text;
+  canonical_proven boolean := false;
+  temp_proven boolean := false;
+  forward_temp_proven boolean := false;
   action text;
-  comment_text text :=
+  proof boolean;
+  comment_text constant text :=
     'manual | whatsapp_saved | whatsapp_push | whatsapp_short | phone — upgrade-only allow-list after SQL rollback. Application policy (SYNC-14B+): nonempty profile_name with null name_source is treated as whatsapp_legacy (not manual). phone is deprecated and must not be newly written as profile_name.';
 begin
-  -- -------------------------------------------------------------------------
-  -- Schema guard (before any direct table references)
-  -- -------------------------------------------------------------------------
   if to_regclass('public.whatsapp_contacts') is null then
     raise exception 'STOP: public.whatsapp_contacts does not exist';
   end if;
@@ -81,8 +55,7 @@ begin
   end if;
 
   if not exists (
-    select 1
-    from pg_attribute a
+    select 1 from pg_attribute a
     where a.attrelid = table_oid
       and a.attname = 'name_source'
       and a.attnum > 0
@@ -101,140 +74,141 @@ begin
       blocking_count;
   end if;
 
-  select con.oid, pg_get_constraintdef(con.oid, true), con.convalidated
-  into canonical_oid, canonical_def, canonical_validated
-  from pg_constraint con
-  where con.conrelid = table_oid
-    and con.conname = canonical_name
-    and con.contype = 'c';
-
-  select con.oid, pg_get_constraintdef(con.oid, true), con.convalidated
-  into temp_oid, temp_def, temp_validated
-  from pg_constraint con
-  where con.conrelid = table_oid
-    and con.conname = temp_name
-    and con.contype = 'c';
-
-  select con.oid, pg_get_constraintdef(con.oid, true), con.convalidated
-  into forward_temp_oid, forward_temp_def, forward_temp_validated
-  from pg_constraint con
-  where con.conrelid = table_oid
-    and con.conname = forward_temp_name
-    and con.contype = 'c';
-
-  -- Exact match helper for rollback allow-list
-  canonical_exact := false;
-  if canonical_def is not null then
-    def_norm := lower(canonical_def);
-    if def_norm ~ 'check\s*\('
-       and def_norm ~ 'name_source\s+is\s+null'
-       and (
-         def_norm ~ 'name_source\s*=\s*any\s*\(\s*array\s*\['
-         or def_norm ~ 'name_source\s+in\s*\('
-       )
-       and def_norm !~ '\bor\s+true\b'
-       and def_norm !~ '=\s*true\b'
-       and def_norm !~ '\bsimilar\s+to\b'
-       and def_norm !~ '\slike\s'
-       and def_norm !~ '~'
-       and def_norm !~ '\bin\s*\(\s*select\b'
-    then
-      select coalesce(array_agg(x order by x), array[]::text[])
-      into parsed
-      from (
-        select distinct m[1] as x
-        from regexp_matches(canonical_def, '''([^'']+)''', 'g') as m
-      ) s;
-      canonical_exact := parsed is not distinct from expected;
-    end if;
+  -- Refuse unknown forward reference leftover (pack-owned ephemeral only may be dropped below)
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = forward_ref_name
+  ) then
+    execute format(
+      'alter table public.whatsapp_contacts drop constraint %I',
+      forward_ref_name
+    );
   end if;
-  canonical_exact_validated := canonical_exact and coalesce(canonical_validated, false);
 
-  -- Temporary rollback constraint: never trust by name alone
-  temp_exact := false;
-  if temp_def is not null then
-    def_norm := lower(temp_def);
-    if def_norm ~ 'check\s*\('
-       and def_norm ~ 'name_source\s+is\s+null'
-       and (
-         def_norm ~ 'name_source\s*=\s*any\s*\(\s*array\s*\['
-         or def_norm ~ 'name_source\s+in\s*\('
-       )
-       and def_norm !~ '\bor\s+true\b'
-       and def_norm !~ '=\s*true\b'
-       and def_norm !~ '\bsimilar\s+to\b'
-       and def_norm !~ '\slike\s'
-       and def_norm !~ '~'
-       and def_norm !~ '\bin\s*\(\s*select\b'
-    then
-      select coalesce(array_agg(x order by x), array[]::text[])
-      into parsed
-      from (
-        select distinct m[1] as x
-        from regexp_matches(temp_def, '''([^'']+)''', 'g') as m
-      ) s;
-      temp_exact := parsed is not distinct from expected;
-    end if;
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = table_oid and conname = ref_name
+  ) then
+    execute format(
+      'alter table public.whatsapp_contacts drop constraint %I',
+      ref_name
+    );
+  end if;
 
-    if not temp_exact then
+  -- Install rollback reference predicate
+  alter table public.whatsapp_contacts
+    add constraint whatsapp_contacts_name_source_check_ref_rb
+    check (
+      name_source is null
+      or name_source in (
+        'manual',
+        'whatsapp_saved',
+        'whatsapp_push',
+        'whatsapp_short',
+        'phone'
+      )
+    ) not valid;
+
+  select c.oid, c.convalidated, (c.conbin is not null and c.conbin = r.conbin)
+  into canonical_oid, canonical_validated, canonical_proven
+  from pg_constraint r
+  left join pg_constraint c
+    on c.conrelid = r.conrelid
+   and c.conname = canonical_name
+   and c.contype = 'c'
+  where r.conrelid = table_oid
+    and r.conname = ref_name;
+
+  canonical_proven := coalesce(canonical_proven, false);
+
+  select c.oid, c.convalidated, (c.conbin is not null and c.conbin = r.conbin)
+  into temp_oid, temp_validated, temp_proven
+  from pg_constraint r
+  left join pg_constraint c
+    on c.conrelid = r.conrelid
+   and c.conname = temp_name
+   and c.contype = 'c'
+  where r.conrelid = table_oid
+    and r.conname = ref_name;
+
+  temp_proven := coalesce(temp_proven, false);
+
+  alter table public.whatsapp_contacts
+    drop constraint whatsapp_contacts_name_source_check_ref_rb;
+
+  if temp_oid is not null and not temp_proven then
+    raise exception
+      'STOP: temporary constraint % exists but conbin does not equal the exact pre-expansion reference predicate (fail-closed)',
+      temp_name;
+  end if;
+
+  -- Forward temp may be dropped only when its conbin equals the *forward* reference
+  select c.oid into forward_temp_oid
+  from pg_constraint c
+  where c.conrelid = table_oid
+    and c.conname = forward_temp_name
+    and c.contype = 'c';
+
+  if forward_temp_oid is not null then
+    alter table public.whatsapp_contacts
+      add constraint whatsapp_contacts_name_source_check_ref_fwd
+      check (
+        name_source is null
+        or name_source in (
+          'manual',
+          'whatsapp_verified',
+          'whatsapp_saved',
+          'whatsapp_legacy',
+          'whatsapp_push',
+          'whatsapp_short',
+          'phone'
+        )
+      ) not valid;
+
+    select (c.conbin = r.conbin)
+    into forward_temp_proven
+    from pg_constraint r
+    join pg_constraint c
+      on c.conrelid = r.conrelid
+     and c.conname = forward_temp_name
+     and c.contype = 'c'
+    where r.conrelid = table_oid
+      and r.conname = forward_ref_name;
+
+    alter table public.whatsapp_contacts
+      drop constraint whatsapp_contacts_name_source_check_ref_fwd;
+
+    if not coalesce(forward_temp_proven, false) then
       raise exception
-        'STOP: temporary constraint % exists but definition is not exactly the pre-expansion allow-list (fail-closed). def=%',
-        temp_name,
-        coalesce(temp_def, '<null>');
+        'STOP: temporary constraint % exists with unknown/mismatched conbin (fail-closed; will not drop/promote)',
+        forward_temp_name;
     end if;
   end if;
 
-  -- Leftover forward temporary: only allow drop when proven exact expanded
-  forward_temp_exact_expanded := false;
-  if forward_temp_def is not null then
-    def_norm := lower(forward_temp_def);
-    if def_norm ~ 'check\s*\('
-       and def_norm ~ 'name_source\s+is\s+null'
-       and (
-         def_norm ~ 'name_source\s*=\s*any\s*\(\s*array\s*\['
-         or def_norm ~ 'name_source\s+in\s*\('
-       )
-       and def_norm !~ '\bor\s+true\b'
-       and def_norm !~ '=\s*true\b'
-       and def_norm !~ '\bsimilar\s+to\b'
-       and def_norm !~ '\slike\s'
-       and def_norm !~ '~'
-       and def_norm !~ '\bin\s*\(\s*select\b'
-    then
-      select coalesce(array_agg(x order by x), array[]::text[])
-      into parsed
-      from (
-        select distinct m[1] as x
-        from regexp_matches(forward_temp_def, '''([^'']+)''', 'g') as m
-      ) s;
-      forward_temp_exact_expanded := parsed is not distinct from forward_expected;
-    end if;
-
-    if not forward_temp_exact_expanded then
-      raise exception
-        'STOP: temporary constraint % exists with unknown/mismatched definition (fail-closed; will not drop/promote). def=%',
-        forward_temp_name,
-        coalesce(forward_temp_def, '<null>');
-    end if;
-  end if;
-
-  if canonical_exact_validated and temp_oid is null then
+  if coalesce(canonical_proven, false)
+     and coalesce(canonical_validated, false)
+     and temp_oid is null then
     action := 'NOOP';
-  elsif canonical_exact_validated and temp_exact then
+  elsif coalesce(canonical_proven, false)
+        and coalesce(canonical_validated, false)
+        and temp_proven then
     action := 'CLEANUP_TEMP';
-  elsif canonical_exact and not coalesce(canonical_validated, false) and temp_oid is null then
+  elsif coalesce(canonical_proven, false)
+        and not coalesce(canonical_validated, false)
+        and temp_oid is null then
     action := 'VALIDATE_CANONICAL';
-  elsif temp_exact then
+  elsif temp_proven then
     action := 'PROMOTE_TEMP';
   else
     action := 'REBUILD';
   end if;
 
-  raise notice 'SYNC-14C-A rollback: action=% canonical_exact=% canonical_validated=% temp_exact=%',
+  raise notice
+    'SYNC-14C-A rollback: action=% canonical_proven=% canonical_validated=% temp_proven=%',
     action,
-    canonical_exact,
+    canonical_proven,
     coalesce(canonical_validated, false),
-    temp_exact;
+    temp_proven;
 
   if action = 'NOOP' then
     if forward_temp_oid is not null then
@@ -242,7 +216,7 @@ begin
         drop constraint whatsapp_contacts_name_source_check_v14c;
     end if;
     comment on column public.whatsapp_contacts.name_source is comment_text;
-    raise notice 'PASS: SYNC-14C-A rollback — exact validated pre-expansion allow-list already present (idempotent no-op)';
+    raise notice 'PASS: SYNC-14C-A rollback — conbin-proven validated pre-expansion allow-list (idempotent no-op)';
     return;
   end if;
 
@@ -254,28 +228,51 @@ begin
         drop constraint whatsapp_contacts_name_source_check_v14c;
     end if;
     comment on column public.whatsapp_contacts.name_source is comment_text;
-    raise notice 'PASS: SYNC-14C-A rollback — canonical exact; dropped leftover proven temporary';
+    raise notice 'PASS: SYNC-14C-A rollback — canonical proven; dropped leftover proven temporary';
     return;
   end if;
 
   if action = 'VALIDATE_CANONICAL' then
     alter table public.whatsapp_contacts
       validate constraint whatsapp_contacts_name_source_check;
+
+    alter table public.whatsapp_contacts
+      add constraint whatsapp_contacts_name_source_check_ref_rb
+      check (
+        name_source is null
+        or name_source in (
+          'manual',
+          'whatsapp_saved',
+          'whatsapp_push',
+          'whatsapp_short',
+          'phone'
+        )
+      ) not valid;
+
+    select (c.conbin = r.conbin), c.convalidated
+    into proof, canonical_validated
+    from pg_constraint r
+    join pg_constraint c
+      on c.conrelid = r.conrelid
+     and c.conname = canonical_name
+     and c.contype = 'c'
+    where r.conrelid = table_oid
+      and r.conname = ref_name;
+
+    alter table public.whatsapp_contacts
+      drop constraint whatsapp_contacts_name_source_check_ref_rb;
+
+    if not coalesce(proof, false) or not coalesce(canonical_validated, false) then
+      raise exception 'STOP: canonical rollback constraint failed conbin proof and/or validation';
+    end if;
+
     if forward_temp_oid is not null then
       alter table public.whatsapp_contacts
         drop constraint whatsapp_contacts_name_source_check_v14c;
     end if;
+
     comment on column public.whatsapp_contacts.name_source is comment_text;
-
-    select con.convalidated into canonical_validated
-    from pg_constraint con
-    where con.conrelid = table_oid and con.conname = canonical_name;
-
-    if not coalesce(canonical_validated, false) then
-      raise exception 'STOP: canonical rollback constraint failed validation';
-    end if;
-
-    raise notice 'PASS: SYNC-14C-A rollback — validated existing exact pre-expansion canonical';
+    raise notice 'PASS: SYNC-14C-A rollback — validated conbin-proven pre-expansion canonical';
     return;
   end if;
 
@@ -301,27 +298,36 @@ begin
 
   alter table public.whatsapp_contacts
     validate constraint whatsapp_contacts_name_source_check_rollback;
-  raise notice 'SYNC-14C-A rollback: validated %', temp_name;
 
-  select pg_get_constraintdef(con.oid, true), con.convalidated
-  into temp_def, temp_validated
-  from pg_constraint con
-  where con.conrelid = table_oid and con.conname = temp_name;
+  alter table public.whatsapp_contacts
+    add constraint whatsapp_contacts_name_source_check_ref_rb
+    check (
+      name_source is null
+      or name_source in (
+        'manual',
+        'whatsapp_saved',
+        'whatsapp_push',
+        'whatsapp_short',
+        'phone'
+      )
+    ) not valid;
 
-  def_norm := lower(coalesce(temp_def, ''));
-  select coalesce(array_agg(x order by x), array[]::text[])
-  into parsed
-  from (
-    select distinct m[1] as x
-    from regexp_matches(temp_def, '''([^'']+)''', 'g') as m
-  ) s;
+  select (c.conbin = r.conbin), c.convalidated
+  into proof, temp_validated
+  from pg_constraint r
+  join pg_constraint c
+    on c.conrelid = r.conrelid
+   and c.conname = temp_name
+   and c.contype = 'c'
+  where r.conrelid = table_oid
+    and r.conname = ref_name;
 
-  if parsed is distinct from expected
-     or def_norm !~ 'name_source\s+is\s+null'
-     or not coalesce(temp_validated, false) then
+  alter table public.whatsapp_contacts
+    drop constraint whatsapp_contacts_name_source_check_ref_rb;
+
+  if not coalesce(proof, false) or not coalesce(temp_validated, false) then
     raise exception
-      'STOP: temporary rollback constraint failed exact+validated proof before promotion; def=%',
-      coalesce(temp_def, '<null>');
+      'STOP: temporary rollback constraint failed conbin proof + validated check before promotion';
   end if;
 
   if exists (
@@ -332,7 +338,6 @@ begin
       drop constraint whatsapp_contacts_name_source_check;
   end if;
 
-  -- Drop proven forward temporary only (mismatched already STOPped earlier)
   if forward_temp_oid is not null then
     alter table public.whatsapp_contacts
       drop constraint whatsapp_contacts_name_source_check_v14c;
@@ -342,37 +347,46 @@ begin
     rename constraint whatsapp_contacts_name_source_check_rollback
     to whatsapp_contacts_name_source_check;
 
-  select pg_get_constraintdef(con.oid, true), con.convalidated
-  into canonical_def, canonical_validated
-  from pg_constraint con
-  where con.conrelid = table_oid and con.conname = canonical_name;
+  alter table public.whatsapp_contacts
+    add constraint whatsapp_contacts_name_source_check_ref_rb
+    check (
+      name_source is null
+      or name_source in (
+        'manual',
+        'whatsapp_saved',
+        'whatsapp_push',
+        'whatsapp_short',
+        'phone'
+      )
+    ) not valid;
 
-  def_norm := lower(coalesce(canonical_def, ''));
-  select coalesce(array_agg(x order by x), array[]::text[])
-  into parsed
-  from (
-    select distinct m[1] as x
-    from regexp_matches(coalesce(canonical_def, ''), '''([^'']+)''', 'g') as m
-  ) s;
+  select (c.conbin = r.conbin), c.convalidated
+  into proof, canonical_validated
+  from pg_constraint r
+  join pg_constraint c
+    on c.conrelid = r.conrelid
+   and c.conname = canonical_name
+   and c.contype = 'c'
+  where r.conrelid = table_oid
+    and r.conname = ref_name;
 
-  if canonical_def is null
-     or parsed is distinct from expected
-     or def_norm !~ 'name_source\s+is\s+null'
-     or not coalesce(canonical_validated, false) then
+  alter table public.whatsapp_contacts
+    drop constraint whatsapp_contacts_name_source_check_ref_rb;
+
+  if not coalesce(proof, false) or not coalesce(canonical_validated, false) then
     raise exception
-      'STOP: rollback did not leave exact validated pre-expansion canonical constraint; def=%',
-      coalesce(canonical_def, '<null>');
+      'STOP: rollback did not leave conbin-proven validated pre-expansion canonical constraint';
   end if;
 
   if exists (
     select 1 from pg_constraint
     where conrelid = table_oid
-      and conname in (temp_name, forward_temp_name)
+      and conname in (temp_name, forward_temp_name, ref_name, forward_ref_name)
   ) then
-    raise exception 'STOP: temporary name_source constraint(s) still present after rollback';
+    raise exception 'STOP: temporary/reference name_source constraint(s) still present after rollback';
   end if;
 
   comment on column public.whatsapp_contacts.name_source is comment_text;
 
-  raise notice 'PASS: SYNC-14C-A rollback — restored exact pre-expansion name_source check';
+  raise notice 'PASS: SYNC-14C-A rollback — restored conbin-proven pre-expansion name_source check';
 end $$;

@@ -375,21 +375,17 @@ begin
   end if;
 
   declare
-    expected text[] := array[
-      'manual',
-      'phone',
-      'whatsapp_legacy',
-      'whatsapp_push',
-      'whatsapp_saved',
-      'whatsapp_short',
-      'whatsapp_verified'
-    ];
-    parsed text[];
-    def_norm text;
+    -- Read-only stand-in for conbin proof: exact pg_get_expr of the forward
+    -- reference predicate (same IN-list order as forward migration).
+    expected_expr constant text :=
+      '(name_source IS NULL) OR (name_source = ANY (ARRAY[''manual''::text, ''whatsapp_verified''::text, ''whatsapp_saved''::text, ''whatsapp_legacy''::text, ''whatsapp_push''::text, ''whatsapp_short''::text, ''phone''::text]))';
+    actual_expr text;
     is_validated boolean;
   begin
-    select pg_get_constraintdef(con.oid, true), con.convalidated
-    into constraint_def, is_validated
+    select pg_get_constraintdef(con.oid, true),
+           pg_get_expr(con.conbin, con.conrelid),
+           con.convalidated
+    into constraint_def, actual_expr, is_validated
     from pg_constraint con
     join pg_class rel on rel.oid = con.conrelid
     join pg_namespace nsp on nsp.oid = rel.relnamespace
@@ -398,32 +394,10 @@ begin
       and con.conname = 'whatsapp_contacts_name_source_check'
     limit 1;
 
-    -- Exact allow-list + validated (R1). Partial ILIKE substring checks are insufficient.
-    if constraint_def is not null then
-      def_norm := lower(constraint_def);
-      if def_norm ~ 'check\s*\('
-         and def_norm ~ 'name_source\s+is\s+null'
-         and (
-           def_norm ~ 'name_source\s*=\s*any\s*\(\s*array\s*\['
-           or def_norm ~ 'name_source\s+in\s*\('
-         )
-         and def_norm !~ '\bor\s+true\b'
-         and def_norm !~ '=\s*true\b'
-         and def_norm !~ '\bsimilar\s+to\b'
-         and def_norm !~ '\slike\s'
-         and def_norm !~ '~'
-         and def_norm !~ '\bin\s*\(\s*select\b'
-         and coalesce(is_validated, false)
-      then
-        select coalesce(array_agg(x order by x), array[]::text[])
-        into parsed
-        from (
-          select distinct m[1] as x
-          from regexp_matches(constraint_def, '''([^'']+)''', 'g') as m
-        ) s;
-        already_expanded := parsed is not distinct from expected;
-      end if;
-    end if;
+    -- Complete predicate equality (R2). Set-only / partial ILIKE is insufficient.
+    already_expanded :=
+      actual_expr is not distinct from expected_expr
+      and coalesce(is_validated, false);
   end;
 
   if coalesce(array_length(stop_reasons, 1), 0) > 0 then
