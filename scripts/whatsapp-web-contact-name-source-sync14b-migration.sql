@@ -2,6 +2,15 @@
 -- Additive, idempotent, manual apply in Supabase SQL Editor only.
 -- Do NOT auto-apply from the application. Do NOT run against production in SYNC-14B.
 --
+-- SUPERSEDED FOR APPLY (SYNC-14C-A):
+--   Use the release pack under scripts/sync14c/ instead:
+--     sync14c-name-source-preflight.sql
+--     sync14c-name-source-forward-migration.sql
+--     sync14c-name-source-post-verify.sql
+--     sync14c-name-source-rollback.sql
+--   Sequencing: docs/deployment/sync14c-contact-identity-name-source-release-sequencing.md
+--   This file remains as the PR #12 historical review artifact.
+--
 -- Why required:
 --   Application now persists distinct provenance:
 --     whatsapp_verified  (Baileys Contact.verifiedName)
