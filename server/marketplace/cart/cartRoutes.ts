@@ -2,6 +2,7 @@ import type { Request, Response, Router } from "express";
 import express from "express";
 import type { Database } from "../../../dbManager.ts";
 import {
+  isMarketplaceCartEnabled,
   isMarketplaceEnabled,
   readMarketplaceConfig,
 } from "../marketplaceConfig.ts";
@@ -84,6 +85,7 @@ function statusForCode(code: string): number {
     case "CONFLICT":
       return 409;
     case "MARKETPLACE_DISABLED":
+    case "MARKETPLACE_CART_DISABLED":
       return 503;
     default:
       return 500;
@@ -110,9 +112,25 @@ function rejectSmuggledTokens(req: Request, res: Response): boolean {
   return false;
 }
 
+/** Paths owned by WS5 cart/checkout (relative to /api/marketplace). */
+function isCartOwnedPath(path: string): boolean {
+  if (path === "/cart" || path.startsWith("/cart/")) return true;
+  if (path === "/checkout" || path.startsWith("/checkout/")) return true;
+  if (path === "/delivery/quote" || path.startsWith("/delivery/quote/")) {
+    return true;
+  }
+  // Order read is cart-owned; payment/COD subpaths are not.
+  if (path.startsWith("/orders/")) {
+    if (path.includes("/payments") || path.includes("/cod")) return false;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Cart, delivery quote, checkout, and order-read routes.
- * Requires MARKETPLACE_ENABLED=true. Defaults remain disabled.
+ * Requires MARKETPLACE_ENABLED=true AND MARKETPLACE_CART_ENABLED=true.
+ * Defaults remain disabled so CEO auto-import can enable independently.
  */
 export function createCartRouter(deps: CartRouterDeps = {}): Router {
   const router = express.Router();
@@ -122,7 +140,12 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
     resolveLocalDb: deps.resolveLocalDb,
   };
 
-  router.use((_req, res, next) => {
+  router.use((req, res, next) => {
+    // Only gate cart/checkout/order-read paths; pass other /api/marketplace/*
+    // traffic through so payments/COD can apply their own feature gates.
+    if (!isCartOwnedPath(req.path)) {
+      return next("router");
+    }
     setApiVersion(res);
     const config = readMarketplaceConfig(env);
     if (!isMarketplaceEnabled(config)) {
@@ -131,6 +154,14 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
         503,
         "MARKETPLACE_DISABLED",
         "Marketplace is disabled.",
+      );
+    }
+    if (!isMarketplaceCartEnabled(config)) {
+      return sendError(
+        res,
+        503,
+        "MARKETPLACE_CART_DISABLED",
+        "Marketplace cart/checkout is disabled.",
       );
     }
     return next();

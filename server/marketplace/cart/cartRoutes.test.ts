@@ -168,7 +168,10 @@ async function main(): Promise<void> {
   });
 
   const repo = buildMemoryRepo();
-  await withServer({ MARKETPLACE_ENABLED: "true" }, repo, async (base) => {
+  await withServer(
+    { MARKETPLACE_ENABLED: "true", MARKETPLACE_CART_ENABLED: "true" },
+    repo,
+    async (base) => {
     const create = await fetch(`${base}/api/marketplace/cart`, {
       method: "POST",
       headers: { "content-type": "application/json" },

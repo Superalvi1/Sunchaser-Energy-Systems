@@ -156,7 +156,7 @@ const salesActor: RequestActor = {
 };
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_COD_ENABLED: "true" },
   buildRepo(),
   undefined,
   async (base) => {
@@ -190,7 +190,7 @@ await withServer(
 );
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_COD_ENABLED: "true" },
   buildRepo(),
   salesActor,
   async (base) => {
@@ -228,7 +228,7 @@ await withServer(
 );
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_COD_ENABLED: "true" },
   buildRepo(),
   financeActor,
   async (base) => {

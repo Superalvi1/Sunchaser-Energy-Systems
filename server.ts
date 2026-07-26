@@ -683,18 +683,21 @@ app.use(
 
 // Marketplace public catalogue (requires MARKETPLACE_ENABLED=true; defaults off).
 app.use("/api/marketplace/catalogue", createCatalogueRouter());
-// Marketplace cart / delivery quote / checkout (handler-gated; guest header tokens).
+// Marketplace cart / delivery quote / checkout.
+// Fail-closed unless MARKETPLACE_ENABLED + MARKETPLACE_CART_ENABLED (default false).
 app.use(
   "/api/marketplace",
   createCartRouter({ resolveLocalDb: resolveAuthLocalDb }),
 );
 // Marketplace bank-transfer payments (customer/guest + admin finance lockdown).
+// Fail-closed unless MARKETPLACE_ENABLED + MARKETPLACE_PAYMENTS_ENABLED (default false).
 // Mounted before catalogue/pricing admin so /admin/payments* uses finance lockdown.
 app.use(
   "/api/marketplace",
   createPaymentRouter({ resolveLocalDb: resolveAuthLocalDb }),
 );
 // Marketplace cash-on-delivery lifecycle (customer/guest + ops/finance lockdown).
+// Fail-closed unless MARKETPLACE_ENABLED + MARKETPLACE_COD_ENABLED (default false).
 // Mounted before catalogue/pricing admin so /admin/cod* uses ops/finance lockdown.
 app.use(
   "/api/marketplace",

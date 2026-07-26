@@ -2,6 +2,7 @@ import type { Request, Response, Router } from "express";
 import express from "express";
 import type { Database } from "../../../dbManager.ts";
 import {
+  isMarketplaceCodEnabled,
   isMarketplaceEnabled,
   readMarketplaceConfig,
 } from "../marketplaceConfig.ts";
@@ -71,6 +72,7 @@ function statusForCode(code: string): number {
     case "COD_ALREADY_COLLECTED":
       return 409;
     case "MARKETPLACE_DISABLED":
+    case "MARKETPLACE_COD_DISABLED":
       return 503;
     case "INTERNAL_ERROR":
       return 500;
@@ -105,6 +107,13 @@ function rejectSmuggle(req: Request, res: Response): boolean {
   return false;
 }
 
+/** Paths owned by WS6b COD (relative to /api/marketplace). */
+function isCodOwnedPath(path: string): boolean {
+  if (path.startsWith("/admin/cod")) return true;
+  if (path.startsWith("/orders/") && path.includes("/cod")) return true;
+  return false;
+}
+
 /**
  * COD customer/guest + admin/ops routes.
  *
@@ -113,6 +122,8 @@ function rejectSmuggle(req: Request, res: Response): boolean {
  * - WS6b: order-centric lifecycle under /admin/cod/orders/:id/*
  *   `:id` is order public_ref (mporef_*). collect uses the established
  *   cash_on_delivery payment model (status=collected).
+ *
+ * Requires MARKETPLACE_ENABLED + MARKETPLACE_COD_ENABLED (default false).
  */
 export function createCodRouter(deps: CodRouterDeps = {}): Router {
   const router = express.Router();
@@ -122,11 +133,22 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
     resolveLocalDb: deps.resolveLocalDb,
   };
 
-  router.use((_req, res, next) => {
+  router.use((req, res, next) => {
+    if (!isCodOwnedPath(req.path)) {
+      return next("router");
+    }
     setApiVersion(res);
     const config = readMarketplaceConfig(env);
     if (!isMarketplaceEnabled(config)) {
       return sendError(res, 503, "MARKETPLACE_DISABLED", "Marketplace is disabled.");
+    }
+    if (!isMarketplaceCodEnabled(config)) {
+      return sendError(
+        res,
+        503,
+        "MARKETPLACE_COD_DISABLED",
+        "Marketplace COD is disabled.",
+      );
     }
     return next();
   });
@@ -193,7 +215,7 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
   ops.use((req, res, next) => {
     const config = readMarketplaceConfig(env);
     return createCodRouteLockdown({
-      marketplaceEnabled: isMarketplaceEnabled(config),
+      marketplaceEnabled: isMarketplaceCodEnabled(config),
       mode: "ops",
     })(req, res, next);
   });
@@ -201,7 +223,7 @@ export function createCodRouter(deps: CodRouterDeps = {}): Router {
   finance.use((req, res, next) => {
     const config = readMarketplaceConfig(env);
     return createCodRouteLockdown({
-      marketplaceEnabled: isMarketplaceEnabled(config),
+      marketplaceEnabled: isMarketplaceCodEnabled(config),
       mode: "finance",
     })(req, res, next);
   });

@@ -3,6 +3,7 @@ import express from "express";
 import type { Database } from "../../../dbManager.ts";
 import {
   isMarketplaceEnabled,
+  isMarketplacePaymentsEnabled,
   readMarketplaceConfig,
 } from "../marketplaceConfig.ts";
 import {
@@ -99,6 +100,7 @@ function statusForCode(code: string): number {
     case "CONFLICT":
       return 409;
     case "MARKETPLACE_DISABLED":
+    case "MARKETPLACE_PAYMENTS_DISABLED":
       return 503;
     default:
       return 500;
@@ -125,6 +127,13 @@ function rejectSmuggledTokens(req: Request, res: Response): boolean {
   return false;
 }
 
+/** Paths owned by WS6a payments (relative to /api/marketplace). */
+function isPaymentsOwnedPath(path: string): boolean {
+  if (path.startsWith("/admin/payments")) return true;
+  if (path.startsWith("/orders/") && path.includes("/payments")) return true;
+  return false;
+}
+
 /**
  * Customer/guest bank-transfer routes + admin finance routes.
  *
@@ -132,6 +141,8 @@ function rejectSmuggledTokens(req: Request, res: Response): boolean {
  * - Contract: POST /orders/:public_ref/payments (combined upload+record)
  * - WS6a:     POST /orders/:public_ref/payments/receipt (explicit receipt step)
  *   plus GET  /orders/:public_ref/payments and admin reject (not only reject-cod).
+ *
+ * Requires MARKETPLACE_ENABLED + MARKETPLACE_PAYMENTS_ENABLED (default false).
  */
 export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   const router = express.Router();
@@ -144,6 +155,9 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   };
 
   router.use((req, res, next) => {
+    if (!isPaymentsOwnedPath(req.path)) {
+      return next("router");
+    }
     setApiVersion(res);
     const config = readMarketplaceConfig(env);
     if (!isMarketplaceEnabled(config)) {
@@ -152,6 +166,14 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
         503,
         "MARKETPLACE_DISABLED",
         "Marketplace is disabled.",
+      );
+    }
+    if (!isMarketplacePaymentsEnabled(config)) {
+      return sendError(
+        res,
+        503,
+        "MARKETPLACE_PAYMENTS_DISABLED",
+        "Marketplace payments are disabled.",
       );
     }
     return next();
@@ -338,7 +360,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   admin.use((req, res, next) => {
     const config = readMarketplaceConfig(env);
     return createMarketplaceRouteLockdown({
-      marketplaceEnabled: isMarketplaceEnabled(config),
+      marketplaceEnabled: isMarketplacePaymentsEnabled(config),
     })(req, res, next);
   });
 

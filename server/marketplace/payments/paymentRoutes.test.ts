@@ -191,7 +191,7 @@ const pathBody = parseReceiptJsonBody({
 check("caller storagePath rejected", pathBody.ok === false);
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_PAYMENTS_ENABLED: "true" },
   buildMemoryRepo(),
   async (base) => {
     const missing = await fetch(
@@ -258,7 +258,7 @@ const financeActor: RequestActor = {
 };
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_PAYMENTS_ENABLED: "true" },
   buildMemoryRepo(),
   async (base) => {
     const res = await fetch(`${base}/api/marketplace/admin/payments`, {
@@ -271,7 +271,7 @@ await withServer(
 );
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_PAYMENTS_ENABLED: "true" },
   buildMemoryRepo(),
   async (base) => {
     const res = await fetch(`${base}/api/marketplace/admin/payments`);
@@ -291,7 +291,7 @@ const salesActor: RequestActor = {
 };
 
 await withServer(
-  { MARKETPLACE_ENABLED: "true" },
+  { MARKETPLACE_ENABLED: "true", MARKETPLACE_PAYMENTS_ENABLED: "true" },
   buildMemoryRepo(),
   async (base) => {
     const res = await fetch(`${base}/api/marketplace/admin/payments`);

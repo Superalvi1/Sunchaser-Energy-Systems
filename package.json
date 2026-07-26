@@ -66,6 +66,7 @@
     "test:marketplace-ws4": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/supplierRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/marketplaceWs4Supplier.pg.test.ts",
     "test:marketplace-live-suppliers-phase1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/liveCataloguePhase1.test.ts",
     "test:marketplace-ws-map-0": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWsMap0.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWsMap0.pg.test.ts",
+    "test:marketplace-ws56-gates": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWs56FeatureGates.test.ts",
     "test:marketplace-ceo-auto-import": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImport.test.ts",
     "test:marketplace-ws5": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/cartRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/marketplaceWs5Cart.test.ts",
     "test:marketplace-ws6a": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/receiptValidation.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/paymentRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/marketplaceWs6aPayments.test.ts",
