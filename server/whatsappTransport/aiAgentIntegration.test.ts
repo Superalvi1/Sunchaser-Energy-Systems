@@ -27,8 +27,11 @@ import {
   createQueryAgentService,
   createQueryKnowledgeAdapter,
   isLiveQueryProviderOptedIn,
+  isTechnicalRateContext,
   mapIntentToKnowledgeCategory,
+  normalizePriceIntentText,
   prepareKnowledgeDraftForPhrasing,
+  queryRequestsPrice,
   readQueryAgentConfig,
   resolveKnowledgeTenantId,
   type QueryAgentGateway,
@@ -255,6 +258,211 @@ await test("provider opt-in: full opt-in selects injected fake live gateway only
       assert.equal(phrased.providerId, "fake-live");
     }
   );
+});
+
+await test("AI-04-R2: informal Pakistani price intents are recognized", () => {
+  const positives = [
+    "5kW ka rate bata dein",
+    "8kW system kitne ka hai?",
+    "10kW ke charges kya hain?",
+    "solar package kia rate hai",
+    "5kw kitnay ka hai",
+    "system kitni ki hai",
+    "kitnay mein milega 5kw",
+    "price batao please",
+    "rate batao",
+    // punctuation / case / spacing variations
+    "  5KW   KA   RATE???   BATA   DEIN!!!  ",
+    "10kw-ke-charges-kya-hain",
+    "Solar Package  KYA   Rate  Hai",
+    // Urdu-script
+    "5kW کی قیمت کیا ہے؟",
+    "پیکج کا ریٹ بتائیں",
+    "کتنے کا ہے 8kW؟",
+    "کتنی کی ہے؟",
+  ];
+  for (const sample of positives) {
+    assert.equal(
+      queryRequestsPrice(sample),
+      true,
+      `expected price intent: ${JSON.stringify(sample)} (norm=${normalizePriceIntentText(sample)})`
+    );
+  }
+});
+
+await test("AI-04-R2: technical rate phrases are not price requests", () => {
+  const technical = [
+    "What is the battery charge rate for this lithium pack?",
+    "Explain the charging rate for overnight top-up",
+    "Safe discharge rate for the battery bank?",
+    "What data rate does the logger use?",
+    "Display refresh rate settings",
+    "Inverter failure rate statistics",
+    "Expected generation rate in summer",
+    "Panel degradation rate per year",
+  ];
+  for (const sample of technical) {
+    assert.equal(isTechnicalRateContext(sample), true, sample);
+    assert.equal(
+      queryRequestsPrice(sample),
+      false,
+      `technical rate must not be price intent: ${sample}`
+    );
+  }
+});
+
+await test("AI-04-R2: informal conflicting/stale/missing price requests escalate", async () => {
+  const { gateway, calls } = recordingGateway();
+  const service = createQueryAgentService({
+    config: readQueryAgentConfig({
+      WHATSAPP_AI_QUERY_DRAFT_ENABLED: "true",
+      WHATSAPP_AI_QUERY_PROVIDER: "mock",
+    }),
+    gateway,
+    knowledge: createQueryKnowledgeAdapter({
+      engine: createFixtureKnowledgeEngine(),
+      asOfIso: fixtureAsOfIso(),
+    }),
+  });
+
+  // Conflicting current 5kW prices via informal wording.
+  const conflict = await service.generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_r2_conflict",
+    actorUserId: "staff_1",
+    messageText: "5kW ka rate bata dein",
+  });
+  assert.equal(conflict.status, "draft");
+  if (conflict.status === "draft") {
+    assert.equal(conflict.escalate, true);
+    assert.equal(conflict.requiresHumanReview, true);
+    assert.equal(conflict.autoSendBlocked, true);
+    assertNoMonetaryLeak(
+      conflict.answer,
+      [650000, 875000, 899000],
+      "informal conflict answer"
+    );
+  }
+
+  // Missing approved price for 8kW (no fixture amount for that size).
+  assert.equal(queryRequestsPrice("8kW solar package kitne ka hai?"), true);
+  const missing = await service.generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_r2_missing",
+    actorUserId: "staff_1",
+    messageText: "8kW solar package kitne ka hai?",
+  });
+  assert.equal(missing.status, "draft");
+  if (missing.status === "draft") {
+    assert.equal(missing.escalate, true);
+    assert.equal(missing.requiresHumanReview, true);
+    assert.equal(missing.autoSendBlocked, true);
+    assert.ok(
+      missing.escalationReasons.includes("uncertain") ||
+        missing.warnings.some((w) => /price|knowledge|human/i.test(w))
+    );
+  }
+
+  // Stale-only informal request (knowledge price path).
+  const staleAmount = 588000;
+  const staleRecorder = recordingGateway();
+  const staleService = createQueryAgentService({
+    config: readQueryAgentConfig({
+      WHATSAPP_AI_QUERY_DRAFT_ENABLED: "true",
+      WHATSAPP_AI_QUERY_PROVIDER: "mock",
+    }),
+    gateway: staleRecorder.gateway,
+    knowledge: createQueryKnowledgeAdapter({
+      engine: engineFromRecords([
+        {
+          id: "pkg-6kw-stale-informal",
+          tenantId: FIXTURE_TENANT_A,
+          sourceType: "pricing_approved",
+          title: "6kW Package Price (stale)",
+          body: "Legacy approved row retained for freshness testing only.",
+          categories: ["solar_packages"],
+          keywords: ["6kw", "package", "price", "rate"],
+          publishedAt: hoursAgoIso(96),
+          maxAgeHours: DEFAULT_PRICE_MAX_AGE_HOURS,
+          containsPrice: true,
+          price: {
+            amountPkr: staleAmount,
+            currency: "PKR",
+            unitLabel: "starting package",
+            publishedAt: hoursAgoIso(96),
+            freshness: "stale",
+            sourceId: "pkg-6kw-stale-informal",
+            sourceTitle: "6kW Package Price (stale)",
+          },
+          priority: 80,
+          active: true,
+        },
+      ]),
+      asOfIso: fixtureAsOfIso(),
+    }),
+  });
+  assert.equal(queryRequestsPrice("6kW package kitnay ka rate hai?"), true);
+  const stale = await staleService.generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_r2_stale",
+    actorUserId: "staff_1",
+    messageText: "6kW package kitnay ka rate hai?",
+  });
+  assert.equal(stale.status, "draft");
+  if (stale.status === "draft") {
+    assert.equal(stale.escalate, true);
+    assert.equal(stale.requiresHumanReview, true);
+    assert.equal(stale.autoSendBlocked, true);
+    assertNoMonetaryLeak(stale.answer, [staleAmount], "informal stale answer");
+  }
+
+  assert.equal(
+    calls.length,
+    0,
+    "informal uncertain prices must not reach provider phrasing"
+  );
+  assert.equal(
+    staleRecorder.calls.length,
+    0,
+    "stale informal price must not reach provider phrasing"
+  );
+});
+
+await test("AI-04-R2: one approved informal price request remains normal", async () => {
+  const { gateway, calls } = recordingGateway();
+  const service = createQueryAgentService({
+    config: readQueryAgentConfig({
+      WHATSAPP_AI_QUERY_DRAFT_ENABLED: "true",
+      WHATSAPP_AI_QUERY_PROVIDER: "mock",
+    }),
+    gateway,
+    knowledge: createQueryKnowledgeAdapter({
+      engine: createFixtureKnowledgeEngine(),
+      asOfIso: fixtureAsOfIso(),
+    }),
+  });
+
+  const outcome = await service.generateDraft({
+    companyId: "sunchaser",
+    conversationCompanyId: "sunchaser",
+    conversationId: "conv_r2_one_price",
+    actorUserId: "staff_1",
+    messageText: "10kW ke charges kya hain?",
+  });
+  assert.equal(outcome.status, "draft");
+  if (outcome.status === "draft") {
+    assert.equal(outcome.escalate, false);
+    assert.equal(outcome.requiresHumanReview, true);
+    assert.equal(outcome.autoSendBlocked, true);
+    assert.ok(outcome.answer.length > 0);
+  }
+  assert.ok(calls.length >= 1);
+  const outline = calls.map((c) => c.policyAnswerOutline).join("\n");
+  assert.match(outline, /1450000|1,450,000/);
+  assertNoMonetaryLeak(outline, [650000, 875000, 899000], "informal one-price outline");
 });
 
 await test("customer query → approved knowledge → safe draft (never sends)", async () => {

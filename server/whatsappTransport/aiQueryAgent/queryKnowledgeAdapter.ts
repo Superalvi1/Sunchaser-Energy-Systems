@@ -80,18 +80,111 @@ export function resolveKnowledgeTenantId(companyId: string): string {
   return id;
 }
 
-/** True when the customer text is asking for a price / cost / monetary quote. */
-export function queryRequestsPrice(queryText: string): boolean {
-  const t = String(queryText || "").toLowerCase();
-  if (!t.trim()) return false;
+/**
+ * Normalize customer text for price-intent detection:
+ * - Unicode NFKC
+ * - collapse whitespace
+ * - treat harmless punctuation as separators
+ * - fold common Roman-Urdu spelling variants
+ */
+export function normalizePriceIntentText(queryText: string): string {
+  let t = String(queryText || "")
+    .normalize("NFKC")
+    .toLowerCase();
+
+  // Harmless punctuation → space (keep digits/letters including Urdu).
+  t = t.replace(/[?!.,;:'"“”‘’`´()[\]{}<>*_~^+=|\\/]+/g, " ");
+  t = t.replace(/[-–—]+/g, " ");
+  t = t.replace(/\s+/g, " ").trim();
+
+  // Common Roman-Urdu spelling folds (word-bounded).
+  t = t
+    .replace(/\bkitnay\b/g, "kitne")
+    .replace(/\bkitny\b/g, "kitne")
+    .replace(/\bkitni\b/g, "kitne")
+    .replace(/\bkya\b/g, "kia")
+    .replace(/\bbatao\b/g, "bata")
+    .replace(/\bbata\s+dein\b/g, "bata")
+    .replace(/\bbata\s+den\b/g, "bata")
+    .replace(/\bbata\s+do\b/g, "bata")
+    .replace(/\bbata\s+dena\b/g, "bata")
+    .replace(/\bmein\b/g, "men")
+    .replace(/\bmai\b/g, "men");
+
+  return t.replace(/\s+/g, " ").trim();
+}
+
+/** Technical “rate” phrases that must not be treated as price requests. */
+const TECHNICAL_RATE_PATTERNS: RegExp[] = [
+  /\bbattery\s+charge\s+rate\b/,
+  /\bcharging\s+rate\b/,
+  /\bdischarge\s+rate\b/,
+  /\bdata\s+rate\b/,
+  /\brefresh\s+rate\b/,
+  /\bfailure\s+rate\b/,
+  /\bgeneration\s+rate\b/,
+  /\bdegradation\s+rate\b/,
+];
+
+export function isTechnicalRateContext(queryText: string): boolean {
+  const t = normalizePriceIntentText(queryText);
+  return TECHNICAL_RATE_PATTERNS.some((re) => re.test(t));
+}
+
+function hasUrduPriceIntent(queryText: string): boolean {
+  const raw = String(queryText || "").normalize("NFKC");
+  // Urdu-script price / rate / “how much” equivalents.
   return (
+    /قیمت/.test(raw) ||
+    /ریٹ/.test(raw) ||
+    /کتنے\s*کا/.test(raw) ||
+    /کتنی\s*کی/.test(raw)
+  );
+}
+
+/**
+ * True when the customer text is asking for a price / cost / monetary quote.
+ * Includes common Pakistani WhatsApp Roman-Urdu / Urdu phrasing, while
+ * excluding technical “rate” uses (charge rate, data rate, etc.).
+ */
+export function queryRequestsPrice(queryText: string): boolean {
+  if (hasUrduPriceIntent(queryText)) return true;
+
+  const t = normalizePriceIntentText(queryText);
+  if (!t) return false;
+
+  // Formal English price wording.
+  if (
     /\b(price|pricing|cost|costs|pkr|rupees?)\b/.test(t) ||
-    /\b(rs\.?|rs\/-)\b/.test(t) ||
+    /\b(rs|rs\/-)\b/.test(t) ||
     /\bhow much\b/.test(t) ||
     /\b(quote|quot(?:e|ation))\b.*\b(price|cost|pkr|rs)\b/.test(t) ||
     /\b(exact|current)\s+(price|cost)\b/.test(t) ||
     /\bprice\s+of\b/.test(t)
-  );
+  ) {
+    return true;
+  }
+
+  // Informal Roman-Urdu / mixed WhatsApp price intents.
+  if (
+    /\bkitne\s+ka\b/.test(t) ||
+    /\bkitne\s+ki\b/.test(t) ||
+    /\bkitne\s+men\b/.test(t) ||
+    /\bkia\s+rate\b/.test(t) ||
+    /\brate\s+kia\b/.test(t) ||
+    /\b(price|rate)\s+bata\b/.test(t) ||
+    /\bbata\b.{0,40}\b(price|rate)\b/.test(t) ||
+    /\bcharges\b/.test(t)
+  ) {
+    return true;
+  }
+
+  // Bare rate/rates — only when not a known technical-rate phrase.
+  if (/\brates?\b/.test(t) && !isTechnicalRateContext(t)) {
+    return true;
+  }
+
+  return false;
 }
 
 /** Extract package-size tokens (e.g. 5kw, 10kw) to scope price ambiguity. */
