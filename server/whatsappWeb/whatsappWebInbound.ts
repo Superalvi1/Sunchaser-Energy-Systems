@@ -84,6 +84,8 @@ export async function persistWhatsAppWebInbound(
     const contact = await repo.resolveOrCreateContact({
       phoneE164: event.fromWaId,
       profileName: event.profileName,
+      // Live inbound pushName is notify-tier only — never saved/verified/manual.
+      nameSource: event.profileName ? "whatsapp_push" : null,
     });
     const conversation = await repo.resolveOrCreateOpenConversation({
       channelId: channel.id,

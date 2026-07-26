@@ -294,6 +294,8 @@ export class WhatsAppWebHistorySyncService {
                   jid: chat.jid,
                   phoneE164: chat.phoneE164,
                   savedName: null,
+                  verifiedName: null,
+                  // Chat metadata is notify-tier only — not address-book/verified.
                   pushName: chat.name,
                   shortName: null,
                   isBusiness: false,

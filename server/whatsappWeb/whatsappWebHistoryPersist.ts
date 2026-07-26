@@ -17,7 +17,6 @@ import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import {
   resolveWhatsAppDisplayName,
   shouldApplyWhatsAppContactName,
-  type WhatsAppContactNameSource,
   type WhatsAppWebSyncContact,
   type WhatsAppWebSyncMessage,
 } from "./whatsappWebSyncTypes.ts";
@@ -27,6 +26,12 @@ export const WHATSAPP_WEB_BACKFILL_SOURCE = "history_backfill";
 export type WhatsAppWebHistoryPersistDeps = {
   repo?: WhatsAppRepository;
   now?: () => Date;
+  /**
+   * Optional abort for session queue generation/shutdown.
+   * Checked immediately before DB writes so stale in-flight work cannot
+   * overwrite newer contact metadata after an await.
+   */
+  shouldContinue?: () => boolean;
 };
 
 export type ContactSyncResult = {
@@ -64,6 +69,7 @@ export async function syncWhatsAppWebContact(
     throw new Error("invalid_contact_phone");
   }
   const resolved = resolveWhatsAppDisplayName({
+    verifiedName: contact.verifiedName,
     savedName: contact.savedName,
     pushName: contact.pushName,
     shortName: contact.shortName,
@@ -71,56 +77,107 @@ export async function syncWhatsAppWebContact(
   });
 
   const companyId = DEFAULT_COMPANY_ID;
+  const stillCurrent = () =>
+    !deps.shouldContinue || deps.shouldContinue() === true;
+
   const existing = repo.findContactByPhoneE164
     ? await repo.findContactByPhoneE164(phone, companyId)
     : null;
 
+  if (!stillCurrent()) {
+    return {
+      contact: existing ?? ({ phoneE164: phone } as WhatsAppContact),
+      created: false,
+      updated: false,
+    };
+  }
+
+  const nowIso = (deps.now ?? (() => new Date))().toISOString();
+
+  const businessPatch =
+    contact.isBusiness === null || contact.isBusiness === undefined
+      ? {}
+      : { isBusinessContact: contact.isBusiness };
+
   if (!existing) {
+    if (!stillCurrent()) {
+      return {
+        contact: { phoneE164: phone } as WhatsAppContact,
+        created: false,
+        updated: false,
+      };
+    }
     const created = await repo.resolveOrCreateContact({
       phoneE164: phone,
       profileName: resolved.name,
+      nameSource: resolved.source,
     });
-    if (repo.updateContactSyncFields) {
+    if (repo.updateContactSyncFields && stillCurrent()) {
       await repo.updateContactSyncFields(
         created.id,
         {
           waJid: contact.jid,
-          nameSource: resolved.source,
-          isBusinessContact: contact.isBusiness,
-          lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
-          profileName: resolved.name,
+          lastSyncedAt: nowIso,
+          ...businessPatch,
+          ...(resolved.name && resolved.source
+            ? { profileName: resolved.name, nameSource: resolved.source }
+            : {}),
         },
         companyId
       );
     }
-    return { contact: created, created: true, updated: false };
+    const refreshed =
+      (repo.findContactByPhoneE164
+        ? await repo.findContactByPhoneE164(phone, companyId)
+        : null) ?? created;
+    return { contact: refreshed, created: true, updated: false };
   }
 
-  // Legacy non-null profile_name with null name_source → treat as manual.
-  const existingSource = (existing.nameSource ??
-    (existing.profileName ? "manual" : null)) as WhatsAppContactNameSource | null;
   const applyName = shouldApplyWhatsAppContactName({
     existingName: existing.profileName,
-    existingSource,
+    existingSource: existing.nameSource,
     nextName: resolved.name,
     nextSource: resolved.source,
+    phoneE164: phone,
   });
 
   let updated = false;
   if (repo.updateContactSyncFields) {
+    // Metadata (wa_jid / last_synced_at) never blindly writes weaker names —
+    // updateContactSyncFields applies upgrade-only CAS for profile fields.
+    // Re-check generation after awaits so stale queue work cannot overwrite newer metadata.
+    if (!stillCurrent()) {
+      return { contact: existing, created: false, updated: false };
+    }
     await repo.updateContactSyncFields(
       existing.id,
       {
         waJid: contact.jid,
-        isBusinessContact: contact.isBusiness,
-        lastSyncedAt: (deps.now ?? (() => new Date))().toISOString(),
-        ...(applyName
+        lastSyncedAt: nowIso,
+        ...businessPatch,
+        ...(applyName && resolved.name && resolved.source
           ? { profileName: resolved.name, nameSource: resolved.source }
           : {}),
       },
       companyId
     );
-    updated = true;
+    updated = Boolean(
+      applyName ||
+        contact.jid ||
+        (contact.isBusiness !== null &&
+          contact.isBusiness !== undefined &&
+          contact.isBusiness !== Boolean(existing.isBusinessContact))
+    );
+  } else {
+    if (!stillCurrent()) {
+      return { contact: existing, created: false, updated: false };
+    }
+    await repo.resolveOrCreateContact({
+      phoneE164: phone,
+      profileName: resolved.name,
+      nameSource: resolved.source,
+    });
+    updated = applyName;
   }
 
   const refreshed =

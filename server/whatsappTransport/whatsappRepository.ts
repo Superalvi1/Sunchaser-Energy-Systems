@@ -12,6 +12,38 @@ import type {
   NormalizedInboundText,
   NormalizedStatusEvent,
 } from "./whatsappEnvelope.ts";
+import {
+  isValidWhatsAppDisplayName,
+  shouldApplyWhatsAppContactName,
+  type WhatsAppContactNameSource,
+} from "../whatsappWeb/whatsappWebSyncTypes.ts";
+
+const CONTACT_NAME_CAS_MAX_ATTEMPTS = 8;
+
+export type WhatsAppContactSyncFieldPatch = {
+  waJid?: string | null;
+  nameSource?: string | null;
+  isBusinessContact?: boolean;
+  lastSyncedAt?: string | null;
+  profileName?: string | null;
+};
+
+function resolveNextContactNameCandidate(input: {
+  phoneE164: string;
+  profileName?: string | null;
+  nameSource?: WhatsAppContactNameSource | string | null;
+}): {
+  nextName: string | null;
+  nextSource: WhatsAppContactNameSource | null;
+} {
+  const nextName = isValidWhatsAppDisplayName(
+    input.profileName,
+    input.phoneE164
+  );
+  const nextSource = (input.nameSource ??
+    (nextName ? "whatsapp_push" : null)) as WhatsAppContactNameSource | null;
+  return { nextName, nextSource };
+}
 
 export type WhatsAppChannel = {
   id: string;
@@ -126,6 +158,8 @@ export interface WhatsAppRepository {
   resolveOrCreateContact(input: {
     phoneE164: string;
     profileName?: string | null;
+    /** Provenance for profileName when applying ranked upgrades. */
+    nameSource?: WhatsAppContactNameSource | string | null;
   }): Promise<WhatsAppContact>;
   resolveOrCreateOpenConversation(input: {
     channelId: string;
@@ -193,13 +227,7 @@ export interface WhatsAppRepository {
   ): Promise<WhatsAppContact | null>;
   updateContactSyncFields?(
     contactId: string,
-    fields: {
-      waJid?: string | null;
-      nameSource?: string | null;
-      isBusinessContact?: boolean;
-      lastSyncedAt?: string | null;
-      profileName?: string | null;
-    },
+    fields: WhatsAppContactSyncFieldPatch,
     companyId?: string
   ): Promise<WhatsAppContact | null>;
   insertOutboundMessage(input: {
@@ -338,32 +366,76 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
     return channel;
   }
 
+  /** Serializes per-phone writes so concurrent async upgrades cannot lose the strongest name. */
+  private readonly contactWriteTails = new Map<string, Promise<unknown>>();
+
+  private async serializeContactWrite<T>(
+    key: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const prev = this.contactWriteTails.get(key) ?? Promise.resolve();
+    let release!: (value: unknown) => void;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(
+      () => gate,
+      () => gate
+    );
+    this.contactWriteTails.set(key, tail);
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release(undefined);
+      if (this.contactWriteTails.get(key) === tail) {
+        this.contactWriteTails.delete(key);
+      }
+    }
+  }
+
   async resolveOrCreateContact(input: {
     phoneE164: string;
     profileName?: string | null;
+    nameSource?: WhatsAppContactNameSource | string | null;
   }): Promise<WhatsAppContact> {
-    for (const contact of this.contacts.values()) {
-      if (
-        contact.companyId === DEFAULT_COMPANY_ID &&
-        contact.phoneE164 === input.phoneE164
-      ) {
-        if (input.profileName && !contact.profileName) {
-          contact.profileName = input.profileName;
-          contact.updatedAt = nowIso();
+    const lockKey = `${DEFAULT_COMPANY_ID}:phone:${input.phoneE164}`;
+    return this.serializeContactWrite(lockKey, async () => {
+      const { nextName, nextSource } = resolveNextContactNameCandidate(input);
+
+      for (const contact of this.contacts.values()) {
+        if (
+          contact.companyId === DEFAULT_COMPANY_ID &&
+          contact.phoneE164 === input.phoneE164
+        ) {
+          if (
+            shouldApplyWhatsAppContactName({
+              existingName: contact.profileName,
+              existingSource: contact.nameSource,
+              nextName,
+              nextSource,
+              phoneE164: input.phoneE164,
+            })
+          ) {
+            contact.profileName = nextName;
+            contact.nameSource = nextSource;
+            contact.updatedAt = nowIso();
+          }
+          return contact;
         }
-        return contact;
       }
-    }
-    const contact: WhatsAppContact = {
-      id: newId("wct"),
-      companyId: DEFAULT_COMPANY_ID,
-      phoneE164: input.phoneE164,
-      profileName: input.profileName ?? null,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-    };
-    this.contacts.set(contact.id, contact);
-    return contact;
+      const contact: WhatsAppContact = {
+        id: newId("wct"),
+        companyId: DEFAULT_COMPANY_ID,
+        phoneE164: input.phoneE164,
+        profileName: nextName,
+        nameSource: nextName ? nextSource : null,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      this.contacts.set(contact.id, contact);
+      return contact;
+    });
   }
 
   async resolveOrCreateOpenConversation(input: {
@@ -546,30 +618,56 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
 
   async updateContactSyncFields(
     contactId: string,
-    fields: {
-      waJid?: string | null;
-      nameSource?: string | null;
-      isBusinessContact?: boolean;
-      lastSyncedAt?: string | null;
-      profileName?: string | null;
-    },
+    fields: WhatsAppContactSyncFieldPatch,
     companyId: string = DEFAULT_COMPANY_ID
   ): Promise<WhatsAppContact | null> {
-    const contact = this.contacts.get(contactId);
-    if (!contact || contact.companyId !== companyId) return null;
-    if (fields.waJid !== undefined) contact.waJid = fields.waJid;
-    if (fields.nameSource !== undefined) contact.nameSource = fields.nameSource;
-    if (fields.isBusinessContact !== undefined) {
-      contact.isBusinessContact = fields.isBusinessContact;
-    }
-    if (fields.lastSyncedAt !== undefined) {
-      contact.lastSyncedAt = fields.lastSyncedAt;
-    }
-    if (fields.profileName !== undefined) {
-      contact.profileName = fields.profileName;
-    }
-    contact.updatedAt = nowIso();
-    return contact;
+    const lockKey = `${companyId}:id:${contactId}`;
+    return this.serializeContactWrite(lockKey, async () => {
+      const contact = this.contacts.get(contactId);
+      if (!contact || contact.companyId !== companyId) return null;
+      if (fields.waJid !== undefined) contact.waJid = fields.waJid;
+      if (fields.isBusinessContact !== undefined) {
+        contact.isBusinessContact = fields.isBusinessContact;
+      }
+      if (fields.lastSyncedAt !== undefined) {
+        contact.lastSyncedAt = fields.lastSyncedAt;
+      }
+      // Explicit manual pathway (CRM/admin) — not subject to WhatsApp upgrade ranks.
+      if (fields.nameSource === "manual") {
+        const manualName = isValidWhatsAppDisplayName(
+          fields.profileName,
+          contact.phoneE164
+        );
+        if (manualName) {
+          contact.profileName = manualName;
+          contact.nameSource = "manual";
+        }
+      } else if (
+        fields.profileName !== undefined ||
+        fields.nameSource !== undefined
+      ) {
+        // Automatic WhatsApp paths: upgrade-only — never blindly downgrade.
+        const { nextName, nextSource } = resolveNextContactNameCandidate({
+          phoneE164: contact.phoneE164,
+          profileName: fields.profileName,
+          nameSource: fields.nameSource,
+        });
+        if (
+          shouldApplyWhatsAppContactName({
+            existingName: contact.profileName,
+            existingSource: contact.nameSource,
+            nextName,
+            nextSource,
+            phoneE164: contact.phoneE164,
+          })
+        ) {
+          contact.profileName = nextName;
+          contact.nameSource = nextSource;
+        }
+      }
+      contact.updatedAt = nowIso();
+      return contact;
+    });
   }
 
   async insertAuditEvent(input: {
@@ -963,51 +1061,137 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
     return mapChannel(data as Record<string, unknown>);
   }
 
+  /**
+   * Optimistic CAS name upgrade: update only if observed profile_name/name_source
+   * are unchanged. Concurrent writers re-read and retry so the strongest candidate wins.
+   */
+  private async casUpgradeContactName(
+    contactId: string,
+    observed: WhatsAppContact,
+    nextName: string,
+    nextSource: WhatsAppContactNameSource,
+    companyId: string = DEFAULT_COMPANY_ID
+  ): Promise<{ applied: boolean; contact: WhatsAppContact }> {
+    const supabase = this.client();
+    let query = supabase
+      .from("whatsapp_contacts")
+      .update({
+        profile_name: nextName,
+        name_source: nextSource,
+        updated_at: nowIso(),
+      })
+      .eq("company_id", companyId)
+      .eq("id", contactId);
+
+    if (observed.profileName == null) {
+      query = query.is("profile_name", null);
+    } else {
+      query = query.eq("profile_name", observed.profileName);
+    }
+    if (observed.nameSource == null) {
+      query = query.is("name_source", null);
+    } else {
+      query = query.eq("name_source", observed.nameSource);
+    }
+
+    const { data: updated, error } = await query.select("*").maybeSingle();
+    if (error) throw new Error(error.message);
+    if (updated) {
+      return {
+        applied: true,
+        contact: mapContact(updated as Record<string, unknown>),
+      };
+    }
+    const { data: fresh, error: reselectError } = await supabase
+      .from("whatsapp_contacts")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", contactId)
+      .maybeSingle();
+    if (reselectError) throw new Error(reselectError.message);
+    if (!fresh) {
+      return { applied: false, contact: observed };
+    }
+    return {
+      applied: false,
+      contact: mapContact(fresh as Record<string, unknown>),
+    };
+  }
+
   async resolveOrCreateContact(input: {
     phoneE164: string;
     profileName?: string | null;
+    nameSource?: WhatsAppContactNameSource | string | null;
   }): Promise<WhatsAppContact> {
     const supabase = this.client();
-    const { data: existing } = await supabase
+    const { nextName, nextSource } = resolveNextContactNameCandidate(input);
+
+    for (let attempt = 0; attempt < CONTACT_NAME_CAS_MAX_ATTEMPTS; attempt++) {
+      const { data: existing } = await supabase
+        .from("whatsapp_contacts")
+        .select("*")
+        .eq("company_id", DEFAULT_COMPANY_ID)
+        .eq("phone_e164", input.phoneE164)
+        .maybeSingle();
+
+      if (existing) {
+        let mapped = mapContact(existing as Record<string, unknown>);
+        if (
+          !shouldApplyWhatsAppContactName({
+            existingName: mapped.profileName,
+            existingSource: mapped.nameSource,
+            nextName,
+            nextSource,
+            phoneE164: input.phoneE164,
+          })
+        ) {
+          return mapped;
+        }
+        if (!nextName || !nextSource) return mapped;
+        const cas = await this.casUpgradeContactName(
+          mapped.id,
+          mapped,
+          nextName,
+          nextSource
+        );
+        if (cas.applied) return cas.contact;
+        mapped = cas.contact;
+        // Concurrent change — retry policy against the fresh row.
+        continue;
+      }
+
+      const row: Record<string, unknown> = {
+        id: newId("wct"),
+        company_id: DEFAULT_COMPANY_ID,
+        phone_e164: input.phoneE164,
+        profile_name: nextName,
+        ...(nextName && nextSource ? { name_source: nextSource } : {}),
+      };
+      const { data, error } = await supabase
+        .from("whatsapp_contacts")
+        .insert(row)
+        .select("*")
+        .single();
+      if (error) {
+        if (isUniqueViolation(error)) {
+          // Winner inserted concurrently — loop to upgrade against that row.
+          continue;
+        }
+        throw new Error(error.message);
+      }
+      return mapContact(data as Record<string, unknown>);
+    }
+
+    const { data: fallback } = await supabase
       .from("whatsapp_contacts")
       .select("*")
       .eq("company_id", DEFAULT_COMPANY_ID)
       .eq("phone_e164", input.phoneE164)
       .maybeSingle();
-    if (existing) {
-      return mapContact(existing as Record<string, unknown>);
+    if (!fallback) {
+      throw new Error("contact resolve exhausted CAS retries without a row");
     }
-
-    const row = {
-      id: newId("wct"),
-      company_id: DEFAULT_COMPANY_ID,
-      phone_e164: input.phoneE164,
-      profile_name: input.profileName ?? null,
-    };
-    const { data, error } = await supabase
-      .from("whatsapp_contacts")
-      .insert(row)
-      .select("*")
-      .single();
-    if (error) {
-      if (isUniqueViolation(error)) {
-        const { data: raced, error: reselectError } = await supabase
-          .from("whatsapp_contacts")
-          .select("*")
-          .eq("company_id", DEFAULT_COMPANY_ID)
-          .eq("phone_e164", input.phoneE164)
-          .maybeSingle();
-        if (reselectError || !raced) {
-          throw new Error(
-            reselectError?.message ||
-              "contact unique conflict but existing row not found"
-          );
-        }
-        return mapContact(raced as Record<string, unknown>);
-      }
-      throw new Error(error.message);
-    }
-    return mapContact(data as Record<string, unknown>);
+    return mapContact(fallback as Record<string, unknown>);
   }
 
   async resolveOrCreateOpenConversation(input: {
@@ -1319,36 +1503,127 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
 
   async updateContactSyncFields(
     contactId: string,
-    fields: {
-      waJid?: string | null;
-      nameSource?: string | null;
-      isBusinessContact?: boolean;
-      lastSyncedAt?: string | null;
-      profileName?: string | null;
-    },
+    fields: WhatsAppContactSyncFieldPatch,
     companyId: string = DEFAULT_COMPANY_ID
   ): Promise<WhatsAppContact | null> {
-    const patch: Record<string, unknown> = { updated_at: nowIso() };
-    if (fields.waJid !== undefined) patch.wa_jid = fields.waJid;
-    if (fields.nameSource !== undefined) patch.name_source = fields.nameSource;
-    if (fields.isBusinessContact !== undefined) {
-      patch.is_business_contact = fields.isBusinessContact;
+    const supabase = this.client();
+
+    for (let attempt = 0; attempt < CONTACT_NAME_CAS_MAX_ATTEMPTS; attempt++) {
+      const { data: existing, error: readError } = await supabase
+        .from("whatsapp_contacts")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", contactId)
+        .maybeSingle();
+      if (readError) throw new Error(readError.message);
+      if (!existing) return null;
+      const mapped = mapContact(existing as Record<string, unknown>);
+
+      const metaPatch: Record<string, unknown> = { updated_at: nowIso() };
+      if (fields.waJid !== undefined) metaPatch.wa_jid = fields.waJid;
+      if (fields.isBusinessContact !== undefined) {
+        metaPatch.is_business_contact = fields.isBusinessContact;
+      }
+      if (fields.lastSyncedAt !== undefined) {
+        metaPatch.last_synced_at = fields.lastSyncedAt;
+      }
+
+      let nameUpgrade: {
+        nextName: string;
+        nextSource: WhatsAppContactNameSource;
+      } | null = null;
+      if (fields.nameSource === "manual") {
+        const manualName = isValidWhatsAppDisplayName(
+          fields.profileName,
+          mapped.phoneE164
+        );
+        if (manualName) {
+          nameUpgrade = { nextName: manualName, nextSource: "manual" };
+        }
+      } else if (
+        fields.profileName !== undefined ||
+        fields.nameSource !== undefined
+      ) {
+        const { nextName, nextSource } = resolveNextContactNameCandidate({
+          phoneE164: mapped.phoneE164,
+          profileName: fields.profileName,
+          nameSource: fields.nameSource,
+        });
+        if (
+          nextName &&
+          nextSource &&
+          shouldApplyWhatsAppContactName({
+            existingName: mapped.profileName,
+            existingSource: mapped.nameSource,
+            nextName,
+            nextSource,
+            phoneE164: mapped.phoneE164,
+          })
+        ) {
+          nameUpgrade = { nextName, nextSource };
+        }
+      }
+
+      if (nameUpgrade) {
+        // Manual writes are authoritative; WhatsApp upgrades use CAS on observed identity.
+        if (nameUpgrade.nextSource === "manual") {
+          const { data: updated, error } = await supabase
+            .from("whatsapp_contacts")
+            .update({
+              ...metaPatch,
+              profile_name: nameUpgrade.nextName,
+              name_source: "manual",
+            })
+            .eq("company_id", companyId)
+            .eq("id", contactId)
+            .select("*")
+            .maybeSingle();
+          if (error) throw new Error(error.message);
+          return updated
+            ? mapContact(updated as Record<string, unknown>)
+            : mapped;
+        }
+        let query = supabase
+          .from("whatsapp_contacts")
+          .update({
+            ...metaPatch,
+            profile_name: nameUpgrade.nextName,
+            name_source: nameUpgrade.nextSource,
+          })
+          .eq("company_id", companyId)
+          .eq("id", contactId);
+        if (mapped.profileName == null) query = query.is("profile_name", null);
+        else query = query.eq("profile_name", mapped.profileName);
+        if (mapped.nameSource == null) query = query.is("name_source", null);
+        else query = query.eq("name_source", mapped.nameSource);
+        const { data: updated, error } = await query.select("*").maybeSingle();
+        if (error) throw new Error(error.message);
+        if (updated) {
+          return mapContact(updated as Record<string, unknown>);
+        }
+        // Lost CAS race — retry against fresh row (never apply a weaker name).
+        continue;
+      }
+
+      // Metadata-only: never touch profile_name / name_source columns.
+      const { data: updated, error } = await supabase
+        .from("whatsapp_contacts")
+        .update(metaPatch)
+        .eq("company_id", companyId)
+        .eq("id", contactId)
+        .select("*")
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return updated ? mapContact(updated as Record<string, unknown>) : mapped;
     }
-    if (fields.lastSyncedAt !== undefined) {
-      patch.last_synced_at = fields.lastSyncedAt;
-    }
-    if (fields.profileName !== undefined) {
-      patch.profile_name = fields.profileName;
-    }
-    const { data, error } = await this.client()
+
+    const { data: fallback } = await supabase
       .from("whatsapp_contacts")
-      .update(patch)
+      .select("*")
       .eq("company_id", companyId)
       .eq("id", contactId)
-      .select("*")
       .maybeSingle();
-    if (error) throw new Error(error.message);
-    return data ? mapContact(data as Record<string, unknown>) : null;
+    return fallback ? mapContact(fallback as Record<string, unknown>) : null;
   }
 
   async insertHistoricalOutboundMessage(input: {

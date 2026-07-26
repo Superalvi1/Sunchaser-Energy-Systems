@@ -125,6 +125,26 @@ function nonEmptyString(value: unknown): string | null {
   return s ? s : null;
 }
 
+/**
+ * Prove business status from a Baileys contact event.
+ * Only a real boolean `isBusiness` or a non-empty verifiedName proves a value.
+ * Missing / undefined / null / invalid `isBusiness` → persist null (no DB patch).
+ */
+export function resolveWhatsAppBusinessProof(
+  raw: Record<string, unknown>,
+  previousMemoryBusiness: boolean | null | undefined
+): { persist: boolean | null; memory: boolean } {
+  let persist: boolean | null = null;
+  if (typeof raw.isBusiness === "boolean") {
+    persist = raw.isBusiness;
+  } else if (nonEmptyString(raw.verifiedName)) {
+    persist = true;
+  }
+  const memory =
+    persist !== null ? persist : Boolean(previousMemoryBusiness);
+  return { persist, memory };
+}
+
 function keyFields(msg: Record<string, unknown>): Record<string, unknown> {
   return (msg.key as Record<string, unknown> | undefined) ?? {};
 }
@@ -201,7 +221,13 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
     return this.selfJid;
   }
 
-  ingestContacts(rawContacts: Array<Record<string, unknown>>): void {
+  /**
+   * Ingest Baileys contacts into the in-memory sync source.
+   * Returns phone-resolved contacts suitable for immediate persistence.
+   * LID-only contacts (no trustworthy phone mapping) are skipped.
+   */
+  ingestContacts(rawContacts: Array<Record<string, unknown>>): WhatsAppWebSyncContact[] {
+    const resolved: WhatsAppWebSyncContact[] = [];
     for (const c of rawContacts) {
       const identity = this.lidMap.resolveIdentity({
         contactId: String(c.id || ""),
@@ -214,21 +240,34 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
       const jid = identity.phoneJid;
       const prev = this.contacts.get(jid);
       const savedName = nonEmptyString(c.name) ?? prev?.savedName ?? null;
-      const pushName =
-        nonEmptyString(c.notify) ??
-        nonEmptyString(c.verifiedName) ??
-        prev?.pushName ??
-        null;
+      // Keep verifiedName separate from push/notify (never fold).
+      const verifiedName =
+        nonEmptyString(c.verifiedName) ?? prev?.verifiedName ?? null;
+      const pushName = nonEmptyString(c.notify) ?? prev?.pushName ?? null;
       const shortName = nonEmptyString(c.short) ?? prev?.shortName ?? null;
-      this.contacts.set(jid, {
+      // Partial contacts.update: only proven boolean / verifiedName may change business.
+      const businessProof = resolveWhatsAppBusinessProof(
+        c,
+        prev?.isBusiness ?? null
+      );
+      const entry: WhatsAppWebSyncContact = {
         jid,
         phoneE164: identity.phoneE164,
         savedName,
+        verifiedName,
         pushName,
         shortName,
-        isBusiness: Boolean(c.isBusiness || c.verifiedName),
+        // Memory keeps a concrete flag; persist payload uses null when unproven.
+        isBusiness: businessProof.memory,
+      };
+      this.contacts.set(jid, entry);
+      resolved.push({
+        ...entry,
+        // Downstream persistence: null means "do not patch business flag".
+        isBusiness: businessProof.persist,
       });
     }
+    return resolved;
   }
 
   ingestChats(rawChats: Array<Record<string, unknown>>): void {
