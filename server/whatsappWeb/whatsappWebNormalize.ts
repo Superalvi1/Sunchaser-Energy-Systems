@@ -5,7 +5,10 @@
 import { digitsOnlyPhone } from "../whatsappTransport/whatsappEnvelope.ts";
 import type { NormalizedInboundText } from "../whatsappTransport/whatsappEnvelope.ts";
 import { WHATSAPP_WEB_QR_CHANNEL_PHONE_NUMBER_ID } from "./whatsappWebConfig.ts";
-import { resolveWhatsAppIdentity } from "./whatsappWebIdentity.ts";
+import {
+  resolveWhatsAppIdentity,
+  type WhatsAppLidPhoneMap,
+} from "./whatsappWebIdentity.ts";
 
 export type BaileysInboundLike = {
   providerMessageId: string;
@@ -63,8 +66,14 @@ export function jidToWaId(remoteJid: string): string | null {
   return digits.length >= 6 ? digits : null;
 }
 
+export type NormalizeBaileysOptions = {
+  /** Optional ephemeral LID map (process-local). Never creates fake phones from @lid. */
+  lidMap?: WhatsAppLidPhoneMap | null;
+};
+
 export function normalizeBaileysInbound(
-  message: BaileysInboundLike
+  message: BaileysInboundLike,
+  options?: NormalizeBaileysOptions
 ): NormalizeBaileysResult {
   if (!message.providerMessageId?.trim()) {
     return { kind: "ignore", reason: "missing_provider_id" };
@@ -82,7 +91,7 @@ export function normalizeBaileysInbound(
   if (!text) {
     return { kind: "ignore", reason: "no_text" };
   }
-  const identity = resolveWhatsAppIdentity({
+  const identityInput = {
     remoteJid: message.remoteJid,
     remoteJidAlt: message.remoteJidAlt,
     participant: message.participant,
@@ -91,7 +100,10 @@ export function normalizeBaileysInbound(
     senderLid: message.senderLid,
     participantPn: message.participantPn,
     participantLid: message.participantLid,
-  });
+  };
+  const identity = options?.lidMap
+    ? options.lidMap.resolveIdentity(identityInput)
+    : resolveWhatsAppIdentity(identityInput);
   const fromWaId = identity?.phoneE164 ?? jidToWaId(message.remoteJid);
   if (!fromWaId) {
     return { kind: "ignore", reason: "bad_jid" };

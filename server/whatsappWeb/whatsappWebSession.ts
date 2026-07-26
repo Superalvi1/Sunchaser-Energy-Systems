@@ -38,6 +38,7 @@ import {
   ContactIdentityPersistQueue,
   WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY,
 } from "./whatsappWebContactIdentityQueue.ts";
+import { getSharedWhatsAppLidMappingRuntime } from "./whatsappWebLidMapping.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
   WhatsAppWebSyncSource,
@@ -294,7 +295,13 @@ async function defaultSocketFactory(input: {
     shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false,
   });
-  const syncSource = new BaileysInMemorySyncSource();
+  // SYNC-14C-B: share durable LID map with inbound. Persist/hydrate is
+  // best-effort — missing migration must never affect socket lifecycle.
+  const lidRuntime = getSharedWhatsAppLidMappingRuntime();
+  const syncSource = new BaileysInMemorySyncSource({
+    lidMap: lidRuntime.memory,
+  });
+  syncSource.setLidMappingStore(lidRuntime.repo, lidRuntime.scope);
   syncSource.setHistoryFetcher(async (count, oldestMsgKey, oldestMsgTimestamp) =>
     sock.fetchMessageHistory(count, oldestMsgKey as never, oldestMsgTimestamp)
   );

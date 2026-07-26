@@ -351,6 +351,7 @@ import {
 import { createMessagingProductionWiring } from "./server/whatsappTransport/messagingProductionFactory.ts";
 import {
   createWhatsAppWebRouter,
+  getSharedWhatsAppLidMappingRuntime,
   getSharedWhatsAppWebSession,
   persistWhatsAppWebInbound,
   readWhatsAppWebConfig,
@@ -689,10 +690,14 @@ app.use(
 // WhatsApp Web QR (Baileys) — Admin-only; disabled unless WHATSAPP_WEB_QR_ENABLED=true.
 // Shared session is created before Inbox mount so list availability can see QR CONNECTED.
 const whatsappWebSession = getSharedWhatsAppWebSession();
+const whatsappWebLidMapping = getSharedWhatsAppLidMappingRuntime();
 const whatsappWebShadowEngine = new AiShadowEngine();
 whatsappWebSession.setInboundHandler(async (message) => {
   await persistWhatsAppWebInbound(message, {
     messagingRepository,
+    lidMap: whatsappWebLidMapping.memory,
+    lidMappingRepo: whatsappWebLidMapping.repo,
+    lidMappingScope: whatsappWebLidMapping.scope,
     autoLinkLead: async (conversationId) => {
       const result = await productionAutoLinkLead(conversationId);
       return result.leadId;

@@ -13,7 +13,9 @@ export type WhatsAppIdentitySource =
   | "participant_alt"
   | "sender_pn"
   | "participant_pn"
-  | "contact_jid";
+  | "contact_jid"
+  | "ephemeral_lid_map"
+  | "durable_lid_map";
 
 export type ResolvedWhatsAppIdentity = {
   phoneE164: string;
@@ -62,7 +64,10 @@ function firstPhoneFromCandidates(
   return null;
 }
 
-function collectLid(...values: Array<string | null | undefined>): string | null {
+/** Extract the first normalized @lid JID from candidate fields. */
+export function collectLidJid(
+  ...values: Array<string | null | undefined>
+): string | null {
   for (const value of values) {
     const jid = normalizeJid(String(value || ""));
     if (jid && isLidJid(jid)) return jid;
@@ -89,7 +94,7 @@ export function resolveWhatsAppIdentity(
   ]);
   if (!phone) return null;
 
-  const lidJid = collectLid(
+  const lidJid = collectLidJid(
     input.contactLid,
     input.senderLid,
     input.participantLid,
@@ -140,7 +145,7 @@ export class WhatsAppLidPhoneMap {
       this.remember(direct.lidJid, direct.phoneJid);
       return direct;
     }
-    const lid = collectLid(
+    const lid = collectLidJid(
       input.remoteJid,
       input.participant,
       input.contactId,
@@ -157,7 +162,14 @@ export class WhatsAppLidPhoneMap {
       phoneE164: phone,
       phoneJid: waIdToChatJid(phone),
       lidJid: lid,
-      source: "contact_jid",
+      source: "ephemeral_lid_map",
     };
+  }
+
+  /** Seed from durable hydration without treating values as unverified Baileys fields. */
+  seedFromDurable(lidJid: string, phoneE164: string): void {
+    const digits = String(phoneE164 || "").replace(/\D/g, "");
+    if (digits.length < 6) return;
+    this.remember(lidJid, waIdToChatJid(digits));
   }
 }
