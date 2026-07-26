@@ -7,7 +7,9 @@ import type { WhatsAppReadWatermark } from "./whatsappInboxDatabaseTypes.ts";
 import type { WhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
 import { canViewInbox } from "./whatsappInboxPermissions.ts";
 import type { WhatsAppInboxReadWatermarkRepository } from "./whatsappInboxReadWatermarkRepository.ts";
+import type { ConversationUnreadState } from "./whatsappInboxUnreadBatch.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
+import type { KeysetCursor } from "./whatsappInboxRepoSupport.ts";
 
 function isStrictlyNewerInbound(
   candidate: { createdAt: string; id: string },
@@ -140,5 +142,55 @@ export class ReadStateService {
       actor.id,
       this.companyId
     );
+  }
+
+  /**
+   * Batch unread for the given conversation ids using the actor's watermarks.
+   * Authorization: viewer check only — ids must already be accessible inbox rows.
+   */
+  async batchUnreadState(
+    conversationIds: string[],
+    actor: RequestActor
+  ): Promise<Map<string, ConversationUnreadState>> {
+    if (!canViewInbox(actor)) {
+      throw new InboxServiceError("forbidden", "Inbox access denied");
+    }
+    return this.watermarks.batchUnreadState(
+      conversationIds,
+      actor.id,
+      this.companyId
+    );
+  }
+
+  /**
+   * Count unread conversations across the complete accessible Inbox
+   * (not limited to a loaded list page).
+   */
+  async countUnreadConversations(actor: RequestActor): Promise<number> {
+    if (!canViewInbox(actor)) {
+      throw new InboxServiceError("forbidden", "Inbox access denied");
+    }
+    const ids: string[] = [];
+    let cursor: KeysetCursor | null = null;
+    for (;;) {
+      const page = await this.conversations.listByActivity(
+        { companyId: this.companyId },
+        { cursor, limit: 100 }
+      );
+      for (const row of page.rows) ids.push(row.id);
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    if (ids.length === 0) return 0;
+    const states = await this.watermarks.batchUnreadState(
+      ids,
+      actor.id,
+      this.companyId
+    );
+    let total = 0;
+    for (const state of states.values()) {
+      if (state.isUnread) total += 1;
+    }
+    return total;
   }
 }

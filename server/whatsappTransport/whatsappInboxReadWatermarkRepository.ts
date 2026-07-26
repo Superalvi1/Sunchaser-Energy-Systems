@@ -14,6 +14,11 @@ import {
   type KeysetCursor,
   WhatsAppInboxMemoryStore,
 } from "./whatsappInboxRepoSupport.ts";
+import {
+  batchUnreadStateFromMemory,
+  batchUnreadStateFromSnapshots,
+  type ConversationUnreadState,
+} from "./whatsappInboxUnreadBatch.ts";
 
 export interface WhatsAppInboxReadWatermarkRepository {
   isActive(): boolean;
@@ -46,6 +51,15 @@ export interface WhatsAppInboxReadWatermarkRepository {
     userId: string,
     companyId?: string
   ): Promise<boolean>;
+  /**
+   * Batch unread state for many conversations (single pass / few queries).
+   * Avoids N+1 countUnreadInbound calls on live list refresh.
+   */
+  batchUnreadState(
+    conversationIds: string[],
+    userId: string,
+    companyId?: string
+  ): Promise<Map<string, ConversationUnreadState>>;
 }
 
 function isNewerThanWatermark(
@@ -153,6 +167,14 @@ export class InMemoryWhatsAppInboxReadWatermarkRepository
       companyId
     );
     return count > 0;
+  }
+
+  async batchUnreadState(
+    conversationIds: string[],
+    userId: string,
+    _companyId?: string
+  ): Promise<Map<string, ConversationUnreadState>> {
+    return batchUnreadStateFromMemory(this.store, conversationIds, userId);
   }
 }
 
@@ -290,5 +312,52 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
     const { data, error } = await query.limit(1);
     if (error) handleSupabaseError(error);
     return (data ?? []).length > 0;
+  }
+
+  async batchUnreadState(
+    conversationIds: string[],
+    userId: string,
+    companyId?: string
+  ): Promise<Map<string, ConversationUnreadState>> {
+    if (conversationIds.length === 0) return new Map();
+    const company = this.access.companyId(companyId);
+
+    const { data: watermarkRows, error: wmError } = await this.client()
+      .from("whatsapp_read_watermarks")
+      .select("*")
+      .eq("company_id", company)
+      .eq("user_id", userId)
+      .in("conversation_id", conversationIds);
+    if (wmError) handleSupabaseError(wmError);
+
+    const watermarksByConversationId = new Map<
+      string,
+      WhatsAppReadWatermark | null
+    >();
+    for (const id of conversationIds) {
+      watermarksByConversationId.set(id, null);
+    }
+    for (const row of (watermarkRows ?? []) as Record<string, unknown>[]) {
+      const mapped = mapReadWatermark(row);
+      watermarksByConversationId.set(mapped.conversationId, mapped);
+    }
+
+    const { data: messageRows, error: msgError } = await this.client()
+      .from("whatsapp_messages")
+      .select("id, conversation_id, direction, created_at, company_id, is_backfill")
+      .eq("company_id", company)
+      .in("conversation_id", conversationIds)
+      .eq("direction", "inbound")
+      .eq("is_backfill", false);
+    if (msgError) handleSupabaseError(msgError);
+
+    const inbound = ((messageRows ?? []) as Record<string, unknown>[]).map(
+      mapMessageRef
+    );
+    return batchUnreadStateFromSnapshots(
+      conversationIds,
+      watermarksByConversationId,
+      inbound
+    );
   }
 }

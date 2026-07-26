@@ -50,30 +50,33 @@ import { canGenerateAiDraft } from "./whatsappInboxPermissions.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import { readQueryAgentConfig } from "./aiQueryAgent/queryAgentConfig.ts";
 
-/** Attach server-backed unread fields from the actor read watermark. */
+/**
+ * Attach server-backed unread fields via batch watermark lookup.
+ * Prefer ConversationService.list* which already enriches; this remains for
+ * single-conversation detail responses.
+ */
 async function enrichConversationsWithUnread(
   rows: WhatsAppConversationInbox[],
   actor: RequestActor,
   services: WhatsAppInboxServices
 ): Promise<WhatsAppConversationInbox[]> {
   if (rows.length === 0) return rows;
-  return Promise.all(
-    rows.map(async (row) => {
-      try {
-        const unreadCount = await services.readState.getUnreadCount(
-          row.id,
-          actor
-        );
-        return {
-          ...row,
-          unreadCount,
-          isUnread: unreadCount > 0,
-        };
-      } catch {
-        return { ...row, unreadCount: 0, isUnread: false };
-      }
-    })
-  );
+  try {
+    const unreadMap = await services.readState.batchUnreadState(
+      rows.map((r) => r.id),
+      actor
+    );
+    return rows.map((row) => {
+      const state = unreadMap.get(row.id);
+      return {
+        ...row,
+        unreadCount: state?.unreadCount ?? 0,
+        isUnread: state?.isUnread ?? false,
+      };
+    });
+  } catch {
+    return rows.map((row) => ({ ...row, unreadCount: 0, isUnread: false }));
+  }
 }
 
 /** Customer-safe draft payload — strips internal audit metadata/IDs. */
@@ -286,18 +289,15 @@ export function createInboxControllers(
             assignedTo: parsed.value.assignedTo,
             channelId: parsed.value.channelId,
             hasFailedMessage: parsed.value.hasFailedMessage,
+            quickFilter: parsed.value.quickFilter,
           },
           { cursor: parsed.value.cursor, limit: parsed.value.limit }
         );
-        const conversations = await enrichConversationsWithUnread(
-          page.rows,
-          actor,
-          services
-        );
-        return inboxOk(res, { conversations }, 200, {
+        return inboxOk(res, { conversations: page.rows }, 200, {
           nextCursor: page.nextCursor
             ? encodeInboxCursor(page.nextCursor)
             : null,
+          totalUnreadCount: page.totalUnreadCount,
         });
       } catch (err) {
         return sendInboxError(res, err);
@@ -372,18 +372,15 @@ export function createInboxControllers(
             assignedTo: parsed.value.assignedTo,
             channelId: parsed.value.channelId,
             hasFailedMessage: parsed.value.hasFailedMessage,
+            quickFilter: parsed.value.quickFilter,
           },
           { since: parsed.value.since, limit: parsed.value.limit }
         );
-        const conversations = await enrichConversationsWithUnread(
-          page.rows,
-          actor,
-          services
-        );
-        return inboxOk(res, { conversations }, 200, {
+        return inboxOk(res, { conversations: page.rows }, 200, {
           nextCursor: page.nextCursor
             ? encodeInboxCursor(page.nextCursor)
             : null,
+          totalUnreadCount: page.totalUnreadCount,
         });
       } catch (err) {
         return sendInboxError(res, err);

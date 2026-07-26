@@ -1,33 +1,19 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 import { fetchInboxMessages } from "../api/inboxApi";
-import type { InboxMessagesPage } from "../types";
 import { inboxKeys } from "./inboxQueryKeys";
 import {
   INBOX_LIVE_REFRESH_MS,
   isDocumentVisible,
   subscribeImmediateRefresh,
 } from "./inboxLiveRefresh";
+import {
+  INBOX_MESSAGE_PAGE_SIZE,
+  repartitionLiveMessagePages,
+  type InfiniteMessagesData,
+} from "./inboxMessageCache";
 
-/**
- * Merge newest-first API pages without duplicating message ids.
- * Live refresh replaces the first (newest) page; older pages are preserved.
- */
-function mergeNewestFirst(
-  existing: InboxMessagesPage["messages"],
-  incoming: InboxMessagesPage["messages"]
-): InboxMessagesPage["messages"] {
-  const map = new Map<string, (typeof existing)[number]>();
-  // Incoming first so newer fields win, then keep prior order for the rest.
-  for (const row of incoming) map.set(row.id, row);
-  for (const row of existing) {
-    if (!map.has(row.id)) map.set(row.id, row);
-  }
-  return [...map.values()].sort((a, b) => {
-    if (a.createdAt !== b.createdAt) return b.createdAt < a.createdAt ? -1 : 1;
-    return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
-  });
-}
+export { repartitionLiveMessagePages, INBOX_MESSAGE_PAGE_SIZE } from "./inboxMessageCache";
 
 export function useInboxMessages(conversationId: string | null) {
   const queryClient = useQueryClient();
@@ -39,7 +25,7 @@ export function useInboxMessages(conversationId: string | null) {
     queryFn: ({ pageParam }) =>
       fetchInboxMessages(conversationId!, {
         before: pageParam,
-        limit: 50,
+        limit: INBOX_MESSAGE_PAGE_SIZE,
       }),
     getNextPageParam: (last) => last.nextCursor,
     enabled: Boolean(conversationId),
@@ -54,28 +40,12 @@ export function useInboxMessages(conversationId: string | null) {
     try {
       const page = await fetchInboxMessages(conversationId, {
         before: null,
-        limit: 50,
+        limit: INBOX_MESSAGE_PAGE_SIZE,
       });
       queryClient.setQueryData(
         inboxKeys.messages(conversationId),
-        (old: { pages: InboxMessagesPage[]; pageParams: unknown[] } | undefined) => {
-          if (!old) {
-            return {
-              pages: [page],
-              pageParams: [null],
-            };
-          }
-          const [first, ...rest] = old.pages;
-          const mergedFirst: InboxMessagesPage = {
-            messages: mergeNewestFirst(first?.messages ?? [], page.messages),
-            // Keep existing older-page cursor; first-page live refresh uses null before.
-            nextCursor: first?.nextCursor ?? page.nextCursor,
-          };
-          return {
-            ...old,
-            pages: [mergedFirst, ...rest],
-          };
-        }
+        (old: InfiniteMessagesData | undefined) =>
+          repartitionLiveMessagePages(page, old, INBOX_MESSAGE_PAGE_SIZE)
       );
     } catch {
       // Soft failure — timeline remains; next tick retries.

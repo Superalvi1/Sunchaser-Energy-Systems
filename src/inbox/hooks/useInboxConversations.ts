@@ -55,28 +55,6 @@ function matchesSearch(row: InboxConversation, search: string): boolean {
   );
 }
 
-function matchesQuickFilter(
-  row: InboxConversation,
-  filter: InboxListFilters["quickFilter"]
-): boolean {
-  switch (filter) {
-    case "unread":
-      return row.isUnread === true || (row.unreadCount ?? 0) > 0;
-    case "read":
-      return row.isUnread !== true && (row.unreadCount ?? 0) === 0;
-    case "open":
-      return row.status === "open" || row.status === "pending";
-    case "resolved":
-      return row.status === "resolved";
-    case "archived":
-      return row.status === "archived";
-    case "all":
-    case undefined:
-    default:
-      return true;
-  }
-}
-
 function topWatermark(
   rows: InboxConversation[]
 ): { at: string; id: string } | null {
@@ -85,15 +63,33 @@ function topWatermark(
   return { at: activityAt(first), id: first.id };
 }
 
+function normalizeServerFilters(filters: InboxListFilters): InboxListFilters {
+  return {
+    status: filters.status,
+    assignedTo: filters.assignedTo,
+    hasFailedMessage: filters.hasFailedMessage,
+    quickFilter:
+      filters.quickFilter ??
+      (filters.unreadOnly ? ("unread" as const) : ("all" as const)),
+  };
+}
+
+function usesServerExclusiveFilter(filters: InboxListFilters): boolean {
+  const quick = filters.quickFilter ?? (filters.unreadOnly ? "unread" : "all");
+  return quick !== "all";
+}
+
 export function useInboxConversations(filters: InboxListFilters) {
   const queryClient = useQueryClient();
   const serverFilters = useMemo(
-    () => ({
-      status: filters.status,
-      assignedTo: filters.assignedTo,
-      hasFailedMessage: filters.hasFailedMessage,
-    }),
-    [filters.status, filters.assignedTo, filters.hasFailedMessage]
+    () => normalizeServerFilters(filters),
+    [
+      filters.status,
+      filters.assignedTo,
+      filters.hasFailedMessage,
+      filters.quickFilter,
+      filters.unreadOnly,
+    ]
   );
 
   const query = useInfiniteQuery({
@@ -113,37 +109,28 @@ export function useInboxConversations(filters: InboxListFilters) {
   );
 
   const conversations = useMemo(() => {
-    let next = rawConversations;
-    // Prefer API-backed quick filters; keep unreadOnly as alias for unread.
-    const quick =
-      filters.quickFilter ??
-      (filters.unreadOnly ? ("unread" as const) : ("all" as const));
-    if (quick !== "all") {
-      next = next.filter((c) => matchesQuickFilter(c, quick));
-    }
-    if (filters.search) {
-      next = next.filter((c) => matchesSearch(c, filters.search!));
-    }
-    return next;
-  }, [
-    rawConversations,
-    filters.quickFilter,
-    filters.unreadOnly,
-    filters.search,
-  ]);
+    if (!filters.search) return rawConversations;
+    return rawConversations.filter((c) => matchesSearch(c, filters.search!));
+  }, [rawConversations, filters.search]);
 
-  const totalUnreadCount = useMemo(
-    () =>
-      rawConversations.reduce(
-        (sum, row) => sum + Math.max(0, row.unreadCount ?? (row.isUnread ? 1 : 0)),
-        0
-      ),
-    [rawConversations]
-  );
+  const totalUnreadCount = useMemo(() => {
+    const fromMeta = query.data?.pages[0]?.totalUnreadCount;
+    if (typeof fromMeta === "number") return fromMeta;
+    return rawConversations.reduce(
+      (sum, row) => sum + (row.isUnread ? 1 : 0),
+      0
+    );
+  }, [query.data, rawConversations]);
 
-  // Watermark from unfiltered first page so empty-client-filter states still advance.
+  // Per-filter watermark — switching tabs resets via effect below.
   const watermarkRef = useRef<{ at: string; id: string } | null>(null);
   const inFlightRef = useRef(false);
+  const filterKey = JSON.stringify(serverFilters);
+
+  useEffect(() => {
+    // Switching quick filters must not reuse an incompatible cursor/cache watermark.
+    watermarkRef.current = topWatermark(rawConversations);
+  }, [filterKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on filter identity
 
   useEffect(() => {
     const top = topWatermark(rawConversations);
@@ -169,6 +156,7 @@ export function useInboxConversations(filters: InboxListFilters) {
         const nextFirst: InboxListPage = {
           conversations: page.conversations,
           nextCursor: page.nextCursor,
+          totalUnreadCount: page.totalUnreadCount,
         };
         // Preserve older pages when present; first page is authoritative.
         return {
@@ -187,6 +175,13 @@ export function useInboxConversations(filters: InboxListFilters) {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
+      // Filtered tabs: authoritative first-page refresh so membership stays correct
+      // across the full Inbox (not just the previously loaded page).
+      if (usesServerExclusiveFilter(serverFilters)) {
+        await applyAuthoritativeFirstPage();
+        return;
+      }
+
       const since = watermarkRef.current;
       // Empty Inbox / missing watermark: keep checking via authoritative list.
       if (!since) {
@@ -198,7 +193,12 @@ export function useInboxConversations(filters: InboxListFilters) {
           sinceAt: since.at,
           sinceId: since.id,
         });
-        if (page.conversations.length === 0) return;
+        if (
+          page.conversations.length === 0 &&
+          typeof page.totalUnreadCount !== "number"
+        ) {
+          return;
+        }
         queryClient.setQueryData<InfiniteData<InboxListPage>>(
           inboxKeys.list(serverFilters),
           (old) => {
@@ -213,7 +213,15 @@ export function useInboxConversations(filters: InboxListFilters) {
             if (top) watermarkRef.current = top;
             return {
               ...old,
-              pages: [{ ...first, conversations: merged }, ...rest],
+              pages: [
+                {
+                  ...first,
+                  conversations: merged,
+                  totalUnreadCount:
+                    page.totalUnreadCount ?? first.totalUnreadCount,
+                },
+                ...rest,
+              ],
             };
           }
         );
@@ -234,7 +242,7 @@ export function useInboxConversations(filters: InboxListFilters) {
     return () => window.clearInterval(timer);
     // refreshLive closes over latest refs/filters; rebind when list identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional interval rebind
-  }, [query.isSuccess, queryClient, serverFilters]);
+  }, [query.isSuccess, queryClient, filterKey]);
 
   useEffect(() => {
     if (!query.isSuccess) return;
@@ -242,7 +250,7 @@ export function useInboxConversations(filters: InboxListFilters) {
       void refreshLive();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.isSuccess, queryClient, serverFilters]);
+  }, [query.isSuccess, queryClient, filterKey]);
 
   return {
     ...query,

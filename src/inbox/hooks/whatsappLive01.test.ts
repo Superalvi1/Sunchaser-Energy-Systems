@@ -61,7 +61,7 @@ await test("delta failure falls back to authoritative first-page refresh", () =>
 await test("selected thread refreshes latest messages on interval", () => {
   assert.ok(messagesHook.includes("INBOX_LIVE_REFRESH_MS"));
   assert.ok(messagesHook.includes("refreshLatest"));
-  assert.ok(messagesHook.includes("mergeNewestFirst"));
+  assert.ok(messagesHook.includes("repartitionLiveMessagePages"));
   assert.ok(detailHook.includes("refetchInterval"));
 });
 
@@ -85,9 +85,9 @@ await test("quick filters All/Unread/Read/Open/Resolved/Archived exist", () => {
   for (const label of ["All", "Unread", "Read", "Open", "Resolved", "Archived"]) {
     assert.ok(filters.includes(`label: "${label}"`), label);
   }
-  assert.ok(conversationsHook.includes('case "unread"'));
-  assert.ok(conversationsHook.includes('case "read"'));
-  assert.ok(conversationsHook.includes("isUnread"));
+  assert.ok(conversationsHook.includes("quickFilter"));
+  assert.ok(conversationsHook.includes("normalizeServerFilters"));
+  assert.ok(conversationsHook.includes("totalUnreadCount"));
 });
 
 await test("Connection and Inbox are separate navigation destinations", () => {

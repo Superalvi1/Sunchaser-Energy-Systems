@@ -28,6 +28,11 @@ import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 export type ConversationListFilters = {
   companyId?: string;
   status?: WhatsAppInboxConversationStatus;
+  /**
+   * Multi-status filter (e.g. open tab → open+pending).
+   * When set, takes precedence over `status`.
+   */
+  statuses?: WhatsAppInboxConversationStatus[];
   /** Exact assignee user id, or "unassigned" for null assignee. */
   assignedTo?: string | "unassigned";
   channelId?: string;
@@ -150,7 +155,11 @@ function matchesFilters(
   companyId: string
 ): boolean {
   if (row.companyId !== companyId) return false;
-  if (filters.status && row.status !== filters.status) return false;
+  if (filters.statuses && filters.statuses.length > 0) {
+    if (!filters.statuses.includes(row.status)) return false;
+  } else if (filters.status && row.status !== filters.status) {
+    return false;
+  }
   if (filters.channelId && row.channelId !== filters.channelId) return false;
   if (filters.hasFailedMessage === true && !row.hasFailedMessage) return false;
   if (filters.hasFailedMessage === false && row.hasFailedMessage) return false;
@@ -160,6 +169,11 @@ function matchesFilters(
     if (row.assignedUserId !== filters.assignedTo) return false;
   }
   return true;
+}
+
+/** RPC only accepts a single status — multi-status needs table fallback. */
+function needsMultiStatusTableScan(filters: ConversationListFilters): boolean {
+  return Boolean(filters.statuses && filters.statuses.length > 1);
 }
 
 export class InMemoryWhatsAppInboxConversationRepository
@@ -519,7 +533,11 @@ export class SupabaseWhatsAppInboxConversationRepository
     companyId: string
   ) {
     let q = query.eq("company_id", companyId);
-    if (filters.status) q = q.eq("status", filters.status);
+    if (filters.statuses && filters.statuses.length > 0) {
+      q = q.in("status", filters.statuses);
+    } else if (filters.status) {
+      q = q.eq("status", filters.status);
+    }
     if (filters.channelId) q = q.eq("channel_id", filters.channelId);
     if (filters.hasFailedMessage === true) {
       q = q.eq("has_failed_message", true);
@@ -532,6 +550,104 @@ export class SupabaseWhatsAppInboxConversationRepository
       q = q.eq("assigned_user_id", filters.assignedTo);
     }
     return q;
+  }
+
+  /**
+   * Merge single-status RPC/table pages for multi-status filters (e.g. open+pending).
+   * Avoids a schema migration while keeping keyset pagination correct.
+   */
+  private async listByActivityMergedStatuses(
+    filters: ConversationListFilters,
+    opts?: { cursor?: KeysetCursor | null; limit?: number }
+  ): Promise<ConversationListPage> {
+    const statuses = filters.statuses ?? [];
+    const limit = clampLimit(opts?.limit);
+    const cursor = opts?.cursor ?? null;
+    const collected: WhatsAppConversationInbox[] = [];
+    const seen = new Set<string>();
+
+    for (const status of statuses) {
+      let statusCursor: KeysetCursor | null = null;
+      for (;;) {
+        const page = await this.listByActivity(
+          { ...filters, status, statuses: undefined },
+          { cursor: statusCursor, limit: 100 }
+        );
+        for (const row of page.rows) {
+          if (seen.has(row.id)) continue;
+          seen.add(row.id);
+          collected.push(row);
+        }
+        if (!page.nextCursor) break;
+        statusCursor = page.nextCursor;
+      }
+    }
+
+    const sorted = collected
+      .sort((a, b) => {
+        const aa = activityAt(a);
+        const ba = activityAt(b);
+        if (aa !== ba) return ba < aa ? -1 : 1;
+        return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+      })
+      .filter((row) => {
+        if (!cursor) return true;
+        return isBeforeKeyset(activityAt(row), row.id, cursor);
+      });
+
+    const page = sorted.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      rows: page,
+      nextCursor:
+        sorted.length > limit && last
+          ? { at: activityAt(last), id: last.id }
+          : null,
+    };
+  }
+
+  private async listDeltaMergedStatuses(
+    filters: ConversationListFilters,
+    opts: { since: KeysetCursor; limit?: number }
+  ): Promise<ConversationListPage> {
+    const statuses = filters.statuses ?? [];
+    const limit = clampLimit(opts.limit);
+    const collected: WhatsAppConversationInbox[] = [];
+    const seen = new Set<string>();
+
+    for (const status of statuses) {
+      let since = opts.since;
+      for (;;) {
+        const page = await this.listDelta(
+          { ...filters, status, statuses: undefined },
+          { since, limit: 100 }
+        );
+        for (const row of page.rows) {
+          if (seen.has(row.id)) continue;
+          seen.add(row.id);
+          collected.push(row);
+        }
+        if (!page.nextCursor) break;
+        since = page.nextCursor;
+      }
+    }
+
+    const sorted = collected.sort((a, b) => {
+      if (a.updatedAt !== b.updatedAt) {
+        return a.updatedAt < b.updatedAt ? -1 : 1;
+      }
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+    const page = sorted.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      rows: page,
+      nextCursor:
+        sorted.length > limit && last
+          ? { at: last.updatedAt, id: last.id }
+          : null,
+    };
   }
 
   private async listByActivityTableFallback(
@@ -585,6 +701,17 @@ export class SupabaseWhatsAppInboxConversationRepository
     const limit = clampLimit(opts?.limit);
     const cursor = opts?.cursor ?? null;
 
+    // Collapse single-element statuses into status for the RPC path.
+    const rpcStatus =
+      filters.statuses?.length === 1
+        ? filters.statuses[0]
+        : filters.status ?? null;
+
+    if (needsMultiStatusTableScan(filters)) {
+      // RPC accepts one status — merge single-status pages (no migration).
+      return await this.listByActivityMergedStatuses(filters, opts);
+    }
+
     try {
       const { data, error } = await this.client().rpc(
         "whatsapp_inbox_list_conversations_by_activity",
@@ -593,7 +720,7 @@ export class SupabaseWhatsAppInboxConversationRepository
           p_limit: limit + 1,
           p_cursor_at: cursor?.at ?? null,
           p_cursor_id: cursor?.id ?? null,
-          p_status: filters.status ?? null,
+          p_status: rpcStatus,
           p_assigned_to: filters.assignedTo ?? null,
           p_channel_id: filters.channelId ?? null,
           p_has_failed_message:
@@ -682,6 +809,15 @@ export class SupabaseWhatsAppInboxConversationRepository
     const companyId = this.access.companyId(filters.companyId);
     const limit = clampLimit(opts.limit);
 
+    const rpcStatus =
+      filters.statuses?.length === 1
+        ? filters.statuses[0]
+        : filters.status ?? null;
+
+    if (needsMultiStatusTableScan(filters)) {
+      return await this.listDeltaMergedStatuses(filters, opts);
+    }
+
     try {
       const { data, error } = await this.client().rpc(
         "whatsapp_inbox_list_conversations_delta",
@@ -690,7 +826,7 @@ export class SupabaseWhatsAppInboxConversationRepository
           p_limit: limit + 1,
           p_since_at: opts.since.at,
           p_since_id: opts.since.id ?? "",
-          p_status: filters.status ?? null,
+          p_status: rpcStatus,
           p_assigned_to: filters.assignedTo ?? null,
           p_channel_id: filters.channelId ?? null,
           p_has_failed_message:

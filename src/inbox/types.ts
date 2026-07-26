@@ -108,6 +108,8 @@ export type InboxListFilters = {
 export type InboxListPage = {
   conversations: InboxConversation[];
   nextCursor: string | null;
+  /** Complete accessible Inbox unread conversation count (not page-local). */
+  totalUnreadCount?: number;
 };
 
 export type InboxMessagesPage = {
