@@ -3,6 +3,9 @@
  * Limits concurrent DB writes; isolates per-task failures.
  * Optional per-key serialization: same key never runs concurrently.
  * Optional maxPending + coalesceKey bound memory for high-churn paths.
+ *
+ * Coalesce uses one shared completion promise per key — duplicate enqueues
+ * return that same promise and do not append per-caller resolvers.
  */
 
 export const WHATSAPP_CONTACT_IDENTITY_PERSIST_CONCURRENCY = 3;
@@ -14,7 +17,7 @@ export type ContactIdentityPersistEnqueueOptions = {
   key?: string;
   /**
    * When set, duplicate pending/in-flight work with the same coalesce key shares
-   * one execution. Callers all settle with that single result.
+   * one completion promise (returned by reference).
    */
   coalesceKey?: string;
 };
@@ -31,12 +34,30 @@ export type ContactIdentityPersistQueueOptions = {
   onOverflow?: () => void;
 };
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  settle: (value: T) => void;
+};
+
 type PendingItem = {
   run: ContactIdentityPersistTask<unknown>;
-  resolvers: Array<(value: unknown) => void>;
+  deferred: Deferred<unknown>;
   key: string | null;
   coalesceKey: string | null;
 };
+
+function createDeferred<T>(): Deferred<T> {
+  let settled = false;
+  let settle!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    settle = (value: T) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+  });
+  return { promise, settle };
+}
 
 /**
  * Small FIFO worker pool. Never throws out of enqueue(); failures are isolated.
@@ -53,7 +74,13 @@ export class ContactIdentityPersistQueue {
   private readonly activeKeys = new Set<string>();
   private readonly activePerKey = new Map<string, number>();
   private readonly peakPerKey = new Map<string, number>();
-  private readonly activeCoalesce = new Map<string, Promise<unknown>>();
+  /**
+   * One shared completion promise per coalesce key while that work is
+   * pending or in-flight. Size is O(distinct in-flight coalesce keys).
+   */
+  private readonly coalescePromises = new Map<string, Promise<unknown>>();
+  /** Settle handles for coalesce/non-coalesce work still outstanding. */
+  private readonly openSettles = new Set<(value: unknown) => void>();
   private readonly idleWaiters: Array<() => void> = [];
   private active = 0;
   private closed = false;
@@ -65,6 +92,10 @@ export class ContactIdentityPersistQueue {
   overflowCount = 0;
   /** Test observability: how many enqueues joined an existing coalesce slot. */
   coalesceCount = 0;
+  /** Test observability: peak coalescePromises map size. */
+  peakCoalesceBookkeeping = 0;
+  /** Test observability: peak open settle-handle count (queue-side only). */
+  peakStoredSettles = 0;
 
   constructor(options: ContactIdentityPersistQueueOptions = {}) {
     this.concurrency = Math.max(
@@ -91,6 +122,16 @@ export class ContactIdentityPersistQueue {
     return this.closed;
   }
 
+  /** Queue-side coalesce bookkeeping entries (pending + in-flight). */
+  get coalesceBookkeepingCount(): number {
+    return this.coalescePromises.size;
+  }
+
+  /** Queue-side stored completion settles (one per outstanding slot). */
+  get storedSettleCount(): number {
+    return this.openSettles.size;
+  }
+
   /** Test observability: peak concurrency observed for a serialization key. */
   getPeakActiveForKey(key: string): number {
     return this.peakPerKey.get(key) ?? 0;
@@ -108,18 +149,23 @@ export class ContactIdentityPersistQueue {
   }
 
   /**
-   * Drop pending tasks and refuse new work. Active tasks finish but callers
-   * should no-op themselves when the session is shutting down for work not
-   * yet issued to the repository.
-   * Every pending enqueue promise settles.
+   * Drop pending work and refuse new enqueues. Settles every outstanding
+   * completion promise (pending + active-coalesced) so callers never strand.
+   * In-flight tasks may still finish; their settle is idempotent.
    */
   close(): void {
     this.closed = true;
     while (this.pending.length > 0) {
       const next = this.pending.shift();
       if (!next) break;
-      for (const resolve of next.resolvers) resolve(undefined);
+      this.finishDeferred(next.deferred, undefined, next.coalesceKey);
     }
+    // Settle any remaining coalesce/active completion handles.
+    for (const settle of [...this.openSettles]) {
+      settle(undefined);
+    }
+    this.openSettles.clear();
+    this.coalescePromises.clear();
     this.notifyIdleIfNeeded();
   }
 
@@ -130,10 +176,9 @@ export class ContactIdentityPersistQueue {
   }
 
   /**
-   * Schedule work. Resolves when the task finishes (success or failure), when
-   * coalesced onto existing work, when overflow-dropped, or when the queue is
-   * closed. Failures are swallowed after onTaskError — callers may still await.
-   * Same `key` tasks never run concurrently; different keys share the global cap.
+   * Schedule work. Returns a shared completion promise for coalesceKey (same
+   * object for duplicates). Never rejects. Failures are swallowed after
+   * onTaskError. Same `key` tasks never run concurrently.
    */
   enqueue<T>(
     task: ContactIdentityPersistTask<T>,
@@ -151,56 +196,73 @@ export class ContactIdentityPersistQueue {
         ? options.coalesceKey.trim()
         : null;
 
-    return new Promise<T | undefined>((resolve) => {
-      if (this.closed) {
-        resolve(undefined);
-        return;
+    if (coalesceKey) {
+      const existing = this.coalescePromises.get(coalesceKey);
+      if (existing) {
+        this.coalesceCount += 1;
+        // Return the shared promise by reference — no per-duplicate resolver.
+        return existing as Promise<T | undefined>;
       }
+    }
 
-      if (coalesceKey) {
-        const pendingMatch = this.pending.find(
-          (item) => item.coalesceKey === coalesceKey
-        );
-        if (pendingMatch) {
-          this.coalesceCount += 1;
-          pendingMatch.resolvers.push((value) =>
-            resolve(value as T | undefined)
-          );
-          return;
-        }
-        const activeMatch = this.activeCoalesce.get(coalesceKey);
-        if (activeMatch) {
-          this.coalesceCount += 1;
-          void activeMatch.then(
-            (value) => resolve(value as T | undefined),
-            () => resolve(undefined)
-          );
-          return;
-        }
-      }
+    if (this.maxPending != null && this.pending.length >= this.maxPending) {
+      this.overflowCount += 1;
+      this.invokeOverflowSafely();
+      return Promise.resolve(undefined);
+    }
 
-      if (this.maxPending != null && this.pending.length >= this.maxPending) {
-        this.overflowCount += 1;
-        this.onOverflow?.();
-        resolve(undefined);
-        return;
-      }
+    const deferred = createDeferred<unknown>();
+    this.openSettles.add(deferred.settle);
+    if (this.openSettles.size > this.peakStoredSettles) {
+      this.peakStoredSettles = this.openSettles.size;
+    }
 
-      this.pending.push({
-        run: task as ContactIdentityPersistTask<unknown>,
-        resolvers: [(value) => resolve(value as T | undefined)],
-        key,
-        coalesceKey,
-      });
-      if (this.pending.length > this.peakPending) {
-        this.peakPending = this.pending.length;
+    if (coalesceKey) {
+      this.coalescePromises.set(coalesceKey, deferred.promise);
+      if (this.coalescePromises.size > this.peakCoalesceBookkeeping) {
+        this.peakCoalesceBookkeeping = this.coalescePromises.size;
       }
-      this.pump();
+    }
+
+    this.pending.push({
+      run: task as ContactIdentityPersistTask<unknown>,
+      deferred,
+      key,
+      coalesceKey,
     });
+    if (this.pending.length > this.peakPending) {
+      this.peakPending = this.pending.length;
+    }
+    this.pump();
+    return deferred.promise as Promise<T | undefined>;
   }
 
-  private settleItem(item: PendingItem, value: unknown): void {
-    for (const resolve of item.resolvers) resolve(value);
+  private finishDeferred(
+    deferred: Deferred<unknown>,
+    value: unknown,
+    coalesceKey: string | null
+  ): void {
+    this.openSettles.delete(deferred.settle);
+    deferred.settle(value);
+    if (coalesceKey) {
+      this.coalescePromises.delete(coalesceKey);
+    }
+  }
+
+  private invokeOverflowSafely(): void {
+    try {
+      this.onOverflow?.();
+    } catch {
+      // Callback exceptions must never strand enqueue promises.
+    }
+  }
+
+  private invokeTaskErrorSafely(): void {
+    try {
+      this.onTaskError?.();
+    } catch {
+      // Callback exceptions must never strand enqueue promises.
+    }
   }
 
   private notifyIdleIfNeeded(): void {
@@ -229,34 +291,22 @@ export class ContactIdentityPersistQueue {
         if (per > peak) this.peakPerKey.set(next.key, per);
       }
 
-      let settleActiveCoalesce: ((value: unknown) => void) | null = null;
-      if (next.coalesceKey) {
-        const coalescePromise = new Promise<unknown>((resolve) => {
-          settleActiveCoalesce = resolve;
-        });
-        this.activeCoalesce.set(next.coalesceKey, coalescePromise);
-      }
-
       void (async () => {
         let result: unknown = undefined;
         try {
           // Active work that already started continues even if close() races
           // after dequeue; only skip run() when closed before invocation.
           if (this.closed) {
-            this.settleItem(next, undefined);
+            this.finishDeferred(next.deferred, undefined, next.coalesceKey);
             return;
           }
           result = await next.run();
-          this.settleItem(next, result);
+          this.finishDeferred(next.deferred, result, next.coalesceKey);
         } catch {
-          this.onTaskError?.();
+          this.invokeTaskErrorSafely();
           result = undefined;
-          this.settleItem(next, undefined);
+          this.finishDeferred(next.deferred, undefined, next.coalesceKey);
         } finally {
-          if (next.coalesceKey) {
-            settleActiveCoalesce?.(result);
-            this.activeCoalesce.delete(next.coalesceKey);
-          }
           if (next.key) {
             this.activeKeys.delete(next.key);
             const per = (this.activePerKey.get(next.key) ?? 1) - 1;

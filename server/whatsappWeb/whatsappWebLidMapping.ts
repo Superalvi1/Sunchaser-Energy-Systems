@@ -252,15 +252,12 @@ export function scheduleRememberVerifiedLidMapping(
   const queue = deps.persistQueue ?? getLidMappingPersistQueue();
   const key = lidMappingPersistSerializeKey(scope, lid);
   const coalesceKey = lidMappingPersistCoalesceKey(scope, lid, phone);
-  void queue
-    .enqueue(
-      () => rememberVerifiedLidMapping(lid, phone, deps),
-      { key, coalesceKey }
-    )
-    .catch(() => {
-      // Queue already isolates; this is belt-and-suspenders.
-      logMappingOutcome("lid_mapping_persist_failed", { phase: "schedule" });
-    });
+  // Fire-and-forget: enqueue never rejects and returns a shared coalesce
+  // promise — do not attach per-event .then/.catch (unbounded listeners).
+  void queue.enqueue(
+    () => rememberVerifiedLidMapping(lid, phone, deps),
+    { key, coalesceKey }
+  );
 }
 
 /**

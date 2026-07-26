@@ -1425,54 +1425,180 @@ await runRepoSuite("supabase-fake", () => {
     },
   };
   const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending: 10 });
-  const settled: Array<unknown> = [];
   const p1 = queue.enqueue(
     () => rememberVerifiedLidMapping(LID_A, PHONE_A, { repo, scope: scopeA }),
     { key: "k-a", coalesceKey: "c-a" }
-  ).then((v) => settled.push(["p1", v]));
-  // Coalesced waiter on same in-flight key.
+  );
+  // Coalesced waiter on same in-flight key — shared promise identity.
   const p2 = queue.enqueue(
     () => rememberVerifiedLidMapping(LID_A, PHONE_A, { repo, scope: scopeA }),
     { key: "k-a", coalesceKey: "c-a" }
-  ).then((v) => settled.push(["p2", v]));
+  );
+  assert.equal(p1, p2);
   // Distinct pending item — must settle on close() without running.
   const p3 = queue.enqueue(
     () => rememberVerifiedLidMapping(LID_B, PHONE_B, { repo, scope: scopeA }),
     { key: "k-b", coalesceKey: "c-b" }
-  ).then((v) => settled.push(["p3", v]));
+  );
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(queue.pendingCount, 1);
   assert.equal(queue.coalesceCount >= 1, true);
   queue.close();
-  await p3;
+  // close() settles pending and active-coalesced callers immediately.
+  const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+  assert.equal(r1, undefined);
+  assert.equal(r2, undefined);
+  assert.equal(r3, undefined);
   assert.equal(queue.pendingCount, 0);
-  assert.equal(
-    settled.some((row) => Array.isArray(row) && row[0] === "p3" && row[1] === undefined),
-    true
-  );
-  // Active + coalesced-on-active settle when the in-flight task ends.
+  assert.equal(queue.coalesceBookkeepingCount, 0);
+  assert.equal(queue.storedSettleCount, 0);
   release();
-  await Promise.all([p1, p2]);
   await queue.closeAndDrain();
-  assert.equal(settled.length, 3);
-  // Pending close → undefined; in-flight remember returns structured error.
-  assert.equal(
-    settled.some((row) => Array.isArray(row) && row[0] === "p1"),
-    true
-  );
-  assert.equal(
-    settled.some((row) => Array.isArray(row) && row[0] === "p2"),
-    true
-  );
-  const p1Val = settled.find((row) => Array.isArray(row) && row[0] === "p1") as
-    | [string, { kind?: string } | undefined]
-    | undefined;
-  const p2Val = settled.find((row) => Array.isArray(row) && row[0] === "p2") as
-    | [string, { kind?: string } | undefined]
-    | undefined;
-  assert.equal(p1Val?.[1]?.kind, "error");
-  assert.equal(p2Val?.[1]?.kind, "error");
   console.log("PASS: queue close settles all callers");
 }
 
-console.log("PASS: SYNC-14C-B-R2 durable LID mapping suite complete");
+// ---------------------------------------------------------------------------
+// SYNC-14C-B-R3 — coalesce memory-bounded (shared promise, no resolver fan-out)
+// ---------------------------------------------------------------------------
+
+// 10,000 duplicate events use constant queue-side waiter/resolver storage.
+{
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let upsertCalls = 0;
+  const repo: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: async () => null,
+    markStale: async () => false,
+    listActiveForHydration: async () => [],
+    upsertVerifiedMapping: async () => {
+      upsertCalls += 1;
+      await gate;
+      return {
+        kind: "created",
+        mapping: {
+          id: "wlid_burst",
+          companyId: scopeA.companyId,
+          channelPhoneNumberId: scopeA.channelPhoneNumberId,
+          sessionKey: scopeA.sessionKey,
+          lidNormalized: LID_A,
+          phoneE164: PHONE_A,
+          status: "active",
+          verifiedAt: new Date().toISOString(),
+          lastResolvedAt: new Date().toISOString(),
+          conflictCount: 0,
+          supersededAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    },
+  };
+  const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending: 64 });
+  for (let i = 0; i < 10000; i++) {
+    // Fire-and-forget scheduler must not attach per-event handlers.
+    scheduleRememberVerifiedLidMapping(LID_A, PHONE_A, {
+      repo,
+      scope: scopeA,
+      persistQueue: queue,
+    });
+  }
+  await new Promise((r) => setTimeout(r, 10));
+  // Constant queue-side bookkeeping despite 10k duplicate events.
+  assert.equal(queue.coalesceBookkeepingCount <= 1, true);
+  assert.equal(queue.peakCoalesceBookkeeping <= 1, true);
+  assert.equal(queue.storedSettleCount <= 1, true);
+  assert.equal(queue.peakStoredSettles <= 1, true);
+  assert.equal(queue.pendingCount, 0); // single distinct key is active, not pending
+  assert.equal(queue.activeCount, 1);
+  assert.equal(queue.coalesceCount >= 9000, true);
+  release();
+  await queue.whenIdle();
+  assert.equal(upsertCalls, 1);
+  assert.equal(queue.coalesceBookkeepingCount, 0);
+  assert.equal(queue.storedSettleCount, 0);
+  console.log("PASS: 10k duplicate events keep constant queue-side storage");
+}
+
+// Duplicate enqueue returns the shared promise/result.
+{
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const repo = new InMemoryWhatsAppLidPhoneMappingRepository();
+  const slow: WhatsAppLidPhoneMappingRepository = {
+    isActive: () => true,
+    resolvePhoneByLid: (s, l) => repo.resolvePhoneByLid(s, l),
+    markStale: (s, l) => repo.markStale(s, l),
+    listActiveForHydration: (s) => repo.listActiveForHydration(s),
+    upsertVerifiedMapping: async (s, l, p) => {
+      await gate;
+      return repo.upsertVerifiedMapping(s, l, p);
+    },
+  };
+  const queue = createLidMappingPersistQueue({ concurrency: 1, maxPending: 8 });
+  const a = queue.enqueue(
+    () => rememberVerifiedLidMapping(LID_A, PHONE_A, { repo: slow, scope: scopeA }),
+    { key: "share-a", coalesceKey: "share-c" }
+  );
+  const b = queue.enqueue(
+    () => rememberVerifiedLidMapping(LID_A, PHONE_A, { repo: slow, scope: scopeA }),
+    { key: "share-a", coalesceKey: "share-c" }
+  );
+  assert.equal(a === b, true);
+  release();
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.equal(ra, rb);
+  assert.equal(ra?.kind, "created");
+  console.log("PASS: duplicate enqueue returns the shared promise/result");
+}
+
+// Callback exceptions cannot strand promises.
+{
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let taskCalls = 0;
+  const queue = createLidMappingPersistQueue({
+    concurrency: 1,
+    maxPending: 1,
+    onOverflow: () => {
+      throw new Error("overflow callback boom");
+    },
+    onTaskError: () => {
+      throw new Error("task-error callback boom");
+    },
+  });
+  const running = queue.enqueue(
+    async () => {
+      taskCalls += 1;
+      await gate;
+      throw new Error("task boom");
+    },
+    { key: "cb-a", coalesceKey: "cb-a-phone" }
+  );
+  // Fill the single pending slot (active already holds cb-a).
+  const parked = queue.enqueue(async () => "parked", {
+    key: "cb-park",
+    coalesceKey: "cb-park-phone",
+  });
+  // Distinct key while pending full → overflow (callback throws; must still settle).
+  const overflowed = queue.enqueue(async () => "never", {
+    key: "cb-b",
+    coalesceKey: "cb-b-phone",
+  });
+  assert.equal(await overflowed, undefined);
+  assert.equal(queue.overflowCount, 1);
+  release();
+  assert.equal(await running, undefined);
+  assert.equal(await parked, "parked");
+  assert.equal(taskCalls, 1);
+  await queue.whenIdle();
+  console.log("PASS: callback exceptions cannot strand promises");
+}
+
+console.log("PASS: SYNC-14C-B-R3 durable LID mapping suite complete");
