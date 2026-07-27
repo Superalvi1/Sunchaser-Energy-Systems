@@ -58,6 +58,11 @@ export {
 } from "./whatsappWebSharedLidMap.ts";
 
 export {
+  getWhatsAppWebInboundDiagnostics,
+  __resetWhatsAppWebInboundDiagnostics,
+} from "./whatsappWebInboundDiagnostics.ts";
+
+export {
   persistWhatsAppWebInbound,
   createWhatsAppWebMessagingBridge,
 } from "./whatsappWebInbound.ts";

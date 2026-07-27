@@ -7,7 +7,22 @@ import type { WhatsAppReadWatermark } from "./whatsappInboxDatabaseTypes.ts";
 import type { WhatsAppInboxConversationRepository } from "./whatsappInboxConversationRepository.ts";
 import { canViewInbox } from "./whatsappInboxPermissions.ts";
 import type { WhatsAppInboxReadWatermarkRepository } from "./whatsappInboxReadWatermarkRepository.ts";
+import type { ConversationUnreadState } from "./whatsappInboxUnreadBatch.ts";
+import {
+  beginDirtyFlush,
+  beginUnreadIndexBuild,
+  completeDirtyFlush,
+  endUnreadIndexBuild,
+  getUnreadIndexCache,
+  invalidateUnreadIndexCache,
+  MAX_DIRTY_FLUSH_ATTEMPTS,
+  MAX_UNREAD_INDEX_BUILD_ATTEMPTS,
+  tryPublishUnreadIndex,
+  writeBackUnreadIndexEntries,
+  type UnreadIndexSnapshot,
+} from "./whatsappInboxUnreadIndexCache.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
+import type { KeysetCursor } from "./whatsappInboxRepoSupport.ts";
 
 function isStrictlyNewerInbound(
   candidate: { createdAt: string; id: string },
@@ -27,6 +42,8 @@ function isStrictlyNewerInbound(
   }
   return candidate.id > watermark.lastReadInboundMessageId;
 }
+
+const UNREAD_BATCH_CHUNK = 100;
 
 export class ReadStateService {
   constructor(
@@ -80,7 +97,6 @@ export class ReadStateService {
     );
 
     if (!resolvedInbound) {
-      // No inbound at-or-before the seen position — leave watermark unchanged.
       const watermark =
         existing ??
         (await this.watermarks.upsert({
@@ -90,6 +106,7 @@ export class ReadStateService {
           lastReadInboundMessageCreatedAt: null,
           companyId: this.companyId,
         }));
+      invalidateUnreadIndexCache(this.companyId, input.actor.id);
       return { watermark, advanced: false };
     }
 
@@ -104,6 +121,7 @@ export class ReadStateService {
       lastReadInboundMessageCreatedAt: resolvedInbound.createdAt,
       companyId: this.companyId,
     });
+    invalidateUnreadIndexCache(this.companyId, input.actor.id);
     return { watermark, advanced: true };
   }
 
@@ -140,5 +158,243 @@ export class ReadStateService {
       actor.id,
       this.companyId
     );
+  }
+
+  /**
+   * Batch unread for the given conversation ids using the actor's watermarks.
+   * Prefers the short-lived unread index when warm to avoid message scans.
+   */
+  async batchUnreadState(
+    conversationIds: string[],
+    actor: RequestActor
+  ): Promise<Map<string, ConversationUnreadState>> {
+    if (!canViewInbox(actor)) {
+      throw new InboxServiceError("forbidden", "Inbox access denied");
+    }
+    if (conversationIds.length === 0) return new Map();
+
+    const cached = getUnreadIndexCache(this.companyId, actor.id);
+    if (cached) {
+      const out = new Map<string, ConversationUnreadState>();
+      const missing: string[] = [];
+      for (const id of conversationIds) {
+        const hit = cached.byId.get(id);
+        if (hit) out.set(id, hit);
+        else missing.push(id);
+      }
+      if (missing.length === 0) return out;
+      const fetched = await this.watermarks.batchUnreadState(
+        missing,
+        actor.id,
+        this.companyId
+      );
+      for (const [id, state] of fetched) out.set(id, state);
+      writeBackUnreadIndexEntries(this.companyId, actor.id, fetched);
+      return out;
+    }
+
+    return this.watermarks.batchUnreadState(
+      conversationIds,
+      actor.id,
+      this.companyId
+    );
+  }
+
+  async countUnreadConversations(actor: RequestActor): Promise<number> {
+    if (!canViewInbox(actor)) {
+      throw new InboxServiceError("forbidden", "Inbox access denied");
+    }
+    const index = await this.getOrBuildUnreadIndex(actor);
+    return index.totalUnreadCount;
+  }
+
+  /**
+   * Full per-actor unread index (race-safe publish).
+   *
+   * Warm hit: flush targeted dirty ids, then conversation delta refresh.
+   * Cold build: in-flight handle + publish sequence; invalidation during build
+   * cancels publish and retries up to MAX_UNREAD_INDEX_BUILD_ATTEMPTS.
+   */
+  async getOrBuildUnreadIndex(
+    actor: RequestActor
+  ): Promise<UnreadIndexSnapshot> {
+    if (!canViewInbox(actor)) {
+      throw new InboxServiceError("forbidden", "Inbox access denied");
+    }
+
+    const warm = getUnreadIndexCache(this.companyId, actor.id);
+    if (warm) {
+      await this.flushDirtyConversationIds(actor, warm);
+      return this.refreshUnreadIndexFromDelta(actor, warm);
+    }
+
+    for (let attempt = 0; attempt < MAX_UNREAD_INDEX_BUILD_ATTEMPTS; attempt++) {
+      const handle = beginUnreadIndexBuild(this.companyId, actor.id);
+      try {
+        const built = await this.coldBuildUnreadIndex(actor);
+        if (handle.cancelled) continue;
+
+        const published = tryPublishUnreadIndex(
+          this.companyId,
+          actor.id,
+          handle,
+          built
+        );
+        if (!published) continue;
+
+        await this.flushDirtyConversationIds(actor, published);
+        return published;
+      } finally {
+        endUnreadIndexBuild(handle);
+      }
+    }
+
+    // Bounded fallback: serve an ephemeral exact snapshot without caching so
+    // a stampeding invalidation stream cannot loop forever or publish stale.
+    const ephemeral = await this.coldBuildUnreadIndex(actor);
+    return {
+      ...ephemeral,
+      publishSeq: -1,
+      dirtyGens: new Map(),
+      lastFlushedGen: new Map(),
+      entryFlushSeq: new Map(),
+      lastCompletedFlushSeq: 0,
+      dirtyIds: new Set<string>(),
+      builtAt: Date.now(),
+    };
+  }
+
+  private async coldBuildUnreadIndex(actor: RequestActor): Promise<{
+    byId: Map<string, ConversationUnreadState>;
+    totalUnreadCount: number;
+    highWaterUpdatedAt: string;
+    highWaterId: string;
+  }> {
+    const ids: string[] = [];
+    let highWaterUpdatedAt = "1970-01-01T00:00:00.000Z";
+    let highWaterId = "";
+    let cursor: KeysetCursor | null = null;
+    for (;;) {
+      const page = await this.conversations.listByActivity(
+        { companyId: this.companyId },
+        { cursor, limit: UNREAD_BATCH_CHUNK }
+      );
+      for (const row of page.rows) {
+        ids.push(row.id);
+        if (
+          row.updatedAt > highWaterUpdatedAt ||
+          (row.updatedAt === highWaterUpdatedAt && row.id > highWaterId)
+        ) {
+          highWaterUpdatedAt = row.updatedAt;
+          highWaterId = row.id;
+        }
+      }
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+
+    const byId = new Map<string, ConversationUnreadState>();
+    for (let i = 0; i < ids.length; i += UNREAD_BATCH_CHUNK) {
+      const chunk = ids.slice(i, i + UNREAD_BATCH_CHUNK);
+      const states = await this.watermarks.batchUnreadState(
+        chunk,
+        actor.id,
+        this.companyId
+      );
+      for (const [id, state] of states) byId.set(id, state);
+    }
+
+    let totalUnreadCount = 0;
+    for (const state of byId.values()) {
+      if (state.isUnread) totalUnreadCount += 1;
+    }
+
+    return {
+      byId,
+      totalUnreadCount,
+      highWaterUpdatedAt,
+      highWaterId,
+    };
+  }
+
+  private async flushDirtyConversationIds(
+    actor: RequestActor,
+    _hit: UnreadIndexSnapshot
+  ): Promise<void> {
+    for (let attempt = 0; attempt < MAX_DIRTY_FLUSH_ATTEMPTS; attempt++) {
+      const ticket = beginDirtyFlush(this.companyId, actor.id);
+      if (!ticket) return;
+
+      const dirtyIds = [...ticket.capturedGens.keys()];
+      const states = new Map<string, ConversationUnreadState>();
+      for (let i = 0; i < dirtyIds.length; i += UNREAD_BATCH_CHUNK) {
+        const chunk = dirtyIds.slice(i, i + UNREAD_BATCH_CHUNK);
+        const batch = await this.watermarks.batchUnreadState(
+          chunk,
+          actor.id,
+          this.companyId
+        );
+        for (const [id, state] of batch) states.set(id, state);
+      }
+
+      const { retainedDirtyIds } = completeDirtyFlush(ticket, states);
+      if (retainedDirtyIds.length === 0) return;
+      // Generation advanced during the query — bounded retry.
+    }
+    // Remaining dirty gens stay pending for the next request (no infinite loop).
+  }
+
+  private async refreshUnreadIndexFromDelta(
+    actor: RequestActor,
+    hit: UnreadIndexSnapshot
+  ): Promise<UnreadIndexSnapshot> {
+    const touchedIds = new Set<string>();
+    let since: KeysetCursor = {
+      at: hit.highWaterUpdatedAt,
+      id: hit.highWaterId,
+    };
+    let highWaterUpdatedAt = hit.highWaterUpdatedAt;
+    let highWaterId = hit.highWaterId;
+
+    for (;;) {
+      const delta = await this.conversations.listDelta(
+        { companyId: this.companyId },
+        { since, limit: UNREAD_BATCH_CHUNK }
+      );
+      for (const row of delta.rows) {
+        touchedIds.add(row.id);
+        if (
+          row.updatedAt > highWaterUpdatedAt ||
+          (row.updatedAt === highWaterUpdatedAt && row.id > highWaterId)
+        ) {
+          highWaterUpdatedAt = row.updatedAt;
+          highWaterId = row.id;
+        }
+      }
+      if (!delta.nextCursor) break;
+      since = delta.nextCursor;
+    }
+
+    if (touchedIds.size === 0) {
+      hit.highWaterUpdatedAt = highWaterUpdatedAt;
+      hit.highWaterId = highWaterId;
+      return hit;
+    }
+
+    const touched = [...touchedIds];
+    for (let i = 0; i < touched.length; i += UNREAD_BATCH_CHUNK) {
+      const chunk = touched.slice(i, i + UNREAD_BATCH_CHUNK);
+      const states = await this.watermarks.batchUnreadState(
+        chunk,
+        actor.id,
+        this.companyId
+      );
+      writeBackUnreadIndexEntries(this.companyId, actor.id, states);
+    }
+
+    const latest = getUnreadIndexCache(this.companyId, actor.id) ?? hit;
+    latest.highWaterUpdatedAt = highWaterUpdatedAt;
+    latest.highWaterId = highWaterId;
+    return latest;
   }
 }

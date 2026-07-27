@@ -47,6 +47,11 @@ export function createWhatsAppInboxServices(
   const now = options.now ?? Date.now;
 
   const statuses = new StatusService(repos.conversations, companyId);
+  const readState = new ReadStateService(
+    repos.conversations,
+    repos.readWatermarks,
+    companyId
+  );
 
   return {
     statuses,
@@ -56,6 +61,7 @@ export function createWhatsAppInboxServices(
       repos.statuses,
       repos.crmLinks,
       statuses,
+      readState,
       companyId,
       now
     ),
@@ -67,11 +73,7 @@ export function createWhatsAppInboxServices(
       companyId,
       now
     ),
-    readState: new ReadStateService(
-      repos.conversations,
-      repos.readWatermarks,
-      companyId
-    ),
+    readState,
     assignments: new AssignmentService(
       repos.conversations,
       options.assignees ?? emptyAssigneeDirectory,

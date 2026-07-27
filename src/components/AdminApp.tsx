@@ -130,13 +130,22 @@ export default function AdminApp({
   const [partyLedgerKey, setPartyLedgerKey] = useState<string | null>(null);
 
   const selectSegment = (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => {
-    setActiveSegment(id);
+    // Legacy nav id → Connection destination (Inbox stays separate).
+    const resolved: AdminSegmentId =
+      id === "whatsapp-setup" ? "whatsapp-connection" : id;
+    setActiveSegment(resolved);
     if (options?.settingsSubTab) setSelectedSubTab("settings");
-    else if (id === "pdf-templates") setSelectedSubTab("pages");
+    else if (resolved === "pdf-templates") setSelectedSubTab("pages");
     if (typeof window !== "undefined") {
-      if (id === "inbox") {
+      if (resolved === "inbox") {
         window.history.replaceState(null, "", "/admin/inbox");
-      } else if (window.location.pathname.startsWith("/admin/inbox")) {
+      } else if (resolved === "whatsapp-connection") {
+        window.history.replaceState(null, "", "/admin/whatsapp-connection");
+      } else if (
+        window.location.pathname.startsWith("/admin/inbox") ||
+        window.location.pathname.startsWith("/admin/whatsapp-connection") ||
+        window.location.pathname.startsWith("/admin/whatsapp-setup")
+      ) {
         window.history.replaceState(null, "", "/");
       }
     }
@@ -1615,7 +1624,8 @@ export default function AdminApp({
           <SupportDeskStaff staffUser={staffUser} leads={leads} />
         )}
         {activeSegment === "inbox" && <InboxPage staffUser={staffUser} />}
-        {activeSegment === "whatsapp-setup" && (
+        {(activeSegment === "whatsapp-connection" ||
+          activeSegment === "whatsapp-setup") && (
           <WhatsAppSetupPage staffUser={staffUser} />
         )}
         {activeSegment === 'service-desk' && (

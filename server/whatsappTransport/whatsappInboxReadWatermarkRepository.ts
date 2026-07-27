@@ -14,6 +14,15 @@ import {
   type KeysetCursor,
   WhatsAppInboxMemoryStore,
 } from "./whatsappInboxRepoSupport.ts";
+import {
+  accumulateUnreadFromPagedFetch,
+  batchUnreadStateFromMemory,
+  SUPABASE_UNREAD_MESSAGE_PAGE_SIZE,
+  type ConversationUnreadState,
+  type InboundUnreadPageCursor,
+} from "./whatsappInboxUnreadBatch.ts";
+
+export { SUPABASE_UNREAD_MESSAGE_PAGE_SIZE } from "./whatsappInboxUnreadBatch.ts";
 
 export interface WhatsAppInboxReadWatermarkRepository {
   isActive(): boolean;
@@ -46,6 +55,15 @@ export interface WhatsAppInboxReadWatermarkRepository {
     userId: string,
     companyId?: string
   ): Promise<boolean>;
+  /**
+   * Batch unread state for many conversations (single pass / few queries).
+   * Avoids N+1 countUnreadInbound calls on live list refresh.
+   */
+  batchUnreadState(
+    conversationIds: string[],
+    userId: string,
+    companyId?: string
+  ): Promise<Map<string, ConversationUnreadState>>;
 }
 
 function isNewerThanWatermark(
@@ -153,6 +171,14 @@ export class InMemoryWhatsAppInboxReadWatermarkRepository
       companyId
     );
     return count > 0;
+  }
+
+  async batchUnreadState(
+    conversationIds: string[],
+    userId: string,
+    _companyId?: string
+  ): Promise<Map<string, ConversationUnreadState>> {
+    return batchUnreadStateFromMemory(this.store, conversationIds, userId);
   }
 }
 
@@ -290,5 +316,169 @@ export class SupabaseWhatsAppInboxReadWatermarkRepository
     const { data, error } = await query.limit(1);
     if (error) handleSupabaseError(error);
     return (data ?? []).length > 0;
+  }
+
+  /**
+   * Batch unread for many conversations (exact, pagination-safe).
+   *
+   * Query behavior:
+   * - 1 watermarks select for the requested id set + actor
+   * - Explicitly paginated inbound message selects (keyset on created_at, id)
+   *   with page size {@link SUPABASE_UNREAD_MESSAGE_PAGE_SIZE} (500).
+   * - No-watermark ids: all matching inbound pages for those ids
+   * - Watermarked ids: pages with created_at >= oldest watermark in the chunk;
+   *   per-conversation created_at+id tie-break applied in JS
+   *
+   * Does NOT call countUnreadInbound per conversation (no N+1).
+   * Does NOT assume a single unpaginated select returns every matching row.
+   */
+  async batchUnreadState(
+    conversationIds: string[],
+    userId: string,
+    companyId?: string
+  ): Promise<Map<string, ConversationUnreadState>> {
+    if (conversationIds.length === 0) return new Map();
+    const company = this.access.companyId(companyId);
+
+    const { data: watermarkRows, error: wmError } = await this.client()
+      .from("whatsapp_read_watermarks")
+      .select("*")
+      .eq("company_id", company)
+      .eq("user_id", userId)
+      .in("conversation_id", conversationIds);
+    if (wmError) handleSupabaseError(wmError);
+
+    const watermarksByConversationId = new Map<
+      string,
+      WhatsAppReadWatermark | null
+    >();
+    for (const id of conversationIds) {
+      watermarksByConversationId.set(id, null);
+    }
+    for (const row of (watermarkRows ?? []) as Record<string, unknown>[]) {
+      const mapped = mapReadWatermark(row);
+      watermarksByConversationId.set(mapped.conversationId, mapped);
+    }
+
+    const withWmIds: string[] = [];
+    const noWmIds: string[] = [];
+    let oldestWatermarkAt: string | null = null;
+    for (const id of conversationIds) {
+      const wm = watermarksByConversationId.get(id) ?? null;
+      if (
+        wm?.lastReadInboundMessageCreatedAt &&
+        wm.lastReadInboundMessageId
+      ) {
+        withWmIds.push(id);
+        if (
+          oldestWatermarkAt == null ||
+          wm.lastReadInboundMessageCreatedAt < oldestWatermarkAt
+        ) {
+          oldestWatermarkAt = wm.lastReadInboundMessageCreatedAt;
+        }
+      } else {
+        noWmIds.push(id);
+      }
+    }
+
+    const merged = new Map<string, ConversationUnreadState>();
+    for (const id of conversationIds) {
+      merged.set(id, { unreadCount: 0, isUnread: false });
+    }
+
+    if (noWmIds.length > 0) {
+      const result = await accumulateUnreadFromPagedFetch({
+        conversationIds: noWmIds,
+        watermarksByConversationId,
+        pageSize: SUPABASE_UNREAD_MESSAGE_PAGE_SIZE,
+        fetchPage: ({ cursor, limit }) =>
+          this.fetchInboundUnreadPage({
+            companyId: company,
+            conversationIds: noWmIds,
+            createdAtGte: null,
+            cursor,
+            limit,
+          }),
+      });
+      for (const [id, state] of result.states) merged.set(id, state);
+    }
+
+    if (withWmIds.length > 0 && oldestWatermarkAt) {
+      const result = await accumulateUnreadFromPagedFetch({
+        conversationIds: withWmIds,
+        watermarksByConversationId,
+        pageSize: SUPABASE_UNREAD_MESSAGE_PAGE_SIZE,
+        fetchPage: ({ cursor, limit }) =>
+          this.fetchInboundUnreadPage({
+            companyId: company,
+            conversationIds: withWmIds,
+            createdAtGte: oldestWatermarkAt,
+            cursor,
+            limit,
+          }),
+      });
+      for (const [id, state] of result.states) merged.set(id, state);
+    }
+
+    return merged;
+  }
+
+  /**
+   * One bounded inbound page for unread aggregation.
+   * Max rows per request: {@link SUPABASE_UNREAD_MESSAGE_PAGE_SIZE}.
+   */
+  private async fetchInboundUnreadPage(input: {
+    companyId: string;
+    conversationIds: string[];
+    createdAtGte: string | null;
+    cursor: InboundUnreadPageCursor | null;
+    limit: number;
+  }): Promise<
+    Array<{
+      id: string;
+      conversationId: string;
+      createdAt: string;
+      direction: string;
+      isBackfill?: boolean;
+    }>
+  > {
+    const limit = Math.max(
+      1,
+      Math.min(SUPABASE_UNREAD_MESSAGE_PAGE_SIZE, input.limit)
+    );
+    let query = this.client()
+      .from("whatsapp_messages")
+      .select(
+        "id, conversation_id, direction, created_at, company_id, is_backfill"
+      )
+      .eq("company_id", input.companyId)
+      .in("conversation_id", input.conversationIds)
+      .eq("direction", "inbound")
+      .eq("is_backfill", false)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(limit);
+
+    if (input.createdAtGte) {
+      query = query.gte("created_at", input.createdAtGte);
+    }
+    if (input.cursor) {
+      query = query.or(
+        `created_at.gt.${input.cursor.at},and(created_at.eq.${input.cursor.at},id.gt.${input.cursor.id})`
+      );
+    }
+
+    const { data, error } = await query;
+    if (error) handleSupabaseError(error);
+    return ((data ?? []) as Record<string, unknown>[]).map((row) => {
+      const mapped = mapMessageRef(row);
+      return {
+        id: mapped.id,
+        conversationId: mapped.conversationId,
+        createdAt: mapped.createdAt,
+        direction: mapped.direction,
+        isBackfill: mapped.isBackfill,
+      };
+    });
   }
 }

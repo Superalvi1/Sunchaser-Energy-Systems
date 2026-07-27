@@ -69,6 +69,13 @@ function isAdminInboxPath(): boolean {
   return /^\/admin\/inbox\/?$/.test(window.location.pathname);
 }
 
+function isAdminWhatsAppConnectionPath(): boolean {
+  if (typeof window === "undefined") return false;
+  return /^\/admin\/whatsapp-(connection|setup)\/?$/.test(
+    window.location.pathname
+  );
+}
+
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
   const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">("landing");
@@ -218,7 +225,7 @@ export default function App() {
   // Set default tab based on logged-in role
   useEffect(() => {
     if (currentUser) {
-      if (isAdminInboxPath()) {
+      if (isAdminInboxPath() || isAdminWhatsAppConnectionPath()) {
         setActiveTab("Admin Dashboard");
         return;
       }
@@ -872,7 +879,13 @@ export default function App() {
             {activeTab === "Admin Dashboard" && (
               <AdminApp
                 staffUser={currentUser}
-                initialSegment={isAdminInboxPath() ? "inbox" : "overview"}
+                initialSegment={
+                  isAdminInboxPath()
+                    ? "inbox"
+                    : isAdminWhatsAppConnectionPath()
+                      ? "whatsapp-connection"
+                      : "overview"
+                }
                 leads={appState.leads}
                 tickets={appState.tickets}
                 inventory={appState.inventory}

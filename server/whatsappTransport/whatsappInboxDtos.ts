@@ -135,11 +135,24 @@ export function decodeInboxCursor(raw: unknown): DtoResult<KeysetCursor | null> 
   }
 }
 
+export const INBOX_QUICK_FILTERS = [
+  "all",
+  "unread",
+  "read",
+  "open",
+  "resolved",
+  "archived",
+] as const;
+
+export type InboxQuickFilter = (typeof INBOX_QUICK_FILTERS)[number];
+
 export type ListConversationsQuery = {
   status?: WhatsAppInboxConversationStatus;
   assignedTo?: string | "unassigned";
   channelId?: string;
   hasFailedMessage?: boolean;
+  /** Server-side quick filter (Unread/Read/Open/Resolved/Archived). */
+  quickFilter?: InboxQuickFilter;
   cursor?: KeysetCursor | null;
   limit?: number;
 };
@@ -149,6 +162,7 @@ const LIST_QUERY_KEYS = [
   "assignedTo",
   "channelId",
   "hasFailedMessage",
+  "quickFilter",
   "cursor",
   "limit",
 ] as const;
@@ -201,6 +215,21 @@ export function parseListConversationsQuery(
     };
   }
 
+  let quickFilter: InboxQuickFilter | undefined;
+  if (query.quickFilter != null && query.quickFilter !== "") {
+    if (
+      typeof query.quickFilter !== "string" ||
+      !(INBOX_QUICK_FILTERS as readonly string[]).includes(query.quickFilter)
+    ) {
+      return {
+        ok: false,
+        message: `quickFilter must be one of: ${INBOX_QUICK_FILTERS.join(", ")}`,
+        field: "quickFilter",
+      };
+    }
+    quickFilter = query.quickFilter as InboxQuickFilter;
+  }
+
   const cursor = decodeInboxCursor(query.cursor);
   if (isDtoErr(cursor)) return cursor;
 
@@ -218,6 +247,7 @@ export function parseListConversationsQuery(
       assignedTo: assignedTo.value as string | "unassigned" | undefined,
       channelId: channelId.value,
       hasFailedMessage: hasFailedRaw,
+      quickFilter,
       cursor: cursor.value,
       limit,
     },
@@ -240,6 +270,7 @@ export function parseDeltaQuery(
     assignedTo: query.assignedTo,
     channelId: query.channelId,
     hasFailedMessage: query.hasFailedMessage,
+    quickFilter: query.quickFilter,
     cursor: query.cursor,
     limit: query.limit,
   });

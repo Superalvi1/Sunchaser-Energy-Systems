@@ -184,7 +184,7 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
         );
       }
       const identity = await resolveCreateIdentity(req, identityDeps);
-      if (!identity.ok) {
+      if (identity.ok === false) {
         return sendError(res, identity.status, identity.code, identity.message);
       }
       const config = readMarketplaceConfig(env);
@@ -202,18 +202,18 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
     try {
       if (rejectSmuggledTokens(req, res)) return;
       const ref = parsePublicRefParam(req.params.public_ref);
-      if (!ref.ok) {
+      if (ref.ok === false) {
         return sendError(res, 404, ref.code, ref.message);
       }
       if (!ref.value.startsWith("mpcref_")) {
         return sendError(res, 404, "CART_NOT_FOUND", "Cart not found.");
       }
       const parsed = parseCartItemBody(req.body);
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         return sendError(res, statusForCode(parsed.code), parsed.code, parsed.message);
       }
       const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-      if (!identity.ok) {
+      if (identity.ok === false) {
         return sendError(res, identity.status, identity.code, identity.message);
       }
       const data = await repository.upsertItem(
@@ -232,7 +232,7 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
     try {
       if (rejectSmuggledTokens(req, res)) return;
       const parsed = parseDeliveryQuoteBody(req.body);
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         return sendError(res, statusForCode(parsed.code), parsed.code, parsed.message);
       }
       const identity = await resolveOwnedIdentity(
@@ -240,7 +240,7 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
         parsed.value.publicRef,
         identityDeps,
       );
-      if (!identity.ok) {
+      if (identity.ok === false) {
         return sendError(res, identity.status, identity.code, identity.message);
       }
       const data = await repository.quoteDelivery(
@@ -258,13 +258,13 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
     try {
       if (rejectSmuggledTokens(req, res)) return;
       const parsed = parseCheckoutBody(req.body);
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         return sendError(res, statusForCode(parsed.code), parsed.code, parsed.message);
       }
       const idem = parseIdempotencyKey(
         req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
       );
-      if (!idem.ok) {
+      if (idem.ok === false) {
         return sendError(res, statusForCode(idem.code), idem.code, idem.message);
       }
       const identity = await resolveOwnedIdentity(
@@ -272,7 +272,7 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
         parsed.value.publicRef,
         identityDeps,
       );
-      if (!identity.ok) {
+      if (identity.ok === false) {
         return sendError(res, identity.status, identity.code, identity.message);
       }
       const data = await repository.checkout(identity.identity, {
@@ -291,14 +291,14 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
     try {
       if (rejectSmuggledTokens(req, res)) return;
       const ref = parsePublicRefParam(req.params.public_ref);
-      if (!ref.ok) {
+      if (ref.ok === false) {
         return sendError(res, 404, ref.code, ref.message);
       }
       if (!ref.value.startsWith("mporef_")) {
         return sendError(res, 404, "CART_NOT_FOUND", "Not found.");
       }
       const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-      if (!identity.ok) {
+      if (identity.ok === false) {
         return sendError(res, identity.status, identity.code, identity.message);
       }
       const data = await repository.getOrder(identity.identity, ref.value);

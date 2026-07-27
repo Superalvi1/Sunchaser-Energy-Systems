@@ -20,7 +20,9 @@ import type {
   InboxConversationStatus,
 } from "../types";
 import { newIdempotencyKey } from "../utils/format";
+import { applyFilteredMembershipUpdate } from "./inboxConversationCache";
 import { inboxKeys } from "./inboxQueryKeys";
+import type { InboxListFilters } from "../types";
 
 function patchConversationInLists(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -256,6 +258,74 @@ export function useInboxMutations() {
 
   const markRead = useMutation({
     mutationFn: markInboxRead,
+    onSuccess: (_data, input) => {
+      // Server watermark advanced — clear unread badges and drop from Unread caches.
+      const lists = queryClient.getQueriesData<InfiniteData<InboxListPage>>({
+        queryKey: inboxKeys.lists(),
+      });
+      for (const [key, data] of lists) {
+        if (!data) continue;
+        const filters = (Array.isArray(key) ? key[key.length - 1] : null) as
+          | InboxListFilters
+          | null;
+        const quick = filters?.quickFilter ?? (filters?.unreadOnly ? "unread" : "all");
+
+        const patchedPages = data.pages.map((page) => ({
+          ...page,
+          conversations: page.conversations.map((c) =>
+            c.id === input.conversationId
+              ? { ...c, isUnread: false, unreadCount: 0 }
+              : c
+          ),
+        }));
+        const patched = { ...data, pages: patchedPages };
+        const target = patched.pages
+          .flatMap((p) => p.conversations)
+          .find((c) => c.id === input.conversationId);
+
+        if (quick === "unread") {
+          queryClient.setQueryData(
+            key,
+            applyFilteredMembershipUpdate(patched, {
+              upsert: [],
+              removeIds: [input.conversationId],
+              totalUnreadCount: Math.max(
+                0,
+                (patched.pages[0]?.totalUnreadCount ?? 1) - 1
+              ),
+            })
+          );
+        } else if (quick === "read" && target) {
+          queryClient.setQueryData(
+            key,
+            applyFilteredMembershipUpdate(patched, {
+              upsert: [target],
+              removeIds: [],
+              totalUnreadCount: Math.max(
+                0,
+                (patched.pages[0]?.totalUnreadCount ?? 1) - 1
+              ),
+            })
+          );
+        } else {
+          queryClient.setQueryData<InfiniteData<InboxListPage>>(key, patched);
+        }
+      }
+      queryClient.setQueryData<InboxConversationDetail>(
+        inboxKeys.detail(input.conversationId),
+        (old) =>
+          old
+            ? {
+                ...old,
+                conversation: {
+                  ...old.conversation,
+                  isUnread: false,
+                  unreadCount: 0,
+                },
+              }
+            : old
+      );
+    },
   });
 
   const createLead = useMutation({

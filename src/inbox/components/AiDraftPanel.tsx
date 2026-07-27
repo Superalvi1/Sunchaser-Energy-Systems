@@ -17,6 +17,8 @@ type AiDraftPanelProps = {
   state: AiDraftUiState;
   disabled?: boolean;
   canGenerate: boolean;
+  /** Optional status line derived from config booleans. */
+  statusHint?: string | null;
   onGenerate: () => void;
   onRegenerate: () => void;
   onDiscard: () => void;
@@ -34,6 +36,7 @@ export default function AiDraftPanel({
   state,
   disabled,
   canGenerate,
+  statusHint,
   onGenerate,
   onRegenerate,
   onDiscard,
@@ -48,34 +51,44 @@ export default function AiDraftPanel({
     <div
       className="border-t border-[var(--inbox-border)] bg-[var(--inbox-surface)] px-3 pt-3"
       data-testid="ai-draft-panel"
-      aria-label="AI draft assistant"
+      aria-label="AI Reply Assistant"
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-xs font-semibold text-[var(--inbox-fg)]">
-            AI draft (human review required)
+            AI Reply Assistant
           </p>
           <p className="text-[11px] text-[var(--inbox-muted)]">
-            Generates a suggestion only — never sends automatically.
+            Staff-click draft only — human review required · never auto-sends.
           </p>
+          {statusHint ? (
+            <p
+              className="mt-0.5 text-[11px] text-[var(--inbox-muted)]"
+              data-testid="ai-draft-status-hint"
+            >
+              {statusHint}
+            </p>
+          ) : null}
         </div>
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={disabled || loading || !canGenerate}
-          aria-label={
-            loading ? "Generating AI draft" : "Generate AI draft"
-          }
-          aria-busy={loading || undefined}
-          className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] px-3 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface)] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {loading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <Sparkles className="h-3.5 w-3.5" aria-hidden />
-          )}
-          {loading ? "Generating…" : "Generate AI draft"}
-        </button>
+        {canGenerate ? (
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={disabled || loading}
+            aria-label={
+              loading ? "Generating AI draft" : "Generate AI Draft"
+            }
+            aria-busy={loading || undefined}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] px-3 py-2 text-xs font-semibold text-[var(--inbox-fg)] hover:bg-[var(--inbox-surface)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {loading ? "Generating…" : "Generate AI Draft"}
+          </button>
+        ) : null}
       </div>
 
       {state.status === "unavailable" ? (

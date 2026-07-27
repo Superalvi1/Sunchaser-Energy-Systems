@@ -1,4 +1,4 @@
-import { Moon, Smartphone, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -16,7 +16,6 @@ import type { InboxListFilters } from "../types";
 import ConversationList from "./ConversationList";
 import ConversationView from "./ConversationView";
 import CRMPanel from "./CRMPanel";
-import WhatsAppConnectionPanel from "./WhatsAppConnectionPanel";
 
 type InboxPageProps = {
   staffUser: User;
@@ -31,11 +30,11 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
       "dark"
     );
   });
-  const [filters, setFilters] = useState<InboxListFilters>({});
+  const [filters, setFilters] = useState<InboxListFilters>({
+    quickFilter: "all",
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
   const [mobilePane, setMobilePane] = useState<"list" | "thread">("list");
-  const [showConnectionPanel, setShowConnectionPanel] = useState(false);
 
   const list = useInboxConversations(filters);
   const detail = useInboxConversation(selectedId);
@@ -51,33 +50,6 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
       setSelectedId(list.conversations[0].id);
     }
   }, [selectedId, list.conversations]);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    setUnreadIds((prev) => {
-      if (!prev.has(selectedId)) return prev;
-      const next = new Set(prev);
-      next.delete(selectedId);
-      return next;
-    });
-  }, [selectedId]);
-
-  // Mark newly delta-updated conversations as unread when not selected.
-  useEffect(() => {
-    setUnreadIds((prev) => {
-      let changed = false;
-      const next = new Set(prev);
-      for (const c of list.conversations) {
-        if (c.id === selectedId) continue;
-        // Heuristic: failed messages always surface as unread attention.
-        if (c.hasFailedMessage && !next.has(c.id)) {
-          next.add(c.id);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [list.conversations, selectedId]);
 
   useEffect(() => {
     const latestInbound = [...messages.messages]
@@ -187,27 +159,18 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
       className="flex h-[calc(100vh-7rem)] min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[var(--inbox-border)] shadow-xl"
       style={themeVars}
       data-inbox-theme={theme}
+      data-testid="whatsapp-inbox-workspace"
     >
       <div className="flex items-center justify-between border-b border-[var(--inbox-border)] bg-[var(--inbox-surface)] px-4 py-2">
         <div>
           <h1 className="text-sm font-semibold text-[var(--inbox-fg)]">
-            WhatsApp Shared Inbox
+            WhatsApp Inbox
           </h1>
           <p className="text-[11px] text-[var(--inbox-muted)]">
-            j/k navigate · Esc back to list · Enter send
+            Live refresh ~2s · j/k navigate · Esc back to list · Enter send
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {(staffUser.role === "Super Admin" || staffUser.role === "Admin") && (
-            <button
-              type="button"
-              onClick={() => setShowConnectionPanel((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--inbox-border)] bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-            >
-              <Smartphone className="h-3.5 w-3.5" />
-              WhatsApp Coexistence
-            </button>
-          )}
           <button
             type="button"
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
@@ -225,15 +188,6 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
           </button>
         </div>
       </div>
-
-      {showConnectionPanel && (
-        <div className="border-b border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-4">
-          <WhatsAppConnectionPanel
-            isAdmin={staffUser.role === "Super Admin" || staffUser.role === "Admin"}
-            onClose={() => setShowConnectionPanel(false)}
-          />
-        </div>
-      )}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)_300px]">
         <div
@@ -257,7 +211,7 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
             hasNextPage={Boolean(list.hasNextPage)}
             isFetchingNextPage={list.isFetchingNextPage}
             fetchNextPage={() => void list.fetchNextPage()}
-            unreadIds={unreadIds}
+            totalUnreadCount={list.totalUnreadCount}
           />
         </div>
 

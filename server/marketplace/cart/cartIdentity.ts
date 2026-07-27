@@ -43,7 +43,7 @@ export async function resolveOptionalCustomer(
 
   const localDb = deps.resolveLocalDb?.();
   const hydrated = await hydrateActorFromJwt(bearer, localDb);
-  if (!hydrated.ok) {
+  if (hydrated.ok === false) {
     return {
       ok: false,
       status: hydrated.status,
@@ -79,9 +79,13 @@ export async function resolveCreateIdentity(
   deps: CartIdentityDeps = {},
 ): Promise<IdentityResolveResult> {
   const customer = await resolveOptionalCustomer(req, deps);
-  if (!customer.ok) return customer;
-  if (customer.identity) {
-    return { ok: true, identity: customer.identity, actor: customer.actor };
+  if (customer.ok === false) return customer;
+  if (customer.identity !== null) {
+    return {
+      ok: true,
+      identity: customer.identity,
+      actor: "actor" in customer ? customer.actor : undefined,
+    };
   }
 
   const rawToken = generatePossessionToken();
@@ -107,9 +111,13 @@ export async function resolveOwnedIdentity(
   deps: CartIdentityDeps = {},
 ): Promise<IdentityResolveResult> {
   const customer = await resolveOptionalCustomer(req, deps);
-  if (!customer.ok) return customer;
-  if (customer.identity) {
-    return { ok: true, identity: customer.identity, actor: customer.actor };
+  if (customer.ok === false) return customer;
+  if (customer.identity !== null) {
+    return {
+      ok: true,
+      identity: customer.identity,
+      actor: "actor" in customer ? customer.actor : undefined,
+    };
   }
 
   const rawToken = readPossessionTokenFromHeaders(

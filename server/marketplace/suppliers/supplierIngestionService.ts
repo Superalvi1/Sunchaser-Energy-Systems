@@ -214,7 +214,7 @@ export function createSupplierIngestionService(
 
     const adapter = adapters[mapping.supplierCode];
     const fetched = await adapter.fetchObservation(mapping, { env });
-    if (!fetched.ok) {
+    if (fetched.ok === false) {
       ctx.onFailure({
         supplierCode: fetched.supplierCode,
         mappingId: fetched.mappingId,

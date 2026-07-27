@@ -29,6 +29,25 @@ export type InboxConversation = {
   aiOwnershipState?: InboxAiOwnershipState;
   profileName?: string | null;
   phoneE164?: string | null;
+  /** Server-backed unread (read-watermark). Not a client heuristic. */
+  isUnread?: boolean;
+  unreadCount?: number;
+};
+
+export type InboxQuickFilter =
+  | "all"
+  | "unread"
+  | "read"
+  | "open"
+  | "resolved"
+  | "archived";
+
+/** Booleans-only AI draft configuration status (never secrets). */
+export type InboxAiDraftConfigStatus = {
+  draftFeatureEnabled: boolean;
+  liveProviderEnabled: boolean;
+  autoReplyEnabled: boolean;
+  geminiKeyConfigured: boolean;
 };
 
 export type InboxCrmLink = {
@@ -80,13 +99,17 @@ export type InboxListFilters = {
   status?: InboxConversationStatus | "";
   assignedTo?: string;
   hasFailedMessage?: boolean;
+  /** @deprecated Prefer quickFilter="unread". Kept for compatibility. */
   unreadOnly?: boolean;
+  quickFilter?: InboxQuickFilter;
   search?: string;
 };
 
 export type InboxListPage = {
   conversations: InboxConversation[];
   nextCursor: string | null;
+  /** Complete accessible Inbox unread conversation count (not page-local). */
+  totalUnreadCount?: number;
 };
 
 export type InboxMessagesPage = {

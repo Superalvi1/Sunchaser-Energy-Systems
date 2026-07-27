@@ -1,6 +1,6 @@
 /**
- * Admin WhatsApp Setup Checklist — production Meta onboarding readiness.
- * Reuses existing inbox connection panel patterns; no redesign.
+ * Admin WhatsApp Connection — coexistence, QR, sync, diagnostics, Meta checklist.
+ * Separate from WhatsApp Inbox so connection controls never block Inbox access.
  */
 import {
   CheckCircle2,
@@ -9,7 +9,12 @@ import {
   Smartphone,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { User } from "../../types";
 import {
   disconnectWhatsAppConnection,
@@ -28,6 +33,7 @@ import type {
   WhatsAppConnectionTestResult,
   WhatsAppOnboardingDiagnostics,
 } from "../types";
+import WhatsAppConnectionPanel from "./WhatsAppConnectionPanel";
 
 type WhatsAppSetupPageProps = {
   staffUser: User;
@@ -141,15 +147,19 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
   const status = connection?.status ?? "DISCONNECTED";
 
   return (
-    <div className="space-y-5 text-neutral-100">
+    <div
+      className="space-y-5 text-neutral-100"
+      data-testid="whatsapp-connection-page"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Smartphone className="h-5 w-5 text-emerald-400" />
-            <h2 className="text-lg font-semibold">WhatsApp Setup Checklist</h2>
+            <h2 className="text-lg font-semibold">WhatsApp Connection</h2>
           </div>
           <p className="mt-1 text-xs text-neutral-400">
-            Production readiness for Meta Embedded Signup and Cloud API webhooks.
+            QR connect, coexistence, history sync and diagnostics — separate from
+            WhatsApp Inbox.
           </p>
         </div>
         <button
@@ -168,9 +178,33 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
         </div>
       ) : null}
 
+      {isAdmin ? (
+        <div
+          className="rounded-xl border border-neutral-800 bg-neutral-900/80 p-4"
+          style={
+            {
+              "--inbox-bg": "#0b0c0e",
+              "--inbox-surface": "#121417",
+              "--inbox-surface-2": "#1a1d22",
+              "--inbox-border": "#2a2f36",
+              "--inbox-fg": "#f3f4f6",
+              "--inbox-muted": "#9ca3af",
+              "--inbox-accent": "#f59e0b",
+            } as CSSProperties
+          }
+        >
+          <WhatsAppConnectionPanel isAdmin={isAdmin} />
+        </div>
+      ) : (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          Connection controls are Admin / Super Admin only. WhatsApp Inbox remains
+          available from its own navigation item.
+        </div>
+      )}
+
       <div className="rounded-xl border border-neutral-800 bg-neutral-900/80 p-4">
         <div className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Onboarding status
+          Meta onboarding status
         </div>
         <div className="mt-1 text-sm font-semibold text-emerald-300">{status}</div>
         {connection?.connectionErrorSummary ? (

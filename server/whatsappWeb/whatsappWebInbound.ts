@@ -12,6 +12,7 @@ import {
   type WhatsAppMessagingBridge,
 } from "../whatsappTransport/whatsappMessagingBridge.ts";
 import { AUDIT_EVENTS } from "../whatsappTransport/whatsappConstants.ts";
+import { dirtyUnreadIndexForConversation } from "../whatsappTransport/whatsappInboxUnreadIndexCache.ts";
 import {
   createDefaultWhatsAppRepository,
   safeAudit,
@@ -22,6 +23,12 @@ import {
   WHATSAPP_WEB_QR_CONNECTION_ID,
 } from "./whatsappWebConfig.ts";
 import type { WhatsAppLidPhoneMap } from "./whatsappWebIdentity.ts";
+import {
+  noteInboundEventReceived,
+  noteInboundIgnored,
+  noteInboundPersistFailed,
+  noteInboundStored,
+} from "./whatsappWebInboundDiagnostics.ts";
 import { logWhatsAppWeb } from "./whatsappWebLog.ts";
 import {
   normalizeBaileysInbound,
@@ -67,11 +74,13 @@ export async function persistWhatsAppWebInbound(
   | { kind: "ignored"; reason: string }
   | { kind: "error"; error: string }
 > {
+  noteInboundEventReceived();
   const normalized = normalizeBaileysInbound(message, {
     lidMap: deps.lidMap ?? null,
   });
   if (normalized.kind === "ignore") {
     // Privacy-safe: reason code only — never phone/JID/text/payload.
+    noteInboundIgnored(normalized.reason);
     logWhatsAppWeb("info", "inbound_ignored", { reason: normalized.reason });
     return { kind: "ignored", reason: normalized.reason };
   }
@@ -79,6 +88,7 @@ export async function persistWhatsAppWebInbound(
   const event = normalized.event;
   const repo = deps.repo ?? createDefaultWhatsAppRepository();
   if (!repo.isActive()) {
+    noteInboundPersistFailed("persistence_unavailable");
     logWhatsAppWeb("error", "inbound_persist_failed", {
       code: "persistence_unavailable",
     });
@@ -116,6 +126,7 @@ export async function persistWhatsAppWebInbound(
       },
     });
     if (inserted.ok === false) {
+      noteInboundPersistFailed("insert_failed");
       logWhatsAppWeb("error", "inbound_persist_failed", {
         code: "insert_failed",
       });
@@ -170,8 +181,15 @@ export async function persistWhatsAppWebInbound(
     });
 
     if (inserted.created) {
+      noteInboundStored();
       logWhatsAppWeb("info", "inbound_stored");
+      // Targeted dirty: warm actor indexes recompute this conversation only.
+      dirtyUnreadIndexForConversation(
+        conversation.companyId ?? "sunchaser",
+        conversation.id
+      );
     } else {
+      noteInboundStored();
       logWhatsAppWeb("info", "inbound_duplicate");
     }
 
@@ -182,6 +200,7 @@ export async function persistWhatsAppWebInbound(
       created: inserted.created,
     };
   } catch {
+    noteInboundPersistFailed("unexpected_persist_failure");
     logWhatsAppWeb("error", "inbound_persist_failed", {
       code: "unexpected_persist_failure",
     });

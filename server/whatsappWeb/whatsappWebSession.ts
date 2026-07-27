@@ -33,6 +33,7 @@ import {
 } from "./whatsappWebTypes.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
+import { getWhatsAppWebInboundDiagnostics } from "./whatsappWebInboundDiagnostics.ts";
 import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
@@ -526,6 +527,7 @@ export class WhatsAppWebSession {
         Date.parse(this.qrExpiresAt) > this.now().getTime() &&
         this.state === "QR_READY"
     );
+    const inbound = getWhatsAppWebInboundDiagnostics();
     return {
       enabled: config.enabled,
       state: this.state,
@@ -534,6 +536,10 @@ export class WhatsAppWebSession {
       qrAvailable,
       qrExpiresAt: qrAvailable ? this.qrExpiresAt : null,
       safeMessage: this.safeMessage,
+      lastInboundEventAt: inbound.lastInboundEventAt,
+      lastInboundStoredAt: inbound.lastInboundStoredAt,
+      lastIgnoredReason: inbound.lastIgnoredReason,
+      lastPersistFailureCode: inbound.lastPersistFailureCode,
     };
   }
 

@@ -10,6 +10,7 @@ import {
   type InboxMessage,
   type InboxMessagesPage,
   type InboxConversationStatus,
+  type InboxAiDraftConfigStatus,
   type WhatsAppConnectionStatusPayload,
   type WhatsAppConnectionTestResult,
   type WhatsAppOnboardingDiagnostics,
@@ -63,6 +64,9 @@ export function buildListQuery(
   filters: InboxListFilters,
   opts?: { cursor?: string | null; limit?: number }
 ): string {
+  const quick =
+    filters.quickFilter ??
+    (filters.unreadOnly ? ("unread" as const) : undefined);
   return toQuery({
     status: filters.status || undefined,
     assignedTo: filters.assignedTo || undefined,
@@ -72,6 +76,7 @@ export function buildListQuery(
         : filters.hasFailedMessage === false
           ? "false"
           : undefined,
+    quickFilter: quick && quick !== "all" ? quick : undefined,
     cursor: opts?.cursor || undefined,
     limit: opts?.limit != null ? String(opts.limit) : undefined,
   });
@@ -87,6 +92,10 @@ export async function fetchInboxConversations(
   return {
     conversations: data.conversations ?? [],
     nextCursor: (meta?.nextCursor as string | null | undefined) ?? null,
+    totalUnreadCount:
+      typeof meta?.totalUnreadCount === "number"
+        ? meta.totalUnreadCount
+        : undefined,
   };
 }
 
@@ -95,6 +104,9 @@ export async function fetchInboxDelta(
   since: { sinceAt: string; sinceId: string },
   opts?: { limit?: number }
 ): Promise<InboxListPage> {
+  const quick =
+    filters.quickFilter ??
+    (filters.unreadOnly ? ("unread" as const) : undefined);
   const { data, meta } = await inboxRequest<{
     conversations: InboxConversation[];
   }>(
@@ -107,6 +119,7 @@ export async function fetchInboxDelta(
           : filters.hasFailedMessage === false
             ? "false"
             : undefined,
+      quickFilter: quick && quick !== "all" ? quick : undefined,
       sinceAt: since.sinceAt,
       sinceId: since.sinceId,
       limit: opts?.limit != null ? String(opts.limit) : undefined,
@@ -115,6 +128,10 @@ export async function fetchInboxDelta(
   return {
     conversations: data.conversations ?? [],
     nextCursor: (meta?.nextCursor as string | null | undefined) ?? null,
+    totalUnreadCount:
+      typeof meta?.totalUnreadCount === "number"
+        ? meta.totalUnreadCount
+        : undefined,
   };
 }
 
@@ -212,6 +229,14 @@ export async function generateInboxAiDraft(input: {
     }
     throw err;
   }
+}
+
+/** Booleans-only AI draft configuration status (never secrets). */
+export async function fetchInboxAiDraftConfig(): Promise<InboxAiDraftConfigStatus> {
+  const { data } = await inboxRequest<InboxAiDraftConfigStatus>(
+    "/api/inbox/ai-draft/config"
+  );
+  return data;
 }
 
 export async function markInboxRead(input: {
@@ -367,6 +392,11 @@ export type WhatsAppWebSafeStatus = {
   qrAvailable: boolean;
   qrExpiresAt: string | null;
   safeMessage: string | null;
+  /** Privacy-safe inbound ops diagnostics (codes/timestamps only). */
+  lastInboundEventAt?: string | null;
+  lastInboundStoredAt?: string | null;
+  lastIgnoredReason?: string | null;
+  lastPersistFailureCode?: string | null;
 };
 
 export type WhatsAppWebQrPayload = {

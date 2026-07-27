@@ -7,7 +7,12 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { InboxConversationDetail, InboxMessage } from "../types";
+import type {
+  InboxAiDraftConfigStatus,
+  InboxConversationDetail,
+  InboxMessage,
+} from "../types";
+import { fetchInboxAiDraftConfig } from "../api/inboxApi";
 import { useAiDraft } from "../hooks/useAiDraft";
 import { isAiDraftUiEnabled } from "../lib/aiDraftFeature";
 import { displayContactLabel, initialsFromId } from "../utils/format";
@@ -63,16 +68,37 @@ export default function ConversationView({
   mutating,
 }: ConversationViewProps) {
   const conversationId = detail?.conversation.id ?? null;
-  const aiDraftEnabled = isAiDraftUiEnabled();
+  const aiDraftUiEnabled = isAiDraftUiEnabled();
   const aiDraft = useAiDraft(conversationId);
   const [composerSeed, setComposerSeed] = useState<{
     text: string;
     token: number;
   }>({ text: "", token: 0 });
+  const [aiConfig, setAiConfig] = useState<InboxAiDraftConfigStatus | null>(
+    null
+  );
 
   // Reset composer seed when switching threads (no cross-customer draft leak).
   useEffect(() => {
     setComposerSeed({ text: "", token: 0 });
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId) {
+      setAiConfig(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchInboxAiDraftConfig()
+      .then((cfg) => {
+        if (!cancelled) setAiConfig(cfg);
+      })
+      .catch(() => {
+        if (!cancelled) setAiConfig(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId]);
 
   const latestInbound = useMemo(() => {
@@ -120,6 +146,29 @@ export default function ConversationView({
       messageId: latestInbound?.id,
     });
   };
+
+  const backendDraftEnabled = aiConfig?.draftFeatureEnabled === true;
+  const providerReady =
+    aiConfig?.liveProviderEnabled === true &&
+    aiConfig?.geminiKeyConfigured === true;
+  const canGenerateDraft =
+    Boolean(conversationId) &&
+    aiDraftUiEnabled &&
+    backendDraftEnabled &&
+    Boolean(latestInbound);
+  const aiStatusHint = !conversationId
+    ? "Select a conversation to use AI Reply Assistant."
+    : !aiDraftUiEnabled
+      ? "Feature disabled in this CRM build."
+      : aiConfig == null
+        ? "Checking AI draft configuration…"
+        : !backendDraftEnabled
+          ? "AI draft feature disabled on server."
+          : !providerReady
+            ? "Provider unavailable — draft generation cannot run yet."
+            : aiDraft.state.status === "ready"
+              ? "Draft ready — edit and copy to composer. Send stays manual."
+              : "Ready — click Generate AI Draft (never auto-sends).";
 
   return (
     <section
@@ -244,26 +293,26 @@ export default function ConversationView({
         }
       />
 
-      {aiDraftEnabled ? (
-        <AiDraftPanel
-          state={aiDraft.state}
-          disabled={mutating || sending}
-          canGenerate={Boolean(conversationId)}
-          onGenerate={runGenerate}
-          onRegenerate={runGenerate}
-          onDiscard={aiDraft.discard}
-          onEditableTextChange={aiDraft.setEditableText}
-          onCopyToComposer={() => {
-            const text = aiDraft.state.editableText.trim();
-            if (!text) return;
-            // Copy only — never calls onSend.
-            setComposerSeed((prev) => ({
-              text,
-              token: prev.token + 1,
-            }));
-          }}
-        />
-      ) : null}
+      {/* Always visible for a selected genuine conversation so staff can find it. */}
+      <AiDraftPanel
+        state={aiDraft.state}
+        disabled={mutating || sending}
+        canGenerate={canGenerateDraft}
+        statusHint={aiStatusHint}
+        onGenerate={runGenerate}
+        onRegenerate={runGenerate}
+        onDiscard={aiDraft.discard}
+        onEditableTextChange={aiDraft.setEditableText}
+        onCopyToComposer={() => {
+          const text = aiDraft.state.editableText.trim();
+          if (!text) return;
+          // Copy only — never calls onSend.
+          setComposerSeed((prev) => ({
+            text,
+            token: prev.token + 1,
+          }));
+        }}
+      />
 
       <Composer
         freeForm={detail?.freeForm}

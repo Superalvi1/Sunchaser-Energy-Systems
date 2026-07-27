@@ -177,6 +177,15 @@ export function createWhatsAppInboxRouter(
   );
 
   /**
+   * AI-03: booleans-only draft configuration status for the CRM UI.
+   * Never returns secrets, provider keys, or message content.
+   */
+  router.get(
+    "/ai-draft/config",
+    run((c, req, res) => c.getAiDraftConfigStatus(req, res))
+  );
+
+  /**
    * AI-03: staff-initiated AI draft. Separate from send — never auto-sends.
    * Gated by WHATSAPP_AI_QUERY_DRAFT_ENABLED (default OFF) inside the controller.
    */

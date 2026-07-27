@@ -187,15 +187,15 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
       try {
         if (rejectSmuggledTokens(req, res)) return;
         const empty = parseEmptyBody(req.body);
-        if (!empty.ok) {
+        if (empty.ok === false) {
           return sendError(res, statusForCode(empty.code), empty.code, empty.message);
         }
         const ref = parsePublicRefParam(req.params.public_ref);
-        if (!ref.ok || !ref.value.startsWith("mporef_")) {
+        if (ref.ok === false || !ref.value.startsWith("mporef_")) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-        if (!identity.ok) {
+        if (identity.ok === false) {
           // Uniform not-found for unauthorized cross-order probes
           if (
             identity.code === "INVALID_TOKEN" ||
@@ -225,21 +225,21 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
       try {
         if (rejectSmuggledTokens(req, res)) return;
         const body = parseUploadIntentBody(req.body);
-        if (!body.ok) {
+        if (body.ok === false) {
           return sendError(res, statusForCode(body.code), body.code, body.message);
         }
         const ref = parsePublicRefParam(req.params.public_ref);
-        if (!ref.ok || !ref.value.startsWith("mporef_")) {
+        if (ref.ok === false || !ref.value.startsWith("mporef_")) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const idem = parseIdempotencyKey(
           req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
         );
-        if (!idem.ok) {
+        if (idem.ok === false) {
           return sendError(res, statusForCode(idem.code), idem.code, idem.message);
         }
         const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-        if (!identity.ok) {
+        if (identity.ok === false) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const data = await repository.createUploadIntent(
@@ -266,17 +266,17 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
       try {
         if (rejectSmuggledTokens(req, res)) return;
         const ref = parsePublicRefParam(req.params.public_ref);
-        if (!ref.ok || !ref.value.startsWith("mporef_")) {
+        if (ref.ok === false || !ref.value.startsWith("mporef_")) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const idem = parseIdempotencyKey(
           req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
         );
-        if (!idem.ok) {
+        if (idem.ok === false) {
           return sendError(res, statusForCode(idem.code), idem.code, idem.message);
         }
         const parsed = parseReceiptJsonBody(req.body);
-        if (!parsed.ok) {
+        if (parsed.ok === false) {
           return sendError(
             res,
             statusForCode(parsed.code),
@@ -298,7 +298,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
         }
 
         const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-        if (!identity.ok) {
+        if (identity.ok === false) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
 
@@ -328,11 +328,11 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
       try {
         if (rejectSmuggledTokens(req, res)) return;
         const ref = parsePublicRefParam(req.params.public_ref);
-        if (!ref.ok || !ref.value.startsWith("mporef_")) {
+        if (ref.ok === false || !ref.value.startsWith("mporef_")) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const identity = await resolveOwnedIdentity(req, ref.value, identityDeps);
-        if (!identity.ok) {
+        if (identity.ok === false) {
           return sendError(res, 404, "ORDER_NOT_FOUND", "Order not found.");
         }
         const payments = await repository.listOrderPayments(
@@ -382,17 +382,17 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   admin.post("/:id/verify", async (req: Request, res: Response) => {
     try {
       const empty = parseEmptyBody(req.body);
-      if (!empty.ok) {
+      if (empty.ok === false) {
         return sendError(res, statusForCode(empty.code), empty.code, empty.message);
       }
       const id = parsePaymentIdParam(req.params.id);
-      if (!id.ok) {
+      if (id.ok === false) {
         return sendError(res, statusForCode(id.code), id.code, id.message);
       }
       const idem = parseIdempotencyKey(
         req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
       );
-      if (!idem.ok) {
+      if (idem.ok === false) {
         return sendError(res, statusForCode(idem.code), idem.code, idem.message);
       }
       const actor = req.actor!;
@@ -412,7 +412,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   admin.post("/:id/reject", async (req: Request, res: Response) => {
     try {
       const parsed = parseRejectBody(req.body);
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         return sendError(
           res,
           statusForCode(parsed.code),
@@ -421,13 +421,13 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
         );
       }
       const id = parsePaymentIdParam(req.params.id);
-      if (!id.ok) {
+      if (id.ok === false) {
         return sendError(res, statusForCode(id.code), id.code, id.message);
       }
       const idem = parseIdempotencyKey(
         req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
       );
-      if (!idem.ok) {
+      if (idem.ok === false) {
         return sendError(res, statusForCode(idem.code), idem.code, idem.message);
       }
       const actor = req.actor!;
@@ -447,7 +447,7 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
   admin.post("/:id/refund", async (req: Request, res: Response) => {
     try {
       const parsed = parseRefundBody(req.body);
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         return sendError(
           res,
           statusForCode(parsed.code),
@@ -456,13 +456,13 @@ export function createPaymentRouter(deps: PaymentRouterDeps = {}): Router {
         );
       }
       const id = parsePaymentIdParam(req.params.id);
-      if (!id.ok) {
+      if (id.ok === false) {
         return sendError(res, statusForCode(id.code), id.code, id.message);
       }
       const idem = parseIdempotencyKey(
         req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"],
       );
-      if (!idem.ok) {
+      if (idem.ok === false) {
         return sendError(res, statusForCode(idem.code), idem.code, idem.message);
       }
       const actor = req.actor!;
