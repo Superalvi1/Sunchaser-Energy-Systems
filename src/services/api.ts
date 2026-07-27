@@ -3184,6 +3184,10 @@ export const MARKETPLACE_AUTO_IMPORT_RUN_PATH =
   "/api/marketplace/admin/suppliers/auto-import/run";
 export const MARKETPLACE_AUTO_IMPORT_HEALTH_PATH =
   "/api/marketplace/admin/suppliers/auto-import/health";
+export const MARKETPLACE_AUTO_IMPORT_PREFLIGHT_PATH =
+  "/api/marketplace/admin/suppliers/auto-import/preflight";
+export const MARKETPLACE_AUTO_IMPORT_LISTINGS_PATH =
+  "/api/marketplace/admin/suppliers/auto-import/listings";
 
 export async function fetchMarketplaceAutoImportHealth(_staff?: {
   id: string;
@@ -3237,8 +3241,82 @@ export async function runMarketplaceAutoImport(_staff?: {
     status: string;
     health: Awaited<ReturnType<typeof fetchMarketplaceAutoImportHealth>>;
     sampleLowestPrice: unknown[];
+    stages?: {
+      observationFetched: boolean;
+      catalogueProductCreated: boolean;
+      variantPriceStored: boolean;
+      ceoListingImported: boolean;
+      publicWebsiteVisible: boolean;
+    };
     automaticPublication: true;
     ceoDiscountApplied: false;
     legacyMappingBypassUsed: false;
+  };
+}
+
+export async function fetchMarketplaceAutoImportPreflight(_staff?: {
+  id: string;
+  username: string;
+  role: string;
+}) {
+  const res = await authorizedFetch(MARKETPLACE_AUTO_IMPORT_PREFLIGHT_PATH);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as any)?.error?.message ||
+        (data as any)?.error ||
+        "Failed to run auto-import preflight.",
+    );
+  }
+  return ((data as any).data || data) as {
+    checkedAt: string;
+    marketplaceEnabled: boolean;
+    autoImportEnabled: boolean;
+    persistenceEnabled: boolean;
+    catalogueSource: "static" | "database";
+    supabaseConfigured: boolean;
+    objects: {
+      tableMpAutoImportListings: string;
+      tableMpAutoImportSyncRuns: string;
+      rpcMpCeoAutoImportUpsertListing: string;
+    };
+    suppliers: {
+      kamal: { origin: string; status: string; detail?: string };
+      alladin: { origin: string; status: string; detail?: string };
+    };
+    stages: {
+      canFetchSupplierObservations: boolean;
+      canPersistCatalogueProducts: boolean;
+      canStoreVariantPrices: boolean;
+      canImportCeoListings: boolean;
+      publicWebsiteWouldShowSyncedProducts: boolean;
+    };
+    blockers: string[];
+    notes: string[];
+  };
+}
+
+export async function fetchMarketplaceAutoImportListings(_staff?: {
+  id: string;
+  username: string;
+  role: string;
+}) {
+  const res = await authorizedFetch(MARKETPLACE_AUTO_IMPORT_LISTINGS_PATH);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as any)?.error?.message ||
+        (data as any)?.error ||
+        "Failed to load auto-import listings.",
+    );
+  }
+  return ((data as any).data || data) as {
+    count: number;
+    listings: Array<{
+      identityKey: string;
+      title: string;
+      websitePricePkr: number;
+      selectedSupplier: string;
+    }>;
   };
 }

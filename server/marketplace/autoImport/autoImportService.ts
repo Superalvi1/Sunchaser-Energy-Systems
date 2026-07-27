@@ -14,9 +14,15 @@ import {
 import type { CatalogueProductObservation } from "../suppliers/liveCatalogueTypes.ts";
 import {
   fetchShopifyCatalogue,
+  SHOPIFY_AUTO_IMPORT_MAX_PAGES,
+  SHOPIFY_AUTO_IMPORT_MAX_PRODUCTS,
   type CatalogueFetchDeps,
   type ShopifyRawProduct,
 } from "../suppliers/shopifyCatalogue.ts";
+import {
+  isDatabaseCatalogueSource,
+  readMarketplaceConfig,
+} from "../marketplaceConfig.ts";
 import {
   buildVariantIdentity,
   exactIdentityKey,
@@ -27,6 +33,7 @@ import type {
   UpsertListingInput,
 } from "./autoImportRepository.ts";
 import { createAutoImportRepositoryFromEnv } from "./supabaseAutoImportRepository.ts";
+import { isSupabaseActive } from "../../../dbManager.ts";
 import {
   resolvePriceWithRollback,
   selectLowestValidPrice,
@@ -118,6 +125,7 @@ function rejectReason(obs: CatalogueProductObservation): string | null {
 function emptyResult(
   runId: string,
   health: AutoImportSyncHealth,
+  stages?: AutoImportSyncResult["stages"],
 ): AutoImportSyncResult {
   return {
     runId,
@@ -125,9 +133,42 @@ function emptyResult(
       health.lastSyncStatus === "never" ? "failed" : health.lastSyncStatus,
     health,
     sampleLowestPrice: [],
+    stages: stages ?? {
+      observationFetched: false,
+      catalogueProductCreated: false,
+      variantPriceStored: false,
+      ceoListingImported: false,
+      publicWebsiteVisible: false,
+    },
     automaticPublication: true,
     ceoDiscountApplied: false,
     legacyMappingBypassUsed: false,
+  };
+}
+
+function resolvePersistEnabled(env: NodeJS.ProcessEnv): boolean {
+  return (
+    String(env.MARKETPLACE_CEO_AUTO_IMPORT_PERSIST || "").toLowerCase() ===
+    "true"
+  );
+}
+
+function buildStages(input: {
+  env: NodeJS.ProcessEnv;
+  observationFetched: boolean;
+  durableWrites: number;
+}): AutoImportSyncResult["stages"] {
+  const durablePersistActive =
+    resolvePersistEnabled(input.env) && isSupabaseActive();
+  const durable = durablePersistActive && input.durableWrites > 0;
+  const publicVisible =
+    durable && isDatabaseCatalogueSource(readMarketplaceConfig(input.env));
+  return {
+    observationFetched: input.observationFetched,
+    catalogueProductCreated: durable,
+    variantPriceStored: durable,
+    ceoListingImported: durable,
+    publicWebsiteVisible: publicVisible,
   };
 }
 
@@ -137,6 +178,15 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? logAutoImport;
   const timeouts = resolveAutoImportTimeouts(env);
+  const catalogueDeps: CatalogueFetchDeps = {
+    maxPages: SHOPIFY_AUTO_IMPORT_MAX_PAGES,
+    maxProducts: SHOPIFY_AUTO_IMPORT_MAX_PRODUCTS,
+    ...deps.catalogueDeps,
+    fetchOpts: {
+      maxRetries: 1,
+      ...deps.catalogueDeps?.fetchOpts,
+    },
+  };
 
   async function saveHealthSafe(
     runId: string,
@@ -198,7 +248,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     });
     try {
       const catalogue = await withDeadline(
-        fetchShopifyCatalogue(supplier, deps.catalogueDeps),
+        fetchShopifyCatalogue(supplier, catalogueDeps),
         timeouts.supplierTimeoutMs,
         `supplier:${supplier}`,
       );
@@ -215,6 +265,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         status: "running",
         pagesFetched: catalogue.pagesFetched,
         discovered: catalogue.products.length,
+        detail: `stop_${catalogue.stopReason}`,
       });
       return {
         discovered: catalogue.products.length,
@@ -552,6 +603,11 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         status: "failed",
         health,
         sampleLowestPrice: [],
+        stages: buildStages({
+          env,
+          observationFetched: observations.length > 0,
+          durableWrites: 0,
+        }),
         automaticPublication: true,
         ceoDiscountApplied: false,
         legacyMappingBypassUsed: false,
@@ -573,6 +629,12 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           ? "partial"
           : "failed";
 
+    const stages = buildStages({
+      env,
+      observationFetched: observations.length > 0 || acceptedOffers.length > 0,
+      durableWrites: productsCreated + productsUpdated,
+    });
+
     const health: AutoImportSyncHealth = {
       lastSyncAt: now().toISOString(),
       lastSyncStatus: status,
@@ -588,8 +650,9 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       lowestPriceSelections,
       rolledBackPrices,
       errors,
-      note:
-        "CEO auto-import: public listed price published as website price; no purchasing discount; WS-MAP-0 legacy mapping unused.",
+      note: stages.publicWebsiteVisible
+        ? "CEO auto-import persisted active priced catalogue rows; public website uses database catalogue source."
+        : "CEO auto-import completed pipeline stages A–D as applicable. Public website visibility (stage E) requires MARKETPLACE_CATALOGUE_SOURCE=database and durable persist — sync success alone does not publish the storefront.",
     };
     await saveHealthSafe(runId, health, startedAt);
 
@@ -605,6 +668,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       status,
       health,
       sampleLowestPrice,
+      stages,
       automaticPublication: true,
       ceoDiscountApplied: false,
       legacyMappingBypassUsed: false,

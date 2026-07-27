@@ -1154,4 +1154,280 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   console.log("ok - route 500 still bounded + logged");
 }
 
+{
+  // Kamal-shaped Shopify products.json parsing (title/vendor/handle/images/variants/price)
+  const { normalizeCatalogueProducts } = await import(
+    "../suppliers/catalogueNormalize.ts"
+  );
+  const { parseShopifyProductsJson } = await import(
+    "../suppliers/shopifyCatalogue.ts"
+  );
+  const body = JSON.stringify({
+    products: [
+      {
+        id: 6355818922601,
+        title: "Crown Electra Boost 5kW 100A Lithium Battery",
+        handle: "crown-electra-boost-5kw-100a-lithium-battery",
+        body_html: "<p>Lithium battery for solar storage</p>",
+        vendor: "Crown Solar",
+        product_type: "Lithium Battery",
+        tags: ["Lithium Battery", "Solar"],
+        variants: [
+          {
+            id: 1,
+            title: "Default",
+            price: "220000.00",
+            compare_at_price: null,
+            available: true,
+            sku: null,
+          },
+        ],
+        images: [
+          {
+            src: "https://cdn.shopify.com/s/files/1/0635/5818/9226/files/IP2051.2v100A.png",
+          },
+        ],
+      },
+    ],
+  });
+  const page = parseShopifyProductsJson(body);
+  assert.equal(page.products.length, 1);
+  const { accepted, excluded } = normalizeCatalogueProducts(
+    "kamal",
+    page.products,
+    "2026-07-27T00:00:00.000Z",
+  );
+  assert.equal(excluded.length, 0);
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0]!.currentListedPricePkr, 220000);
+  assert.equal(accepted[0]!.brand, "Crown Solar");
+  assert.ok(accepted[0]!.canonicalUrl.includes("/products/crown-electra"));
+  assert.ok(accepted[0]!.primaryImageUrl?.includes("cdn.shopify.com"));
+  assert.equal(accepted[0]!.availability, "in_stock");
+  console.log("ok - Kamal response parsing");
+}
+
+{
+  // Alladin-shaped Shopify products.json with compare-at + SKU
+  const { normalizeCatalogueProducts } = await import(
+    "../suppliers/catalogueNormalize.ts"
+  );
+  const { parseShopifyProductsJson } = await import(
+    "../suppliers/shopifyCatalogue.ts"
+  );
+  const body = JSON.stringify({
+    products: [
+      {
+        id: 77115130135,
+        title: "Tomzn TOB7Z-63 4P DC MTS Dual Power Manual Transfer Switch for PV system",
+        handle: "tomzn-tob7z-63-4p-dc-mts-pv",
+        body_html: "<p>PV transfer switch</p>",
+        vendor: "Tomzn",
+        product_type: "Protection",
+        tags: ["PV", "MTS"],
+        variants: [
+          {
+            id: 9,
+            title: "Default",
+            price: "6499.00",
+            compare_at_price: "7299.00",
+            available: true,
+            sku: "AR-002453",
+          },
+        ],
+        images: [
+          {
+            src: "https://cdn.shopify.com/s/files/1/0771/1513/0135/files/TOMZN.jpg",
+          },
+        ],
+      },
+    ],
+  });
+  const page = parseShopifyProductsJson(body);
+  const { accepted } = normalizeCatalogueProducts(
+    "alladin",
+    page.products,
+    "2026-07-27T00:00:00.000Z",
+  );
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0]!.currentListedPricePkr, 6499);
+  assert.equal(accepted[0]!.compareAtPricePkr, 7299);
+  assert.equal(accepted[0]!.modelSku, "AR-002453");
+  assert.equal(accepted[0]!.brand, "Tomzn");
+  console.log("ok - Alladin response parsing");
+}
+
+{
+  // Pagination termination: short page stops; empty page stops; repeated page stops; max products
+  const { fetchShopifyCatalogue } = await import(
+    "../suppliers/shopifyCatalogue.ts"
+  );
+  const short = await fetchShopifyCatalogue("kamal", {
+    pageLimit: 250,
+    maxPages: 40,
+    pageProvider: async (_s, page) => {
+      if (page === 1) {
+        return {
+          products: Array.from({ length: 3 }, (_, i) => ({
+            id: 100 + i,
+            title: `Solar Hybrid Inverter ${i}`,
+            handle: `h-${i}`,
+            vendor: "Inverex",
+            product_type: "Solar Inverter",
+            variants: [{ price: "100000", available: true }],
+            images: [],
+          })),
+        };
+      }
+      throw new Error("should not request page 2 after short page");
+    },
+  });
+  assert.equal(short.pagesFetched, 1);
+  assert.equal(short.stopReason, "short_page");
+
+  const empty = await fetchShopifyCatalogue("alladin", {
+    pageLimit: 250,
+    pageProvider: async () => ({ products: [] }),
+  });
+  assert.equal(empty.stopReason, "empty_page");
+
+  const repeated = await fetchShopifyCatalogue("kamal", {
+    pageLimit: 2,
+    maxPages: 5,
+    pageProvider: async () => ({
+      products: [
+        { id: 1, title: "Solar Hybrid Inverter A", variants: [{ price: "1", available: true }] },
+        { id: 2, title: "Solar Hybrid Inverter B", variants: [{ price: "1", available: true }] },
+      ],
+    }),
+  });
+  assert.ok(repeated.pagesFetched >= 2);
+  assert.equal(repeated.stopReason, "repeated_page");
+
+  const capped = await fetchShopifyCatalogue("alladin", {
+    pageLimit: 2,
+    maxPages: 40,
+    maxProducts: 3,
+    pageProvider: async (_s, page) => ({
+      products: [
+        { id: page * 10, title: `Solar Panel ${page}a`, variants: [{ price: "1", available: true }] },
+        { id: page * 10 + 1, title: `Solar Panel ${page}b`, variants: [{ price: "1", available: true }] },
+      ],
+    }),
+  });
+  assert.equal(capped.stopReason, "max_products");
+  assert.ok(capped.rawProductRows >= 3);
+  console.log("ok - pagination termination + repeated-page + max products");
+}
+
+{
+  // Health saved after failure (status flips from never)
+  const repository = createMemoryAutoImportRepository();
+  assert.equal((await repository.getHealth()).lastSyncStatus, "never");
+  const service = createAutoImportService({
+    repository,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+    catalogueDeps: {
+      pageProvider: async () => {
+        throw Object.assign(new Error("Upstream HTTP 502"), {
+          name: "SafeHttpError",
+          code: "HTTP_ERROR",
+        });
+      },
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  const health = await service.getHealth();
+  assert.equal(health.lastSyncStatus, "failed");
+  assert.ok(health.lastRunId);
+  assert.equal(result.stages.publicWebsiteVisible, false);
+  console.log("ok - health saved after failure");
+}
+
+{
+  // Read-only preflight reports presence/reachability without importing
+  const { runAutoImportPreflight } = await import("./autoImportPreflight.ts");
+  const report = await runAutoImportPreflight({
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_PERSIST: "false",
+      MARKETPLACE_CATALOGUE_SOURCE: "static",
+    },
+    probeTable: async () => "absent",
+    probeRpc: async () => "absent",
+    probeSupplier: async (origin) => ({
+      status: "reachable",
+      detail: `ok:${origin.includes("kamal") ? "kamal" : "alladin"}`,
+    }),
+  });
+  assert.equal(report.persistenceEnabled, false);
+  assert.equal(report.objects.rpcMpCeoAutoImportUpsertListing, "absent");
+  assert.equal(report.suppliers.kamal.status, "reachable");
+  assert.equal(report.suppliers.alladin.status, "reachable");
+  assert.equal(report.stages.publicWebsiteWouldShowSyncedProducts, false);
+  assert.ok(
+    report.notes.some((n) => /CATALOGUE_SOURCE|database/i.test(n)),
+  );
+  console.log("ok - preflight read-only report");
+}
+
+{
+  // Canonical route auth + preflight gated; non-super-admin forbidden
+  function actor(role: string): RequestActor {
+    return {
+      id: "u1",
+      username: "staff",
+      name: role,
+      email: "s@test.com",
+      role,
+      accountStatus: "Approved",
+      emailVerified: true,
+      onboardingCompleted: true,
+      authMethod: "jwt",
+    };
+  }
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).actor = actor("Admin");
+    next();
+  });
+  app.use(
+    "/api/marketplace/admin",
+    createMarketplaceAutoImportRouter({
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+      preflight: async () => {
+        throw new Error("preflight should not run for non-super-admin");
+      },
+    }),
+  );
+  const server = createServer(app);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const run = await fetch(
+      `http://127.0.0.1:${port}/api/marketplace/admin/suppliers/auto-import/run`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    assert.equal(run.status, 403);
+    const pre = await fetch(
+      `http://127.0.0.1:${port}/api/marketplace/admin/suppliers/auto-import/preflight`,
+    );
+    assert.equal(pre.status, 403);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+  console.log("ok - canonical route authentication");
+}
+
 console.log("\nCEO auto-import tests passed.");

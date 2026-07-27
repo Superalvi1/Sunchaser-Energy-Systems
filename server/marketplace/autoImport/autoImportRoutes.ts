@@ -27,22 +27,30 @@ import {
   type AutoImportService,
 } from "./autoImportService.ts";
 import { logAutoImport, sanitizeAutoImportError } from "./autoImportLog.ts";
+import {
+  runAutoImportPreflight,
+  type AutoImportPreflightDeps,
+  type AutoImportPreflightReport,
+} from "./autoImportPreflight.ts";
 
 export type AutoImportRouterDeps = {
   env?: NodeJS.ProcessEnv;
   service?: AutoImportService;
   log?: typeof logAutoImport;
+  preflight?: (deps?: AutoImportPreflightDeps) => Promise<AutoImportPreflightReport>;
 };
 
 /** Canonical Super-Admin paths (relative to /api/marketplace/admin). */
 export const AUTO_IMPORT_ADMIN_RUN_PATH = "/suppliers/auto-import/run";
 export const AUTO_IMPORT_ADMIN_HEALTH_PATH = "/suppliers/auto-import/health";
 export const AUTO_IMPORT_ADMIN_LISTINGS_PATH = "/suppliers/auto-import/listings";
+export const AUTO_IMPORT_ADMIN_PREFLIGHT_PATH = "/suppliers/auto-import/preflight";
 
 /** Compatibility alias paths (relative to /api/marketplace/auto-import). */
 export const AUTO_IMPORT_ALIAS_RUN_PATH = "/run";
 export const AUTO_IMPORT_ALIAS_HEALTH_PATH = "/health";
 export const AUTO_IMPORT_ALIAS_LISTINGS_PATH = "/listings";
+export const AUTO_IMPORT_ALIAS_PREFLIGHT_PATH = "/preflight";
 
 function setApiVersion(res: Response): void {
   res.setHeader(MARKETPLACE_API_VERSION_HEADER, MARKETPLACE_API_VERSION);
@@ -86,12 +94,51 @@ function attachAutoImportHandlers(
   deps: {
     service: AutoImportService;
     log: typeof logAutoImport;
+    env: NodeJS.ProcessEnv;
+    preflight: (
+      deps?: AutoImportPreflightDeps,
+    ) => Promise<AutoImportPreflightReport>;
     runPath: string;
     healthPath: string;
     listingsPath: string;
+    preflightPath: string;
   },
 ): void {
-  const { service, log, runPath, healthPath, listingsPath } = deps;
+  const {
+    service,
+    log,
+    env,
+    preflight,
+    runPath,
+    healthPath,
+    listingsPath,
+    preflightPath,
+  } = deps;
+
+  router.get(preflightPath, async (req, res) => {
+    const actor = requireSuperAdmin(req, res);
+    if (!actor) return;
+    try {
+      const report = await preflight({ env });
+      return sendOk(res, report, 200);
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId: "route",
+        stage: "route_error",
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
+      return sendError(
+        res,
+        500,
+        "INTERNAL_ERROR",
+        "Unable to run auto-import preflight.",
+      );
+    }
+  });
 
   router.post(runPath, async (req, res) => {
     const actor = requireSuperAdmin(req, res);
@@ -185,17 +232,25 @@ function attachAutoImportHandlers(
 
 function buildAutoImportRouter(
   deps: AutoImportRouterDeps,
-  paths: { runPath: string; healthPath: string; listingsPath: string },
+  paths: {
+    runPath: string;
+    healthPath: string;
+    listingsPath: string;
+    preflightPath: string;
+  },
 ): Router {
   const router = express.Router();
   const env = deps.env ?? process.env;
   const service = deps.service ?? createAutoImportService({ env });
   const log = deps.log ?? logAutoImport;
+  const preflight = deps.preflight ?? runAutoImportPreflight;
 
   router.use(createMarketplaceRouteLockdown({ env }));
   attachAutoImportHandlers(router, {
     service,
     log,
+    env,
+    preflight,
     ...paths,
   });
   return router;
@@ -203,7 +258,7 @@ function buildAutoImportRouter(
 
 /**
  * Canonical router for mount at `/api/marketplace/admin`.
- * Routes: POST/GET `/suppliers/auto-import/{run,health,listings}`.
+ * Routes: POST/GET `/suppliers/auto-import/{run,health,listings,preflight}`.
  */
 export function createMarketplaceAutoImportRouter(
   deps: AutoImportRouterDeps = {},
@@ -212,6 +267,7 @@ export function createMarketplaceAutoImportRouter(
     runPath: AUTO_IMPORT_ADMIN_RUN_PATH,
     healthPath: AUTO_IMPORT_ADMIN_HEALTH_PATH,
     listingsPath: AUTO_IMPORT_ADMIN_LISTINGS_PATH,
+    preflightPath: AUTO_IMPORT_ADMIN_PREFLIGHT_PATH,
   });
 }
 
@@ -227,5 +283,6 @@ export function createMarketplaceAutoImportAliasRouter(
     runPath: AUTO_IMPORT_ALIAS_RUN_PATH,
     healthPath: AUTO_IMPORT_ALIAS_HEALTH_PATH,
     listingsPath: AUTO_IMPORT_ALIAS_LISTINGS_PATH,
+    preflightPath: AUTO_IMPORT_ALIAS_PREFLIGHT_PATH,
   });
 }

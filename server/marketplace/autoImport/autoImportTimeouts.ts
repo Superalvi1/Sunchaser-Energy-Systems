@@ -6,8 +6,11 @@
 /** Default overall job budget (under common ~60–100s reverse-proxy limits). */
 export const DEFAULT_AUTO_IMPORT_JOB_TIMEOUT_MS = 55_000;
 
-/** Per-supplier discovery budget (fetch + normalize). */
-export const DEFAULT_AUTO_IMPORT_SUPPLIER_TIMEOUT_MS = 25_000;
+/**
+ * Per-supplier discovery budget (fetch + normalize).
+ * Live Alladin ≈4 large pages; keep under the job budget with headroom for RPC.
+ */
+export const DEFAULT_AUTO_IMPORT_SUPPLIER_TIMEOUT_MS = 30_000;
 
 /** Supabase RPC / table call budget. */
 export const DEFAULT_AUTO_IMPORT_RPC_TIMEOUT_MS = 12_000;
