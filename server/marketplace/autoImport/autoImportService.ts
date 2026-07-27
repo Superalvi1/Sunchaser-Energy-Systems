@@ -619,7 +619,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
 
     try {
       // Single awaited transactional call — no Promise.race abandonment.
-      // PG statement_timeout (inside commit_batch) cancels the txn on overrun.
+      // Timeout: SET LOCAL statement_timeout on direct Postgres before the RPC.
       const commit = await repo.commitBatch(plannedInputs, healthForCommit);
       productsCreated = commit.productsCreated;
       productsUpdated = commit.productsUpdated;

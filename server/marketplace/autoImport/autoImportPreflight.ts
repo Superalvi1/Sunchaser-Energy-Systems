@@ -18,6 +18,7 @@ import {
   resolveAutoImportTimeouts,
   withDeadline,
 } from "./autoImportTimeouts.ts";
+import { hasAutoImportTimeoutProtection } from "./autoImportDbUrl.ts";
 
 export type PreflightPresence = "present" | "absent" | "unknown" | "skipped";
 export type PreflightReachability = "reachable" | "unreachable" | "skipped";
@@ -35,6 +36,8 @@ export type AutoImportPreflightReport = {
     rpcMpCeoAutoImportUpsertListing: PreflightPresence;
     rpcMpCeoAutoImportCommitBatch: PreflightPresence;
     rpcMpCeoAutoImportPreflight: PreflightPresence;
+    /** Direct-Postgres SET LOCAL statement_timeout path available? */
+    timeoutProtection: PreflightPresence;
   };
   suppliers: {
     kamal: { origin: string; status: PreflightReachability; detail?: string };
@@ -282,6 +285,23 @@ export async function runAutoImportPreflight(
       "Read-only preflight RPC absent — apply marketplace-ceo-auto-import-atomic.sql; upsert presence reported as unknown without write probes.",
     );
   }
+
+  const timeoutProtection: PreflightPresence = !persistenceEnabled
+    ? "skipped"
+    : hasAutoImportTimeoutProtection(env)
+      ? "present"
+      : "absent";
+
+  if (persistenceEnabled && timeoutProtection === "absent") {
+    blockers.push(
+      "Timeout protection absent: set DATABASE_URL or SUPABASE_DB_URL so durable commits can SET LOCAL statement_timeout before mp_ceo_auto_import_commit_batch",
+    );
+  }
+  if (persistenceEnabled && timeoutProtection === "present") {
+    notes.push(
+      "Timeout protection: direct Postgres SET LOCAL statement_timeout before atomic commit_batch (in-RPC set_config is ineffective).",
+    );
+  }
   if (kamal.status === "unreachable") {
     blockers.push("Kamal supplier feed unreachable");
   }
@@ -298,7 +318,8 @@ export async function runAutoImportPreflight(
     persistenceEnabled &&
     supabaseConfigured &&
     rpcCatalog.commitBatch === "present" &&
-    listings === "present";
+    listings === "present" &&
+    timeoutProtection === "present";
 
   return {
     checkedAt: now().toISOString(),
@@ -313,6 +334,7 @@ export async function runAutoImportPreflight(
       rpcMpCeoAutoImportUpsertListing: rpcCatalog.upsert,
       rpcMpCeoAutoImportCommitBatch: rpcCatalog.commitBatch,
       rpcMpCeoAutoImportPreflight: rpcCatalog.preflight,
+      timeoutProtection,
     },
     suppliers: {
       kamal: {

@@ -201,6 +201,9 @@ export default function MarketplaceAutoImportStaff({ staffUser }: Props) {
             <li>Persistence enabled: {String(preflight.persistenceEnabled)}</li>
             <li>Catalogue source: {preflight.catalogueSource}</li>
             <li>
+              Timeout protection: {preflight.objects.timeoutProtection}
+            </li>
+            <li>
               RPC commit batch:{" "}
               {preflight.objects.rpcMpCeoAutoImportCommitBatch}
             </li>

@@ -8,6 +8,20 @@
 --   1) mp_ceo_auto_import_preflight() — STRICTLY READ-ONLY object presence check
 --   2) mp_ceo_auto_import_commit_batch(...) — one transactional batch write
 --
+-- TIMEOUT ENFORCEMENT (required — do not skip):
+--   In-function set_config('statement_timeout', ...) and CREATE FUNCTION
+--   ... SET statement_timeout do NOT reliably cancel the outer client statement
+--   on PostgreSQL 16. Proven working pattern used by the application:
+--
+--     BEGIN;
+--     SET LOCAL statement_timeout = '45000';  -- own client command
+--     SELECT public.mp_ceo_auto_import_commit_batch(...);
+--     COMMIT;
+--
+--   Durable persist MUST use a direct Postgres connection that applies SET LOCAL
+--   before the batch (DATABASE_URL / SUPABASE_DB_URL). PostgREST-only RPC without
+--   a prior session timeout is NOT sufficient cancellation protection.
+--
 -- Does NOT restore mp_admin_upsert_supplier_mapping (WS-MAP-0 preserved).
 -- =============================================================================
 
@@ -72,6 +86,14 @@ begin
       'mp_ceo_auto_import_upsert_listing', case when v_upsert then 'present' else 'absent' end,
       'mp_ceo_auto_import_commit_batch', case when v_batch then 'present' else 'absent' end,
       'mp_ceo_auto_import_preflight', 'present'
+    ),
+    -- Honest: this RPC cannot enforce statement_timeout on its own caller.
+    'timeoutEnforcement', jsonb_build_object(
+      'inFunctionSetConfig', 'ineffective',
+      'functionLevelSet', 'ineffective_on_pg16',
+      'requiredCallerPattern',
+        'BEGIN; SET LOCAL statement_timeout = ''<ms>''; SELECT mp_ceo_auto_import_commit_batch(...); COMMIT;',
+      'applicationMustProvide', 'direct_postgres_with_set_local'
     )
   );
 end;
@@ -81,13 +103,15 @@ revoke all on function public.mp_ceo_auto_import_preflight() from public;
 
 -- ---------------------------------------------------------------------------
 -- Atomic batch commit: validate all → write all → save health, or roll back
+-- Timeout MUST be applied by the caller via SET LOCAL before this SELECT.
 -- ---------------------------------------------------------------------------
+drop function if exists public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb, integer);
+
 create or replace function public.mp_ceo_auto_import_commit_batch(
   p_actor_scope text,
   p_run_id text,
   p_listings jsonb,
-  p_health jsonb,
-  p_statement_timeout_ms integer default 45000
+  p_health jsonb
 )
 returns jsonb
 language plpgsql
@@ -101,7 +125,6 @@ declare
   v_updated integer := 0;
   v_results jsonb := '[]'::jsonb;
   v_one jsonb;
-  v_timeout integer;
   v_identity text;
   v_title text;
   v_brand text;
@@ -126,9 +149,8 @@ declare
   v_cat_slug text;
   v_status text;
 begin
-  -- Abort this transaction if it exceeds the bound (cancels mid-statement writes).
-  v_timeout := greatest(1000, least(coalesce(p_statement_timeout_ms, 45000), 120000));
-  perform set_config('statement_timeout', v_timeout::text, true);
+  -- Do NOT call set_config('statement_timeout', ...) here — it does not cancel
+  -- this outer client statement on PostgreSQL 16. Callers must SET LOCAL first.
 
   if p_actor_scope not like 'admin:super%' and p_actor_scope not like 'system:%' then
     raise exception 'VALIDATION_ERROR: CEO auto-import requires Super-Admin or system'
@@ -362,22 +384,22 @@ end;
 $$;
 
 revoke all on function public.mp_ceo_auto_import_commit_batch(
-  text, text, jsonb, jsonb, integer
+  text, text, jsonb, jsonb
 ) from public;
 
 do $ceo_ai_atomic_grants$
 begin
   if exists (select 1 from pg_roles where rolname = 'anon') then
     execute $sql$revoke all on function public.mp_ceo_auto_import_preflight() from anon$sql$;
-    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb, integer) from anon$sql$;
+    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from anon$sql$;
   end if;
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     execute $sql$revoke all on function public.mp_ceo_auto_import_preflight() from authenticated$sql$;
-    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb, integer) from authenticated$sql$;
+    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from authenticated$sql$;
   end if;
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     execute $sql$grant execute on function public.mp_ceo_auto_import_preflight() to service_role$sql$;
-    execute $sql$grant execute on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb, integer) to service_role$sql$;
+    execute $sql$grant execute on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) to service_role$sql$;
   end if;
 end
 $ceo_ai_atomic_grants$;

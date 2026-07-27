@@ -543,8 +543,15 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   );
   assert.ok(atomic.includes("mp_ceo_auto_import_preflight"));
   assert.ok(atomic.includes("mp_ceo_auto_import_commit_batch"));
-  assert.ok(atomic.includes("statement_timeout"));
+  assert.ok(atomic.includes("SET LOCAL statement_timeout"));
+  assert.ok(atomic.includes("ineffective"));
   assert.ok(/pg_catalog\.pg_proc/i.test(atomic));
+  // Must NOT claim in-function set_config cancels the outer statement.
+  assert.ok(
+    !/perform\s+set_config\(\s*'statement_timeout'/i.test(atomic),
+    "atomic SQL must not use in-function set_config(statement_timeout)",
+  );
+  assert.ok(!/p_statement_timeout_ms/.test(atomic));
   assert.ok(!/insert\s+into|update\s+|delete\s+from/i.test(
     atomic.slice(
       atomic.indexOf("mp_ceo_auto_import_preflight"),
@@ -556,24 +563,23 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
     join(__dirname, "supabaseAutoImportRepository.ts"),
     "utf8",
   );
-  assert.ok(repoSrc.includes("mp_ceo_auto_import_commit_batch"));
-  assert.ok(repoSrc.includes("p_listings"));
-  assert.ok(repoSrc.includes("p_statement_timeout_ms"));
-  assert.ok(!repoSrc.includes("mp_ceo_auto_import_upsert_listing"));
+  const pgCommitSrc = readFileSync(
+    join(__dirname, "autoImportPgCommit.ts"),
+    "utf8",
+  );
+  assert.ok(repoSrc.includes("commitBatchWithStatementTimeout"), "repo uses pg commit helper");
+  assert.ok(pgCommitSrc.includes("SET LOCAL statement_timeout"), "pg commit SET LOCAL");
+  assert.ok(pgCommitSrc.includes("mp_ceo_auto_import_commit_batch"), "pg commit calls batch rpc");
+  assert.ok(!pgCommitSrc.includes("Promise.race("), "pg commit must not Promise.race");
+  assert.ok(!repoSrc.includes("p_statement_timeout_ms"), "repo must not pass p_statement_timeout_ms");
+  assert.ok(!repoSrc.includes("mp_ceo_auto_import_upsert_listing"), "repo must not call upsert rpc");
   // Commit must not Promise.race/abandon the transactional RPC.
   const commitFn = repoSrc.slice(repoSrc.indexOf("async commitBatch"));
-  assert.ok(!commitFn.slice(0, 800).includes("rpcBounded"));
-  assert.ok(!commitFn.slice(0, 800).includes("withDeadline"));
+  assert.ok(!commitFn.slice(0, 900).includes("withDeadline("), "commitBatch no withDeadline");
+  assert.ok(!commitFn.slice(0, 900).includes("sb.rpc("), "commitBatch no supabase.rpc");
 
-  for (const arg of [
-    "p_actor_scope",
-    "p_run_id",
-    "p_listings",
-    "p_health",
-    "p_statement_timeout_ms",
-  ]) {
-    assert.ok(atomic.includes(arg), `atomic SQL missing ${arg}`);
-    assert.ok(repoSrc.includes(arg), `code missing ${arg}`);
+  for (const arg of ["$1::text", "$2::text", "$3::jsonb", "$4::jsonb"]) {
+    assert.ok(pgCommitSrc.includes(arg), `pg commit missing ${arg}`);
   }
   const guard = readFileSync(
     join(ROOT, "scripts/marketplace-ws-map-0-legacy-guard.sql"),
@@ -1373,6 +1379,7 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.equal(report.persistenceEnabled, false);
   assert.equal(report.objects.rpcMpCeoAutoImportCommitBatch, "present");
   assert.equal(report.objects.rpcMpCeoAutoImportPreflight, "present");
+  assert.equal(report.objects.timeoutProtection, "skipped");
   assert.equal(report.suppliers.kamal.status, "reachable");
   assert.equal(report.stages.publicWebsiteWouldShowSyncedProducts, false);
   assert.ok(
@@ -1383,6 +1390,49 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
     rpcCalls.every(
       (c) => c === "probeRpcCatalog" || c === "mp_ceo_auto_import_preflight",
     ),
+  );
+
+  // Persist without DB URL → timeout protection absent; cannot persist
+  const blocked = await runAutoImportPreflight({
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_PERSIST: "true",
+      MARKETPLACE_CATALOGUE_SOURCE: "static",
+    },
+    probeTable: async () => "present",
+    probeRpcCatalog: async () => ({
+      preflight: "present",
+      upsert: "present",
+      commitBatch: "present",
+    }),
+    probeSupplier: async () => ({ status: "reachable", detail: "ok" }),
+  });
+  assert.equal(blocked.objects.timeoutProtection, "absent");
+  assert.equal(blocked.stages.canPersistCatalogueProducts, false);
+  assert.ok(
+    blocked.blockers.some((b) => /Timeout protection absent/i.test(b)),
+  );
+
+  const allowed = await runAutoImportPreflight({
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_PERSIST: "true",
+      MARKETPLACE_CATALOGUE_SOURCE: "static",
+      DATABASE_URL: "postgresql://local/test",
+    },
+    probeTable: async () => "present",
+    probeRpcCatalog: async () => ({
+      preflight: "present",
+      upsert: "present",
+      commitBatch: "present",
+    }),
+    probeSupplier: async () => ({ status: "reachable", detail: "ok" }),
+  });
+  assert.equal(allowed.objects.timeoutProtection, "present");
+  assert.ok(
+    !allowed.blockers.some((b) => /Timeout protection absent/i.test(b)),
   );
 
   // Source-level: preflight never references write RPCs as invoked calls
@@ -1466,6 +1516,50 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(r1.status === "succeeded" || r1.status === "partial");
   __resetAutoImportRunLockForTests();
   console.log("ok - concurrent run protection");
+}
+
+{
+  // Statement-timeout style cancel releases the run lock (no abandoned lock)
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  const repository = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    listListings: () => base.listListings(),
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch() {
+      throw new Error("canceling statement due to statement timeout");
+    },
+  };
+  const service = createSvc({
+    repository,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "to-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const r1 = await service.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  assert.equal(r1.status, "failed");
+  assert.ok(r1.health.errors.some((e) => /statement timeout|persist_/i.test(e)));
+  // Lock must be free for a subsequent run
+  const r2 = await service.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  assert.equal(r2.status, "failed");
+  assert.ok(!r2.health.errors.some((e) => /concurrent_run_blocked/i.test(e)));
+  __resetAutoImportRunLockForTests();
+  console.log("ok - timeout cancel releases run lock");
 }
 
 {

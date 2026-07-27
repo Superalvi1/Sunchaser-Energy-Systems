@@ -1,8 +1,14 @@
 /**
  * Supabase/Postgres persistence for CEO auto-import via
  * mp_ceo_auto_import_commit_batch (atomic transactional write).
+ *
+ * Durable commits use direct Postgres with:
+ *   BEGIN; SET LOCAL statement_timeout; SELECT commit_batch(...); COMMIT;
+ * PostgREST/supabase.rpc alone cannot apply a reliable per-call timeout.
+ *
  * Requires scripts/marketplace-ceo-auto-import.sql +
- * scripts/marketplace-ceo-auto-import-atomic.sql applied manually.
+ * scripts/marketplace-ceo-auto-import-atomic.sql applied manually, plus
+ * DATABASE_URL or SUPABASE_DB_URL for timeout-protected commits.
  */
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
 import type { SupplierCode } from "../suppliers/adapterTypes.ts";
@@ -16,6 +22,8 @@ import type {
   UpsertListingInput,
 } from "./autoImportRepository.ts";
 import { createMemoryAutoImportRepository } from "./autoImportRepository.ts";
+import { commitBatchWithStatementTimeout } from "./autoImportPgCommit.ts";
+import { hasAutoImportTimeoutProtection } from "./autoImportDbUrl.ts";
 import {
   resolveAutoImportTimeouts,
   withDeadline,
@@ -41,31 +49,12 @@ async function rpcBounded<T>(
   return data;
 }
 
-function listingPayload(input: UpsertListingInput) {
-  return {
-    identityKey: input.identityKey,
-    title: input.title,
-    brandName: input.brandName,
-    categoryName: input.categoryName,
-    websitePricePkr: input.websitePricePkr,
-    availability: input.availability,
-    selectedSupplier: input.selectedSupplier,
-    sourceUrls: input.sourceUrls,
-    matchReason: input.matchReason,
-    priceReason: input.priceReason,
-    offers: input.offers,
-    fetchedAt: input.fetchedAt,
-  };
-}
-
 export function createSupabaseAutoImportRepository(
   env: NodeJS.ProcessEnv = process.env,
 ): AutoImportRepository {
   // Local cache mirrors successful durable commits only.
   const memory = createMemoryAutoImportRepository();
   const { rpcTimeoutMs } = resolveAutoImportTimeouts(env);
-  // Leave headroom under HTTP job budget; PG statement_timeout cancels the txn.
-  const batchTimeoutMs = Math.max(5_000, Math.min(rpcTimeoutMs * 3, 50_000));
 
   return {
     async getListingByIdentityKey(key) {
@@ -101,28 +90,22 @@ export function createSupabaseAutoImportRepository(
       return mapRow(data[0]);
     },
     async commitBatch(inputs, health): Promise<CommitBatchResult> {
-      const sb = requireClient();
+      if (!hasAutoImportTimeoutProtection(env)) {
+        throw new Error(
+          "TIMEOUT_PROTECTION_ABSENT: durable auto-import requires DATABASE_URL or SUPABASE_DB_URL so SET LOCAL statement_timeout can cover mp_ceo_auto_import_commit_batch.",
+        );
+      }
       try {
-        // Await the single transactional RPC fully — do NOT Promise.race/abandon.
-        // PostgreSQL statement_timeout (set inside the RPC) cancels the txn.
-        const { data, error } = await sb.rpc("mp_ceo_auto_import_commit_batch", {
-          p_actor_scope: "system:ceo-auto-import",
-          p_run_id: health.lastRunId || `mpair_unknown`,
-          p_listings: inputs.map(listingPayload),
-          p_health: health,
-          p_statement_timeout_ms: batchTimeoutMs,
+        // Await fully — no Promise.race. SET LOCAL cancels the PG statement.
+        const data = await commitBatchWithStatementTimeout({
+          env,
+          listings: inputs,
+          health,
         });
-        if (error) {
-          throw new Error(error.message || "mp_ceo_auto_import_commit_batch failed");
-        }
-        const row = (data || {}) as Record<string, unknown>;
-        const productsCreated = Number(row.productsCreated || 0);
-        const productsUpdated = Number(row.productsUpdated || 0);
-        // Mirror into memory only after durable commit succeeded.
         const mem = await memory.commitBatch(inputs, health);
         return {
-          productsCreated,
-          productsUpdated,
+          productsCreated: data.productsCreated,
+          productsUpdated: data.productsUpdated,
           records: mem.records,
         };
       } catch (err) {
@@ -152,7 +135,6 @@ export function createSupabaseAutoImportRepository(
       return (Array.isArray(data) ? data : []).map(mapRow);
     },
     async saveHealth(health) {
-      // Prefer recording health via commit_batch; standalone save is best-effort.
       await memory.saveHealth(health);
       try {
         const sb = requireClient();
