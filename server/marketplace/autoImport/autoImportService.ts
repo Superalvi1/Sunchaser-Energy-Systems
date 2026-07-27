@@ -14,16 +14,26 @@ import {
 import type { CatalogueProductObservation } from "../suppliers/liveCatalogueTypes.ts";
 import {
   fetchShopifyCatalogue,
+  SHOPIFY_AUTO_IMPORT_MAX_PAGES,
+  SHOPIFY_AUTO_IMPORT_MAX_PRODUCTS,
   type CatalogueFetchDeps,
   type ShopifyRawProduct,
 } from "../suppliers/shopifyCatalogue.ts";
+import {
+  isDatabaseCatalogueSource,
+  readMarketplaceConfig,
+} from "../marketplaceConfig.ts";
 import {
   buildVariantIdentity,
   exactIdentityKey,
   separateListingKey,
 } from "./identityNormalize.ts";
-import type { AutoImportRepository } from "./autoImportRepository.ts";
+import type {
+  AutoImportRepository,
+  UpsertListingInput,
+} from "./autoImportRepository.ts";
 import { createAutoImportRepositoryFromEnv } from "./supabaseAutoImportRepository.ts";
+import { isSupabaseActive } from "../../../dbManager.ts";
 import {
   resolvePriceWithRollback,
   selectLowestValidPrice,
@@ -35,6 +45,15 @@ import type {
   AutoImportSyncResult,
 } from "./autoImportTypes.ts";
 import { CEO_AUTO_IMPORT_JOB_NAME } from "./autoImportTypes.ts";
+import { logAutoImport, sanitizeAutoImportError } from "./autoImportLog.ts";
+import {
+  AutoImportTimeoutError,
+  resolveAutoImportTimeouts,
+  withDeadline,
+} from "./autoImportTimeouts.ts";
+
+/** Process-wide lock so alias + admin mounts cannot run two imports at once. */
+let activeImportRunId: string | null = null;
 
 export type AutoImportServiceDeps = {
   repository?: AutoImportRepository;
@@ -43,6 +62,8 @@ export type AutoImportServiceDeps = {
   now?: () => Date;
   /** Optional fixture observations (tests) — skips live fetch when provided. */
   fixtureObservations?: CatalogueProductObservation[];
+  /** Inject logger (tests). */
+  log?: typeof logAutoImport;
 };
 
 function isAutoImportEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -104,48 +125,216 @@ function rejectReason(obs: CatalogueProductObservation): string | null {
   return null;
 }
 
+function emptyResult(
+  runId: string,
+  health: AutoImportSyncHealth,
+  stages?: AutoImportSyncResult["stages"],
+): AutoImportSyncResult {
+  return {
+    runId,
+    status:
+      health.lastSyncStatus === "never" ? "failed" : health.lastSyncStatus,
+    health,
+    sampleLowestPrice: [],
+    stages: stages ?? {
+      observationFetched: false,
+      catalogueProductCreated: false,
+      variantPriceStored: false,
+      ceoListingImported: false,
+      publicWebsiteVisible: false,
+    },
+    automaticPublication: true,
+    ceoDiscountApplied: false,
+    legacyMappingBypassUsed: false,
+  };
+}
+
+function resolvePersistEnabled(env: NodeJS.ProcessEnv): boolean {
+  return (
+    String(env.MARKETPLACE_CEO_AUTO_IMPORT_PERSIST || "").toLowerCase() ===
+    "true"
+  );
+}
+
+function buildStages(input: {
+  env: NodeJS.ProcessEnv;
+  observationFetched: boolean;
+  durableWrites: number;
+}): AutoImportSyncResult["stages"] {
+  const durablePersistActive =
+    resolvePersistEnabled(input.env) && isSupabaseActive();
+  const durable = durablePersistActive && input.durableWrites > 0;
+  const publicVisible =
+    durable && isDatabaseCatalogueSource(readMarketplaceConfig(input.env));
+  return {
+    observationFetched: input.observationFetched,
+    catalogueProductCreated: durable,
+    variantPriceStored: durable,
+    ceoListingImported: durable,
+    publicWebsiteVisible: publicVisible,
+  };
+}
+
 export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
   const env = deps.env ?? process.env;
   const repo = deps.repository ?? createAutoImportRepositoryFromEnv(env);
   const now = deps.now ?? (() => new Date());
+  const log = deps.log ?? logAutoImport;
+  const timeouts = resolveAutoImportTimeouts(env);
+  const catalogueDeps: CatalogueFetchDeps = {
+    maxPages: SHOPIFY_AUTO_IMPORT_MAX_PAGES,
+    maxProducts: SHOPIFY_AUTO_IMPORT_MAX_PRODUCTS,
+    ...deps.catalogueDeps,
+    fetchOpts: {
+      maxRetries: 1,
+      ...deps.catalogueDeps?.fetchOpts,
+    },
+  };
+
+  async function saveHealthSafe(
+    runId: string,
+    health: AutoImportSyncHealth,
+    startedAt: number,
+    originalFailure?: { errorClass: string; errorCode: string; message: string },
+  ): Promise<void> {
+    const remaining = Math.max(
+      500,
+      timeouts.jobTimeoutMs - (Date.now() - startedAt),
+    );
+    const budget = Math.min(timeouts.rpcTimeoutMs, remaining);
+    try {
+      await withDeadline(repo.saveHealth(health), budget, "auto-import-saveHealth");
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "health_save_failed",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: originalFailure
+          ? `health_save_failed_after_${originalFailure.errorCode}:${sanitized.message}`
+          : sanitized.message,
+      });
+      if (originalFailure) {
+        // Keep the original failure visible in logs (do not hide it).
+        log({
+          runId,
+          stage: "unexpected_error",
+          elapsedMs: Date.now() - startedAt,
+          status: "failed",
+          errorClass: originalFailure.errorClass,
+          errorCode: originalFailure.errorCode,
+          detail: originalFailure.message,
+        });
+      }
+    }
+  }
 
   async function discoverSupplier(
+    runId: string,
     supplier: SupplierCode,
+    startedAt: number,
   ): Promise<{
     discovered: number;
     accepted: CatalogueProductObservation[];
     excluded: number;
     error?: string;
   }> {
+    log({
+      runId,
+      stage: "supplier_fetch_start",
+      supplier,
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+    });
     try {
-      const catalogue = await fetchShopifyCatalogue(supplier, deps.catalogueDeps);
+      const catalogue = await withDeadline(
+        fetchShopifyCatalogue(supplier, catalogueDeps),
+        timeouts.supplierTimeoutMs,
+        `supplier:${supplier}`,
+      );
       const { accepted, excluded } = normalizeCatalogueProducts(
         supplier,
         catalogue.products as ShopifyRawProduct[],
         now().toISOString(),
       );
+      log({
+        runId,
+        stage: "supplier_fetch_done",
+        supplier,
+        elapsedMs: Date.now() - startedAt,
+        status: "running",
+        pagesFetched: catalogue.pagesFetched,
+        discovered: catalogue.products.length,
+        detail: `stop_${catalogue.stopReason}`,
+      });
       return {
         discovered: catalogue.products.length,
         accepted,
         excluded: excluded.length,
       };
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "supplier_fetch_failed";
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "supplier_fetch_failed",
+        supplier,
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
       return {
         discovered: 0,
         accepted: [],
         excluded: 0,
-        error: `${supplier}_timeout_or_error:${message}`.slice(0, 200),
+        error: `${supplier}_${sanitized.errorCode}:${sanitized.message}`.slice(
+          0,
+          200,
+        ),
       };
     }
   }
 
-  async function runAutomaticImport(input: {
+  async function planAutomaticImport(input: {
     actorScope: string;
-  }): Promise<AutoImportSyncResult> {
-    const runId = `mpair_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    runId: string;
+    startedAt: number;
+  }): Promise<
+    | { kind: "complete"; result: AutoImportSyncResult }
+    | {
+        kind: "planned";
+        runId: string;
+        startedAt: number;
+        observationsLen: number;
+        acceptedOffersLen: number;
+        kamalDiscovered: number;
+        alladinDiscovered: number;
+        rejectedVariants: number;
+        exactGroupCount: number;
+        separateGroupCount: number;
+        lowestPriceSelections: number;
+        rolledBackPrices: number;
+        errors: string[];
+        plannedInputs: UpsertListingInput[];
+        sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"];
+        provisionalStatus: AutoImportSyncResult["status"];
+      }
+  > {
+    const { runId, startedAt } = input;
+
     if (!isAutoImportEnabled(env)) {
+      log({
+        runId,
+        stage: "feature_gate",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorCode: "FEATURE_DISABLED",
+        detail: "CEO auto-import disabled",
+      });
       const health: AutoImportSyncHealth = {
         lastSyncAt: now().toISOString(),
         lastSyncStatus: "failed",
@@ -160,19 +349,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         productsUpdated: 0,
         lowestPriceSelections: 0,
         rolledBackPrices: 0,
-        errors: ["CEO auto-import disabled (MARKETPLACE_CEO_AUTO_IMPORT_ENABLED)."],
+        errors: [
+          "CEO auto-import disabled (MARKETPLACE_CEO_AUTO_IMPORT_ENABLED).",
+        ],
         note: "Enable MARKETPLACE_ENABLED and MARKETPLACE_CEO_AUTO_IMPORT_ENABLED.",
       };
-      await repo.saveHealth(health);
-      return {
-        runId,
-        status: "failed",
-        health,
-        sampleLowestPrice: [],
-        automaticPublication: true,
-        ceoDiscountApplied: false,
-        legacyMappingBypassUsed: false,
-      };
+      await saveHealthSafe(runId, health, startedAt);
+      return { kind: "complete", result: emptyResult(runId, health) };
     }
 
     // Defense: never touch legacy mapping RPC from this path.
@@ -187,10 +370,21 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     if (deps.fixtureObservations) {
       observations = deps.fixtureObservations;
       kamalDiscovered = observations.filter((o) => o.supplier === "kamal").length;
-      alladinDiscovered = observations.filter((o) => o.supplier === "alladin").length;
+      alladinDiscovered = observations.filter((o) => o.supplier === "alladin")
+        .length;
+      log({
+        runId,
+        stage: "normalize",
+        elapsedMs: Date.now() - startedAt,
+        status: "running",
+        discovered: observations.length,
+        detail: "fixture_observations",
+      });
     } else {
-      const kamal = await discoverSupplier("kamal");
-      const alladin = await discoverSupplier("alladin");
+      // Sequential discovery so one supplier's budget cannot starve the other
+      // beyond its own supplierTimeoutMs, and total stays under jobTimeoutMs.
+      const kamal = await discoverSupplier(runId, "kamal", startedAt);
+      const alladin = await discoverSupplier(runId, "alladin", startedAt);
       kamalDiscovered = kamal.discovered;
       alladinDiscovered = alladin.discovered;
       if (kamal.error) errors.push(kamal.error);
@@ -240,11 +434,17 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       k.startsWith("separate:"),
     ).length;
 
-    let productsCreated = 0;
-    let productsUpdated = 0;
+    // Phase 1: plan all upserts (no persistence yet).
+    type Planned = {
+      input: UpsertListingInput;
+      selectionOk: boolean;
+      selection:
+        | ReturnType<typeof selectLowestValidPrice>
+        | null;
+    };
+    const planned: Planned[] = [];
     let lowestPriceSelections = 0;
     let rolledBackPrices = 0;
-    const sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"] = [];
 
     for (const [identityKey, offers] of groups) {
       const priced: PricedOffer[] = offers.map((o) => ({
@@ -276,13 +476,10 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         continue;
       }
       if (resolved.rolledBack) rolledBackPrices += 1;
-      else if (selection.ok && selection.considered.length > 1) {
-        lowestPriceSelections += 1;
-      } else if (selection.ok) {
+      else if (selection.ok) {
         lowestPriceSelections += 1;
       }
 
-      // Availability: if any offer in_stock → in_stock; else if all sold_out → sold_out
       let availability = offers[0]!.availability;
       if (offers.some((o) => o.availability === "in_stock")) {
         availability = "in_stock";
@@ -290,42 +487,207 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         availability = "sold_out";
       }
 
-      const primary = offers.find((o) => o.supplier === resolved.supplier) ?? offers[0]!;
-      const { created } = await repo.upsertListing({
-        identityKey,
-        title: primary.title,
-        brandName: primary.brand || primary.identity.manufacturer || "Unknown",
-        categoryName:
-          primary.category || primary.identity.categoryFamily || "solar",
-        websitePricePkr: resolved.pricePkr,
-        availability,
-        selectedSupplier: resolved.supplier,
-        sourceUrls: offers.map((o) => o.canonicalUrl),
-        matchReason: primary.matchReason,
-        priceReason: resolved.reason,
-        fetchedAt: now().toISOString(),
-        previous,
-        offers: offers.map((o) => ({
-          supplier: o.supplier,
-          pricePkr: o.currentListedPricePkr,
-          url: o.canonicalUrl,
-          availability: o.availability,
-        })),
-      });
-      if (created) productsCreated += 1;
-      else productsUpdated += 1;
-
-      if (selection.ok && sampleLowestPrice.length < 12) {
-        sampleLowestPrice.push({
-          title: primary.title,
+      const primary =
+        offers.find((o) => o.supplier === resolved.supplier) ?? offers[0]!;
+      planned.push({
+        selectionOk: selection.ok,
+        selection,
+        input: {
           identityKey,
-          selectedSupplier: selection.supplier,
-          pricePkr: selection.pricePkr,
-          considered: selection.considered,
-          reason: selection.reason,
+          title: primary.title,
+          brandName: primary.brand || primary.identity.manufacturer || "Unknown",
+          categoryName:
+            primary.category || primary.identity.categoryFamily || "solar",
+          websitePricePkr: resolved.pricePkr,
+          availability,
+          selectedSupplier: resolved.supplier,
+          sourceUrls: offers.map((o) => o.canonicalUrl),
+          matchReason: primary.matchReason,
+          priceReason: resolved.reason,
+          fetchedAt: now().toISOString(),
+          previous,
+          offers: offers.map((o) => ({
+            supplier: o.supplier,
+            pricePkr: o.currentListedPricePkr,
+            url: o.canonicalUrl,
+            availability: o.availability,
+          })),
+        },
+      });
+    }
+
+    // Plan phase complete — return planned batch for atomic commit OUTSIDE
+    // withDeadline so Promise.race never abandons in-flight catalogue writes.
+    const sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"] = [];
+    for (const item of planned) {
+      if (
+        item.selectionOk &&
+        item.selection &&
+        item.selection.ok &&
+        sampleLowestPrice.length < 12
+      ) {
+        sampleLowestPrice.push({
+          title: item.input.title,
+          identityKey: item.input.identityKey,
+          selectedSupplier: item.selection.supplier,
+          pricePkr: item.selection.pricePkr,
+          considered: item.selection.considered,
+          reason: item.selection.reason,
         });
       }
     }
+
+    const provisionalStatus: AutoImportSyncResult["status"] =
+      errors.length === 0
+        ? "succeeded"
+        : planned.length > 0
+          ? "partial"
+          : "failed";
+
+    return {
+      kind: "planned" as const,
+      runId,
+      startedAt,
+      observationsLen: observations.length,
+      acceptedOffersLen: acceptedOffers.length,
+      kamalDiscovered,
+      alladinDiscovered,
+      rejectedVariants,
+      exactGroupCount,
+      separateGroupCount,
+      lowestPriceSelections,
+      rolledBackPrices,
+      errors: [...errors],
+      plannedInputs: planned.map((p) => p.input),
+      sampleLowestPrice,
+      provisionalStatus,
+    };
+  }
+
+  async function commitPlannedBatch(
+    plan: Extract<
+      Awaited<ReturnType<typeof planAutomaticImport>>,
+      { kind: "planned" }
+    >,
+  ): Promise<AutoImportSyncResult> {
+    const {
+      runId,
+      startedAt,
+      errors,
+      plannedInputs,
+      sampleLowestPrice,
+      provisionalStatus,
+      kamalDiscovered,
+      alladinDiscovered,
+      rejectedVariants,
+      exactGroupCount,
+      separateGroupCount,
+      lowestPriceSelections,
+      rolledBackPrices,
+      observationsLen,
+      acceptedOffersLen,
+    } = plan;
+
+    log({
+      runId,
+      stage: "persist_start",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      plannedUpserts: plannedInputs.length,
+    });
+
+    let productsCreated = 0;
+    let productsUpdated = 0;
+
+    const healthForCommit: AutoImportSyncHealth = {
+      lastSyncAt: now().toISOString(),
+      lastSyncStatus: provisionalStatus,
+      lastRunId: runId,
+      kamalDiscovered,
+      alladinDiscovered,
+      acceptedVariants: acceptedOffersLen,
+      rejectedVariants,
+      exactMatches: exactGroupCount,
+      conflictKeptSeparate: separateGroupCount,
+      productsCreated: 0,
+      productsUpdated: 0,
+      lowestPriceSelections,
+      rolledBackPrices,
+      errors: [...errors],
+      note: "pending_atomic_commit",
+    };
+
+    try {
+      // Single awaited transactional call — no Promise.race abandonment.
+      // Timeout: SET LOCAL statement_timeout on direct Postgres before the RPC.
+      const commit = await repo.commitBatch(plannedInputs, healthForCommit);
+      productsCreated = commit.productsCreated;
+      productsUpdated = commit.productsUpdated;
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "persist_failed",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+        plannedUpserts: plannedInputs.length,
+      });
+      errors.push(
+        `persist_${sanitized.errorCode}:${sanitized.message}`.slice(0, 200),
+      );
+      const health: AutoImportSyncHealth = {
+        lastSyncAt: now().toISOString(),
+        lastSyncStatus: "failed",
+        lastRunId: runId,
+        kamalDiscovered,
+        alladinDiscovered,
+        acceptedVariants: acceptedOffersLen,
+        rejectedVariants,
+        exactMatches: exactGroupCount,
+        conflictKeptSeparate: separateGroupCount,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors,
+        note:
+          "CEO auto-import aborted: atomic commit failed; no partial catalogue writes retained.",
+      };
+      await saveHealthSafe(runId, health, startedAt, sanitized);
+      log({
+        runId,
+        stage: "run_complete",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+      });
+      return {
+        runId,
+        status: "failed",
+        health,
+        sampleLowestPrice: [],
+        stages: buildStages({
+          env,
+          observationFetched: observationsLen > 0,
+          durableWrites: 0,
+        }),
+        automaticPublication: true,
+        ceoDiscountApplied: false,
+        legacyMappingBypassUsed: false,
+      };
+    }
+
+    log({
+      runId,
+      stage: "persist_done",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      plannedUpserts: plannedInputs.length,
+    });
 
     const status: AutoImportSyncResult["status"] =
       errors.length === 0
@@ -334,13 +696,19 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           ? "partial"
           : "failed";
 
+    const stages = buildStages({
+      env,
+      observationFetched: observationsLen > 0 || acceptedOffersLen > 0,
+      durableWrites: productsCreated + productsUpdated,
+    });
+
     const health: AutoImportSyncHealth = {
       lastSyncAt: now().toISOString(),
       lastSyncStatus: status,
       lastRunId: runId,
       kamalDiscovered,
       alladinDiscovered,
-      acceptedVariants: acceptedOffers.length,
+      acceptedVariants: acceptedOffersLen,
       rejectedVariants,
       exactMatches: exactGroupCount,
       conflictKeptSeparate: separateGroupCount,
@@ -349,20 +717,129 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       lowestPriceSelections,
       rolledBackPrices,
       errors,
-      note:
-        "CEO auto-import: public listed price published as website price; no purchasing discount; WS-MAP-0 legacy mapping unused.",
+      note: stages.publicWebsiteVisible
+        ? "CEO auto-import persisted active priced catalogue rows; public website uses database catalogue source."
+        : "CEO auto-import completed pipeline stages A–D as applicable. Public website visibility (stage E) requires MARKETPLACE_CATALOGUE_SOURCE=database and durable persist — sync success alone does not publish the storefront.",
     };
-    await repo.saveHealth(health);
+    await saveHealthSafe(runId, health, startedAt);
+
+    log({
+      runId,
+      stage: "run_complete",
+      elapsedMs: Date.now() - startedAt,
+      status,
+    });
 
     return {
       runId,
       status,
       health,
       sampleLowestPrice,
+      stages,
       automaticPublication: true,
       ceoDiscountApplied: false,
       legacyMappingBypassUsed: false,
     };
+  }
+
+  async function runAutomaticImport(input: {
+    actorScope: string;
+  }): Promise<AutoImportSyncResult> {
+    const runId = `mpair_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const startedAt = Date.now();
+
+    if (activeImportRunId) {
+      const health: AutoImportSyncHealth = {
+        lastSyncAt: now().toISOString(),
+        lastSyncStatus: "failed",
+        lastRunId: runId,
+        kamalDiscovered: 0,
+        alladinDiscovered: 0,
+        acceptedVariants: 0,
+        rejectedVariants: 0,
+        exactMatches: 0,
+        conflictKeptSeparate: 0,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors: [
+          `concurrent_run_blocked:active=${activeImportRunId}`.slice(0, 200),
+        ],
+        note: "Another auto-import run is already in progress.",
+      };
+      log({
+        runId,
+        stage: "feature_gate",
+        status: "failed",
+        errorCode: "CONCURRENT_RUN",
+        detail: `blocked_by_${activeImportRunId}`,
+      });
+      return emptyResult(runId, health);
+    }
+
+    activeImportRunId = runId;
+    log({
+      runId,
+      stage: "run_start",
+      elapsedMs: 0,
+      status: "running",
+      detail: `jobTimeoutMs=${timeouts.jobTimeoutMs}`,
+    });
+
+    try {
+      // Phase 1: fetch/normalize/plan under HTTP-safe deadline (no catalogue writes).
+      const plan = await withDeadline(
+        planAutomaticImport({ ...input, runId, startedAt }),
+        timeouts.jobTimeoutMs,
+        "auto-import-plan",
+      );
+      if (plan.kind === "complete") return plan.result;
+      // Phase 2: one awaited transactional commit — never Promise.race-abandoned.
+      return await commitPlannedBatch(plan);
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      const isTimeout =
+        err instanceof AutoImportTimeoutError ||
+        sanitized.errorCode === "TIMEOUT";
+      log({
+        runId,
+        stage: isTimeout ? "job_timeout" : "unexpected_error",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
+      const health: AutoImportSyncHealth = {
+        lastSyncAt: now().toISOString(),
+        lastSyncStatus: "failed",
+        lastRunId: runId,
+        kamalDiscovered: 0,
+        alladinDiscovered: 0,
+        acceptedVariants: 0,
+        rejectedVariants: 0,
+        exactMatches: 0,
+        conflictKeptSeparate: 0,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors: [
+          `${isTimeout ? "job_timeout" : "unexpected"}:${sanitized.message}`.slice(
+            0,
+            200,
+          ),
+        ],
+        note: isTimeout
+          ? "Auto-import exceeded plan-phase timeout before atomic commit; no catalogue writes started."
+          : "Auto-import failed with an unexpected error.",
+      };
+      await saveHealthSafe(runId, health, startedAt, sanitized);
+      return emptyResult(runId, health);
+    } finally {
+      if (activeImportRunId === runId) activeImportRunId = null;
+    }
   }
 
   return {
@@ -374,3 +851,8 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
 }
 
 export type AutoImportService = ReturnType<typeof createAutoImportService>;
+
+/** Test helper — clear process-wide import lock. */
+export function __resetAutoImportRunLockForTests(): void {
+  activeImportRunId = null;
+}

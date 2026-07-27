@@ -39,9 +39,12 @@ export function isPublicApiRoute(method: string, pathname: string): boolean {
   const path = pathname.split("?")[0] || pathname;
 
   // marketplaceRouteLockdown surface — requires CRM JWT via central auth.
+  // Admin + auto-import alias are never public (JWT + Super Admin gates).
   if (
     path === "/api/marketplace/admin" ||
-    path.startsWith("/api/marketplace/admin/")
+    path.startsWith("/api/marketplace/admin/") ||
+    path === "/api/marketplace/auto-import" ||
+    path.startsWith("/api/marketplace/auto-import/")
   ) {
     return false;
   }

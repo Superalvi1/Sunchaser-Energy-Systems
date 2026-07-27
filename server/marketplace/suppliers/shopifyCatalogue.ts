@@ -19,7 +19,15 @@ import {
 import { SHOPIFY_STOREFRONT_PRODUCTS_JSON } from "./liveCatalogueTypes.ts";
 
 export const SHOPIFY_PAGE_LIMIT = 250;
+/** Hard ceiling for exploratory/full catalogue pulls (not used for CEO auto-import HTTP). */
 export const SHOPIFY_MAX_PAGES = 40;
+/**
+ * Auto-import must finish inside the platform request deadline.
+ * Live probe (2026-07): Kamal ≈1 page / 144 products; Alladin ≈4 pages / 999 products.
+ */
+export const SHOPIFY_AUTO_IMPORT_MAX_PAGES = 8;
+/** Cap unique products retained per supplier during CEO auto-import. */
+export const SHOPIFY_AUTO_IMPORT_MAX_PRODUCTS = 1_200;
 /** Cap conflict warnings retained per catalogue fetch. */
 export const DEDUPE_WARNING_CAP = 25;
 
@@ -359,6 +367,8 @@ export type CatalogueFetchDeps = {
   fetchOpts?: SafeFetchOptions;
   pageLimit?: number;
   maxPages?: number;
+  /** Stop after this many unique products (post-page collection, pre-dedupe cap). */
+  maxProducts?: number;
   /** Optional page provider for fixture-based tests (page is 1-indexed). */
   pageProvider?: (
     supplier: SupplierCode,
@@ -377,7 +387,21 @@ export type DiscoveredCatalogue = {
   rawProductRows: number;
   duplicateCount: number;
   dedupeWarnings: string[];
+  /** Why pagination stopped (sanitized; no bodies). */
+  stopReason:
+    | "empty_page"
+    | "short_page"
+    | "max_pages"
+    | "max_products"
+    | "repeated_page";
 };
+
+function pageFingerprint(products: ShopifyRawProduct[]): string {
+  return products
+    .map((p) => (p?.id != null ? String(p.id) : ""))
+    .filter(Boolean)
+    .join(",");
+}
 
 export async function fetchShopifyCatalogue(
   supplier: SupplierCode,
@@ -387,8 +411,11 @@ export async function fetchShopifyCatalogue(
   const safeFetch = deps.safeFetch ?? safeFetchText;
   const pageLimit = deps.pageLimit ?? SHOPIFY_PAGE_LIMIT;
   const maxPages = deps.maxPages ?? SHOPIFY_MAX_PAGES;
+  const maxProducts = deps.maxProducts ?? Number.POSITIVE_INFINITY;
   const collected: ShopifyRawProduct[] = [];
   let pagesFetched = 0;
+  let stopReason: DiscoveredCatalogue["stopReason"] = "max_pages";
+  const seenFingerprints = new Set<string>();
 
   for (let page = 1; page <= maxPages; page++) {
     let pageData: ShopifyCataloguePage;
@@ -408,12 +435,34 @@ export async function fetchShopifyCatalogue(
       pageData = parseShopifyProductsJson(res.body);
     }
     pagesFetched += 1;
-    if (!pageData.products.length) break;
+    if (!pageData.products.length) {
+      stopReason = "empty_page";
+      break;
+    }
+
+    const fingerprint = pageFingerprint(pageData.products);
+    if (fingerprint && seenFingerprints.has(fingerprint)) {
+      stopReason = "repeated_page";
+      break;
+    }
+    if (fingerprint) seenFingerprints.add(fingerprint);
+
     collected.push(...pageData.products);
-    if (pageData.products.length < pageLimit) break;
+    if (pageData.products.length < pageLimit) {
+      stopReason = "short_page";
+      break;
+    }
+    if (collected.length >= maxProducts) {
+      stopReason = "max_products";
+      break;
+    }
   }
 
-  const deduped = dedupeShopifyProducts(supplier, collected);
+  const capped =
+    Number.isFinite(maxProducts) && collected.length > maxProducts
+      ? collected.slice(0, maxProducts)
+      : collected;
+  const deduped = dedupeShopifyProducts(supplier, capped);
 
   return {
     supplier,
@@ -424,5 +473,6 @@ export async function fetchShopifyCatalogue(
     rawProductRows: collected.length,
     duplicateCount: deduped.duplicateCount,
     dedupeWarnings: deduped.warnings,
+    stopReason,
   };
 }

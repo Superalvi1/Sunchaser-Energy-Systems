@@ -81,7 +81,26 @@ export type AutoImportSyncResult = {
     considered: Array<{ supplier: SupplierCode; pricePkr: number }>;
     reason: string;
   }>;
-  /** CEO auto-import is authorized to publish listed prices. */
+  /**
+   * Explicit pipeline stages. Sync success does NOT imply public website visibility.
+   * Stage E (publicWebsiteVisible) requires database catalogue source + durable persist.
+   */
+  stages: {
+    /** A — supplier catalogue observations fetched/normalized */
+    observationFetched: boolean;
+    /** B — mp_products row created/updated (durable persist path only) */
+    catalogueProductCreated: boolean;
+    /** C — variant website_price stored (durable persist path only) */
+    variantPriceStored: boolean;
+    /** D — mp_auto_import_listings upserted (durable persist path only) */
+    ceoListingImported: boolean;
+    /**
+     * E — visible on public website catalogue.
+     * False when MARKETPLACE_CATALOGUE_SOURCE≠database or persist did not run.
+     */
+    publicWebsiteVisible: boolean;
+  };
+  /** True when this job is authorized to write website_price via CEO RPC (not storefront visibility). */
   automaticPublication: true;
   ceoDiscountApplied: false;
   legacyMappingBypassUsed: false;
