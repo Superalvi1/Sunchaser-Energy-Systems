@@ -1635,6 +1635,275 @@ console.log("PASS: retryable close schedules reconnect; open resets retry state"
 console.log("PASS: stale socket events cannot overwrite current socket state");
 
 // ---------------------------------------------------------------------------
+// REPAIR — post-close stale open/QR/inbound/creds cannot resurrect state
+// ---------------------------------------------------------------------------
+
+{
+  const authDir = tmpAuthDir();
+  const scheduled: Array<{ ms: number; fn: () => void }> = [];
+  let factoryInput: {
+    onConnectionUpdate: (update: {
+      connection?: string;
+      statusCode?: number;
+      userId?: string | null;
+    }) => void;
+    onQr: (qr: string) => void;
+    onCredentialsSaved: () => void;
+    onInbound: (message: unknown) => Promise<void>;
+  } | null = null;
+
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [5_000],
+    setTimeoutFn: ((fn: () => void, ms: number) => {
+      scheduled.push({ ms, fn: fn as () => void });
+      return scheduled.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: ((handle: NodeJS.Timeout) => {
+      const idx = (handle as unknown as number) - 1;
+      if (idx >= 0 && idx < scheduled.length) scheduled[idx]!.fn = () => undefined;
+    }) as typeof clearTimeout,
+    socketFactory: async (input) => {
+      factoryInput = input as typeof factoryInput;
+      return {
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+      };
+    },
+  });
+
+  let inboundCalls = 0;
+  session.setInboundHandler(async () => {
+    inboundCalls += 1;
+  });
+
+  await session.connect();
+  assert.ok(factoryInput);
+  const closedSocket = factoryInput!;
+
+  // 1) Retryable close, then late open from the same socket.
+  await closedSocket.onConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session.getSafeStatus().state, "RECONNECTING");
+  assert.equal(session.__testHasReconnectTimer(), true);
+  const delaysAfterClose = session.__testGetScheduledReconnectDelays().length;
+
+  await closedSocket.onConnectionUpdate({
+    connection: "open",
+    userId: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(session.getSafeStatus().state, "RECONNECTING");
+  assert.equal(session.__testHasReconnectTimer(), true);
+  assert.equal(
+    session.__testGetScheduledReconnectDelays().length,
+    delaysAfterClose
+  );
+
+  // Stale inbound after close must not reach the handler.
+  inboundCalls = 0;
+  await closedSocket.onInbound({
+    providerMessageId: "stale_1",
+    remoteJid: "923009998877@s.whatsapp.net",
+    fromMe: false,
+    text: "nope",
+    pushName: null,
+    occurredAt: new Date().toISOString(),
+    isGroup: false,
+    isStatusOrNewsletter: false,
+    rawType: "conversation",
+  });
+  assert.equal(inboundCalls, 0);
+
+  // 4) Newly created reconnect socket can still open normally.
+  const timer = scheduled[scheduled.length - 1]!;
+  timer.fn();
+  await new Promise((r) => setTimeout(r, 15));
+  assert.ok(factoryInput);
+  assert.notEqual(factoryInput, closedSocket);
+  const newSocket = factoryInput!;
+  await newSocket.onConnectionUpdate({
+    connection: "open",
+    userId: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(session.getSafeStatus().state, "CONNECTED");
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log(
+  "PASS: late open after retryable close ignored; new reconnect socket can connect"
+);
+
+{
+  const authDir = tmpAuthDir();
+  let factoryInput: {
+    onConnectionUpdate: (update: {
+      connection?: string;
+      statusCode?: number;
+      userId?: string | null;
+    }) => void;
+  } | null = null;
+  const scheduled: Array<{ ms: number; fn: () => void }> = [];
+
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [1_000],
+    setTimeoutFn: ((fn: () => void, ms: number) => {
+      scheduled.push({ ms, fn: fn as () => void });
+      return scheduled.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: async (input) => {
+      factoryInput = input as typeof factoryInput;
+      return {
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+      };
+    },
+  });
+
+  await session.connect();
+  const closedSocket = factoryInput!;
+
+  await closedSocket.onConnectionUpdate({
+    connection: "close",
+    statusCode: 440,
+  });
+  assert.equal(session.getSafeStatus().state, "ERROR");
+  assert.equal(session.__testHasReconnectTimer(), false);
+  assert.equal(scheduled.length, 0);
+
+  await closedSocket.onConnectionUpdate({
+    connection: "open",
+    userId: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(session.getSafeStatus().state, "ERROR");
+  assert.equal(session.__testHasReconnectTimer(), false);
+  assert.equal(scheduled.length, 0);
+
+  // badSession path
+  session.__testSetState("DISCONNECTED", { connectionDesired: true });
+  await session.connect();
+  const badSessionSocket = factoryInput!;
+  await badSessionSocket.onConnectionUpdate({
+    connection: "close",
+    statusCode: 500,
+  });
+  assert.equal(session.getSafeStatus().state, "ERROR");
+  await badSessionSocket.onConnectionUpdate({
+    connection: "open",
+    userId: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(session.getSafeStatus().state, "ERROR");
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: late open after connectionReplaced/badSession ignored");
+
+{
+  const authDir = tmpAuthDir();
+  let factoryInput: {
+    onConnectionUpdate: (update: {
+      connection?: string;
+      statusCode?: number;
+      userId?: string | null;
+    }) => void;
+    onQr: (qr: string) => void;
+    onCredentialsSaved: () => void;
+    onInbound: (message: unknown) => Promise<void>;
+  } | null = null;
+
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [1_000],
+    setTimeoutFn: ((fn: () => void) =>
+      1 as unknown as NodeJS.Timeout) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: async (input) => {
+      factoryInput = input as typeof factoryInput;
+      return {
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+      };
+    },
+  });
+
+  let inboundCalls = 0;
+  session.setInboundHandler(async () => {
+    inboundCalls += 1;
+  });
+
+  await session.connect();
+  const closedSocket = factoryInput!;
+  await closedSocket.onConnectionUpdate({
+    connection: "logged_out",
+    statusCode: 401,
+  });
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+  assert.equal(session.__testIsConnectionDesired(), false);
+  assert.equal(session.getSafeStatus().credentialsAvailable, false);
+
+  await closedSocket.onConnectionUpdate({
+    connection: "open",
+    userId: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+
+  closedSocket.onQr("should-not-publish");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+  assert.equal(session.getSafeStatus().qrAvailable, false);
+
+  closedSocket.onCredentialsSaved();
+  assert.equal(session.getSafeStatus().credentialsAvailable, false);
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+
+  inboundCalls = 0;
+  await closedSocket.onInbound({
+    providerMessageId: "stale_logout",
+    remoteJid: "923009998877@s.whatsapp.net",
+    fromMe: false,
+    text: "nope",
+    pushName: null,
+    occurredAt: new Date().toISOString(),
+    isGroup: false,
+    isStatusOrNewsletter: false,
+    rawType: "conversation",
+  });
+  assert.equal(inboundCalls, 0);
+  assert.equal(session.getSafeStatus().state, "LOGGED_OUT");
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log(
+  "PASS: late open/QR/inbound/creds after loggedOut are ignored"
+);
+
+// ---------------------------------------------------------------------------
 // INBOX-HOTFIX-01 — shared LID map + live inbound + privacy-safe diagnostics
 // ---------------------------------------------------------------------------
 

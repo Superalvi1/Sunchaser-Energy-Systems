@@ -1021,6 +1021,13 @@ export class WhatsAppWebSession {
     }
 
     if (update.connection === "open") {
+      // Never resurrect CONNECTED from a closed/undesired/shutdown session.
+      if (!this.connectionDesired || this.shuttingDown) {
+        return;
+      }
+      if (generation != null && generation !== this.socketGeneration) {
+        return;
+      }
       this.clearReconnectTimer();
       this.reconnectAttempt = 0;
       this.reconnectAttemptInProgress = false;
@@ -1036,7 +1043,9 @@ export class WhatsAppWebSession {
     }
 
     if (update.connection === "logged_out") {
-      // Terminal: clear timer first; never reconnect.
+      // Terminal: invalidate this socket generation first so late open/QR/inbound
+      // callbacks from the same socket cannot overwrite LOGGED_OUT.
+      this.invalidateClosedSocketGeneration(generation);
       this.connectionDesired = false;
       this.cancelHistorySync("logged_out");
       this.clearReconnectTimer();
@@ -1044,7 +1053,6 @@ export class WhatsAppWebSession {
       this.reconnectAttemptInProgress = false;
       this.clearQr();
       this.phoneRaw = null;
-      this.socket = null;
       this.credentialsAvailable = false;
       this.lastDisconnectClassification = "logged_out";
       this.logConnectionClosed({
@@ -1068,10 +1076,9 @@ export class WhatsAppWebSession {
 
     if (update.connection === "close") {
       this.cancelHistorySync("connection_close");
-      // Leave CONNECTED immediately — never report connected after socket close.
-      if (this.socket && (generation == null || generation === this.socketGeneration)) {
-        this.socket = null;
-      }
+      // Invalidate immediately so late open/QR/inbound/creds from this socket
+      // cannot pass the generation guard while reconnect is only scheduled.
+      this.invalidateClosedSocketGeneration(generation);
       this.clearQr();
 
       // Manual stop / shutdown: close events must not reconnect.
@@ -1093,12 +1100,13 @@ export class WhatsAppWebSession {
       const classification = classifyDisconnect(update.statusCode);
       if (classification === "logged_out") {
         // Safety if factory mis-emits close+loggedOut code.
+        // Generation already invalidated; logged_out path is idempotent for that.
         await this.handleConnectionUpdate(
           {
             connection: "logged_out",
             statusCode: update.statusCode,
           },
-          generation
+          this.socketGeneration
         );
         return;
       }
@@ -1124,6 +1132,7 @@ export class WhatsAppWebSession {
       }
 
       // Temporary / retryable network loss — reconnect with bounded backoff.
+      // startSocket will allocate a fresh generation for the next socket.
       const willRetry = this.shouldReconnect();
       this.lastDisconnectClassification = classifyDisconnectDiagnostic(
         update.statusCode
@@ -1136,6 +1145,19 @@ export class WhatsAppWebSession {
       this.setState("RECONNECTING", "Reconnect scheduled after network loss");
       this.scheduleReconnect();
     }
+  }
+
+  /**
+   * After an accepted close/logged_out for the active socket, bump generation
+   * so late callbacks from that socket can no longer mutate session state.
+   * Reconnect still works: startSocket allocates a newer generation.
+   */
+  private invalidateClosedSocketGeneration(generation?: number): void {
+    if (generation != null && generation !== this.socketGeneration) {
+      return;
+    }
+    this.socketGeneration += 1;
+    this.socket = null;
   }
 
   private logConnectionClosed(input: {
