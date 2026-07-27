@@ -201,7 +201,16 @@ export default function MarketplaceAutoImportStaff({ staffUser }: Props) {
             <li>Persistence enabled: {String(preflight.persistenceEnabled)}</li>
             <li>Catalogue source: {preflight.catalogueSource}</li>
             <li>
-              RPC upsert: {preflight.objects.rpcMpCeoAutoImportUpsertListing}
+              RPC commit batch:{" "}
+              {preflight.objects.rpcMpCeoAutoImportCommitBatch}
+            </li>
+            <li>
+              RPC preflight (read-only):{" "}
+              {preflight.objects.rpcMpCeoAutoImportPreflight}
+            </li>
+            <li>
+              RPC upsert (legacy helper):{" "}
+              {preflight.objects.rpcMpCeoAutoImportUpsertListing}
             </li>
             <li>
               Listings table: {preflight.objects.tableMpAutoImportListings}

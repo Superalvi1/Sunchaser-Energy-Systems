@@ -528,7 +528,7 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
-  // SQL artifact present and does not re-enable legacy mapping execute for service on old RPC
+  // SQL artifacts: legacy upsert + atomic batch/preflight (manual apply)
   const sql = readFileSync(
     join(ROOT, "scripts/marketplace-ceo-auto-import.sql"),
     "utf8",
@@ -536,27 +536,43 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(sql.includes("mp_ceo_auto_import_upsert_listing"));
   assert.ok(sql.includes("ceoDiscountApplied"));
   assert.ok(!sql.includes("create or replace function public.mp_admin_upsert_supplier_mapping"));
-  // Code RPC args must match SQL signature (no drift).
+
+  const atomic = readFileSync(
+    join(ROOT, "scripts/marketplace-ceo-auto-import-atomic.sql"),
+    "utf8",
+  );
+  assert.ok(atomic.includes("mp_ceo_auto_import_preflight"));
+  assert.ok(atomic.includes("mp_ceo_auto_import_commit_batch"));
+  assert.ok(atomic.includes("statement_timeout"));
+  assert.ok(/pg_catalog\.pg_proc/i.test(atomic));
+  assert.ok(!/insert\s+into|update\s+|delete\s+from/i.test(
+    atomic.slice(
+      atomic.indexOf("mp_ceo_auto_import_preflight"),
+      atomic.indexOf("mp_ceo_auto_import_commit_batch"),
+    ),
+  ));
+
   const repoSrc = readFileSync(
     join(__dirname, "supabaseAutoImportRepository.ts"),
     "utf8",
   );
+  assert.ok(repoSrc.includes("mp_ceo_auto_import_commit_batch"));
+  assert.ok(repoSrc.includes("p_listings"));
+  assert.ok(repoSrc.includes("p_statement_timeout_ms"));
+  assert.ok(!repoSrc.includes("mp_ceo_auto_import_upsert_listing"));
+  // Commit must not Promise.race/abandon the transactional RPC.
+  const commitFn = repoSrc.slice(repoSrc.indexOf("async commitBatch"));
+  assert.ok(!commitFn.slice(0, 800).includes("rpcBounded"));
+  assert.ok(!commitFn.slice(0, 800).includes("withDeadline"));
+
   for (const arg of [
     "p_actor_scope",
-    "p_identity_key",
-    "p_title",
-    "p_brand_name",
-    "p_category_name",
-    "p_website_price",
-    "p_availability",
-    "p_selected_supplier",
-    "p_source_urls",
-    "p_match_reason",
-    "p_price_reason",
-    "p_offers",
-    "p_fetched_at",
+    "p_run_id",
+    "p_listings",
+    "p_health",
+    "p_statement_timeout_ms",
   ]) {
-    assert.ok(sql.includes(arg), `SQL missing ${arg}`);
+    assert.ok(atomic.includes(arg), `atomic SQL missing ${arg}`);
     assert.ok(repoSrc.includes(arg), `code missing ${arg}`);
   }
   const guard = readFileSync(
@@ -564,7 +580,7 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
     "utf8",
   );
   assert.ok(guard.includes("LEGACY_MAPPING_DISABLED"));
-  console.log("ok - SQL artifacts + RPC signature alignment");
+  console.log("ok - SQL artifacts + atomic RPC signature alignment");
 }
 
 {
@@ -677,22 +693,11 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
-  // RPC / persist failure → failed run, no partial persistence
-  const base = createMemoryAutoImportRepository();
-  let upserts = 0;
-  const repository: typeof base = {
-    ...base,
-    async upsertListing(input) {
-      upserts += 1;
-      if (upserts >= 2) {
-        throw new Error("function mp_ceo_auto_import_upsert_listing does not exist");
-      }
-      return base.upsertListing(input);
-    },
-    async deleteListings(keys) {
-      return base.deleteListings(keys);
-    },
-  };
+  // Atomic mid-batch failure → zero retained writes from the failed run
+  const failCtrl = { n: 1 as number | null };
+  const repository = createMemoryAutoImportRepository({
+    failAfterNWrites: failCtrl,
+  });
   const service = createAutoImportService({
     repository,
     fixtureObservations: [
@@ -719,15 +724,18 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
     actorScope: "admin:super:ceo",
   });
   assert.equal(result.status, "failed");
-  assert.ok(result.health.errors.some((e) => /persist_|RPC/i.test(e)));
+  assert.ok(result.health.errors.some((e) => /persist_/i.test(e)));
   assert.equal((await service.listListings()).length, 0);
   assert.equal(result.health.productsCreated, 0);
-  console.log("ok - RPC failure rolls back partial persistence");
+  console.log("ok - atomic commit failure leaves zero listings");
 }
 
 {
-  // Rollback deletes only newly created keys — never pre-existing listings
-  const repository = createMemoryAutoImportRepository();
+  // Mid-batch failure leaves every pre-existing listing value unchanged
+  const failCtrl = { n: null as number | null };
+  const repository = createMemoryAutoImportRepository({
+    failAfterNWrites: failCtrl,
+  });
   const env = {
     MARKETPLACE_ENABLED: "true",
     MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
@@ -748,26 +756,12 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   const before = await seed.listListings();
   assert.equal(before.length, 1);
   const preKey = before[0]!.identityKey;
+  const prePrice = before[0]!.websitePricePkr;
+  const preValid = before[0]!.lastValidPricePkr;
 
-  let upserts = 0;
-  const guarded = {
-    getListingByIdentityKey: (k: string) => repository.getListingByIdentityKey(k),
-    getListingBySourceUrl: (u: string) => repository.getListingBySourceUrl(u),
-    listListings: () => repository.listListings(),
-    saveHealth: (h: Parameters<typeof repository.saveHealth>[0]) =>
-      repository.saveHealth(h),
-    getHealth: () => repository.getHealth(),
-    async upsertListing(input: Parameters<typeof repository.upsertListing>[0]) {
-      upserts += 1;
-      if (upserts >= 2) {
-        throw new Error("rpc upsert failed on second listing");
-      }
-      return repository.upsertListing(input);
-    },
-    deleteListings: (keys: string[]) => repository.deleteListings(keys),
-  };
+  failCtrl.n = 1;
   const service = createAutoImportService({
-    repository: guarded,
+    repository,
     fixtureObservations: [
       obs({
         supplier: "kamal",
@@ -792,7 +786,9 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   const after = await service.listListings();
   assert.equal(after.length, 1);
   assert.equal(after[0]!.identityKey, preKey);
-  console.log("ok - rollback preserves pre-existing listings");
+  assert.equal(after[0]!.websitePricePkr, prePrice);
+  assert.equal(after[0]!.lastValidPricePkr, preValid);
+  console.log("ok - atomic rollback preserves pre-existing listing values");
 }
 
 {
@@ -809,10 +805,9 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
       getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
       listListings: () => base.listListings(),
       getHealth: () => base.getHealth(),
-      deleteListings: (keys: string[]) => base.deleteListings(keys),
-      async upsertListing() {
+      async commitBatch() {
         throw new Error(
-          "function mp_ceo_auto_import_upsert_listing does not exist",
+          "function mp_ceo_auto_import_commit_batch does not exist",
         );
       },
       async saveHealth() {
@@ -1036,10 +1031,9 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   const boomService = createAutoImportService({
     repository: {
       ...failingRepo,
-      async upsertListing() {
-        throw new Error("rpc upsert failed");
+      async commitBatch() {
+        throw new Error("rpc commit_batch failed");
       },
-      deleteListings: (keys) => failingRepo.deleteListings(keys),
     },
     fixtureObservations: [
       obs({
@@ -1351,8 +1345,9 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
-  // Read-only preflight reports presence/reachability without importing
+  // Read-only preflight: zero write-capable RPC calls
   const { runAutoImportPreflight } = await import("./autoImportPreflight.ts");
+  const rpcCalls: string[] = [];
   const report = await runAutoImportPreflight({
     env: {
       MARKETPLACE_ENABLED: "true",
@@ -1361,21 +1356,116 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
       MARKETPLACE_CATALOGUE_SOURCE: "static",
     },
     probeTable: async () => "absent",
-    probeRpc: async () => "absent",
+    probeRpcCatalog: async () => {
+      rpcCalls.push("probeRpcCatalog");
+      return {
+        preflight: "present",
+        upsert: "present",
+        commitBatch: "present",
+      };
+    },
+    onRpcCall: (name) => rpcCalls.push(name),
     probeSupplier: async (origin) => ({
       status: "reachable",
       detail: `ok:${origin.includes("kamal") ? "kamal" : "alladin"}`,
     }),
   });
   assert.equal(report.persistenceEnabled, false);
-  assert.equal(report.objects.rpcMpCeoAutoImportUpsertListing, "absent");
+  assert.equal(report.objects.rpcMpCeoAutoImportCommitBatch, "present");
+  assert.equal(report.objects.rpcMpCeoAutoImportPreflight, "present");
   assert.equal(report.suppliers.kamal.status, "reachable");
-  assert.equal(report.suppliers.alladin.status, "reachable");
   assert.equal(report.stages.publicWebsiteWouldShowSyncedProducts, false);
   assert.ok(
     report.notes.some((n) => /CATALOGUE_SOURCE|database/i.test(n)),
   );
-  console.log("ok - preflight read-only report");
+  assert.ok(!rpcCalls.some((c) => /upsert|commit_batch/i.test(c)));
+  assert.ok(
+    rpcCalls.every(
+      (c) => c === "probeRpcCatalog" || c === "mp_ceo_auto_import_preflight",
+    ),
+  );
+
+  // Source-level: preflight never references write RPCs as invoked calls
+  const preflightSrc = readFileSync(
+    join(__dirname, "autoImportPreflight.ts"),
+    "utf8",
+  );
+  assert.ok(!preflightSrc.includes('rpc("mp_ceo_auto_import_upsert_listing"'));
+  assert.ok(!preflightSrc.includes('rpc("mp_ceo_auto_import_commit_batch"'));
+  assert.ok(preflightSrc.includes('rpc("mp_ceo_auto_import_preflight"'));
+  console.log("ok - preflight read-only; zero write-capable calls");
+}
+
+{
+  // Concurrent runs: second import blocked while first is active
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const repository = createMemoryAutoImportRepository();
+  const blockingRepo = {
+    getListingByIdentityKey: (k: string) => repository.getListingByIdentityKey(k),
+    getListingBySourceUrl: async (u: string) => {
+      await gate;
+      return repository.getListingBySourceUrl(u);
+    },
+    listListings: () => repository.listListings(),
+    getHealth: () => repository.getHealth(),
+    saveHealth: (h: Parameters<typeof repository.saveHealth>[0]) =>
+      repository.saveHealth(h),
+    commitBatch: (
+      inputs: Parameters<typeof repository.commitBatch>[0],
+      health: Parameters<typeof repository.commitBatch>[1],
+    ) => repository.commitBatch(inputs, health),
+  };
+  const serviceA = createSvc({
+    repository: blockingRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "lock-a",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const serviceB = createSvc({
+    repository,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Knox Hybrid Inverter 6kW Single Phase",
+        supplierProductId: "lock-b",
+        brand: "Knox",
+        currentListedPricePkr: 90000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const p1 = serviceA.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  await new Promise((r) => setTimeout(r, 20));
+  const r2 = await serviceB.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(r2.status, "failed");
+  assert.ok(r2.health.errors.some((e) => /concurrent_run_blocked/i.test(e)));
+  release();
+  const r1 = await p1;
+  assert.ok(r1.status === "succeeded" || r1.status === "partial");
+  __resetAutoImportRunLockForTests();
+  console.log("ok - concurrent run protection");
 }
 
 {

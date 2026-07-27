@@ -52,6 +52,9 @@ import {
   withDeadline,
 } from "./autoImportTimeouts.ts";
 
+/** Process-wide lock so alias + admin mounts cannot run two imports at once. */
+let activeImportRunId: string | null = null;
+
 export type AutoImportServiceDeps = {
   repository?: AutoImportRepository;
   catalogueDeps?: CatalogueFetchDeps;
@@ -296,11 +299,31 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     }
   }
 
-  async function runAutomaticImportInner(input: {
+  async function planAutomaticImport(input: {
     actorScope: string;
     runId: string;
     startedAt: number;
-  }): Promise<AutoImportSyncResult> {
+  }): Promise<
+    | { kind: "complete"; result: AutoImportSyncResult }
+    | {
+        kind: "planned";
+        runId: string;
+        startedAt: number;
+        observationsLen: number;
+        acceptedOffersLen: number;
+        kamalDiscovered: number;
+        alladinDiscovered: number;
+        rejectedVariants: number;
+        exactGroupCount: number;
+        separateGroupCount: number;
+        lowestPriceSelections: number;
+        rolledBackPrices: number;
+        errors: string[];
+        plannedInputs: UpsertListingInput[];
+        sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"];
+        provisionalStatus: AutoImportSyncResult["status"];
+      }
+  > {
     const { runId, startedAt } = input;
 
     if (!isAutoImportEnabled(env)) {
@@ -332,7 +355,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         note: "Enable MARKETPLACE_ENABLED and MARKETPLACE_CEO_AUTO_IMPORT_ENABLED.",
       };
       await saveHealthSafe(runId, health, startedAt);
-      return emptyResult(runId, health);
+      return { kind: "complete", result: emptyResult(runId, health) };
     }
 
     // Defense: never touch legacy mapping RPC from this path.
@@ -493,46 +516,113 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       });
     }
 
+    // Plan phase complete — return planned batch for atomic commit OUTSIDE
+    // withDeadline so Promise.race never abandons in-flight catalogue writes.
+    const sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"] = [];
+    for (const item of planned) {
+      if (
+        item.selectionOk &&
+        item.selection &&
+        item.selection.ok &&
+        sampleLowestPrice.length < 12
+      ) {
+        sampleLowestPrice.push({
+          title: item.input.title,
+          identityKey: item.input.identityKey,
+          selectedSupplier: item.selection.supplier,
+          pricePkr: item.selection.pricePkr,
+          considered: item.selection.considered,
+          reason: item.selection.reason,
+        });
+      }
+    }
+
+    const provisionalStatus: AutoImportSyncResult["status"] =
+      errors.length === 0
+        ? "succeeded"
+        : planned.length > 0
+          ? "partial"
+          : "failed";
+
+    return {
+      kind: "planned" as const,
+      runId,
+      startedAt,
+      observationsLen: observations.length,
+      acceptedOffersLen: acceptedOffers.length,
+      kamalDiscovered,
+      alladinDiscovered,
+      rejectedVariants,
+      exactGroupCount,
+      separateGroupCount,
+      lowestPriceSelections,
+      rolledBackPrices,
+      errors: [...errors],
+      plannedInputs: planned.map((p) => p.input),
+      sampleLowestPrice,
+      provisionalStatus,
+    };
+  }
+
+  async function commitPlannedBatch(
+    plan: Extract<
+      Awaited<ReturnType<typeof planAutomaticImport>>,
+      { kind: "planned" }
+    >,
+  ): Promise<AutoImportSyncResult> {
+    const {
+      runId,
+      startedAt,
+      errors,
+      plannedInputs,
+      sampleLowestPrice,
+      provisionalStatus,
+      kamalDiscovered,
+      alladinDiscovered,
+      rejectedVariants,
+      exactGroupCount,
+      separateGroupCount,
+      lowestPriceSelections,
+      rolledBackPrices,
+      observationsLen,
+      acceptedOffersLen,
+    } = plan;
+
     log({
       runId,
       stage: "persist_start",
       elapsedMs: Date.now() - startedAt,
       status: "running",
-      plannedUpserts: planned.length,
+      plannedUpserts: plannedInputs.length,
     });
 
     let productsCreated = 0;
     let productsUpdated = 0;
-    const sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"] = [];
-    /** Only newly created identity keys — never roll back pre-existing listings. */
-    const createdKeysThisRun: string[] = [];
+
+    const healthForCommit: AutoImportSyncHealth = {
+      lastSyncAt: now().toISOString(),
+      lastSyncStatus: provisionalStatus,
+      lastRunId: runId,
+      kamalDiscovered,
+      alladinDiscovered,
+      acceptedVariants: acceptedOffersLen,
+      rejectedVariants,
+      exactMatches: exactGroupCount,
+      conflictKeptSeparate: separateGroupCount,
+      productsCreated: 0,
+      productsUpdated: 0,
+      lowestPriceSelections,
+      rolledBackPrices,
+      errors: [...errors],
+      note: "pending_atomic_commit",
+    };
 
     try {
-      for (const item of planned) {
-        const { created } = await repo.upsertListing(item.input);
-        if (created) {
-          createdKeysThisRun.push(item.input.identityKey);
-          productsCreated += 1;
-        } else {
-          productsUpdated += 1;
-        }
-
-        if (
-          item.selectionOk &&
-          item.selection &&
-          item.selection.ok &&
-          sampleLowestPrice.length < 12
-        ) {
-          sampleLowestPrice.push({
-            title: item.input.title,
-            identityKey: item.input.identityKey,
-            selectedSupplier: item.selection.supplier,
-            pricePkr: item.selection.pricePkr,
-            considered: item.selection.considered,
-            reason: item.selection.reason,
-          });
-        }
-      }
+      // Single awaited transactional call — no Promise.race abandonment.
+      // PG statement_timeout (inside commit_batch) cancels the txn on overrun.
+      const commit = await repo.commitBatch(plannedInputs, healthForCommit);
+      productsCreated = commit.productsCreated;
+      productsUpdated = commit.productsUpdated;
     } catch (err) {
       const sanitized = sanitizeAutoImportError(err);
       log({
@@ -543,31 +633,8 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         errorClass: sanitized.errorClass,
         errorCode: sanitized.errorCode,
         detail: sanitized.message,
-        plannedUpserts: planned.length,
+        plannedUpserts: plannedInputs.length,
       });
-      // Roll back only listings created in this run; never delete pre-existing.
-      try {
-        await repo.deleteListings(createdKeysThisRun);
-        log({
-          runId,
-          stage: "persist_rollback",
-          elapsedMs: Date.now() - startedAt,
-          status: "failed",
-          detail: `rolled_back_created_${createdKeysThisRun.length}`,
-        });
-      } catch (rollbackErr) {
-        const rb = sanitizeAutoImportError(rollbackErr);
-        log({
-          runId,
-          stage: "persist_rollback",
-          elapsedMs: Date.now() - startedAt,
-          status: "failed",
-          errorClass: rb.errorClass,
-          errorCode: rb.errorCode,
-          detail: rb.message,
-        });
-        // Original persist failure remains primary — logged above and in errors[].
-      }
       errors.push(
         `persist_${sanitized.errorCode}:${sanitized.message}`.slice(0, 200),
       );
@@ -577,7 +644,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         lastRunId: runId,
         kamalDiscovered,
         alladinDiscovered,
-        acceptedVariants: acceptedOffers.length,
+        acceptedVariants: acceptedOffersLen,
         rejectedVariants,
         exactMatches: exactGroupCount,
         conflictKeptSeparate: separateGroupCount,
@@ -587,7 +654,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         rolledBackPrices: 0,
         errors,
         note:
-          "CEO auto-import aborted during persistence; attempted rollback of this run's newly created listings only.",
+          "CEO auto-import aborted: atomic commit failed; no partial catalogue writes retained.",
       };
       await saveHealthSafe(runId, health, startedAt, sanitized);
       log({
@@ -605,7 +672,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         sampleLowestPrice: [],
         stages: buildStages({
           env,
-          observationFetched: observations.length > 0,
+          observationFetched: observationsLen > 0,
           durableWrites: 0,
         }),
         automaticPublication: true,
@@ -619,7 +686,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       stage: "persist_done",
       elapsedMs: Date.now() - startedAt,
       status: "running",
-      plannedUpserts: planned.length,
+      plannedUpserts: plannedInputs.length,
     });
 
     const status: AutoImportSyncResult["status"] =
@@ -631,7 +698,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
 
     const stages = buildStages({
       env,
-      observationFetched: observations.length > 0 || acceptedOffers.length > 0,
+      observationFetched: observationsLen > 0 || acceptedOffersLen > 0,
       durableWrites: productsCreated + productsUpdated,
     });
 
@@ -641,7 +708,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       lastRunId: runId,
       kamalDiscovered,
       alladinDiscovered,
-      acceptedVariants: acceptedOffers.length,
+      acceptedVariants: acceptedOffersLen,
       rejectedVariants,
       exactMatches: exactGroupCount,
       conflictKeptSeparate: separateGroupCount,
@@ -680,6 +747,38 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
   }): Promise<AutoImportSyncResult> {
     const runId = `mpair_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const startedAt = Date.now();
+
+    if (activeImportRunId) {
+      const health: AutoImportSyncHealth = {
+        lastSyncAt: now().toISOString(),
+        lastSyncStatus: "failed",
+        lastRunId: runId,
+        kamalDiscovered: 0,
+        alladinDiscovered: 0,
+        acceptedVariants: 0,
+        rejectedVariants: 0,
+        exactMatches: 0,
+        conflictKeptSeparate: 0,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors: [
+          `concurrent_run_blocked:active=${activeImportRunId}`.slice(0, 200),
+        ],
+        note: "Another auto-import run is already in progress.",
+      };
+      log({
+        runId,
+        stage: "feature_gate",
+        status: "failed",
+        errorCode: "CONCURRENT_RUN",
+        detail: `blocked_by_${activeImportRunId}`,
+      });
+      return emptyResult(runId, health);
+    }
+
+    activeImportRunId = runId;
     log({
       runId,
       stage: "run_start",
@@ -689,11 +788,15 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     });
 
     try {
-      return await withDeadline(
-        runAutomaticImportInner({ ...input, runId, startedAt }),
+      // Phase 1: fetch/normalize/plan under HTTP-safe deadline (no catalogue writes).
+      const plan = await withDeadline(
+        planAutomaticImport({ ...input, runId, startedAt }),
         timeouts.jobTimeoutMs,
-        "auto-import-job",
+        "auto-import-plan",
       );
+      if (plan.kind === "complete") return plan.result;
+      // Phase 2: one awaited transactional commit — never Promise.race-abandoned.
+      return await commitPlannedBatch(plan);
     } catch (err) {
       const sanitized = sanitizeAutoImportError(err);
       const isTimeout =
@@ -729,11 +832,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           ),
         ],
         note: isTimeout
-          ? "Auto-import job exceeded bounded timeout and failed safely."
+          ? "Auto-import exceeded plan-phase timeout before atomic commit; no catalogue writes started."
           : "Auto-import failed with an unexpected error.",
       };
       await saveHealthSafe(runId, health, startedAt, sanitized);
       return emptyResult(runId, health);
+    } finally {
+      if (activeImportRunId === runId) activeImportRunId = null;
     }
   }
 
@@ -746,3 +851,8 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
 }
 
 export type AutoImportService = ReturnType<typeof createAutoImportService>;
+
+/** Test helper — clear process-wide import lock. */
+export function __resetAutoImportRunLockForTests(): void {
+  activeImportRunId = null;
+}

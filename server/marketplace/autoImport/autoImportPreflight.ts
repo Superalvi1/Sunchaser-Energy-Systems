@@ -1,6 +1,7 @@
 /**
  * Read-only CEO auto-import production preflight.
  * Never imports products, never writes catalogue rows, never changes prices.
+ * Never calls mp_ceo_auto_import_upsert_listing / commit_batch.
  */
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
 import {
@@ -32,6 +33,8 @@ export type AutoImportPreflightReport = {
     tableMpAutoImportListings: PreflightPresence;
     tableMpAutoImportSyncRuns: PreflightPresence;
     rpcMpCeoAutoImportUpsertListing: PreflightPresence;
+    rpcMpCeoAutoImportCommitBatch: PreflightPresence;
+    rpcMpCeoAutoImportPreflight: PreflightPresence;
   };
   suppliers: {
     kamal: { origin: string; status: PreflightReachability; detail?: string };
@@ -51,14 +54,23 @@ export type AutoImportPreflightReport = {
 
 export type AutoImportPreflightDeps = {
   env?: NodeJS.ProcessEnv;
-  /** Injected table probe for tests. */
+  /** Injected table probe for tests (must be SELECT-only). */
   probeTable?: (table: string) => Promise<PreflightPresence>;
-  /** Injected RPC probe for tests. */
-  probeRpc?: () => Promise<PreflightPresence>;
+  /**
+   * Injected RPC presence probe for tests.
+   * Must NOT call upsert/commit write RPCs.
+   */
+  probeRpcCatalog?: () => Promise<{
+    preflight: PreflightPresence;
+    upsert: PreflightPresence;
+    commitBatch: PreflightPresence;
+  }>;
   /** Injected supplier reachability for tests. */
   probeSupplier?: (
     origin: string,
   ) => Promise<{ status: PreflightReachability; detail?: string }>;
+  /** Optional observer for tests asserting zero write-capable calls. */
+  onRpcCall?: (name: string) => void;
   now?: () => Date;
 };
 
@@ -93,56 +105,77 @@ async function defaultProbeTable(table: string): Promise<PreflightPresence> {
 }
 
 /**
- * Probe RPC without writing: invalid actor_scope fails validation before inserts.
- * Missing function → absent. Validation/check violation → present.
+ * Probe RPC catalog via dedicated READ-ONLY preflight function only.
+ * Never invokes upsert_listing or commit_batch.
  */
-async function defaultProbeRpc(): Promise<PreflightPresence> {
-  if (!isSupabaseActive()) return "skipped";
+async function defaultProbeRpcCatalog(
+  onRpcCall?: (name: string) => void,
+): Promise<{
+  preflight: PreflightPresence;
+  upsert: PreflightPresence;
+  commitBatch: PreflightPresence;
+}> {
+  if (!isSupabaseActive()) {
+    return { preflight: "skipped", upsert: "skipped", commitBatch: "skipped" };
+  }
   const sb = getSupabase();
-  if (!sb) return "skipped";
+  if (!sb) {
+    return { preflight: "skipped", upsert: "skipped", commitBatch: "skipped" };
+  }
   try {
-    const { error } = await withDeadline(
-      Promise.resolve(
-        sb.rpc("mp_ceo_auto_import_upsert_listing", {
-          p_actor_scope: "preflight:probe",
-          p_identity_key: "preflight",
-          p_title: "preflight",
-          p_brand_name: "preflight",
-          p_category_name: "solar",
-          p_website_price: 1,
-          p_availability: "unknown",
-          p_selected_supplier: "kamal",
-          p_source_urls: [],
-          p_match_reason: "preflight",
-          p_price_reason: "preflight",
-          p_offers: [],
-          p_fetched_at: new Date().toISOString(),
-        }),
-      ),
+    onRpcCall?.("mp_ceo_auto_import_preflight");
+    const { data, error } = await withDeadline(
+      Promise.resolve(sb.rpc("mp_ceo_auto_import_preflight")),
       8_000,
-      "preflight-rpc",
+      "preflight-rpc-readonly",
     );
-    if (!error) {
-      // Unexpected success — treat as present but note anomaly (should not write with bad scope).
-      return "present";
+    if (error) {
+      const msg = String(error.message || "").toLowerCase();
+      if (
+        msg.includes("could not find the function") ||
+        msg.includes("does not exist") ||
+        msg.includes("pgrst202") ||
+        msg.includes("schema cache")
+      ) {
+        // Cannot safely verify upsert/batch without write probes → unknown.
+        return {
+          preflight: "absent",
+          upsert: "unknown",
+          commitBatch: "unknown",
+        };
+      }
+      return {
+        preflight: "unknown",
+        upsert: "unknown",
+        commitBatch: "unknown",
+      };
     }
-    const msg = String(error.message || "").toLowerCase();
-    if (
-      msg.includes("could not find the function") ||
-      msg.includes("does not exist") ||
-      msg.includes("pgrst202") ||
-      msg.includes("schema cache")
-    ) {
-      return "absent";
-    }
-    // Validation / permission / check_violation ⇒ function exists.
-    return "present";
+    const row = (data || {}) as {
+      tables?: Record<string, string>;
+      functions?: Record<string, string>;
+    };
+    const fn = row.functions || {};
+    const asPresence = (v: unknown): PreflightPresence =>
+      v === "present" || v === "absent" ? v : "unknown";
+    return {
+      preflight: "present",
+      upsert: asPresence(fn.mp_ceo_auto_import_upsert_listing),
+      commitBatch: asPresence(fn.mp_ceo_auto_import_commit_batch),
+    };
   } catch (err) {
     const sanitized = sanitizeAutoImportError(err);
     if (/does not exist|could not find|pgrst202/i.test(sanitized.message)) {
-      return "absent";
+      return {
+        preflight: "absent",
+        upsert: "unknown",
+        commitBatch: "unknown",
+      };
     }
-    return "unknown";
+    return {
+      preflight: "unknown",
+      upsert: "unknown",
+      commitBatch: "unknown",
+    };
   }
 }
 
@@ -160,7 +193,6 @@ async function defaultProbeSupplier(
       15_000,
       `preflight-supplier:${origin}`,
     );
-    // Confirm JSON shape without retaining body.
     const parsed = JSON.parse(res.body);
     if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.products)) {
       return {
@@ -170,7 +202,10 @@ async function defaultProbeSupplier(
     }
     return {
       status: "reachable",
-      detail: sanitizeLogText(`http_${res.status}_products_${parsed.products.length}`, 80),
+      detail: sanitizeLogText(
+        `http_${res.status}_products_${parsed.products.length}`,
+        80,
+      ),
     };
   } catch (err) {
     const sanitized = sanitizeAutoImportError(err);
@@ -198,13 +233,15 @@ export async function runAutoImportPreflight(
   void resolveAutoImportTimeouts(env);
 
   const probeTable = deps.probeTable ?? defaultProbeTable;
-  const probeRpc = deps.probeRpc ?? defaultProbeRpc;
+  const probeRpcCatalog =
+    deps.probeRpcCatalog ??
+    (() => defaultProbeRpcCatalog(deps.onRpcCall));
   const probeSupplier = deps.probeSupplier ?? defaultProbeSupplier;
 
-  const [listings, syncRuns, rpc, kamal, alladin] = await Promise.all([
+  const [listings, syncRuns, rpcCatalog, kamal, alladin] = await Promise.all([
     probeTable("mp_auto_import_listings"),
     probeTable("mp_auto_import_sync_runs"),
-    probeRpc(),
+    probeRpcCatalog(),
     probeSupplier(SHOPIFY_SUPPLIERS.kamal.origin),
     probeSupplier(SHOPIFY_SUPPLIERS.alladin.origin),
   ]);
@@ -228,10 +265,22 @@ export async function runAutoImportPreflight(
     blockers.push("Table mp_auto_import_listings is absent");
   }
   if (persistenceEnabled && syncRuns === "absent") {
-    notes.push("Table mp_auto_import_sync_runs is absent (health durability degraded)");
+    notes.push(
+      "Table mp_auto_import_sync_runs is absent (health durability degraded)",
+    );
   }
-  if (persistenceEnabled && rpc === "absent") {
-    blockers.push("RPC mp_ceo_auto_import_upsert_listing is absent");
+  if (persistenceEnabled && rpcCatalog.commitBatch === "absent") {
+    blockers.push("RPC mp_ceo_auto_import_commit_batch is absent");
+  }
+  if (persistenceEnabled && rpcCatalog.commitBatch === "unknown") {
+    notes.push(
+      "RPC mp_ceo_auto_import_commit_batch presence unknown (apply marketplace-ceo-auto-import-atomic.sql and preflight RPC).",
+    );
+  }
+  if (persistenceEnabled && rpcCatalog.preflight === "absent") {
+    notes.push(
+      "Read-only preflight RPC absent — apply marketplace-ceo-auto-import-atomic.sql; upsert presence reported as unknown without write probes.",
+    );
   }
   if (kamal.status === "unreachable") {
     blockers.push("Kamal supplier feed unreachable");
@@ -248,7 +297,7 @@ export async function runAutoImportPreflight(
   const canPersist =
     persistenceEnabled &&
     supabaseConfigured &&
-    rpc === "present" &&
+    rpcCatalog.commitBatch === "present" &&
     listings === "present";
 
   return {
@@ -261,7 +310,9 @@ export async function runAutoImportPreflight(
     objects: {
       tableMpAutoImportListings: listings,
       tableMpAutoImportSyncRuns: syncRuns,
-      rpcMpCeoAutoImportUpsertListing: rpc,
+      rpcMpCeoAutoImportUpsertListing: rpcCatalog.upsert,
+      rpcMpCeoAutoImportCommitBatch: rpcCatalog.commitBatch,
+      rpcMpCeoAutoImportPreflight: rpcCatalog.preflight,
     },
     suppliers: {
       kamal: {

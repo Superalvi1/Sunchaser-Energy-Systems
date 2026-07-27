@@ -1,6 +1,8 @@
 /**
- * Supabase/Postgres persistence for CEO auto-import via mp_ceo_auto_import_upsert_listing.
- * Requires scripts/marketplace-ceo-auto-import.sql applied manually.
+ * Supabase/Postgres persistence for CEO auto-import via
+ * mp_ceo_auto_import_commit_batch (atomic transactional write).
+ * Requires scripts/marketplace-ceo-auto-import.sql +
+ * scripts/marketplace-ceo-auto-import-atomic.sql applied manually.
  */
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
 import type { SupplierCode } from "../suppliers/adapterTypes.ts";
@@ -8,7 +10,11 @@ import type {
   AutoImportListingRecord,
   AutoImportSyncHealth,
 } from "./autoImportTypes.ts";
-import type { AutoImportRepository, UpsertListingInput } from "./autoImportRepository.ts";
+import type {
+  AutoImportRepository,
+  CommitBatchResult,
+  UpsertListingInput,
+} from "./autoImportRepository.ts";
 import { createMemoryAutoImportRepository } from "./autoImportRepository.ts";
 import {
   resolveAutoImportTimeouts,
@@ -35,12 +41,31 @@ async function rpcBounded<T>(
   return data;
 }
 
+function listingPayload(input: UpsertListingInput) {
+  return {
+    identityKey: input.identityKey,
+    title: input.title,
+    brandName: input.brandName,
+    categoryName: input.categoryName,
+    websitePricePkr: input.websitePricePkr,
+    availability: input.availability,
+    selectedSupplier: input.selectedSupplier,
+    sourceUrls: input.sourceUrls,
+    matchReason: input.matchReason,
+    priceReason: input.priceReason,
+    offers: input.offers,
+    fetchedAt: input.fetchedAt,
+  };
+}
+
 export function createSupabaseAutoImportRepository(
   env: NodeJS.ProcessEnv = process.env,
 ): AutoImportRepository {
-  // Health/listings cache in-process; durable rows live in Postgres.
+  // Local cache mirrors successful durable commits only.
   const memory = createMemoryAutoImportRepository();
   const { rpcTimeoutMs } = resolveAutoImportTimeouts(env);
+  // Leave headroom under HTTP job budget; PG statement_timeout cancels the txn.
+  const batchTimeoutMs = Math.max(5_000, Math.min(rpcTimeoutMs * 3, 50_000));
 
   return {
     async getListingByIdentityKey(key) {
@@ -75,33 +100,35 @@ export function createSupabaseAutoImportRepository(
       if (!data || !Array.isArray(data) || !data.length) return null;
       return mapRow(data[0]);
     },
-    async upsertListing(input) {
+    async commitBatch(inputs, health): Promise<CommitBatchResult> {
       const sb = requireClient();
-      let data: Record<string, unknown>;
       try {
-        data = (await rpcBounded(
-          "mp_ceo_auto_import_upsert_listing",
-          sb.rpc("mp_ceo_auto_import_upsert_listing", {
-            p_actor_scope: "system:ceo-auto-import",
-            p_identity_key: input.identityKey,
-            p_title: input.title,
-            p_brand_name: input.brandName,
-            p_category_name: input.categoryName,
-            p_website_price: input.websitePricePkr,
-            p_availability: input.availability,
-            p_selected_supplier: input.selectedSupplier,
-            p_source_urls: input.sourceUrls,
-            p_match_reason: input.matchReason,
-            p_price_reason: input.priceReason,
-            p_offers: input.offers,
-            p_fetched_at: input.fetchedAt,
-          }),
-          rpcTimeoutMs,
-        )) as Record<string, unknown>;
+        // Await the single transactional RPC fully — do NOT Promise.race/abandon.
+        // PostgreSQL statement_timeout (set inside the RPC) cancels the txn.
+        const { data, error } = await sb.rpc("mp_ceo_auto_import_commit_batch", {
+          p_actor_scope: "system:ceo-auto-import",
+          p_run_id: health.lastRunId || `mpair_unknown`,
+          p_listings: inputs.map(listingPayload),
+          p_health: health,
+          p_statement_timeout_ms: batchTimeoutMs,
+        });
+        if (error) {
+          throw new Error(error.message || "mp_ceo_auto_import_commit_batch failed");
+        }
+        const row = (data || {}) as Record<string, unknown>;
+        const productsCreated = Number(row.productsCreated || 0);
+        const productsUpdated = Number(row.productsUpdated || 0);
+        // Mirror into memory only after durable commit succeeded.
+        const mem = await memory.commitBatch(inputs, health);
+        return {
+          productsCreated,
+          productsUpdated,
+          records: mem.records,
+        };
       } catch (err) {
         const sanitized = sanitizeAutoImportError(err);
         logAutoImport({
-          runId: "rpc",
+          runId: health.lastRunId || "rpc",
           stage: "rpc_failed",
           status: "failed",
           errorClass: sanitized.errorClass,
@@ -109,38 +136,6 @@ export function createSupabaseAutoImportRepository(
           detail: sanitized.message,
         });
         throw err;
-      }
-      const row = (data || {}) as Record<string, unknown>;
-      const created = Boolean(row.created);
-      const mem = await memory.upsertListing(input);
-      return {
-        created,
-        record: {
-          ...mem.record,
-          productId: String(row.productId || mem.record.productId),
-          variantId: String(row.variantId || mem.record.variantId),
-          websitePricePkr: Number(row.websitePrice || mem.record.websitePricePkr),
-        },
-      };
-    },
-    async deleteListings(identityKeys) {
-      await memory.deleteListings(identityKeys);
-      // Best-effort durable cleanup; never throws (SQL may not be applied).
-      try {
-        if (!identityKeys.length) return;
-        const sb = requireClient();
-        await withDeadline(
-          Promise.resolve(
-            sb
-              .from("mp_auto_import_listings")
-              .delete()
-              .in("identity_key", identityKeys),
-          ),
-          rpcTimeoutMs,
-          "auto-import deleteListings",
-        );
-      } catch {
-        // ignore
       }
     },
     async listListings() {
@@ -157,6 +152,7 @@ export function createSupabaseAutoImportRepository(
       return (Array.isArray(data) ? data : []).map(mapRow);
     },
     async saveHealth(health) {
+      // Prefer recording health via commit_batch; standalone save is best-effort.
       await memory.saveHealth(health);
       try {
         const sb = requireClient();

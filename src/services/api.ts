@@ -3279,6 +3279,8 @@ export async function fetchMarketplaceAutoImportPreflight(_staff?: {
       tableMpAutoImportListings: string;
       tableMpAutoImportSyncRuns: string;
       rpcMpCeoAutoImportUpsertListing: string;
+      rpcMpCeoAutoImportCommitBatch: string;
+      rpcMpCeoAutoImportPreflight: string;
     };
     suppliers: {
       kamal: { origin: string; status: string; detail?: string };
