@@ -415,6 +415,14 @@ begin
       noreplication
       nobypassrls;
   end if;
+  -- Idempotent attribute lock: re-apply even if the role already existed.
+  alter role mp_ceo_auto_import_runtime
+    nologin
+    nosuperuser
+    nocreatedb
+    nocreaterole
+    noreplication
+    nobypassrls;
 end
 $ceo_ai_runtime_role$;
 

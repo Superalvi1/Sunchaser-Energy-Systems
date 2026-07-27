@@ -319,6 +319,126 @@ async function main(): Promise<void> {
       await who.end();
     }
 
+    // --- already operating as runtime role succeeds (SET ROLE before commit) ---
+    function createAlreadyRuntimeClient(url: string): pg.Client {
+      const ssl = /sslmode=disable|localhost|127\.0\.0\.1/i.test(url)
+        ? undefined
+        : { rejectUnauthorized: false };
+      const c = new pg.Client({
+        connectionString: url,
+        connectionTimeoutMillis: 10_000,
+        ssl,
+      });
+      const origConnect = c.connect.bind(c);
+      c.connect = (async () => {
+        await origConnect();
+        await c.query(`set role mp_ceo_auto_import_runtime`);
+      }) as typeof c.connect;
+      return c;
+    }
+    const already = await commitBatchWithStatementTimeout({
+      env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
+      clientFactory: createAlreadyRuntimeClient,
+      listings: [
+        {
+          identityKey: "exact:priv:already-runtime",
+          title: "Knox Hybrid Inverter 6kW Single Phase",
+          brandName: "Knox",
+          categoryName: "Solar Inverter",
+          websitePricePkr: 99000,
+          availability: "in_stock",
+          selectedSupplier: "kamal",
+          sourceUrls: ["https://kamalsolar.pk/products/priv-already"],
+          matchReason: "exact_identity",
+          priceReason: "auto",
+          fetchedAt: new Date().toISOString(),
+          offers: [],
+          previous: null,
+        },
+      ],
+      health: health(`mpair_already_${randomUUID().slice(0, 8)}`),
+      statementTimeoutMs: 30_000,
+    });
+    check(
+      "login already as runtime role succeeds",
+      already.productsCreated === 1,
+    );
+
+    // --- non-member login rejected cleanly; no writes; connection not aborted ---
+    const denyKey = `exact:priv:deny:${randomUUID().slice(0, 8)}`;
+    let nonMemberRejected = false;
+    let nonMemberCode = "";
+    try {
+      await commitBatchWithStatementTimeout({
+        env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: DB_URL },
+        listings: [
+          {
+            identityKey: denyKey,
+            title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+            brandName: "Inverex",
+            categoryName: "Solar Inverter",
+            websitePricePkr: 50000,
+            availability: "in_stock",
+            selectedSupplier: "kamal",
+            sourceUrls: ["https://kamalsolar.pk/products/priv-deny"],
+            matchReason: "exact_identity",
+            priceReason: "auto",
+            fetchedAt: new Date().toISOString(),
+            offers: [],
+            previous: null,
+          },
+        ],
+        health: health(`mpair_deny_${randomUUID().slice(0, 8)}`),
+        statementTimeoutMs: 30_000,
+      });
+    } catch (err) {
+      nonMemberRejected =
+        /ROLE_SWITCH_REJECTED/i.test(String((err as Error).message)) ||
+        (err as { code?: string }).code === "ROLE_SWITCH_REJECTED";
+      nonMemberCode = String((err as { code?: string }).code || "");
+    }
+    check("non-member login is rejected cleanly", nonMemberRejected);
+    check(
+      "non-member error is ROLE_SWITCH_REJECTED",
+      nonMemberCode === "ROLE_SWITCH_REJECTED" || nonMemberRejected,
+    );
+
+    const denyRows = await admin.query(
+      `select count(*)::int as n from public.mp_auto_import_listings where identity_key = $1`,
+      [denyKey],
+    );
+    check("non-member left no batch writes", Number(denyRows.rows[0].n) === 0);
+
+    // Fresh statement on the same admin connection must still work (not aborted).
+    const alive = await admin.query("select 1::int as n");
+    check(
+      "admin connection not left in aborted transaction state",
+      Number(alive.rows[0].n) === 1,
+    );
+
+    // Role attribute lock
+    const attrs = await admin.query(
+      `select rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+       from pg_roles where rolname = 'mp_ceo_auto_import_runtime'`,
+    );
+    const a = attrs.rows[0];
+    check(
+      "runtime role attributes locked (nologin/nosuperuser/...)",
+      a &&
+        a.rolcanlogin === false &&
+        a.rolsuper === false &&
+        a.rolcreatedb === false &&
+        a.rolcreaterole === false &&
+        a.rolreplication === false &&
+        a.rolbypassrls === false,
+    );
+    check(
+      "atomic SQL re-applies ALTER ROLE attribute lock",
+      /alter role mp_ceo_auto_import_runtime\s+nologin/i.test(
+        readFileSync(ATOMIC, "utf8"),
+      ),
+    );
+
     // --- duplicate identityKey rejected (no misleading counts) ---
     let dupRejected = false;
     try {

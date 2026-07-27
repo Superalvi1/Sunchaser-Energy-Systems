@@ -596,6 +596,16 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(repoSrc.includes("commitBatchWithStatementTimeout"), "repo uses pg commit helper");
   assert.ok(pgCommitSrc.includes("SET LOCAL statement_timeout"), "pg commit SET LOCAL");
   assert.ok(pgCommitSrc.includes("mp_ceo_auto_import_commit_batch"), "pg commit calls batch rpc");
+  assert.ok(pgCommitSrc.includes("ROLE_SWITCH_REJECTED"), "pg commit fail-closed role gate");
+  assert.ok(
+    pgCommitSrc.includes("resolveRuntimeRoleAuthorization"),
+    "pg commit authorizes before BEGIN",
+  );
+  assert.ok(
+    !/catch\s*\{[^}]*SET LOCAL ROLE/s.test(pgCommitSrc) &&
+      !/SET LOCAL ROLE[\s\S]{0,120}catch\s*\{/s.test(pgCommitSrc),
+    "must not swallow SET LOCAL ROLE failures",
+  );
   assert.ok(!pgCommitSrc.includes("Promise.race("), "pg commit must not Promise.race");
   assert.ok(!repoSrc.includes("p_statement_timeout_ms"), "repo must not pass p_statement_timeout_ms");
   assert.ok(!repoSrc.includes("mp_ceo_auto_import_upsert_listing"), "repo must not call upsert rpc");
