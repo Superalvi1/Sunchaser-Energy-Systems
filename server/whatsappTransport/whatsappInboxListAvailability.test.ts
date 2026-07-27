@@ -63,8 +63,8 @@ await test("both explicitly disconnected → allTransportsDisconnected", async (
   assert.equal(result.allTransportsDisconnected, true);
 });
 
-await test("Meta DISCONNECTED + QR_READY/CONNECTING/RECONNECTING → empty short-circuit", async () => {
-  for (const state of ["QR_READY", "CONNECTING", "RECONNECTING"]) {
+await test("Meta DISCONNECTED + QR_READY/CONNECTING/RECONNECTING → health offline (lists still load)", async () => {
+  for (const state of ["QR_READY", "CONNECTING", "RECONNECTING", "ERROR"]) {
     const result = await resolveWhatsAppInboxListAvailability({
       getMetaConnectionStatus: async () => ({ status: "DISCONNECTED" }),
       getQrConnectionStatus: async () => ({ state }),

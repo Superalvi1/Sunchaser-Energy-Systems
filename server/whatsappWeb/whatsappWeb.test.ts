@@ -1459,6 +1459,182 @@ console.log("PASS: QR Inbox path works with Postgres dual-write off");
 console.log("PASS: safe disconnect diagnostics + unchanged reconnect policy");
 
 // ---------------------------------------------------------------------------
+// REPAIR — terminal disconnects, stale socket generation, status accuracy
+// ---------------------------------------------------------------------------
+
+{
+  const authDir = tmpAuthDir();
+  const scheduled: Array<{ ms: number; fn: () => void }> = [];
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [1_000, 5_000, 10_000],
+    setTimeoutFn: ((fn: () => void, ms: number) => {
+      scheduled.push({ ms, fn: fn as () => void });
+      return scheduled.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: ((handle: NodeJS.Timeout) => {
+      const idx = (handle as unknown as number) - 1;
+      if (idx >= 0 && idx < scheduled.length) scheduled[idx]!.fn = () => undefined;
+    }) as typeof clearTimeout,
+    socketFactory: async () => ({
+      end: () => undefined,
+      logout: async () => undefined,
+      sendText: async () => ({ providerMessageId: "X" }),
+      getUserId: () => "923001112233@s.whatsapp.net",
+    }),
+  });
+
+  await session.connect();
+  assert.equal(session.__testGetSocketGeneration(), 1);
+
+  // connectionReplaced (440) — terminal, no reconnect loop
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 440,
+  });
+  assert.equal(session.getSafeStatus().state, "ERROR");
+  assert.equal(session.__testIsConnectionDesired(), false);
+  assert.equal(session.__testHasReconnectTimer(), false);
+  assert.match(
+    String(session.getSafeStatus().safeMessage),
+    /replaced by another/i
+  );
+  assert.equal(session.getSafeStatus().reconnectScheduled, false);
+  assert.equal(scheduled.length, 0);
+
+  // badSession (500) — terminal, no auto reconnect
+  session.__testSetState("CONNECTED", { connectionDesired: true });
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 500,
+  });
+  assert.equal(session.getSafeStatus().state, "ERROR");
+  assert.equal(session.__testHasReconnectTimer(), false);
+  assert.match(String(session.getSafeStatus().safeMessage), /invalid/i);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: connectionReplaced and badSession never auto-reconnect");
+
+{
+  const authDir = tmpAuthDir();
+  const delays: number[] = [];
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [100, 200, 400],
+    setTimeoutFn: ((fn: () => void, ms: number) => {
+      delays.push(ms);
+      // Do not run — only observe scheduling
+      return delays.length as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: async () => ({
+      end: () => undefined,
+      logout: async () => undefined,
+      sendText: async () => ({ providerMessageId: "X" }),
+    }),
+  });
+
+  await session.connect();
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.equal(session.getSafeStatus().state, "RECONNECTING");
+  assert.equal(session.getSafeStatus().reconnectScheduled, true);
+  assert.equal(delays.length, 1);
+  assert.equal(delays[0], 100);
+
+  // Clear timer manually and schedule again to observe backoff progression
+  session.__testSetState("RECONNECTING", { connectionDesired: true });
+  // Force another schedule by clearing timer via disconnect path then re-desired
+  // Use close again after clearing: bump by simulating timer cleared through open reset then close
+  await session.__testHandleConnectionUpdate({
+    connection: "open",
+    userId: "923001112233@s.whatsapp.net",
+  });
+  assert.equal(session.__testGetReconnectAttempt(), 0);
+  assert.equal(session.getSafeStatus().state, "CONNECTED");
+
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 408,
+  });
+  assert.equal(delays[delays.length - 1], 100);
+
+  // Second consecutive retry without successful open uses next delay
+  // Drain by invoking schedule while timer "exists" is no-op; clear via test:
+  // complete by pretending timer fired failed and scheduleReconnect again
+  const attemptBefore = session.__testGetReconnectAttempt();
+  assert.ok(attemptBefore >= 1);
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: retryable close schedules reconnect; open resets retry state");
+
+{
+  const authDir = tmpAuthDir();
+  const session = new WhatsAppWebSession({
+    env: {
+      WHATSAPP_WEB_QR_ENABLED: "true",
+      WHATSAPP_WEB_AUTH_DIR: authDir,
+    },
+    reconnectDelaysMs: [0],
+    setTimeoutFn: ((fn: () => void) => {
+      return 1 as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    socketFactory: async () => ({
+      end: () => undefined,
+      logout: async () => undefined,
+      sendText: async () => ({ providerMessageId: "X" }),
+      getUserId: () => "923001112233@s.whatsapp.net",
+    }),
+  });
+
+  await session.connect();
+  const gen = session.__testGetSocketGeneration();
+  await session.__testHandleConnectionUpdate(
+    { connection: "open", userId: "923001112233@s.whatsapp.net" },
+    gen
+  );
+  assert.equal(session.getSafeStatus().state, "CONNECTED");
+
+  // Stale generation close must not leave CONNECTED or schedule reconnect.
+  const staleGen = gen;
+  session.__testBumpSocketGeneration();
+  await session.__testHandleConnectionUpdate(
+    { connection: "close", statusCode: 428 },
+    staleGen
+  );
+  assert.equal(session.getSafeStatus().state, "CONNECTED");
+  assert.equal(session.__testHasReconnectTimer(), false);
+
+  // Current generation close does leave CONNECTED.
+  await session.__testHandleConnectionUpdate({
+    connection: "close",
+    statusCode: 428,
+  });
+  assert.notEqual(session.getSafeStatus().state, "CONNECTED");
+  assert.equal(session.getSafeStatus().state, "RECONNECTING");
+
+  await session.shutdown();
+  await fsp.rm(authDir, { recursive: true, force: true });
+}
+
+console.log("PASS: stale socket events cannot overwrite current socket state");
+
+// ---------------------------------------------------------------------------
 // INBOX-HOTFIX-01 — shared LID map + live inbound + privacy-safe diagnostics
 // ---------------------------------------------------------------------------
 

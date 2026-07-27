@@ -52,6 +52,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+/** Frozen clock aligned with fixture dates in this file (avoids calendar drift). */
+const FIXTURE_NOW_MS = Date.parse("2026-07-24T12:00:00.000Z");
+function fixtureSyncSource(
+  options?: ConstructorParameters<typeof BaileysInMemorySyncSource>[0]
+): BaileysInMemorySyncSource {
+  return new BaileysInMemorySyncSource({
+    now: () => FIXTURE_NOW_MS,
+    ...options,
+  });
+}
+
 /** Reproduces the SYNC-1 read-modify-write race (for regression contrast). */
 async function racyAdvanceLastMessageAt(
   state: { lastMessageAt: string | null },
@@ -646,7 +657,7 @@ console.log("PASS: concurrent sync joins existing job");
 console.log("PASS: cancel prevents unsafe continuation");
 
 {
-  const baileys = new BaileysInMemorySyncSource();
+  const baileys = fixtureSyncSource();
   baileys.setConnected(true, "923001112233:1@s.whatsapp.net");
   baileys.ingestContacts([
     {
@@ -660,6 +671,7 @@ console.log("PASS: cancel prevents unsafe continuation");
     { id: "120363@g.us", name: "Group" },
     { id: "status@broadcast" },
   ]);
+  const recentTs = Math.floor((Date.now() - 60_000) / 1000);
   baileys.ingestMessages([
     {
       key: {
@@ -667,9 +679,7 @@ console.log("PASS: cancel prevents unsafe continuation");
         remoteJid: "923009998877@s.whatsapp.net",
         fromMe: false,
       },
-      messageTimestamp: Math.floor(
-        Date.parse("2026-07-20T10:00:00.000Z") / 1000
-      ),
+      messageTimestamp: recentTs,
       message: { conversation: "hi" },
     },
   ]);
@@ -681,7 +691,7 @@ console.log("PASS: cancel prevents unsafe continuation");
   assert.equal(chats[0]?.jid, "923009998877@s.whatsapp.net");
   const msgs = await baileys.fetchMessages("923009998877@s.whatsapp.net", {
     limit: 10,
-    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+    sinceMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
   });
   assert.equal(msgs.length, 1);
   assert.equal(msgs[0]?.text, "hi");
@@ -691,7 +701,7 @@ console.log("PASS: Baileys in-memory sync source ingest");
 {
   const authDir = tmpAuthDir();
   const repo = new InMemoryWhatsAppRepository();
-  const syncSource = new BaileysInMemorySyncSource();
+  const syncSource = fixtureSyncSource();
   syncSource.setConnected(true, "923001112233@s.whatsapp.net");
   syncSource.ingestContacts([
     {
@@ -708,9 +718,7 @@ console.log("PASS: Baileys in-memory sync source ingest");
         remoteJid: "923009998877@s.whatsapp.net",
         fromMe: false,
       },
-      messageTimestamp: Math.floor(
-        Date.parse("2026-07-20T10:00:00.000Z") / 1000
-      ),
+      messageTimestamp: Math.floor((Date.now() - 60_000) / 1000),
       message: { conversation: "from api sync" },
     },
   ]);
@@ -910,7 +918,7 @@ console.log("PASS: atomic last_message_at max + race regression + company scope"
 console.log("PASS: company scoping on contact sync mutations");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true, "923001112233@s.whatsapp.net");
   source.ingestContacts([
     {
@@ -960,7 +968,7 @@ console.log("PASS: notify stays pushName; push cannot overwrite saved; legacy pr
   assert.equal(jidToWaId("status@broadcast"), null);
   assert.equal(jidToWaId("123@newsletter"), null);
 
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestContacts([
     { id: "123456789012345@lid", name: "LID Person", notify: "Push" },
@@ -1031,9 +1039,13 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
 // ---------------------------------------------------------------------------
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true, "923001112233@s.whatsapp.net");
   source.ingestChats([{ id: "923009998877@s.whatsapp.net", name: "A" }]);
+  const tSeed = Math.floor((Date.now() - 120_000) / 1000);
+  const tHistA = Math.floor((Date.now() - 90_000) / 1000);
+  const tHistB = Math.floor((Date.now() - 80_000) / 1000);
+  const tUnrelated = Math.floor((Date.now() - 100_000) / 1000);
   source.ingestMessages([
     {
       key: {
@@ -1041,7 +1053,7 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
         remoteJid: "923009998877@s.whatsapp.net",
         fromMe: false,
       },
-      messageTimestamp: Math.floor(Date.parse("2026-07-22T10:00:00.000Z") / 1000),
+      messageTimestamp: tSeed,
       message: { conversation: "seed" },
     },
   ]);
@@ -1069,9 +1081,7 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
           remoteJid: "923009998877@s.whatsapp.net",
           fromMe: false,
         },
-        messageTimestamp: Math.floor(
-          Date.parse("2026-07-21T10:00:00.000Z") / 1000
-        ),
+        messageTimestamp: tUnrelated,
         message: { conversation: "initial" },
       },
     ],
@@ -1091,7 +1101,7 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
         remoteJid: "923008887766@s.whatsapp.net",
         fromMe: false,
       },
-      messageTimestamp: Math.floor(Date.parse("2026-07-22T11:00:00.000Z") / 1000),
+      messageTimestamp: tSeed + 10,
       message: { conversation: "seed-b" },
     },
   ]);
@@ -1111,9 +1121,7 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
           remoteJid: "923009998877@s.whatsapp.net",
           fromMe: false,
         },
-        messageTimestamp: Math.floor(
-          Date.parse("2026-07-20T09:00:00.000Z") / 1000
-        ),
+        messageTimestamp: tHistA,
         message: { conversation: "older-a" },
       },
     ],
@@ -1138,9 +1146,7 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
           remoteJid: "923008887766@s.whatsapp.net",
           fromMe: false,
         },
-        messageTimestamp: Math.floor(
-          Date.parse("2026-07-20T08:00:00.000Z") / 1000
-        ),
+        messageTimestamp: tHistB,
         message: { conversation: "older-b" },
       },
     ],
@@ -1156,14 +1162,14 @@ console.log("PASS: empty/unready history cannot claim full 7-day; partial report
   });
   const msgs = await source.fetchMessages("923009998877@s.whatsapp.net", {
     limit: 80,
-    sinceMs: Date.parse("2026-07-17T00:00:00.000Z"),
+    sinceMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
   });
   assert.ok(msgs.some((m) => m.providerMessageId === "HIST_A1"));
 }
 console.log("PASS: request-ID correlation isolates concurrent chats");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
   source.ingestMessages([
@@ -1215,7 +1221,7 @@ console.log("PASS: request-ID correlation isolates concurrent chats");
 console.log("PASS: early matching history event is not lost");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
   source.ingestMessages([
@@ -1292,7 +1298,7 @@ console.log("PASS: early matching history event is not lost");
 console.log("PASS: timeout/failure cleanup + retry with new oldest cursor");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
   source.ingestMessages([
@@ -1328,7 +1334,7 @@ console.log("PASS: timeout/failure cleanup + retry with new oldest cursor");
 console.log("PASS: concurrent same-chat requests do not duplicate provider calls");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestChats([{ id: "923009998877@s.whatsapp.net" }]);
   source.ingestMessages([
@@ -1395,7 +1401,7 @@ console.log("PASS: disconnect clears pending waits; coverage never complete");
 console.log("PASS: phone/LID/alt/Pn identity resolution");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestContacts([
     {
@@ -1432,7 +1438,7 @@ console.log("PASS: phone/LID/alt/Pn identity resolution");
 console.log("PASS: @lid with contact.jid / remoteJidAlt resolves");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestChats([{ id: "923001112233@s.whatsapp.net", name: "Empty" }]);
   let fetchCalls = 0;
@@ -1530,7 +1536,7 @@ console.log("PASS: inbox display labels never use UUID suffixes");
 console.log("PASS: SYNC-8R excluded remote JID helpers");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true, "923001112233@s.whatsapp.net");
   // Group message with participant phone JID must never become a private chat.
   source.ingestMessages([
@@ -1557,7 +1563,7 @@ console.log("PASS: SYNC-8R excluded remote JID helpers");
 console.log("PASS: SYNC-8R group+participant never becomes private chat");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestMessages([
     {
@@ -1579,7 +1585,7 @@ console.log("PASS: SYNC-8R group+participant never becomes private chat");
 console.log("PASS: SYNC-8R group+participantAlt/Pn never imported privately");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.handleHistorySet({
     chats: [{ id: "12036377@g.us", name: "Team", isGroup: true }],
@@ -1602,7 +1608,7 @@ console.log("PASS: SYNC-8R group+participantAlt/Pn never imported privately");
 console.log("PASS: SYNC-8R messaging-history.set group messages excluded");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   // messages.upsert path uses the same ingestMessages entrypoint.
   source.ingestMessages([
@@ -1637,7 +1643,7 @@ console.log("PASS: SYNC-8R messaging-history.set group messages excluded");
 console.log("PASS: SYNC-8R upsert excludes group/status/broadcast/newsletter");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   const chatJid = "923009998877@s.whatsapp.net";
   const now = Date.parse("2026-07-24T12:00:00.000Z");
@@ -1685,7 +1691,7 @@ console.log("PASS: SYNC-8R upsert excludes group/status/broadcast/newsletter");
 console.log("PASS: SYNC-8R history pruned to window+cap; old bodies not kept for cursor");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   const chatJid = "923008887766@s.whatsapp.net";
   source.ingestChats([
@@ -1727,7 +1733,7 @@ console.log("PASS: SYNC-8R history pruned to window+cap; old bodies not kept for
 console.log("PASS: SYNC-8R nested chat.messages survive for unseen chat");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   const chatJid = "923008887755@s.whatsapp.net";
   source.ingestChats([{ id: chatJid, name: "Existing" }]);
@@ -1773,7 +1779,7 @@ console.log("PASS: SYNC-8R nested chat.messages survive for unseen chat");
 console.log("PASS: SYNC-8R nested messages merge idempotently into existing chat");
 
 {
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   const chatJid = "923008887744@s.whatsapp.net";
   source.ingestChats([{ id: chatJid, name: "Cursor" }]);
@@ -1926,7 +1932,7 @@ console.log("PASS: SYNC-8R durable persistence failure reported without PII");
 
 {
   // Baileys sync source never downloads historical media binaries.
-  const source = new BaileysInMemorySyncSource();
+  const source = fixtureSyncSource();
   source.setConnected(true);
   source.ingestMessages([
     {

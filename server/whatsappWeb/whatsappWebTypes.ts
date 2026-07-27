@@ -35,6 +35,16 @@ export type WhatsAppWebSafeStatus = {
   lastInboundStoredAt: string | null;
   lastIgnoredReason: string | null;
   lastPersistFailureCode: string | null;
+  /** True when a reconnect timer is armed (not yet attempting). */
+  reconnectScheduled: boolean;
+  /** True while a reconnect socket start is in progress. */
+  reconnectAttemptInProgress: boolean;
+  /** Bounded retry index (0 after successful open / terminal stop). */
+  reconnectAttempt: number;
+  /** Sanitized last disconnect classification (no secrets). */
+  lastDisconnectClassification: string | null;
+  /** Whether saved Baileys credentials are known present on disk. */
+  credentialsAvailable: boolean;
 };
 
 export type WhatsAppWebQrPayload = {

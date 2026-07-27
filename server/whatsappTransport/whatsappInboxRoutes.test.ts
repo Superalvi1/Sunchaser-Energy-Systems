@@ -470,7 +470,7 @@ function mockJsonRes() {
 }
 
 await test(
-  "list conversations: DISCONNECTED WhatsApp → empty 200 (no 503)",
+  "list conversations: DISCONNECTED WhatsApp → stored conversations returned",
   async () => {
     await withInboxServer({ seedWhatsAppConnected: false }, async (baseUrl, tokens, repos) => {
       seedConversation(repos.store, {
@@ -484,14 +484,16 @@ await test(
       });
       assert.equal(res.status, 200);
       assert.equal(res.body.success, true);
-      assert.deepEqual(res.body.data.conversations, []);
-      assert.equal(res.body.meta?.nextCursor ?? null, null);
+      assert.deepEqual(
+        res.body.data.conversations.map((c: any) => c.id),
+        ["c-orphan"]
+      );
     });
   }
 );
 
 await test(
-  "delta: DISCONNECTED WhatsApp → empty 200 (no 503)",
+  "delta: DISCONNECTED WhatsApp → stored conversations returned",
   async () => {
     await withInboxServer({ seedWhatsAppConnected: false }, async (baseUrl, tokens, repos) => {
       seedConversation(repos.store, {
@@ -509,14 +511,16 @@ await test(
       });
       assert.equal(res.status, 200);
       assert.equal(res.body.success, true);
-      assert.deepEqual(res.body.data.conversations, []);
-      assert.equal(res.body.meta?.nextCursor ?? null, null);
+      assert.deepEqual(
+        res.body.data.conversations.map((c: any) => c.id),
+        ["c-orphan"]
+      );
     });
   }
 );
 
 await test(
-  "controller: explicit DISCONNECTED does not call listByActivity",
+  "controller: DISCONNECTED still queries listByActivity",
   async () => {
     let listCalls = 0;
     const controllers = createInboxControllers(
@@ -524,7 +528,11 @@ await test(
         conversations: {
           async listByActivity() {
             listCalls += 1;
-            return { rows: [{ id: "should-not-return" }], nextCursor: null };
+            return {
+              rows: [{ id: "c-stored" }],
+              nextCursor: null,
+              totalUnreadCount: 0,
+            };
           },
         },
       } as any,
@@ -537,14 +545,17 @@ await test(
       { query: { limit: "40" }, actor: { userId: "u-staff" } } as any,
       res
     );
-    assert.equal(listCalls, 0);
+    assert.equal(listCalls, 1);
     assert.equal(state.statusCode, 200);
-    assert.deepEqual(state.body.data.conversations, []);
+    assert.deepEqual(
+      state.body.data.conversations.map((c: any) => c.id),
+      ["c-stored"]
+    );
   }
 );
 
 await test(
-  "controller: explicit DISCONNECTED does not call listDelta",
+  "controller: ERROR transport still queries listDelta",
   async () => {
     let deltaCalls = 0;
     const controllers = createInboxControllers(
@@ -552,12 +563,17 @@ await test(
         conversations: {
           async listDelta() {
             deltaCalls += 1;
-            return { rows: [{ id: "should-not-return" }], nextCursor: null };
+            return {
+              rows: [{ id: "c-delta-stored" }],
+              nextCursor: null,
+              totalUnreadCount: 0,
+            };
           },
         },
       } as any,
       {
         getConnectionStatus: async () => disconnectedStatus(),
+        getQrConnectionStatus: async () => ({ state: "ERROR" }),
       }
     );
     const { res, state } = mockJsonRes();
@@ -569,9 +585,12 @@ await test(
       { query: { since }, actor: { userId: "u-staff" } } as any,
       res
     );
-    assert.equal(deltaCalls, 0);
+    assert.equal(deltaCalls, 1);
     assert.equal(state.statusCode, 200);
-    assert.deepEqual(state.body.data.conversations, []);
+    assert.deepEqual(
+      state.body.data.conversations.map((c: any) => c.id),
+      ["c-delta-stored"]
+    );
   }
 );
 
@@ -698,7 +717,7 @@ await test(
 );
 
 await test(
-  "both explicitly DISCONNECTED → empty 200",
+  "both transports offline → stored conversations still returned",
   async () => {
     await withInboxServer(
       {
@@ -708,7 +727,7 @@ await test(
       },
       async (baseUrl, tokens, repos) => {
         seedConversation(repos.store, {
-          id: "c-hidden",
+          id: "c-stored-offline",
           updatedAt: "2026-07-19T10:00:00.000Z",
           lastMessageAt: "2026-07-19T10:00:00.000Z",
         });
@@ -717,9 +736,43 @@ await test(
           query: { limit: "40" },
         });
         assert.equal(res.status, 200);
-        assert.deepEqual(res.body.data.conversations, []);
+        assert.deepEqual(
+          res.body.data.conversations.map((c: any) => c.id),
+          ["c-stored-offline"]
+        );
       }
     );
+  }
+);
+
+await test(
+  "QR ERROR / RECONNECTING → stored conversations remain readable",
+  async () => {
+    for (const state of ["ERROR", "RECONNECTING", "CONNECTING"]) {
+      await withInboxServer(
+        {
+          seedWhatsAppConnected: false,
+          getConnectionStatus: async () => disconnectedStatus(),
+          getQrConnectionStatus: async () => ({ state }),
+        },
+        async (baseUrl, tokens, repos) => {
+          seedConversation(repos.store, {
+            id: `c-${state.toLowerCase()}`,
+            updatedAt: "2026-07-19T10:00:00.000Z",
+            lastMessageAt: "2026-07-19T10:00:00.000Z",
+          });
+          const res = await api(baseUrl, "GET", "/conversations", {
+            token: tokens.staff,
+            query: { limit: "40" },
+          });
+          assert.equal(res.status, 200, state);
+          assert.deepEqual(
+            res.body.data.conversations.map((c: any) => c.id),
+            [`c-${state.toLowerCase()}`]
+          );
+        }
+      );
+    }
   }
 );
 
@@ -785,7 +838,7 @@ await test(
 );
 
 await test(
-  "QR_READY/CONNECTING/RECONNECTING are not treated as CONNECTED for list",
+  "QR_READY/CONNECTING/RECONNECTING still load stored conversations",
   async () => {
     for (const state of ["QR_READY", "CONNECTING", "RECONNECTING"] as const) {
       let listCalls = 0;
@@ -794,7 +847,11 @@ await test(
           conversations: {
             async listByActivity() {
               listCalls += 1;
-              return { rows: [{ id: "should-not-return" }], nextCursor: null };
+              return {
+                rows: [{ id: `c-${state}` }],
+                nextCursor: null,
+                totalUnreadCount: 0,
+              };
             },
           },
         } as any,
@@ -808,9 +865,13 @@ await test(
         { query: { limit: "40" }, actor: { userId: "u-staff" } } as any,
         res
       );
-      assert.equal(listCalls, 0, state);
+      assert.equal(listCalls, 1, state);
       assert.equal(http.statusCode, 200, state);
-      assert.deepEqual(http.body.data.conversations, [], state);
+      assert.deepEqual(
+        http.body.data.conversations.map((c: any) => c.id),
+        [`c-${state}`],
+        state
+      );
     }
   }
 );

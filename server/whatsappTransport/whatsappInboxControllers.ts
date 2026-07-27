@@ -238,17 +238,10 @@ export type InboxControllerDeps = {
 };
 
 /**
- * Empty-list short-circuit only when every WhatsApp transport is explicitly
- * disconnected. Lookup failures must not masquerade as disconnected — fall
- * through so repository/RPC errors still surface.
+ * Empty-list short-circuit removed (repair/whatsapp-inbox-persistence-reconnect).
+ * Stored Supabase conversations must remain readable while WhatsApp is
+ * DISCONNECTED / RECONNECTING / ERROR. Connection health is separate.
  */
-async function isWhatsAppDisconnectedForList(
-  resolveAvailability: WhatsAppInboxListAvailabilityResolver
-): Promise<boolean> {
-  const availability = await resolveAvailability();
-  return availability.allTransportsDisconnected === true;
-}
-
 export function createInboxControllers(
   services: WhatsAppInboxServices,
   deps: InboxControllerDeps = {}
@@ -256,12 +249,14 @@ export function createInboxControllers(
   const sendEnabled = deps.sendEnabled ?? deps.sendPort != null;
   const resolveConnectionStatus =
     deps.getConnectionStatus ?? getWhatsAppConnectionStatus;
-  const resolveListAvailability =
+  // Health resolver retained for DI/production wiring — never gates list/delta.
+  const _listAvailabilityHealth =
     deps.resolveListAvailability ??
     createWhatsAppInboxListAvailabilityResolver({
       getMetaConnectionStatus: resolveConnectionStatus,
       getQrConnectionStatus: deps.getQrConnectionStatus,
     });
+  void _listAvailabilityHealth;
   const aiDraftConfig = deps.aiDraftConfig ?? readAiDraftConfig();
   const aiDraftAdapter =
     deps.aiDraftAdapter ??
@@ -275,11 +270,6 @@ export function createInboxControllers(
         );
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
-        }
-        if (await isWhatsAppDisconnectedForList(resolveListAvailability)) {
-          return inboxOk(res, { conversations: [] }, 200, {
-            nextCursor: null,
-          });
         }
         const actor = actorOf(req);
         const page = await services.conversations.listByActivity(
@@ -358,11 +348,6 @@ export function createInboxControllers(
         const parsed = parseDeltaQuery(req.query as Record<string, unknown>);
         if (isDtoErr(parsed)) {
           return validationFail(res, parsed);
-        }
-        if (await isWhatsAppDisconnectedForList(resolveListAvailability)) {
-          return inboxOk(res, { conversations: [] }, 200, {
-            nextCursor: null,
-          });
         }
         const actor = actorOf(req);
         const page = await services.conversations.listDelta(
