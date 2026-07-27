@@ -2,6 +2,10 @@
  * Direct Postgres URL for CEO auto-import atomic commits.
  * Required so the server can SET LOCAL statement_timeout BEFORE invoking
  * mp_ceo_auto_import_commit_batch (in-function set_config does not cancel).
+ *
+ * Privilege model: commit_batch EXECUTE is granted only to
+ * mp_ceo_auto_import_runtime (not service_role). Prefer connecting with a
+ * login that is a member of that role (e.g. MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL).
  */
 export function resolveAutoImportDatabaseUrl(
   env: NodeJS.ProcessEnv = process.env,
@@ -20,3 +24,6 @@ export function hasAutoImportTimeoutProtection(
 ): boolean {
   return resolveAutoImportDatabaseUrl(env) != null;
 }
+
+/** Dedicated SQL role that holds EXECUTE on commit_batch. */
+export const CEO_AUTO_IMPORT_RUNTIME_ROLE = "mp_ceo_auto_import_runtime";

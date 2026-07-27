@@ -545,6 +545,32 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(atomic.includes("mp_ceo_auto_import_commit_batch"));
   assert.ok(atomic.includes("SET LOCAL statement_timeout"));
   assert.ok(atomic.includes("ineffective"));
+  assert.ok(atomic.includes("mp_ceo_auto_import_runtime"));
+  assert.ok(
+    /grant execute on function public\.mp_ceo_auto_import_commit_batch[\s\S]*to mp_ceo_auto_import_runtime/i.test(
+      atomic,
+    ),
+    "commit_batch granted to runtime role",
+  );
+  assert.ok(
+    /revoke all on function public\.mp_ceo_auto_import_commit_batch\(text, text, jsonb, jsonb\) from service_role/i.test(
+      atomic,
+    ),
+    "commit_batch revoked from service_role",
+  );
+  assert.ok(
+    !/grant execute on function public\.mp_ceo_auto_import_commit_batch[\s\S]*to service_role/i.test(
+      atomic,
+    ),
+    "commit_batch must not be granted to service_role",
+  );
+  assert.ok(
+    /revoke all on function public\.mp_ceo_auto_import_upsert_listing[\s\S]*from service_role/i.test(
+      sql,
+    ),
+    "upsert revoked from service_role",
+  );
+  assert.ok(atomic.includes("duplicate identityKey"));
   assert.ok(/pg_catalog\.pg_proc/i.test(atomic));
   // Must NOT claim in-function set_config cancels the outer statement.
   assert.ok(
@@ -587,6 +613,54 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   );
   assert.ok(guard.includes("LEGACY_MAPPING_DISABLED"));
   console.log("ok - SQL artifacts + atomic RPC signature alignment");
+}
+
+{
+  // Memory commitBatch rejects duplicate identityKey before any write
+  const repository = createMemoryAutoImportRepository();
+  const listing = {
+    identityKey: "exact:dup:mem",
+    title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+    brandName: "Inverex",
+    categoryName: "Solar Inverter",
+    websitePricePkr: 100000,
+    availability: "in_stock" as const,
+    selectedSupplier: "kamal" as const,
+    sourceUrls: ["https://example.com/a"],
+    matchReason: "exact_identity",
+    priceReason: "auto",
+    fetchedAt: new Date().toISOString(),
+    offers: [],
+    previous: null,
+  };
+  let rejected = false;
+  try {
+    await repository.commitBatch(
+      [listing, { ...listing, sourceUrls: ["https://example.com/b"] }],
+      {
+        lastSyncAt: null,
+        lastSyncStatus: "never",
+        lastRunId: "mpair_dup",
+        kamalDiscovered: 0,
+        alladinDiscovered: 0,
+        acceptedVariants: 0,
+        rejectedVariants: 0,
+        exactMatches: 0,
+        conflictKeptSeparate: 0,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors: [],
+        note: "",
+      },
+    );
+  } catch (err) {
+    rejected = /duplicate identityKey/i.test(String((err as Error).message));
+  }
+  assert.equal(rejected, true);
+  assert.equal((await repository.listListings()).length, 0);
+  console.log("ok - memory commit rejects duplicate identityKey");
 }
 
 {

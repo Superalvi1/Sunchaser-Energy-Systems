@@ -17,7 +17,7 @@
 import pg from "pg";
 import type { AutoImportSyncHealth } from "./autoImportTypes.ts";
 import type { UpsertListingInput } from "./autoImportRepository.ts";
-import { resolveAutoImportDatabaseUrl } from "./autoImportDbUrl.ts";
+import { resolveAutoImportDatabaseUrl, CEO_AUTO_IMPORT_RUNTIME_ROLE } from "./autoImportDbUrl.ts";
 import { resolveAutoImportTimeouts } from "./autoImportTimeouts.ts";
 
 export type PgCommitBatchResult = {
@@ -88,6 +88,14 @@ export async function commitBatchWithStatementTimeout(input: {
   await client.connect();
   try {
     await client.query("BEGIN");
+    // Prefer least-privilege runtime role when the login is a member of it.
+    // SET LOCAL ROLE scopes only this transaction; fails closed to prior role
+    // if the membership is absent (e.g. temporary owner connections).
+    try {
+      await client.query(`SET LOCAL ROLE ${CEO_AUTO_IMPORT_RUNTIME_ROLE}`);
+    } catch {
+      /* connection may already be the runtime role, or membership not granted */
+    }
     // Own client command — starts the statement_timeout timer for subsequent work.
     await client.query(`SET LOCAL statement_timeout = '${timeoutMs}'`);
     try {
