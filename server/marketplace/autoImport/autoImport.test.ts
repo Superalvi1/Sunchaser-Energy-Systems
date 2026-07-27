@@ -536,12 +536,622 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(sql.includes("mp_ceo_auto_import_upsert_listing"));
   assert.ok(sql.includes("ceoDiscountApplied"));
   assert.ok(!sql.includes("create or replace function public.mp_admin_upsert_supplier_mapping"));
+  // Code RPC args must match SQL signature (no drift).
+  const repoSrc = readFileSync(
+    join(__dirname, "supabaseAutoImportRepository.ts"),
+    "utf8",
+  );
+  for (const arg of [
+    "p_actor_scope",
+    "p_identity_key",
+    "p_title",
+    "p_brand_name",
+    "p_category_name",
+    "p_website_price",
+    "p_availability",
+    "p_selected_supplier",
+    "p_source_urls",
+    "p_match_reason",
+    "p_price_reason",
+    "p_offers",
+    "p_fetched_at",
+  ]) {
+    assert.ok(sql.includes(arg), `SQL missing ${arg}`);
+    assert.ok(repoSrc.includes(arg), `code missing ${arg}`);
+  }
   const guard = readFileSync(
     join(ROOT, "scripts/marketplace-ws-map-0-legacy-guard.sql"),
     "utf8",
   );
   assert.ok(guard.includes("LEGACY_MAPPING_DISABLED"));
-  console.log("ok - SQL artifacts");
+  console.log("ok - SQL artifacts + RPC signature alignment");
+}
+
+{
+  // Sanitized error logging — never emits secrets / bodies / tokens
+  const { sanitizeAutoImportError, sanitizeLogText, logAutoImport } =
+    await import("./autoImportLog.ts");
+  assert.equal(sanitizeLogText("Authorization: Bearer abc.def"), "[redacted]");
+  assert.equal(sanitizeLogText('{"products":[1,2,3]}'), "[redacted_payload]");
+  assert.ok(!String(sanitizeLogText("user@example.com")).includes("@") || sanitizeLogText("user@example.com") === "[redacted]");
+  const rpcErr = sanitizeAutoImportError(
+    new Error("function mp_ceo_auto_import_upsert_listing does not exist"),
+  );
+  assert.equal(rpcErr.errorCode, "RPC_FAILURE", `got ${rpcErr.errorCode}`);
+  const lines: string[] = [];
+  const origErr = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(String(args[0] ?? ""));
+  };
+  try {
+    logAutoImport({
+      runId: "mpair_test",
+      stage: "route_error",
+      status: "failed",
+      errorClass: "Error",
+      errorCode: "RPC_FAILURE",
+      detail: "Authorization: Bearer super-secret-token",
+    });
+  } finally {
+    console.error = origErr;
+  }
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0]!.includes("marketplace-ceo-auto-import"));
+  assert.ok(lines[0]!.includes("mpair_test"));
+  assert.ok(!lines[0]!.toLowerCase().includes("bearer"));
+  assert.ok(!lines[0]!.includes("super-secret-token"));
+  console.log("ok - sanitized error logging");
+}
+
+{
+  // Supplier HTTP failure → soft error, bounded result (no throw)
+  const repository = createMemoryAutoImportRepository();
+  const service = createAutoImportService({
+    repository,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "30000",
+      MARKETPLACE_CEO_AUTO_IMPORT_SUPPLIER_TIMEOUT_MS: "5000",
+    },
+    catalogueDeps: {
+      pageProvider: async (supplier) => {
+        if (supplier === "kamal") {
+          const err = new Error("Upstream HTTP 503");
+          (err as any).code = "HTTP_ERROR";
+          (err as any).name = "SafeHttpError";
+          throw err;
+        }
+        return {
+          products: [
+            {
+              id: 101,
+              title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+              handle: "nitrox-10",
+              vendor: "Inverex",
+              product_type: "Solar Inverter",
+              tags: ["Solar Inverter"],
+              body_html: "<p>x</p>",
+              variants: [{ price: "250000.00", available: true, sku: "N" }],
+              images: [],
+            },
+          ],
+        };
+      },
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "partial");
+  assert.ok(result.health.errors.some((e) => /kamal/i.test(e)));
+  assert.ok((await service.listListings()).length >= 1);
+  console.log("ok - supplier HTTP failure soft-fail");
+}
+
+{
+  // Malformed supplier response → soft error
+  const repository = createMemoryAutoImportRepository();
+  const service = createAutoImportService({
+    repository,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+    catalogueDeps: {
+      pageProvider: async () => {
+        throw Object.assign(new Error("Invalid JSON catalogue payload."), {
+          name: "SafeHttpError",
+          code: "HTTP_ERROR",
+        });
+      },
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(result.health.errors.length >= 1);
+  assert.equal((await service.listListings()).length, 0);
+  console.log("ok - malformed supplier response");
+}
+
+{
+  // RPC / persist failure → failed run, no partial persistence
+  const base = createMemoryAutoImportRepository();
+  let upserts = 0;
+  const repository: typeof base = {
+    ...base,
+    async upsertListing(input) {
+      upserts += 1;
+      if (upserts >= 2) {
+        throw new Error("function mp_ceo_auto_import_upsert_listing does not exist");
+      }
+      return base.upsertListing(input);
+    },
+    async deleteListings(keys) {
+      return base.deleteListings(keys);
+    },
+  };
+  const service = createAutoImportService({
+    repository,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "rpc-a",
+        currentListedPricePkr: 200000,
+      }),
+      obs({
+        supplier: "kamal",
+        title: "Knox Hybrid Inverter 6kW Single Phase",
+        supplierProductId: "rpc-b",
+        brand: "Knox",
+        currentListedPricePkr: 150000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(result.health.errors.some((e) => /persist_|RPC/i.test(e)));
+  assert.equal((await service.listListings()).length, 0);
+  assert.equal(result.health.productsCreated, 0);
+  console.log("ok - RPC failure rolls back partial persistence");
+}
+
+{
+  // Rollback deletes only newly created keys — never pre-existing listings
+  const repository = createMemoryAutoImportRepository();
+  const env = {
+    MARKETPLACE_ENABLED: "true",
+    MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+  };
+  const seed = createAutoImportService({
+    repository,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "pre-exist",
+        currentListedPricePkr: 200000,
+      }),
+    ],
+    env,
+  });
+  await seed.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  const before = await seed.listListings();
+  assert.equal(before.length, 1);
+  const preKey = before[0]!.identityKey;
+
+  let upserts = 0;
+  const guarded = {
+    getListingByIdentityKey: (k: string) => repository.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => repository.getListingBySourceUrl(u),
+    listListings: () => repository.listListings(),
+    saveHealth: (h: Parameters<typeof repository.saveHealth>[0]) =>
+      repository.saveHealth(h),
+    getHealth: () => repository.getHealth(),
+    async upsertListing(input: Parameters<typeof repository.upsertListing>[0]) {
+      upserts += 1;
+      if (upserts >= 2) {
+        throw new Error("rpc upsert failed on second listing");
+      }
+      return repository.upsertListing(input);
+    },
+    deleteListings: (keys: string[]) => repository.deleteListings(keys),
+  };
+  const service = createAutoImportService({
+    repository: guarded,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "pre-exist",
+        currentListedPricePkr: 210000,
+      }),
+      obs({
+        supplier: "kamal",
+        title: "Knox Hybrid Inverter 6kW Single Phase",
+        supplierProductId: "new-fail",
+        brand: "Knox",
+        currentListedPricePkr: 150000,
+      }),
+    ],
+    env,
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  const after = await service.listListings();
+  assert.equal(after.length, 1);
+  assert.equal(after[0]!.identityKey, preKey);
+  console.log("ok - rollback preserves pre-existing listings");
+}
+
+{
+  // Health-save failure: request still completes; both failures logged
+  const base = createMemoryAutoImportRepository();
+  const lines: string[] = [];
+  const origErr = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(String(args[0] ?? ""));
+  };
+  try {
+    const repository = {
+      getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+      getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+      listListings: () => base.listListings(),
+      getHealth: () => base.getHealth(),
+      deleteListings: (keys: string[]) => base.deleteListings(keys),
+      async upsertListing() {
+        throw new Error(
+          "function mp_ceo_auto_import_upsert_listing does not exist",
+        );
+      },
+      async saveHealth() {
+        throw new Error("sync_runs upsert timed out");
+      },
+    };
+    const service = createAutoImportService({
+      repository,
+      fixtureObservations: [
+        obs({
+          supplier: "kamal",
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          supplierProductId: "hs-1",
+          currentListedPricePkr: 100000,
+        }),
+      ],
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "8000",
+      },
+    });
+    const t0 = Date.now();
+    const result = await service.runAutomaticImport({
+      actorScope: "admin:super:ceo",
+    });
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 5000, `expected bounded response, got ${elapsed}ms`);
+    assert.equal(result.status, "failed");
+    assert.ok(result.health.errors.some((e) => /persist_|RPC/i.test(e)));
+    assert.ok(lines.some((l) => l.includes("persist_failed")));
+    assert.ok(lines.some((l) => l.includes("health_save_failed")));
+    assert.ok(
+      lines.some((l) => l.includes("persist_failed") && l.includes("RPC_FAILURE")) ||
+        lines.some(
+          (l) => l.includes("unexpected_error") && l.includes("RPC_FAILURE"),
+        ),
+    );
+  } finally {
+    console.error = origErr;
+  }
+  console.log("ok - health-save failure logged; request still completes");
+}
+
+{
+  // Alias path shares Super-Admin auth; UI uses canonical admin path
+  const { createMarketplaceAutoImportAliasRouter } = await import(
+    "./autoImportRoutes.ts"
+  );
+  const { isPublicApiRoute } = await import("../../middleware/publicRoutes.ts");
+  assert.equal(
+    isPublicApiRoute("POST", "/api/marketplace/auto-import/run"),
+    false,
+  );
+  assert.equal(
+    isPublicApiRoute("GET", "/api/marketplace/auto-import/health"),
+    false,
+  );
+  assert.equal(
+    isPublicApiRoute("POST", "/api/marketplace/admin/suppliers/auto-import/run"),
+    false,
+  );
+
+  function actor(role: string): RequestActor {
+    return {
+      id: "u1",
+      username: "sa",
+      name: role,
+      email: "sa@test.com",
+      role,
+      accountStatus: "Approved",
+      emailVerified: true,
+      onboardingCompleted: true,
+      authMethod: "jwt",
+    };
+  }
+  const shared = createAutoImportService({
+    fixtureObservations: [],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).actor = actor("Super Admin");
+    next();
+  });
+  app.use(
+    "/api/marketplace/admin",
+    createMarketplaceAutoImportRouter({
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+      service: shared,
+    }),
+  );
+  app.use(
+    "/api/marketplace/auto-import",
+    createMarketplaceAutoImportAliasRouter({
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+      service: shared,
+    }),
+  );
+  const server = createServer(app);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const aliasHealth = await fetch(
+      `http://127.0.0.1:${port}/api/marketplace/auto-import/health`,
+    );
+    assert.equal(aliasHealth.status, 200);
+    const adminHealth = await fetch(
+      `http://127.0.0.1:${port}/api/marketplace/admin/suppliers/auto-import/health`,
+    );
+    assert.equal(adminHealth.status, 200);
+    const apiSrc = readFileSync(join(ROOT, "src/services/api.ts"), "utf8");
+    assert.ok(
+      apiSrc.includes("/api/marketplace/admin/suppliers/auto-import/run"),
+    );
+    assert.ok(
+      !apiSrc.includes('authorizedFetch("/api/marketplace/auto-import/run"'),
+    );
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+  console.log("ok - alias + canonical share auth; UI uses canonical admin path");
+}
+
+{
+  // Unexpected exception during discovery is bounded (supplier soft-fail)
+  const repository = createMemoryAutoImportRepository();
+  const service = createAutoImportService({
+    repository,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+    catalogueDeps: {
+      pageProvider: async () => {
+        throw new TypeError("unexpected boom");
+      },
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(result.runId.startsWith("mpair_"));
+  assert.equal(result.health.lastSyncStatus, "failed");
+  console.log("ok - unexpected exception bounded");
+}
+
+{
+  // Supplier timeout via job/supplier deadline — one supplier cannot hang forever
+  const repository = createMemoryAutoImportRepository();
+  const service = createAutoImportService({
+    repository,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "8000",
+      MARKETPLACE_CEO_AUTO_IMPORT_SUPPLIER_TIMEOUT_MS: "200",
+    },
+    catalogueDeps: {
+      pageProvider: async (supplier) => {
+        if (supplier === "kamal") {
+          await new Promise((r) => setTimeout(r, 2000));
+          return { products: [] };
+        }
+        return {
+          products: [
+            {
+              id: 77,
+              title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+              handle: "nitrox-10",
+              vendor: "Inverex",
+              product_type: "Solar Inverter",
+              tags: ["Solar Inverter"],
+              body_html: "<p>x</p>",
+              variants: [{ price: "250000.00", available: true, sku: "N" }],
+              images: [],
+            },
+          ],
+        };
+      },
+    },
+  });
+  const t0 = Date.now();
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 3000, `expected fast fail, got ${elapsed}ms`);
+  assert.ok(result.health.errors.some((e) => /kamal/i.test(e) && /TIMEOUT/i.test(e)));
+  assert.ok((await service.listListings()).length >= 1);
+  console.log("ok - supplier timeout bounded; other supplier proceeds");
+}
+
+{
+  // Route always returns a bounded HTTP response (202 on service failure, 500 only on throw)
+  function actor(role: string): RequestActor {
+    return {
+      id: "u1",
+      username: "sa",
+      name: role,
+      email: "sa@test.com",
+      role,
+      accountStatus: "Approved",
+      emailVerified: true,
+      onboardingCompleted: true,
+      authMethod: "jwt",
+    };
+  }
+  const failingRepo = createMemoryAutoImportRepository();
+  const boomService = createAutoImportService({
+    repository: {
+      ...failingRepo,
+      async upsertListing() {
+        throw new Error("rpc upsert failed");
+      },
+      deleteListings: (keys) => failingRepo.deleteListings(keys),
+    },
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "route-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).actor = actor("Super Admin");
+    next();
+  });
+  app.use(
+    "/api/marketplace/admin",
+    createMarketplaceAutoImportRouter({
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+      service: boomService,
+    }),
+  );
+  const server = createServer(app);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  const res = await fetch(
+    `http://127.0.0.1:${port}/api/marketplace/admin/suppliers/auto-import/run`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+  );
+  const body = await res.json();
+  assert.equal(res.status, 202);
+  assert.equal(body.ok, true);
+  assert.equal(body.data.status, "failed");
+  assert.ok(body.data.runId);
+  assert.equal((await boomService.listListings()).length, 0);
+  await new Promise<void>((r) => server.close(() => r()));
+  console.log("ok - route returns bounded 202 on persist failure");
+}
+
+{
+  // Route 500 path still logs + returns bounded JSON when service itself throws
+  function actor(role: string): RequestActor {
+    return {
+      id: "u1",
+      username: "sa",
+      name: role,
+      email: "sa@test.com",
+      role,
+      accountStatus: "Approved",
+      emailVerified: true,
+      onboardingCompleted: true,
+      authMethod: "jwt",
+    };
+  }
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).actor = actor("Super Admin");
+    next();
+  });
+  const lines: string[] = [];
+  const origErr = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(String(args[0] ?? ""));
+  };
+  app.use(
+    "/api/marketplace/admin",
+    createMarketplaceAutoImportRouter({
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+      service: {
+        runAutomaticImport: async () => {
+          throw new Error("totally unexpected");
+        },
+        getHealth: async () => {
+          throw new Error("health boom");
+        },
+        listListings: async () => {
+          throw new Error("list boom");
+        },
+        repository: createMemoryAutoImportRepository(),
+      } as any,
+    }),
+  );
+  const server = createServer(app);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/marketplace/admin/suppliers/auto-import/run`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    const body = await res.json();
+    assert.equal(res.status, 500);
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, "INTERNAL_ERROR");
+    assert.ok(lines.some((l) => l.includes("route_error")));
+  } finally {
+    console.error = origErr;
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+  console.log("ok - route 500 still bounded + logged");
 }
 
 console.log("\nCEO auto-import tests passed.");

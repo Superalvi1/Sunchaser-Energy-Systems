@@ -44,6 +44,8 @@ export const SUPPLIER_IMAGE_HOSTS = new Set([
 
 export type SafeFetchOptions = {
   timeoutMs?: number;
+  /** DNS lookup deadline (defaults to DEFAULT_DNS_TIMEOUT_MS). */
+  dnsTimeoutMs?: number;
   maxBytes?: number;
   maxRetries?: number;
   maxRedirects?: number;
@@ -249,14 +251,39 @@ export function createPinnedLookup(
   };
 }
 
+/** Bound DNS so a stalled resolver cannot hang catalogue discovery forever. */
+export const DEFAULT_DNS_TIMEOUT_MS = 5_000;
+
+async function lookupWithTimeout(
+  hostname: string,
+  lookupFn: (hostname: string) => Promise<string[]>,
+  timeoutMs: number,
+): Promise<string[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      lookupFn(hostname),
+      new Promise<string[]>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new SafeHttpError("TIMEOUT", `DNS lookup timed out for ${hostname}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function lookupPublicAddresses(
   hostname: string,
   lookupFn: (hostname: string) => Promise<string[]>,
+  dnsTimeoutMs: number = DEFAULT_DNS_TIMEOUT_MS,
 ): Promise<string[]> {
   let addresses: string[];
   try {
-    addresses = await lookupFn(hostname);
+    addresses = await lookupWithTimeout(hostname, lookupFn, dnsTimeoutMs);
   } catch (err) {
+    if (err instanceof SafeHttpError) throw err;
     throw new SafeHttpError(
       "DNS_ERROR",
       err instanceof Error ? err.message : "DNS lookup failed",
@@ -302,28 +329,43 @@ function headersFromIncoming(msg: IncomingMessage): Headers {
 async function readIncomingBody(
   res: IncomingMessage,
   maxBytes: number,
+  timeoutMs: number,
 ): Promise<string> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    const timer = setTimeout(() => {
+      res.destroy();
+      reject(new SafeHttpError("TIMEOUT", "Response body timed out."));
+    }, timeoutMs);
+    const finish = (fn: () => void) => {
+      clearTimeout(timer);
+      fn();
+    };
     res.on("data", (chunk: Buffer | string) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += buf.byteLength;
       if (total > maxBytes) {
         res.destroy();
-        reject(
-          new SafeHttpError("RESPONSE_TOO_LARGE", "Response exceeds max size."),
+        finish(() =>
+          reject(
+            new SafeHttpError("RESPONSE_TOO_LARGE", "Response exceeds max size."),
+          ),
         );
         return;
       }
       chunks.push(buf);
     });
-    res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    res.on("end", () =>
+      finish(() => resolve(Buffer.concat(chunks).toString("utf8"))),
+    );
     res.on("error", (err) =>
-      reject(
-        new SafeHttpError(
-          "NETWORK_ERROR",
-          err instanceof Error ? err.message : "Response stream error",
+      finish(() =>
+        reject(
+          new SafeHttpError(
+            "NETWORK_ERROR",
+            err instanceof Error ? err.message : "Response stream error",
+          ),
         ),
       ),
     );
@@ -363,7 +405,7 @@ export async function pinnedHttpsRequest(
         lookup: pinnedLookup as unknown as typeof dnsCallback.lookup,
       },
       (res) => {
-        readIncomingBody(res, maxBytes)
+        readIncomingBody(res, maxBytes, timeoutMs)
           .then((body) =>
             resolve({
               status: res.statusCode || 0,
@@ -407,6 +449,7 @@ export async function safeFetchText(
 ): Promise<{ url: string; status: number; body: string; contentType: string | null }> {
   const allowedHosts = opts.allowedHosts ?? SUPPLIER_CATALOGUE_HOSTS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS;
+  const dnsTimeoutMs = opts.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
@@ -427,6 +470,7 @@ export async function safeFetchText(
         const validatedAddresses = await lookupPublicAddresses(
           current.hostname,
           lookupFn,
+          dnsTimeoutMs,
         );
 
         const res = await requestFn({

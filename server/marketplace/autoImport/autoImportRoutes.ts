@@ -1,5 +1,14 @@
 /**
  * Super-Admin routes for CEO automatic supplier import + sync health.
+ *
+ * Canonical mount (server.ts):
+ *   /api/marketplace/admin + /suppliers/auto-import/{run,health,listings}
+ *
+ * Compatibility alias mount (same service instance, same Super-Admin gates):
+ *   /api/marketplace/auto-import + /{run,health,listings}
+ *
+ * Auth is never weakened: central JWT (non-public carve-out) + marketplace
+ * lockdown + Super Admin pricing gate on every handler.
  */
 import type { Request, Response, Router } from "express";
 import express from "express";
@@ -13,12 +22,27 @@ import {
   MARKETPLACE_API_VERSION,
   MARKETPLACE_API_VERSION_HEADER,
 } from "../catalogue/catalogueTypes.ts";
-import { createAutoImportService } from "./autoImportService.ts";
+import {
+  createAutoImportService,
+  type AutoImportService,
+} from "./autoImportService.ts";
+import { logAutoImport, sanitizeAutoImportError } from "./autoImportLog.ts";
 
 export type AutoImportRouterDeps = {
   env?: NodeJS.ProcessEnv;
-  service?: ReturnType<typeof createAutoImportService>;
+  service?: AutoImportService;
+  log?: typeof logAutoImport;
 };
+
+/** Canonical Super-Admin paths (relative to /api/marketplace/admin). */
+export const AUTO_IMPORT_ADMIN_RUN_PATH = "/suppliers/auto-import/run";
+export const AUTO_IMPORT_ADMIN_HEALTH_PATH = "/suppliers/auto-import/health";
+export const AUTO_IMPORT_ADMIN_LISTINGS_PATH = "/suppliers/auto-import/listings";
+
+/** Compatibility alias paths (relative to /api/marketplace/auto-import). */
+export const AUTO_IMPORT_ALIAS_RUN_PATH = "/run";
+export const AUTO_IMPORT_ALIAS_HEALTH_PATH = "/health";
+export const AUTO_IMPORT_ALIAS_LISTINGS_PATH = "/listings";
 
 function setApiVersion(res: Response): void {
   res.setHeader(MARKETPLACE_API_VERSION_HEADER, MARKETPLACE_API_VERSION);
@@ -57,22 +81,19 @@ function requireSuperAdmin(req: Request, res: Response): RequestActor | null {
   return actor;
 }
 
-/**
- * Routes (relative to /api/marketplace/admin):
- * - POST /suppliers/auto-import/run
- * - GET  /suppliers/auto-import/health
- * - GET  /suppliers/auto-import/listings
- */
-export function createMarketplaceAutoImportRouter(
-  deps: AutoImportRouterDeps = {},
-): Router {
-  const router = express.Router();
-  const env = deps.env ?? process.env;
-  const service = deps.service ?? createAutoImportService({ env });
+function attachAutoImportHandlers(
+  router: Router,
+  deps: {
+    service: AutoImportService;
+    log: typeof logAutoImport;
+    runPath: string;
+    healthPath: string;
+    listingsPath: string;
+  },
+): void {
+  const { service, log, runPath, healthPath, listingsPath } = deps;
 
-  router.use(createMarketplaceRouteLockdown({ env }));
-
-  router.post("/suppliers/auto-import/run", async (req, res) => {
+  router.post(runPath, async (req, res) => {
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
@@ -87,8 +108,18 @@ export function createMarketplaceAutoImportRouter(
       const result = await service.runAutomaticImport({
         actorScope: superAdminActorScope(actor),
       });
+      // Service always returns a bounded result (including timeout/RPC failures).
       return sendOk(res, result, 202);
-    } catch {
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId: "route",
+        stage: "route_error",
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
       return sendError(
         res,
         500,
@@ -98,17 +129,26 @@ export function createMarketplaceAutoImportRouter(
     }
   });
 
-  router.get("/suppliers/auto-import/health", async (req, res) => {
+  router.get(healthPath, async (req, res) => {
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
       return sendOk(res, await service.getHealth());
-    } catch {
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId: "route",
+        stage: "route_error",
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
       return sendError(res, 500, "INTERNAL_ERROR", "Unable to load sync health.");
     }
   });
 
-  router.get("/suppliers/auto-import/listings", async (req, res) => {
+  router.get(listingsPath, async (req, res) => {
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
@@ -128,10 +168,64 @@ export function createMarketplaceAutoImportRouter(
           sourceUrls: l.sourceUrls,
         })),
       });
-    } catch {
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId: "route",
+        stage: "route_error",
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
       return sendError(res, 500, "INTERNAL_ERROR", "Unable to list import listings.");
     }
   });
+}
 
+function buildAutoImportRouter(
+  deps: AutoImportRouterDeps,
+  paths: { runPath: string; healthPath: string; listingsPath: string },
+): Router {
+  const router = express.Router();
+  const env = deps.env ?? process.env;
+  const service = deps.service ?? createAutoImportService({ env });
+  const log = deps.log ?? logAutoImport;
+
+  router.use(createMarketplaceRouteLockdown({ env }));
+  attachAutoImportHandlers(router, {
+    service,
+    log,
+    ...paths,
+  });
   return router;
+}
+
+/**
+ * Canonical router for mount at `/api/marketplace/admin`.
+ * Routes: POST/GET `/suppliers/auto-import/{run,health,listings}`.
+ */
+export function createMarketplaceAutoImportRouter(
+  deps: AutoImportRouterDeps = {},
+): Router {
+  return buildAutoImportRouter(deps, {
+    runPath: AUTO_IMPORT_ADMIN_RUN_PATH,
+    healthPath: AUTO_IMPORT_ADMIN_HEALTH_PATH,
+    listingsPath: AUTO_IMPORT_ADMIN_LISTINGS_PATH,
+  });
+}
+
+/**
+ * Compatibility alias for mount at `/api/marketplace/auto-import`.
+ * Same Super-Admin authorization and shared service instance when deps.service
+ * is passed from server.ts — does not duplicate import logic.
+ */
+export function createMarketplaceAutoImportAliasRouter(
+  deps: AutoImportRouterDeps = {},
+): Router {
+  return buildAutoImportRouter(deps, {
+    runPath: AUTO_IMPORT_ALIAS_RUN_PATH,
+    healthPath: AUTO_IMPORT_ALIAS_HEALTH_PATH,
+    listingsPath: AUTO_IMPORT_ALIAS_LISTINGS_PATH,
+  });
 }

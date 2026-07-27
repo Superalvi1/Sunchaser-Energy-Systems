@@ -31,6 +31,11 @@ export type AutoImportRepository = {
   upsertListing(
     input: UpsertListingInput,
   ): Promise<{ record: AutoImportListingRecord; created: boolean }>;
+  /**
+   * Best-effort removal of listings written during a failed run.
+   * Memory: hard delete. Supabase: soft best-effort (may be no-op if SQL not applied).
+   */
+  deleteListings(identityKeys: string[]): Promise<void>;
   listListings(): Promise<AutoImportListingRecord[]>;
   saveHealth(health: AutoImportSyncHealth): Promise<void>;
   getHealth(): Promise<AutoImportSyncHealth>;
@@ -112,6 +117,17 @@ export function createMemoryAutoImportRepository(): AutoImportRepository {
       byKey.set(input.identityKey, record);
       for (const u of record.sourceUrls) urlIndex.set(u, input.identityKey);
       return { record, created };
+    },
+    async deleteListings(identityKeys) {
+      for (const key of identityKeys) {
+        const existing = byKey.get(key);
+        if (!existing) continue;
+        byKey.delete(key);
+        for (const [url, mapped] of [...urlIndex.entries()]) {
+          if (mapped === key) urlIndex.delete(url);
+        }
+        void existing;
+      }
     },
     async listListings() {
       return [...byKey.values()];

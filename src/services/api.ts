@@ -3176,14 +3176,21 @@ export async function submitPublicLead(payload: {
 
 // ---------------------------------------------------------------------------
 // Marketplace CEO auto-import (Super Admin JWT)
+// Canonical protected endpoints under /api/marketplace/admin/suppliers/...
 // ---------------------------------------------------------------------------
+
+/** Canonical Super-Admin auto-import paths (must match server mounts). */
+export const MARKETPLACE_AUTO_IMPORT_RUN_PATH =
+  "/api/marketplace/admin/suppliers/auto-import/run";
+export const MARKETPLACE_AUTO_IMPORT_HEALTH_PATH =
+  "/api/marketplace/admin/suppliers/auto-import/health";
 
 export async function fetchMarketplaceAutoImportHealth(_staff?: {
   id: string;
   username: string;
   role: string;
 }) {
-  const res = await authorizedFetch("/api/marketplace/admin/suppliers/auto-import/health");
+  const res = await authorizedFetch(MARKETPLACE_AUTO_IMPORT_HEALTH_PATH);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(
@@ -3214,7 +3221,7 @@ export async function runMarketplaceAutoImport(_staff?: {
   username: string;
   role: string;
 }) {
-  const res = await authorizedFetch("/api/marketplace/admin/suppliers/auto-import/run", {
+  const res = await authorizedFetch(MARKETPLACE_AUTO_IMPORT_RUN_PATH, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),

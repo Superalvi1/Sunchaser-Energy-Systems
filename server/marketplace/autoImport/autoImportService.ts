@@ -22,7 +22,10 @@ import {
   exactIdentityKey,
   separateListingKey,
 } from "./identityNormalize.ts";
-import type { AutoImportRepository } from "./autoImportRepository.ts";
+import type {
+  AutoImportRepository,
+  UpsertListingInput,
+} from "./autoImportRepository.ts";
 import { createAutoImportRepositoryFromEnv } from "./supabaseAutoImportRepository.ts";
 import {
   resolvePriceWithRollback,
@@ -35,6 +38,12 @@ import type {
   AutoImportSyncResult,
 } from "./autoImportTypes.ts";
 import { CEO_AUTO_IMPORT_JOB_NAME } from "./autoImportTypes.ts";
+import { logAutoImport, sanitizeAutoImportError } from "./autoImportLog.ts";
+import {
+  AutoImportTimeoutError,
+  resolveAutoImportTimeouts,
+  withDeadline,
+} from "./autoImportTimeouts.ts";
 
 export type AutoImportServiceDeps = {
   repository?: AutoImportRepository;
@@ -43,6 +52,8 @@ export type AutoImportServiceDeps = {
   now?: () => Date;
   /** Optional fixture observations (tests) — skips live fetch when provided. */
   fixtureObservations?: CatalogueProductObservation[];
+  /** Inject logger (tests). */
+  log?: typeof logAutoImport;
 };
 
 function isAutoImportEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -104,48 +115,152 @@ function rejectReason(obs: CatalogueProductObservation): string | null {
   return null;
 }
 
+function emptyResult(
+  runId: string,
+  health: AutoImportSyncHealth,
+): AutoImportSyncResult {
+  return {
+    runId,
+    status:
+      health.lastSyncStatus === "never" ? "failed" : health.lastSyncStatus,
+    health,
+    sampleLowestPrice: [],
+    automaticPublication: true,
+    ceoDiscountApplied: false,
+    legacyMappingBypassUsed: false,
+  };
+}
+
 export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
   const env = deps.env ?? process.env;
   const repo = deps.repository ?? createAutoImportRepositoryFromEnv(env);
   const now = deps.now ?? (() => new Date());
+  const log = deps.log ?? logAutoImport;
+  const timeouts = resolveAutoImportTimeouts(env);
+
+  async function saveHealthSafe(
+    runId: string,
+    health: AutoImportSyncHealth,
+    startedAt: number,
+    originalFailure?: { errorClass: string; errorCode: string; message: string },
+  ): Promise<void> {
+    const remaining = Math.max(
+      500,
+      timeouts.jobTimeoutMs - (Date.now() - startedAt),
+    );
+    const budget = Math.min(timeouts.rpcTimeoutMs, remaining);
+    try {
+      await withDeadline(repo.saveHealth(health), budget, "auto-import-saveHealth");
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "health_save_failed",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: originalFailure
+          ? `health_save_failed_after_${originalFailure.errorCode}:${sanitized.message}`
+          : sanitized.message,
+      });
+      if (originalFailure) {
+        // Keep the original failure visible in logs (do not hide it).
+        log({
+          runId,
+          stage: "unexpected_error",
+          elapsedMs: Date.now() - startedAt,
+          status: "failed",
+          errorClass: originalFailure.errorClass,
+          errorCode: originalFailure.errorCode,
+          detail: originalFailure.message,
+        });
+      }
+    }
+  }
 
   async function discoverSupplier(
+    runId: string,
     supplier: SupplierCode,
+    startedAt: number,
   ): Promise<{
     discovered: number;
     accepted: CatalogueProductObservation[];
     excluded: number;
     error?: string;
   }> {
+    log({
+      runId,
+      stage: "supplier_fetch_start",
+      supplier,
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+    });
     try {
-      const catalogue = await fetchShopifyCatalogue(supplier, deps.catalogueDeps);
+      const catalogue = await withDeadline(
+        fetchShopifyCatalogue(supplier, deps.catalogueDeps),
+        timeouts.supplierTimeoutMs,
+        `supplier:${supplier}`,
+      );
       const { accepted, excluded } = normalizeCatalogueProducts(
         supplier,
         catalogue.products as ShopifyRawProduct[],
         now().toISOString(),
       );
+      log({
+        runId,
+        stage: "supplier_fetch_done",
+        supplier,
+        elapsedMs: Date.now() - startedAt,
+        status: "running",
+        pagesFetched: catalogue.pagesFetched,
+        discovered: catalogue.products.length,
+      });
       return {
         discovered: catalogue.products.length,
         accepted,
         excluded: excluded.length,
       };
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "supplier_fetch_failed";
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "supplier_fetch_failed",
+        supplier,
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
       return {
         discovered: 0,
         accepted: [],
         excluded: 0,
-        error: `${supplier}_timeout_or_error:${message}`.slice(0, 200),
+        error: `${supplier}_${sanitized.errorCode}:${sanitized.message}`.slice(
+          0,
+          200,
+        ),
       };
     }
   }
 
-  async function runAutomaticImport(input: {
+  async function runAutomaticImportInner(input: {
     actorScope: string;
+    runId: string;
+    startedAt: number;
   }): Promise<AutoImportSyncResult> {
-    const runId = `mpair_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const { runId, startedAt } = input;
+
     if (!isAutoImportEnabled(env)) {
+      log({
+        runId,
+        stage: "feature_gate",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorCode: "FEATURE_DISABLED",
+        detail: "CEO auto-import disabled",
+      });
       const health: AutoImportSyncHealth = {
         lastSyncAt: now().toISOString(),
         lastSyncStatus: "failed",
@@ -160,19 +275,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         productsUpdated: 0,
         lowestPriceSelections: 0,
         rolledBackPrices: 0,
-        errors: ["CEO auto-import disabled (MARKETPLACE_CEO_AUTO_IMPORT_ENABLED)."],
+        errors: [
+          "CEO auto-import disabled (MARKETPLACE_CEO_AUTO_IMPORT_ENABLED).",
+        ],
         note: "Enable MARKETPLACE_ENABLED and MARKETPLACE_CEO_AUTO_IMPORT_ENABLED.",
       };
-      await repo.saveHealth(health);
-      return {
-        runId,
-        status: "failed",
-        health,
-        sampleLowestPrice: [],
-        automaticPublication: true,
-        ceoDiscountApplied: false,
-        legacyMappingBypassUsed: false,
-      };
+      await saveHealthSafe(runId, health, startedAt);
+      return emptyResult(runId, health);
     }
 
     // Defense: never touch legacy mapping RPC from this path.
@@ -187,10 +296,21 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     if (deps.fixtureObservations) {
       observations = deps.fixtureObservations;
       kamalDiscovered = observations.filter((o) => o.supplier === "kamal").length;
-      alladinDiscovered = observations.filter((o) => o.supplier === "alladin").length;
+      alladinDiscovered = observations.filter((o) => o.supplier === "alladin")
+        .length;
+      log({
+        runId,
+        stage: "normalize",
+        elapsedMs: Date.now() - startedAt,
+        status: "running",
+        discovered: observations.length,
+        detail: "fixture_observations",
+      });
     } else {
-      const kamal = await discoverSupplier("kamal");
-      const alladin = await discoverSupplier("alladin");
+      // Sequential discovery so one supplier's budget cannot starve the other
+      // beyond its own supplierTimeoutMs, and total stays under jobTimeoutMs.
+      const kamal = await discoverSupplier(runId, "kamal", startedAt);
+      const alladin = await discoverSupplier(runId, "alladin", startedAt);
       kamalDiscovered = kamal.discovered;
       alladinDiscovered = alladin.discovered;
       if (kamal.error) errors.push(kamal.error);
@@ -240,11 +360,17 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       k.startsWith("separate:"),
     ).length;
 
-    let productsCreated = 0;
-    let productsUpdated = 0;
+    // Phase 1: plan all upserts (no persistence yet).
+    type Planned = {
+      input: UpsertListingInput;
+      selectionOk: boolean;
+      selection:
+        | ReturnType<typeof selectLowestValidPrice>
+        | null;
+    };
+    const planned: Planned[] = [];
     let lowestPriceSelections = 0;
     let rolledBackPrices = 0;
-    const sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"] = [];
 
     for (const [identityKey, offers] of groups) {
       const priced: PricedOffer[] = offers.map((o) => ({
@@ -276,13 +402,10 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         continue;
       }
       if (resolved.rolledBack) rolledBackPrices += 1;
-      else if (selection.ok && selection.considered.length > 1) {
-        lowestPriceSelections += 1;
-      } else if (selection.ok) {
+      else if (selection.ok) {
         lowestPriceSelections += 1;
       }
 
-      // Availability: if any offer in_stock → in_stock; else if all sold_out → sold_out
       let availability = offers[0]!.availability;
       if (offers.some((o) => o.availability === "in_stock")) {
         availability = "in_stock";
@@ -290,42 +413,158 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         availability = "sold_out";
       }
 
-      const primary = offers.find((o) => o.supplier === resolved.supplier) ?? offers[0]!;
-      const { created } = await repo.upsertListing({
-        identityKey,
-        title: primary.title,
-        brandName: primary.brand || primary.identity.manufacturer || "Unknown",
-        categoryName:
-          primary.category || primary.identity.categoryFamily || "solar",
-        websitePricePkr: resolved.pricePkr,
-        availability,
-        selectedSupplier: resolved.supplier,
-        sourceUrls: offers.map((o) => o.canonicalUrl),
-        matchReason: primary.matchReason,
-        priceReason: resolved.reason,
-        fetchedAt: now().toISOString(),
-        previous,
-        offers: offers.map((o) => ({
-          supplier: o.supplier,
-          pricePkr: o.currentListedPricePkr,
-          url: o.canonicalUrl,
-          availability: o.availability,
-        })),
-      });
-      if (created) productsCreated += 1;
-      else productsUpdated += 1;
-
-      if (selection.ok && sampleLowestPrice.length < 12) {
-        sampleLowestPrice.push({
-          title: primary.title,
+      const primary =
+        offers.find((o) => o.supplier === resolved.supplier) ?? offers[0]!;
+      planned.push({
+        selectionOk: selection.ok,
+        selection,
+        input: {
           identityKey,
-          selectedSupplier: selection.supplier,
-          pricePkr: selection.pricePkr,
-          considered: selection.considered,
-          reason: selection.reason,
-        });
-      }
+          title: primary.title,
+          brandName: primary.brand || primary.identity.manufacturer || "Unknown",
+          categoryName:
+            primary.category || primary.identity.categoryFamily || "solar",
+          websitePricePkr: resolved.pricePkr,
+          availability,
+          selectedSupplier: resolved.supplier,
+          sourceUrls: offers.map((o) => o.canonicalUrl),
+          matchReason: primary.matchReason,
+          priceReason: resolved.reason,
+          fetchedAt: now().toISOString(),
+          previous,
+          offers: offers.map((o) => ({
+            supplier: o.supplier,
+            pricePkr: o.currentListedPricePkr,
+            url: o.canonicalUrl,
+            availability: o.availability,
+          })),
+        },
+      });
     }
+
+    log({
+      runId,
+      stage: "persist_start",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      plannedUpserts: planned.length,
+    });
+
+    let productsCreated = 0;
+    let productsUpdated = 0;
+    const sampleLowestPrice: AutoImportSyncResult["sampleLowestPrice"] = [];
+    /** Only newly created identity keys — never roll back pre-existing listings. */
+    const createdKeysThisRun: string[] = [];
+
+    try {
+      for (const item of planned) {
+        const { created } = await repo.upsertListing(item.input);
+        if (created) {
+          createdKeysThisRun.push(item.input.identityKey);
+          productsCreated += 1;
+        } else {
+          productsUpdated += 1;
+        }
+
+        if (
+          item.selectionOk &&
+          item.selection &&
+          item.selection.ok &&
+          sampleLowestPrice.length < 12
+        ) {
+          sampleLowestPrice.push({
+            title: item.input.title,
+            identityKey: item.input.identityKey,
+            selectedSupplier: item.selection.supplier,
+            pricePkr: item.selection.pricePkr,
+            considered: item.selection.considered,
+            reason: item.selection.reason,
+          });
+        }
+      }
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "persist_failed",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+        plannedUpserts: planned.length,
+      });
+      // Roll back only listings created in this run; never delete pre-existing.
+      try {
+        await repo.deleteListings(createdKeysThisRun);
+        log({
+          runId,
+          stage: "persist_rollback",
+          elapsedMs: Date.now() - startedAt,
+          status: "failed",
+          detail: `rolled_back_created_${createdKeysThisRun.length}`,
+        });
+      } catch (rollbackErr) {
+        const rb = sanitizeAutoImportError(rollbackErr);
+        log({
+          runId,
+          stage: "persist_rollback",
+          elapsedMs: Date.now() - startedAt,
+          status: "failed",
+          errorClass: rb.errorClass,
+          errorCode: rb.errorCode,
+          detail: rb.message,
+        });
+        // Original persist failure remains primary — logged above and in errors[].
+      }
+      errors.push(
+        `persist_${sanitized.errorCode}:${sanitized.message}`.slice(0, 200),
+      );
+      const health: AutoImportSyncHealth = {
+        lastSyncAt: now().toISOString(),
+        lastSyncStatus: "failed",
+        lastRunId: runId,
+        kamalDiscovered,
+        alladinDiscovered,
+        acceptedVariants: acceptedOffers.length,
+        rejectedVariants,
+        exactMatches: exactGroupCount,
+        conflictKeptSeparate: separateGroupCount,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors,
+        note:
+          "CEO auto-import aborted during persistence; attempted rollback of this run's newly created listings only.",
+      };
+      await saveHealthSafe(runId, health, startedAt, sanitized);
+      log({
+        runId,
+        stage: "run_complete",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+      });
+      return {
+        runId,
+        status: "failed",
+        health,
+        sampleLowestPrice: [],
+        automaticPublication: true,
+        ceoDiscountApplied: false,
+        legacyMappingBypassUsed: false,
+      };
+    }
+
+    log({
+      runId,
+      stage: "persist_done",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      plannedUpserts: planned.length,
+    });
 
     const status: AutoImportSyncResult["status"] =
       errors.length === 0
@@ -352,7 +591,14 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       note:
         "CEO auto-import: public listed price published as website price; no purchasing discount; WS-MAP-0 legacy mapping unused.",
     };
-    await repo.saveHealth(health);
+    await saveHealthSafe(runId, health, startedAt);
+
+    log({
+      runId,
+      stage: "run_complete",
+      elapsedMs: Date.now() - startedAt,
+      status,
+    });
 
     return {
       runId,
@@ -363,6 +609,68 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       ceoDiscountApplied: false,
       legacyMappingBypassUsed: false,
     };
+  }
+
+  async function runAutomaticImport(input: {
+    actorScope: string;
+  }): Promise<AutoImportSyncResult> {
+    const runId = `mpair_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const startedAt = Date.now();
+    log({
+      runId,
+      stage: "run_start",
+      elapsedMs: 0,
+      status: "running",
+      detail: `jobTimeoutMs=${timeouts.jobTimeoutMs}`,
+    });
+
+    try {
+      return await withDeadline(
+        runAutomaticImportInner({ ...input, runId, startedAt }),
+        timeouts.jobTimeoutMs,
+        "auto-import-job",
+      );
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      const isTimeout =
+        err instanceof AutoImportTimeoutError ||
+        sanitized.errorCode === "TIMEOUT";
+      log({
+        runId,
+        stage: isTimeout ? "job_timeout" : "unexpected_error",
+        elapsedMs: Date.now() - startedAt,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
+      const health: AutoImportSyncHealth = {
+        lastSyncAt: now().toISOString(),
+        lastSyncStatus: "failed",
+        lastRunId: runId,
+        kamalDiscovered: 0,
+        alladinDiscovered: 0,
+        acceptedVariants: 0,
+        rejectedVariants: 0,
+        exactMatches: 0,
+        conflictKeptSeparate: 0,
+        productsCreated: 0,
+        productsUpdated: 0,
+        lowestPriceSelections: 0,
+        rolledBackPrices: 0,
+        errors: [
+          `${isTimeout ? "job_timeout" : "unexpected"}:${sanitized.message}`.slice(
+            0,
+            200,
+          ),
+        ],
+        note: isTimeout
+          ? "Auto-import job exceeded bounded timeout and failed safely."
+          : "Auto-import failed with an unexpected error.",
+      };
+      await saveHealthSafe(runId, health, startedAt, sanitized);
+      return emptyResult(runId, health);
+    }
   }
 
   return {
