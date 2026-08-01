@@ -26,7 +26,13 @@
 -- PRIVILEGE MATRIX (after this script):
 --   preflight()       → EXECUTE: service_role only (among PostgREST roles)
 --   commit_batch(...) → EXECUTE: mp_ceo_auto_import_runtime only (direct PG)
---   upsert_listing    → EXECUTE: revoked from public/anon/authenticated/service_role
+--   upsert_listing    → EXECUTE: revoked from public/anon/authenticated/service_role/runtime
+--
+-- RUNTIME ROLE CREATION (Supabase-compatible):
+--   Supabase dashboard postgres can CREATE ROLE but cannot ALTER ROLE with
+--   NOSUPERUSER/NOREPLICATION/NOBYPASSRLS. Create with NOLOGIN only, rely on
+--   PostgreSQL secure defaults, then fail-closed verify via pg_roles.
+--   Do not auto-downgrade an existing unsafe role.
 --
 -- Does NOT restore mp_admin_upsert_supplier_mapping (WS-MAP-0 preserved).
 -- =============================================================================
@@ -402,27 +408,52 @@ revoke all on function public.mp_ceo_auto_import_commit_batch(
 -- Dedicated direct-Postgres runtime role for commit_batch only.
 -- Not a PostgREST role. Application connects with a login role that is a member
 -- of mp_ceo_auto_import_runtime (e.g. via MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL).
+--
+-- Supabase-compatible: CREATE ROLE … NOLOGIN only (secure defaults). Do NOT run
+-- ALTER ROLE … NOSUPERUSER/NOREPLICATION/NOBYPASSRLS — restricted CREATEROLE
+-- admins (including Supabase dashboard postgres) get "permission denied to alter role".
 do $ceo_ai_runtime_role$
+declare
+  r record;
 begin
   if not exists (
     select 1 from pg_catalog.pg_roles where rolname = 'mp_ceo_auto_import_runtime'
   ) then
-    create role mp_ceo_auto_import_runtime
-      nologin
-      nosuperuser
-      nocreatedb
-      nocreaterole
-      noreplication
-      nobypassrls;
+    create role mp_ceo_auto_import_runtime nologin;
   end if;
-  -- Idempotent attribute lock: re-apply even if the role already existed.
-  alter role mp_ceo_auto_import_runtime
-    nologin
-    nosuperuser
-    nocreatedb
-    nocreaterole
-    noreplication
-    nobypassrls;
+
+  select
+    rolcanlogin,
+    rolsuper,
+    rolcreatedb,
+    rolcreaterole,
+    rolreplication,
+    rolbypassrls
+  into r
+  from pg_catalog.pg_roles
+  where rolname = 'mp_ceo_auto_import_runtime';
+
+  if not found then
+    raise exception
+      'mp_ceo_auto_import_runtime role missing after create/verify';
+  end if;
+
+  -- Fail closed: never auto-downgrade a superuser or otherwise unsafe role.
+  if r.rolcanlogin
+     or r.rolsuper
+     or r.rolcreatedb
+     or r.rolcreaterole
+     or r.rolreplication
+     or r.rolbypassrls then
+    raise exception
+      'mp_ceo_auto_import_runtime has unsafe attributes (rolcanlogin=%, rolsuper=%, rolcreatedb=%, rolcreaterole=%, rolreplication=%, rolbypassrls=%). Refusing to continue; replace or fix the role manually — this script will not ALTER ROLE to downgrade privileges.',
+      r.rolcanlogin,
+      r.rolsuper,
+      r.rolcreatedb,
+      r.rolcreaterole,
+      r.rolreplication,
+      r.rolbypassrls;
+  end if;
 end
 $ceo_ai_runtime_role$;
 
@@ -474,6 +505,9 @@ begin
         text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
       ) from service_role$sql$;
     end if;
+    execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
+      text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
+    ) from mp_ceo_auto_import_runtime$sql$;
   end if;
 end
 $ceo_ai_atomic_grants$;

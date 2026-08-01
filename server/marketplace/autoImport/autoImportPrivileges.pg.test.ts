@@ -28,6 +28,10 @@ const DB_URL = `postgresql://postgres:postgres@127.0.0.1:${PORT}/postgres`;
 const RUNTIME_USER = "mp_ceo_auto_import_app";
 const RUNTIME_PASS = "runtime_test_pw";
 const RUNTIME_URL = `postgresql://${RUNTIME_USER}:${RUNTIME_PASS}@127.0.0.1:${PORT}/postgres`;
+/** CREATEROLE non-superuser — mirrors Supabase dashboard postgres limits. */
+const RESTRICTED_ADMIN = "mp_supabase_like_admin";
+const RESTRICTED_PASS = "restricted_admin_pw";
+const RESTRICTED_URL = `postgresql://${RESTRICTED_ADMIN}:${RESTRICTED_PASS}@127.0.0.1:${PORT}/postgres`;
 
 const UPSERT_SIG =
   "public.mp_ceo_auto_import_upsert_listing(text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz)";
@@ -100,6 +104,38 @@ function isPermissionDenied(err: unknown): boolean {
   return /permission denied|must be owner/i.test(msg);
 }
 
+function extractRuntimeRoleDoBlock(atomicSql: string): string {
+  const match = atomicSql.match(
+    /do \$ceo_ai_runtime_role\$[\s\S]*?\$ceo_ai_runtime_role\$;/i,
+  );
+  if (!match) {
+    throw new Error("runtime role DO block ($ceo_ai_runtime_role$) not found in atomic SQL");
+  }
+  return match[0];
+}
+
+async function runtimeRoleAttrs(
+  client: pg.Client,
+): Promise<Record<string, boolean> | null> {
+  const attrs = await client.query(
+    `select rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+     from pg_roles where rolname = 'mp_ceo_auto_import_runtime'`,
+  );
+  return attrs.rows[0] ?? null;
+}
+
+function attrsAreSecure(a: Record<string, boolean> | null): boolean {
+  return (
+    !!a &&
+    a.rolcanlogin === false &&
+    a.rolsuper === false &&
+    a.rolcreatedb === false &&
+    a.rolcreaterole === false &&
+    a.rolreplication === false &&
+    a.rolbypassrls === false
+  );
+}
+
 async function asRole<T>(
   admin: pg.Client,
   role: string,
@@ -165,6 +201,111 @@ async function main(): Promise<void> {
     await apply(admin, WS0);
     await apply(admin, WS1);
     await apply(admin, CEO);
+
+    const atomicSql = readFileSync(ATOMIC, "utf8");
+    const roleBlock = extractRuntimeRoleDoBlock(atomicSql);
+
+    // Source: no privileged ALTER ROLE (Supabase dashboard postgres cannot run it).
+    check(
+      "atomic SQL does not ALTER ROLE mp_ceo_auto_import_runtime",
+      !/alter\s+role\s+mp_ceo_auto_import_runtime/i.test(atomicSql),
+    );
+    check(
+      "atomic SQL creates runtime with NOLOGIN only",
+      /create\s+role\s+mp_ceo_auto_import_runtime\s+nologin\s*;/i.test(atomicSql),
+    );
+    check(
+      "atomic SQL fail-closed verifies runtime attributes via pg_roles",
+      /from pg_catalog\.pg_roles/i.test(roleBlock) &&
+        /rolcanlogin/i.test(roleBlock) &&
+        /unsafe attributes/i.test(roleBlock),
+    );
+
+    // --- Supabase-like restricted CREATEROLE admin (not superuser) ---
+    await admin.query(`
+      do $$ begin
+        if not exists (select 1 from pg_roles where rolname = '${RESTRICTED_ADMIN}') then
+          create role ${RESTRICTED_ADMIN} login password '${RESTRICTED_PASS}'
+            nosuperuser createrole nocreatedb noreplication nobypassrls;
+        end if;
+      end $$;
+      grant create on database postgres to ${RESTRICTED_ADMIN};
+    `);
+
+    // Document why ALTER ROLE was removed: restricted admin cannot run it.
+    let alterDenied = false;
+    const alterProbe = new pg.Client({ connectionString: RESTRICTED_URL });
+    await alterProbe.connect();
+    try {
+      await alterProbe.query(`create role mp_ceo_alter_probe nologin`);
+      try {
+        await alterProbe.query(`
+          alter role mp_ceo_alter_probe
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls
+        `);
+      } catch (err) {
+        alterDenied = /permission denied to alter role/i.test(
+          String((err as Error)?.message || err),
+        );
+      }
+    } finally {
+      await alterProbe.end();
+    }
+    await admin.query(`drop role if exists mp_ceo_alter_probe`);
+    check(
+      "restricted CREATEROLE admin cannot ALTER ROLE privileged attrs",
+      alterDenied,
+    );
+
+    // Clean install of runtime role as restricted admin (no privileged ALTER).
+    await admin.query(`drop role if exists mp_ceo_auto_import_runtime`);
+    const restricted = new pg.Client({ connectionString: RESTRICTED_URL });
+    await restricted.connect();
+    try {
+      await restricted.query(roleBlock);
+      check(
+        "restricted admin clean install creates runtime without ALTER ROLE",
+        attrsAreSecure(await runtimeRoleAttrs(admin)),
+      );
+
+      // Safe rerun is idempotent.
+      await restricted.query(roleBlock);
+      check(
+        "restricted admin safe rerun is idempotent",
+        attrsAreSecure(await runtimeRoleAttrs(admin)),
+      );
+    } finally {
+      await restricted.end();
+    }
+
+    // Existing unsafe role → clear failure; do not auto-downgrade.
+    await admin.query(`
+      drop role if exists mp_ceo_auto_import_runtime;
+      create role mp_ceo_auto_import_runtime nologin bypassrls;
+    `);
+    let unsafeFailed = false;
+    let unsafeMsg = "";
+    const restrictedUnsafe = new pg.Client({ connectionString: RESTRICTED_URL });
+    await restrictedUnsafe.connect();
+    try {
+      try {
+        await restrictedUnsafe.query(roleBlock);
+      } catch (err) {
+        unsafeMsg = String((err as Error)?.message || err);
+        unsafeFailed = /unsafe attributes/i.test(unsafeMsg) && /rolbypassrls/i.test(unsafeMsg);
+      }
+    } finally {
+      await restrictedUnsafe.end();
+    }
+    check("existing unsafe runtime role fails closed with clear error", unsafeFailed);
+    const stillUnsafe = await runtimeRoleAttrs(admin);
+    check(
+      "unsafe runtime role was not auto-downgraded",
+      stillUnsafe?.rolbypassrls === true,
+    );
+
+    // Replace unsafe role with a secure one, then apply full atomic script.
+    await admin.query(`drop role if exists mp_ceo_auto_import_runtime`);
     await apply(admin, ATOMIC);
     await provisionRuntimeLogin(admin);
 
@@ -180,6 +321,7 @@ async function main(): Promise<void> {
          has_function_privilege('service_role', $2, 'EXECUTE') as service_preflight,
          has_function_privilege('service_role', $3, 'EXECUTE') as service_upsert,
          has_function_privilege('mp_ceo_auto_import_runtime', $1, 'EXECUTE') as runtime_batch,
+         has_function_privilege('mp_ceo_auto_import_runtime', $3, 'EXECUTE') as runtime_upsert,
          has_function_privilege('anon', $1, 'EXECUTE') as anon_batch,
          has_function_privilege('authenticated', $1, 'EXECUTE') as auth_batch
       `,
@@ -194,6 +336,7 @@ async function main(): Promise<void> {
     check("has_function_privilege: service_role can preflight", g.service_preflight === true);
     check("has_function_privilege: service_role cannot upsert", g.service_upsert === false);
     check("has_function_privilege: runtime can commit_batch", g.runtime_batch === true);
+    check("has_function_privilege: runtime cannot upsert", g.runtime_upsert === false);
     check("has_function_privilege: anon cannot commit_batch", g.anon_batch === false);
     check("has_function_privilege: authenticated cannot commit_batch", g.auth_batch === false);
 
@@ -416,27 +559,17 @@ async function main(): Promise<void> {
       Number(alive.rows[0].n) === 1,
     );
 
-    // Role attribute lock
-    const attrs = await admin.query(
-      `select rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
-       from pg_roles where rolname = 'mp_ceo_auto_import_runtime'`,
-    );
-    const a = attrs.rows[0];
+    // Role attributes remain secure after full atomic apply (no ALTER ROLE).
     check(
-      "runtime role attributes locked (nologin/nosuperuser/...)",
-      a &&
-        a.rolcanlogin === false &&
-        a.rolsuper === false &&
-        a.rolcreatedb === false &&
-        a.rolcreaterole === false &&
-        a.rolreplication === false &&
-        a.rolbypassrls === false,
+      "runtime role attributes secure after full atomic apply",
+      attrsAreSecure(await runtimeRoleAttrs(admin)),
     );
+
+    // Full atomic apply is idempotent when role already exists and is safe.
+    await apply(admin, ATOMIC);
     check(
-      "atomic SQL re-applies ALTER ROLE attribute lock",
-      /alter role mp_ceo_auto_import_runtime\s+nologin/i.test(
-        readFileSync(ATOMIC, "utf8"),
-      ),
+      "full atomic SQL safe rerun is idempotent",
+      attrsAreSecure(await runtimeRoleAttrs(admin)),
     );
 
     // --- duplicate identityKey rejected (no misleading counts) ---
@@ -491,7 +624,7 @@ async function main(): Promise<void> {
     check("duplicate batch left no listing rows", Number(dupRows.rows[0].n) === 0);
 
     // Source honesty
-    const atomic = readFileSync(ATOMIC, "utf8");
+    const atomic = atomicSql;
     const ceo = readFileSync(CEO, "utf8");
     check(
       "atomic SQL grants commit_batch only to runtime role",
@@ -502,6 +635,12 @@ async function main(): Promise<void> {
     check(
       "atomic SQL revokes commit_batch from service_role",
       /revoke all on function public\.mp_ceo_auto_import_commit_batch\(text, text, jsonb, jsonb\) from service_role/i.test(
+        atomic,
+      ),
+    );
+    check(
+      "atomic SQL revokes upsert from runtime role",
+      /revoke all on function public\.mp_ceo_auto_import_upsert_listing[\s\S]*from mp_ceo_auto_import_runtime/i.test(
         atomic,
       ),
     );
