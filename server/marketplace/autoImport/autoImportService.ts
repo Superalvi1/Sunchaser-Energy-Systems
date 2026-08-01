@@ -29,6 +29,12 @@ import {
   separateListingKey,
 } from "./identityNormalize.ts";
 import type {
+  AutoImportListingRecord,
+  AutoImportOffer,
+  AutoImportSyncHealth,
+  AutoImportSyncResult,
+} from "./autoImportTypes.ts";
+import type {
   AutoImportRepository,
   UpsertListingInput,
 } from "./autoImportRepository.ts";
@@ -39,11 +45,6 @@ import {
   selectLowestValidPrice,
   type PricedOffer,
 } from "./priceSelect.ts";
-import type {
-  AutoImportOffer,
-  AutoImportSyncHealth,
-  AutoImportSyncResult,
-} from "./autoImportTypes.ts";
 import { CEO_AUTO_IMPORT_JOB_NAME } from "./autoImportTypes.ts";
 import { logAutoImport, sanitizeAutoImportError } from "./autoImportLog.ts";
 import {
@@ -51,6 +52,11 @@ import {
   resolveAutoImportTimeouts,
   withDeadline,
 } from "./autoImportTimeouts.ts";
+
+type PlanningLookup = {
+  byKey: Map<string, AutoImportListingRecord>;
+  byUrl: Map<string, AutoImportListingRecord>;
+};
 
 /** Process-wide lock so alias + admin mounts cannot run two imports at once. */
 let activeImportRunId: string | null = null;
@@ -366,20 +372,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     let alladinDiscovered = 0;
     const errors: string[] = [];
     let observations: CatalogueProductObservation[] = [];
+    const fetchStarted = Date.now();
 
     if (deps.fixtureObservations) {
       observations = deps.fixtureObservations;
       kamalDiscovered = observations.filter((o) => o.supplier === "kamal").length;
       alladinDiscovered = observations.filter((o) => o.supplier === "alladin")
         .length;
-      log({
-        runId,
-        stage: "normalize",
-        elapsedMs: Date.now() - startedAt,
-        status: "running",
-        discovered: observations.length,
-        detail: "fixture_observations",
-      });
     } else {
       // Sequential discovery so one supplier's budget cannot starve the other
       // beyond its own supplierTimeoutMs, and total stays under jobTimeoutMs.
@@ -391,12 +390,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       if (alladin.error) errors.push(alladin.error);
       observations = [...kamal.accepted, ...alladin.accepted];
     }
+    const fetchMs = Date.now() - fetchStarted;
 
-    // Duplicate URL rejection (per URL globally for import set)
+    // Normalize / reject invalid observations (in-memory only — no DB).
+    const normalizeStarted = Date.now();
     const seenUrls = new Set<string>();
     let rejectedVariants = 0;
-    const acceptedOffers: AutoImportOffer[] = [];
-
+    const normalized: CatalogueProductObservation[] = [];
     for (const obs of observations) {
       const why = rejectReason(obs);
       if (why) {
@@ -408,39 +408,67 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         rejectedVariants += 1;
         continue;
       }
-      // Also reject if URL already owned by a different identity listing
-      const existingByUrl = await repo.getListingBySourceUrl(obs.canonicalUrl);
+      seenUrls.add(url);
+      normalized.push(obs);
+    }
+    const normalizeMs = Date.now() - normalizeStarted;
+    log({
+      runId,
+      stage: "normalize",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      discovered: observations.length,
+      normalizeMs,
+      detail: deps.fixtureObservations
+        ? "fixture_observations"
+        : `accepted_${normalized.length}`,
+    });
+
+    // Shared planning context: ONE catalogue read, then deterministic in-memory
+    // matching. Sequential per-listing getListingBySourceUrl/getListingByIdentityKey
+    // previously burned the 55s job budget (N × rpcTimeoutMs) after fetch completed.
+    const matchingStarted = Date.now();
+    const lookup = await loadPlanningLookup(runId, startedAt);
+    const acceptedOffers: AutoImportOffer[] = [];
+    for (const obs of normalized) {
       const offer = toOffer(obs);
+      const existingByUrl = lookup.byUrl.get(obs.canonicalUrl) ?? null;
       if (existingByUrl && existingByUrl.identityKey !== offer.groupKey) {
         rejectedVariants += 1;
         continue;
       }
-      seenUrls.add(url);
       acceptedOffers.push(offer);
     }
 
-    // Group by identity key
     const groups = new Map<string, AutoImportOffer[]>();
     for (const offer of acceptedOffers) {
       const list = groups.get(offer.groupKey) || [];
       list.push(offer);
       groups.set(offer.groupKey, list);
     }
-    // Count cross-supplier exact groups (not offers)
     const exactGroupCount = [...groups.keys()].filter(
       (k) => !k.startsWith("separate:"),
     ).length;
     const separateGroupCount = [...groups.keys()].filter((k) =>
       k.startsWith("separate:"),
     ).length;
+    const matchingMs = Date.now() - matchingStarted;
+    log({
+      runId,
+      stage: "matching",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      matchingMs,
+      discovered: acceptedOffers.length,
+      detail: `groups_${groups.size}`,
+    });
 
-    // Phase 1: plan all upserts (no persistence yet).
+    // Deterministic price/identity planning (no AI model calls in this path).
+    const planStarted = Date.now();
     type Planned = {
       input: UpsertListingInput;
       selectionOk: boolean;
-      selection:
-        | ReturnType<typeof selectLowestValidPrice>
-        | null;
+      selection: ReturnType<typeof selectLowestValidPrice> | null;
     };
     const planned: Planned[] = [];
     let lowestPriceSelections = 0;
@@ -459,7 +487,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       }));
 
       const selection = selectLowestValidPrice(priced);
-      const previous = await repo.getListingByIdentityKey(identityKey);
+      const previous = lookup.byKey.get(identityKey) ?? null;
       const resolved = resolvePriceWithRollback(
         selection,
         previous
@@ -515,6 +543,34 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         },
       });
     }
+    const planMs = Date.now() - planStarted;
+    const aiPlanMs = 0; // AI kill-switch path: no model enrichment in CEO auto-import.
+    log({
+      runId,
+      stage: "plan",
+      elapsedMs: Date.now() - startedAt,
+      status: "running",
+      planMs,
+      aiPlanMs,
+      plannedUpserts: planned.length,
+      detail: "deterministic_price_plan",
+    });
+
+    const totalMs = Date.now() - startedAt;
+    log({
+      runId,
+      stage: "plan_phase_timing",
+      elapsedMs: totalMs,
+      status: "running",
+      fetchMs,
+      normalizeMs,
+      matchingMs,
+      aiPlanMs,
+      planMs,
+      totalMs,
+      plannedUpserts: planned.length,
+      detail: `lookup_keys_${lookup.byKey.size}`,
+    });
 
     // Plan phase complete — return planned batch for atomic commit OUTSIDE
     // withDeadline so Promise.race never abandons in-flight catalogue writes.
@@ -562,6 +618,45 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       sampleLowestPrice,
       provisionalStatus,
     };
+  }
+
+  async function loadPlanningLookup(
+    runId: string,
+    startedAt: number,
+  ): Promise<PlanningLookup> {
+    const byKey = new Map<string, AutoImportListingRecord>();
+    const byUrl = new Map<string, AutoImportListingRecord>();
+    const remaining = Math.max(
+      500,
+      timeouts.jobTimeoutMs - (Date.now() - startedAt),
+    );
+    const budget = Math.min(timeouts.rpcTimeoutMs, remaining);
+    try {
+      const listings = await withDeadline(
+        repo.listListings(),
+        budget,
+        "auto-import-plan-context",
+      );
+      for (const listing of listings) {
+        byKey.set(listing.identityKey, listing);
+        for (const url of listing.sourceUrls) {
+          byUrl.set(url, listing);
+        }
+      }
+    } catch (err) {
+      if (err instanceof AutoImportTimeoutError) throw err;
+      // Soft-fail like the previous per-row .catch(() => null) lookups.
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId,
+        stage: "matching",
+        elapsedMs: Date.now() - startedAt,
+        status: "running",
+        errorCode: sanitized.errorCode,
+        detail: `plan_context_empty:${sanitized.message}`,
+      });
+    }
+    return { byKey, byUrl };
   }
 
   async function commitPlannedBatch(

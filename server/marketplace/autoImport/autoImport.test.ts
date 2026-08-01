@@ -1562,11 +1562,12 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   const repository = createMemoryAutoImportRepository();
   const blockingRepo = {
     getListingByIdentityKey: (k: string) => repository.getListingByIdentityKey(k),
-    getListingBySourceUrl: async (u: string) => {
+    getListingBySourceUrl: (u: string) => repository.getListingBySourceUrl(u),
+    // Planner holds the run lock while loading shared planning context.
+    listListings: async () => {
       await gate;
-      return repository.getListingBySourceUrl(u);
+      return repository.listListings();
     },
-    listListings: () => repository.listListings(),
     getHealth: () => repository.getHealth(),
     saveHealth: (h: Parameters<typeof repository.saveHealth>[0]) =>
       repository.saveHealth(h),
@@ -1662,6 +1663,174 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(!r2.health.errors.some((e) => /concurrent_run_blocked/i.test(e)));
   __resetAutoImportRunLockForTests();
   console.log("ok - timeout cancel releases run lock");
+}
+
+{
+  // 14 listings plan inside job timeout via shared planning context (not N×RPC).
+  // Simulates production: each per-listing lookup would cost ~4s (14×4s > 55s).
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let getByUrlCalls = 0;
+  let getByKeyCalls = 0;
+  let listCalls = 0;
+  let commitCalls = 0;
+  const timingLogs: Array<Record<string, unknown>> = [];
+  const slowRepo = {
+    async getListingBySourceUrl(u: string) {
+      getByUrlCalls += 1;
+      await new Promise((r) => setTimeout(r, 4_000));
+      return base.getListingBySourceUrl(u);
+    },
+    async getListingByIdentityKey(k: string) {
+      getByKeyCalls += 1;
+      await new Promise((r) => setTimeout(r, 4_000));
+      return base.getListingByIdentityKey(k);
+    },
+    async listListings() {
+      listCalls += 1;
+      await new Promise((r) => setTimeout(r, 20));
+      return base.listListings();
+    },
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const fixtures: CatalogueProductObservation[] = [];
+  for (let i = 0; i < 14; i++) {
+    const supplier = i % 2 === 0 ? "kamal" : "alladin";
+    fixtures.push(
+      obs({
+        supplier,
+        title: `Inverex Nitrox ${10 + i}kW Hybrid Solar Inverter`,
+        brand: "Inverex",
+        modelSku: `NITROX-${i}`,
+        supplierProductId: `plan14-${i}`,
+        currentListedPricePkr: 100000 + i * 1000,
+        canonicalUrl: `https://${supplier === "kamal" ? "kamalsolar.pk" : "alladin.pk"}/products/plan14-${i}`,
+      }),
+    );
+  }
+  const planStarted = Date.now();
+  const service = createSvc({
+    repository: slowRepo,
+    fixtureObservations: fixtures,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      // Tight ceiling: old N×lookup path cannot finish; shared context can.
+      MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "5000",
+      MARKETPLACE_CEO_AUTO_IMPORT_RPC_TIMEOUT_MS: "4000",
+    },
+    log: (fields) => {
+      if (fields.stage === "plan_phase_timing") {
+        timingLogs.push(fields as unknown as Record<string, unknown>);
+      }
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  const planElapsed = Date.now() - planStarted;
+  assert.equal(result.status, "succeeded", `status=${result.status} errors=${result.health.errors.join(";")}`);
+  assert.equal(result.health.productsCreated, 14);
+  assert.equal(getByUrlCalls, 0, "must not per-list getListingBySourceUrl");
+  assert.equal(getByKeyCalls, 0, "must not per-list getListingByIdentityKey");
+  assert.equal(listCalls, 1, "exactly one shared planning-context load");
+  assert.equal(commitCalls, 1, "exactly one atomic commit");
+  assert.ok(planElapsed < 5000, `14-listing plan+commit finished in ${planElapsed}ms`);
+  assert.equal(timingLogs.length, 1);
+  assert.equal(timingLogs[0]!.aiPlanMs, 0);
+  assert.ok(typeof timingLogs[0]!.fetchMs === "number");
+  assert.ok(typeof timingLogs[0]!.normalizeMs === "number");
+  assert.ok(typeof timingLogs[0]!.matchingMs === "number");
+  assert.ok(typeof timingLogs[0]!.totalMs === "number");
+  assert.equal((await base.listListings()).length, 14);
+
+  // Retry cannot create duplicates — second run updates, listing count stable.
+  const retry = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(retry.status, "succeeded");
+  assert.equal(retry.health.productsCreated, 0);
+  assert.equal(retry.health.productsUpdated, 14);
+  assert.equal(commitCalls, 2);
+  assert.equal(listCalls, 2, "retry loads planning context once more");
+  assert.equal((await base.listListings()).length, 14);
+  __resetAutoImportRunLockForTests();
+  console.log("ok - 14 listings plan within timeout via shared context; retry non-duplicating");
+}
+
+{
+  // Genuinely stalled planner still times out with zero catalogue writes.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let commitCalls = 0;
+  const stalledRepo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    listListings: () =>
+      new Promise<Awaited<ReturnType<typeof base.listListings>>>(() => {
+        /* never resolves */
+      }),
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const service = createSvc({
+    repository: stalledRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "stall-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "300",
+      MARKETPLACE_CEO_AUTO_IMPORT_RPC_TIMEOUT_MS: "200",
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(
+    result.health.errors.some((e) => /job_timeout|timed out/i.test(e)),
+    `expected job_timeout, got ${result.health.errors.join(";")}`,
+  );
+  assert.equal(commitCalls, 0, "timeout must not start atomic commit");
+  assert.equal(result.health.productsCreated, 0);
+  assert.equal(result.health.productsUpdated, 0);
+  assert.equal((await base.listListings()).length, 0, "zero catalogue writes");
+  assert.ok(
+    /no catalogue writes/i.test(result.health.note || ""),
+    "timeout note documents zero writes",
+  );
+  __resetAutoImportRunLockForTests();
+  console.log("ok - stalled planner times out with zero catalogue writes");
 }
 
 {

@@ -11,6 +11,9 @@ export type AutoImportLogStage =
   | "supplier_fetch_done"
   | "supplier_fetch_failed"
   | "normalize"
+  | "matching"
+  | "plan"
+  | "plan_phase_timing"
   | "persist_start"
   | "persist_done"
   | "persist_failed"
@@ -34,6 +37,13 @@ export type AutoImportLogFields = {
   pagesFetched?: number;
   discovered?: number;
   plannedUpserts?: number;
+  /** Sanitized stage durations (ms). Never include secrets or payloads. */
+  fetchMs?: number;
+  normalizeMs?: number;
+  matchingMs?: number;
+  aiPlanMs?: number;
+  planMs?: number;
+  totalMs?: number;
 };
 
 const SENSITIVE_FRAGMENT =
@@ -120,6 +130,19 @@ export function logAutoImport(fields: AutoImportLogFields): void {
   }
   if (typeof fields.plannedUpserts === "number") {
     payload.plannedUpserts = fields.plannedUpserts;
+  }
+  for (const key of [
+    "fetchMs",
+    "normalizeMs",
+    "matchingMs",
+    "aiPlanMs",
+    "planMs",
+    "totalMs",
+  ] as const) {
+    const value = fields[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      payload[key] = Math.max(0, Math.round(value));
+    }
   }
 
   const isError =
