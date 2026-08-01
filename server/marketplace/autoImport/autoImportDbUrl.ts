@@ -7,6 +7,10 @@
  * mp_ceo_auto_import_runtime (not service_role). The login MUST be that role
  * or an explicit MEMBER; unauthorized logins are rejected before BEGIN.
  * Prefer MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL pointing at such a login.
+ *
+ * TLS: see autoImportPgSsl.ts. Optional MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_SSL_CA
+ * (PEM) enables verified TLS to the Supabase Session Pooler; without it the
+ * dedicated client uses encrypt-only fallback (not global TLS weakening).
  */
 export function resolveAutoImportDatabaseUrl(
   env: NodeJS.ProcessEnv = process.env,

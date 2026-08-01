@@ -2171,6 +2171,206 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
+  // Dedicated pooler TLS: sslmode=require must not override importer ssl config.
+  const {
+    buildAutoImportPgClientConfig,
+    isEncryptOnlyAutoImportSsl,
+  } = await import("./autoImportPgSsl.ts");
+  const { sanitizeAutoImportError } = await import("./autoImportLog.ts");
+  const { TLS_REJECT_UNAUTHORIZED } = await import(
+    "../suppliers/safeHttp.ts"
+  );
+  const { parse: parseConnectionString } = await import("pg-connection-string");
+
+  const poolerUrl =
+    "postgresql://runtime.user:secret@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require";
+
+  // Evidence: pg merge would discard explicit rejectUnauthorized:false.
+  const parsed = parseConnectionString(poolerUrl) as { ssl?: unknown };
+  const brokenMerge = Object.assign(
+    {},
+    { connectionString: poolerUrl, ssl: { rejectUnauthorized: false } },
+    parsed,
+  );
+  assert.notEqual(
+    (brokenMerge as { ssl?: { rejectUnauthorized?: boolean } }).ssl
+      ?.rejectUnauthorized,
+    false,
+    "repro: sslmode=require overrides explicit ssl object",
+  );
+
+  const poolerCfg = buildAutoImportPgClientConfig(poolerUrl);
+  assert.equal(poolerCfg.host, "aws-0-ap-southeast-1.pooler.supabase.com");
+  assert.equal(poolerCfg.port, 5432);
+  assert.equal(isEncryptOnlyAutoImportSsl(poolerCfg.ssl), true);
+  assert.equal(
+    typeof poolerCfg.ssl === "object" &&
+      poolerCfg.ssl &&
+      poolerCfg.ssl.rejectUnauthorized,
+    false,
+  );
+  // Must not retain connectionString (avoids second sslmode parse in pg).
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(poolerCfg, "connectionString"),
+    false,
+  );
+
+  const caPem =
+    "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----";
+  const verified = buildAutoImportPgClientConfig(poolerUrl, { sslCaPem: caPem });
+  assert.equal(
+    typeof verified.ssl === "object" &&
+      verified.ssl &&
+      verified.ssl.rejectUnauthorized,
+    true,
+  );
+  assert.equal(
+    typeof verified.ssl === "object" && verified.ssl && verified.ssl.ca,
+    caPem,
+  );
+  assert.equal(isEncryptOnlyAutoImportSsl(verified.ssl), false);
+
+  const localCfg = buildAutoImportPgClientConfig(
+    "postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=require",
+  );
+  assert.equal(localCfg.ssl, false);
+
+  // Sanitized TLS failure (Node OPENSSL style code).
+  const tlsErr = Object.assign(new Error("self-signed certificate in certificate chain"), {
+    code: "SELF_SIGNED_CERT_IN_CHAIN",
+    name: "Error",
+  });
+  const sanitizedTls = sanitizeAutoImportError(tlsErr);
+  assert.equal(sanitizedTls.errorCode, "TLS_FAILURE");
+  assert.ok(/self-signed certificate/i.test(sanitizedTls.message));
+  assert.ok(!/secret|runtime\.user/i.test(JSON.stringify(sanitizedTls)));
+
+  // Global TLS behavior unchanged.
+  assert.equal(TLS_REJECT_UNAUTHORIZED, true);
+  assert.notEqual(process.env.NODE_TLS_REJECT_UNAUTHORIZED, "0");
+
+  console.log("ok - dedicated pooler TLS config wins over sslmode; global TLS unchanged");
+}
+
+{
+  // TLS failure during persist → zero catalogue writes; successful plan still one atomic commit.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let commitCalls = 0;
+  const tlsFailRepo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    listListings: () => base.listListings(),
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch() {
+      commitCalls += 1;
+      const err = Object.assign(
+        new Error("self-signed certificate in certificate chain"),
+        { code: "SELF_SIGNED_CERT_IN_CHAIN", name: "Error" },
+      );
+      throw err;
+    },
+  };
+  const service = createSvc({
+    repository: tlsFailRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "tls-fail-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const failed = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(failed.status, "failed");
+  assert.equal(commitCalls, 1, "planning reached one atomic commit attempt");
+  assert.ok(
+    failed.health.errors.some((e) =>
+      /persist_TLS_FAILURE|self-signed certificate/i.test(e),
+    ),
+    `expected sanitized TLS persist error, got ${failed.health.errors.join(";")}`,
+  );
+  assert.equal(failed.health.productsCreated, 0);
+  assert.equal(failed.health.productsUpdated, 0);
+  assert.equal((await base.listListings()).length, 0, "zero catalogue writes");
+
+  // Successful planning → exactly one atomic commit when persist works.
+  __resetAutoImportRunLockForTests();
+  commitCalls = 0;
+  const okRepo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    listListings: () => base.listListings(),
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const okService = createSvc({
+    repository: okRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "tls-ok-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const ok = await okService.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(ok.status, "succeeded");
+  assert.equal(commitCalls, 1);
+  assert.equal(ok.health.productsCreated, 1);
+  assert.equal((await base.listListings()).length, 1);
+  __resetAutoImportRunLockForTests();
+  console.log("ok - TLS persist failure zero writes; success path one atomic commit");
+}
+
+{
+  // Source honesty: createAutoImportPgClient uses buildAutoImportPgClientConfig (no raw connectionString+ssl race).
+  const pgCommitSrc = readFileSync(
+    join(__dirname, "autoImportPgCommit.ts"),
+    "utf8",
+  );
+  const sslSrc = readFileSync(join(__dirname, "autoImportPgSsl.ts"), "utf8");
+  assert.ok(pgCommitSrc.includes("buildAutoImportPgClientConfig"));
+  assert.ok(pgCommitSrc.includes("createAutoImportPgClient"));
+  assert.ok(!/new pg\.Client\(\{\s*connectionString/s.test(pgCommitSrc));
+  assert.ok(sslSrc.includes("rejectUnauthorized: false"));
+  assert.ok(sslSrc.includes("sslCaPem"));
+  assert.ok(sslSrc.includes("sslmode=require"));
+  assert.ok(
+    /Never set NODE_TLS_REJECT_UNAUTHORIZED/i.test(sslSrc),
+    "docs must forbid global TLS disable",
+  );
+  assert.ok(!/NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0/.test(sslSrc));
+  console.log("ok - source: dedicated pg TLS builder; no global TLS disable");
+}
+
+{
   // Canonical route auth + preflight gated; non-super-admin forbidden
   function actor(role: string): RequestActor {
     return {
