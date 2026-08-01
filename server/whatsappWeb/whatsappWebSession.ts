@@ -248,6 +248,76 @@ export type WhatsAppWebConnectionUpdate = {
 /** Upsert types that may carry live customer inbound (Baileys online/offline). */
 export const WHATSAPP_WEB_LIVE_UPSERT_TYPES = new Set(["notify", "append"]);
 
+/**
+ * Production-shaped Baileys event bus for messages.upsert binding.
+ * Baileys 6.7.23 exposes on/off/emit but not listenerCount — never rely on it.
+ */
+export type WhatsAppWebBaileysUpsertEventBus = {
+  on(
+    event: "messages.upsert",
+    listener: (upsert: WhatsAppWebMessagesUpsert) => void
+  ): void;
+  off(
+    event: "messages.upsert",
+    listener: (upsert: WhatsAppWebMessagesUpsert) => void
+  ): void;
+};
+
+export type WhatsAppWebMessagesUpsert = {
+  messages?: Array<{
+    key?: {
+      remoteJid?: string | null;
+      id?: string | null;
+      fromMe?: boolean | null;
+      remoteJidAlt?: string | null;
+      participant?: string | null;
+      participantAlt?: string | null;
+      senderPn?: string | null;
+      senderLid?: string | null;
+      participantPn?: string | null;
+      participantLid?: string | null;
+    };
+    message?: Record<string, unknown> | null;
+    pushName?: string | null;
+    messageTimestamp?: number | LongLike | null;
+  }>;
+  type?: string;
+};
+
+type LongLike = { low: number; high?: number; unsigned?: boolean };
+
+export type TrackedMessagesUpsertBinding = {
+  /** Tracked attachment count for this handle (0 or 1). Never invents a fallback. */
+  getInboundListenerCount: () => number;
+  /** Detach only the registered named upsert handler. */
+  detach: () => void;
+};
+
+/**
+ * Register a named messages.upsert handler and track attachment without
+ * relying on EventEmitter.listenerCount (unavailable on Baileys sock.ev).
+ */
+export function attachTrackedMessagesUpsertListener(
+  ev: WhatsAppWebBaileysUpsertEventBus,
+  onMessagesUpsert: (upsert: WhatsAppWebMessagesUpsert) => void
+): TrackedMessagesUpsertBinding {
+  let attached = false;
+  ev.on("messages.upsert", onMessagesUpsert);
+  attached = true;
+  return {
+    getInboundListenerCount: () => (attached ? 1 : 0),
+    detach: () => {
+      if (!attached) return;
+      try {
+        ev.off("messages.upsert", onMessagesUpsert);
+      } catch {
+        /* ignore */
+      }
+      attached = false;
+    },
+  };
+}
+
 export type WhatsAppWebSocketHandle = {
   end: () => void;
   logout: () => Promise<void>;
@@ -256,7 +326,10 @@ export type WhatsAppWebSocketHandle = {
   getUserId?: () => string | null;
   /** Contact/chat/history source for admin sync (Baileys in-memory). */
   getSyncSource?: () => import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncSource;
-  /** Count of messages.upsert listeners on this socket (ops/diagnostics). */
+  /**
+   * Tracked messages.upsert attachment count for this handle (0 or 1).
+   * Must not invent a fallback of 1 when unverified.
+   */
   getInboundListenerCount?: () => number;
 };
 
@@ -403,12 +476,13 @@ async function defaultSocketFactory(input: {
     syncSource.handleHistorySet(p);
   });
 
-  sock.ev.on("messages.upsert", (upsert) => {
+  // Named handler so sock.ev.off can detach exactly this listener.
+  function onMessagesUpsert(upsert: WhatsAppWebMessagesUpsert): void {
     noteInboundRawUpsert();
     const messages = upsert.messages ?? [];
     // Baileys online receipts use "notify"; offline-flagged nodes use "append".
     // Both must reach the live inbound pipeline; unsupported types are ignored.
-    const upsertType = String((upsert as { type?: string }).type || "notify");
+    const upsertType = String(upsert.type || "notify");
     syncSource.ingestMessages(
       messages as unknown as Array<Record<string, unknown>>
     );
@@ -434,22 +508,21 @@ async function defaultSocketFactory(input: {
           remoteJid === "status@broadcast" ||
           remoteJid.endsWith("@newsletter") ||
           remoteJid.includes("broadcast");
+        const messageBody = msg.message as
+          | {
+              conversation?: string;
+              extendedTextMessage?: { text?: string };
+            }
+          | null
+          | undefined;
         const text =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
+          messageBody?.conversation ||
+          messageBody?.extendedTextMessage?.text ||
           null;
         const occurredAt = msg.messageTimestamp
           ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
           : new Date().toISOString();
-        const key = msg.key as {
-          remoteJidAlt?: string | null;
-          participant?: string | null;
-          participantAlt?: string | null;
-          senderPn?: string | null;
-          senderLid?: string | null;
-          participantPn?: string | null;
-          participantLid?: string | null;
-        };
+        const key = msg.key ?? {};
         await input.onInbound({
           providerMessageId,
           remoteJid,
@@ -472,11 +545,17 @@ async function defaultSocketFactory(input: {
         logWhatsAppWeb("warn", "inbound_handler_failed");
       });
     }
-  });
+  }
+
+  const upsertBinding = attachTrackedMessagesUpsertListener(
+    sock.ev as unknown as WhatsAppWebBaileysUpsertEventBus,
+    onMessagesUpsert
+  );
 
   return {
     end: () => {
       syncSource.setConnected(false);
+      upsertBinding.detach();
       try {
         sock.end(undefined);
       } catch {
@@ -485,6 +564,7 @@ async function defaultSocketFactory(input: {
     },
     logout: async () => {
       syncSource.setConnected(false);
+      upsertBinding.detach();
       await sock.logout();
     },
     sendText: async (jid, text) => {
@@ -497,14 +577,7 @@ async function defaultSocketFactory(input: {
     },
     getUserId: () => sock.user?.id ?? null,
     getSyncSource: () => syncSource,
-    getInboundListenerCount: () => {
-      const emitter = sock.ev as unknown as {
-        listenerCount?: (event: string) => number;
-      };
-      return typeof emitter.listenerCount === "function"
-        ? emitter.listenerCount("messages.upsert")
-        : 1;
-    },
+    getInboundListenerCount: () => upsertBinding.getInboundListenerCount(),
   };
 }
 
@@ -585,15 +658,8 @@ export class WhatsAppWebSession {
     );
     const inbound = getWhatsAppWebInboundDiagnostics();
     const socketOpen = this.state === "CONNECTED" && this.socket != null;
-    // Real Baileys handles report listenerCount; injectable test handles without
-    // the seam are treated as a single attached listener when the socket exists.
-    const reportedListenerCount = this.socket?.getInboundListenerCount?.();
-    const listenerCount =
-      reportedListenerCount != null
-        ? reportedListenerCount
-        : this.socket != null
-          ? 1
-          : 0;
+    // Never invent attachment: missing/unverified tracking reports 0 (not operational).
+    const listenerCount = this.socket?.getInboundListenerCount?.() ?? 0;
     const inboundListenerAttached = socketOpen && listenerCount >= 1;
     const inboundListenerOperational =
       socketOpen && inboundListenerAttached && listenerCount === 1;
