@@ -286,7 +286,7 @@ async function plantExpiredRow(
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 5) In-flight heartbeat during intentional release: no late onLeaseLost / no overwrite.
+  // 5) Tracked in-flight heartbeat vs release (same path as interval callback).
   {
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
@@ -315,21 +315,35 @@ async function plantExpiredRow(
       },
     });
     await lease.acquire(paths);
+    const versionBefore = lease.__testGetFencingVersion();
     const tokenBefore = lease.__testGetFencingToken();
+    assert.ok(versionBefore != null);
 
+    // Production-shaped tracked heartbeat (registers on inFlightBeat).
     const beatPromise = lease.__testBeatNow();
     await atBarrier;
-    await lease.release();
-    assert.equal(lease.isHeld(), false);
+
+    // Start release without awaiting — it must wait for the tracked beat.
+    let releaseSettled = false;
+    const releasePromise = lease.release().then(() => {
+      releaseSettled = true;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(releaseSettled, false);
 
     resumeBeat();
     await beatPromise;
+    await releasePromise;
+    assert.equal(releaseSettled, true);
+    assert.equal(lease.isHeld(), false);
     assert.equal(lostCalls, 0);
 
     const next = makeLease("successor", store);
     const snap = await next.acquire(paths);
-    assert.equal(snap.status, "held");
+    assert.ok(snap.status === "held" || snap.status === "stale_reclaimed");
+    assert.equal(next.isHeld(), true);
     assert.notEqual(next.__testGetFencingToken(), tokenBefore);
+    assert.ok((next.__testGetFencingVersion() ?? 0) > versionBefore!);
 
     await next.release();
     await fsp.rm(authDir, { recursive: true, force: true });
@@ -569,13 +583,95 @@ async function plantExpiredRow(
     const a = makeLease("seq-a", store);
     const b = makeLease("seq-b", store);
     assert.equal((await a.acquire(paths)).status, "held");
+    const v1 = a.__testGetFencingVersion();
+    assert.equal(v1, 1);
     await a.release();
-    assert.equal((await b.acquire(paths)).status, "held");
+    const snapB = await b.acquire(paths);
+    assert.ok(snapB.status === "held" || snapB.status === "stale_reclaimed");
+    assert.equal(b.isHeld(), true);
+    assert.ok((b.__testGetFencingVersion() ?? 0) > v1!);
     await b.release();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 12) Diagnostics remain sanitized.
+  // 12) Fencing versions increase across release/reacquire, takeover, and cycles.
+  {
+    const authDir = tmpAuthDir();
+    const paths = resolveWhatsAppWebAuthPaths({ authDir });
+    await fsp.mkdir(paths.sessionDir, { recursive: true });
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
+
+    // acquire → release → acquire
+    const first = makeLease("fv-a", store);
+    await first.acquire(paths);
+    const v1 = first.__testGetFencingVersion();
+    assert.equal(v1, 1);
+    await first.release();
+    const second = makeLease("fv-b", store);
+    await second.acquire(paths);
+    const v2 = second.__testGetFencingVersion();
+    assert.ok((v2 ?? 0) > v1!);
+    await second.release();
+
+    // repeated release/acquisition cycles
+    let prev = v2!;
+    for (let i = 0; i < 5; i += 1) {
+      const lease = makeLease(`fv-cycle-${i}`, store);
+      await lease.acquire(paths);
+      const v = lease.__testGetFencingVersion();
+      assert.ok((v ?? 0) > prev);
+      prev = v!;
+      await lease.release();
+    }
+
+    // expired takeover bumps further
+    let nowMs = Date.now();
+    const timed = createInMemoryWhatsAppWebSessionLeaseStore({
+      now: () => new Date(nowMs),
+    });
+    const live = makeLease("fv-live", timed, { staleMs: 1_000 });
+    await live.acquire(paths);
+    const liveV = live.__testGetFencingVersion();
+    assert.ok(liveV != null);
+    nowMs += 5_000;
+    const taker = makeLease("fv-taker", timed, { staleMs: 1_000 });
+    const taken = await taker.acquire(paths);
+    assert.equal(taken.status, "stale_reclaimed");
+    assert.ok((taker.__testGetFencingVersion() ?? 0) > liveV!);
+    await taker.release();
+
+    // simultaneous acquisition after release: one winner, version > prev
+    const holder = makeLease("fv-hold", store);
+    await holder.acquire(paths);
+    const beforeSim = holder.__testGetFencingVersion();
+    await holder.release();
+
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const c1 = makeLease("fv-sim-1", store);
+    const c2 = makeLease("fv-sim-2", store);
+    const p1 = (async () => {
+      await barrier;
+      return c1.acquire(paths);
+    })();
+    const p2 = (async () => {
+      await barrier;
+      return c2.acquire(paths);
+    })();
+    releaseBarrier();
+    await Promise.all([p1, p2]);
+    const winners = [c1, c2].filter((l) => l.isHeld());
+    assert.equal(winners.length, 1);
+    assert.ok((winners[0]!.__testGetFencingVersion() ?? 0) > beforeSim!);
+    await c1.release();
+    await c2.release();
+
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // 13) Diagnostics remain sanitized.
   {
     __resetWhatsAppWebConnectionDiagnostics();
     noteSocketCreatedDiagnostic();

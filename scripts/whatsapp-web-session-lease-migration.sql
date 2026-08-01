@@ -6,18 +6,22 @@
 --   1. Apply this script in Supabase SQL Editor (service_role / postgres).
 --   2. Ensure the Render web service has DATABASE_URL or SUPABASE_DB_URL.
 --   3. Keep Render numInstances=1 until this lease is verified in production.
---   4. Deploy application code that uses conditional UPDATE/DELETE fencing.
+--   4. Deploy application code that uses conditional UPDATE fencing (soft-release).
 --
 -- Access model: backend service_role only.
 -- No anon / authenticated browser policies.
 --
 -- Semantics:
---   - One row per stable session_key.
+--   - One row per stable session_key (retained across release; never hard-deleted).
 --   - owner_token is a random fencing token per acquisition.
---   - fencing_version increases monotonically on every successful takeover.
+--   - fencing_version increases monotonically on every successful ownership grant,
+--     including release→reacquire and stale takeover (never resets to 1 while the row exists).
+--   - Release soft-expires the row and rotates owner_token; next acquire increments fencing_version.
 --   - expires_at is set with database server time (clock_timestamp()).
 --   - Heartbeat/release must use WHERE session_key + owner_token + fencing_version
 --     so an older fencing version can never mutate a replacement owner's row.
+--   - Heartbeat also requires expires_at > clock_timestamp() so a soft-released
+--     owner cannot refresh the row.
 
 create table if not exists public.whatsapp_web_session_lease (
   session_key text primary key,

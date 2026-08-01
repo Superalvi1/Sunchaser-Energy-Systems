@@ -1,12 +1,15 @@
 /**
  * Atomic WhatsApp Web session lease store.
  *
- * Production: Postgres conditional INSERT/UPDATE/DELETE (see migration script).
+ * Production: Postgres conditional INSERT/UPDATE (see migration script).
  * Tests: in-memory store with identical CAS fencing semantics.
+ *
+ * Fencing versions are monotonic per session_key: release soft-expires the row
+ * (does not delete it); the next successful grant increments fencing_version.
  *
  * Never stores credentials, phones, QR, or message content.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { SqlExecutor } from "../unifiedMessaging/messagingSql.ts";
 
@@ -46,7 +49,6 @@ export type WhatsAppWebSessionLeaseStore = {
     ownerToken: string;
     staleMs: number;
     pid: number;
-    /** When re-acquiring while still holding locally. */
     currentOwnerToken?: string | null;
     currentFencingVersion?: number | null;
   }): Promise<WhatsAppWebLeaseAcquireResult>;
@@ -65,7 +67,6 @@ export type WhatsAppWebSessionLeaseStore = {
   read(sessionKey: string): Promise<WhatsAppWebLeaseRow | null>;
 };
 
-/** Stable opaque session key derived from the auth session directory. */
 export function resolveWhatsAppWebSessionLeaseKey(sessionDir: string): string {
   const resolved = path.resolve(sessionDir);
   return createHash("sha256").update(resolved).digest("hex").slice(0, 32);
@@ -90,7 +91,12 @@ function mapSqlRow(row: Record<string, unknown>): WhatsAppWebLeaseRow {
   };
 }
 
-/** In-memory CAS store (shared within a process; keyed by session_key). */
+function isExpired(expiresAt: string, nowMs: number): boolean {
+  const expMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expMs)) return true;
+  return expMs < nowMs;
+}
+
 export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
   now?: () => Date;
 }): WhatsAppWebSessionLeaseStore {
@@ -120,7 +126,8 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
           input.currentOwnerToken &&
           input.currentFencingVersion != null &&
           existing.ownerToken === input.currentOwnerToken &&
-          existing.fencingVersion === input.currentFencingVersion
+          existing.fencingVersion === input.currentFencingVersion &&
+          !isExpired(existing.expiresAt, nowMs)
         ) {
           const refreshed: WhatsAppWebLeaseRow = {
             ...existing,
@@ -147,8 +154,7 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
           return { outcome: "held" as const, row };
         }
 
-        const expMs = Date.parse(existing.expiresAt);
-        if (Number.isFinite(expMs) && expMs < nowMs) {
+        if (isExpired(existing.expiresAt, nowMs)) {
           const row: WhatsAppWebLeaseRow = {
             sessionKey: input.sessionKey,
             ownerId: input.ownerId,
@@ -170,10 +176,12 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
     async heartbeat(input) {
       return serialize(() => {
         const existing = rows.get(input.sessionKey);
+        const nowMs = now().getTime();
         if (
           !existing ||
           existing.ownerToken !== input.ownerToken ||
-          existing.fencingVersion !== input.fencingVersion
+          existing.fencingVersion !== input.fencingVersion ||
+          isExpired(existing.expiresAt, nowMs)
         ) {
           return "not_owner" as const;
         }
@@ -181,7 +189,7 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
         rows.set(input.sessionKey, {
           ...existing,
           heartbeatAt: stamp,
-          expiresAt: new Date(now().getTime() + input.staleMs).toISOString(),
+          expiresAt: new Date(nowMs + input.staleMs).toISOString(),
           pid: input.pid,
         });
         return "ok" as const;
@@ -198,7 +206,14 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
         ) {
           return "not_owner" as const;
         }
-        rows.delete(input.sessionKey);
+        const stamp = now().toISOString();
+        rows.set(input.sessionKey, {
+          ...existing,
+          ownerToken: `released:${randomUUID()}`,
+          expiresAt: new Date(now().getTime() - 1).toISOString(),
+          heartbeatAt: stamp,
+          pid: input.pid,
+        });
         return "ok" as const;
       });
     },
@@ -209,7 +224,6 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
   };
 }
 
-/** Postgres store: every mutate is a single conditional statement (no TOCTOU). */
 export function createSqlWhatsAppWebSessionLeaseStore(
   db: SqlExecutor
 ): WhatsAppWebSessionLeaseStore {
@@ -234,6 +248,7 @@ export function createSqlWhatsAppWebSessionLeaseStore(
               WHERE session_key = $1
                 AND owner_token = $2
                 AND fencing_version = $3::bigint
+                AND expires_at > clock_timestamp()
               RETURNING session_key, owner_id, owner_token, fencing_version,
                         expires_at, acquired_at, heartbeat_at, pid
               `,
@@ -346,6 +361,7 @@ export function createSqlWhatsAppWebSessionLeaseStore(
           WHERE session_key = $1
             AND owner_token = $2
             AND fencing_version = $3::bigint
+            AND expires_at > clock_timestamp()
           `,
           [
             input.sessionKey,
@@ -365,12 +381,22 @@ export function createSqlWhatsAppWebSessionLeaseStore(
       try {
         const result = await db.query(
           `
-          DELETE FROM public.${table}
+          UPDATE public.${table}
+          SET
+            owner_token = $4,
+            expires_at = clock_timestamp() - interval '1 millisecond',
+            heartbeat_at = clock_timestamp(),
+            updated_at = clock_timestamp()
           WHERE session_key = $1
             AND owner_token = $2
             AND fencing_version = $3::bigint
           `,
-          [input.sessionKey, input.ownerToken, input.fencingVersion]
+          [
+            input.sessionKey,
+            input.ownerToken,
+            input.fencingVersion,
+            `released:${randomUUID()}`,
+          ]
         );
         return (result.rowCount ?? 0) === 1 ? "ok" : "not_owner";
       } catch {
@@ -399,7 +425,6 @@ export function createSqlWhatsAppWebSessionLeaseStore(
 
 let sharedMemoryStore: WhatsAppWebSessionLeaseStore | null = null;
 
-/** Process-wide memory store for local/dev/tests without DATABASE_URL. */
 export function getSharedInMemoryWhatsAppWebSessionLeaseStore(): WhatsAppWebSessionLeaseStore {
   if (!sharedMemoryStore) {
     sharedMemoryStore = createInMemoryWhatsAppWebSessionLeaseStore();
@@ -407,7 +432,6 @@ export function getSharedInMemoryWhatsAppWebSessionLeaseStore(): WhatsAppWebSess
   return sharedMemoryStore;
 }
 
-/** Test-only reset of the shared memory lease store. */
 export function __resetSharedInMemoryWhatsAppWebSessionLeaseStore(): void {
   sharedMemoryStore = null;
 }

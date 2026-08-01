@@ -5,6 +5,7 @@
  * - Stable session_key + random owner_token + monotonic fencing_version.
  * - Acquire / heartbeat / release are store operations guarded by
  *   session_key + owner_token + fencing_version (no read-then-mutate TOCTOU).
+ * - Release soft-expires the row (keeps fencing_version); next grant increments it.
  * - Ops are serialized; release invalidates in-flight heartbeats and awaits them.
  * - Intentional release never fires onLeaseLost.
  *
@@ -214,7 +215,7 @@ export class WhatsAppWebSessionLease {
     }
 
     await this.withLock(async () => {
-      // Guarded delete — older fencing version cannot remove a replacement.
+      // Guarded soft-release — older fencing version cannot mutate a replacement.
       await this.store.release(prepared!);
       this.clearLocalOwnership("released");
     });
@@ -281,10 +282,12 @@ export class WhatsAppWebSessionLease {
     }
   }
 
-  private enqueueBeat(): void {
-    this.inFlightBeat = this.inFlightBeat
+  private enqueueBeat(): Promise<void> {
+    const next = this.inFlightBeat
       .then(() => this.beat())
       .catch(() => undefined);
+    this.inFlightBeat = next;
+    return next;
   }
 
   private async beat(): Promise<void> {
@@ -405,9 +408,12 @@ export class WhatsAppWebSessionLease {
     this.lastHeartbeatAt = null;
   }
 
-  /** Test-only: run one serialized heartbeat immediately. */
+  /**
+   * Test-only: enqueue one heartbeat on the same inFlightBeat path as the
+   * interval callback so release() awaits it.
+   */
   async __testBeatNow(): Promise<void> {
-    await this.beat();
+    await this.enqueueBeat();
   }
 
   /** Test-only: current fencing token (never expose via status API). */
