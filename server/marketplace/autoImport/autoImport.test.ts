@@ -1562,11 +1562,12 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   const repository = createMemoryAutoImportRepository();
   const blockingRepo = {
     getListingByIdentityKey: (k: string) => repository.getListingByIdentityKey(k),
-    getListingBySourceUrl: async (u: string) => {
+    getListingBySourceUrl: (u: string) => repository.getListingBySourceUrl(u),
+    // Planner holds the run lock while loading shared planning context.
+    listListings: async () => {
       await gate;
-      return repository.getListingBySourceUrl(u);
+      return repository.listListings();
     },
-    listListings: () => repository.listListings(),
     getHealth: () => repository.getHealth(),
     saveHealth: (h: Parameters<typeof repository.saveHealth>[0]) =>
       repository.saveHealth(h),
@@ -1662,6 +1663,511 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(!r2.health.errors.some((e) => /concurrent_run_blocked/i.test(e)));
   __resetAutoImportRunLockForTests();
   console.log("ok - timeout cancel releases run lock");
+}
+
+{
+  // 14 listings plan inside job timeout via shared planning context (not N×RPC).
+  // Simulates production: each per-listing lookup would cost ~4s (14×4s > 55s).
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let getByUrlCalls = 0;
+  let getByKeyCalls = 0;
+  let listCalls = 0;
+  let commitCalls = 0;
+  const timingLogs: Array<Record<string, unknown>> = [];
+  const slowRepo = {
+    async getListingBySourceUrl(u: string) {
+      getByUrlCalls += 1;
+      await new Promise((r) => setTimeout(r, 4_000));
+      return base.getListingBySourceUrl(u);
+    },
+    async getListingByIdentityKey(k: string) {
+      getByKeyCalls += 1;
+      await new Promise((r) => setTimeout(r, 4_000));
+      return base.getListingByIdentityKey(k);
+    },
+    async listListings() {
+      listCalls += 1;
+      await new Promise((r) => setTimeout(r, 20));
+      return base.listListings();
+    },
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const fixtures: CatalogueProductObservation[] = [];
+  for (let i = 0; i < 14; i++) {
+    const supplier = i % 2 === 0 ? "kamal" : "alladin";
+    fixtures.push(
+      obs({
+        supplier,
+        title: `Inverex Nitrox ${10 + i}kW Hybrid Solar Inverter`,
+        brand: "Inverex",
+        modelSku: `NITROX-${i}`,
+        supplierProductId: `plan14-${i}`,
+        currentListedPricePkr: 100000 + i * 1000,
+        canonicalUrl: `https://${supplier === "kamal" ? "kamalsolar.pk" : "alladin.pk"}/products/plan14-${i}`,
+      }),
+    );
+  }
+  const planStarted = Date.now();
+  const service = createSvc({
+    repository: slowRepo,
+    fixtureObservations: fixtures,
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      // Tight ceiling: old N×lookup path cannot finish; shared context can.
+      MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "5000",
+      MARKETPLACE_CEO_AUTO_IMPORT_RPC_TIMEOUT_MS: "4000",
+    },
+    log: (fields) => {
+      if (fields.stage === "plan_phase_timing") {
+        timingLogs.push(fields as unknown as Record<string, unknown>);
+      }
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  const planElapsed = Date.now() - planStarted;
+  assert.equal(result.status, "succeeded", `status=${result.status} errors=${result.health.errors.join(";")}`);
+  assert.equal(result.health.productsCreated, 14);
+  assert.equal(getByUrlCalls, 0, "must not per-list getListingBySourceUrl");
+  assert.equal(getByKeyCalls, 0, "must not per-list getListingByIdentityKey");
+  assert.equal(listCalls, 1, "exactly one shared planning-context load");
+  assert.equal(commitCalls, 1, "exactly one atomic commit");
+  assert.ok(planElapsed < 5000, `14-listing plan+commit finished in ${planElapsed}ms`);
+  assert.equal(timingLogs.length, 1);
+  assert.equal(timingLogs[0]!.aiPlanMs, 0);
+  assert.ok(typeof timingLogs[0]!.fetchMs === "number");
+  assert.ok(typeof timingLogs[0]!.normalizeMs === "number");
+  assert.ok(typeof timingLogs[0]!.matchingMs === "number");
+  assert.ok(typeof timingLogs[0]!.totalMs === "number");
+  assert.equal((await base.listListings()).length, 14);
+
+  // Retry cannot create duplicates — second run updates, listing count stable.
+  const retry = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(retry.status, "succeeded");
+  assert.equal(retry.health.productsCreated, 0);
+  assert.equal(retry.health.productsUpdated, 14);
+  assert.equal(commitCalls, 2);
+  assert.equal(listCalls, 2, "retry loads planning context once more");
+  assert.equal((await base.listListings()).length, 14);
+  __resetAutoImportRunLockForTests();
+  console.log("ok - 14 listings plan within timeout via shared context; retry non-duplicating");
+}
+
+{
+  // Genuinely stalled planner still times out with zero catalogue writes.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let commitCalls = 0;
+  const stalledRepo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    listListings: () =>
+      new Promise<Awaited<ReturnType<typeof base.listListings>>>(() => {
+        /* never resolves */
+      }),
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const service = createSvc({
+    repository: stalledRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "stall-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_TIMEOUT_MS: "300",
+      MARKETPLACE_CEO_AUTO_IMPORT_RPC_TIMEOUT_MS: "200",
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(
+    result.health.errors.some((e) => /job_timeout|timed out/i.test(e)),
+    `expected job_timeout, got ${result.health.errors.join(";")}`,
+  );
+  assert.equal(commitCalls, 0, "timeout must not start atomic commit");
+  assert.equal(result.health.productsCreated, 0);
+  assert.equal(result.health.productsUpdated, 0);
+  assert.equal((await base.listListings()).length, 0, "zero catalogue writes");
+  assert.ok(
+    /no catalogue writes/i.test(result.health.note || ""),
+    "timeout note documents zero writes",
+  );
+  __resetAutoImportRunLockForTests();
+  console.log("ok - stalled planner times out with zero catalogue writes");
+}
+
+{
+  // Fail closed: non-timeout listListings error → failed run, zero commit/writes.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let commitCalls = 0;
+  const failingRepo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    async listListings() {
+      throw new Error("PGRST301: JWT expired");
+    },
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const service = createSvc({
+    repository: failingRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "ctx-fail-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(
+    result.health.errors.some((e) => /plan_context_failed|PLAN_CONTEXT/i.test(e)),
+    `expected plan_context_failed, got ${result.health.errors.join(";")}`,
+  );
+  assert.equal(commitCalls, 0);
+  assert.equal(result.health.productsCreated, 0);
+  assert.equal(result.health.productsUpdated, 0);
+  assert.equal((await base.listListings()).length, 0);
+  assert.ok(/no catalogue writes/i.test(result.health.note || ""));
+  __resetAutoImportRunLockForTests();
+  console.log("ok - listListings DB error fails closed with zero writes");
+}
+
+{
+  // Multi-page planning context: all rows loaded; URL ownership from later page respected.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  const { fetchCompleteListingPages } = await import(
+    "./autoImportPlanningContext.ts"
+  );
+  __resetAutoImportRunLockForTests();
+
+  // Unit: pagination aggregates every page and refuses silent truncation.
+  const pageCalls: number[] = [];
+  const pages = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8],
+  ];
+  const aggregated = await fetchCompleteListingPages({
+    pageSize: 3,
+    maxPages: 10,
+    fetchPage: async (offset, limit) => {
+      pageCalls.push(offset);
+      const idx = Math.floor(offset / limit);
+      return pages[idx] ?? [];
+    },
+  });
+  assert.deepEqual(aggregated, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(pageCalls, [0, 3, 6]);
+
+  let incompleteFailed = false;
+  try {
+    await fetchCompleteListingPages({
+      pageSize: 2,
+      maxPages: 2,
+      fetchPage: async () => [1, 2], // always full page → hits maxPages
+    });
+  } catch (err) {
+    incompleteFailed = /PLAN_CONTEXT_INCOMPLETE/i.test(
+      String((err as Error).message),
+    );
+  }
+  assert.equal(incompleteFailed, true, "must refuse truncated catalogue");
+
+  // Service: catalogue > one page via listListings pagination helper.
+  const seed = createMemoryAutoImportRepository();
+  const ownedUrl = "https://kamalsolar.pk/products/page2-owned";
+  // Seed 7 prior listings (page size 3 → 3 pages) including URL ownership conflict.
+  for (let i = 0; i < 6; i++) {
+    await seed.commitBatch(
+      [
+        {
+          identityKey: `exact:page:seed:${i}`,
+          title: `Seed Inverter ${i}kW Hybrid`,
+          brandName: "Inverex",
+          categoryName: "Solar Inverter",
+          websitePricePkr: 90000 + i,
+          availability: "in_stock",
+          selectedSupplier: "kamal",
+          sourceUrls: [`https://kamalsolar.pk/products/seed-page-${i}`],
+          matchReason: "exact_identity",
+          priceReason: "auto",
+          fetchedAt: "2026-07-26T12:00:00.000Z",
+          offers: [],
+          previous: null,
+        },
+      ],
+      {
+        lastSyncAt: "2026-07-26T12:00:00.000Z",
+        lastSyncStatus: "succeeded",
+        lastRunId: `seed_${i}`,
+        kamalDiscovered: 1,
+        alladinDiscovered: 0,
+        acceptedVariants: 1,
+        rejectedVariants: 0,
+        exactMatches: 1,
+        conflictKeptSeparate: 0,
+        productsCreated: 1,
+        productsUpdated: 0,
+        lowestPriceSelections: 1,
+        rolledBackPrices: 0,
+        errors: [],
+        note: "seed",
+      },
+    );
+  }
+  await seed.commitBatch(
+    [
+      {
+        identityKey: "exact:other:owner",
+        title: "Other Owner Hybrid 5kW",
+        brandName: "Knox",
+        categoryName: "Solar Inverter",
+        websitePricePkr: 88000,
+        availability: "in_stock",
+        selectedSupplier: "alladin",
+        sourceUrls: [ownedUrl],
+        matchReason: "exact_identity",
+        priceReason: "auto",
+        fetchedAt: "2026-07-26T12:00:00.000Z",
+        offers: [],
+        previous: null,
+      },
+    ],
+    {
+      lastSyncAt: "2026-07-26T12:00:00.000Z",
+      lastSyncStatus: "succeeded",
+      lastRunId: "seed_owner",
+      kamalDiscovered: 0,
+      alladinDiscovered: 1,
+      acceptedVariants: 1,
+      rejectedVariants: 0,
+      exactMatches: 1,
+      conflictKeptSeparate: 0,
+      productsCreated: 1,
+      productsUpdated: 0,
+      lowestPriceSelections: 1,
+      rolledBackPrices: 0,
+      errors: [],
+      note: "seed",
+    },
+  );
+  const allSeeded = await seed.listListings();
+  assert.equal(allSeeded.length, 7);
+
+  let pageFetches = 0;
+  let commitCalls = 0;
+  const pagedRepo = {
+    getListingByIdentityKey: (k: string) => seed.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => seed.getListingBySourceUrl(u),
+    async listListings() {
+      return fetchCompleteListingPages({
+        pageSize: 3,
+        maxPages: 10,
+        fetchPage: async (offset, limit) => {
+          pageFetches += 1;
+          return allSeeded.slice(offset, offset + limit);
+        },
+      });
+    },
+    getHealth: () => seed.getHealth(),
+    saveHealth: (h: Parameters<typeof seed.saveHealth>[0]) => seed.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof seed.commitBatch>[0],
+      health: Parameters<typeof seed.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return seed.commitBatch(inputs, health);
+    },
+  };
+
+  const service = createSvc({
+    repository: pagedRepo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 12kW Hybrid Solar Inverter",
+        brand: "Inverex",
+        modelSku: "NITROX-PAGE",
+        supplierProductId: "page-new-1",
+        currentListedPricePkr: 111000,
+        canonicalUrl: "https://kamalsolar.pk/products/page-new-1",
+      }),
+      // Same URL as seed on later page, different identity → must be rejected.
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 15kW Hybrid Solar Inverter",
+        brand: "Inverex",
+        modelSku: "NITROX-CONFLICT",
+        supplierProductId: "page-conflict",
+        currentListedPricePkr: 122000,
+        canonicalUrl: ownedUrl,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "succeeded", result.health.errors.join(";"));
+  assert.ok(pageFetches >= 3, `expected multi-page fetches, got ${pageFetches}`);
+  assert.equal(commitCalls, 1);
+  assert.equal(result.health.productsCreated, 1);
+  assert.equal(result.health.rejectedVariants >= 1, true);
+  const after = await seed.listListings();
+  assert.equal(after.length, 8); // 7 seed + 1 new; conflict not written
+  assert.ok(
+    after.some((l) => l.sourceUrls.includes("https://kamalsolar.pk/products/page-new-1")),
+  );
+  assert.equal(
+    after.filter((l) => l.identityKey === "exact:other:owner").length,
+    1,
+  );
+  __resetAutoImportRunLockForTests();
+  console.log("ok - multi-page planning context loads completely; matching correct");
+}
+
+{
+  // Pagination failure mid-load → fail closed, zero writes.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  const { fetchCompleteListingPages } = await import(
+    "./autoImportPlanningContext.ts"
+  );
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let commitCalls = 0;
+  const repo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    async listListings() {
+      return fetchCompleteListingPages({
+        pageSize: 2,
+        maxPages: 10,
+        fetchPage: async (offset) => {
+          if (offset === 0) return [{ id: "a" }, { id: "b" }] as any;
+          throw new Error("PGRST000: connection reset during page fetch");
+        },
+      });
+    },
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const service = createSvc({
+    repository: repo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "page-fail-1",
+        currentListedPricePkr: 100000,
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const result = await service.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(
+    result.health.errors.some((e) => /plan_context_failed|PLAN_CONTEXT/i.test(e)),
+  );
+  assert.equal(commitCalls, 0);
+  assert.equal(result.health.productsCreated, 0);
+  assert.equal((await base.listListings()).length, 0);
+  __resetAutoImportRunLockForTests();
+  console.log("ok - pagination failure fails closed with zero writes");
+}
+
+{
+  // Source: Supabase listListings paginates; no silent limit(2000) cap.
+  const supabaseSrc = readFileSync(
+    join(__dirname, "supabaseAutoImportRepository.ts"),
+    "utf8",
+  );
+  assert.ok(supabaseSrc.includes("fetchCompleteListingPages"));
+  assert.ok(supabaseSrc.includes("AUTO_IMPORT_LISTINGS_PAGE_SIZE"));
+  assert.ok(!/\.limit\(\s*2000\s*\)/.test(supabaseSrc));
+  assert.ok(/\.range\(/.test(supabaseSrc));
+  const svcSrc = readFileSync(join(__dirname, "autoImportService.ts"), "utf8");
+  assert.ok(svcSrc.includes("PLAN_CONTEXT_FAILED"));
+  assert.ok(!svcSrc.includes("plan_context_empty"));
+  console.log("ok - source: complete pagination + fail-closed planning context");
 }
 
 {
