@@ -50,10 +50,19 @@ import {
   classifyDisconnectDiagnostic,
   buildConnectionClosedDiagnostic,
   reconnectDelayMs,
+  WHATSAPP_WEB_LIVE_UPSERT_TYPES,
   WHATSAPP_WEB_RECONNECT_DELAYS_MS,
+  attachTrackedMessagesUpsertListener,
   type WhatsAppWebSocketFactory,
+  type WhatsAppWebMessagesUpsert,
 } from "./whatsappWebSession.ts";
 import { logWhatsAppWeb } from "./whatsappWebLog.ts";
+import {
+  __resetWhatsAppWebInboundDiagnostics,
+  getWhatsAppWebInboundDiagnostics,
+  noteInboundIgnored,
+  noteInboundRawUpsert,
+} from "./whatsappWebInboundDiagnostics.ts";
 import {
   FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS,
   maskPhoneNumber,
@@ -62,6 +71,37 @@ import { InMemoryWhatsAppRepository } from "../whatsappTransport/whatsappReposit
 import { isWhatsAppWebQrChannel } from "./whatsappWebOutbound.ts";
 import { sendWhatsAppWebPlainText } from "./whatsappWebOutbound.ts";
 import type { RequestActor } from "../middleware/actor.ts";
+
+/**
+ * Production-shaped Baileys sock.ev stand-in: on/off/emit only.
+ * Intentionally omits listenerCount (unavailable on Baileys 6.7.23).
+ */
+function createBaileysShapedEmitter() {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  return {
+    on(event: string, listener: (...args: unknown[]) => void) {
+      let set = listeners.get(event);
+      if (!set) {
+        set = new Set();
+        listeners.set(event, set);
+      }
+      set.add(listener);
+    },
+    off(event: string, listener: (...args: unknown[]) => void) {
+      listeners.get(event)?.delete(listener);
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const listener of listeners.get(event) ?? []) {
+        listener(...args);
+      }
+      return true;
+    },
+    /** Test-only inspection — not part of the production Baileys surface. */
+    __rawCount(event: string): number {
+      return listeners.get(event)?.size ?? 0;
+    },
+  };
+}
 
 function tmpAuthDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wa-web-auth-"));
@@ -2283,6 +2323,592 @@ console.log(
 
 console.log(
   "PASS: INBOX-HOTFIX-01 shared LID map inbound + diagnostics + safety invariants"
+);
+
+// ---------------------------------------------------------------------------
+// LIVE-INBOUND-REPAIR — orphan teardown, listener ops, upsert types, diagnostics
+// ---------------------------------------------------------------------------
+
+{
+  __resetWhatsAppWebInboundDiagnostics();
+
+  // Production-shaped emitter: on/off/emit, no listenerCount.
+  {
+    const ev = createBaileysShapedEmitter();
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(ev, "listenerCount"),
+      false
+    );
+    assert.equal(typeof (ev as { listenerCount?: unknown }).listenerCount, "undefined");
+
+    function onMessagesUpsert(_upsert: WhatsAppWebMessagesUpsert): void {
+      /* tracked attachment only */
+    }
+    const binding = attachTrackedMessagesUpsertListener(
+      ev as unknown as Parameters<typeof attachTrackedMessagesUpsertListener>[0],
+      onMessagesUpsert
+    );
+    // 1 + 2) Registering messages.upsert reports exactly one attached listener.
+    assert.equal(binding.getInboundListenerCount(), 1);
+    assert.equal(ev.__rawCount("messages.upsert"), 1);
+
+    // Keep an unrelated listener; detach must not remove it.
+    const other = () => undefined;
+    ev.on("connection.update", other);
+    assert.equal(ev.__rawCount("connection.update"), 1);
+
+    // 3) end()/detach reports zero and removes only the named upsert handler.
+    binding.detach();
+    assert.equal(binding.getInboundListenerCount(), 0);
+    assert.equal(ev.__rawCount("messages.upsert"), 0);
+    assert.equal(ev.__rawCount("connection.update"), 1);
+  }
+
+  // 4) logout path detaches the named listener before socket logout.
+  {
+    const ev = createBaileysShapedEmitter();
+    function onMessagesUpsert(_upsert: WhatsAppWebMessagesUpsert): void {}
+    const binding = attachTrackedMessagesUpsertListener(
+      ev as unknown as Parameters<typeof attachTrackedMessagesUpsertListener>[0],
+      onMessagesUpsert
+    );
+    let loggedOut = false;
+    const handle = {
+      end: () => {
+        binding.detach();
+      },
+      logout: async () => {
+        binding.detach();
+        loggedOut = true;
+      },
+      sendText: async () => ({ providerMessageId: "X" }),
+      getInboundListenerCount: () => binding.getInboundListenerCount(),
+    };
+    assert.equal(handle.getInboundListenerCount(), 1);
+    await handle.logout();
+    assert.equal(loggedOut, true);
+    assert.equal(handle.getInboundListenerCount(), 0);
+    assert.equal(ev.__rawCount("messages.upsert"), 0);
+  }
+
+  // 1) Connected socket with tracked attachment reports operational.
+  {
+    const authDir = tmpAuthDir();
+    const ev = createBaileysShapedEmitter();
+    function onMessagesUpsert(_upsert: WhatsAppWebMessagesUpsert): void {}
+    const binding = attachTrackedMessagesUpsertListener(
+      ev as unknown as Parameters<typeof attachTrackedMessagesUpsertListener>[0],
+      onMessagesUpsert
+    );
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: async () => ({
+        end: () => {
+          binding.detach();
+        },
+        logout: async () => {
+          binding.detach();
+        },
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+        getInboundListenerCount: () => binding.getInboundListenerCount(),
+      }),
+    });
+    await session.connect();
+    await session.__testHandleConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    const status = session.getSafeStatus();
+    assert.equal(status.state, "CONNECTED");
+    assert.equal(status.socketOpen, true);
+    assert.equal(status.inboundListenerAttached, true);
+    assert.equal(status.inboundListenerOperational, true);
+    assert.equal(binding.getInboundListenerCount(), 1);
+    assert.equal(ev.__rawCount("messages.upsert"), 1);
+    assert.match(String(status.activeSessionKey), /^web_qr:/);
+    assert.equal(typeof status.activeSocketGeneration, "number");
+    await session.shutdown();
+    assert.equal(binding.getInboundListenerCount(), 0);
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // 2) Valid current-generation inbound reaches the handler.
+  {
+    const authDir = tmpAuthDir();
+    let factoryInput: {
+      onInbound: (message: unknown) => Promise<void>;
+      onConnectionUpdate: (update: {
+        connection?: string;
+        userId?: string | null;
+      }) => void;
+    } | null = null;
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: async (input) => {
+        factoryInput = input as typeof factoryInput;
+        const ev = createBaileysShapedEmitter();
+        function onMessagesUpsert(_upsert: WhatsAppWebMessagesUpsert): void {}
+        const binding = attachTrackedMessagesUpsertListener(
+          ev as unknown as Parameters<typeof attachTrackedMessagesUpsertListener>[0],
+          onMessagesUpsert
+        );
+        return {
+          end: () => binding.detach(),
+          logout: async () => {
+            binding.detach();
+          },
+          sendText: async () => ({ providerMessageId: "X" }),
+          getUserId: () => "923001112233@s.whatsapp.net",
+          getInboundListenerCount: () => binding.getInboundListenerCount(),
+        };
+      },
+    });
+    let inboundCalls = 0;
+    session.setInboundHandler(async () => {
+      inboundCalls += 1;
+    });
+    await session.connect();
+    await factoryInput!.onConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    await factoryInput!.onInbound({
+      providerMessageId: "live_ok_1",
+      remoteJid: "923009998877@s.whatsapp.net",
+      fromMe: false,
+      text: "hello",
+      pushName: null,
+      occurredAt: new Date().toISOString(),
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    });
+    assert.equal(inboundCalls, 1);
+    await session.shutdown();
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // 3) Close-race: closed socket is ended; replacement socket events are accepted.
+  {
+    const authDir = tmpAuthDir();
+    const scheduled: Array<{ ms: number; fn: () => void }> = [];
+    let endCalls = 0;
+    let factoryInput: {
+      onConnectionUpdate: (update: {
+        connection?: string;
+        statusCode?: number;
+        userId?: string | null;
+      }) => void;
+      onInbound: (message: unknown) => Promise<void>;
+    } | null = null;
+    let factoryCount = 0;
+    const bindings: Array<ReturnType<typeof attachTrackedMessagesUpsertListener>> =
+      [];
+    const emitters: Array<ReturnType<typeof createBaileysShapedEmitter>> = [];
+
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      reconnectDelaysMs: [5_000],
+      setTimeoutFn: ((fn: () => void, ms: number) => {
+        scheduled.push({ ms, fn: fn as () => void });
+        return scheduled.length as unknown as NodeJS.Timeout;
+      }) as typeof setTimeout,
+      clearTimeoutFn: ((handle: NodeJS.Timeout) => {
+        const idx = (handle as unknown as number) - 1;
+        if (idx >= 0 && idx < scheduled.length) scheduled[idx]!.fn = () => undefined;
+      }) as typeof clearTimeout,
+      socketFactory: async (input) => {
+        factoryCount += 1;
+        factoryInput = input as typeof factoryInput;
+        const ev = createBaileysShapedEmitter();
+        function onMessagesUpsert(_upsert: WhatsAppWebMessagesUpsert): void {}
+        const binding = attachTrackedMessagesUpsertListener(
+          ev as unknown as Parameters<typeof attachTrackedMessagesUpsertListener>[0],
+          onMessagesUpsert
+        );
+        emitters.push(ev);
+        bindings.push(binding);
+        return {
+          end: () => {
+            endCalls += 1;
+            binding.detach();
+          },
+          logout: async () => {
+            binding.detach();
+          },
+          sendText: async () => ({ providerMessageId: "X" }),
+          getUserId: () => "923001112233@s.whatsapp.net",
+          getInboundListenerCount: () => binding.getInboundListenerCount(),
+        };
+      },
+    });
+
+    let inboundCalls = 0;
+    session.setInboundHandler(async () => {
+      inboundCalls += 1;
+    });
+
+    await session.connect();
+    assert.equal(factoryCount, 1);
+    const closedSocket = factoryInput!;
+    await closedSocket.onConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    assert.equal(bindings[0]!.getInboundListenerCount(), 1);
+
+    __resetWhatsAppWebInboundDiagnostics();
+    await closedSocket.onConnectionUpdate({
+      connection: "close",
+      statusCode: 428,
+    });
+    // Closed handle must be torn down (not left orphaned).
+    assert.ok(endCalls >= 1);
+    assert.equal(bindings[0]!.getInboundListenerCount(), 0);
+    assert.equal(emitters[0]!.__rawCount("messages.upsert"), 0);
+    assert.equal(session.getSafeStatus().state, "RECONNECTING");
+
+    // Stale inbound from closed generation is rejected with sanitized reason.
+    inboundCalls = 0;
+    await closedSocket.onInbound({
+      providerMessageId: "stale_repair_1",
+      remoteJid: "923009998877@s.whatsapp.net",
+      fromMe: false,
+      text: "nope",
+      pushName: null,
+      occurredAt: new Date().toISOString(),
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    });
+    assert.equal(inboundCalls, 0);
+    assert.equal(
+      getWhatsAppWebInboundDiagnostics().lastIgnoredReason,
+      "stale_socket"
+    );
+
+    // 5) Replacement socket gets one listener; old one is not retained.
+    const timer = scheduled[scheduled.length - 1]!;
+    timer.fn();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(factoryCount, 2);
+    const newSocket = factoryInput!;
+    assert.notEqual(newSocket, closedSocket);
+    await newSocket.onConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    assert.equal(session.getSafeStatus().state, "CONNECTED");
+    assert.equal(bindings[0]!.getInboundListenerCount(), 0);
+    assert.equal(bindings[1]!.getInboundListenerCount(), 1);
+    assert.equal(emitters[0]!.__rawCount("messages.upsert"), 0);
+    assert.equal(emitters[1]!.__rawCount("messages.upsert"), 1);
+    assert.equal(session.getSafeStatus().inboundListenerOperational, true);
+
+    inboundCalls = 0;
+    await newSocket.onInbound({
+      providerMessageId: "replacement_ok",
+      remoteJid: "923009998877@s.whatsapp.net",
+      fromMe: false,
+      text: "hello again",
+      pushName: null,
+      occurredAt: new Date().toISOString(),
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    });
+    assert.equal(inboundCalls, 1);
+
+    await session.shutdown();
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // 4) Supported upsert types include notify + append.
+  assert.equal(WHATSAPP_WEB_LIVE_UPSERT_TYPES.has("notify"), true);
+  assert.equal(WHATSAPP_WEB_LIVE_UPSERT_TYPES.has("append"), true);
+  assert.equal(WHATSAPP_WEB_LIVE_UPSERT_TYPES.has("history"), false);
+
+  // 5) Unsupported / system / outbound paths record sanitized ignored reasons.
+  {
+    __resetWhatsAppWebInboundDiagnostics();
+    noteInboundRawUpsert();
+    noteInboundIgnored("unsupported_upsert_type");
+    assert.equal(
+      getWhatsAppWebInboundDiagnostics().lastIgnoredReason,
+      "unsupported_upsert_type"
+    );
+    assert.ok(getWhatsAppWebInboundDiagnostics().lastRawUpsertAt);
+
+    const fromMe = normalizeBaileysInbound({
+      providerMessageId: "sys_1",
+      remoteJid: "923009998877@s.whatsapp.net",
+      fromMe: true,
+      text: "mine",
+      pushName: null,
+      occurredAt: new Date().toISOString(),
+      isGroup: false,
+      isStatusOrNewsletter: false,
+      rawType: "conversation",
+    });
+    assert.equal(fromMe.kind, "ignore");
+    if (fromMe.kind === "ignore") {
+      assert.equal(fromMe.reason, "from_me");
+    }
+  }
+
+  // 6) @lid inbound protection keeps valid mapped customer messages.
+  {
+    __resetWhatsAppWebInboundDiagnostics();
+    const repo = new InMemoryWhatsAppRepository();
+    // Valid: @lid + verified phone alt is accepted (never invent phone from lid digits).
+    const stored = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "LID_LIVE_1",
+        remoteJid: "123456789012345@lid",
+        remoteJidAlt: "923001112233@s.whatsapp.net",
+        fromMe: false,
+        text: "mapped lid ok",
+        pushName: "Customer",
+        occurredAt: "2026-08-01T20:00:00.000Z",
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo }
+    );
+    assert.equal(stored.kind, "stored");
+    assert.ok(getWhatsAppWebInboundDiagnostics().lastInboundStoredAt);
+
+    // Unmapped bare @lid is ignored with sanitized bad_jid (not dropped silently).
+    const dropped = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "LID_LIVE_BAD",
+        remoteJid: "999888777666555@lid",
+        fromMe: false,
+        text: "unmapped",
+        pushName: null,
+        occurredAt: "2026-08-01T20:01:00.000Z",
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo, lidMap: new WhatsAppLidPhoneMap() }
+    );
+    assert.equal(dropped.kind, "ignored");
+    if (dropped.kind === "ignored") {
+      assert.equal(dropped.reason, "bad_jid");
+    }
+    assert.equal(
+      getWhatsAppWebInboundDiagnostics().lastIgnoredReason,
+      "bad_jid"
+    );
+  }
+
+  // 7 + 8) Persistence success/failure update diagnostics.
+  {
+    __resetWhatsAppWebInboundDiagnostics();
+    const repo = new InMemoryWhatsAppRepository();
+    const ok = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "STORE_DIAG_1",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+        text: "persist me",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo }
+    );
+    assert.equal(ok.kind, "stored");
+    assert.ok(getWhatsAppWebInboundDiagnostics().lastInboundStoredAt);
+
+    const inactive = new InMemoryWhatsAppRepository();
+    inactive.isActive = () => false;
+    const failed = await persistWhatsAppWebInbound(
+      {
+        providerMessageId: "STORE_DIAG_FAIL",
+        remoteJid: "923009998877@s.whatsapp.net",
+        fromMe: false,
+        text: "fail me",
+        pushName: null,
+        occurredAt: new Date().toISOString(),
+        isGroup: false,
+        isStatusOrNewsletter: false,
+        rawType: "conversation",
+      },
+      { repo: inactive }
+    );
+    assert.equal(failed.kind, "error");
+    assert.equal(
+      getWhatsAppWebInboundDiagnostics().lastPersistFailureCode,
+      "persistence_unavailable"
+    );
+    assert.ok(getWhatsAppWebInboundDiagnostics().lastPersistFailureAt);
+  }
+
+  // 6 / 9) CONNECTED cannot report operational when attachment tracking is false.
+  {
+    const authDir = tmpAuthDir();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: async () => ({
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+        getInboundListenerCount: () => 0,
+      }),
+    });
+    await session.connect();
+    await session.__testHandleConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    const status = session.getSafeStatus();
+    assert.equal(status.state, "CONNECTED");
+    assert.equal(status.socketOpen, true);
+    assert.equal(status.inboundListenerAttached, false);
+    assert.equal(status.inboundListenerOperational, false);
+    await session.shutdown();
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // Missing getInboundListenerCount must not invent operational=true.
+  {
+    const authDir = tmpAuthDir();
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      socketFactory: async () => ({
+        end: () => undefined,
+        logout: async () => undefined,
+        sendText: async () => ({ providerMessageId: "X" }),
+        getUserId: () => "923001112233@s.whatsapp.net",
+        // intentionally omit getInboundListenerCount
+      }),
+    });
+    await session.connect();
+    await session.__testHandleConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    const status = session.getSafeStatus();
+    assert.equal(status.state, "CONNECTED");
+    assert.equal(status.socketOpen, true);
+    assert.equal(status.inboundListenerAttached, false);
+    assert.equal(status.inboundListenerOperational, false);
+    await session.shutdown();
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // 10) Reconnect does not duplicate or lose the active listener.
+  {
+    const authDir = tmpAuthDir();
+    const scheduled: Array<{ ms: number; fn: () => void }> = [];
+    let factoryInput: {
+      onConnectionUpdate: (update: {
+        connection?: string;
+        statusCode?: number;
+        userId?: string | null;
+      }) => void;
+    } | null = null;
+    const bindings: Array<ReturnType<typeof attachTrackedMessagesUpsertListener>> =
+      [];
+    const emitters: Array<ReturnType<typeof createBaileysShapedEmitter>> = [];
+
+    const session = new WhatsAppWebSession({
+      env: {
+        WHATSAPP_WEB_QR_ENABLED: "true",
+        WHATSAPP_WEB_AUTH_DIR: authDir,
+      },
+      reconnectDelaysMs: [1],
+      setTimeoutFn: ((fn: () => void, ms: number) => {
+        scheduled.push({ ms, fn: fn as () => void });
+        return scheduled.length as unknown as NodeJS.Timeout;
+      }) as typeof setTimeout,
+      clearTimeoutFn: ((handle: NodeJS.Timeout) => {
+        const idx = (handle as unknown as number) - 1;
+        if (idx >= 0 && idx < scheduled.length) scheduled[idx]!.fn = () => undefined;
+      }) as typeof clearTimeout,
+      socketFactory: async (input) => {
+        factoryInput = input as typeof factoryInput;
+        const ev = createBaileysShapedEmitter();
+        function onMessagesUpsert(_upsert: WhatsAppWebMessagesUpsert): void {}
+        const binding = attachTrackedMessagesUpsertListener(
+          ev as unknown as Parameters<typeof attachTrackedMessagesUpsertListener>[0],
+          onMessagesUpsert
+        );
+        emitters.push(ev);
+        bindings.push(binding);
+        return {
+          end: () => {
+            binding.detach();
+          },
+          logout: async () => {
+            binding.detach();
+          },
+          sendText: async () => ({ providerMessageId: "X" }),
+          getUserId: () => "923001112233@s.whatsapp.net",
+          getInboundListenerCount: () => binding.getInboundListenerCount(),
+        };
+      },
+    });
+
+    await session.connect();
+    await factoryInput!.onConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    assert.equal(session.getSafeStatus().inboundListenerOperational, true);
+    assert.equal(bindings[0]!.getInboundListenerCount(), 1);
+
+    await factoryInput!.onConnectionUpdate({
+      connection: "close",
+      statusCode: 428,
+    });
+    assert.equal(bindings[0]!.getInboundListenerCount(), 0);
+    assert.equal(emitters[0]!.__rawCount("messages.upsert"), 0);
+
+    const timer = scheduled[scheduled.length - 1]!;
+    timer.fn();
+    await new Promise((r) => setTimeout(r, 15));
+    await factoryInput!.onConnectionUpdate({
+      connection: "open",
+      userId: "923001112233@s.whatsapp.net",
+    });
+    assert.equal(bindings.length, 2);
+    assert.equal(bindings[0]!.getInboundListenerCount(), 0);
+    assert.equal(bindings[1]!.getInboundListenerCount(), 1);
+    assert.equal(emitters[0]!.__rawCount("messages.upsert"), 0);
+    assert.equal(emitters[1]!.__rawCount("messages.upsert"), 1);
+    assert.equal(session.getSafeStatus().inboundListenerOperational, true);
+    assert.equal(session.getSafeStatus().inboundListenerAttached, true);
+
+    await session.shutdown();
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+}
+
+console.log(
+  "PASS: LIVE-INBOUND-REPAIR orphan teardown + listener ops + diagnostics"
 );
 
 console.log("\nAll WhatsApp Web QR tests passed.");

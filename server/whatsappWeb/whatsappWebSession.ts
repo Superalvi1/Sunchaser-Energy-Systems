@@ -14,6 +14,7 @@ import QRCode from "qrcode";
 import {
   assertWhatsAppWebAuthDirReady,
   readWhatsAppWebConfig,
+  WHATSAPP_WEB_QR_CONNECTION_ID,
   WHATSAPP_WEB_QR_TTL_MS,
   type WhatsAppWebConfig,
 } from "./whatsappWebConfig.ts";
@@ -33,7 +34,11 @@ import {
 } from "./whatsappWebTypes.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
-import { getWhatsAppWebInboundDiagnostics } from "./whatsappWebInboundDiagnostics.ts";
+import {
+  getWhatsAppWebInboundDiagnostics,
+  noteInboundIgnored,
+  noteInboundRawUpsert,
+} from "./whatsappWebInboundDiagnostics.ts";
 import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
@@ -240,6 +245,79 @@ export type WhatsAppWebConnectionUpdate = {
   userId?: string | null;
 };
 
+/** Upsert types that may carry live customer inbound (Baileys online/offline). */
+export const WHATSAPP_WEB_LIVE_UPSERT_TYPES = new Set(["notify", "append"]);
+
+/**
+ * Production-shaped Baileys event bus for messages.upsert binding.
+ * Baileys 6.7.23 exposes on/off/emit but not listenerCount — never rely on it.
+ */
+export type WhatsAppWebBaileysUpsertEventBus = {
+  on(
+    event: "messages.upsert",
+    listener: (upsert: WhatsAppWebMessagesUpsert) => void
+  ): void;
+  off(
+    event: "messages.upsert",
+    listener: (upsert: WhatsAppWebMessagesUpsert) => void
+  ): void;
+};
+
+export type WhatsAppWebMessagesUpsert = {
+  messages?: Array<{
+    key?: {
+      remoteJid?: string | null;
+      id?: string | null;
+      fromMe?: boolean | null;
+      remoteJidAlt?: string | null;
+      participant?: string | null;
+      participantAlt?: string | null;
+      senderPn?: string | null;
+      senderLid?: string | null;
+      participantPn?: string | null;
+      participantLid?: string | null;
+    };
+    message?: Record<string, unknown> | null;
+    pushName?: string | null;
+    messageTimestamp?: number | LongLike | null;
+  }>;
+  type?: string;
+};
+
+type LongLike = { low: number; high?: number; unsigned?: boolean };
+
+export type TrackedMessagesUpsertBinding = {
+  /** Tracked attachment count for this handle (0 or 1). Never invents a fallback. */
+  getInboundListenerCount: () => number;
+  /** Detach only the registered named upsert handler. */
+  detach: () => void;
+};
+
+/**
+ * Register a named messages.upsert handler and track attachment without
+ * relying on EventEmitter.listenerCount (unavailable on Baileys sock.ev).
+ */
+export function attachTrackedMessagesUpsertListener(
+  ev: WhatsAppWebBaileysUpsertEventBus,
+  onMessagesUpsert: (upsert: WhatsAppWebMessagesUpsert) => void
+): TrackedMessagesUpsertBinding {
+  let attached = false;
+  ev.on("messages.upsert", onMessagesUpsert);
+  attached = true;
+  return {
+    getInboundListenerCount: () => (attached ? 1 : 0),
+    detach: () => {
+      if (!attached) return;
+      try {
+        ev.off("messages.upsert", onMessagesUpsert);
+      } catch {
+        /* ignore */
+      }
+      attached = false;
+    },
+  };
+}
+
 export type WhatsAppWebSocketHandle = {
   end: () => void;
   logout: () => Promise<void>;
@@ -248,6 +326,11 @@ export type WhatsAppWebSocketHandle = {
   getUserId?: () => string | null;
   /** Contact/chat/history source for admin sync (Baileys in-memory). */
   getSyncSource?: () => import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncSource;
+  /**
+   * Tracked messages.upsert attachment count for this handle (0 or 1).
+   * Must not invent a fallback of 1 when unverified.
+   */
+  getInboundListenerCount?: () => number;
 };
 
 export type WhatsAppWebSocketFactory = (input: {
@@ -393,43 +476,53 @@ async function defaultSocketFactory(input: {
     syncSource.handleHistorySet(p);
   });
 
-  sock.ev.on("messages.upsert", (upsert) => {
+  // Named handler so sock.ev.off can detach exactly this listener.
+  function onMessagesUpsert(upsert: WhatsAppWebMessagesUpsert): void {
+    noteInboundRawUpsert();
     const messages = upsert.messages ?? [];
-    // Keep history/append traffic out of the live inbound pipeline (AI/auto-link).
-    const upsertType = String((upsert as { type?: string }).type || "notify");
+    // Baileys online receipts use "notify"; offline-flagged nodes use "append".
+    // Both must reach the live inbound pipeline; unsupported types are ignored.
+    const upsertType = String(upsert.type || "notify");
     syncSource.ingestMessages(
       messages as unknown as Array<Record<string, unknown>>
     );
-    if (upsertType !== "notify") {
+    if (!WHATSAPP_WEB_LIVE_UPSERT_TYPES.has(upsertType)) {
+      noteInboundIgnored("unsupported_upsert_type");
       return;
     }
     for (const msg of messages) {
       void (async () => {
         const remoteJid = String(msg.key?.remoteJid ?? "");
         const providerMessageId = String(msg.key?.id ?? "");
-        if (!remoteJid || !providerMessageId) return;
+        if (!remoteJid) {
+          noteInboundIgnored("missing_remote_jid");
+          return;
+        }
+        if (!providerMessageId) {
+          noteInboundIgnored("missing_provider_id");
+          return;
+        }
         const fromMe = msg.key?.fromMe === true;
         const isGroup = remoteJid.endsWith("@g.us");
         const isStatusOrNewsletter =
           remoteJid === "status@broadcast" ||
           remoteJid.endsWith("@newsletter") ||
           remoteJid.includes("broadcast");
+        const messageBody = msg.message as
+          | {
+              conversation?: string;
+              extendedTextMessage?: { text?: string };
+            }
+          | null
+          | undefined;
         const text =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
+          messageBody?.conversation ||
+          messageBody?.extendedTextMessage?.text ||
           null;
         const occurredAt = msg.messageTimestamp
           ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
           : new Date().toISOString();
-        const key = msg.key as {
-          remoteJidAlt?: string | null;
-          participant?: string | null;
-          participantAlt?: string | null;
-          senderPn?: string | null;
-          senderLid?: string | null;
-          participantPn?: string | null;
-          participantLid?: string | null;
-        };
+        const key = msg.key ?? {};
         await input.onInbound({
           providerMessageId,
           remoteJid,
@@ -452,11 +545,17 @@ async function defaultSocketFactory(input: {
         logWhatsAppWeb("warn", "inbound_handler_failed");
       });
     }
-  });
+  }
+
+  const upsertBinding = attachTrackedMessagesUpsertListener(
+    sock.ev as unknown as WhatsAppWebBaileysUpsertEventBus,
+    onMessagesUpsert
+  );
 
   return {
     end: () => {
       syncSource.setConnected(false);
+      upsertBinding.detach();
       try {
         sock.end(undefined);
       } catch {
@@ -465,6 +564,7 @@ async function defaultSocketFactory(input: {
     },
     logout: async () => {
       syncSource.setConnected(false);
+      upsertBinding.detach();
       await sock.logout();
     },
     sendText: async (jid, text) => {
@@ -477,6 +577,7 @@ async function defaultSocketFactory(input: {
     },
     getUserId: () => sock.user?.id ?? null,
     getSyncSource: () => syncSource,
+    getInboundListenerCount: () => upsertBinding.getInboundListenerCount(),
   };
 }
 
@@ -556,6 +657,12 @@ export class WhatsAppWebSession {
         this.state === "QR_READY"
     );
     const inbound = getWhatsAppWebInboundDiagnostics();
+    const socketOpen = this.state === "CONNECTED" && this.socket != null;
+    // Never invent attachment: missing/unverified tracking reports 0 (not operational).
+    const listenerCount = this.socket?.getInboundListenerCount?.() ?? 0;
+    const inboundListenerAttached = socketOpen && listenerCount >= 1;
+    const inboundListenerOperational =
+      socketOpen && inboundListenerAttached && listenerCount === 1;
     return {
       enabled: config.enabled,
       state: this.state,
@@ -564,10 +671,18 @@ export class WhatsAppWebSession {
       qrAvailable,
       qrExpiresAt: qrAvailable ? this.qrExpiresAt : null,
       safeMessage: this.safeMessage,
+      lastRawUpsertAt: inbound.lastRawUpsertAt,
       lastInboundEventAt: inbound.lastInboundEventAt,
       lastInboundStoredAt: inbound.lastInboundStoredAt,
+      lastIgnoredAt: inbound.lastIgnoredAt,
       lastIgnoredReason: inbound.lastIgnoredReason,
+      lastPersistFailureAt: inbound.lastPersistFailureAt,
       lastPersistFailureCode: inbound.lastPersistFailureCode,
+      socketOpen,
+      inboundListenerAttached,
+      inboundListenerOperational,
+      activeSocketGeneration: this.socketGeneration,
+      activeSessionKey: `web_qr:${WHATSAPP_WEB_QR_CONNECTION_ID}:g${this.socketGeneration}`,
       reconnectScheduled: this.reconnectTimer != null,
       reconnectAttemptInProgress: this.reconnectAttemptInProgress === true,
       reconnectAttempt: this.reconnectAttempt,
@@ -970,7 +1085,11 @@ export class WhatsAppWebSession {
           logWhatsAppWeb("info", "credentials_saved");
         },
         onInbound: async (message) => {
-          if (generation !== this.socketGeneration) return;
+          if (generation !== this.socketGeneration) {
+            // Privacy-safe: prove events arrived but belonged to a closed socket.
+            noteInboundIgnored("stale_socket");
+            return;
+          }
           if (this.inboundHandler) {
             await this.inboundHandler(message);
           }
@@ -1149,15 +1268,25 @@ export class WhatsAppWebSession {
 
   /**
    * After an accepted close/logged_out for the active socket, bump generation
-   * so late callbacks from that socket can no longer mutate session state.
+   * so late callbacks from that socket can no longer mutate session state,
+   * then tear down the handle so Baileys cannot keep receiving on an orphan.
    * Reconnect still works: startSocket allocates a newer generation.
    */
   private invalidateClosedSocketGeneration(generation?: number): void {
     if (generation != null && generation !== this.socketGeneration) {
       return;
     }
+    const closing = this.socket;
+    // Bump first so any events emitted during end() fail the generation guard.
     this.socketGeneration += 1;
     this.socket = null;
+    if (closing) {
+      try {
+        closing.end();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   private logConnectionClosed(input: {

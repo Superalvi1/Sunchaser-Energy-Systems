@@ -45,6 +45,25 @@ function status(
     updatedAt: partial.updatedAt,
     qrExpiresAt: partial.qrExpiresAt ?? null,
     safeMessage: partial.safeMessage ?? null,
+    lastRawUpsertAt: partial.lastRawUpsertAt ?? null,
+    lastInboundEventAt: partial.lastInboundEventAt ?? null,
+    lastInboundStoredAt: partial.lastInboundStoredAt ?? null,
+    lastIgnoredAt: partial.lastIgnoredAt ?? null,
+    lastIgnoredReason: partial.lastIgnoredReason ?? null,
+    lastPersistFailureAt: partial.lastPersistFailureAt ?? null,
+    lastPersistFailureCode: partial.lastPersistFailureCode ?? null,
+    socketOpen: partial.socketOpen ?? partial.state === "CONNECTED",
+    inboundListenerAttached:
+      partial.inboundListenerAttached ?? partial.state === "CONNECTED",
+    inboundListenerOperational:
+      partial.inboundListenerOperational ?? partial.state === "CONNECTED",
+    activeSocketGeneration: partial.activeSocketGeneration ?? 0,
+    activeSessionKey: partial.activeSessionKey ?? "web_qr:test:g0",
+    reconnectScheduled: partial.reconnectScheduled ?? false,
+    reconnectAttemptInProgress: partial.reconnectAttemptInProgress ?? false,
+    reconnectAttempt: partial.reconnectAttempt ?? 0,
+    lastDisconnectClassification: partial.lastDisconnectClassification ?? null,
+    credentialsAvailable: partial.credentialsAvailable ?? false,
   };
 }
 
