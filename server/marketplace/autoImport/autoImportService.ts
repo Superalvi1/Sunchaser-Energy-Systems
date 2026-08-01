@@ -41,8 +41,10 @@ import type {
 import { createAutoImportRepositoryFromEnv } from "./supabaseAutoImportRepository.ts";
 import { isSupabaseActive } from "../../../dbManager.ts";
 import {
+  lastValidCommercialFromListing,
   resolvePriceWithRollback,
   selectLowestValidPrice,
+  type PriceSelection,
   type PricedOffer,
 } from "./priceSelect.ts";
 import { CEO_AUTO_IMPORT_JOB_NAME } from "./autoImportTypes.ts";
@@ -56,7 +58,6 @@ import {
   assertBatchDefaultVariantInvariant,
   attachDefaultVariants,
   AutoImportDefaultVariantError,
-  selectDefaultOffer,
 } from "./autoImportDefaultVariant.ts";
 
 type PlanningLookup = {
@@ -399,14 +400,20 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     const fetchMs = Date.now() - fetchStarted;
 
     // Normalize / reject invalid observations (in-memory only — no DB).
+    // Missing/invalid prices are counted as rejected but retained for last-valid
+    // commercial rollback when a prior listing exists for the same identity.
     const normalizeStarted = Date.now();
     const seenUrls = new Set<string>();
     let rejectedVariants = 0;
     const normalized: CatalogueProductObservation[] = [];
+    const staleObservations: CatalogueProductObservation[] = [];
     for (const obs of observations) {
       const why = rejectReason(obs);
       if (why) {
         rejectedVariants += 1;
+        if (why === "missing_or_invalid_price") {
+          staleObservations.push(obs);
+        }
         continue;
       }
       const url = obs.canonicalUrl.trim().toLowerCase();
@@ -469,67 +476,74 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       detail: `groups_${groups.size}`,
     });
 
-    // Deterministic price/identity planning (no AI model calls in this path).
+    // Deterministic commercial planning (no AI model calls in this path).
+    // One selector drives websitePricePkr, selectedSupplier, defaultSourceKey
+    // and availability — never publish a sold_out price with an available default.
     const planStarted = Date.now();
     type Planned = {
       input: UpsertListingInput;
       selectionOk: boolean;
-      selection: ReturnType<typeof selectLowestValidPrice> | null;
+      /** Final commercial selection reported in sampleLowestPrice. */
+      selection: PriceSelection | null;
     };
     const planned: Planned[] = [];
     let lowestPriceSelections = 0;
     let rolledBackPrices = 0;
+    const plannedKeys = new Set<string>();
 
-    for (const [identityKey, offers] of groups) {
-      const priced: PricedOffer[] = offers.map((o) => ({
-        supplier: o.supplier,
-        sourceKey: o.sourceKey,
-        canonicalUrl: o.canonicalUrl,
-        title: o.title,
-        currentListedPricePkr: o.currentListedPricePkr,
-        parseStatus: o.parseStatus,
-        availability: o.availability,
-        fetchedAt: o.fetchedAt,
-      }));
-
-      const selection = selectLowestValidPrice(priced);
-      const defaultPick = selectDefaultOffer(priced);
+    const planFromOffers = (
+      identityKey: string,
+      offers: AutoImportOffer[],
+      selection: PriceSelection,
+    ): void => {
       const previous = lookup.byKey.get(identityKey) ?? null;
       const resolved = resolvePriceWithRollback(
         selection,
-        previous
-          ? {
-              pricePkr: previous.lastValidPricePkr,
-              observedAt: previous.lastValidObservationAt,
-              supplier: previous.lastValidSupplier,
-            }
-          : null,
+        previous ? lastValidCommercialFromListing(previous) : null,
       );
 
-      if (resolved.pricePkr == null || !resolved.supplier || !defaultPick.ok) {
+      if (
+        resolved.pricePkr == null ||
+        !resolved.supplier ||
+        !resolved.sourceKey ||
+        !resolved.availability
+      ) {
         rejectedVariants += offers.length;
-        continue;
-      }
-      if (resolved.rolledBack) rolledBackPrices += 1;
-      else if (selection.ok) {
-        lowestPriceSelections += 1;
+        return;
       }
 
       const primary =
-        offers.find((o) => o.sourceKey === defaultPick.offer.sourceKey) ??
+        offers.find((o) => o.sourceKey === resolved.sourceKey) ??
         offers.find((o) => o.supplier === resolved.supplier) ??
         offers[0]!;
 
-      let availability = primary.availability;
-      if (offers.some((o) => o.availability === "in_stock")) {
-        availability = "in_stock";
-      } else if (offers.every((o) => o.availability === "sold_out")) {
-        availability = "sold_out";
-      }
+      // Availability is the commercial winner's stock — not a group aggregate.
+      const availability = resolved.availability;
+
+      if (resolved.rolledBack) rolledBackPrices += 1;
+      else if (selection.ok) lowestPriceSelections += 1;
+
+      const commercialSample: PriceSelection = selection.ok
+        ? selection
+        : {
+            ok: true,
+            pricePkr: resolved.pricePkr,
+            supplier: resolved.supplier,
+            sourceKey: resolved.sourceKey,
+            canonicalUrl: primary.canonicalUrl,
+            availability: resolved.availability,
+            reason: resolved.reason,
+            considered: [
+              {
+                supplier: resolved.supplier,
+                pricePkr: resolved.pricePkr,
+              },
+            ],
+          };
 
       planned.push({
-        selectionOk: selection.ok,
-        selection,
+        selectionOk: true,
+        selection: commercialSample,
         input: {
           identityKey,
           title: primary.title,
@@ -544,7 +558,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           priceReason: resolved.reason,
           fetchedAt: now().toISOString(),
           previous,
-          defaultSourceKey: defaultPick.offer.sourceKey,
+          defaultSourceKey: resolved.sourceKey,
           offers: offers.map((o) => ({
             supplier: o.supplier,
             pricePkr: o.currentListedPricePkr,
@@ -552,6 +566,42 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
             availability: o.availability,
           })),
         },
+      });
+      plannedKeys.add(identityKey);
+    };
+
+    for (const [identityKey, offers] of groups) {
+      const priced: PricedOffer[] = offers.map((o) => ({
+        supplier: o.supplier,
+        sourceKey: o.sourceKey,
+        canonicalUrl: o.canonicalUrl,
+        title: o.title,
+        currentListedPricePkr: o.currentListedPricePkr,
+        parseStatus: o.parseStatus,
+        availability: o.availability,
+        fetchedAt: o.fetchedAt,
+      }));
+      planFromOffers(identityKey, offers, selectLowestValidPrice(priced));
+    }
+
+    // Last-valid commercial rollback when current observations are unparseable.
+    const staleGroups = new Map<string, AutoImportOffer[]>();
+    for (const obs of staleObservations) {
+      const offer = toOffer(obs);
+      const existingByUrl = lookup.byUrl.get(obs.canonicalUrl) ?? null;
+      if (existingByUrl && existingByUrl.identityKey !== offer.groupKey) {
+        continue;
+      }
+      const list = staleGroups.get(offer.groupKey) || [];
+      list.push(offer);
+      staleGroups.set(offer.groupKey, list);
+    }
+    for (const [identityKey, offers] of staleGroups) {
+      if (plannedKeys.has(identityKey)) continue;
+      if (!lookup.byKey.has(identityKey)) continue;
+      planFromOffers(identityKey, offers, {
+        ok: false,
+        reason: "no_valid_listed_price",
       });
     }
 

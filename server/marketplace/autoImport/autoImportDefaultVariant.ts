@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import type { SupplierAvailability, SupplierCode } from "../suppliers/adapterTypes.ts";
 import type { UpsertListingInput } from "./autoImportRepository.ts";
 import type { PricedOffer } from "./priceSelect.ts";
-import { isValidListedPrice } from "./priceSelect.ts";
+import { selectLowestValidPrice } from "./priceSelect.ts";
 
 export type PlannedDefaultVariant = {
   isDefault: boolean;
@@ -55,50 +55,30 @@ export function supplierClassOf(
 }
 
 /**
- * Prefer lowest valid public price among non-sold_out offers when any exist;
- * otherwise fall back to priced sold_out. Equal prices: sourceKey ASC, then
- * supplier tie-break (kamal before alladin). Never selects parse-invalid offers.
+ * Default-offer identity is the same commercial winner as website price /
+ * selectedSupplier (selectLowestValidPrice). Never diverges on sold_out vs stock.
  */
 export function selectDefaultOffer(offers: PricedOffer[]): {
   ok: true;
   offer: PricedOffer & { currentListedPricePkr: number };
   reason: string;
 } | { ok: false; reason: string } {
-  const priced = offers.filter((o) =>
-    isValidListedPrice(o.currentListedPricePkr, o.parseStatus),
-  ) as Array<PricedOffer & { currentListedPricePkr: number }>;
-
-  if (!priced.length) {
-    return { ok: false, reason: "no_valid_listed_price" };
+  const selection = selectLowestValidPrice(offers);
+  if (!selection.ok) {
+    return { ok: false, reason: selection.reason };
   }
-
-  const activePreferred = priced.filter((o) => o.availability !== "sold_out");
-  const pool = activePreferred.length > 0 ? activePreferred : priced;
-
-  let best = pool[0]!;
-  for (const o of pool.slice(1)) {
-    if (o.currentListedPricePkr < best.currentListedPricePkr) {
-      best = o;
-      continue;
-    }
-    if (o.currentListedPricePkr !== best.currentListedPricePkr) continue;
-    if (o.sourceKey < best.sourceKey) {
-      best = o;
-      continue;
-    }
-    if (o.sourceKey > best.sourceKey) continue;
-    const bi = SUPPLIER_TIEBREAK.indexOf(best.supplier);
-    const oi = SUPPLIER_TIEBREAK.indexOf(o.supplier);
-    if (oi >= 0 && (bi < 0 || oi < bi)) best = o;
+  const offer = offers.find((o) => o.sourceKey === selection.sourceKey);
+  if (
+    !offer ||
+    typeof offer.currentListedPricePkr !== "number" ||
+    !Number.isFinite(offer.currentListedPricePkr)
+  ) {
+    return { ok: false, reason: "commercial_offer_missing" };
   }
-
   return {
     ok: true,
-    offer: best,
-    reason:
-      activePreferred.length > 0 && priced.some((o) => o.availability === "sold_out")
-        ? "lowest_active_preferred_over_sold_out"
-        : "lowest_valid_price",
+    offer: offer as PricedOffer & { currentListedPricePkr: number },
+    reason: selection.reason,
   };
 }
 

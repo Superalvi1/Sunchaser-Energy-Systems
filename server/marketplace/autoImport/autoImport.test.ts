@@ -208,7 +208,7 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
-  // Equal prices — deterministic kamal tie-break
+  // Equal prices — sourceKey ASC, then supplier tie-break
   const sel = selectLowestValidPrice([
     {
       supplier: "alladin",
@@ -232,7 +232,11 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
     },
   ]);
   assert.equal(sel.ok, true);
-  if (sel.ok) assert.equal(sel.supplier, "kamal");
+  // 'alladin:1' < 'kamal:1'
+  if (sel.ok) {
+    assert.equal(sel.sourceKey, "alladin:1");
+    assert.equal(sel.supplier, "alladin");
+  }
   console.log("ok - equal prices tie-break");
 }
 
@@ -338,7 +342,7 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
-  // Stale / rollback to last valid observation
+  // Stale / rollback to last valid observation — commercial fields stay aligned.
   const repository = createMemoryAutoImportRepository();
   const first = createAutoImportService({
     repository,
@@ -348,6 +352,7 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
         title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
         supplierProductId: "rb",
         currentListedPricePkr: 250000,
+        availability: "in_stock",
       }),
     ],
     env: {
@@ -355,7 +360,15 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
       MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
     },
   });
-  await first.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  const firstResult = await first.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(firstResult.status, "succeeded");
+  const before = (await repository.listListings())[0]!;
+  assert.equal(before.websitePricePkr, 250000);
+  assert.equal(before.selectedSupplier, "kamal");
+  assert.equal(before.availability, "in_stock");
+
   const second = createAutoImportService({
     repository,
     fixtureObservations: [
@@ -372,15 +385,38 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
       MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
     },
   });
-  // When only invalid offer remains, group may reject entirely after rejectReason filter.
-  // Explicit unit for rollback helper:
+  const secondResult = await second.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(secondResult.status, "succeeded");
+  assert.ok(secondResult.health.rolledBackPrices >= 1);
+  const after = (await repository.listListings())[0]!;
+  assert.equal(after.identityKey, before.identityKey);
+  assert.equal(after.variantId, before.variantId);
+  assert.equal(after.websitePricePkr, 250000);
+  assert.equal(after.selectedSupplier, "kamal");
+  assert.equal(after.availability, "in_stock");
+  assert.ok(
+    /rollback_last_valid/i.test(after.priceReason),
+    `expected rollback reason, got ${after.priceReason}`,
+  );
+  // Helper still returns a consistent commercial snapshot.
   const rolled = resolvePriceWithRollback(
     { ok: false, reason: "no_valid_listed_price" },
-    { pricePkr: 250000, observedAt: "t0", supplier: "kamal" },
+    {
+      pricePkr: 250000,
+      observedAt: "t0",
+      supplier: "kamal",
+      availability: "in_stock",
+      sourceKey: "kamal:rb",
+    },
   );
   assert.equal(rolled.rolledBack, true);
   assert.equal(rolled.pricePkr, 250000);
-  console.log("ok - stale price rollback helper");
+  assert.equal(rolled.supplier, "kamal");
+  assert.equal(rolled.availability, "in_stock");
+  assert.equal(rolled.sourceKey, "kamal:rb");
+  console.log("ok - stale price rollback keeps commercial fields aligned");
 }
 
 {
@@ -2692,6 +2728,213 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(/is_default\s*=\s*true/.test(variantUpdate));
   assert.ok(/active\s*=\s*true/.test(variantUpdate));
   console.log("ok - default variant invariant normalize/validate/688-plan/retry");
+}
+
+{
+  // Integration: unified commercial selection (price/supplier/default/availability).
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+
+  // sold-out Alladin 50k + in-stock Kamal 90k → Kamal commercial wins end-to-end.
+  {
+    const base = createMemoryAutoImportRepository();
+    const committed: Array<Parameters<typeof base.commitBatch>[0][number]> = [];
+    const repo = {
+      getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+      getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+      listListings: () => base.listListings(),
+      getHealth: () => base.getHealth(),
+      saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+      async commitBatch(
+        inputs: Parameters<typeof base.commitBatch>[0],
+        health: Parameters<typeof base.commitBatch>[1],
+      ) {
+        committed.push(...inputs);
+        return base.commitBatch(inputs, health);
+      },
+    };
+    const svc = createSvc({
+      repository: repo,
+      fixtureObservations: [
+        obs({
+          supplier: "alladin",
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          supplierProductId: "mix-sold",
+          currentListedPricePkr: 50000,
+          availability: "sold_out",
+        }),
+        obs({
+          supplier: "kamal",
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          supplierProductId: "mix-stock",
+          currentListedPricePkr: 90000,
+          availability: "in_stock",
+        }),
+      ],
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+    });
+    const result = await svc.runAutomaticImport({ actorScope: "admin:super:ceo" });
+    assert.equal(result.status, "succeeded");
+    assert.equal(committed.length, 1);
+    const plan = committed[0]!;
+    assert.equal(plan.websitePricePkr, 90000);
+    assert.equal(plan.selectedSupplier, "kamal");
+    assert.equal(plan.availability, "in_stock");
+    assert.equal(plan.defaultSourceKey, "kamal:mix-stock");
+    assert.equal(plan.defaultVariant?.selectedSupplier, "kamal");
+    assert.equal(plan.defaultVariant?.sourceKey, "kamal:mix-stock");
+    assert.equal(plan.defaultVariant?.stockStatus, "in_stock");
+    assert.equal(plan.defaultVariant?.active, true);
+    assert.equal(plan.defaultVariant?.isDefault, true);
+    const listing = (await base.listListings())[0]!;
+    assert.equal(listing.websitePricePkr, 90000);
+    assert.equal(listing.selectedSupplier, "kamal");
+    assert.equal(listing.availability, "in_stock");
+    assert.equal(result.sampleLowestPrice[0]?.pricePkr, 90000);
+    assert.equal(result.sampleLowestPrice[0]?.selectedSupplier, "kamal");
+    assert.ok(
+      !result.sampleLowestPrice[0]?.considered.some((c) => c.pricePkr === 50000),
+      "sample must not report discarded sold_out candidate",
+    );
+    assert.equal(result.health.lowestPriceSelections, 1);
+    __resetAutoImportRunLockForTests();
+  }
+
+  // All offers sold_out → lowest deterministic sold_out; sole active default.
+  {
+    const base = createMemoryAutoImportRepository();
+    const committed: Array<Parameters<typeof base.commitBatch>[0][number]> = [];
+    const repo = {
+      getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+      getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+      listListings: () => base.listListings(),
+      getHealth: () => base.getHealth(),
+      saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+      async commitBatch(
+        inputs: Parameters<typeof base.commitBatch>[0],
+        health: Parameters<typeof base.commitBatch>[1],
+      ) {
+        committed.push(...inputs);
+        return base.commitBatch(inputs, health);
+      },
+    };
+    const svc = createSvc({
+      repository: repo,
+      fixtureObservations: [
+        obs({
+          supplier: "alladin",
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          supplierProductId: "all-sold-a",
+          currentListedPricePkr: 120000,
+          availability: "sold_out",
+        }),
+        obs({
+          supplier: "kamal",
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          supplierProductId: "all-sold-k",
+          currentListedPricePkr: 110000,
+          availability: "sold_out",
+        }),
+      ],
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+    });
+    const result = await svc.runAutomaticImport({ actorScope: "admin:super:ceo" });
+    assert.equal(result.status, "succeeded");
+    assert.equal(committed.length, 1);
+    const plan = committed[0]!;
+    assert.equal(plan.websitePricePkr, 110000);
+    assert.equal(plan.selectedSupplier, "kamal");
+    assert.equal(plan.availability, "sold_out");
+    assert.equal(plan.defaultSourceKey, "kamal:all-sold-k");
+    assert.equal(plan.defaultVariant?.active, true);
+    assert.equal(plan.defaultVariant?.isDefault, true);
+    assert.equal(plan.defaultVariant?.stockStatus, "sold_out");
+    const listing = (await base.listListings())[0]!;
+    assert.equal(listing.availability, "sold_out");
+    assert.equal(listing.websitePricePkr, 110000);
+    assert.equal(listing.selectedSupplier, "kamal");
+    assert.equal(result.sampleLowestPrice[0]?.pricePkr, 110000);
+    __resetAutoImportRunLockForTests();
+  }
+
+  // Equal-price available offers → sourceKey ASC then supplier; retry stable.
+  {
+    const base = createMemoryAutoImportRepository();
+    const committed: Array<Parameters<typeof base.commitBatch>[0][number]> = [];
+    const repo = {
+      getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+      getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+      listListings: () => base.listListings(),
+      getHealth: () => base.getHealth(),
+      saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+      async commitBatch(
+        inputs: Parameters<typeof base.commitBatch>[0],
+        health: Parameters<typeof base.commitBatch>[1],
+      ) {
+        committed.push(...inputs);
+        return base.commitBatch(inputs, health);
+      },
+    };
+    const fixtures = [
+      obs({
+        supplier: "kamal",
+        title: "Knox Hybrid Inverter 6kW Single Phase",
+        brand: "Knox",
+        modelSku: "K6",
+        supplierProductId: "eq-k",
+        currentListedPricePkr: 100000,
+        availability: "in_stock",
+      }),
+      obs({
+        supplier: "alladin",
+        title: "Knox Hybrid Inverter 6kW Single Phase",
+        brand: "Knox",
+        modelSku: "K6",
+        supplierProductId: "eq-a",
+        currentListedPricePkr: 100000,
+        availability: "in_stock",
+      }),
+    ];
+    const svc = createSvc({
+      repository: repo,
+      fixtureObservations: fixtures,
+      env: {
+        MARKETPLACE_ENABLED: "true",
+        MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+      },
+    });
+    const r1 = await svc.runAutomaticImport({ actorScope: "admin:super:ceo" });
+    assert.equal(r1.status, "succeeded");
+    assert.equal(committed.length, 1);
+    assert.equal(committed[0]!.websitePricePkr, 100000);
+    assert.equal(committed[0]!.selectedSupplier, "alladin");
+    assert.equal(committed[0]!.defaultSourceKey, "alladin:eq-a");
+    const firstListing = (await base.listListings())[0]!;
+    const r2 = await svc.runAutomaticImport({ actorScope: "admin:super:ceo" });
+    assert.equal(r2.status, "succeeded");
+    assert.equal(r2.health.productsCreated, 0);
+    assert.equal(r2.health.productsUpdated, 1);
+    assert.equal(committed.length, 2);
+    assert.equal(committed[1]!.selectedSupplier, "alladin");
+    assert.equal(committed[1]!.defaultSourceKey, "alladin:eq-a");
+    assert.equal(committed[1]!.websitePricePkr, 100000);
+    const after = await base.listListings();
+    assert.equal(after.length, 1);
+    assert.equal(after[0]!.variantId, firstListing.variantId);
+    assert.equal(after[0]!.selectedSupplier, "alladin");
+    __resetAutoImportRunLockForTests();
+  }
+
+  console.log("ok - unified commercial selection integration (mixed/sold_out/equal/retry)");
 }
 
 {

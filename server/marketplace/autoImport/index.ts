@@ -19,7 +19,11 @@ export {
   exactIdentityKey,
   hasHardIdentityConflict,
 } from "./identityNormalize.ts";
-export { selectLowestValidPrice, resolvePriceWithRollback } from "./priceSelect.ts";
+export {
+  selectLowestValidPrice,
+  resolvePriceWithRollback,
+  lastValidCommercialFromListing,
+} from "./priceSelect.ts";
 export {
   logAutoImport,
   sanitizeAutoImportError,
