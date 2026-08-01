@@ -212,7 +212,7 @@ export function createInMemoryWhatsAppWebSessionLeaseStore(options?: {
           ownerToken: `released:${randomUUID()}`,
           expiresAt: new Date(now().getTime() - 1).toISOString(),
           heartbeatAt: stamp,
-          pid: input.pid,
+          pid: existing.pid,
         });
         return "ok" as const;
       });
