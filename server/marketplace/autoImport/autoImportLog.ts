@@ -88,6 +88,8 @@ export function sanitizeAutoImportError(err: unknown): {
     else if (/HTTP \d+/i.test(err.message)) errorCode = "HTTP_ERROR";
     else if (/JSON|catalogue|products array/i.test(err.message)) {
       errorCode = "MALFORMED_RESPONSE";
+    }     else if (/PLAN_CONTEXT/i.test(err.message)) {
+      errorCode = "PLAN_CONTEXT_FAILED";
     } else if (/rpc|upsert|supabase|postgres|PGRST|function/i.test(err.message)) {
       errorCode = "RPC_FAILURE";
     }

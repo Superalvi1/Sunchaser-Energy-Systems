@@ -626,15 +626,15 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
   ): Promise<PlanningLookup> {
     const byKey = new Map<string, AutoImportListingRecord>();
     const byUrl = new Map<string, AutoImportListingRecord>();
+    // Full remaining job budget — pagination may use multiple RPC pages.
     const remaining = Math.max(
       500,
       timeouts.jobTimeoutMs - (Date.now() - startedAt),
     );
-    const budget = Math.min(timeouts.rpcTimeoutMs, remaining);
     try {
       const listings = await withDeadline(
         repo.listListings(),
-        budget,
+        remaining,
         "auto-import-plan-context",
       );
       for (const listing of listings) {
@@ -643,20 +643,25 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           byUrl.set(url, listing);
         }
       }
+      return { byKey, byUrl };
     } catch (err) {
       if (err instanceof AutoImportTimeoutError) throw err;
-      // Soft-fail like the previous per-row .catch(() => null) lookups.
       const sanitized = sanitizeAutoImportError(err);
       log({
         runId,
         stage: "matching",
         elapsedMs: Date.now() - startedAt,
-        status: "running",
-        errorCode: sanitized.errorCode,
-        detail: `plan_context_empty:${sanitized.message}`,
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode:
+          sanitized.errorCode === "UNKNOWN"
+            ? "PLAN_CONTEXT_FAILED"
+            : sanitized.errorCode,
+        detail: `plan_context_failed:${sanitized.message}`,
       });
+      // Fail closed: never continue with empty/partial Maps after a read error.
+      throw new Error(`PLAN_CONTEXT_FAILED:${sanitized.message}`);
     }
-    return { byKey, byUrl };
   }
 
   async function commitPlannedBatch(
@@ -897,6 +902,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       const isTimeout =
         err instanceof AutoImportTimeoutError ||
         sanitized.errorCode === "TIMEOUT";
+      const isPlanContext = sanitized.errorCode === "PLAN_CONTEXT_FAILED";
       log({
         runId,
         stage: isTimeout ? "job_timeout" : "unexpected_error",
@@ -921,14 +927,19 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         lowestPriceSelections: 0,
         rolledBackPrices: 0,
         errors: [
-          `${isTimeout ? "job_timeout" : "unexpected"}:${sanitized.message}`.slice(
-            0,
-            200,
-          ),
+          `${
+            isTimeout
+              ? "job_timeout"
+              : isPlanContext
+                ? "plan_context_failed"
+                : "unexpected"
+          }:${sanitized.message}`.slice(0, 200),
         ],
         note: isTimeout
           ? "Auto-import exceeded plan-phase timeout before atomic commit; no catalogue writes started."
-          : "Auto-import failed with an unexpected error.",
+          : isPlanContext
+            ? "Planning-context catalogue read failed before atomic commit; no catalogue writes started."
+            : "Auto-import failed with an unexpected error.",
       };
       await saveHealthSafe(runId, health, startedAt, sanitized);
       return emptyResult(runId, health);

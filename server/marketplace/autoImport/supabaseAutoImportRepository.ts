@@ -29,6 +29,11 @@ import {
   withDeadline,
 } from "./autoImportTimeouts.ts";
 import { logAutoImport, sanitizeAutoImportError } from "./autoImportLog.ts";
+import {
+  AUTO_IMPORT_LISTINGS_MAX_PAGES,
+  AUTO_IMPORT_LISTINGS_PAGE_SIZE,
+  fetchCompleteListingPages,
+} from "./autoImportPlanningContext.ts";
 
 function requireClient() {
   if (!isSupabaseActive()) {
@@ -123,16 +128,23 @@ export function createSupabaseAutoImportRepository(
     },
     async listListings() {
       const sb = requireClient();
-      const data = await rpcBounded(
-        "auto-import listListings",
-        sb
-          .from("mp_auto_import_listings")
-          .select("*")
-          .order("last_synced_at", { ascending: false })
-          .limit(2000),
-        rpcTimeoutMs,
-      );
-      return (Array.isArray(data) ? data : []).map(mapRow);
+      // Bounded pagination until a short page — never silently cap/truncate.
+      return fetchCompleteListingPages({
+        pageSize: AUTO_IMPORT_LISTINGS_PAGE_SIZE,
+        maxPages: AUTO_IMPORT_LISTINGS_MAX_PAGES,
+        fetchPage: async (offset, limit) => {
+          const data = await rpcBounded(
+            `auto-import listListings offset=${offset}`,
+            sb
+              .from("mp_auto_import_listings")
+              .select("*")
+              .order("identity_key", { ascending: true })
+              .range(offset, offset + limit - 1),
+            rpcTimeoutMs,
+          );
+          return (Array.isArray(data) ? data : []).map(mapRow);
+        },
+      });
     },
     async saveHealth(health) {
       await memory.saveHealth(health);
