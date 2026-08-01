@@ -559,12 +559,16 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           fetchedAt: now().toISOString(),
           previous,
           defaultSourceKey: resolved.sourceKey,
-          offers: offers.map((o) => ({
-            supplier: o.supplier,
-            pricePkr: o.currentListedPricePkr,
-            url: o.canonicalUrl,
-            availability: o.availability,
-          })),
+          offers:
+            resolved.rolledBack && previous
+              ? previous.offers
+              : offers.map((o) => ({
+                  supplier: o.supplier,
+                  pricePkr: o.currentListedPricePkr,
+                  url: o.canonicalUrl,
+                  availability: o.availability,
+                  sourceKey: o.sourceKey,
+                })),
         },
       });
       plannedKeys.add(identityKey);

@@ -42,6 +42,8 @@ export type LastValidCommercial = {
   supplier: SupplierCode;
   availability: SupplierAvailability;
   sourceKey: string;
+  /** True when sourceKey came from the documented legacy fallback. */
+  legacyFallback?: boolean;
 };
 
 export type ResolvedCommercial = {
@@ -77,7 +79,6 @@ function pickDeterministicWinner(
       continue;
     }
     if (o.currentListedPricePkr !== best.currentListedPricePkr) continue;
-    // Equal price: sourceKey ASC, then supplier tie-break.
     if (o.sourceKey < best.sourceKey) {
       best = o;
       continue;
@@ -129,7 +130,6 @@ export function selectLowestValidPrice(offers: PricedOffer[]): PriceSelection {
     canonicalUrl: best.canonicalUrl,
     availability: best.availability,
     reason,
-    // Report the commercial pool that produced the winner (not discarded sold_out).
     considered: pool.map((v) => ({
       supplier: v.supplier,
       pricePkr: v.currentListedPricePkr,
@@ -175,35 +175,81 @@ export function resolvePriceWithRollback(
   };
 }
 
-/** Build last-valid commercial snapshot from a prior listing row. */
-export function lastValidCommercialFromListing(previous: {
+export type ListingCommercialSnapshot = {
+  identityKey: string;
   lastValidPricePkr: number;
   lastValidObservationAt: string;
   lastValidSupplier: SupplierCode;
+  lastValidSourceKey?: string | null;
+  lastValidAvailability?: SupplierAvailability | null;
   availability: SupplierAvailability;
-  identityKey: string;
   offers: Array<{
     supplier: SupplierCode;
     pricePkr: number | null;
     url: string;
     availability: SupplierAvailability;
+    sourceKey?: string;
   }>;
-}): LastValidCommercial {
-  // Prefer URL-derived key from the offer that produced lastValid when present;
-  // otherwise a stable supplier+identity key keeps rollback fields aligned.
-  const matching = previous.offers.find(
+};
+
+/**
+ * Return the exact stored last-valid commercial snapshot when present.
+ *
+ * Legacy fallback (rows without snapshot columns / null snapshot fields):
+ * 1. price/supplier/observedAt from existing last_valid_* columns
+ * 2. availability from lastValidAvailability, else listing.availability
+ * 3. sourceKey from a matching offer's persisted `sourceKey` when present
+ * 4. otherwise documented non-adapter surrogate `legacy:{supplier}:{identityKey}`
+ *    — never reconstructed from supplier+URL
+ */
+export function lastValidCommercialFromListing(
+  previous: ListingCommercialSnapshot,
+): LastValidCommercial {
+  const pricePkr = previous.lastValidPricePkr;
+  const supplier = previous.lastValidSupplier;
+  const observedAt = previous.lastValidObservationAt;
+  const storedKey =
+    typeof previous.lastValidSourceKey === "string"
+      ? previous.lastValidSourceKey.trim()
+      : "";
+  const storedAvail = previous.lastValidAvailability;
+
+  if (storedKey && storedAvail) {
+    return {
+      pricePkr,
+      observedAt,
+      supplier,
+      availability: storedAvail,
+      sourceKey: storedKey,
+      legacyFallback: false,
+    };
+  }
+
+  const offerWithKey = previous.offers.find(
     (o) =>
-      o.supplier === previous.lastValidSupplier &&
-      o.pricePkr === previous.lastValidPricePkr,
+      o.supplier === supplier &&
+      o.pricePkr === pricePkr &&
+      typeof o.sourceKey === "string" &&
+      o.sourceKey.trim().length > 0,
   );
-  const sourceKey = matching
-    ? `${matching.supplier}:${matching.url}`
-    : `${previous.lastValidSupplier}:${previous.identityKey}`;
+  const availability = storedAvail ?? previous.availability;
+  if (offerWithKey?.sourceKey) {
+    return {
+      pricePkr,
+      observedAt,
+      supplier,
+      availability,
+      sourceKey: offerWithKey.sourceKey.trim(),
+      legacyFallback: !storedKey || !storedAvail,
+    };
+  }
+
   return {
-    pricePkr: previous.lastValidPricePkr,
-    observedAt: previous.lastValidObservationAt,
-    supplier: previous.lastValidSupplier,
-    availability: previous.availability,
-    sourceKey,
+    pricePkr,
+    observedAt,
+    supplier,
+    availability,
+    sourceKey: `legacy:${supplier}:${previous.identityKey}`,
+    legacyFallback: true,
   };
 }

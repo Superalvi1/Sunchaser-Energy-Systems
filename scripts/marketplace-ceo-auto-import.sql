@@ -30,10 +30,16 @@ create table if not exists public.mp_auto_import_listings (
   last_valid_supplier text not null
     check (last_valid_supplier in ('kamal', 'alladin')),
   last_valid_observation_at timestamptz not null default timezone('utc', now()),
+  last_valid_source_key text,
+  last_valid_availability text
+    check (last_valid_availability is null or last_valid_availability in ('in_stock','sold_out','backorder','unknown')),
   active boolean not null default true,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.mp_auto_import_listings add column if not exists last_valid_source_key text;
+alter table public.mp_auto_import_listings add column if not exists last_valid_availability text;
 
 create index if not exists mp_auto_import_listings_variant_idx
   on public.mp_auto_import_listings (variant_id);

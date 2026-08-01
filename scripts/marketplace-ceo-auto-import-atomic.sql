@@ -37,6 +37,9 @@
 -- Does NOT restore mp_admin_upsert_supplier_mapping (WS-MAP-0 preserved).
 -- =============================================================================
 
+alter table public.mp_auto_import_listings add column if not exists last_valid_source_key text;
+alter table public.mp_auto_import_listings add column if not exists last_valid_availability text;
+
 -- ---------------------------------------------------------------------------
 -- Read-only preflight (no inserts/updates/deletes; catalog metadata only)
 -- ---------------------------------------------------------------------------
@@ -149,6 +152,7 @@ declare
   v_price_reason text;
   v_offers jsonb;
   v_fetched timestamptz;
+  v_source_key text;
   v_brand_id text;
   v_category_id text;
   v_product_id text;
@@ -216,6 +220,10 @@ begin
       raise exception 'VALIDATION_ERROR: listings[%].availability invalid', v_idx
         using errcode = 'check_violation';
     end if;
+    if nullif(trim(coalesce(v_item->>'defaultSourceKey', '')), '') is null then
+      raise exception 'VALIDATION_ERROR: listings[%].defaultSourceKey required', v_idx
+        using errcode = 'check_violation';
+    end if;
   end loop;
 
   -- Phase 2: write all items (same transaction — any failure rolls everything back).
@@ -233,6 +241,7 @@ begin
     v_price_reason := coalesce(nullif(trim(v_item->>'priceReason'), ''), 'auto');
     v_offers := coalesce(v_item->'offers', '[]'::jsonb);
     v_fetched := coalesce((v_item->>'fetchedAt')::timestamptz, timezone('utc', now()));
+    v_source_key := nullif(trim(coalesce(v_item->>'defaultSourceKey', '')), '');
 
     select * into v_existing
     from public.mp_auto_import_listings
@@ -291,11 +300,11 @@ begin
         identity_key, product_id, variant_id, title, brand_name, category_name,
         selected_supplier, website_price, availability, source_urls, match_reason,
         price_reason, offers, last_synced_at, last_valid_price, last_valid_supplier,
-        last_valid_observation_at, active
+        last_valid_observation_at, last_valid_source_key, last_valid_availability, active
       ) values (
         v_identity, v_product_id, v_variant_id, v_title, v_brand, v_category,
         v_supplier, v_price, v_avail, v_urls, v_match, v_price_reason, v_offers,
-        v_fetched, v_price, v_supplier, v_fetched, v_avail <> 'sold_out'
+        v_fetched, v_price, v_supplier, v_fetched, v_source_key, v_avail, v_avail <> 'sold_out'
       );
     else
       v_updated := v_updated + 1;
@@ -332,6 +341,14 @@ begin
           last_valid_observation_at = case
             when v_price_reason like 'rollback_%' then last_valid_observation_at
             else v_fetched
+          end,
+          last_valid_source_key = case
+            when v_price_reason like 'rollback_%' then last_valid_source_key
+            else v_source_key
+          end,
+          last_valid_availability = case
+            when v_price_reason like 'rollback_%' then last_valid_availability
+            else v_avail
           end,
           active = v_avail <> 'sold_out',
           updated_at = timezone('utc', now())

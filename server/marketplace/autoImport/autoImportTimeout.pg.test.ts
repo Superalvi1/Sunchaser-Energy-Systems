@@ -197,6 +197,7 @@ async function main(): Promise<void> {
       fetchedAt: new Date().toISOString(),
       offers: [],
       previous: null,
+      defaultSourceKey: "kamal:nitrox-seed",
     };
     const seed = await commitBatchWithStatementTimeout({
       env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
@@ -270,6 +271,7 @@ async function main(): Promise<void> {
             fetchedAt: new Date().toISOString(),
             offers: [],
             previous: null,
+            defaultSourceKey: "kamal:knox-new",
           },
         ],
         health: health(`mpair_slow_${randomUUID().slice(0, 8)}`),
@@ -360,13 +362,7 @@ async function main(): Promise<void> {
           fetchedAt: new Date().toISOString(),
           offers: [],
           previous: null,
-          defaultVariant: {
-            isDefault: true,
-            active: true,
-            stockStatus: "sold_out",
-            selectedSupplier: "kamal",
-            sourceKey: soldKey,
-          },
+          defaultSourceKey: "kamal:sold-default",
         },
       ],
       health: health(`mpair_sold_${randomUUID().slice(0, 8)}`),
@@ -394,6 +390,84 @@ async function main(): Promise<void> {
     check(
       "sold_out product has exactly one active default",
       Number(defaultCount.rows[0].n) === 1,
+    );
+    const soldRow = await admin.query(
+      `select last_valid_source_key, last_valid_availability
+       from public.mp_auto_import_listings where identity_key = $1`,
+      [soldKey],
+    );
+    check(
+      "sold_out row persisted last_valid_source_key",
+      soldRow.rows[0]?.last_valid_source_key === "kamal:sold-default",
+    );
+
+    const rbKey = `exact:rollback:${randomUUID().slice(0, 8)}`;
+    await commitBatchWithStatementTimeout({
+      env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
+      listings: [
+        {
+          identityKey: rbKey,
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          brandName: "Inverex",
+          categoryName: "Solar Inverter",
+          websitePricePkr: 250000,
+          availability: "in_stock",
+          selectedSupplier: "kamal",
+          sourceUrls: ["https://kamalsolar.pk/products/rb-seed"],
+          matchReason: "exact_identity",
+          priceReason: "auto",
+          fetchedAt: new Date().toISOString(),
+          offers: [],
+          previous: null,
+          defaultSourceKey: "kamal:rb",
+        },
+      ],
+      health: health(`mpair_rb_seed_${randomUUID().slice(0, 8)}`),
+      statementTimeoutMs: 30_000,
+    });
+    await commitBatchWithStatementTimeout({
+      env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
+      listings: [
+        {
+          identityKey: rbKey,
+          title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+          brandName: "Inverex",
+          categoryName: "Solar Inverter",
+          websitePricePkr: 250000,
+          availability: "sold_out",
+          selectedSupplier: "kamal",
+          sourceUrls: ["https://kamalsolar.pk/products/rb-seed"],
+          matchReason: "exact_identity",
+          priceReason: "rollback_last_valid:no_valid_listed_price",
+          fetchedAt: new Date().toISOString(),
+          offers: [],
+          previous: null,
+          defaultSourceKey: "kamal:rb",
+        },
+      ],
+      health: health(`mpair_rb_roll_${randomUUID().slice(0, 8)}`),
+      statementTimeoutMs: 30_000,
+    });
+    const rbRow = await admin.query(
+      `select website_price, last_valid_price, last_valid_source_key, last_valid_availability
+       from public.mp_auto_import_listings where identity_key = $1`,
+      [rbKey],
+    );
+    check(
+      "rollback preserves last_valid_source_key kamal:rb",
+      rbRow.rows[0]?.last_valid_source_key === "kamal:rb",
+    );
+    check(
+      "rollback preserves last_valid_availability in_stock",
+      rbRow.rows[0]?.last_valid_availability === "in_stock",
+    );
+    check(
+      "rollback website_price stays 250000",
+      Number(rbRow.rows[0]?.website_price) === 250000,
+    );
+    check(
+      "rollback last_valid_price stays 250000",
+      Number(rbRow.rows[0]?.last_valid_price) === 250000,
     );
 
     // Source/SQL honesty checks

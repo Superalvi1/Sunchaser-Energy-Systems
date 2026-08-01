@@ -193,6 +193,16 @@ function mapRow(data: any): AutoImportListingRecord {
     lastValidPricePkr: Number(data.last_valid_price),
     lastValidSupplier: data.last_valid_supplier as SupplierCode,
     lastValidObservationAt: String(data.last_valid_observation_at),
+    lastValidSourceKey:
+      data.last_valid_source_key != null &&
+      String(data.last_valid_source_key).trim()
+        ? String(data.last_valid_source_key).trim()
+        : null,
+    lastValidAvailability:
+      data.last_valid_availability != null &&
+      String(data.last_valid_availability).trim()
+        ? (String(data.last_valid_availability) as AutoImportListingRecord["lastValidAvailability"])
+        : null,
     active: Boolean(data.active),
     offers: Array.isArray(data.offers) ? data.offers : [],
   };

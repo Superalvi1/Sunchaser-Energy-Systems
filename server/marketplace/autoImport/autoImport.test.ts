@@ -17,6 +17,7 @@ import { createMarketplacePricingRouter } from "../pricing/pricingRoutes.ts";
 import { createMarketplaceSupplierRouter } from "../suppliers/supplierRoutes.ts";
 import { createMarketplaceAutoImportRouter } from "./autoImportRoutes.ts";
 import { createMemoryAutoImportRepository } from "./autoImportRepository.ts";
+import type { UpsertListingInput } from "./autoImportRepository.ts";
 import { createAutoImportService } from "./autoImportService.ts";
 import {
   buildVariantIdentity,
@@ -24,6 +25,7 @@ import {
   hasHardIdentityConflict,
 } from "./identityNormalize.ts";
 import {
+  lastValidCommercialFromListing,
   resolvePriceWithRollback,
   selectLowestValidPrice,
 } from "./priceSelect.ts";
@@ -342,81 +344,132 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
-  // Stale / rollback to last valid observation — commercial fields stay aligned.
-  const repository = createMemoryAutoImportRepository();
+  // Stale / rollback integration — defaultSourceKey snapshot + commitBatch capture
+  const baseRepository = createMemoryAutoImportRepository();
+  const committed: UpsertListingInput[][] = [];
+  const repository = {
+    ...baseRepository,
+    async commitBatch(
+      inputs: UpsertListingInput[],
+      health: Parameters<typeof baseRepository.commitBatch>[1],
+    ) {
+      committed.push(
+        inputs.map((input) => ({
+          ...input,
+          offers: input.offers.map((o) => ({ ...o })),
+        })),
+      );
+      return baseRepository.commitBatch(inputs, health);
+    },
+  };
+
+  const env = {
+    MARKETPLACE_ENABLED: "true",
+    MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+  };
+  const rbFixtures = [
+    obs({
+      supplier: "kamal",
+      title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+      supplierProductId: "rb",
+      currentListedPricePkr: 250000,
+      availability: "in_stock",
+    }),
+  ];
+  const staleFixtures = [
+    obs({
+      supplier: "kamal",
+      title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+      supplierProductId: "rb",
+      currentListedPricePkr: null,
+      parseStatus: "missing",
+    }),
+  ];
+
   const first = createAutoImportService({
     repository,
-    fixtureObservations: [
-      obs({
-        supplier: "kamal",
-        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
-        supplierProductId: "rb",
-        currentListedPricePkr: 250000,
-        availability: "in_stock",
-      }),
-    ],
-    env: {
-      MARKETPLACE_ENABLED: "true",
-      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
-    },
+    fixtureObservations: rbFixtures,
+    env,
   });
   const firstResult = await first.runAutomaticImport({
     actorScope: "admin:super:ceo",
   });
   assert.equal(firstResult.status, "succeeded");
-  const before = (await repository.listListings())[0]!;
-  assert.equal(before.websitePricePkr, 250000);
-  assert.equal(before.selectedSupplier, "kamal");
-  assert.equal(before.availability, "in_stock");
+  assert.equal(committed.length, 1);
+  assert.equal(committed[0]![0]!.defaultSourceKey, "kamal:rb");
+  const afterFirst = (await repository.listListings())[0]!;
+  assert.equal(afterFirst.lastValidSourceKey, "kamal:rb");
+  assert.equal(afterFirst.websitePricePkr, 250000);
 
   const second = createAutoImportService({
     repository,
-    fixtureObservations: [
-      obs({
-        supplier: "kamal",
-        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
-        supplierProductId: "rb",
-        currentListedPricePkr: null,
-        parseStatus: "missing",
-      }),
-    ],
-    env: {
-      MARKETPLACE_ENABLED: "true",
-      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
-    },
+    fixtureObservations: staleFixtures,
+    env,
   });
   const secondResult = await second.runAutomaticImport({
     actorScope: "admin:super:ceo",
   });
   assert.equal(secondResult.status, "succeeded");
+  assert.equal(committed.length, 2);
+  assert.equal(committed[1]![0]!.defaultSourceKey, "kamal:rb");
+  assert.equal(committed[1]![0]!.websitePricePkr, 250000);
   assert.ok(secondResult.health.rolledBackPrices >= 1);
-  const after = (await repository.listListings())[0]!;
-  assert.equal(after.identityKey, before.identityKey);
-  assert.equal(after.variantId, before.variantId);
-  assert.equal(after.websitePricePkr, 250000);
-  assert.equal(after.selectedSupplier, "kamal");
-  assert.equal(after.availability, "in_stock");
-  assert.ok(
-    /rollback_last_valid/i.test(after.priceReason),
-    `expected rollback reason, got ${after.priceReason}`,
+  const rollbackSample = secondResult.sampleLowestPrice.find(
+    (s) => s.identityKey === afterFirst.identityKey,
   );
-  // Helper still returns a consistent commercial snapshot.
-  const rolled = resolvePriceWithRollback(
-    { ok: false, reason: "no_valid_listed_price" },
-    {
-      pricePkr: 250000,
-      observedAt: "t0",
-      supplier: "kamal",
-      availability: "in_stock",
-      sourceKey: "kamal:rb",
-    },
-  );
-  assert.equal(rolled.rolledBack, true);
-  assert.equal(rolled.pricePkr, 250000);
-  assert.equal(rolled.supplier, "kamal");
-  assert.equal(rolled.availability, "in_stock");
-  assert.equal(rolled.sourceKey, "kamal:rb");
-  console.log("ok - stale price rollback keeps commercial fields aligned");
+  assert.ok(rollbackSample, "sampleLowestPrice includes rollback winner");
+  assert.equal(rollbackSample!.pricePkr, 250000);
+  assert.ok(/rollback_last_valid/i.test(rollbackSample!.reason));
+  const afterSecond = (await repository.listListings())[0]!;
+  assert.equal(afterSecond.lastValidSourceKey, "kamal:rb");
+  assert.equal(afterSecond.websitePricePkr, 250000);
+
+  const third = createAutoImportService({
+    repository,
+    fixtureObservations: staleFixtures,
+    env,
+  });
+  await third.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  assert.equal(committed.length, 3);
+  assert.equal(committed[2]![0]!.defaultSourceKey, "kamal:rb");
+  assert.equal((await repository.listListings()).length, 1);
+
+  const legacy = lastValidCommercialFromListing({
+    identityKey: "exact:legacy:1",
+    lastValidPricePkr: 100000,
+    lastValidObservationAt: "t0",
+    lastValidSupplier: "alladin",
+    lastValidSourceKey: null,
+    lastValidAvailability: null,
+    availability: "in_stock",
+    offers: [],
+  });
+  assert.equal(legacy.sourceKey, "legacy:alladin:exact:legacy:1");
+  assert.ok(!legacy.sourceKey.includes("http"));
+  assert.equal(legacy.legacyFallback, true);
+
+  const legacyOffer = lastValidCommercialFromListing({
+    identityKey: "exact:legacy:2",
+    lastValidPricePkr: 120000,
+    lastValidObservationAt: "t1",
+    lastValidSupplier: "kamal",
+    lastValidSourceKey: null,
+    lastValidAvailability: null,
+    availability: "in_stock",
+    offers: [
+      {
+        supplier: "kamal",
+        pricePkr: 120000,
+        url: "https://kamalsolar.pk/products/x",
+        availability: "in_stock",
+        sourceKey: "kamal:embedded",
+      },
+    ],
+  });
+  assert.equal(legacyOffer.sourceKey, "kamal:embedded");
+  assert.equal(legacyOffer.legacyFallback, true);
+
+  console.log("ok - stale price rollback integration with defaultSourceKey snapshot");
 }
 
 {
