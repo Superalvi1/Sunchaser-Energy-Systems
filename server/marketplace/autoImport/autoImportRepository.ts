@@ -160,10 +160,17 @@ export function createMemoryAutoImportRepository(
       };
       try {
         // Validate first (fail closed before mutating).
+        const seen = new Set<string>();
         for (const input of inputs) {
           if (!input.identityKey?.trim()) {
             throw new Error("VALIDATION_ERROR: identityKey required");
           }
+          if (seen.has(input.identityKey)) {
+            throw new Error(
+              `VALIDATION_ERROR: duplicate identityKey in batch: ${input.identityKey}`,
+            );
+          }
+          seen.add(input.identityKey);
           if (!(input.websitePricePkr > 0)) {
             throw new Error("VALIDATION_ERROR: websitePricePkr must be positive");
           }

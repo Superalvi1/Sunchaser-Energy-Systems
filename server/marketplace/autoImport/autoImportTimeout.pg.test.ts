@@ -25,6 +25,9 @@ const IMAGE = "postgres:16-alpine";
 const CONTAINER = `mp-ceo-ai-timeout-${randomUUID().slice(0, 8)}`;
 const PORT = 55900 + Math.floor(Math.random() * 200);
 const DB_URL = `postgresql://postgres:postgres@127.0.0.1:${PORT}/postgres`;
+const RUNTIME_USER = "mp_ceo_auto_import_app";
+const RUNTIME_PASS = "runtime_test_pw";
+const RUNTIME_URL = `postgresql://${RUNTIME_USER}:${RUNTIME_PASS}@127.0.0.1:${PORT}/postgres`;
 
 function check(name: string, ok: boolean): void {
   assert.equal(ok, true, name);
@@ -72,6 +75,20 @@ async function ensureRoles(client: pg.Client): Promise<void> {
 
 async function apply(client: pg.Client, file: string): Promise<void> {
   await client.query(readFileSync(file, "utf8"));
+}
+
+/** Login role that inherits EXECUTE on commit_batch via mp_ceo_auto_import_runtime. */
+async function provisionRuntimeLogin(admin: pg.Client): Promise<void> {
+  await admin.query(`
+    do $$ begin
+      if not exists (select 1 from pg_roles where rolname = '${RUNTIME_USER}') then
+        create role ${RUNTIME_USER} login password '${RUNTIME_PASS}'
+          nosuperuser nocreatedb nocreaterole nobypassrls;
+      end if;
+    end $$;
+    grant usage on schema public to ${RUNTIME_USER};
+    grant mp_ceo_auto_import_runtime to ${RUNTIME_USER};
+  `);
 }
 
 function health(runId: string): AutoImportSyncHealth {
@@ -127,6 +144,7 @@ async function main(): Promise<void> {
     await apply(admin, WS1);
     await apply(admin, CEO);
     await apply(admin, ATOMIC);
+    await provisionRuntimeLogin(admin);
 
     // Evidence: in-function set_config does NOT cancel (control).
     await admin.query(`
@@ -181,7 +199,7 @@ async function main(): Promise<void> {
       previous: null,
     };
     const seed = await commitBatchWithStatementTimeout({
-      env: { DATABASE_URL: DB_URL },
+      env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
       listings: [seedListing],
       health: health(`mpair_seed_${randomUUID().slice(0, 8)}`),
       statementTimeoutMs: 30_000,
@@ -231,7 +249,7 @@ async function main(): Promise<void> {
     const tBatch = Date.now();
     try {
       await commitBatchWithStatementTimeout({
-        env: { DATABASE_URL: DB_URL },
+        env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
         listings: [
           {
             ...seedListing,
@@ -311,7 +329,7 @@ async function main(): Promise<void> {
       drop trigger if exists trg_mp_ai_sleep_listing on public.mp_auto_import_listings;
     `);
     const ok = await commitBatchWithStatementTimeout({
-      env: { DATABASE_URL: DB_URL },
+      env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
       listings: [
         {
           ...seedListing,

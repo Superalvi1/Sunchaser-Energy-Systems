@@ -19,8 +19,14 @@
 --     COMMIT;
 --
 --   Durable persist MUST use a direct Postgres connection that applies SET LOCAL
---   before the batch (DATABASE_URL / SUPABASE_DB_URL). PostgREST-only RPC without
---   a prior session timeout is NOT sufficient cancellation protection.
+--   before the batch, authenticated as (or SET ROLE to) the dedicated role
+--   mp_ceo_auto_import_runtime. PostgREST/service_role must NOT execute
+--   commit_batch or the legacy upsert_listing.
+--
+-- PRIVILEGE MATRIX (after this script):
+--   preflight()       → EXECUTE: service_role only (among PostgREST roles)
+--   commit_batch(...) → EXECUTE: mp_ceo_auto_import_runtime only (direct PG)
+--   upsert_listing    → EXECUTE: revoked from public/anon/authenticated/service_role
 --
 -- Does NOT restore mp_admin_upsert_supplier_mapping (WS-MAP-0 preserved).
 -- =============================================================================
@@ -148,6 +154,7 @@ declare
   v_brand_slug text;
   v_cat_slug text;
   v_status text;
+  v_seen text[] := array[]::text[];
 begin
   -- Do NOT call set_config('statement_timeout', ...) here — it does not cancel
   -- this outer client statement on PostgreSQL 16. Callers must SET LOCAL first.
@@ -182,6 +189,11 @@ begin
       raise exception 'VALIDATION_ERROR: listings[%].identityKey required', v_idx
         using errcode = 'check_violation';
     end if;
+    if v_identity = any (v_seen) then
+      raise exception 'VALIDATION_ERROR: duplicate identityKey in batch: %', v_identity
+        using errcode = 'check_violation';
+    end if;
+    v_seen := array_append(v_seen, v_identity);
     if v_title is null or v_brand is null or v_category is null then
       raise exception 'VALIDATION_ERROR: listings[%] missing title/brand/category', v_idx
         using errcode = 'check_violation';
@@ -387,19 +399,81 @@ revoke all on function public.mp_ceo_auto_import_commit_batch(
   text, text, jsonb, jsonb
 ) from public;
 
+-- Dedicated direct-Postgres runtime role for commit_batch only.
+-- Not a PostgREST role. Application connects with a login role that is a member
+-- of mp_ceo_auto_import_runtime (e.g. via MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL).
+do $ceo_ai_runtime_role$
+begin
+  if not exists (
+    select 1 from pg_catalog.pg_roles where rolname = 'mp_ceo_auto_import_runtime'
+  ) then
+    create role mp_ceo_auto_import_runtime
+      nologin
+      nosuperuser
+      nocreatedb
+      nocreaterole
+      noreplication
+      nobypassrls;
+  end if;
+  -- Idempotent attribute lock: re-apply even if the role already existed.
+  alter role mp_ceo_auto_import_runtime
+    nologin
+    nosuperuser
+    nocreatedb
+    nocreaterole
+    noreplication
+    nobypassrls;
+end
+$ceo_ai_runtime_role$;
+
 do $ceo_ai_atomic_grants$
 begin
+  -- Read-only preflight: service_role only (among API roles).
   if exists (select 1 from pg_roles where rolname = 'anon') then
     execute $sql$revoke all on function public.mp_ceo_auto_import_preflight() from anon$sql$;
-    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from anon$sql$;
   end if;
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     execute $sql$revoke all on function public.mp_ceo_auto_import_preflight() from authenticated$sql$;
-    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from authenticated$sql$;
   end if;
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     execute $sql$grant execute on function public.mp_ceo_auto_import_preflight() to service_role$sql$;
-    execute $sql$grant execute on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) to service_role$sql$;
+  end if;
+
+  -- commit_batch: never grant to PostgREST roles (including service_role).
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from anon$sql$;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from authenticated$sql$;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute $sql$revoke all on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb) from service_role$sql$;
+  end if;
+
+  -- Direct Postgres path only.
+  execute $sql$grant execute on function public.mp_ceo_auto_import_commit_batch(text, text, jsonb, jsonb)
+    to mp_ceo_auto_import_runtime$sql$;
+
+  -- Harden legacy upsert after atomic objects exist: deny all PostgREST roles.
+  if to_regprocedure('public.mp_ceo_auto_import_upsert_listing(text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz)') is not null then
+    execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
+      text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
+    ) from public$sql$;
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+      execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
+        text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
+      ) from anon$sql$;
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+      execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
+        text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
+      ) from authenticated$sql$;
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'service_role') then
+      execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
+        text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
+      ) from service_role$sql$;
+    end if;
   end if;
 end
 $ceo_ai_atomic_grants$;

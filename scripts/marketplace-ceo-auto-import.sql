@@ -259,6 +259,9 @@ revoke all on function public.mp_ceo_auto_import_upsert_listing(
 
 do $ceo_ai_grants$
 begin
+  -- Legacy per-item upsert is retained for reference/migration only.
+  -- EXECUTE is denied to PostgREST roles; durable writes use commit_batch via
+  -- the dedicated direct-Postgres runtime role (see atomic SQL).
   if exists (select 1 from pg_roles where rolname = 'anon') then
     execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
       text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
@@ -270,9 +273,9 @@ begin
     ) from authenticated$sql$;
   end if;
   if exists (select 1 from pg_roles where rolname = 'service_role') then
-    execute $sql$grant execute on function public.mp_ceo_auto_import_upsert_listing(
+    execute $sql$revoke all on function public.mp_ceo_auto_import_upsert_listing(
       text, text, text, text, text, numeric, text, text, jsonb, text, text, jsonb, timestamptz
-    ) to service_role$sql$;
+    ) from service_role$sql$;
   end if;
 end
 $ceo_ai_grants$;
