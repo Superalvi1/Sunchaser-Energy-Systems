@@ -31,10 +31,26 @@ export type WhatsAppWebSafeStatus = {
   /** Non-secret operator hint (never credentials). */
   safeMessage: string | null;
   /** Privacy-safe inbound ops diagnostics (timestamps + codes only). */
+  lastRawUpsertAt: string | null;
   lastInboundEventAt: string | null;
   lastInboundStoredAt: string | null;
+  lastIgnoredAt: string | null;
   lastIgnoredReason: string | null;
+  lastPersistFailureAt: string | null;
   lastPersistFailureCode: string | null;
+  /** True when the active socket reports open / CONNECTED. */
+  socketOpen: boolean;
+  /** True when the active handle has an inbound messages.upsert listener. */
+  inboundListenerAttached: boolean;
+  /**
+   * True when CONNECTED, socket open, and exactly one operational
+   * messages.upsert listener is bound to the active generation.
+   */
+  inboundListenerOperational: boolean;
+  /** Active socket generation (monotonic; no secrets). */
+  activeSocketGeneration: number;
+  /** Opaque company/session identifier (no phone/credentials). */
+  activeSessionKey: string;
   /** True when a reconnect timer is armed (not yet attempting). */
   reconnectScheduled: boolean;
   /** True while a reconnect socket start is in progress. */

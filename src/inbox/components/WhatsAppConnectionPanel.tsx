@@ -597,6 +597,23 @@ export default function WhatsAppConnectionPanel({
                 <ul className="mt-1 space-y-0.5 font-mono">
                   <li>state={webStatus.state}</li>
                   <li>
+                    socketOpen={webStatus.socketOpen === true ? "yes" : "no"}
+                  </li>
+                  <li>
+                    inboundListener=
+                    {webStatus.inboundListenerAttached === true
+                      ? webStatus.inboundListenerOperational === true
+                        ? "operational"
+                        : "attached"
+                      : "missing"}
+                  </li>
+                  <li>
+                    lastRawUpsert=
+                    {webStatus.lastRawUpsertAt
+                      ? new Date(webStatus.lastRawUpsertAt).toLocaleString()
+                      : "—"}
+                  </li>
+                  <li>
                     lastEvent=
                     {webStatus.lastInboundEventAt
                       ? new Date(webStatus.lastInboundEventAt).toLocaleString()
@@ -608,10 +625,32 @@ export default function WhatsAppConnectionPanel({
                       ? new Date(webStatus.lastInboundStoredAt).toLocaleString()
                       : "—"}
                   </li>
-                  <li>lastIgnored={webStatus.lastIgnoredReason ?? "—"}</li>
                   <li>
-                    lastPersistFail={webStatus.lastPersistFailureCode ?? "—"}
+                    lastIgnored=
+                    {webStatus.lastIgnoredReason
+                      ? `${webStatus.lastIgnoredReason}${
+                          webStatus.lastIgnoredAt
+                            ? `@${new Date(webStatus.lastIgnoredAt).toLocaleString()}`
+                            : ""
+                        }`
+                      : "—"}
                   </li>
+                  <li>
+                    lastPersistFail=
+                    {webStatus.lastPersistFailureCode
+                      ? `${webStatus.lastPersistFailureCode}${
+                          webStatus.lastPersistFailureAt
+                            ? `@${new Date(
+                                webStatus.lastPersistFailureAt
+                              ).toLocaleString()}`
+                            : ""
+                        }`
+                      : "—"}
+                  </li>
+                  <li>
+                    generation={webStatus.activeSocketGeneration ?? "—"}
+                  </li>
+                  <li>session={webStatus.activeSessionKey ?? "—"}</li>
                 </ul>
               </div>
             ) : null}

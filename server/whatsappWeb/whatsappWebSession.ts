@@ -14,6 +14,7 @@ import QRCode from "qrcode";
 import {
   assertWhatsAppWebAuthDirReady,
   readWhatsAppWebConfig,
+  WHATSAPP_WEB_QR_CONNECTION_ID,
   WHATSAPP_WEB_QR_TTL_MS,
   type WhatsAppWebConfig,
 } from "./whatsappWebConfig.ts";
@@ -33,7 +34,11 @@ import {
 } from "./whatsappWebTypes.ts";
 import { BaileysInMemorySyncSource } from "./whatsappWebBaileysSyncSource.ts";
 import { WhatsAppWebHistorySyncService } from "./whatsappWebHistorySync.ts";
-import { getWhatsAppWebInboundDiagnostics } from "./whatsappWebInboundDiagnostics.ts";
+import {
+  getWhatsAppWebInboundDiagnostics,
+  noteInboundIgnored,
+  noteInboundRawUpsert,
+} from "./whatsappWebInboundDiagnostics.ts";
 import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
@@ -240,6 +245,9 @@ export type WhatsAppWebConnectionUpdate = {
   userId?: string | null;
 };
 
+/** Upsert types that may carry live customer inbound (Baileys online/offline). */
+export const WHATSAPP_WEB_LIVE_UPSERT_TYPES = new Set(["notify", "append"]);
+
 export type WhatsAppWebSocketHandle = {
   end: () => void;
   logout: () => Promise<void>;
@@ -248,6 +256,8 @@ export type WhatsAppWebSocketHandle = {
   getUserId?: () => string | null;
   /** Contact/chat/history source for admin sync (Baileys in-memory). */
   getSyncSource?: () => import("./whatsappWebSyncTypes.ts").WhatsAppWebSyncSource;
+  /** Count of messages.upsert listeners on this socket (ops/diagnostics). */
+  getInboundListenerCount?: () => number;
 };
 
 export type WhatsAppWebSocketFactory = (input: {
@@ -394,20 +404,30 @@ async function defaultSocketFactory(input: {
   });
 
   sock.ev.on("messages.upsert", (upsert) => {
+    noteInboundRawUpsert();
     const messages = upsert.messages ?? [];
-    // Keep history/append traffic out of the live inbound pipeline (AI/auto-link).
+    // Baileys online receipts use "notify"; offline-flagged nodes use "append".
+    // Both must reach the live inbound pipeline; unsupported types are ignored.
     const upsertType = String((upsert as { type?: string }).type || "notify");
     syncSource.ingestMessages(
       messages as unknown as Array<Record<string, unknown>>
     );
-    if (upsertType !== "notify") {
+    if (!WHATSAPP_WEB_LIVE_UPSERT_TYPES.has(upsertType)) {
+      noteInboundIgnored("unsupported_upsert_type");
       return;
     }
     for (const msg of messages) {
       void (async () => {
         const remoteJid = String(msg.key?.remoteJid ?? "");
         const providerMessageId = String(msg.key?.id ?? "");
-        if (!remoteJid || !providerMessageId) return;
+        if (!remoteJid) {
+          noteInboundIgnored("missing_remote_jid");
+          return;
+        }
+        if (!providerMessageId) {
+          noteInboundIgnored("missing_provider_id");
+          return;
+        }
         const fromMe = msg.key?.fromMe === true;
         const isGroup = remoteJid.endsWith("@g.us");
         const isStatusOrNewsletter =
@@ -477,6 +497,14 @@ async function defaultSocketFactory(input: {
     },
     getUserId: () => sock.user?.id ?? null,
     getSyncSource: () => syncSource,
+    getInboundListenerCount: () => {
+      const emitter = sock.ev as unknown as {
+        listenerCount?: (event: string) => number;
+      };
+      return typeof emitter.listenerCount === "function"
+        ? emitter.listenerCount("messages.upsert")
+        : 1;
+    },
   };
 }
 
@@ -556,6 +584,19 @@ export class WhatsAppWebSession {
         this.state === "QR_READY"
     );
     const inbound = getWhatsAppWebInboundDiagnostics();
+    const socketOpen = this.state === "CONNECTED" && this.socket != null;
+    // Real Baileys handles report listenerCount; injectable test handles without
+    // the seam are treated as a single attached listener when the socket exists.
+    const reportedListenerCount = this.socket?.getInboundListenerCount?.();
+    const listenerCount =
+      reportedListenerCount != null
+        ? reportedListenerCount
+        : this.socket != null
+          ? 1
+          : 0;
+    const inboundListenerAttached = socketOpen && listenerCount >= 1;
+    const inboundListenerOperational =
+      socketOpen && inboundListenerAttached && listenerCount === 1;
     return {
       enabled: config.enabled,
       state: this.state,
@@ -564,10 +605,18 @@ export class WhatsAppWebSession {
       qrAvailable,
       qrExpiresAt: qrAvailable ? this.qrExpiresAt : null,
       safeMessage: this.safeMessage,
+      lastRawUpsertAt: inbound.lastRawUpsertAt,
       lastInboundEventAt: inbound.lastInboundEventAt,
       lastInboundStoredAt: inbound.lastInboundStoredAt,
+      lastIgnoredAt: inbound.lastIgnoredAt,
       lastIgnoredReason: inbound.lastIgnoredReason,
+      lastPersistFailureAt: inbound.lastPersistFailureAt,
       lastPersistFailureCode: inbound.lastPersistFailureCode,
+      socketOpen,
+      inboundListenerAttached,
+      inboundListenerOperational,
+      activeSocketGeneration: this.socketGeneration,
+      activeSessionKey: `web_qr:${WHATSAPP_WEB_QR_CONNECTION_ID}:g${this.socketGeneration}`,
       reconnectScheduled: this.reconnectTimer != null,
       reconnectAttemptInProgress: this.reconnectAttemptInProgress === true,
       reconnectAttempt: this.reconnectAttempt,
@@ -970,7 +1019,11 @@ export class WhatsAppWebSession {
           logWhatsAppWeb("info", "credentials_saved");
         },
         onInbound: async (message) => {
-          if (generation !== this.socketGeneration) return;
+          if (generation !== this.socketGeneration) {
+            // Privacy-safe: prove events arrived but belonged to a closed socket.
+            noteInboundIgnored("stale_socket");
+            return;
+          }
           if (this.inboundHandler) {
             await this.inboundHandler(message);
           }
@@ -1149,15 +1202,25 @@ export class WhatsAppWebSession {
 
   /**
    * After an accepted close/logged_out for the active socket, bump generation
-   * so late callbacks from that socket can no longer mutate session state.
+   * so late callbacks from that socket can no longer mutate session state,
+   * then tear down the handle so Baileys cannot keep receiving on an orphan.
    * Reconnect still works: startSocket allocates a newer generation.
    */
   private invalidateClosedSocketGeneration(generation?: number): void {
     if (generation != null && generation !== this.socketGeneration) {
       return;
     }
+    const closing = this.socket;
+    // Bump first so any events emitted during end() fail the generation guard.
     this.socketGeneration += 1;
     this.socket = null;
+    if (closing) {
+      try {
+        closing.end();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   private logConnectionClosed(input: {

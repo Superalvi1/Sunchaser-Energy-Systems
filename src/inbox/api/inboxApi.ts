@@ -393,10 +393,18 @@ export type WhatsAppWebSafeStatus = {
   qrExpiresAt: string | null;
   safeMessage: string | null;
   /** Privacy-safe inbound ops diagnostics (codes/timestamps only). */
+  lastRawUpsertAt?: string | null;
   lastInboundEventAt?: string | null;
   lastInboundStoredAt?: string | null;
+  lastIgnoredAt?: string | null;
   lastIgnoredReason?: string | null;
+  lastPersistFailureAt?: string | null;
   lastPersistFailureCode?: string | null;
+  socketOpen?: boolean;
+  inboundListenerAttached?: boolean;
+  inboundListenerOperational?: boolean;
+  activeSocketGeneration?: number;
+  activeSessionKey?: string;
   reconnectScheduled?: boolean;
   reconnectAttemptInProgress?: boolean;
   reconnectAttempt?: number;

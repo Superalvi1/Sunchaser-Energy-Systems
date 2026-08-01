@@ -35,6 +35,7 @@ export {
   sanitizeDisconnectStatusCode,
   reconnectDelayMs,
   terminalDisconnectSafeMessage,
+  WHATSAPP_WEB_LIVE_UPSERT_TYPES,
   WHATSAPP_WEB_RECONNECT_DELAYS_MS,
   type WhatsAppWebSocketFactory,
   type WhatsAppWebInboundHandler,
