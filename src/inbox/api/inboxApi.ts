@@ -397,6 +397,11 @@ export type WhatsAppWebSafeStatus = {
   lastInboundStoredAt?: string | null;
   lastIgnoredReason?: string | null;
   lastPersistFailureCode?: string | null;
+  reconnectScheduled?: boolean;
+  reconnectAttemptInProgress?: boolean;
+  reconnectAttempt?: number;
+  lastDisconnectClassification?: string | null;
+  credentialsAvailable?: boolean;
 };
 
 export type WhatsAppWebQrPayload = {

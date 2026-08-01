@@ -143,6 +143,7 @@ export type DisconnectDiagnosticClassification =
   | "connection_closed"
   | "timed_out"
   | "bad_session"
+  | "connection_replaced"
   | "retryable"
   | "unknown";
 
@@ -163,6 +164,8 @@ export function classifyDisconnectDiagnostic(
       return "timed_out";
     case 500:
       return "bad_session";
+    case 440:
+      return "connection_replaced";
     default:
       return classifyDisconnect(statusCode) === "retryable"
         ? "retryable"
@@ -195,6 +198,25 @@ export function buildConnectionClosedDiagnostic(input: {
     willRetry: input.willRetry === true,
     nextState: input.nextState,
   };
+}
+
+export function terminalDisconnectSafeMessage(
+  statusCode: number | undefined | null
+): string {
+  switch (Number(statusCode)) {
+    case 440:
+      return "Session replaced by another WhatsApp connection. Admin must reconnect from this CRM.";
+    case 500:
+      return "Saved WhatsApp session is invalid. Admin must scan a new QR.";
+    case 403:
+      return "WhatsApp rejected this companion session. Admin must repair linking.";
+    case 411:
+      return "WhatsApp multi-device mismatch. Admin must repair linking.";
+    case 401:
+      return "WhatsApp session logged out. Admin must scan a new QR.";
+    default:
+      return "WhatsApp Web session ended. Admin action required.";
+  }
 }
 
 export function reconnectDelayMs(
@@ -479,6 +501,8 @@ export class WhatsAppWebSession {
   private qrGeneration = 0;
 
   private socket: WhatsAppWebSocketHandle | null = null;
+  /** Monotonic socket instance id — stale close/open events are ignored. */
+  private socketGeneration = 0;
   private startLock = false;
   /** Process-level shutdown (SIGTERM) or explicit stop. */
   private shuttingDown = false;
@@ -486,6 +510,10 @@ export class WhatsAppWebSession {
   private connectionDesired = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private reconnectAttemptInProgress = false;
+  private lastDisconnectClassification: DisconnectDiagnosticClassification | null =
+    null;
+  private credentialsAvailable = false;
   private paths: ResolvedAuthPaths | null = null;
   /** Test observability: delays scheduled for reconnect. */
   private readonly scheduledReconnectDelays: number[] = [];
@@ -540,6 +568,11 @@ export class WhatsAppWebSession {
       lastInboundStoredAt: inbound.lastInboundStoredAt,
       lastIgnoredReason: inbound.lastIgnoredReason,
       lastPersistFailureCode: inbound.lastPersistFailureCode,
+      reconnectScheduled: this.reconnectTimer != null,
+      reconnectAttemptInProgress: this.reconnectAttemptInProgress === true,
+      reconnectAttempt: this.reconnectAttempt,
+      lastDisconnectClassification: this.lastDisconnectClassification,
+      credentialsAvailable: this.credentialsAvailable === true,
     };
   }
 
@@ -575,6 +608,7 @@ export class WhatsAppWebSession {
     await ensureWhatsAppWebAuthDirWritable(this.paths);
 
     const hasCreds = await hasSavedBaileysCredentials(this.paths.sessionDir);
+    this.credentialsAvailable = hasCreds;
     if (!hasCreds) {
       this.connectionDesired = false;
       this.setState("DISCONNECTED", "Waiting for Admin to generate QR");
@@ -631,6 +665,8 @@ export class WhatsAppWebSession {
     this.cancelHistorySync("disconnect");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
+    this.reconnectAttemptInProgress = false;
+    this.socketGeneration += 1;
     if (this.socket) {
       try {
         this.socket.end();
@@ -652,10 +688,13 @@ export class WhatsAppWebSession {
     this.cancelHistorySync("logout");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
+    this.reconnectAttemptInProgress = false;
+    this.socketGeneration += 1;
 
     const config = this.getConfig();
     if (!config.enabled && !config.authDir) {
       this.phoneRaw = null;
+      this.credentialsAvailable = false;
       this.clearQr();
       this.setState("LOGGED_OUT", "Logged out");
       return this.getSafeStatus();
@@ -684,6 +723,7 @@ export class WhatsAppWebSession {
     await deleteWhatsAppWebSessionDir(paths);
     this.paths = paths;
     this.phoneRaw = null;
+    this.credentialsAvailable = false;
     this.clearQr();
     this.setState("LOGGED_OUT", "Logged out; session removed");
     return this.getSafeStatus();
@@ -738,6 +778,8 @@ export class WhatsAppWebSession {
     this.cancelHistorySync("shutdown");
     this.clearReconnectTimer();
     this.reconnectAttempt = 0;
+    this.reconnectAttemptInProgress = false;
+    this.socketGeneration += 1;
     if (this.socket) {
       try {
         this.socket.end();
@@ -796,8 +838,23 @@ export class WhatsAppWebSession {
     return this.scheduledReconnectDelays;
   }
 
-  __testHandleConnectionUpdate(update: WhatsAppWebConnectionUpdate): Promise<void> {
-    return this.handleConnectionUpdate(update);
+  __testHandleConnectionUpdate(
+    update: WhatsAppWebConnectionUpdate,
+    generation?: number
+  ): Promise<void> {
+    return this.handleConnectionUpdate(
+      update,
+      generation ?? this.socketGeneration
+    );
+  }
+
+  __testGetSocketGeneration(): number {
+    return this.socketGeneration;
+  }
+
+  __testBumpSocketGeneration(): number {
+    this.socketGeneration += 1;
+    return this.socketGeneration;
   }
 
   __testAcceptQr(qr: string): Promise<void> {
@@ -875,8 +932,16 @@ export class WhatsAppWebSession {
     }
 
     this.startLock = true;
+    this.reconnectAttemptInProgress = initialState === "RECONNECTING";
     this.clearReconnectTimer();
-    this.setState(initialState, "Starting WhatsApp Web connection");
+    this.setState(
+      initialState,
+      initialState === "RECONNECTING"
+        ? "Reconnect attempt in progress"
+        : "Starting WhatsApp Web connection"
+    );
+
+    const generation = ++this.socketGeneration;
 
     try {
       if (this.socket) {
@@ -890,40 +955,83 @@ export class WhatsAppWebSession {
       }
 
       const sessionDir = this.paths.sessionDir;
-      this.socket = await this.socketFactory({
+      const handle = await this.socketFactory({
         sessionDir,
         onQr: (qr) => {
+          if (generation !== this.socketGeneration) return;
           void this.acceptQr(qr);
         },
         onConnectionUpdate: (update) => {
-          void this.handleConnectionUpdate(update);
+          void this.handleConnectionUpdate(update, generation);
         },
         onCredentialsSaved: () => {
+          if (generation !== this.socketGeneration) return;
+          this.credentialsAvailable = true;
           logWhatsAppWeb("info", "credentials_saved");
         },
         onInbound: async (message) => {
+          if (generation !== this.socketGeneration) return;
           if (this.inboundHandler) {
             await this.inboundHandler(message);
           }
         },
       });
+
+      // A newer start superseded this one while the factory was awaiting.
+      if (generation !== this.socketGeneration) {
+        try {
+          handle.end();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+
+      this.socket = handle;
     } catch (err) {
-      this.socket = null;
-      this.setState("ERROR", "Connection failed");
+      if (generation === this.socketGeneration) {
+        this.socket = null;
+        // Leave ERROR only when not about to schedule another retry.
+        if (this.shouldReconnect()) {
+          this.setState("RECONNECTING", "Reconnect failed; retrying");
+        } else {
+          this.setState("ERROR", "Connection failed");
+        }
+      }
       // Reconnect scheduling is owned by the reconnect timer callback / close handler
       // (avoids double-scheduling when startSocket rejects).
       throw err;
     } finally {
-      this.startLock = false;
+      if (generation === this.socketGeneration) {
+        this.startLock = false;
+        this.reconnectAttemptInProgress = false;
+      } else {
+        this.startLock = false;
+      }
     }
   }
 
   private async handleConnectionUpdate(
-    update: WhatsAppWebConnectionUpdate
+    update: WhatsAppWebConnectionUpdate,
+    generation?: number
   ): Promise<void> {
+    // Stale sockets cannot mutate current lifecycle state.
+    if (generation != null && generation !== this.socketGeneration) {
+      return;
+    }
+
     if (update.connection === "open") {
+      // Never resurrect CONNECTED from a closed/undesired/shutdown session.
+      if (!this.connectionDesired || this.shuttingDown) {
+        return;
+      }
+      if (generation != null && generation !== this.socketGeneration) {
+        return;
+      }
       this.clearReconnectTimer();
       this.reconnectAttempt = 0;
+      this.reconnectAttemptInProgress = false;
+      this.lastDisconnectClassification = null;
       this.clearQr();
       const userId =
         update.userId ??
@@ -935,20 +1043,27 @@ export class WhatsAppWebSession {
     }
 
     if (update.connection === "logged_out") {
-      // Terminal: clear timer first; never reconnect.
+      // Terminal: invalidate this socket generation first so late open/QR/inbound
+      // callbacks from the same socket cannot overwrite LOGGED_OUT.
+      this.invalidateClosedSocketGeneration(generation);
       this.connectionDesired = false;
       this.cancelHistorySync("logged_out");
       this.clearReconnectTimer();
       this.reconnectAttempt = 0;
+      this.reconnectAttemptInProgress = false;
       this.clearQr();
       this.phoneRaw = null;
-      this.socket = null;
+      this.credentialsAvailable = false;
+      this.lastDisconnectClassification = "logged_out";
       this.logConnectionClosed({
         statusCode: update.statusCode ?? 401,
         willRetry: false,
         nextState: "LOGGED_OUT",
       });
-      this.setState("LOGGED_OUT", "WhatsApp session logged out");
+      this.setState(
+        "LOGGED_OUT",
+        terminalDisconnectSafeMessage(update.statusCode ?? 401)
+      );
       if (this.paths) {
         try {
           await deleteWhatsAppWebSessionDir(this.paths);
@@ -961,12 +1076,17 @@ export class WhatsAppWebSession {
 
     if (update.connection === "close") {
       this.cancelHistorySync("connection_close");
-      this.socket = null;
+      // Invalidate immediately so late open/QR/inbound/creds from this socket
+      // cannot pass the generation guard while reconnect is only scheduled.
+      this.invalidateClosedSocketGeneration(generation);
       this.clearQr();
 
       // Manual stop / shutdown: close events must not reconnect.
       if (!this.connectionDesired || this.shuttingDown) {
         if (this.state !== "LOGGED_OUT" && this.state !== "DISCONNECTED") {
+          this.lastDisconnectClassification = classifyDisconnectDiagnostic(
+            update.statusCode
+          );
           this.logConnectionClosed({
             statusCode: update.statusCode,
             willRetry: false,
@@ -980,36 +1100,64 @@ export class WhatsAppWebSession {
       const classification = classifyDisconnect(update.statusCode);
       if (classification === "logged_out") {
         // Safety if factory mis-emits close+loggedOut code.
-        await this.handleConnectionUpdate({
-          connection: "logged_out",
-          statusCode: update.statusCode,
-        });
+        // Generation already invalidated; logged_out path is idempotent for that.
+        await this.handleConnectionUpdate(
+          {
+            connection: "logged_out",
+            statusCode: update.statusCode,
+          },
+          this.socketGeneration
+        );
         return;
       }
       if (classification === "terminal") {
         this.connectionDesired = false;
         this.clearReconnectTimer();
         this.reconnectAttempt = 0;
+        this.reconnectAttemptInProgress = false;
         this.phoneRaw = null;
+        this.lastDisconnectClassification = classifyDisconnectDiagnostic(
+          update.statusCode
+        );
         this.logConnectionClosed({
           statusCode: update.statusCode,
           willRetry: false,
           nextState: "ERROR",
         });
-        this.setState("ERROR", "WhatsApp Web session ended");
+        this.setState(
+          "ERROR",
+          terminalDisconnectSafeMessage(update.statusCode)
+        );
         return;
       }
 
-      // Temporary / retryable network loss — reconnect policy unchanged.
+      // Temporary / retryable network loss — reconnect with bounded backoff.
+      // startSocket will allocate a fresh generation for the next socket.
       const willRetry = this.shouldReconnect();
+      this.lastDisconnectClassification = classifyDisconnectDiagnostic(
+        update.statusCode
+      );
       this.logConnectionClosed({
         statusCode: update.statusCode,
         willRetry,
         nextState: "RECONNECTING",
       });
-      this.setState("RECONNECTING", "Reconnecting after network loss");
+      this.setState("RECONNECTING", "Reconnect scheduled after network loss");
       this.scheduleReconnect();
     }
+  }
+
+  /**
+   * After an accepted close/logged_out for the active socket, bump generation
+   * so late callbacks from that socket can no longer mutate session state.
+   * Reconnect still works: startSocket allocates a newer generation.
+   */
+  private invalidateClosedSocketGeneration(generation?: number): void {
+    if (generation != null && generation !== this.socketGeneration) {
+      return;
+    }
+    this.socketGeneration += 1;
+    this.socket = null;
   }
 
   private logConnectionClosed(input: {

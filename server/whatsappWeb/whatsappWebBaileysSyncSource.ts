@@ -135,6 +135,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private readonly contacts = new Map<string, InternalContact>();
   private readonly chats = new Map<string, InternalChat>();
   private readonly lidMap: WhatsAppLidPhoneMap;
+  private readonly nowMs: () => number;
   private historyFetcher: BaileysHistoryFetchFn | null = null;
   private providerHistoryEventObserved = false;
   private lastAvailability: WhatsAppWebHistoryAvailability = "unknown";
@@ -143,10 +144,15 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   private readonly pendingByRequestId = new Map<string, PendingHistoryWait>();
   private readonly earlyMatchedRequestIds = new Set<string>();
 
-  constructor(options?: { lidMap?: WhatsAppLidPhoneMap }) {
+  constructor(options?: {
+    lidMap?: WhatsAppLidPhoneMap;
+    /** Injectable clock for sync-window tests (defaults to Date.now). */
+    now?: () => number;
+  }) {
     // Prefer an injected process-shared map so live inbound can resolve LIDs
     // learned from contacts/chats/history in the same runtime.
     this.lidMap = options?.lidMap ?? new WhatsAppLidPhoneMap();
+    this.nowMs = options?.now ?? (() => Date.now());
   }
 
   getLidMap(): WhatsAppLidPhoneMap {
@@ -300,7 +306,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
 
   ingestMessages(rawMessages: Array<Record<string, unknown>>): void {
     const windowStartMs = syncWindowStartMs(
-      Date.now(),
+      this.nowMs(),
       WHATSAPP_WEB_SYNC_WINDOW_DAYS
     );
 
@@ -384,7 +390,7 @@ export class BaileysInMemorySyncSource implements WhatsAppWebSyncSource {
   /** Keep newest N in-window bodies; cursor metadata is independent. */
   private pruneChatCache(chat: InternalChat): void {
     const windowStartMs = syncWindowStartMs(
-      Date.now(),
+      this.nowMs(),
       WHATSAPP_WEB_SYNC_WINDOW_DAYS
     );
     for (const [id, message] of [...chat.messages.entries()]) {

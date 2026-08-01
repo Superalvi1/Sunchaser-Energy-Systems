@@ -1,10 +1,12 @@
 /**
- * Transport-aware Inbox list availability.
+ * Transport health for Admin / diagnostics.
  *
- * listConversations / listDelta must query the repository when ANY supported
- * WhatsApp transport is CONNECTED (Meta Cloud or WhatsApp Web QR).
- * Empty short-circuit only when every transport lookup succeeds and none is connected.
- * Lookup failures fail through so repository/RPC errors can still surface.
+ * IMPORTANT: listConversations / listDelta must ALWAYS query the repository for
+ * stored conversations. Connection state (Meta or WhatsApp Web) is reported
+ * separately and must never replace stored records with [].
+ *
+ * `allTransportsDisconnected` remains a health signal only — controllers must
+ * not short-circuit list/delta on it.
  */
 import { DEFAULT_COMPANY_ID } from "./whatsappConstants.ts";
 import { getWhatsAppConnectionStatus } from "./whatsappConnectionService.ts";
@@ -18,7 +20,10 @@ export type WhatsAppQrListStatus = {
 };
 
 export type WhatsAppInboxListAvailability = {
-  /** True → controllers may return empty 200 without querying the repository. */
+  /**
+   * True when every looked-up transport reports offline.
+   * Health-only — never use this to skip repository list/delta queries.
+   */
   allTransportsDisconnected: boolean;
 };
 
@@ -43,6 +48,7 @@ export function isMetaWhatsAppDisconnectedForInbox(
 
 /**
  * Pure combined resolver (injectable — no global QR session hardwiring).
+ * Returns connection health only; callers must still load stored inbox data.
  */
 export async function resolveWhatsAppInboxListAvailability(
   deps: WhatsAppInboxListAvailabilityDeps
@@ -54,7 +60,7 @@ export async function resolveWhatsAppInboxListAvailability(
     const meta = await deps.getMetaConnectionStatus();
     metaDisconnected = isMetaWhatsAppDisconnectedForInbox(meta.status);
   } catch {
-    // Fail through — do not hide conversations on Meta lookup failure.
+    // Fail through — do not treat Meta lookup failure as disconnected health.
     metaDisconnected = null;
   }
 
@@ -62,7 +68,7 @@ export async function resolveWhatsAppInboxListAvailability(
     const qr = await deps.getQrConnectionStatus();
     qrConnected = isWhatsAppWebQrConnectedForInbox(qr.state);
   } catch {
-    // Fail through — do not hide conversations on QR lookup failure.
+    // Fail through — do not treat QR lookup failure as disconnected health.
     qrConnected = null;
   }
 
@@ -84,8 +90,8 @@ export type WhatsAppInboxListAvailabilityResolver =
   () => Promise<WhatsAppInboxListAvailability>;
 
 /**
- * Factory for controller DI. Defaults treat missing QR getter as explicit
- * DISCONNECTED so legacy Meta-only tests keep their empty-list behavior.
+ * Factory for controller DI / Admin health. Defaults treat missing QR getter as
+ * explicit DISCONNECTED for Meta-only wiring.
  */
 export function createWhatsAppInboxListAvailabilityResolver(input: {
   getMetaConnectionStatus?: (
