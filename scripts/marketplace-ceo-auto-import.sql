@@ -213,14 +213,27 @@ begin
     end if;
   end if;
 
+  -- Demote any corrupt extra defaults (update path).
+  if not v_created then
+    update public.mp_product_variants
+    set is_default = false,
+        updated_at = timezone('utc', now())
+    where product_id = v_product_id
+      and id is distinct from v_variant_id
+      and is_default = true;
+  end if;
+
   -- Sole commercial write path for this workstream (RPC-guarded columns).
+  -- Keep is_default+active so DEFAULT_VARIANT_REQUIRED cannot fire on sold_out;
+  -- stock_status carries availability.
   perform set_config('mp.allow_price_write', 'on', true);
   update public.mp_product_variants
   set website_price = v_price,
       website_price_state = 'priced_auto',
       website_price_source = p_selected_supplier,
       stock_status = v_avail,
-      active = v_avail <> 'sold_out',
+      is_default = true,
+      active = true,
       updated_at = timezone('utc', now())
   where id = v_variant_id;
   perform set_config('mp.allow_price_write', 'off', true);

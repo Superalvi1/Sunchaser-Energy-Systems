@@ -341,6 +341,61 @@ async function main(): Promise<void> {
     });
     check("post-timeout commit succeeds", ok.productsUpdated === 1);
 
+    // sold_out must keep exactly one active default (stock_status carries availability).
+    const soldKey = `exact:sold:${randomUUID().slice(0, 8)}`;
+    const sold = await commitBatchWithStatementTimeout({
+      env: { MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_URL: RUNTIME_URL },
+      listings: [
+        {
+          identityKey: soldKey,
+          title: "Inverex Nitrox 12kW Hybrid Solar Inverter",
+          brandName: "Inverex",
+          categoryName: "Solar Inverter",
+          websitePricePkr: 150000,
+          availability: "sold_out",
+          selectedSupplier: "kamal",
+          sourceUrls: ["https://kamalsolar.pk/products/sold-default"],
+          matchReason: "exact_identity",
+          priceReason: "auto",
+          fetchedAt: new Date().toISOString(),
+          offers: [],
+          previous: null,
+          defaultVariant: {
+            isDefault: true,
+            active: true,
+            stockStatus: "sold_out",
+            selectedSupplier: "kamal",
+            sourceKey: soldKey,
+          },
+        },
+      ],
+      health: health(`mpair_sold_${randomUUID().slice(0, 8)}`),
+      statementTimeoutMs: 30_000,
+    });
+    check("sold_out listing commits (DEFAULT_VARIANT_REQUIRED avoided)", sold.productsCreated === 1);
+    const soldVariant = await admin.query(
+      `select v.is_default, v.active, v.stock_status
+       from public.mp_auto_import_listings l
+       join public.mp_product_variants v on v.id = l.variant_id
+       where l.identity_key = $1`,
+      [soldKey],
+    );
+    const sv = soldVariant.rows[0];
+    check("sold_out default variant remains is_default", sv?.is_default === true);
+    check("sold_out default variant remains active", sv?.active === true);
+    check("sold_out stock_status is sold_out", sv?.stock_status === "sold_out");
+    const defaultCount = await admin.query(
+      `select count(*)::int as n
+       from public.mp_product_variants v
+       join public.mp_auto_import_listings l on l.product_id = v.product_id
+       where l.identity_key = $1 and v.is_default and v.active`,
+      [soldKey],
+    );
+    check(
+      "sold_out product has exactly one active default",
+      Number(defaultCount.rows[0].n) === 1,
+    );
+
     // Source/SQL honesty checks
     const atomic = readFileSync(ATOMIC, "utf8");
     check(
@@ -351,6 +406,15 @@ async function main(): Promise<void> {
       "atomic SQL does not perform set_config(statement_timeout)",
       !/perform\s+set_config\(\s*'statement_timeout'/i.test(atomic),
     );
+    {
+      const variantUpdate = atomic.slice(
+        atomic.indexOf("update public.mp_product_variants"),
+      );
+      check(
+        "atomic SQL never deactivates default variant via sold_out",
+        !/active\s*=\s*v_avail\s*<>\s*'sold_out'/i.test(variantUpdate),
+      );
+    }
 
     console.log("\nCEO auto-import PG timeout tests passed.");
   } finally {

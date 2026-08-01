@@ -2371,6 +2371,330 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
 }
 
 {
+  // Default-variant invariant: normalize, tie-break, reject inactive, pre-commit.
+  const {
+    selectDefaultOffer,
+    normalizeToSingleActiveDefault,
+    attachDefaultVariants,
+    assertBatchDefaultVariantInvariant,
+    AutoImportDefaultVariantError,
+    hashIdentityKey,
+  } = await import("./autoImportDefaultVariant.ts");
+
+  // Zero defaults among active candidates → normalize to exactly one active default.
+  const fromZero = normalizeToSingleActiveDefault([
+    {
+      isDefault: false,
+      active: true,
+      stockStatus: "in_stock",
+      selectedSupplier: "kamal",
+      sourceKey: "kamal:a",
+    },
+  ]);
+  assert.ok(fromZero);
+  assert.equal(fromZero!.isDefault, true);
+  assert.equal(fromZero!.active, true);
+  assert.equal(fromZero!.sourceKey, "kamal:a");
+
+  // Multiple defaults → deterministic single (sourceKey ASC).
+  const fromMulti = normalizeToSingleActiveDefault([
+    {
+      isDefault: true,
+      active: true,
+      stockStatus: "in_stock",
+      selectedSupplier: "alladin",
+      sourceKey: "z-source",
+    },
+    {
+      isDefault: true,
+      active: true,
+      stockStatus: "in_stock",
+      selectedSupplier: "kamal",
+      sourceKey: "a-source",
+    },
+  ]);
+  assert.equal(fromMulti!.sourceKey, "a-source");
+  assert.equal(fromMulti!.selectedSupplier, "kamal");
+
+  // Inactive/sold_out lowest price cannot win when an active priced offer exists.
+  const pick = selectDefaultOffer([
+    {
+      supplier: "alladin",
+      sourceKey: "alladin:cheap-sold",
+      canonicalUrl: "https://alladin.pk/products/cheap-sold",
+      title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+      currentListedPricePkr: 50000,
+      parseStatus: "ok",
+      availability: "sold_out",
+      fetchedAt: "2026-07-26T12:00:00.000Z",
+    },
+    {
+      supplier: "kamal",
+      sourceKey: "kamal:dearer-stock",
+      canonicalUrl: "https://kamalsolar.pk/products/dearer-stock",
+      title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+      currentListedPricePkr: 90000,
+      parseStatus: "ok",
+      availability: "in_stock",
+      fetchedAt: "2026-07-26T12:00:00.000Z",
+    },
+  ]);
+  assert.equal(pick.ok, true);
+  if (pick.ok) {
+    assert.equal(pick.offer.sourceKey, "kamal:dearer-stock");
+    assert.equal(pick.offer.availability, "in_stock");
+  }
+
+  // Equal-price: stable sourceKey tie-breaker.
+  const tied = selectDefaultOffer([
+    {
+      supplier: "alladin",
+      sourceKey: "alladin:b",
+      canonicalUrl: "https://alladin.pk/products/b",
+      title: "Knox Hybrid Inverter 6kW Single Phase",
+      currentListedPricePkr: 100000,
+      parseStatus: "ok",
+      availability: "in_stock",
+      fetchedAt: "2026-07-26T12:00:00.000Z",
+    },
+    {
+      supplier: "kamal",
+      sourceKey: "kamal:a",
+      canonicalUrl: "https://kamalsolar.pk/products/a",
+      title: "Knox Hybrid Inverter 6kW Single Phase",
+      currentListedPricePkr: 100000,
+      parseStatus: "ok",
+      availability: "in_stock",
+      fetchedAt: "2026-07-26T12:00:00.000Z",
+    },
+  ]);
+  assert.equal(tied.ok, true);
+  // 'alladin:b' < 'kamal:a' lexicographically
+  if (tied.ok) assert.equal(tied.offer.sourceKey, "alladin:b");
+
+  // Inactive-only candidates cannot fabricate a default.
+  assert.equal(
+    normalizeToSingleActiveDefault([
+      {
+        isDefault: true,
+        active: false,
+        stockStatus: "sold_out",
+        selectedSupplier: "kamal",
+        sourceKey: "kamal:dead",
+      },
+    ]),
+    null,
+  );
+
+  // No valid active priced variants → fail before commit, zero writes.
+  const {
+    createAutoImportService: createSvc,
+    __resetAutoImportRunLockForTests,
+  } = await import("./autoImportService.ts");
+  __resetAutoImportRunLockForTests();
+  const base = createMemoryAutoImportRepository();
+  let commitCalls = 0;
+  const repo = {
+    getListingByIdentityKey: (k: string) => base.getListingByIdentityKey(k),
+    getListingBySourceUrl: (u: string) => base.getListingBySourceUrl(u),
+    listListings: () => base.listListings(),
+    getHealth: () => base.getHealth(),
+    saveHealth: (h: Parameters<typeof base.saveHealth>[0]) => base.saveHealth(h),
+    async commitBatch(
+      inputs: Parameters<typeof base.commitBatch>[0],
+      health: Parameters<typeof base.commitBatch>[1],
+    ) {
+      commitCalls += 1;
+      return base.commitBatch(inputs, health);
+    },
+  };
+  const noPrice = createSvc({
+    repository: repo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "no-price",
+        currentListedPricePkr: null,
+        parseStatus: "missing",
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const noPriceResult = await noPrice.runAutomaticImport({
+    actorScope: "admin:super:ceo",
+  });
+  assert.equal(noPriceResult.health.productsCreated, 0);
+  assert.equal(noPriceResult.health.productsUpdated, 0);
+  assert.equal((await base.listListings()).length, 0, "zero catalogue writes");
+  assert.ok(noPriceResult.health.rejectedVariants >= 1);
+
+  // Pre-commit validator rejects corrupt plan (inactive default) with sanitized hash.
+  let preCommitFailed = false;
+  try {
+    assertBatchDefaultVariantInvariant([
+      {
+        identityKey: "exact:corrupt",
+        title: "x",
+        brandName: "Inverex",
+        categoryName: "Solar Inverter",
+        websitePricePkr: 1,
+        availability: "in_stock",
+        selectedSupplier: "kamal",
+        sourceUrls: [],
+        matchReason: "exact_identity",
+        priceReason: "auto",
+        fetchedAt: "2026-07-26T12:00:00.000Z",
+        offers: [],
+        previous: null,
+        defaultVariant: {
+          isDefault: true,
+          active: false,
+          stockStatus: "sold_out",
+          selectedSupplier: "kamal",
+          sourceKey: "exact:corrupt",
+        },
+      },
+    ]);
+  } catch (err) {
+    preCommitFailed = err instanceof AutoImportDefaultVariantError;
+    assert.ok(/DEFAULT_VARIANT_REQUIRED/i.test(String((err as Error).message)));
+    assert.equal(
+      (err as InstanceType<typeof AutoImportDefaultVariantError>).diagnostics
+        .identityKeyHash,
+      hashIdentityKey("exact:corrupt"),
+    );
+    assert.equal(
+      (err as InstanceType<typeof AutoImportDefaultVariantError>).diagnostics
+        .defaultVariantCount,
+      0,
+    );
+  }
+  assert.equal(preCommitFailed, true);
+
+  // 688-variant production-shaped plan: every product has exactly one active default.
+  const shaped: Parameters<typeof attachDefaultVariants>[0] = [];
+  for (let i = 0; i < 688; i++) {
+    shaped.push({
+      identityKey: `exact:prod:${i}`,
+      title: `Inverex Nitrox ${i}kW Hybrid Solar Inverter`,
+      brandName: "Inverex",
+      categoryName: "Solar Inverter",
+      websitePricePkr: 100000 + i,
+      availability: i % 17 === 0 ? "sold_out" : "in_stock",
+      selectedSupplier: i % 2 === 0 ? "kamal" : "alladin",
+      sourceUrls: [`https://example.test/p/${i}`],
+      matchReason: "exact_identity",
+      priceReason: "auto",
+      fetchedAt: "2026-07-26T12:00:00.000Z",
+      offers: [],
+      previous: null,
+      defaultSourceKey: `src:${i}`,
+    });
+  }
+  const validated688 = attachDefaultVariants(shaped);
+  assert.equal(validated688.length, 688);
+  for (const item of validated688) {
+    assert.equal(item.defaultVariant.isDefault, true);
+    assert.equal(item.defaultVariant.active, true);
+  }
+  assertBatchDefaultVariantInvariant(validated688);
+
+  // Successful plan → one atomic commit; retry preserves default, no duplicates.
+  __resetAutoImportRunLockForTests();
+  commitCalls = 0;
+  const okSvc = createSvc({
+    repository: repo,
+    fixtureObservations: [
+      obs({
+        supplier: "kamal",
+        title: "Inverex Nitrox 10kW Hybrid Solar Inverter",
+        supplierProductId: "def-ok",
+        currentListedPricePkr: 111000,
+        availability: "sold_out",
+      }),
+    ],
+    env: {
+      MARKETPLACE_ENABLED: "true",
+      MARKETPLACE_CEO_AUTO_IMPORT_ENABLED: "true",
+    },
+  });
+  const ok1 = await okSvc.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  assert.equal(ok1.status, "succeeded");
+  assert.equal(commitCalls, 1);
+  assert.equal(ok1.health.productsCreated, 1);
+  assert.ok(ok1.health.errors.every((e) => !/DEFAULT_VARIANT/i.test(e)));
+  const first = (await base.listListings())[0]!;
+  assert.equal(first.availability, "sold_out");
+  const ok2 = await okSvc.runAutomaticImport({ actorScope: "admin:super:ceo" });
+  assert.equal(ok2.status, "succeeded");
+  assert.equal(commitCalls, 2);
+  assert.equal(ok2.health.productsCreated, 0);
+  assert.equal(ok2.health.productsUpdated, 1);
+  const after = await base.listListings();
+  assert.equal(after.length, 1);
+  assert.equal(after[0]!.identityKey, first.identityKey);
+  assert.equal(after[0]!.variantId, first.variantId);
+
+  // Update path: memory commit rejects a second inactive/corrupt default when attached.
+  let updateCorrupt = false;
+  try {
+    await base.commitBatch(
+      [
+        {
+          identityKey: first.identityKey,
+          title: first.title,
+          brandName: first.brandName,
+          categoryName: first.categoryName,
+          websitePricePkr: first.websitePricePkr,
+          availability: "in_stock",
+          selectedSupplier: first.selectedSupplier,
+          sourceUrls: first.sourceUrls,
+          matchReason: "exact_identity",
+          priceReason: "auto",
+          fetchedAt: "2026-07-26T12:00:00.000Z",
+          offers: first.offers,
+          previous: first,
+          defaultVariant: {
+            isDefault: true,
+            active: false,
+            stockStatus: "sold_out",
+            selectedSupplier: first.selectedSupplier,
+            sourceKey: first.identityKey,
+          },
+        },
+      ],
+      await base.getHealth(),
+    );
+  } catch (err) {
+    updateCorrupt = /DEFAULT_VARIANT_REQUIRED/i.test(String((err as Error).message));
+  }
+  assert.equal(updateCorrupt, true);
+  assert.equal((await base.listListings()).length, 1, "corrupt update retains zero extra writes");
+  __resetAutoImportRunLockForTests();
+
+  // SQL must keep default variant active (sold_out via stock_status only).
+  // Listing-row active may still track sold_out; variant must not.
+  const atomicSql = readFileSync(
+    join(ROOT, "scripts/marketplace-ceo-auto-import-atomic.sql"),
+    "utf8",
+  );
+  const variantUpdate = atomicSql.slice(
+    atomicSql.indexOf("update public.mp_product_variants"),
+  );
+  assert.ok(
+    !/active\s*=\s*v_avail\s*<>\s*'sold_out'/i.test(variantUpdate),
+    "variant update must not deactivate on sold_out",
+  );
+  assert.ok(/is_default\s*=\s*true/.test(variantUpdate));
+  assert.ok(/active\s*=\s*true/.test(variantUpdate));
+  console.log("ok - default variant invariant normalize/validate/688-plan/retry");
+}
+
+{
   // Canonical route auth + preflight gated; non-super-admin forbidden
   function actor(role: string): RequestActor {
     return {

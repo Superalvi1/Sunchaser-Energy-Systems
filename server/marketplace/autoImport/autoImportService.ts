@@ -52,6 +52,12 @@ import {
   resolveAutoImportTimeouts,
   withDeadline,
 } from "./autoImportTimeouts.ts";
+import {
+  assertBatchDefaultVariantInvariant,
+  attachDefaultVariants,
+  AutoImportDefaultVariantError,
+  selectDefaultOffer,
+} from "./autoImportDefaultVariant.ts";
 
 type PlanningLookup = {
   byKey: Map<string, AutoImportListingRecord>;
@@ -487,6 +493,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       }));
 
       const selection = selectLowestValidPrice(priced);
+      const defaultPick = selectDefaultOffer(priced);
       const previous = lookup.byKey.get(identityKey) ?? null;
       const resolved = resolvePriceWithRollback(
         selection,
@@ -499,7 +506,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           : null,
       );
 
-      if (resolved.pricePkr == null || !resolved.supplier) {
+      if (resolved.pricePkr == null || !resolved.supplier || !defaultPick.ok) {
         rejectedVariants += offers.length;
         continue;
       }
@@ -508,15 +515,18 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         lowestPriceSelections += 1;
       }
 
-      let availability = offers[0]!.availability;
+      const primary =
+        offers.find((o) => o.sourceKey === defaultPick.offer.sourceKey) ??
+        offers.find((o) => o.supplier === resolved.supplier) ??
+        offers[0]!;
+
+      let availability = primary.availability;
       if (offers.some((o) => o.availability === "in_stock")) {
         availability = "in_stock";
       } else if (offers.every((o) => o.availability === "sold_out")) {
         availability = "sold_out";
       }
 
-      const primary =
-        offers.find((o) => o.supplier === resolved.supplier) ?? offers[0]!;
       planned.push({
         selectionOk: selection.ok,
         selection,
@@ -534,6 +544,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           priceReason: resolved.reason,
           fetchedAt: now().toISOString(),
           previous,
+          defaultSourceKey: defaultPick.offer.sourceKey,
           offers: offers.map((o) => ({
             supplier: o.supplier,
             pricePkr: o.currentListedPricePkr,
@@ -543,6 +554,14 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         },
       });
     }
+
+    // Final default-variant normalization + fail-closed invariant (before persist).
+    const validatedPlans = attachDefaultVariants(planned.map((p) => p.input));
+    assertBatchDefaultVariantInvariant(validatedPlans);
+    for (let i = 0; i < planned.length; i += 1) {
+      planned[i]!.input = validatedPlans[i]!;
+    }
+
     const planMs = Date.now() - planStarted;
     const aiPlanMs = 0; // AI kill-switch path: no model enrichment in CEO auto-import.
     log({
@@ -553,7 +572,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       planMs,
       aiPlanMs,
       plannedUpserts: planned.length,
-      detail: "deterministic_price_plan",
+      detail: "deterministic_price_plan+default_variant",
     });
 
     const totalMs = Date.now() - startedAt;
@@ -718,13 +737,32 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     };
 
     try {
+      // Re-validate immediately before commitBatch — zero writes on failure.
+      const preCommit = attachDefaultVariants(plannedInputs);
+      assertBatchDefaultVariantInvariant(preCommit);
+
       // Single awaited transactional call — no Promise.race abandonment.
       // Timeout: SET LOCAL statement_timeout on direct Postgres before the RPC.
-      const commit = await repo.commitBatch(plannedInputs, healthForCommit);
+      const commit = await repo.commitBatch(preCommit, healthForCommit);
       productsCreated = commit.productsCreated;
       productsUpdated = commit.productsUpdated;
     } catch (err) {
       const sanitized = sanitizeAutoImportError(err);
+      if (err instanceof AutoImportDefaultVariantError) {
+        log({
+          runId,
+          stage: "default_variant",
+          elapsedMs: Date.now() - startedAt,
+          status: "failed",
+          errorCode: "DEFAULT_VARIANT_REQUIRED",
+          identityKeyHash: err.diagnostics.identityKeyHash,
+          variantCount: err.diagnostics.variantCount,
+          activeVariantCount: err.diagnostics.activeVariantCount,
+          defaultVariantCount: err.diagnostics.defaultVariantCount,
+          supplierClass: err.diagnostics.supplierClass,
+          detail: "pre_commit_invariant_failed",
+        });
+      }
       log({
         runId,
         stage: "persist_failed",

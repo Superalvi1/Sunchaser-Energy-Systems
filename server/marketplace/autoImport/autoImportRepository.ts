@@ -34,6 +34,16 @@ export type UpsertListingInput = {
   fetchedAt: string;
   offers: AutoImportListingRecord["offers"];
   previous: AutoImportListingRecord | null;
+  /** Deterministic default-offer identity (sourceKey) chosen after price planning. */
+  defaultSourceKey?: string;
+  /** Attached by attachDefaultVariants before commitBatch. */
+  defaultVariant?: {
+    isDefault: boolean;
+    active: boolean;
+    stockStatus: AutoImportListingRecord["availability"];
+    selectedSupplier: SupplierCode;
+    sourceKey: string;
+  };
 };
 
 export type CommitBatchResult = {
@@ -173,6 +183,15 @@ export function createMemoryAutoImportRepository(
           seen.add(input.identityKey);
           if (!(input.websitePricePkr > 0)) {
             throw new Error("VALIDATION_ERROR: websitePricePkr must be positive");
+          }
+          // When planner attached defaultVariant, enforce the same invariant as PG.
+          if (input.defaultVariant) {
+            const dv = input.defaultVariant;
+            if (dv.isDefault !== true || dv.active !== true) {
+              throw new Error(
+                "DEFAULT_VARIANT_REQUIRED: product must have exactly one active default variant",
+              );
+            }
           }
         }
         let productsCreated = 0;

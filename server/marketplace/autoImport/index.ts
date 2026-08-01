@@ -36,3 +36,11 @@ export {
   isEncryptOnlyAutoImportSsl,
 } from "./autoImportPgSsl.ts";
 export { createAutoImportPgClient } from "./autoImportPgCommit.ts";
+export {
+  assertBatchDefaultVariantInvariant,
+  attachDefaultVariants,
+  selectDefaultOffer,
+  normalizeToSingleActiveDefault,
+  hashIdentityKey,
+  AutoImportDefaultVariantError,
+} from "./autoImportDefaultVariant.ts";

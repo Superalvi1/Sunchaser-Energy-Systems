@@ -14,6 +14,7 @@ export type AutoImportLogStage =
   | "matching"
   | "plan"
   | "plan_phase_timing"
+  | "default_variant"
   | "persist_start"
   | "persist_done"
   | "persist_failed"
@@ -44,6 +45,12 @@ export type AutoImportLogFields = {
   aiPlanMs?: number;
   planMs?: number;
   totalMs?: number;
+  /** Sanitized default-variant diagnostics (never raw identity keys / URLs). */
+  identityKeyHash?: string;
+  variantCount?: number;
+  activeVariantCount?: number;
+  defaultVariantCount?: number;
+  supplierClass?: string;
 };
 
 const SENSITIVE_FRAGMENT =
@@ -78,6 +85,12 @@ export function sanitizeAutoImportError(err: unknown): {
     if (/SELF_SIGNED|CERT_|UNABLE_TO_VERIFY_LEAF|DEPTH_ZERO_SELF_SIGNED/i.test(errorCode)) {
       errorCode = "TLS_FAILURE";
     }
+    if (
+      /DEFAULT_VARIANT_REQUIRED/i.test(errorCode) ||
+      /DEFAULT_VARIANT_REQUIRED/i.test(String(named.message || ""))
+    ) {
+      errorCode = "DEFAULT_VARIANT_REQUIRED";
+    }
     const message =
       sanitizeLogText(String(named.message || "error"), 160) || "error";
     return { errorClass, errorCode, message };
@@ -97,6 +110,8 @@ export function sanitizeAutoImportError(err: unknown): {
     } else if (/HTTP \d+/i.test(err.message)) errorCode = "HTTP_ERROR";
     else if (/JSON|catalogue|products array/i.test(err.message)) {
       errorCode = "MALFORMED_RESPONSE";
+    } else if (/DEFAULT_VARIANT_REQUIRED/i.test(err.message)) {
+      errorCode = "DEFAULT_VARIANT_REQUIRED";
     } else if (/PLAN_CONTEXT/i.test(err.message)) {
       errorCode = "PLAN_CONTEXT_FAILED";
     } else if (/rpc|upsert|supabase|postgres|PGRST|function/i.test(err.message)) {
@@ -149,11 +164,22 @@ export function logAutoImport(fields: AutoImportLogFields): void {
     "aiPlanMs",
     "planMs",
     "totalMs",
+    "variantCount",
+    "activeVariantCount",
+    "defaultVariantCount",
   ] as const) {
     const value = fields[key];
     if (typeof value === "number" && Number.isFinite(value)) {
       payload[key] = Math.max(0, Math.round(value));
     }
+  }
+  if (fields.identityKeyHash) {
+    const h = sanitizeLogText(fields.identityKeyHash, 32);
+    if (h) payload.identityKeyHash = h;
+  }
+  if (fields.supplierClass) {
+    const sc = sanitizeLogText(fields.supplierClass, 16);
+    if (sc) payload.supplierClass = sc;
   }
 
   const isError =

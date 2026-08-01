@@ -63,7 +63,12 @@ export function selectLowestValidPrice(offers: PricedOffer[]): PriceSelection {
     if (o.currentListedPricePkr === best.currentListedPricePkr) {
       const bi = SUPPLIER_TIEBREAK.indexOf(best.supplier);
       const oi = SUPPLIER_TIEBREAK.indexOf(o.supplier);
-      if (oi >= 0 && (bi < 0 || oi < bi)) best = o;
+      if (oi >= 0 && (bi < 0 || oi < bi)) {
+        best = o;
+        continue;
+      }
+      // Same supplier (or equal rank): stable identity-key / sourceKey ASC.
+      if (oi === bi && o.sourceKey < best.sourceKey) best = o;
     }
   }
 

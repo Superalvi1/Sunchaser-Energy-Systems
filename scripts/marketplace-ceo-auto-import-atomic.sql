@@ -279,6 +279,8 @@ begin
         true, false
       );
 
+      -- Sole default must stay active=true (stock_status carries sold_out).
+      -- Deactivating the default violates mp_assert_product_exactly_one_default.
       insert into public.mp_product_variants (
         id, product_id, sku, title, is_default, is_priceable, active, stock_status
       ) values (
@@ -338,6 +340,14 @@ begin
       if v_price_reason like 'rollback_%' then
         v_price := v_existing.last_valid_price;
       end if;
+
+      -- Demote any corrupt extra defaults before re-asserting ours.
+      update public.mp_product_variants
+      set is_default = false,
+          updated_at = timezone('utc', now())
+      where product_id = v_product_id
+        and id is distinct from v_variant_id
+        and is_default = true;
     end if;
 
     perform set_config('mp.allow_price_write', 'on', true);
@@ -346,7 +356,8 @@ begin
         website_price_state = 'priced_auto',
         website_price_source = v_supplier,
         stock_status = v_avail,
-        active = v_avail <> 'sold_out',
+        is_default = true,
+        active = true,
         updated_at = timezone('utc', now())
     where id = v_variant_id;
     perform set_config('mp.allow_price_write', 'off', true);
