@@ -42,12 +42,15 @@ export type AutoImportListingRecord = {
   lastValidPricePkr: number;
   lastValidSupplier: SupplierCode;
   lastValidObservationAt: string;
+  lastValidSourceKey: string | null;
+  lastValidAvailability: SupplierAvailability | null;
   active: boolean;
   offers: Array<{
     supplier: SupplierCode;
     pricePkr: number | null;
     url: string;
     availability: SupplierAvailability;
+    sourceKey?: string;
   }>;
 };
 

@@ -52,6 +52,7 @@ function listingPayload(input: UpsertListingInput) {
     priceReason: input.priceReason,
     offers: input.offers,
     fetchedAt: input.fetchedAt,
+    defaultSourceKey: input.defaultSourceKey ?? null,
   };
 }
 

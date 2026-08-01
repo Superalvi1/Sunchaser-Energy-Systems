@@ -30,10 +30,16 @@ create table if not exists public.mp_auto_import_listings (
   last_valid_supplier text not null
     check (last_valid_supplier in ('kamal', 'alladin')),
   last_valid_observation_at timestamptz not null default timezone('utc', now()),
+  last_valid_source_key text,
+  last_valid_availability text
+    check (last_valid_availability is null or last_valid_availability in ('in_stock','sold_out','backorder','unknown')),
   active boolean not null default true,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.mp_auto_import_listings add column if not exists last_valid_source_key text;
+alter table public.mp_auto_import_listings add column if not exists last_valid_availability text;
 
 create index if not exists mp_auto_import_listings_variant_idx
   on public.mp_auto_import_listings (variant_id);
@@ -213,14 +219,27 @@ begin
     end if;
   end if;
 
+  -- Demote any corrupt extra defaults (update path).
+  if not v_created then
+    update public.mp_product_variants
+    set is_default = false,
+        updated_at = timezone('utc', now())
+    where product_id = v_product_id
+      and id is distinct from v_variant_id
+      and is_default = true;
+  end if;
+
   -- Sole commercial write path for this workstream (RPC-guarded columns).
+  -- Keep is_default+active so DEFAULT_VARIANT_REQUIRED cannot fire on sold_out;
+  -- stock_status carries availability.
   perform set_config('mp.allow_price_write', 'on', true);
   update public.mp_product_variants
   set website_price = v_price,
       website_price_state = 'priced_auto',
       website_price_source = p_selected_supplier,
       stock_status = v_avail,
-      active = v_avail <> 'sold_out',
+      is_default = true,
+      active = true,
       updated_at = timezone('utc', now())
   where id = v_variant_id;
   perform set_config('mp.allow_price_write', 'off', true);

@@ -34,6 +34,16 @@ export type UpsertListingInput = {
   fetchedAt: string;
   offers: AutoImportListingRecord["offers"];
   previous: AutoImportListingRecord | null;
+  /** Deterministic default-offer identity (sourceKey) chosen after price planning. */
+  defaultSourceKey?: string;
+  /** Attached by attachDefaultVariants before commitBatch. */
+  defaultVariant?: {
+    isDefault: boolean;
+    active: boolean;
+    stockStatus: AutoImportListingRecord["availability"];
+    selectedSupplier: SupplierCode;
+    sourceKey: string;
+  };
 };
 
 export type CommitBatchResult = {
@@ -108,6 +118,8 @@ export function createMemoryAutoImportRepository(
     const productId = prev?.productId ?? `mpprod_auto_${randomUUID().slice(0, 8)}`;
     const variantId = prev?.variantId ?? `mpvar_auto_${randomUUID().slice(0, 8)}`;
     const slug = prev?.slug ?? slugify(input.title, input.identityKey);
+    const isRollback =
+      Boolean(prev) && input.priceReason.startsWith("rollback_");
     const record: AutoImportListingRecord = {
       identityKey: input.identityKey,
       productId,
@@ -126,13 +138,18 @@ export function createMemoryAutoImportRepository(
       lastValidPricePkr: input.websitePricePkr,
       lastValidSupplier: input.selectedSupplier,
       lastValidObservationAt: input.fetchedAt,
+      lastValidSourceKey:
+        input.defaultSourceKey?.trim() || prev?.lastValidSourceKey || null,
+      lastValidAvailability: input.availability,
       active: input.availability !== "sold_out",
       offers: input.offers,
     };
-    if (prev && input.priceReason.startsWith("rollback_")) {
+    if (isRollback && prev) {
       record.lastValidPricePkr = prev.lastValidPricePkr;
       record.lastValidSupplier = prev.lastValidSupplier;
       record.lastValidObservationAt = prev.lastValidObservationAt;
+      record.lastValidSourceKey = prev.lastValidSourceKey;
+      record.lastValidAvailability = prev.lastValidAvailability;
       record.websitePricePkr = prev.lastValidPricePkr;
     }
     byKey.set(input.identityKey, record);
@@ -173,6 +190,15 @@ export function createMemoryAutoImportRepository(
           seen.add(input.identityKey);
           if (!(input.websitePricePkr > 0)) {
             throw new Error("VALIDATION_ERROR: websitePricePkr must be positive");
+          }
+          // When planner attached defaultVariant, enforce the same invariant as PG.
+          if (input.defaultVariant) {
+            const dv = input.defaultVariant;
+            if (dv.isDefault !== true || dv.active !== true) {
+              throw new Error(
+                "DEFAULT_VARIANT_REQUIRED: product must have exactly one active default variant",
+              );
+            }
           }
         }
         let productsCreated = 0;

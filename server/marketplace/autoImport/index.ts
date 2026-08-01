@@ -19,7 +19,11 @@ export {
   exactIdentityKey,
   hasHardIdentityConflict,
 } from "./identityNormalize.ts";
-export { selectLowestValidPrice, resolvePriceWithRollback } from "./priceSelect.ts";
+export {
+  selectLowestValidPrice,
+  resolvePriceWithRollback,
+  lastValidCommercialFromListing,
+} from "./priceSelect.ts";
 export {
   logAutoImport,
   sanitizeAutoImportError,
@@ -36,3 +40,11 @@ export {
   isEncryptOnlyAutoImportSsl,
 } from "./autoImportPgSsl.ts";
 export { createAutoImportPgClient } from "./autoImportPgCommit.ts";
+export {
+  assertBatchDefaultVariantInvariant,
+  attachDefaultVariants,
+  selectDefaultOffer,
+  normalizeToSingleActiveDefault,
+  hashIdentityKey,
+  AutoImportDefaultVariantError,
+} from "./autoImportDefaultVariant.ts";
