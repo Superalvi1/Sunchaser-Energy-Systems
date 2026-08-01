@@ -73,8 +73,11 @@ export function sanitizeAutoImportError(err: unknown): {
   if (err && typeof err === "object" && "code" in err && "name" in err) {
     const named = err as { name?: string; code?: string; message?: string };
     const errorClass = sanitizeLogText(String(named.name || "Error"), 64) || "Error";
-    const errorCode =
+    let errorCode =
       sanitizeLogText(String(named.code || "UNKNOWN"), 64) || "UNKNOWN";
+    if (/SELF_SIGNED|CERT_|UNABLE_TO_VERIFY_LEAF|DEPTH_ZERO_SELF_SIGNED/i.test(errorCode)) {
+      errorCode = "TLS_FAILURE";
+    }
     const message =
       sanitizeLogText(String(named.message || "error"), 160) || "error";
     return { errorClass, errorCode, message };
@@ -85,10 +88,16 @@ export function sanitizeAutoImportError(err: unknown): {
     // Map common timeout / network wording into stable codes.
     let errorCode = "UNEXPECTED";
     if (/timeout|aborted/i.test(err.message)) errorCode = "TIMEOUT";
-    else if (/HTTP \d+/i.test(err.message)) errorCode = "HTTP_ERROR";
+    else if (
+      /self-?signed|certificate|CERT_|SSL|TLS|UNABLE_TO_VERIFY/i.test(
+        err.message,
+      )
+    ) {
+      errorCode = "TLS_FAILURE";
+    } else if (/HTTP \d+/i.test(err.message)) errorCode = "HTTP_ERROR";
     else if (/JSON|catalogue|products array/i.test(err.message)) {
       errorCode = "MALFORMED_RESPONSE";
-    }     else if (/PLAN_CONTEXT/i.test(err.message)) {
+    } else if (/PLAN_CONTEXT/i.test(err.message)) {
       errorCode = "PLAN_CONTEXT_FAILED";
     } else if (/rpc|upsert|supabase|postgres|PGRST|function/i.test(err.message)) {
       errorCode = "RPC_FAILURE";

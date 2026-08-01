@@ -22,6 +22,7 @@ import {
   CEO_AUTO_IMPORT_RUNTIME_ROLE,
 } from "./autoImportDbUrl.ts";
 import { resolveAutoImportTimeouts } from "./autoImportTimeouts.ts";
+import { buildAutoImportPgClientConfig } from "./autoImportPgSsl.ts";
 
 export type PgCommitBatchResult = {
   productsCreated: number;
@@ -54,15 +55,18 @@ function listingPayload(input: UpsertListingInput) {
   };
 }
 
-function createClient(connectionString: string): pg.Client {
-  const ssl = /sslmode=disable|localhost|127\.0\.0\.1/i.test(connectionString)
-    ? undefined
-    : { rejectUnauthorized: false };
-  return new pg.Client({
-    connectionString,
-    connectionTimeoutMillis: 10_000,
-    ssl,
+/**
+ * Dedicated importer client. Parses URL then applies SSL last so
+ * `?sslmode=require` cannot force verify-full against Supabase's private CA.
+ */
+export function createAutoImportPgClient(
+  connectionString: string,
+  env: NodeJS.ProcessEnv = process.env,
+): pg.Client {
+  const config = buildAutoImportPgClientConfig(connectionString, {
+    sslCaPem: env.MARKETPLACE_CEO_AUTO_IMPORT_DATABASE_SSL_CA,
   });
+  return new pg.Client(config);
 }
 
 type RuntimeAuth = {
@@ -160,7 +164,9 @@ export async function commitBatchWithStatementTimeout(input: {
     ),
   );
 
-  const client = (input.clientFactory ?? createClient)(url);
+  const client = (input.clientFactory ?? ((u) => createAutoImportPgClient(u, env)))(
+    url,
+  );
   await client.connect();
   let inTransaction = false;
   try {

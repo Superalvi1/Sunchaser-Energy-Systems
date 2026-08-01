@@ -31,3 +31,8 @@ export {
   withDeadline,
   DEFAULT_AUTO_IMPORT_JOB_TIMEOUT_MS,
 } from "./autoImportTimeouts.ts";
+export {
+  buildAutoImportPgClientConfig,
+  isEncryptOnlyAutoImportSsl,
+} from "./autoImportPgSsl.ts";
+export { createAutoImportPgClient } from "./autoImportPgCommit.ts";
