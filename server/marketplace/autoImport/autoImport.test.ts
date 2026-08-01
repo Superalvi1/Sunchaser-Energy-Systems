@@ -547,6 +547,18 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.ok(atomic.includes("ineffective"));
   assert.ok(atomic.includes("mp_ceo_auto_import_runtime"));
   assert.ok(
+    /create\s+role\s+mp_ceo_auto_import_runtime\s+nologin\s*;/i.test(atomic),
+    "runtime role created with NOLOGIN only (Supabase-compatible)",
+  );
+  assert.ok(
+    !/alter\s+role\s+mp_ceo_auto_import_runtime/i.test(atomic),
+    "must not ALTER ROLE runtime (Supabase CREATEROLE cannot)",
+  );
+  assert.ok(
+    /unsafe attributes/i.test(atomic),
+    "fail-closed unsafe role attribute verification",
+  );
+  assert.ok(
     /grant execute on function public\.mp_ceo_auto_import_commit_batch[\s\S]*to mp_ceo_auto_import_runtime/i.test(
       atomic,
     ),
@@ -557,6 +569,12 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
       atomic,
     ),
     "commit_batch revoked from service_role",
+  );
+  assert.ok(
+    /revoke all on function public\.mp_ceo_auto_import_upsert_listing[\s\S]*from mp_ceo_auto_import_runtime/i.test(
+      atomic,
+    ),
+    "upsert revoked from runtime role",
   );
   assert.ok(
     !/grant execute on function public\.mp_ceo_auto_import_commit_batch[\s\S]*to service_role/i.test(
