@@ -25,6 +25,7 @@ export type WhatsAppWebConnectionDiagnosticsSnapshot = {
   sessionLeaseStatus: string | null;
   sessionLeaseOwnerMatch: boolean;
   sessionLeaseOwnerId: string | null;
+  sessionLeaseFencingTokenHash: string | null;
   sessionLeaseAcquiredAt: string | null;
   sessionLeaseHeartbeatAt: string | null;
   credentialsFilePresent: boolean | null;
@@ -65,6 +66,7 @@ let snapshot: Omit<
   | "sessionLeaseStatus"
   | "sessionLeaseOwnerMatch"
   | "sessionLeaseOwnerId"
+  | "sessionLeaseFencingTokenHash"
   | "sessionLeaseAcquiredAt"
   | "sessionLeaseHeartbeatAt"
   | "listeningSilent"
@@ -204,6 +206,7 @@ export function getWhatsAppWebConnectionDiagnostics(input: {
     sessionLeaseStatus: lease?.status ?? null,
     sessionLeaseOwnerMatch: lease?.ownerMatch === true,
     sessionLeaseOwnerId: lease?.ownerIdHash ?? null,
+    sessionLeaseFencingTokenHash: lease?.fencingTokenHash ?? null,
     sessionLeaseAcquiredAt: lease?.acquiredAt ?? null,
     sessionLeaseHeartbeatAt: lease?.heartbeatAt ?? null,
     credentialsFilePresent: snapshot.credentialsFilePresent,

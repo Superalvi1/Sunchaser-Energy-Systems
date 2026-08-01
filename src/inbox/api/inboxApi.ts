@@ -422,6 +422,7 @@ export type WhatsAppWebSafeStatus = {
   sessionLeaseStatus?: string | null;
   sessionLeaseOwnerMatch?: boolean;
   sessionLeaseOwnerId?: string | null;
+  sessionLeaseFencingTokenHash?: string | null;
   sessionLeaseAcquiredAt?: string | null;
   sessionLeaseHeartbeatAt?: string | null;
   credentialsFilePresent?: boolean | null;

@@ -658,6 +658,9 @@ export class WhatsAppWebSession {
             now: this.now,
             heartbeatMs: options.sessionLeaseHeartbeatMs,
             staleMs: options.sessionLeaseStaleMs,
+            onLeaseLost: (reason) => {
+              this.handleLeaseLost(reason);
+            },
           });
     const boundSource = new SessionBoundSyncSource(
       () => this.socket?.getSyncSource?.() ?? null
@@ -737,6 +740,7 @@ export class WhatsAppWebSession {
       sessionLeaseStatus: connection.sessionLeaseStatus,
       sessionLeaseOwnerMatch: connection.sessionLeaseOwnerMatch,
       sessionLeaseOwnerId: connection.sessionLeaseOwnerId,
+      sessionLeaseFencingTokenHash: connection.sessionLeaseFencingTokenHash,
       sessionLeaseAcquiredAt: connection.sessionLeaseAcquiredAt,
       sessionLeaseHeartbeatAt: connection.sessionLeaseHeartbeatAt,
       credentialsFilePresent: connection.credentialsFilePresent,
@@ -1056,6 +1060,16 @@ export class WhatsAppWebSession {
     return this.socketGeneration;
   }
 
+  /** Test-only: invoke lease-loss teardown path. */
+  __testHandleLeaseLost(reason = "ownership_lost"): void {
+    this.handleLeaseLost(reason);
+  }
+
+  /** Test-only: access lease for concurrency/heartbeat races. */
+  __testGetSessionLease(): WhatsAppWebSessionLease | null {
+    return this.sessionLease;
+  }
+
   __testAcceptQr(qr: string): Promise<void> {
     return this.acceptQr(qr);
   }
@@ -1244,6 +1258,39 @@ export class WhatsAppWebSession {
   private async releaseSessionLease(): Promise<void> {
     if (!this.sessionLease) return;
     await this.sessionLease.release();
+  }
+
+  /**
+   * Exclusive lease lost while a socket may still be open.
+   * Tear down immediately and do not auto-reconnect until ownership is
+   * acquired again by an explicit connect/startup path.
+   */
+  private handleLeaseLost(reason: string): void {
+    this.connectionDesired = false;
+    this.cancelHistorySync("lease_lost");
+    this.clearReconnectTimer();
+    this.reconnectAttempt = 0;
+    this.reconnectAttemptInProgress = false;
+    this.socketGeneration += 1;
+    if (this.socket) {
+      try {
+        this.socket.end();
+      } catch {
+        /* ignore */
+      }
+      this.socket = null;
+    }
+    this.clearQr();
+    this.lastDisconnectClassification = "unknown";
+    noteConnectionUpdateDiagnostic({
+      state: "close",
+      reason: "unknown",
+    });
+    logWhatsAppWeb("error", "session_lease_lost", { reason });
+    this.setState(
+      "ERROR",
+      "WhatsApp session ownership lost; another process holds the lease"
+    );
   }
 
   private async handleConnectionUpdate(

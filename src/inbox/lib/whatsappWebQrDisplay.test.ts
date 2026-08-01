@@ -76,6 +76,7 @@ function status(
     sessionLeaseStatus: partial.sessionLeaseStatus ?? null,
     sessionLeaseOwnerMatch: partial.sessionLeaseOwnerMatch ?? false,
     sessionLeaseOwnerId: partial.sessionLeaseOwnerId ?? null,
+    sessionLeaseFencingTokenHash: partial.sessionLeaseFencingTokenHash ?? null,
     sessionLeaseAcquiredAt: partial.sessionLeaseAcquiredAt ?? null,
     sessionLeaseHeartbeatAt: partial.sessionLeaseHeartbeatAt ?? null,
     credentialsFilePresent: partial.credentialsFilePresent ?? null,

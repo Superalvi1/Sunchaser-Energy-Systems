@@ -82,6 +82,7 @@ export {
 
 export {
   WhatsAppWebSessionLease,
+  WHATSAPP_WEB_SESSION_LOCK_DIR,
   WHATSAPP_WEB_SESSION_LEASE_FILE,
   WHATSAPP_WEB_SESSION_LEASE_STALE_MS,
 } from "./whatsappWebSessionLease.ts";

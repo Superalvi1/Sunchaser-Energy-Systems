@@ -85,6 +85,8 @@ export type WhatsAppWebSafeStatus = {
   sessionLeaseOwnerMatch: boolean;
   /** Opaque lease owner id (truncated). */
   sessionLeaseOwnerId: string | null;
+  /** Opaque fencing token hash for the held acquisition. */
+  sessionLeaseFencingTokenHash: string | null;
   sessionLeaseAcquiredAt: string | null;
   sessionLeaseHeartbeatAt: string | null;
   /** Whether creds.json exists (contents never exposed). */
