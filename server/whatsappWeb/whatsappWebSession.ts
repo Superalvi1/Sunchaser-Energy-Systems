@@ -49,6 +49,11 @@ import {
 } from "./whatsappWebConnectionDiagnostics.ts";
 import { getWhatsAppWebProcessInstanceId } from "./whatsappWebProcessIdentity.ts";
 import { WhatsAppWebSessionLease } from "./whatsappWebSessionLease.ts";
+import { tryCreateWhatsAppWebSessionLeaseSqlStore } from "./whatsappWebSessionLeaseSql.ts";
+import {
+  getSharedInMemoryWhatsAppWebSessionLeaseStore,
+  type WhatsAppWebSessionLeaseStore,
+} from "./whatsappWebSessionLeaseStore.ts";
 import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
@@ -58,6 +63,15 @@ import {
   createDefaultWhatsAppRepository,
   type WhatsAppRepository,
 } from "../whatsappTransport/whatsappRepository.ts";
+
+function resolveDefaultSessionLeaseStore(
+  env: NodeJS.ProcessEnv
+): WhatsAppWebSessionLeaseStore {
+  return (
+    tryCreateWhatsAppWebSessionLeaseSqlStore(env) ??
+    getSharedInMemoryWhatsAppWebSessionLeaseStore()
+  );
+}
 
 /** Delegates to the active socket sync source (or disconnected stub). */
 class SessionBoundSyncSource implements WhatsAppWebSyncSource {
@@ -371,6 +385,8 @@ export type WhatsAppWebSessionOptions = {
   /** Injectable lease stale/heartbeat timing (tests). */
   sessionLeaseHeartbeatMs?: number;
   sessionLeaseStaleMs?: number;
+  /** Injectable lease store (tests share an in-memory CAS store). */
+  sessionLeaseStore?: WhatsAppWebSessionLeaseStore;
 };
 
 async function defaultSocketFactory(input: {
@@ -637,6 +653,7 @@ export class WhatsAppWebSession {
   private readonly scheduledReconnectDelays: number[] = [];
   private readonly processInstanceId: string;
   private readonly sessionLease: WhatsAppWebSessionLease | null;
+  private leaseLostHandled = false;
 
   constructor(options: WhatsAppWebSessionOptions = {}) {
     this.env = options.env ?? process.env;
@@ -658,6 +675,9 @@ export class WhatsAppWebSession {
             now: this.now,
             heartbeatMs: options.sessionLeaseHeartbeatMs,
             staleMs: options.sessionLeaseStaleMs,
+            store:
+              options.sessionLeaseStore ??
+              resolveDefaultSessionLeaseStore(this.env),
             onLeaseLost: (reason) => {
               this.handleLeaseLost(reason);
             },
@@ -1248,6 +1268,9 @@ export class WhatsAppWebSession {
     if (!this.sessionLease || !this.paths) return true;
     const snap = await this.sessionLease.acquire(this.paths);
     const ok = this.sessionLease.isHeld();
+    if (ok) {
+      this.leaseLostHandled = false;
+    }
     logWhatsAppWeb(ok ? "info" : "warn", "session_lease_acquire", {
       status: snap.status,
       ownerMatch: snap.ownerMatch,
@@ -1266,6 +1289,12 @@ export class WhatsAppWebSession {
    * acquired again by an explicit connect/startup path.
    */
   private handleLeaseLost(reason: string): void {
+    // Idempotent: multiple heartbeat failures must not re-enter teardown.
+    if (this.leaseLostHandled) return;
+    this.leaseLostHandled = true;
+    this.sessionLease?.abandonLocalOwnership(
+      reason === "heartbeat_failed" ? "unavailable" : "contested"
+    );
     this.connectionDesired = false;
     this.cancelHistorySync("lease_lost");
     this.clearReconnectTimer();

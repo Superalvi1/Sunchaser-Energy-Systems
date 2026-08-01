@@ -86,6 +86,12 @@ export {
   WHATSAPP_WEB_SESSION_LEASE_FILE,
   WHATSAPP_WEB_SESSION_LEASE_STALE_MS,
 } from "./whatsappWebSessionLease.ts";
+export {
+  createInMemoryWhatsAppWebSessionLeaseStore,
+  createSqlWhatsAppWebSessionLeaseStore,
+  resolveWhatsAppWebSessionLeaseKey,
+  WHATSAPP_WEB_SESSION_LEASE_TABLE,
+} from "./whatsappWebSessionLeaseStore.ts";
 
 export {
   persistWhatsAppWebInbound,

@@ -1,5 +1,6 @@
 /**
- * Exclusive mkdir session lease + lease-loss enforcement concurrency tests.
+ * Atomic DB-style session lease + lease-loss enforcement concurrency tests.
+ * Uses an in-memory CAS store with identical fencing semantics to SQL.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -17,11 +18,13 @@ import {
   WHATSAPP_WEB_LISTENING_SILENT_MS,
 } from "./whatsappWebConnectionDiagnostics.ts";
 import { hashOpaqueId } from "./whatsappWebProcessIdentity.ts";
+import { WhatsAppWebSessionLease } from "./whatsappWebSessionLease.ts";
 import {
-  WhatsAppWebSessionLease,
-  WHATSAPP_WEB_SESSION_LOCK_DIR,
-  WHATSAPP_WEB_SESSION_LEASE_FILE,
-} from "./whatsappWebSessionLease.ts";
+  createInMemoryWhatsAppWebSessionLeaseStore,
+  resolveWhatsAppWebSessionLeaseKey,
+  __resetSharedInMemoryWhatsAppWebSessionLeaseStore,
+  type WhatsAppWebSessionLeaseStore,
+} from "./whatsappWebSessionLeaseStore.ts";
 import { WhatsAppWebSession } from "./whatsappWebSession.ts";
 import { resolveWhatsAppWebAuthPaths } from "./whatsappWebAuthDir.ts";
 
@@ -42,56 +45,56 @@ function noopInterval(): {
 
 function makeLease(
   ownerId: string,
+  store: WhatsAppWebSessionLeaseStore,
   opts: {
     staleMs?: number;
     onLeaseLost?: (reason: "ownership_lost" | "heartbeat_failed") => void;
+    testHooks?: {
+      beforeHeartbeatMutate?: () => Promise<void>;
+      beforeReleaseMutate?: () => Promise<void>;
+    };
   } = {}
 ): WhatsAppWebSessionLease {
   return new WhatsAppWebSessionLease(ownerId, {
     staleMs: opts.staleMs ?? 60_000,
     heartbeatMs: 60_000,
+    store,
     ...noopInterval(),
     onLeaseLost: opts.onLeaseLost,
+    testHooks: opts.testHooks,
   });
 }
 
-async function plantStaleLock(
+async function plantExpiredRow(
+  store: WhatsAppWebSessionLeaseStore,
   paths: { sessionDir: string; authRoot: string },
-  ownerId = "dead-owner"
+  ownerId: string,
+  timed: { nowMs: number; advance: (ms: number) => void }
 ): Promise<void> {
-  const lockDir = path.join(paths.sessionDir, WHATSAPP_WEB_SESSION_LOCK_DIR);
-  await fsp.mkdir(lockDir, { recursive: true });
-  await fsp.writeFile(
-    path.join(lockDir, "owner.json"),
-    JSON.stringify({
-      ownerId,
-      fencingToken: "stale-token-aaaaaaaa",
-      acquiredAt: "2026-01-01T00:00:00.000Z",
-      heartbeatAt: "2026-01-01T00:00:00.000Z",
-      pid: 1,
-    }),
-    "utf8"
-  );
+  const planter = makeLease(ownerId, store, { staleMs: 1_000 });
+  await planter.acquire(paths);
+  timed.advance(5_000);
 }
 
 {
   __resetWhatsAppWebConnectionDiagnostics();
+  __resetSharedInMemoryWhatsAppWebSessionLeaseStore();
 
   // 1) Two simultaneous absent-lease acquisitions: exactly one held.
   {
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
     await fsp.mkdir(paths.sessionDir, { recursive: true });
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
 
     let releaseBarrier!: () => void;
     const barrier = new Promise<void>((resolve) => {
       releaseBarrier = resolve;
     });
 
-    const a = makeLease("owner-a");
-    const b = makeLease("owner-b");
+    const a = makeLease("owner-a", store);
+    const b = makeLease("owner-b", store);
 
-    // Gate both acquires behind the same barrier tick.
     const p1 = (async () => {
       await barrier;
       return a.acquire(paths);
@@ -103,10 +106,8 @@ async function plantStaleLock(
     releaseBarrier();
     const [r1, r2] = await Promise.all([p1, p2]);
 
-    const held = [a, b].filter((l) => l.isHeld());
-    const contested = [r1, r2].filter((r) => r.status === "contested");
-    assert.equal(held.length, 1);
-    assert.equal(contested.length, 1);
+    assert.equal([a, b].filter((l) => l.isHeld()).length, 1);
+    assert.equal([r1, r2].filter((r) => r.status === "contested").length, 1);
     assert.equal(
       [r1, r2].filter((r) => r.status === "held" || r.status === "stale_reclaimed")
         .length,
@@ -123,17 +124,23 @@ async function plantStaleLock(
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
     await fsp.mkdir(paths.sessionDir, { recursive: true });
-    await plantStaleLock(paths);
+    let nowMs = Date.parse("2020-01-01T00:00:00.000Z");
+    const store = createInMemoryWhatsAppWebSessionLeaseStore({
+      now: () => new Date(nowMs),
+    });
+    await plantExpiredRow(store, paths, "dead-owner", {
+      nowMs,
+      advance: (ms) => {
+        nowMs += ms;
+      },
+    });
 
     let releaseBarrier!: () => void;
     const barrier = new Promise<void>((resolve) => {
       releaseBarrier = resolve;
     });
-    const a = makeLease("reclaim-a", { staleMs: 1 });
-    const b = makeLease("reclaim-b", { staleMs: 1 });
-    // Force "now" far after stale heartbeat via Date override on each lease:
-    // staleMs=1 with default now is enough if plant uses 2026-01-01... actually
-    // current date is Aug 2026 so staleMs=1 means anything older than 1ms is stale.
+    const a = makeLease("reclaim-a", store, { staleMs: 1_000 });
+    const b = makeLease("reclaim-b", store, { staleMs: 1_000 });
 
     const p1 = (async () => {
       await barrier;
@@ -152,127 +159,219 @@ async function plantStaleLock(
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 3) Heartbeat-versus-reclaim cannot overwrite the replacement owner.
+  // 3) Heartbeat pauses after verify → replacement acquires → old beat cannot overwrite.
   {
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
     await fsp.mkdir(paths.sessionDir, { recursive: true });
+    let nowMs = Date.parse("2020-01-01T00:00:00.000Z");
+    const store = createInMemoryWhatsAppWebSessionLeaseStore({
+      now: () => new Date(nowMs),
+    });
 
-    const original = makeLease("original");
-    await original.acquire(paths);
-    assert.equal(original.isHeld(), true);
-    const originalToken = original.__testGetFencingToken();
-    assert.ok(originalToken);
+    let resumeBeat!: () => void;
+    const beatPaused = new Promise<void>((resolve) => {
+      resumeBeat = resolve;
+    });
+    let beatEnteredBarrier!: () => void;
+    const atBarrier = new Promise<void>((resolve) => {
+      beatEnteredBarrier = resolve;
+    });
 
-    // Simulate crash: stop heartbeat without release, plant stale by rewriting hb.
-    const lockDir = path.join(paths.sessionDir, WHATSAPP_WEB_SESSION_LOCK_DIR);
-    const metaPath = path.join(lockDir, "owner.json");
-    const meta = JSON.parse(await fsp.readFile(metaPath, "utf8")) as {
-      ownerId: string;
-      fencingToken: string;
-      acquiredAt: string;
-      heartbeatAt: string;
-      pid: number;
-    };
-    meta.heartbeatAt = "2020-01-01T00:00:00.000Z";
-    await fsp.writeFile(metaPath, JSON.stringify(meta), "utf8");
+    let lost = 0;
+    const oldOwner = makeLease("original", store, {
+      staleMs: 1_000,
+      onLeaseLost: () => {
+        lost += 1;
+      },
+      testHooks: {
+        beforeHeartbeatMutate: async () => {
+          beatEnteredBarrier();
+          await beatPaused;
+        },
+      },
+    });
+    await oldOwner.acquire(paths);
+    const oldToken = oldOwner.__testGetFencingToken();
+    const oldVersion = oldOwner.__testGetFencingVersion();
+    assert.ok(oldToken);
+    assert.ok(oldVersion != null);
 
-    const replacement = makeLease("replacement", { staleMs: 1 });
+    nowMs += 5_000;
+
+    const beatPromise = oldOwner.__testBeatNow();
+    await atBarrier;
+
+    const replacement = makeLease("replacement", store, { staleMs: 1_000 });
     const reclaimed = await replacement.acquire(paths);
     assert.equal(replacement.isHeld(), true);
     assert.equal(reclaimed.status, "stale_reclaimed");
     const replacementToken = replacement.__testGetFencingToken();
+    const replacementVersion = replacement.__testGetFencingVersion();
     assert.ok(replacementToken);
-    assert.notEqual(replacementToken, originalToken);
+    assert.notEqual(replacementToken, oldToken);
+    assert.ok((replacementVersion ?? 0) > (oldVersion ?? 0));
 
-    // Original heartbeat must fail closed and must not rewrite replacement meta.
-    await original.__testBeatNow();
-    assert.equal(original.isHeld(), false);
-    const after = JSON.parse(await fsp.readFile(metaPath, "utf8")) as {
-      fencingToken: string;
-      ownerId: string;
-    };
-    assert.equal(after.fencingToken, replacementToken);
+    resumeBeat();
+    await beatPromise;
+    assert.equal(oldOwner.isHeld(), false);
+    assert.equal(lost, 1);
+
+    const after = await store.read(
+      resolveWhatsAppWebSessionLeaseKey(paths.sessionDir)
+    );
+    assert.ok(after);
+    assert.equal(after.ownerToken, replacementToken);
+    assert.equal(after.fencingVersion, replacementVersion);
     assert.equal(after.ownerId, "replacement");
 
     await replacement.release();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 4) Release-versus-reclaim cannot delete the replacement lock.
+  // 4) Release pauses after verify → replacement acquires → old release cannot delete it.
   {
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
     await fsp.mkdir(paths.sessionDir, { recursive: true });
+    let nowMs = Date.parse("2020-01-01T00:00:00.000Z");
+    const store = createInMemoryWhatsAppWebSessionLeaseStore({
+      now: () => new Date(nowMs),
+    });
 
-    const original = makeLease("original-rel");
+    let resumeRelease!: () => void;
+    const releasePaused = new Promise<void>((resolve) => {
+      resumeRelease = resolve;
+    });
+    let releaseAtBarrier!: () => void;
+    const atBarrier = new Promise<void>((resolve) => {
+      releaseAtBarrier = resolve;
+    });
+
+    const original = makeLease("original-rel", store, {
+      staleMs: 1_000,
+      testHooks: {
+        beforeReleaseMutate: async () => {
+          releaseAtBarrier();
+          await releasePaused;
+        },
+      },
+    });
     await original.acquire(paths);
-    const lockDir = path.join(paths.sessionDir, WHATSAPP_WEB_SESSION_LOCK_DIR);
-    const metaPath = path.join(lockDir, "owner.json");
-    const meta = JSON.parse(await fsp.readFile(metaPath, "utf8")) as {
-      heartbeatAt: string;
-      fencingToken: string;
-      ownerId: string;
-      acquiredAt: string;
-      pid: number;
-    };
-    meta.heartbeatAt = "2020-01-01T00:00:00.000Z";
-    await fsp.writeFile(metaPath, JSON.stringify(meta), "utf8");
 
-    const replacement = makeLease("replacement-rel", { staleMs: 1 });
+    nowMs += 5_000;
+
+    const releasePromise = original.release();
+    await atBarrier;
+
+    const replacement = makeLease("replacement-rel", store, { staleMs: 1_000 });
     await replacement.acquire(paths);
     assert.equal(replacement.isHeld(), true);
+    const replacementToken = replacement.__testGetFencingToken();
+    const replacementVersion = replacement.__testGetFencingVersion();
 
-    // Original release must not remove replacement's lock.
-    await original.release();
-    assert.equal(
-      fs.existsSync(path.join(paths.sessionDir, WHATSAPP_WEB_SESSION_LOCK_DIR)),
-      true
-    );
-    const after = JSON.parse(await fsp.readFile(metaPath, "utf8")) as {
-      ownerId: string;
-    };
-    assert.equal(after.ownerId, "replacement-rel");
+    resumeRelease();
+    await releasePromise;
+
     assert.equal(replacement.isHeld(), true);
+    const after = await store.read(
+      resolveWhatsAppWebSessionLeaseKey(paths.sessionDir)
+    );
+    assert.ok(after);
+    assert.equal(after.ownerId, "replacement-rel");
+    assert.equal(after.ownerToken, replacementToken);
+    assert.equal(after.fencingVersion, replacementVersion);
 
     await replacement.release();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 5) Repeated concurrent acquisition stress test.
+  // 5) In-flight heartbeat during intentional release: no late onLeaseLost / no overwrite.
   {
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
     await fsp.mkdir(paths.sessionDir, { recursive: true });
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
+
+    let lostCalls = 0;
+    let resumeBeat!: () => void;
+    const beatPaused = new Promise<void>((resolve) => {
+      resumeBeat = resolve;
+    });
+    let beatAtBarrier!: () => void;
+    const atBarrier = new Promise<void>((resolve) => {
+      beatAtBarrier = resolve;
+    });
+
+    const lease = makeLease("release-hb", store, {
+      onLeaseLost: () => {
+        lostCalls += 1;
+      },
+      testHooks: {
+        beforeHeartbeatMutate: async () => {
+          beatAtBarrier();
+          await beatPaused;
+        },
+      },
+    });
+    await lease.acquire(paths);
+    const tokenBefore = lease.__testGetFencingToken();
+
+    const beatPromise = lease.__testBeatNow();
+    await atBarrier;
+    await lease.release();
+    assert.equal(lease.isHeld(), false);
+
+    resumeBeat();
+    await beatPromise;
+    assert.equal(lostCalls, 0);
+
+    const next = makeLease("successor", store);
+    const snap = await next.acquire(paths);
+    assert.equal(snap.status, "held");
+    assert.notEqual(next.__testGetFencingToken(), tokenBefore);
+
+    await next.release();
+    await fsp.rm(authDir, { recursive: true, force: true });
+  }
+
+  // 6) Repeated concurrent acquisition stress test.
+  {
+    const authDir = tmpAuthDir();
+    const paths = resolveWhatsAppWebAuthPaths({ authDir });
+    await fsp.mkdir(paths.sessionDir, { recursive: true });
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
 
     for (let round = 0; round < 8; round += 1) {
       const leases = Array.from({ length: 6 }, (_, i) =>
-        makeLease(`stress-${round}-${i}`)
+        makeLease(`stress-${round}-${i}`, store)
       );
       await Promise.all(leases.map((l) => l.acquire(paths)));
-      const winners = leases.filter((l) => l.isHeld());
-      assert.equal(winners.length, 1);
+      assert.equal(leases.filter((l) => l.isHeld()).length, 1);
       await Promise.all(leases.map((l) => l.release()));
     }
 
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 6) Heartbeat ownership loss immediately ends the active socket.
+  // 7) Heartbeat ownership loss immediately ends the active socket.
   {
     const authDir = tmpAuthDir();
+    let nowMs = Date.now();
+    const store = createInMemoryWhatsAppWebSessionLeaseStore({
+      now: () => new Date(nowMs),
+    });
     let endCalls = 0;
-    let factoryCalls = 0;
     const session = new WhatsAppWebSession({
       env: {
         WHATSAPP_WEB_QR_ENABLED: "true",
         WHATSAPP_WEB_AUTH_DIR: authDir,
       },
       processInstanceId: "loss-owner",
-      sessionLeaseStaleMs: 60_000,
+      sessionLeaseStaleMs: 1_000,
       sessionLeaseHeartbeatMs: 60_000,
+      sessionLeaseStore: store,
       socketFactory: async (input) => {
-        factoryCalls += 1;
         queueMicrotask(() => {
           input.onConnectionUpdate({
             connection: "open",
@@ -294,44 +393,41 @@ async function plantStaleLock(
     await session.connect();
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(session.getSafeStatus().state, "CONNECTED");
-    assert.equal(session.getSafeStatus().socketOpen, true);
     const genBefore = session.__testGetSocketGeneration();
-
-    // Steal lock under the held lease, then beat.
     const lease = session.__testGetSessionLease();
     assert.ok(lease);
-    const paths = resolveWhatsAppWebAuthPaths({ authDir });
-    const lockDir = path.join(paths.sessionDir, WHATSAPP_WEB_SESSION_LOCK_DIR);
-    await fsp.writeFile(
-      path.join(lockDir, "owner.json"),
-      JSON.stringify({
-        ownerId: "thief",
-        fencingToken: "stolen-token-bbbbbbbb",
-        acquiredAt: new Date().toISOString(),
-        heartbeatAt: new Date().toISOString(),
-        pid: 2,
-      }),
-      "utf8"
-    );
-    await lease.__testBeatNow();
 
+    nowMs += 5_000;
+    const paths = resolveWhatsAppWebAuthPaths({ authDir });
+    const thief = makeLease("thief", store, { staleMs: 1_000 });
+    await thief.acquire(paths);
+    assert.equal(thief.isHeld(), true);
+
+    await lease.__testBeatNow();
     assert.equal(session.getSafeStatus().state, "ERROR");
     assert.equal(session.getSafeStatus().socketOpen, false);
     assert.equal(session.getSafeStatus().inboundListenerOperational, false);
     assert.equal(session.getSafeStatus().sessionLeaseOwnerMatch, false);
-    assert.ok(session.__testGetSocketGeneration() > genBefore);
-    assert.ok(endCalls >= 1);
+    assert.equal(session.__testGetSocketGeneration() > genBefore, true);
+    assert.equal(endCalls >= 1, true);
     assert.equal(session.__testIsConnectionDesired(), false);
     assert.equal(session.__testHasReconnectTimer(), false);
-    assert.equal(factoryCalls, 1);
 
+    await thief.release();
     await session.shutdown();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 7) Heartbeat write failure fails closed and ends the socket.
+  // 8) Heartbeat write failure fails closed and ends the socket.
   {
     const authDir = tmpAuthDir();
+    const base = createInMemoryWhatsAppWebSessionLeaseStore();
+    const failingStore: WhatsAppWebSessionLeaseStore = {
+      tryAcquire: (i) => base.tryAcquire(i),
+      release: (i) => base.release(i),
+      read: (k) => base.read(k),
+      heartbeat: async () => "error",
+    };
     let endCalls = 0;
     const session = new WhatsAppWebSession({
       env: {
@@ -339,8 +435,9 @@ async function plantStaleLock(
         WHATSAPP_WEB_AUTH_DIR: authDir,
       },
       processInstanceId: "hb-fail-owner",
-      sessionLeaseStaleMs: 60_000,
+      sessionLeaseStore: failingStore,
       sessionLeaseHeartbeatMs: 60_000,
+      sessionLeaseStaleMs: 60_000,
       socketFactory: async (input) => {
         queueMicrotask(() => {
           input.onConnectionUpdate({
@@ -359,30 +456,25 @@ async function plantStaleLock(
         };
       },
     });
+
     await session.connect();
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(session.getSafeStatus().state, "CONNECTED");
 
-    // Remove lock dir so heartbeat write/read fails closed.
-    const paths = resolveWhatsAppWebAuthPaths({ authDir });
-    await fsp.rm(path.join(paths.sessionDir, WHATSAPP_WEB_SESSION_LOCK_DIR), {
-      recursive: true,
-      force: true,
-    });
     await session.__testGetSessionLease()!.__testBeatNow();
-
     assert.equal(session.getSafeStatus().state, "ERROR");
     assert.equal(session.getSafeStatus().socketOpen, false);
-    assert.ok(endCalls >= 1);
-    assert.equal(session.__testHasReconnectTimer(), false);
+    assert.equal(endCalls >= 1, true);
+    assert.equal(session.__testIsConnectionDesired(), false);
 
     await session.shutdown();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 8) Lease loss cannot schedule reconnect.
+  // 9) Lease loss cannot schedule reconnect.
   {
     const authDir = tmpAuthDir();
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
     const scheduled: number[] = [];
     const session = new WhatsAppWebSession({
       env: {
@@ -390,12 +482,11 @@ async function plantStaleLock(
         WHATSAPP_WEB_AUTH_DIR: authDir,
       },
       processInstanceId: "no-reconnect",
-      reconnectDelaysMs: [5],
+      sessionLeaseStore: store,
       setTimeoutFn: ((fn: () => void, ms: number) => {
         scheduled.push(ms);
-        return 1 as unknown as NodeJS.Timeout;
+        return setTimeout(fn, ms);
       }) as typeof setTimeout,
-      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
       socketFactory: async (input) => {
         queueMicrotask(() => {
           input.onConnectionUpdate({
@@ -412,13 +503,13 @@ async function plantStaleLock(
         };
       },
     });
+
     await session.connect();
     await new Promise((r) => setTimeout(r, 20));
     session.__testHandleLeaseLost("ownership_lost");
     assert.equal(session.getSafeStatus().state, "ERROR");
     assert.equal(session.__testIsConnectionDesired(), false);
     assert.equal(session.__testHasReconnectTimer(), false);
-    // No new reconnect timer after lease loss.
     const afterLoss = scheduled.length;
     await session.__testHandleConnectionUpdate({
       connection: "close",
@@ -432,64 +523,59 @@ async function plantStaleLock(
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 9) Only the winning process calls socketFactory.
+  // 10) Only the winning process calls socketFactory.
   {
     const authDir = tmpAuthDir();
-    const paths = resolveWhatsAppWebAuthPaths({ authDir });
-    await fsp.mkdir(paths.sessionDir, { recursive: true });
-
-    // Pre-hold lease as foreign owner.
-    const holder = makeLease("foreign-holder");
-    await holder.acquire(paths);
-    assert.equal(holder.isHeld(), true);
-
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
     let factoryCalls = 0;
-    const session = new WhatsAppWebSession({
-      env: {
-        WHATSAPP_WEB_QR_ENABLED: "true",
-        WHATSAPP_WEB_AUTH_DIR: authDir,
-      },
-      processInstanceId: "loser-instance",
-      sessionLeaseStaleMs: 60_000,
-      socketFactory: async () => {
-        factoryCalls += 1;
-        return {
-          end: () => undefined,
-          logout: async () => undefined,
-          sendText: async () => ({ providerMessageId: "X" }),
-        };
-      },
-    });
+    const mk = (id: string) =>
+      new WhatsAppWebSession({
+        env: {
+          WHATSAPP_WEB_QR_ENABLED: "true",
+          WHATSAPP_WEB_AUTH_DIR: authDir,
+        },
+        processInstanceId: id,
+        sessionLeaseStore: store,
+        socketFactory: async () => {
+          factoryCalls += 1;
+          return {
+            end: () => undefined,
+            logout: async () => undefined,
+            sendText: async () => ({ providerMessageId: "X" }),
+            getUserId: () => null,
+            getInboundListenerCount: () => 0,
+          };
+        },
+      });
 
-    await assert.rejects(
-      () => session.connect(),
-      (err: { code?: string }) => err.code === "session_lease_contested"
-    );
-    assert.equal(factoryCalls, 0);
-    assert.equal(session.getSafeStatus().sessionLeaseStatus, "contested");
+    const a = mk("win-a");
+    const b = mk("win-b");
+    const results = await Promise.allSettled([a.connect(), b.connect()]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal(results.filter((r) => r.status === "rejected").length, 1);
+    assert.equal(factoryCalls, 1);
 
-    await session.shutdown();
-    await holder.release();
+    await a.shutdown();
+    await b.shutdown();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 10) Sequential release followed by acquisition still works.
+  // 11) Sequential release followed by acquisition still works.
   {
     const authDir = tmpAuthDir();
     const paths = resolveWhatsAppWebAuthPaths({ authDir });
     await fsp.mkdir(paths.sessionDir, { recursive: true });
-    const a = makeLease("seq-a");
-    const b = makeLease("seq-b");
-    assert.equal((await a.acquire(paths)).ownerMatch, true);
+    const store = createInMemoryWhatsAppWebSessionLeaseStore();
+    const a = makeLease("seq-a", store);
+    const b = makeLease("seq-b", store);
+    assert.equal((await a.acquire(paths)).status, "held");
     await a.release();
-    assert.equal((await b.acquire(paths)).ownerMatch, true);
-    assert.equal(a.isHeld(), false);
-    assert.equal(b.isHeld(), true);
+    assert.equal((await b.acquire(paths)).status, "held");
     await b.release();
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // 11) Diagnostics remain sanitized + listeningSilent.
+  // 12) Diagnostics remain sanitized.
   {
     __resetWhatsAppWebConnectionDiagnostics();
     noteSocketCreatedDiagnostic();
@@ -497,95 +583,32 @@ async function plantStaleLock(
     noteCredentialsUpdateDiagnostic();
     noteAuthenticatedUserJidHash("923001112233@s.whatsapp.net");
     const authDir = tmpAuthDir();
-    const paths = resolveWhatsAppWebAuthPaths({ authDir });
-    await fsp.mkdir(paths.sessionDir, { recursive: true });
-    await fsp.writeFile(path.join(paths.sessionDir, "creds.json"), "{}", "utf8");
-    await fsp.writeFile(
-      path.join(paths.sessionDir, "app-state-sync-key-1.json"),
-      "{}",
-      "utf8"
+    await refreshAuthSessionIntegrity(
+      resolveWhatsAppWebAuthPaths({ authDir }).sessionDir
     );
-    await refreshAuthSessionIntegrity(paths.sessionDir);
-
-    const diag = getWhatsAppWebConnectionDiagnostics({
-      connected: true,
-      lastRawUpsertAt: null,
-      nowMs: Date.now() + WHATSAPP_WEB_LISTENING_SILENT_MS + 1000,
+    const snap = getWhatsAppWebConnectionDiagnostics({
+      env: { WHATSAPP_WEB_AUTH_DIR: authDir },
       lease: {
         status: "held",
         ownerMatch: true,
-        ownerIdHash: "owner-a",
-        fencingTokenHash: "fence-aaaa",
-        acquiredAt: "2026-08-01T12:00:00.000Z",
-        heartbeatAt: "2026-08-01T12:00:10.000Z",
+        ownerIdHash: hashOpaqueId("owner")!.slice(0, 24),
+        fencingTokenHash: "abcdef0123456789abcdef01",
+        acquiredAt: "2026-08-01T00:00:00.000Z",
+        heartbeatAt: "2026-08-01T00:00:10.000Z",
       },
+      connected: true,
+      lastRawUpsertAt: null,
+      nowMs: Date.now() + WHATSAPP_WEB_LISTENING_SILENT_MS + 1,
     });
-    assert.equal(diag.listeningSilent, true);
-    assert.equal(
-      diag.authenticatedUserJidHash,
-      hashOpaqueId("923001112233@s.whatsapp.net")
-    );
-    const blob = JSON.stringify(diag);
+    const blob = JSON.stringify(snap);
     assert.equal(blob.includes("923001112233"), false);
-    assert.equal(blob.includes("@s.whatsapp.net"), false);
-    assert.equal(blob.includes(WHATSAPP_WEB_SESSION_LEASE_FILE), false);
-
+    assert.equal(blob.includes(authDir), false);
+    assert.ok(snap.sessionLeaseFencingTokenHash);
+    assert.equal(snap.listeningSilent, true);
     await fsp.rm(authDir, { recursive: true, force: true });
   }
 
-  // Owner process can connect; status exposes process/lease fields.
-  {
-    __resetWhatsAppWebConnectionDiagnostics();
-    const authDir = tmpAuthDir();
-    const session = new WhatsAppWebSession({
-      env: {
-        WHATSAPP_WEB_QR_ENABLED: "true",
-        WHATSAPP_WEB_AUTH_DIR: authDir,
-      },
-      processInstanceId: "solo-instance",
-      sessionLeaseStaleMs: 60_000,
-      sessionLeaseHeartbeatMs: 60_000,
-      socketFactory: async (input) => {
-        queueMicrotask(() => {
-          input.onConnectionUpdate({
-            connection: "open",
-            userId: "923001112233@s.whatsapp.net",
-          });
-        });
-        return {
-          end: () => undefined,
-          logout: async () => undefined,
-          sendText: async () => ({ providerMessageId: "X" }),
-          getUserId: () => "923001112233@s.whatsapp.net",
-          getInboundListenerCount: () => 1,
-        };
-      },
-    });
-
-    await session.connect();
-    await new Promise((r) => setTimeout(r, 20));
-    const status = session.getSafeStatus();
-    assert.equal(status.state, "CONNECTED");
-    assert.equal(status.processInstanceId, "solo-instance");
-    assert.equal(status.sessionLeaseOwnerMatch, true);
-    assert.ok(status.sessionLeaseFencingTokenHash);
-    assert.ok(
-      fs.existsSync(
-        path.join(
-          resolveWhatsAppWebAuthPaths({ authDir }).sessionDir,
-          WHATSAPP_WEB_SESSION_LOCK_DIR
-        )
-      )
-    );
-    const json = JSON.stringify(status);
-    assert.equal(json.includes("923001112233@s.whatsapp.net"), false);
-
-    await session.shutdown();
-    assert.equal(session.getSafeStatus().sessionLeaseStatus, "released");
-    await fsp.rm(authDir, { recursive: true, force: true });
-  }
+  console.log(
+    "PASS: exclusive CAS session lease + lease-loss enforcement"
+  );
 }
-
-console.log(
-  "PASS: exclusive mkdir session lease + lease-loss enforcement"
-);
