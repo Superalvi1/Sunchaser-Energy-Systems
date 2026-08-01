@@ -64,6 +64,23 @@ function status(
     reconnectAttempt: partial.reconnectAttempt ?? 0,
     lastDisconnectClassification: partial.lastDisconnectClassification ?? null,
     credentialsAvailable: partial.credentialsAvailable ?? false,
+    processInstanceId: partial.processInstanceId ?? "proc:test",
+    processPid: partial.processPid ?? 1,
+    hostHash: partial.hostHash ?? null,
+    lastConnectionUpdateAt: partial.lastConnectionUpdateAt ?? null,
+    lastConnectionState: partial.lastConnectionState ?? null,
+    lastConnectionReason: partial.lastConnectionReason ?? null,
+    lastCredentialsUpdateAt: partial.lastCredentialsUpdateAt ?? null,
+    authenticatedUserJidHash: partial.authenticatedUserJidHash ?? null,
+    socketCreatedAt: partial.socketCreatedAt ?? null,
+    sessionLeaseStatus: partial.sessionLeaseStatus ?? null,
+    sessionLeaseOwnerMatch: partial.sessionLeaseOwnerMatch ?? false,
+    sessionLeaseOwnerId: partial.sessionLeaseOwnerId ?? null,
+    sessionLeaseAcquiredAt: partial.sessionLeaseAcquiredAt ?? null,
+    sessionLeaseHeartbeatAt: partial.sessionLeaseHeartbeatAt ?? null,
+    credentialsFilePresent: partial.credentialsFilePresent ?? null,
+    authKeyFileCount: partial.authKeyFileCount ?? null,
+    listeningSilent: partial.listeningSilent ?? false,
   };
 }
 
