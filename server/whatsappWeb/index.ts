@@ -92,6 +92,27 @@ export {
   resolveWhatsAppWebSessionLeaseKey,
   WHATSAPP_WEB_SESSION_LEASE_TABLE,
 } from "./whatsappWebSessionLeaseStore.ts";
+export {
+  createInMemoryWhatsAppWebOwnerDiagnosticsStore,
+  deriveWhatsAppWebInboundHealth,
+  getWhatsAppWebBuildIdentity,
+  WHATSAPP_WEB_INBOUND_HEALTH_STATES,
+  WHATSAPP_WEB_OWNER_DIAGNOSTICS_TABLE,
+  __resetSharedInMemoryWhatsAppWebOwnerDiagnosticsStore,
+} from "./whatsappWebOwnerDiagnosticsStore.ts";
+export {
+  resolveDefaultWhatsAppWebOwnerDiagnosticsStore,
+  tryCreateWhatsAppWebOwnerDiagnosticsSqlStore,
+} from "./whatsappWebOwnerDiagnosticsSql.ts";
+export {
+  createLeaseNotOwnedError,
+  isLeaseRowActive,
+  mergeOwnerAwareSafeStatus,
+} from "./whatsappWebOwnerControl.ts";
+export {
+  WHATSAPP_WEB_LEASE_NOT_OWNED_CODE,
+  WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE,
+} from "./whatsappWebTypes.ts";
 
 export {
   persistWhatsAppWebInbound,

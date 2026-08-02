@@ -52,8 +52,21 @@ import { WhatsAppWebSessionLease } from "./whatsappWebSessionLease.ts";
 import { tryCreateWhatsAppWebSessionLeaseSqlStore } from "./whatsappWebSessionLeaseSql.ts";
 import {
   getSharedInMemoryWhatsAppWebSessionLeaseStore,
+  resolveWhatsAppWebSessionLeaseKey,
+  type WhatsAppWebLeaseRow,
   type WhatsAppWebSessionLeaseStore,
 } from "./whatsappWebSessionLeaseStore.ts";
+import {
+  deriveWhatsAppWebInboundHealth,
+  getWhatsAppWebBuildIdentity,
+  type WhatsAppWebOwnerDiagnosticsStore,
+} from "./whatsappWebOwnerDiagnosticsStore.ts";
+import { resolveDefaultWhatsAppWebOwnerDiagnosticsStore } from "./whatsappWebOwnerDiagnosticsSql.ts";
+import {
+  createLeaseNotOwnedError,
+  isLeaseRowActive,
+  mergeOwnerAwareSafeStatus,
+} from "./whatsappWebOwnerControl.ts";
 import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
@@ -313,22 +326,27 @@ type LongLike = { low: number; high?: number; unsigned?: boolean };
 export type TrackedMessagesUpsertBinding = {
   /** Tracked attachment count for this handle (0 or 1). Never invents a fallback. */
   getInboundListenerCount: () => number;
-  /** Detach only the registered named upsert handler. */
+  /** Detach only the registered named upsert handler for this binding. */
   detach: () => void;
+  /** Socket generation this listener was bound for. */
+  generation: number;
 };
 
 /**
  * Register a named messages.upsert handler and track attachment without
  * relying on EventEmitter.listenerCount (unavailable on Baileys sock.ev).
+ * Detach only removes THIS binding — never another generation's listener.
  */
 export function attachTrackedMessagesUpsertListener(
   ev: WhatsAppWebBaileysUpsertEventBus,
-  onMessagesUpsert: (upsert: WhatsAppWebMessagesUpsert) => void
+  onMessagesUpsert: (upsert: WhatsAppWebMessagesUpsert) => void,
+  generation = 0
 ): TrackedMessagesUpsertBinding {
   let attached = false;
   ev.on("messages.upsert", onMessagesUpsert);
   attached = true;
   return {
+    generation,
     getInboundListenerCount: () => (attached ? 1 : 0),
     detach: () => {
       if (!attached) return;
@@ -363,6 +381,10 @@ export type WhatsAppWebSocketFactory = (input: {
   onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
   onCredentialsSaved: () => void;
   onInbound: WhatsAppWebInboundHandler;
+  /** Return false to drop the upsert (stale generation). */
+  onRawUpsert?: () => boolean;
+  /** Socket generation for tracked listener binding. */
+  socketGeneration?: number;
 }) => Promise<WhatsAppWebSocketHandle>;
 
 export type WhatsAppWebSessionOptions = {
@@ -387,6 +409,8 @@ export type WhatsAppWebSessionOptions = {
   sessionLeaseStaleMs?: number;
   /** Injectable lease store (tests share an in-memory CAS store). */
   sessionLeaseStore?: WhatsAppWebSessionLeaseStore;
+  /** Injectable owner diagnostics store (tests share CAS store). */
+  ownerDiagnosticsStore?: WhatsAppWebOwnerDiagnosticsStore;
 };
 
 async function defaultSocketFactory(input: {
@@ -395,6 +419,8 @@ async function defaultSocketFactory(input: {
   onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
   onCredentialsSaved: () => void;
   onInbound: WhatsAppWebInboundHandler;
+  onRawUpsert?: () => boolean;
+  socketGeneration?: number;
 }): Promise<WhatsAppWebSocketHandle> {
   const baileys = await import("@whiskeysockets/baileys");
   const {
@@ -511,7 +537,13 @@ async function defaultSocketFactory(input: {
 
   // Named handler so sock.ev.off can detach exactly this listener.
   function onMessagesUpsert(upsert: WhatsAppWebMessagesUpsert): void {
-    noteInboundRawUpsert();
+    if (input.onRawUpsert && !input.onRawUpsert()) {
+      noteInboundIgnored("stale_socket");
+      return;
+    }
+    if (!input.onRawUpsert) {
+      noteInboundRawUpsert();
+    }
     const messages = upsert.messages ?? [];
     // Baileys online receipts use "notify"; offline-flagged nodes use "append".
     // Both must reach the live inbound pipeline; unsupported types are ignored.
@@ -582,7 +614,8 @@ async function defaultSocketFactory(input: {
 
   const upsertBinding = attachTrackedMessagesUpsertListener(
     sock.ev as unknown as WhatsAppWebBaileysUpsertEventBus,
-    onMessagesUpsert
+    onMessagesUpsert,
+    input.socketGeneration ?? 0
   );
 
   return {
@@ -653,7 +686,10 @@ export class WhatsAppWebSession {
   private readonly scheduledReconnectDelays: number[] = [];
   private readonly processInstanceId: string;
   private readonly sessionLease: WhatsAppWebSessionLease | null;
+  private readonly ownerDiagnosticsStore: WhatsAppWebOwnerDiagnosticsStore;
   private leaseLostHandled = false;
+  /** Generation of the currently authoritative upsert binding. */
+  private activeUpsertGeneration = 0;
 
   constructor(options: WhatsAppWebSessionOptions = {}) {
     this.env = options.env ?? process.env;
@@ -668,6 +704,9 @@ export class WhatsAppWebSession {
     this.updatedAt = this.now().toISOString();
     this.processInstanceId =
       options.processInstanceId ?? getWhatsAppWebProcessInstanceId(this.env);
+    this.ownerDiagnosticsStore =
+      options.ownerDiagnosticsStore ??
+      resolveDefaultWhatsAppWebOwnerDiagnosticsStore(this.env);
     this.sessionLease =
       options.disableSessionLease === true
         ? null
@@ -766,7 +805,42 @@ export class WhatsAppWebSession {
       credentialsFilePresent: connection.credentialsFilePresent,
       authKeyFileCount: connection.authKeyFileCount,
       listeningSilent: connection.listeningSilent,
+      inboundHealth: deriveWhatsAppWebInboundHealth({
+        leaseOwned: connection.sessionLeaseOwnerMatch === true,
+        socketOpen,
+        inboundListenerOperational,
+        lastRawUpsertAt: inbound.lastRawUpsertAt,
+        lastAcceptedEventAt: inbound.lastInboundEventAt,
+        lastStoredMessageAt: inbound.lastInboundStoredAt,
+      }),
+      servingProcessInstanceId: this.processInstanceId,
+      ownerProcessInstanceId: connection.sessionLeaseOwnerId,
+      fencingVersion: this.sessionLease?.getFence()?.fencingVersion ?? null,
+      buildIdentity: getWhatsAppWebBuildIdentity(this.env),
+      durableOwnerMatch: connection.sessionLeaseOwnerMatch === true,
+      leaseRetryGuidance: null,
     };
+  }
+
+  /**
+   * Browser/CRM status: merges durable owner diagnostics so non-owner processes
+   * report the lease owner's truth instead of local zombie CONNECTED state.
+   */
+  async getPublicStatus(): Promise<WhatsAppWebSafeStatus> {
+    const local = this.getSafeStatus();
+    const durable = await this.readDurableLeaseAndDiagnostics();
+    const merged = mergeOwnerAwareSafeStatus({
+      local,
+      servingProcessInstanceId: this.processInstanceId,
+      durableLease: durable.lease,
+      durableDiagnostics: durable.diagnostics,
+      nowMs: this.now().getTime(),
+      env: this.env,
+    });
+    if (merged.durableOwnerMatch) {
+      void this.publishOwnerDiagnostics();
+    }
+    return merged;
   }
 
   async getQrPayload(): Promise<WhatsAppWebQrPayload | null> {
@@ -830,6 +904,7 @@ export class WhatsAppWebSession {
 
   /**
    * Start / resume connection. Marks connection as desired.
+   * Refuses to steal a healthy unexpired foreign lease (409 whatsapp_lease_not_owned).
    */
   async connect(): Promise<WhatsAppWebSafeStatus> {
     const config = this.getConfig();
@@ -843,6 +918,8 @@ export class WhatsAppWebSession {
     await ensureWhatsAppWebAuthDirWritable(this.paths);
     await refreshAuthSessionIntegrity(this.paths.sessionDir);
 
+    await this.assertNoForeignActiveLease();
+
     const leaseOk = await this.ensureSessionLease();
     if (!leaseOk) {
       this.connectionDesired = false;
@@ -850,10 +927,7 @@ export class WhatsAppWebSession {
         "ERROR",
         "Another process holds the WhatsApp session lease; keep a single Render instance"
       );
-      throw Object.assign(
-        new Error("WhatsApp Web session lease is held by another process"),
-        { code: "session_lease_contested" }
-      );
+      throw await this.buildLeaseNotOwnedError("contested");
     }
 
     this.connectionDesired = true;
@@ -871,15 +945,18 @@ export class WhatsAppWebSession {
       this.state === "CONNECTING" ||
       this.state === "RECONNECTING"
     ) {
-      return this.getSafeStatus();
+      await this.publishOwnerDiagnostics();
+      return this.getPublicStatus();
     }
 
     await this.startSocket("CONNECTING");
-    return this.getSafeStatus();
+    await this.publishOwnerDiagnostics();
+    return this.getPublicStatus();
   }
 
   /** Soft disconnect — not desired; never auto-reconnect; keep credentials. */
   async disconnect(): Promise<WhatsAppWebSafeStatus> {
+    await this.assertSocketOwnerForMutation();
     this.connectionDesired = false;
     this.cancelHistorySync("disconnect");
     this.clearReconnectTimer();
@@ -897,13 +974,15 @@ export class WhatsAppWebSession {
     this.clearQr();
     await this.releaseSessionLease();
     this.setState("DISCONNECTED", "Disconnected (session retained)");
-    return this.getSafeStatus();
+    await this.publishOwnerDiagnostics();
+    return this.getPublicStatus();
   }
 
   /**
    * Logout — not desired; never reconnect; delete only contained session dir.
    */
   async logout(): Promise<WhatsAppWebSafeStatus> {
+    await this.assertSocketOwnerForMutation();
     this.connectionDesired = false;
     this.cancelHistorySync("logout");
     this.clearReconnectTimer();
@@ -917,7 +996,7 @@ export class WhatsAppWebSession {
       this.credentialsAvailable = false;
       this.clearQr();
       this.setState("LOGGED_OUT", "Logged out");
-      return this.getSafeStatus();
+      return this.getPublicStatus();
     }
     assertWhatsAppWebAuthDirReady({
       ...config,
@@ -948,7 +1027,8 @@ export class WhatsAppWebSession {
     await this.releaseSessionLease();
     await refreshAuthSessionIntegrity(paths.sessionDir);
     this.setState("LOGGED_OUT", "Logged out; session removed");
-    return this.getSafeStatus();
+    await this.publishOwnerDiagnostics();
+    return this.getPublicStatus();
   }
 
   async sendText(
@@ -970,6 +1050,7 @@ export class WhatsAppWebSession {
   /**
    * Admin contact + 7-day history sync (single-flight).
    * Never sends messages or triggers AI.
+   * Prefer startHistorySyncOwned() from HTTP routes (lease gate).
    */
   startHistorySync(): {
     accepted: boolean;
@@ -982,6 +1063,15 @@ export class WhatsAppWebSession {
       joinedExisting: result.joinedExisting,
       snapshot: result.snapshot,
     };
+  }
+
+  async startHistorySyncOwned(): Promise<{
+    accepted: boolean;
+    joinedExisting: boolean;
+    snapshot: WhatsAppWebSyncJobSnapshot;
+  }> {
+    await this.assertSocketOwnerForMutation();
+    return this.startHistorySync();
   }
 
   async getHistorySyncSnapshot(): Promise<WhatsAppWebSyncJobSnapshot> {
@@ -1218,6 +1308,15 @@ export class WhatsAppWebSession {
           this.credentialsAvailable = true;
           logWhatsAppWeb("info", "credentials_saved");
         },
+        onRawUpsert: () => {
+          if (generation !== this.socketGeneration) {
+            return false;
+          }
+          noteInboundRawUpsert();
+          void this.publishOwnerDiagnostics();
+          return true;
+        },
+        socketGeneration: generation,
         onInbound: async (message) => {
           if (generation !== this.socketGeneration) {
             // Privacy-safe: prove events arrived but belonged to a closed socket.
@@ -1227,6 +1326,7 @@ export class WhatsAppWebSession {
           if (this.inboundHandler) {
             await this.inboundHandler(message);
           }
+          void this.publishOwnerDiagnostics();
         },
       });
 
@@ -1240,7 +1340,9 @@ export class WhatsAppWebSession {
         return;
       }
 
+      this.activeUpsertGeneration = generation;
       this.socket = handle;
+      await this.publishOwnerDiagnostics();
     } catch (err) {
       if (generation === this.socketGeneration) {
         this.socket = null;
@@ -1270,6 +1372,7 @@ export class WhatsAppWebSession {
     const ok = this.sessionLease.isHeld();
     if (ok) {
       this.leaseLostHandled = false;
+      await this.publishOwnerDiagnostics();
     }
     logWhatsAppWeb(ok ? "info" : "warn", "session_lease_acquire", {
       status: snap.status,
@@ -1281,6 +1384,132 @@ export class WhatsAppWebSession {
   private async releaseSessionLease(): Promise<void> {
     if (!this.sessionLease) return;
     await this.sessionLease.release();
+  }
+
+  private resolveSessionKeyOrNull(): string | null {
+    try {
+      if (this.paths) {
+        return resolveWhatsAppWebSessionLeaseKey(this.paths.sessionDir);
+      }
+      const config = this.getConfig();
+      if (!config.authDir) return null;
+      const paths = resolveWhatsAppWebAuthPaths(config);
+      return resolveWhatsAppWebSessionLeaseKey(paths.sessionDir);
+    } catch {
+      return null;
+    }
+  }
+
+  private async readDurableLeaseAndDiagnostics(): Promise<{
+    lease: WhatsAppWebLeaseRow | null;
+    diagnostics: Awaited<
+      ReturnType<WhatsAppWebOwnerDiagnosticsStore["read"]>
+    >;
+  }> {
+    const sessionKey = this.resolveSessionKeyOrNull();
+    if (!sessionKey || !this.sessionLease) {
+      return { lease: null, diagnostics: null };
+    }
+    const lease = await this.sessionLease.readDurableLease(sessionKey);
+    const diagnostics = await this.ownerDiagnosticsStore.read(sessionKey);
+    return { lease, diagnostics };
+  }
+
+  private async assertNoForeignActiveLease(): Promise<void> {
+    if (!this.sessionLease) return;
+    const { lease } = await this.readDurableLeaseAndDiagnostics();
+    if (
+      isLeaseRowActive(lease, this.now().getTime()) &&
+      lease.ownerId !== this.processInstanceId
+    ) {
+      throw await this.buildLeaseNotOwnedError("contested", lease);
+    }
+  }
+
+  private async assertSocketOwnerForMutation(): Promise<void> {
+    if (!this.sessionLease) return;
+    if (!this.paths) {
+      const config = this.getConfig();
+      if (config.authDir) {
+        this.paths = resolveWhatsAppWebAuthPaths(config);
+      }
+    }
+    const { lease } = await this.readDurableLeaseAndDiagnostics();
+    const nowMs = this.now().getTime();
+    if (!isLeaseRowActive(lease, nowMs)) {
+      // No healthy foreign lease — local cleanup is allowed.
+      return;
+    }
+    if (lease.ownerId !== this.processInstanceId) {
+      throw await this.buildLeaseNotOwnedError("contested", lease);
+    }
+    if (!this.sessionLease.isHeld()) {
+      throw await this.buildLeaseNotOwnedError("contested", lease);
+    }
+  }
+
+  private async buildLeaseNotOwnedError(
+    status: string,
+    lease?: WhatsAppWebLeaseRow | null
+  ): Promise<Error> {
+    const durable = lease
+      ? { lease, diagnostics: null }
+      : await this.readDurableLeaseAndDiagnostics();
+    const row = durable.lease;
+    return createLeaseNotOwnedError({
+      servingProcessInstanceId: this.processInstanceId,
+      ownerProcessInstanceId: row?.ownerId ?? null,
+      sessionLeaseStatus: status,
+      fencingVersion: row?.fencingVersion ?? null,
+    });
+  }
+
+  private async publishOwnerDiagnostics(): Promise<void> {
+    if (!this.sessionLease) return;
+    const fence = this.sessionLease.getFence();
+    if (!fence) return;
+    const local = this.getSafeStatus();
+    const inbound = getWhatsAppWebInboundDiagnostics();
+    const inboundHealth = deriveWhatsAppWebInboundHealth({
+      leaseOwned: true,
+      socketOpen: local.socketOpen,
+      inboundListenerOperational: local.inboundListenerOperational,
+      lastRawUpsertAt: inbound.lastRawUpsertAt,
+      lastAcceptedEventAt: inbound.lastInboundEventAt,
+      lastStoredMessageAt: inbound.lastInboundStoredAt,
+    });
+    await this.ownerDiagnosticsStore.write(
+      fence,
+      this.processInstanceId,
+      {
+        ownerProcessInstanceId: this.processInstanceId,
+        connectionGeneration: this.socketGeneration,
+        lifecycleState: this.state,
+        socketOpen: local.socketOpen,
+        inboundListenerAttached: local.inboundListenerAttached,
+        inboundListenerOperational: local.inboundListenerOperational,
+        inboundHealth,
+        lastConnectionAt: local.lastConnectionUpdateAt,
+        lastHeartbeatAt:
+          this.sessionLease.getSnapshot().heartbeatAt ??
+          this.now().toISOString(),
+        lastRawUpsertAt: inbound.lastRawUpsertAt,
+        lastAcceptedEventAt: inbound.lastInboundEventAt,
+        lastStoredMessageAt: inbound.lastInboundStoredAt,
+        lastFailureCode: inbound.lastPersistFailureCode,
+        buildIdentity: getWhatsAppWebBuildIdentity(this.env),
+      }
+    );
+  }
+
+  /** Test-only: publish diagnostics using current fence. */
+  async __testPublishOwnerDiagnostics(): Promise<void> {
+    await this.publishOwnerDiagnostics();
+  }
+
+  /** Test-only: access owner diagnostics store. */
+  __testGetOwnerDiagnosticsStore(): WhatsAppWebOwnerDiagnosticsStore {
+    return this.ownerDiagnosticsStore;
   }
 
   /**
@@ -1365,6 +1594,7 @@ export class WhatsAppWebSession {
       noteConnectionUpdateDiagnostic({ state: "open", reason: "open" });
       void refreshAuthSessionIntegrity(this.paths?.sessionDir);
       this.setState("CONNECTED", "WhatsApp Web connected");
+      void this.publishOwnerDiagnostics();
       return;
     }
 

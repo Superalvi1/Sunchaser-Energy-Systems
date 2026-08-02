@@ -16,6 +16,21 @@ export const WHATSAPP_WEB_LIFECYCLE_STATES = [
 export type WhatsAppWebLifecycleState =
   (typeof WHATSAPP_WEB_LIFECYCLE_STATES)[number];
 
+export const WHATSAPP_WEB_LEASE_NOT_OWNED_CODE = "whatsapp_lease_not_owned";
+
+export const WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE =
+  "This process does not own the WhatsApp session lease. Retry against the lease owner or wait for deploy overlap to finish.";
+
+export type WhatsAppWebLeaseNotOwnedDetails = {
+  code: typeof WHATSAPP_WEB_LEASE_NOT_OWNED_CODE;
+  servingProcessInstanceId: string;
+  ownerProcessInstanceId: string | null;
+  sessionLeaseStatus: string;
+  sessionLeaseOwnerMatch: false;
+  fencingVersion: number | null;
+  retryGuidance: string;
+};
+
 /** Safe status payload for Admin API / CRM panel. */
 export type WhatsAppWebSafeStatus = {
   enabled: boolean;
@@ -94,10 +109,32 @@ export type WhatsAppWebSafeStatus = {
   /** Count of Baileys key JSON files beside creds (no contents). */
   authKeyFileCount: number | null;
   /**
-   * True when CONNECTED with an operational listener but no messages.upsert
-   * has been observed since socket creation (silence threshold).
-   */
+ * True when CONNECTED with an operational listener but no messages.upsert
+ * has been observed since socket creation (silence threshold).
+ */
   listeningSilent: boolean;
+  /**
+   * Inbound readiness classification. LIVE_INBOUND_CONFIRMED requires an
+   * observed upsert/accepted/stored event — never inferred from socketOpen alone.
+   */
+  inboundHealth:
+    | "CONNECTED_SOCKET"
+    | "LISTENER_READY"
+    | "LIVE_INBOUND_CONFIRMED"
+    | "INBOUND_SILENT"
+    | "LEASE_NOT_OWNED";
+  /** Process that answered this HTTP request. */
+  servingProcessInstanceId: string;
+  /** Durable lease owner process id (when known). */
+  ownerProcessInstanceId: string | null;
+  /** Durable fencing version (never the owner_token secret). */
+  fencingVersion: number | null;
+  /** Deploy/build identity (Render git commit / SOURCE_VERSION). */
+  buildIdentity: string | null;
+  /** True when durable lease owner matches the serving process. */
+  durableOwnerMatch: boolean;
+  /** Operator guidance when lease is not owned by this process. */
+  leaseRetryGuidance: string | null;
 };
 
 export type WhatsAppWebQrPayload = {

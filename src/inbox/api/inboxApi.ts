@@ -428,6 +428,18 @@ export type WhatsAppWebSafeStatus = {
   credentialsFilePresent?: boolean | null;
   authKeyFileCount?: number | null;
   listeningSilent?: boolean;
+  inboundHealth?:
+    | "CONNECTED_SOCKET"
+    | "LISTENER_READY"
+    | "LIVE_INBOUND_CONFIRMED"
+    | "INBOUND_SILENT"
+    | "LEASE_NOT_OWNED";
+  servingProcessInstanceId?: string;
+  ownerProcessInstanceId?: string | null;
+  fencingVersion?: number | null;
+  buildIdentity?: string | null;
+  durableOwnerMatch?: boolean;
+  leaseRetryGuidance?: string | null;
 };
 
 export type WhatsAppWebQrPayload = {
