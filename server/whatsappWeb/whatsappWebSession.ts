@@ -41,10 +41,14 @@ import {
   clearWhatsAppWebInboundLiveTimestamps,
 } from "./whatsappWebInboundDiagnostics.ts";
 import {
+  clearProtocolReadinessForNewGeneration,
   getWhatsAppWebConnectionDiagnostics,
   noteAuthenticatedUserJidHash,
+  noteConnectionOpenDiagnostic,
+  noteConnectionReadiness,
   noteConnectionUpdateDiagnostic,
   noteCredentialsUpdateDiagnostic,
+  noteProtocolEvent,
   noteSocketCreatedDiagnostic,
   refreshAuthSessionIntegrity,
 } from "./whatsappWebConnectionDiagnostics.ts";
@@ -281,6 +285,15 @@ export type WhatsAppWebConnectionUpdate = {
   statusCode?: number;
   /** Resolved at open time — not captured before connect. */
   userId?: string | null;
+  /**
+   * Baileys readiness fields from connection.update — Phase 1 observability only.
+   * Never includes phones, credentials, session keys, or raw errors.
+   * All fields are optional; absent means Baileys did not include them.
+   */
+  receivedPendingNotifications?: boolean | null;
+  isOnline?: boolean | null;
+  isNewLogin?: boolean | null;
+  phoneConnected?: boolean | null;
 };
 
 /** Upsert types that may carry live customer inbound (Baileys online/offline). */
@@ -456,11 +469,16 @@ async function defaultSocketFactory(input: {
     sock.fetchMessageHistory(count, oldestMsgKey as never, oldestMsgTimestamp)
   );
 
+  const gen = input.socketGeneration ?? 0;
+
   sock.ev.on("creds.update", () => {
+    noteProtocolEvent({ eventName: "creds.update", generation: gen });
     void saveCreds().then(() => input.onCredentialsSaved());
   });
 
   sock.ev.on("connection.update", (update) => {
+    noteProtocolEvent({ eventName: "connection.update", generation: gen });
+
     const qr = (update as { qr?: string }).qr;
     if (typeof qr === "string" && qr.trim()) {
       input.onQr(qr);
@@ -476,9 +494,28 @@ async function defaultSocketFactory(input: {
             oldestMsgTimestamp
           )
       );
+      // Record connection-open timestamp and readiness fields. Phase 1 observability only.
+      noteConnectionOpenDiagnostic({ generation: gen });
+      const rawUpdate = update as {
+        receivedPendingNotifications?: boolean;
+        isOnline?: boolean;
+        isNewLogin?: boolean;
+        legacy?: { phoneConnected?: boolean };
+      };
+      noteConnectionReadiness({
+        generation: gen,
+        receivedPendingNotifications: rawUpdate.receivedPendingNotifications ?? null,
+        isOnline: rawUpdate.isOnline ?? null,
+        isNewLogin: rawUpdate.isNewLogin ?? null,
+        phoneConnected: rawUpdate.legacy?.phoneConnected ?? null,
+      });
       input.onConnectionUpdate({
         connection: "open",
         userId: sock.user?.id ?? null,
+        receivedPendingNotifications: rawUpdate.receivedPendingNotifications ?? null,
+        isOnline: rawUpdate.isOnline ?? null,
+        isNewLogin: rawUpdate.isNewLogin ?? null,
+        phoneConnected: rawUpdate.legacy?.phoneConnected ?? null,
       });
       return;
     }
@@ -502,30 +539,66 @@ async function defaultSocketFactory(input: {
         connection: "close",
         statusCode,
       });
+      return;
+    }
+
+    // Subsequent connection.update events may carry receivedPendingNotifications=true
+    // after the initial open event. Capture without changing connection lifecycle.
+    const rawUpdateAny = update as {
+      receivedPendingNotifications?: boolean;
+      isOnline?: boolean;
+      isNewLogin?: boolean;
+      legacy?: { phoneConnected?: boolean };
+    };
+    if (
+      update.connection == null &&
+      (rawUpdateAny.receivedPendingNotifications != null ||
+       rawUpdateAny.isOnline != null ||
+       rawUpdateAny.isNewLogin != null ||
+       rawUpdateAny.legacy?.phoneConnected != null)
+    ) {
+      noteConnectionReadiness({
+        generation: gen,
+        receivedPendingNotifications: rawUpdateAny.receivedPendingNotifications ?? null,
+        isOnline: rawUpdateAny.isOnline ?? null,
+        isNewLogin: rawUpdateAny.isNewLogin ?? null,
+        phoneConnected: rawUpdateAny.legacy?.phoneConnected ?? null,
+      });
+      input.onConnectionUpdate({
+        receivedPendingNotifications: rawUpdateAny.receivedPendingNotifications ?? null,
+        isOnline: rawUpdateAny.isOnline ?? null,
+        isNewLogin: rawUpdateAny.isNewLogin ?? null,
+        phoneConnected: rawUpdateAny.legacy?.phoneConnected ?? null,
+      });
     }
   });
 
   sock.ev.on("contacts.upsert", (contacts) => {
+    noteProtocolEvent({ eventName: "contacts.upsert", generation: gen });
     syncSource.ingestContacts(
       (contacts ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
   sock.ev.on("contacts.update", (contacts) => {
+    noteProtocolEvent({ eventName: "contacts.update", generation: gen });
     syncSource.ingestContacts(
       (contacts ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
   sock.ev.on("chats.upsert", (chats) => {
+    noteProtocolEvent({ eventName: "chats.upsert", generation: gen });
     syncSource.ingestChats(
       (chats ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
   sock.ev.on("chats.update", (chats) => {
+    noteProtocolEvent({ eventName: "chats.update", generation: gen });
     syncSource.ingestChats(
       (chats ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
   sock.ev.on("messaging-history.set", (payload) => {
+    noteProtocolEvent({ eventName: "messaging-history.set", generation: gen });
     const p = payload as unknown as {
       chats?: Array<Record<string, unknown>>;
       contacts?: Array<Record<string, unknown>>;
@@ -542,6 +615,7 @@ async function defaultSocketFactory(input: {
       noteInboundIgnored("stale_socket");
       return;
     }
+    noteProtocolEvent({ eventName: "messages.upsert", generation: gen });
     if (!input.onRawUpsert) {
       noteInboundRawUpsert();
     }
@@ -823,6 +897,7 @@ export class WhatsAppWebSession {
       credentialsFilePresent: connection.credentialsFilePresent,
       authKeyFileCount: connection.authKeyFileCount,
       listeningSilent: connection.listeningSilent,
+      protocolReadiness: connection.protocolReadiness,
       inboundHealth: deriveWhatsAppWebInboundHealth({
         leaseOwned: connection.sessionLeaseOwnerMatch === true,
         socketOpen,
@@ -1297,6 +1372,7 @@ export class WhatsAppWebSession {
     );
 
     const generation = ++this.socketGeneration;
+    clearProtocolReadinessForNewGeneration(generation);
     // New generation starts without live-inbound confirmation from history.
     clearWhatsAppWebInboundLiveTimestamps();
     this.liveInboundSocketGeneration = null;
@@ -1520,6 +1596,8 @@ export class WhatsAppWebSession {
       socketOpen: local.socketOpen,
       inboundListenerOperational: local.inboundListenerOperational,
       liveInboundConfirmed,
+      protocolEventActive: local.protocolReadiness.lastProtocolEventAt !== null &&
+        local.protocolReadiness.protocolEventCounts["messages.upsert"] === 0,
     });
     await this.ownerDiagnosticsStore.write(
       fence,

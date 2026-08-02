@@ -14,6 +14,10 @@ export const WHATSAPP_WEB_OWNER_DIAGNOSTICS_TABLE =
 export const WHATSAPP_WEB_INBOUND_HEALTH_STATES = [
   "CONNECTED_SOCKET",
   "LISTENER_READY",
+  /** Socket open, listener operational, at least one non-upsert protocol event received but no live messages.upsert confirmed yet. Observability only. */
+  "AWAITING_PROTOCOL_SYNC",
+  /** Socket open, listener operational, raw messages.upsert arrived but no stored message accepted into inbox yet. Observability only. */
+  "PROTOCOL_ACTIVE_INBOUND_UNCONFIRMED",
   "LIVE_INBOUND_CONFIRMED",
   "INBOUND_SILENT",
   "LEASE_NOT_OWNED",
@@ -133,6 +137,8 @@ export function deriveWhatsAppWebInboundHealth(input: {
   lastRawUpsertAt?: string | null;
   lastAcceptedEventAt?: string | null;
   lastStoredMessageAt?: string | null;
+  /** True when non-upsert protocol events have been observed (Phase 1 observability only). */
+  protocolEventActive?: boolean;
 }): WhatsAppWebInboundHealth {
   if (!input.leaseOwned) return "LEASE_NOT_OWNED";
   const liveConfirmed =
@@ -147,6 +153,12 @@ export function deriveWhatsAppWebInboundHealth(input: {
     return "LIVE_INBOUND_CONFIRMED";
   }
   if (input.socketOpen && input.inboundListenerOperational) {
+    if (input.lastRawUpsertAt && !input.lastStoredMessageAt) {
+      return "PROTOCOL_ACTIVE_INBOUND_UNCONFIRMED";
+    }
+    if (input.protocolEventActive) {
+      return "AWAITING_PROTOCOL_SYNC";
+    }
     return "LISTENER_READY";
   }
   if (input.socketOpen) return "CONNECTED_SOCKET";

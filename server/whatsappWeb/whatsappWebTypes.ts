@@ -120,9 +120,16 @@ export type WhatsAppWebSafeStatus = {
   inboundHealth:
     | "CONNECTED_SOCKET"
     | "LISTENER_READY"
+    | "AWAITING_PROTOCOL_SYNC"
+    | "PROTOCOL_ACTIVE_INBOUND_UNCONFIRMED"
     | "LIVE_INBOUND_CONFIRMED"
     | "INBOUND_SILENT"
     | "LEASE_NOT_OWNED";
+  /**
+   * Protocol readiness diagnostics for the current socket generation.
+   * Never contains credentials, phones, session keys, or raw errors.
+   */
+  protocolReadiness: import("./whatsappWebConnectionDiagnostics.ts").WhatsAppWebProtocolReadiness;
   /** Process that answered this HTTP request. */
   servingProcessInstanceId: string;
   /** Durable lease owner process id (when known). */

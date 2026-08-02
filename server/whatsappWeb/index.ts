@@ -69,11 +69,19 @@ export {
 } from "./whatsappWebInboundDiagnostics.ts";
 
 export {
+  WHATSAPP_WEB_PROTOCOL_EVENT_NAMES,
+  clearProtocolReadinessForNewGeneration,
   getWhatsAppWebConnectionDiagnostics,
-  __resetWhatsAppWebConnectionDiagnostics,
+  noteConnectionOpenDiagnostic,
+  noteConnectionReadiness,
   noteConnectionUpdateDiagnostic,
   noteCredentialsUpdateDiagnostic,
+  noteProtocolEvent,
+  __resetWhatsAppWebConnectionDiagnostics,
   WHATSAPP_WEB_LISTENING_SILENT_MS,
+  type WhatsAppWebProtocolEventName,
+  type WhatsAppWebProtocolEventCounts,
+  type WhatsAppWebProtocolReadiness,
 } from "./whatsappWebConnectionDiagnostics.ts";
 
 export {
