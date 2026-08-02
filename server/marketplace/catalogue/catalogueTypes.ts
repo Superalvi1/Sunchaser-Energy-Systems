@@ -59,6 +59,22 @@ export type CatalogueListFilters = {
   category?: string;
   brand?: string;
   featured?: boolean;
+  /** Skip the first N matching products (server-side, default 0). */
+  offset?: number;
+  /** Maximum products to return; when absent the repository collects all pages. */
+  limit?: number;
+};
+
+/**
+ * Paginated public catalogue result.
+ * `total` is the count of all matching products, accurate even when
+ * `items` is empty (offset beyond the last page).
+ */
+export type CataloguePage = {
+  items: CatalogueProductDto[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type CatalogueErrorBody = {

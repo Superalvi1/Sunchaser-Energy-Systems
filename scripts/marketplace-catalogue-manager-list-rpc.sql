@@ -99,13 +99,18 @@ as $$
   ),
   total_cte as (
     select count(*)::bigint as total from filtered
+  ),
+  paged as (
+    select f.id, tc.total
+    from filtered f cross join total_cte tc
+    order by f.effective_title, f.id
+    offset greatest(0, p_offset)
+    limit greatest(1, least(p_limit, 500))
   )
-  select f.id, tc.total
-  from filtered f
-  cross join total_cte tc
-  order by f.effective_title, f.id
-  offset greatest(0, p_offset)
-  limit greatest(1, least(p_limit, 500))
+  select p.id, p.total from paged p
+  union all
+  select null::text, tc.total from total_cte tc
+  where not exists (select 1 from paged)
 $$;
 
 -- Security: revoke from PUBLIC, anon, authenticated; grant only to service_role
@@ -196,13 +201,18 @@ as $$
   ),
   total_cte as (
     select count(*)::bigint as total from filtered
+  ),
+  paged as (
+    select f.slug, tc.total
+    from filtered f cross join total_cte tc
+    order by f.effective_title, f.id
+    offset greatest(0, p_offset)
+    limit greatest(1, least(p_limit, 500))
   )
-  select f.slug, tc.total
-  from filtered f
-  cross join total_cte tc
-  order by f.effective_title, f.id
-  offset greatest(0, p_offset)
-  limit greatest(1, least(p_limit, 500))
+  select p.slug, p.total from paged p
+  union all
+  select null::text, tc.total from total_cte tc
+  where not exists (select 1 from paged)
 $$;
 
 -- Public RPC: grant to anon and authenticated

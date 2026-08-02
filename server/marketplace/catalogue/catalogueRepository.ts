@@ -13,6 +13,7 @@ import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
   CatalogueListFilters,
+  CataloguePage,
   CatalogueProductDto,
 } from "./catalogueTypes.ts";
 
@@ -27,7 +28,12 @@ export class CatalogueRepositoryError extends Error {
 export type CatalogueRepository = {
   listCategories(): Promise<CatalogueCategoryDto[]>;
   listBrands(): Promise<CatalogueBrandDto[]>;
-  listProducts(filters: CatalogueListFilters): Promise<CatalogueProductDto[]>;
+  /**
+   * Returns a paginated CataloguePage result.
+   * `total` is accurate even when `items` is empty (offset beyond end).
+   * When no `offset`/`limit` are supplied, iterates all RPC pages internally.
+   */
+  listProducts(filters: CatalogueListFilters): Promise<CataloguePage>;
   getProductBySlug(slug: string): Promise<CatalogueProductDto | null>;
 };
 
@@ -247,66 +253,60 @@ export function createSupabaseCatalogueRepository(
       return mapped;
     },
 
-    async listProducts(filters: CatalogueListFilters): Promise<CatalogueProductDto[]> {
+    async listProducts(filters: CatalogueListFilters): Promise<CataloguePage> {
       const supabase = requireClient();
+      const RPC_PAGE = 500;
+      const callerOffset = filters.offset ?? 0;
+      const callerLimit = filters.limit;
+      const orderedSlugs: string[] = [];
+      let total = 0;
+      let rpcOffset = callerOffset;
 
-      // Use the public-safe RPC for bounded server-side pagination.
-      // This bypasses Supabase's implicit 1000-row response cap and
-      // filters on EFFECTIVE values (override-aware), not base columns.
-      // The RPC never returns hidden/inactive products.
-      const { data: rpcData, error: rpcErr } = await supabase.rpc(
-        "mp_public_catalogue_list",
-        {
-          p_limit: 500,
-          p_offset: 0,
+      while (true) {
+        const remaining = callerLimit !== undefined ? callerLimit - orderedSlugs.length : RPC_PAGE;
+        const rpcLimit = Math.min(remaining, RPC_PAGE);
+        if (rpcLimit <= 0) break;
+        const { data: rpcData, error: rpcErr } = await supabase.rpc("mp_public_catalogue_list", {
+          p_limit: rpcLimit,
+          p_offset: rpcOffset,
           p_featured: filters.featured ?? null,
           p_brand_slug: filters.brand ?? null,
           p_category_slug: filters.category ?? null,
-        },
-      );
-      if (rpcErr) {
-        throw new CatalogueRepositoryError(
-          "CATALOGUE_QUERY_FAILED",
-          "Unable to load catalogue products.",
-        );
+        });
+        if (rpcErr) {
+          throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
+        }
+        const rows = (rpcData ?? []) as Array<{ slug: string | null; total: number }>;
+        if (rows.length > 0) total = Number(rows[0].total);
+        const pageSlugs = rows.filter((r) => r.slug !== null).map((r) => r.slug as string);
+        orderedSlugs.push(...pageSlugs);
+        if (pageSlugs.length < rpcLimit) break;
+        if (callerLimit !== undefined && orderedSlugs.length >= callerLimit) break;
+        rpcOffset += rpcLimit;
       }
 
-      const rpcRows = (rpcData ?? []) as Array<{ slug: string; total: number }>;
-      const slugs = rpcRows.map((r) => r.slug);
+      if (orderedSlugs.length === 0) {
+        return { items: [], total, limit: callerLimit ?? 0, offset: callerOffset };
+      }
 
-      if (slugs.length === 0) return [];
-
-      // Fetch full product data for the paginated slugs.
       const { data: prodData, error: prodErr } = await supabase
-        .from("mp_products")
-        .select(PRODUCT_SELECT)
-        .eq("active", true)
-        .in("slug", slugs);
+        .from("mp_products").select(PRODUCT_SELECT).eq("active", true).in("slug", orderedSlugs);
       if (prodErr) {
-        throw new CatalogueRepositoryError(
-          "CATALOGUE_QUERY_FAILED",
-          "Unable to load catalogue products.",
-        );
+        throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
       }
-
-      // Resolve override brands/categories in one batch query.
       const annotated = await resolveOverrideBrandsCategories(
-        (prodData ?? []) as ProductRow[],
-        supabase,
+        (prodData ?? []) as ProductRow[], supabase,
       );
-
-      // Map to DTOs in the RPC's deterministic order.
       const rowBySlug = new Map(annotated.map((r) => [r.slug, r]));
-      const mapped: CatalogueProductDto[] = [];
-      for (const slug of slugs) {
+      const items: CatalogueProductDto[] = [];
+      for (const slug of orderedSlugs) {
         const row = rowBySlug.get(slug);
         if (!row) continue;
         const dto = mapProductDto(row);
-        if (dto) mapped.push(dto);
+        if (dto) items.push(dto);
       }
-
-      assertNoForbiddenKeys(mapped);
-      return mapped;
+      assertNoForbiddenKeys(items);
+      return { items, total, limit: callerLimit ?? orderedSlugs.length, offset: callerOffset };
     },
 
     async getProductBySlug(slug: string): Promise<CatalogueProductDto | null> {

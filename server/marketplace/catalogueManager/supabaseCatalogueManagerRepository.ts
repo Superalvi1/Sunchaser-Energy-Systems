@@ -608,12 +608,13 @@ export function createSupabaseCatalogueManagerRepository(
       );
       if (rpcErr) throw dbErr("listProducts.rpc", rpcErr);
 
-      const rpcRows = (rpcData ?? []) as Array<{ id: string; total: number }>;
+      // Sentinel row with id=null carries accurate total when page is empty.
+      const rpcRows = (rpcData ?? []) as Array<{ id: string | null; total: number }>;
       const total = rpcRows.length > 0 ? Number(rpcRows[0].total) : 0;
-      const ids = rpcRows.map((r) => r.id);
+      const ids = rpcRows.map((r) => r.id).filter((id): id is string => id !== null);
 
       if (ids.length === 0) {
-        return { items: [], total: 0, limit: filters.limit, offset: filters.offset };
+        return { items: [], total, limit: filters.limit, offset: filters.offset };
       }
 
       // Fetch full summary data for the paginated IDs.

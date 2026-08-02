@@ -14,6 +14,7 @@ import type { CatalogueRepository } from "./catalogueRepository.ts";
 import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
+  CataloguePage,
   CatalogueProductDto,
 } from "./catalogueTypes.ts";
 import { MARKETPLACE_API_VERSION_HEADER } from "./catalogueTypes.ts";
@@ -75,8 +76,8 @@ function buildMemoryRepo(): CatalogueRepository {
     async listBrands() {
       return brands;
     },
-    async listProducts(filters) {
-      return products.filter((p) => {
+    async listProducts(filters): Promise<CataloguePage> {
+      const items = products.filter((p) => {
         if (filters.featured !== undefined && p.featured !== filters.featured) {
           return false;
         }
@@ -84,6 +85,7 @@ function buildMemoryRepo(): CatalogueRepository {
         if (filters.brand && p.brand.slug !== filters.brand) return false;
         return true;
       });
+      return { items, total: items.length, limit: items.length, offset: 0 };
     },
     async getProductBySlug(slug) {
       return products.find((p) => p.slug === slug) ?? null;
@@ -134,13 +136,15 @@ async function main(): Promise<void> {
     const listBody = await list.json();
     check("enabled products HTTP 200", list.status === 200);
     check("enabled products ok=true", listBody.ok === true);
-    check("enabled products count 30", Array.isArray(listBody.data) && listBody.data.length === 30);
+    check("enabled products page shape", Array.isArray(listBody.data?.items) && typeof listBody.data?.total === "number");
+    check("enabled products count 30", listBody.data?.items?.length === 30);
+    check("enabled products total=30", listBody.data?.total === 30);
     check(
       "enabled API version header",
       list.headers.get(MARKETPLACE_API_VERSION_HEADER) === "1",
     );
 
-    const serialized = JSON.stringify(listBody.data);
+    const serialized = JSON.stringify(listBody.data?.items);
     check(
       "DTO has no cost/margin/delivery fields",
       !serialized.includes("actual_purchase_cost") &&
@@ -153,8 +157,8 @@ async function main(): Promise<void> {
     );
     check(
       "seed DTO image is null without media",
-      listBody.data.every(
-        (p: CatalogueProductDto) => p.image === null && Array.isArray(p.images),
+      (listBody.data?.items as CatalogueProductDto[]).every(
+        (p) => p.image === null && Array.isArray(p.images),
       ),
     );
 
@@ -165,7 +169,7 @@ async function main(): Promise<void> {
     check("featured filter ok", featuredBody.ok === true);
     check(
       "featured filter only featured",
-      featuredBody.data.every((p: CatalogueProductDto) => p.featured === true),
+      (featuredBody.data?.items as CatalogueProductDto[]).every((p) => p.featured === true),
     );
 
     const brand = await fetch(
@@ -175,7 +179,7 @@ async function main(): Promise<void> {
     check("brand filter ok", brandBody.ok === true);
     check(
       "brand filter matches",
-      brandBody.data.every((p: CatalogueProductDto) => p.brand.slug === "knox"),
+      (brandBody.data?.items as CatalogueProductDto[]).every((p) => p.brand.slug === "knox"),
     );
 
     const category = await fetch(
@@ -185,8 +189,8 @@ async function main(): Promise<void> {
     check("category filter ok", categoryBody.ok === true);
     check(
       "category filter matches",
-      categoryBody.data.every(
-        (p: CatalogueProductDto) => p.category.slug === "solar-panels",
+      (categoryBody.data?.items as CatalogueProductDto[]).every(
+        (p) => p.category.slug === "solar-panels",
       ),
     );
 

@@ -571,21 +571,19 @@ async function main(): Promise<void> {
     check("RPC: deterministic ordering by title then id", JSON.stringify(titles) === JSON.stringify(sortedIds));
 
     // ── Blocker 3: Accurate total for empty pages (offset beyond end) ──────
-    // With 1100 bulk products, offset=2000 is beyond the end.
-    // items should be empty but total must still be 1100.
+    // Sentinel-row pattern: RPC emits {id=NULL, total>=1100} on empty page.
     const beyondEnd = await client.query(
       `select * from public.mp_catalogue_manager_list(500, 2000, 'Bulk', 'b3', 'c3', null, null, null, null, null)`,
     );
-    check("RPC: empty page when offset beyond end", (beyondEnd.rowCount ?? 0) === 0);
-    // Total from the separate count CTE — not derived from a page row.
-    const beyondEndTotal = await client.query(
-      `select count(*)::int as total from public.mp_products p
-       where p.brand_id = 'b3' and p.category_id = 'c3'
-         and p.title like 'Bulk%'`,
-    );
+    const beyondReal = (beyondEnd.rows as Array<{ id: string | null; total: bigint }>)
+      .filter((r) => r.id !== null);
+    const beyondSentinel = (beyondEnd.rows as Array<{ id: string | null; total: bigint }>)
+      .filter((r) => r.id === null);
+    check("admin RPC: no data rows on empty page", beyondReal.length === 0);
+    check("admin RPC: sentinel row emitted for empty page", beyondSentinel.length === 1);
     check(
-      "RPC: total remains accurate when offset beyond end (1100)",
-      beyondEndTotal.rows[0].total === 1100,
+      "admin RPC: sentinel carries accurate total (>=1100) -- no separate count",
+      Number(beyondSentinel[0]?.total) >= 1100,
     );
 
     // ── Blocker 2: RPC privilege tests ──────────────────────────────────────
@@ -684,7 +682,24 @@ async function main(): Promise<void> {
     const publicPage3 = await client.query(
       `select * from public.mp_public_catalogue_list(500, 1000, null, null, null)`,
     );
-    check("public RPC: page 3 reaches products beyond row 1000", (publicPage3.rowCount ?? 0) >= 100);
+    const publicPage3Real = (publicPage3.rows as Array<{ slug: string | null }>)
+      .filter((r) => r.slug !== null);
+    check("public RPC: page 3 reaches products beyond row 1000", publicPage3Real.length >= 100);
+
+    // Public RPC empty-page sentinel test
+    const publicBeyondEnd = await client.query(
+      `select * from public.mp_public_catalogue_list(500, 5000, null, null, null)`,
+    );
+    const publicBeyondReal = (publicBeyondEnd.rows as Array<{ slug: string | null; total: bigint }>)
+      .filter((r) => r.slug !== null);
+    const publicBeyondSentinel = (publicBeyondEnd.rows as Array<{ slug: string | null; total: bigint }>)
+      .filter((r) => r.slug === null);
+    check("public RPC: no data rows on empty page", publicBeyondReal.length === 0);
+    check("public RPC: sentinel row emitted for empty page", publicBeyondSentinel.length === 1);
+    check(
+      "public RPC: empty-page total is accurate (>=1100) -- no separate count",
+      Number(publicBeyondSentinel[0]?.total) >= 1100,
+    );
 
     // ── Blocker 4: Inactive taxonomy rejected ───────────────────────────────
     // Create an inactive brand and try to assign it
@@ -699,9 +714,11 @@ async function main(): Promise<void> {
     const inactiveBrandFilter = await client.query(
       `select * from public.mp_public_catalogue_list(500, 0, null, 'inactive', null)`,
     );
+    const inactiveReal = (inactiveBrandFilter.rows as Array<{ slug: string | null }>)
+      .filter((r) => r.slug !== null);
     check(
-      "public RPC: inactive brand filter returns 0 products",
-      (inactiveBrandFilter.rowCount ?? 0) === 0,
+      "public RPC: inactive brand filter returns 0 real products",
+      inactiveReal.length === 0,
     );
 
     // ── Blocker 5: Gallery deduplication (mapper-level, tested in integration) ─
