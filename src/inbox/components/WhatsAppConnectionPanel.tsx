@@ -651,6 +651,60 @@ export default function WhatsAppConnectionPanel({
                     generation={webStatus.activeSocketGeneration ?? "—"}
                   </li>
                   <li>session={webStatus.activeSessionKey ?? "—"}</li>
+                  <li>
+                    process={webStatus.processInstanceId ?? "—"}
+                    {webStatus.processPid != null
+                      ? `:p${webStatus.processPid}`
+                      : ""}
+                  </li>
+                  <li>
+                    lease=
+                    {webStatus.sessionLeaseStatus ?? "—"}
+                    {webStatus.sessionLeaseOwnerMatch === true
+                      ? "/owner"
+                      : webStatus.sessionLeaseStatus
+                        ? "/not-owner"
+                        : ""}
+                  </li>
+                  <li>
+                    lastConn=
+                    {webStatus.lastConnectionState
+                      ? `${webStatus.lastConnectionState}${
+                          webStatus.lastConnectionReason
+                            ? `:${webStatus.lastConnectionReason}`
+                            : ""
+                        }${
+                          webStatus.lastConnectionUpdateAt
+                            ? `@${new Date(
+                                webStatus.lastConnectionUpdateAt
+                              ).toLocaleString()}`
+                            : ""
+                        }`
+                      : "—"}
+                  </li>
+                  <li>
+                    lastCreds=
+                    {webStatus.lastCredentialsUpdateAt
+                      ? new Date(
+                          webStatus.lastCredentialsUpdateAt
+                        ).toLocaleString()
+                      : "—"}
+                  </li>
+                  <li>
+                    userHash={webStatus.authenticatedUserJidHash ?? "—"}
+                  </li>
+                  <li>
+                    authFiles=
+                    {webStatus.credentialsFilePresent == null
+                      ? "—"
+                      : webStatus.credentialsFilePresent
+                        ? `creds+${webStatus.authKeyFileCount ?? 0}keys`
+                        : "no-creds"}
+                  </li>
+                  <li>
+                    listeningSilent=
+                    {webStatus.listeningSilent === true ? "yes" : "no"}
+                  </li>
                 </ul>
               </div>
             ) : null}

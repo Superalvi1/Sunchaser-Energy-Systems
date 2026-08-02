@@ -39,6 +39,21 @@ import {
   noteInboundIgnored,
   noteInboundRawUpsert,
 } from "./whatsappWebInboundDiagnostics.ts";
+import {
+  getWhatsAppWebConnectionDiagnostics,
+  noteAuthenticatedUserJidHash,
+  noteConnectionUpdateDiagnostic,
+  noteCredentialsUpdateDiagnostic,
+  noteSocketCreatedDiagnostic,
+  refreshAuthSessionIntegrity,
+} from "./whatsappWebConnectionDiagnostics.ts";
+import { getWhatsAppWebProcessInstanceId } from "./whatsappWebProcessIdentity.ts";
+import { WhatsAppWebSessionLease } from "./whatsappWebSessionLease.ts";
+import { tryCreateWhatsAppWebSessionLeaseSqlStore } from "./whatsappWebSessionLeaseSql.ts";
+import {
+  getSharedInMemoryWhatsAppWebSessionLeaseStore,
+  type WhatsAppWebSessionLeaseStore,
+} from "./whatsappWebSessionLeaseStore.ts";
 import { getSharedWhatsAppLidPhoneMap } from "./whatsappWebSharedLidMap.ts";
 import type {
   WhatsAppWebSyncJobSnapshot,
@@ -48,6 +63,15 @@ import {
   createDefaultWhatsAppRepository,
   type WhatsAppRepository,
 } from "../whatsappTransport/whatsappRepository.ts";
+
+function resolveDefaultSessionLeaseStore(
+  env: NodeJS.ProcessEnv
+): WhatsAppWebSessionLeaseStore {
+  return (
+    tryCreateWhatsAppWebSessionLeaseSqlStore(env) ??
+    getSharedInMemoryWhatsAppWebSessionLeaseStore()
+  );
+}
 
 /** Delegates to the active socket sync source (or disconnected stub). */
 class SessionBoundSyncSource implements WhatsAppWebSyncSource {
@@ -354,6 +378,15 @@ export type WhatsAppWebSessionOptions = {
   clearTimeoutFn?: typeof clearTimeout;
   /** Repository used by admin contact/history sync (defaults to createDefault). */
   syncRepo?: WhatsAppRepository;
+  /** Override process instance id (tests). */
+  processInstanceId?: string;
+  /** Disable exclusive session lease (tests only). */
+  disableSessionLease?: boolean;
+  /** Injectable lease stale/heartbeat timing (tests). */
+  sessionLeaseHeartbeatMs?: number;
+  sessionLeaseStaleMs?: number;
+  /** Injectable lease store (tests share an in-memory CAS store). */
+  sessionLeaseStore?: WhatsAppWebSessionLeaseStore;
 };
 
 async function defaultSocketFactory(input: {
@@ -618,6 +651,9 @@ export class WhatsAppWebSession {
   private paths: ResolvedAuthPaths | null = null;
   /** Test observability: delays scheduled for reconnect. */
   private readonly scheduledReconnectDelays: number[] = [];
+  private readonly processInstanceId: string;
+  private readonly sessionLease: WhatsAppWebSessionLease | null;
+  private leaseLostHandled = false;
 
   constructor(options: WhatsAppWebSessionOptions = {}) {
     this.env = options.env ?? process.env;
@@ -630,6 +666,22 @@ export class WhatsAppWebSession {
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
     this.updatedAt = this.now().toISOString();
+    this.processInstanceId =
+      options.processInstanceId ?? getWhatsAppWebProcessInstanceId(this.env);
+    this.sessionLease =
+      options.disableSessionLease === true
+        ? null
+        : new WhatsAppWebSessionLease(this.processInstanceId, {
+            now: this.now,
+            heartbeatMs: options.sessionLeaseHeartbeatMs,
+            staleMs: options.sessionLeaseStaleMs,
+            store:
+              options.sessionLeaseStore ??
+              resolveDefaultSessionLeaseStore(this.env),
+            onLeaseLost: (reason) => {
+              this.handleLeaseLost(reason);
+            },
+          });
     const boundSource = new SessionBoundSyncSource(
       () => this.socket?.getSyncSource?.() ?? null
     );
@@ -663,6 +715,14 @@ export class WhatsAppWebSession {
     const inboundListenerAttached = socketOpen && listenerCount >= 1;
     const inboundListenerOperational =
       socketOpen && inboundListenerAttached && listenerCount === 1;
+    const lease = this.sessionLease?.getSnapshot() ?? null;
+    const connection = getWhatsAppWebConnectionDiagnostics({
+      env: this.env,
+      lease,
+      connected: socketOpen,
+      lastRawUpsertAt: inbound.lastRawUpsertAt,
+      nowMs: this.now().getTime(),
+    });
     return {
       enabled: config.enabled,
       state: this.state,
@@ -688,6 +748,24 @@ export class WhatsAppWebSession {
       reconnectAttempt: this.reconnectAttempt,
       lastDisconnectClassification: this.lastDisconnectClassification,
       credentialsAvailable: this.credentialsAvailable === true,
+      processInstanceId: this.processInstanceId,
+      processPid: connection.processPid,
+      hostHash: connection.hostHash,
+      lastConnectionUpdateAt: connection.lastConnectionUpdateAt,
+      lastConnectionState: connection.lastConnectionState,
+      lastConnectionReason: connection.lastConnectionReason,
+      lastCredentialsUpdateAt: connection.lastCredentialsUpdateAt,
+      authenticatedUserJidHash: connection.authenticatedUserJidHash,
+      socketCreatedAt: connection.socketCreatedAt,
+      sessionLeaseStatus: connection.sessionLeaseStatus,
+      sessionLeaseOwnerMatch: connection.sessionLeaseOwnerMatch,
+      sessionLeaseOwnerId: connection.sessionLeaseOwnerId,
+      sessionLeaseFencingTokenHash: connection.sessionLeaseFencingTokenHash,
+      sessionLeaseAcquiredAt: connection.sessionLeaseAcquiredAt,
+      sessionLeaseHeartbeatAt: connection.sessionLeaseHeartbeatAt,
+      credentialsFilePresent: connection.credentialsFilePresent,
+      authKeyFileCount: connection.authKeyFileCount,
+      listeningSilent: connection.listeningSilent,
     };
   }
 
@@ -721,6 +799,7 @@ export class WhatsAppWebSession {
     assertWhatsAppWebAuthDirReady(config);
     this.paths = resolveWhatsAppWebAuthPaths(config);
     await ensureWhatsAppWebAuthDirWritable(this.paths);
+    await refreshAuthSessionIntegrity(this.paths.sessionDir);
 
     const hasCreds = await hasSavedBaileysCredentials(this.paths.sessionDir);
     this.credentialsAvailable = hasCreds;
@@ -728,6 +807,17 @@ export class WhatsAppWebSession {
       this.connectionDesired = false;
       this.setState("DISCONNECTED", "Waiting for Admin to generate QR");
       logWhatsAppWeb("info", "startup_awaiting_admin_qr");
+      return { resumed: false, state: this.state };
+    }
+
+    const leaseOk = await this.ensureSessionLease();
+    if (!leaseOk) {
+      this.connectionDesired = false;
+      this.setState(
+        "ERROR",
+        "Another process holds the WhatsApp session lease; keep a single Render instance"
+      );
+      logWhatsAppWeb("error", "session_lease_contested_at_startup");
       return { resumed: false, state: this.state };
     }
 
@@ -751,6 +841,20 @@ export class WhatsAppWebSession {
     assertWhatsAppWebAuthDirReady(config);
     this.paths = resolveWhatsAppWebAuthPaths(config);
     await ensureWhatsAppWebAuthDirWritable(this.paths);
+    await refreshAuthSessionIntegrity(this.paths.sessionDir);
+
+    const leaseOk = await this.ensureSessionLease();
+    if (!leaseOk) {
+      this.connectionDesired = false;
+      this.setState(
+        "ERROR",
+        "Another process holds the WhatsApp session lease; keep a single Render instance"
+      );
+      throw Object.assign(
+        new Error("WhatsApp Web session lease is held by another process"),
+        { code: "session_lease_contested" }
+      );
+    }
 
     this.connectionDesired = true;
     this.shuttingDown = false;
@@ -791,6 +895,7 @@ export class WhatsAppWebSession {
       this.socket = null;
     }
     this.clearQr();
+    await this.releaseSessionLease();
     this.setState("DISCONNECTED", "Disconnected (session retained)");
     return this.getSafeStatus();
   }
@@ -840,6 +945,8 @@ export class WhatsAppWebSession {
     this.phoneRaw = null;
     this.credentialsAvailable = false;
     this.clearQr();
+    await this.releaseSessionLease();
+    await refreshAuthSessionIntegrity(paths.sessionDir);
     this.setState("LOGGED_OUT", "Logged out; session removed");
     return this.getSafeStatus();
   }
@@ -904,6 +1011,7 @@ export class WhatsAppWebSession {
       this.socket = null;
     }
     this.clearQr();
+    await this.releaseSessionLease();
     if (
       this.state === "CONNECTED" ||
       this.state === "RECONNECTING" ||
@@ -970,6 +1078,16 @@ export class WhatsAppWebSession {
   __testBumpSocketGeneration(): number {
     this.socketGeneration += 1;
     return this.socketGeneration;
+  }
+
+  /** Test-only: invoke lease-loss teardown path. */
+  __testHandleLeaseLost(reason = "ownership_lost"): void {
+    this.handleLeaseLost(reason);
+  }
+
+  /** Test-only: access lease for concurrency/heartbeat races. */
+  __testGetSessionLease(): WhatsAppWebSessionLease | null {
+    return this.sessionLease;
   }
 
   __testAcceptQr(qr: string): Promise<void> {
@@ -1046,6 +1164,19 @@ export class WhatsAppWebSession {
       throw new Error("Auth paths not resolved");
     }
 
+    const leaseOk = await this.ensureSessionLease();
+    if (!leaseOk) {
+      this.connectionDesired = false;
+      this.setState(
+        "ERROR",
+        "Another process holds the WhatsApp session lease; keep a single Render instance"
+      );
+      throw Object.assign(
+        new Error("WhatsApp Web session lease is held by another process"),
+        { code: "session_lease_contested" }
+      );
+    }
+
     this.startLock = true;
     this.reconnectAttemptInProgress = initialState === "RECONNECTING";
     this.clearReconnectTimer();
@@ -1070,6 +1201,7 @@ export class WhatsAppWebSession {
       }
 
       const sessionDir = this.paths.sessionDir;
+      noteSocketCreatedDiagnostic();
       const handle = await this.socketFactory({
         sessionDir,
         onQr: (qr) => {
@@ -1080,6 +1212,8 @@ export class WhatsAppWebSession {
           void this.handleConnectionUpdate(update, generation);
         },
         onCredentialsSaved: () => {
+          noteCredentialsUpdateDiagnostic();
+          void refreshAuthSessionIntegrity(sessionDir);
           if (generation !== this.socketGeneration) return;
           this.credentialsAvailable = true;
           logWhatsAppWeb("info", "credentials_saved");
@@ -1130,21 +1264,91 @@ export class WhatsAppWebSession {
     }
   }
 
+  private async ensureSessionLease(): Promise<boolean> {
+    if (!this.sessionLease || !this.paths) return true;
+    const snap = await this.sessionLease.acquire(this.paths);
+    const ok = this.sessionLease.isHeld();
+    if (ok) {
+      this.leaseLostHandled = false;
+    }
+    logWhatsAppWeb(ok ? "info" : "warn", "session_lease_acquire", {
+      status: snap.status,
+      ownerMatch: snap.ownerMatch,
+    });
+    return ok;
+  }
+
+  private async releaseSessionLease(): Promise<void> {
+    if (!this.sessionLease) return;
+    await this.sessionLease.release();
+  }
+
+  /**
+   * Exclusive lease lost while a socket may still be open.
+   * Tear down immediately and do not auto-reconnect until ownership is
+   * acquired again by an explicit connect/startup path.
+   */
+  private handleLeaseLost(reason: string): void {
+    // Idempotent: multiple heartbeat failures must not re-enter teardown.
+    if (this.leaseLostHandled) return;
+    this.leaseLostHandled = true;
+    this.sessionLease?.abandonLocalOwnership(
+      reason === "heartbeat_failed" ? "unavailable" : "contested"
+    );
+    this.connectionDesired = false;
+    this.cancelHistorySync("lease_lost");
+    this.clearReconnectTimer();
+    this.reconnectAttempt = 0;
+    this.reconnectAttemptInProgress = false;
+    this.socketGeneration += 1;
+    if (this.socket) {
+      try {
+        this.socket.end();
+      } catch {
+        /* ignore */
+      }
+      this.socket = null;
+    }
+    this.clearQr();
+    this.lastDisconnectClassification = "unknown";
+    noteConnectionUpdateDiagnostic({
+      state: "close",
+      reason: "unknown",
+    });
+    logWhatsAppWeb("error", "session_lease_lost", { reason });
+    this.setState(
+      "ERROR",
+      "WhatsApp session ownership lost; another process holds the lease"
+    );
+  }
+
   private async handleConnectionUpdate(
     update: WhatsAppWebConnectionUpdate,
     generation?: number
   ): Promise<void> {
     // Stale sockets cannot mutate current lifecycle state.
     if (generation != null && generation !== this.socketGeneration) {
+      noteConnectionUpdateDiagnostic({
+        state: String(update.connection ?? "close"),
+        reason: "stale_generation",
+      });
       return;
     }
 
     if (update.connection === "open") {
       // Never resurrect CONNECTED from a closed/undesired/shutdown session.
       if (!this.connectionDesired || this.shuttingDown) {
+        noteConnectionUpdateDiagnostic({
+          state: "open",
+          reason: this.shuttingDown ? "shutdown" : "not_desired",
+        });
         return;
       }
       if (generation != null && generation !== this.socketGeneration) {
+        noteConnectionUpdateDiagnostic({
+          state: "open",
+          reason: "stale_generation",
+        });
         return;
       }
       this.clearReconnectTimer();
@@ -1157,11 +1361,18 @@ export class WhatsAppWebSession {
         this.socket?.getUserId?.() ??
         null;
       this.phoneRaw = jidToPhone(userId);
+      noteAuthenticatedUserJidHash(userId);
+      noteConnectionUpdateDiagnostic({ state: "open", reason: "open" });
+      void refreshAuthSessionIntegrity(this.paths?.sessionDir);
       this.setState("CONNECTED", "WhatsApp Web connected");
       return;
     }
 
     if (update.connection === "logged_out") {
+      noteConnectionUpdateDiagnostic({
+        state: "logged_out",
+        reason: "logged_out",
+      });
       // Terminal: invalidate this socket generation first so late open/QR/inbound
       // callbacks from the same socket cannot overwrite LOGGED_OUT.
       this.invalidateClosedSocketGeneration(generation);
@@ -1190,10 +1401,16 @@ export class WhatsAppWebSession {
           logWhatsAppWeb("warn", "session_dir_cleanup_failed");
         }
       }
+      await this.releaseSessionLease();
       return;
     }
 
     if (update.connection === "close") {
+      const closeReason = classifyDisconnectDiagnostic(update.statusCode);
+      noteConnectionUpdateDiagnostic({
+        state: "close",
+        reason: closeReason,
+      });
       this.cancelHistorySync("connection_close");
       // Invalidate immediately so late open/QR/inbound/creds from this socket
       // cannot pass the generation guard while reconnect is only scheduled.

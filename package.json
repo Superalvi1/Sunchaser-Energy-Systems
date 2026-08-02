@@ -24,7 +24,7 @@
     "test:whatsapp-production-wiring": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappInboxProductionWiring.test.ts",
     "test:whatsapp-web-qr": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWeb.test.ts",
     "test:whatsapp-web-history-sync": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWebHistorySync.test.ts",
-    "test:whatsapp-web": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWeb.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWebHistorySync.test.ts",
+    "test:whatsapp-web": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWeb.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWebHistorySync.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappWeb/whatsappWebSessionOwnership.test.ts",
     "test:ai-shadow-engine": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiEngine/aiEngine.test.ts",
     "test:ai-query-agent": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/aiQueryAgent/queryAgentService.test.ts",
     "test:whatsapp-ai-knowledge": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappAiKnowledge/knowledgeEngine.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappAiKnowledge/knowledgeProduction.test.ts",

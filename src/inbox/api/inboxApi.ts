@@ -410,6 +410,24 @@ export type WhatsAppWebSafeStatus = {
   reconnectAttempt?: number;
   lastDisconnectClassification?: string | null;
   credentialsAvailable?: boolean;
+  processInstanceId?: string;
+  processPid?: number;
+  hostHash?: string | null;
+  lastConnectionUpdateAt?: string | null;
+  lastConnectionState?: string | null;
+  lastConnectionReason?: string | null;
+  lastCredentialsUpdateAt?: string | null;
+  authenticatedUserJidHash?: string | null;
+  socketCreatedAt?: string | null;
+  sessionLeaseStatus?: string | null;
+  sessionLeaseOwnerMatch?: boolean;
+  sessionLeaseOwnerId?: string | null;
+  sessionLeaseFencingTokenHash?: string | null;
+  sessionLeaseAcquiredAt?: string | null;
+  sessionLeaseHeartbeatAt?: string | null;
+  credentialsFilePresent?: boolean | null;
+  authKeyFileCount?: number | null;
+  listeningSilent?: boolean;
 };
 
 export type WhatsAppWebQrPayload = {

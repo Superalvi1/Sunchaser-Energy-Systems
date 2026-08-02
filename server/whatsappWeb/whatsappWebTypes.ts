@@ -61,6 +61,43 @@ export type WhatsAppWebSafeStatus = {
   lastDisconnectClassification: string | null;
   /** Whether saved Baileys credentials are known present on disk. */
   credentialsAvailable: boolean;
+  /** Opaque process/instance id (Render instance hash or boot id). */
+  processInstanceId: string;
+  /** Process pid for multi-instance diagnosis. */
+  processPid: number;
+  /** Hashed hostname (never raw host). */
+  hostHash: string | null;
+  /** Last Baileys connection.update timestamp. */
+  lastConnectionUpdateAt: string | null;
+  /** Last sanitized connection.update state. */
+  lastConnectionState: string | null;
+  /** Last sanitized connection reason/classification. */
+  lastConnectionReason: string | null;
+  /** Last credentials.update persistence timestamp. */
+  lastCredentialsUpdateAt: string | null;
+  /** SHA-256 prefix of authenticated user JID (never phone plaintext). */
+  authenticatedUserJidHash: string | null;
+  /** When the active socket handle was created. */
+  socketCreatedAt: string | null;
+  /** Exclusive session-dir lease status. */
+  sessionLeaseStatus: string | null;
+  /** True when this process holds the session lease. */
+  sessionLeaseOwnerMatch: boolean;
+  /** Opaque lease owner id (truncated). */
+  sessionLeaseOwnerId: string | null;
+  /** Opaque fencing token hash for the held acquisition. */
+  sessionLeaseFencingTokenHash: string | null;
+  sessionLeaseAcquiredAt: string | null;
+  sessionLeaseHeartbeatAt: string | null;
+  /** Whether creds.json exists (contents never exposed). */
+  credentialsFilePresent: boolean | null;
+  /** Count of Baileys key JSON files beside creds (no contents). */
+  authKeyFileCount: number | null;
+  /**
+   * True when CONNECTED with an operational listener but no messages.upsert
+   * has been observed since socket creation (silence threshold).
+   */
+  listeningSilent: boolean;
 };
 
 export type WhatsAppWebQrPayload = {

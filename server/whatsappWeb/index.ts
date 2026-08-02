@@ -68,6 +68,32 @@ export {
 } from "./whatsappWebInboundDiagnostics.ts";
 
 export {
+  getWhatsAppWebConnectionDiagnostics,
+  __resetWhatsAppWebConnectionDiagnostics,
+  noteConnectionUpdateDiagnostic,
+  noteCredentialsUpdateDiagnostic,
+  WHATSAPP_WEB_LISTENING_SILENT_MS,
+} from "./whatsappWebConnectionDiagnostics.ts";
+
+export {
+  getWhatsAppWebProcessInstanceId,
+  hashOpaqueId,
+} from "./whatsappWebProcessIdentity.ts";
+
+export {
+  WhatsAppWebSessionLease,
+  WHATSAPP_WEB_SESSION_LOCK_DIR,
+  WHATSAPP_WEB_SESSION_LEASE_FILE,
+  WHATSAPP_WEB_SESSION_LEASE_STALE_MS,
+} from "./whatsappWebSessionLease.ts";
+export {
+  createInMemoryWhatsAppWebSessionLeaseStore,
+  createSqlWhatsAppWebSessionLeaseStore,
+  resolveWhatsAppWebSessionLeaseKey,
+  WHATSAPP_WEB_SESSION_LEASE_TABLE,
+} from "./whatsappWebSessionLeaseStore.ts";
+
+export {
   persistWhatsAppWebInbound,
   createWhatsAppWebMessagingBridge,
 } from "./whatsappWebInbound.ts";
