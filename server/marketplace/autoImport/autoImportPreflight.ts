@@ -5,9 +5,10 @@
  */
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
 import {
-  isDatabaseCatalogueSource,
+  publicWouldShowSyncedProducts,
   readMarketplaceConfig,
 } from "../marketplaceConfig.ts";
+import { resolvePublicCataloguePublication } from "../catalogue/resolveCatalogueRepository.ts";
 import {
   DEFAULT_RESPONSE_TIMEOUT_MS,
   safeFetchText,
@@ -29,6 +30,10 @@ export type AutoImportPreflightReport = {
   autoImportEnabled: boolean;
   persistenceEnabled: boolean;
   catalogueSource: "static" | "database";
+  /** Effective source used by createCatalogueRouter (fail-closed). */
+  effectivePublicCatalogueSource: "static" | "database";
+  /** True only when effective public source is database. */
+  publicWouldShowSyncedProducts: boolean;
   supabaseConfigured: boolean;
   objects: {
     tableMpAutoImportListings: PreflightPresence;
@@ -310,7 +315,11 @@ export async function runAutoImportPreflight(
   }
   if (cfg.catalogueSource !== "database") {
     notes.push(
-      "MARKETPLACE_CATALOGUE_SOURCE is not database — synced products will not appear on the public website until catalogue source is database.",
+      "Effective public catalogue source is static (fail-closed). CEO sync may still persist mp_* rows, but createCatalogueRouter serves WS1 seed only — synced products are not publicly exposed until MARKETPLACE_CATALOGUE_SOURCE=database.",
+    );
+  } else {
+    notes.push(
+      "Effective public catalogue source is database — public /api/marketplace/catalogue/* reads mp_products.",
     );
   }
 
@@ -321,12 +330,16 @@ export async function runAutoImportPreflight(
     listings === "present" &&
     timeoutProtection === "present";
 
+  const publication = resolvePublicCataloguePublication(env);
+
   return {
     checkedAt: now().toISOString(),
     marketplaceEnabled: cfg.enabled,
     autoImportEnabled,
     persistenceEnabled,
     catalogueSource: cfg.catalogueSource,
+    effectivePublicCatalogueSource: publication.effectivePublicCatalogueSource,
+    publicWouldShowSyncedProducts: publication.publicWouldShowSyncedProducts,
     supabaseConfigured,
     objects: {
       tableMpAutoImportListings: listings,
@@ -354,8 +367,7 @@ export async function runAutoImportPreflight(
       canPersistCatalogueProducts: canPersist,
       canStoreVariantPrices: canPersist,
       canImportCeoListings: canPersist,
-      publicWebsiteWouldShowSyncedProducts:
-        canPersist && isDatabaseCatalogueSource(cfg),
+      publicWebsiteWouldShowSyncedProducts: publicWouldShowSyncedProducts(cfg),
     },
     blockers,
     notes,

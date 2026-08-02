@@ -1573,8 +1573,10 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   assert.equal(report.objects.timeoutProtection, "skipped");
   assert.equal(report.suppliers.kamal.status, "reachable");
   assert.equal(report.stages.publicWebsiteWouldShowSyncedProducts, false);
+  assert.equal(report.publicWouldShowSyncedProducts, false);
+  assert.equal(report.effectivePublicCatalogueSource, "static");
   assert.ok(
-    report.notes.some((n) => /CATALOGUE_SOURCE|database/i.test(n)),
+    report.notes.some((n) => /static|fail-closed|WS1 seed/i.test(n)),
   );
   assert.ok(!rpcCalls.some((c) => /upsert|commit_batch/i.test(c)));
   assert.ok(

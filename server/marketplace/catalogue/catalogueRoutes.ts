@@ -4,11 +4,14 @@ import {
   isMarketplaceEnabled,
   readMarketplaceConfig,
 } from "../marketplaceConfig.ts";
+import type { CatalogueRepository } from "./catalogueRepository.ts";
 import {
   CatalogueRepositoryError,
-  createSupabaseCatalogueRepository,
-  type CatalogueRepository,
 } from "./catalogueRepository.ts";
+import {
+  resolvePublicCatalogueRepository,
+  type CatalogueRepositoryFactories,
+} from "./resolveCatalogueRepository.ts";
 import {
   MARKETPLACE_API_VERSION,
   MARKETPLACE_API_VERSION_HEADER,
@@ -19,9 +22,8 @@ import {
   parseOptionalSlugFilter,
 } from "./catalogueValidation.ts";
 
-export type CatalogueRouterDeps = {
+export type CatalogueRouterDeps = CatalogueRepositoryFactories & {
   env?: NodeJS.ProcessEnv;
-  repository?: CatalogueRepository;
 };
 
 function setApiVersion(res: Response): void {
@@ -62,11 +64,32 @@ function handleRepositoryError(res: Response, err: unknown): Response {
 /**
  * Public catalogue read API.
  * Requires MARKETPLACE_ENABLED=true. Defaults remain disabled.
+ *
+ * Publication gate: MARKETPLACE_CATALOGUE_SOURCE selects static (WS1 seed) vs
+ * database repository. Default / invalid / unset → static (fail-closed).
+ * Static mode never queries mp_products.
  */
 export function createCatalogueRouter(deps: CatalogueRouterDeps = {}): Router {
   const router = express.Router();
   const env = deps.env ?? process.env;
-  const repository = deps.repository ?? createSupabaseCatalogueRepository();
+  const { repository, publication } = resolvePublicCatalogueRepository(env, {
+    repository: deps.repository,
+    createStaticRepository: deps.createStaticRepository,
+    createDatabaseRepository: deps.createDatabaseRepository,
+  });
+
+  /**
+   * Truthful publication status for the public catalogue router.
+   * Always available (even when MARKETPLACE_ENABLED=false) so ops can confirm
+   * the fail-closed source gate without enabling the storefront.
+   */
+  router.get("/publication", (_req: Request, res: Response) => {
+    setApiVersion(res);
+    return sendOk(res, {
+      ...publication,
+      catalogueSource: publication.effectivePublicCatalogueSource,
+    });
+  });
 
   router.use((_req, res, next) => {
     setApiVersion(res);
@@ -158,4 +181,20 @@ export function createCatalogueRouter(deps: CatalogueRouterDeps = {}): Router {
   });
 
   return router;
+}
+
+/** Test helper: expose selected repository type without HTTP. */
+export function selectCatalogueRepositoryForEnv(
+  env: NodeJS.ProcessEnv,
+  factories: CatalogueRepositoryFactories = {},
+): {
+  repository: CatalogueRepository;
+  effectivePublicCatalogueSource: "static" | "database";
+  publicWouldShowSyncedProducts: boolean;
+} {
+  const resolved = resolvePublicCatalogueRepository(env, factories);
+  return {
+    repository: resolved.repository,
+    ...resolved.publication,
+  };
 }

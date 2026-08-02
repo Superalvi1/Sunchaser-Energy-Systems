@@ -910,8 +910,8 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       rolledBackPrices,
       errors,
       note: stages.publicWebsiteVisible
-        ? "CEO auto-import persisted active priced catalogue rows; public website uses database catalogue source."
-        : "CEO auto-import completed pipeline stages A–D as applicable. Public website visibility (stage E) requires MARKETPLACE_CATALOGUE_SOURCE=database and durable persist — sync success alone does not publish the storefront.",
+        ? "CEO auto-import persisted catalogue rows; public catalogue router is using database source so synced products are publicly visible."
+        : "CEO auto-import may persist database listings while MARKETPLACE_CATALOGUE_SOURCE=static. Persistence does not publish: the public catalogue router serves the static WS1 seed until source is explicitly set to database.",
     };
     await saveHealthSafe(runId, health, startedAt);
 

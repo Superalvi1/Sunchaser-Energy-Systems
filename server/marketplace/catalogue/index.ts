@@ -5,6 +5,13 @@ export {
   CatalogueRepositoryError,
 } from "./catalogueRepository.ts";
 export type { CatalogueRepository } from "./catalogueRepository.ts";
+export { createStaticCatalogueRepository } from "./staticCatalogueRepository.ts";
+export {
+  resolvePublicCatalogueRepository,
+  resolvePublicCataloguePublication,
+  publicationFromConfig,
+} from "./resolveCatalogueRepository.ts";
+export type { PublicCataloguePublication } from "./resolveCatalogueRepository.ts";
 export {
   MARKETPLACE_API_VERSION,
   MARKETPLACE_API_VERSION_HEADER,

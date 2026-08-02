@@ -86,7 +86,9 @@ export type AutoImportSyncResult = {
   }>;
   /**
    * Explicit pipeline stages. Sync success does NOT imply public website visibility.
-   * Stage E (publicWebsiteVisible) requires database catalogue source + durable persist.
+   * Stage E (publicWebsiteVisible) is true only when durable persist ran AND the
+   * public catalogue router is configured with MARKETPLACE_CATALOGUE_SOURCE=database.
+   * Persistence while source=static never publishes the storefront.
    */
   stages: {
     /** A — supplier catalogue observations fetched/normalized */
@@ -98,8 +100,9 @@ export type AutoImportSyncResult = {
     /** D — mp_auto_import_listings upserted (durable persist path only) */
     ceoListingImported: boolean;
     /**
-     * E — visible on public website catalogue.
-     * False when MARKETPLACE_CATALOGUE_SOURCE≠database or persist did not run.
+     * E — public catalogue router would expose these synced rows.
+     * False whenever effective public source is static (fail-closed default).
+     * True only when source=database AND this run performed durable writes.
      */
     publicWebsiteVisible: boolean;
   };
