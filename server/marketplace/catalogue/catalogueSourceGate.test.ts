@@ -42,6 +42,7 @@ const DB_ONLY_PRODUCT: CatalogueProductDto = {
   specifications: {},
   warranty: null,
   image: null,
+  images: [],
   defaultVariant: {
     sku: "SC-AUTO-DBONLY",
     title: "Default",

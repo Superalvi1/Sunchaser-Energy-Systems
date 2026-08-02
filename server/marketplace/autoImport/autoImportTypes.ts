@@ -17,6 +17,7 @@ export type AutoImportOffer = {
   availability: SupplierAvailability;
   canonicalUrl: string;
   primaryImageUrl: string | null;
+  additionalImageUrls: string[];
   description: string | null;
   fetchedAt: string;
   identity: VariantIdentity;

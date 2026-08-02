@@ -38,7 +38,10 @@ export type CatalogueProductDto = {
   featured: boolean;
   specifications: Record<string, string>;
   warranty: string | null;
-  image: null;
+  /** Primary supplier image URL (HTTPS allowlisted), or null when none. */
+  image: string | null;
+  /** Additional gallery URLs in deterministic sort order (excludes primary). */
+  images: string[];
   defaultVariant: CatalogueDefaultVariantDto;
 };
 

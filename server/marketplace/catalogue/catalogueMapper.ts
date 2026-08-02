@@ -1,3 +1,4 @@
+import { normalizeSupplierImageUrl } from "../suppliers/safeHttp.ts";
 import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
@@ -25,6 +26,15 @@ type VariantRow = {
   active: boolean;
 };
 
+type MediaRow = {
+  source_url: string | null;
+  sort_order: number | null;
+  role: string | null;
+  published: boolean | null;
+  rights_status: string | null;
+  source_type: string | null;
+};
+
 type ProductRow = {
   slug: string;
   title: string;
@@ -36,6 +46,7 @@ type ProductRow = {
   brand: BrandRow | BrandRow[] | null;
   category: CategoryRow | CategoryRow[] | null;
   variants: VariantRow[] | null;
+  media?: MediaRow[] | MediaRow | null;
 };
 
 function one<T>(value: T | T[] | null | undefined): T | null {
@@ -91,6 +102,51 @@ function mapVariant(row: VariantRow): CatalogueDefaultVariantDto {
   };
 }
 
+/**
+ * Published supplier media → safe public URLs.
+ * Re-validates host/protocol; never returns unallowlisted URLs.
+ */
+export function mapPublishedImageUrls(
+  media: MediaRow[] | MediaRow | null | undefined,
+): { image: string | null; images: string[] } {
+  const rows = Array.isArray(media) ? media : media ? [media] : [];
+  const eligible = rows
+    .filter(
+      (m) =>
+        m &&
+        m.published === true &&
+        m.source_type === "supplier" &&
+        m.role !== "receipt" &&
+        (m.rights_status === "supplier_approved" ||
+          m.rights_status === "own" ||
+          m.rights_status === "licensed"),
+    )
+    .map((m) => ({
+      url: normalizeSupplierImageUrl(m.source_url),
+      sort: Number(m.sort_order) || 0,
+      role: m.role || "gallery",
+    }))
+    .filter((m): m is { url: string; sort: number; role: string } => Boolean(m.url))
+    .sort((a, b) => {
+      if (a.role === "thumbnail" && b.role !== "thumbnail") return -1;
+      if (b.role === "thumbnail" && a.role !== "thumbnail") return 1;
+      return a.sort - b.sort;
+    });
+
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const item of eligible) {
+    if (seen.has(item.url)) continue;
+    seen.add(item.url);
+    urls.push(item.url);
+  }
+
+  return {
+    image: urls[0] ?? null,
+    images: urls.slice(1),
+  };
+}
+
 export function mapBrandDto(row: BrandRow): CatalogueBrandDto {
   return { slug: row.slug, name: row.name };
 }
@@ -111,6 +167,8 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
   const defaultVariant = variants.find((v) => v.is_default) || null;
   if (!brand || !category || !defaultVariant) return null;
 
+  const { image, images } = mapPublishedImageUrls(row.media);
+
   return {
     slug: row.slug,
     title: row.title,
@@ -121,9 +179,10 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
     featured: Boolean(row.featured),
     specifications: asSpecMap(row.specifications),
     warranty: row.warranty ?? null,
-    image: null,
+    image,
+    images,
     defaultVariant: mapVariant(defaultVariant),
   };
 }
 
-export type { ProductRow, BrandRow, CategoryRow };
+export type { ProductRow, BrandRow, CategoryRow, MediaRow };

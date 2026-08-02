@@ -56,6 +56,7 @@ function buildMemoryRepo(): CatalogueRepository {
     specifications: { ...p.specifications },
     warranty: p.warranty,
     image: null,
+    images: [],
     defaultVariant: {
       sku: p.sku,
       title: "Default",
@@ -151,8 +152,10 @@ async function main(): Promise<void> {
         !serialized.includes("supplier_public_price"),
     );
     check(
-      "DTO image is null",
-      listBody.data.every((p: CatalogueProductDto) => p.image === null),
+      "seed DTO image is null without media",
+      listBody.data.every(
+        (p: CatalogueProductDto) => p.image === null && Array.isArray(p.images),
+      ),
     );
 
     const featured = await fetch(

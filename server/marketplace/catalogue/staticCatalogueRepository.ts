@@ -61,6 +61,7 @@ function buildStaticCatalogue(): {
       specifications: { ...p.specifications },
       warranty: p.warranty,
       image: null,
+      images: [],
       defaultVariant: {
         sku: p.sku,
         title: "Default",
@@ -105,6 +106,7 @@ export function createStaticCatalogueRepository(): CatalogueRepository {
           category: { ...p.category },
           tags: [...p.tags],
           specifications: { ...p.specifications },
+          images: [...p.images],
           defaultVariant: { ...p.defaultVariant },
         }));
     },
@@ -117,6 +119,7 @@ export function createStaticCatalogueRepository(): CatalogueRepository {
         category: { ...product.category },
         tags: [...product.tags],
         specifications: { ...product.specifications },
+        images: [...product.images],
         defaultVariant: { ...product.defaultVariant },
       };
     },
