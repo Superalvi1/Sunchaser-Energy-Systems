@@ -38,6 +38,12 @@ const PRODUCT_SELECT = `
   featured,
   specifications,
   warranty,
+  public_visible,
+  short_description,
+  model,
+  seo_title,
+  seo_description,
+  datasheet_url,
   brand:mp_brands!brand_id (
     slug,
     name,
@@ -58,7 +64,8 @@ const PRODUCT_SELECT = `
     website_price_state,
     website_price_source,
     stock_status,
-    active
+    active,
+    compare_at_price
   ),
   media:mp_media!product_id (
     source_url,

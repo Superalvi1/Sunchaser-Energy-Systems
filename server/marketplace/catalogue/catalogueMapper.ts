@@ -35,6 +35,20 @@ type MediaRow = {
   source_type: string | null;
 };
 
+const PUBLIC_MEDIA_SOURCE_TYPES = new Set([
+  "supplier",
+  "own",
+  "licensed",
+  "user_upload",
+  "manufacturer",
+]);
+
+const PUBLIC_MEDIA_RIGHTS = new Set([
+  "supplier_approved",
+  "own",
+  "licensed",
+]);
+
 type ProductRow = {
   slug: string;
   title: string;
@@ -43,6 +57,13 @@ type ProductRow = {
   featured: boolean;
   specifications: Record<string, unknown> | null;
   warranty: string | null;
+  /** When explicitly false, product is hidden from public catalogue. Legacy null/undefined → visible. */
+  public_visible?: boolean | null;
+  short_description?: string | null;
+  model?: string | null;
+  seo_title?: string | null;
+  seo_description?: string | null;
+  datasheet_url?: string | null;
   brand: BrandRow | BrandRow[] | null;
   category: CategoryRow | CategoryRow[] | null;
   variants: VariantRow[] | null;
@@ -115,11 +136,11 @@ export function mapPublishedImageUrls(
       (m) =>
         m &&
         m.published === true &&
-        m.source_type === "supplier" &&
         m.role !== "receipt" &&
-        (m.rights_status === "supplier_approved" ||
-          m.rights_status === "own" ||
-          m.rights_status === "licensed"),
+        typeof m.source_type === "string" &&
+        PUBLIC_MEDIA_SOURCE_TYPES.has(m.source_type) &&
+        typeof m.rights_status === "string" &&
+        PUBLIC_MEDIA_RIGHTS.has(m.rights_status),
     )
     .map((m) => ({
       url: normalizeSupplierImageUrl(m.source_url),
@@ -161,6 +182,9 @@ export function mapCategoryDto(row: CategoryRow): CatalogueCategoryDto {
 }
 
 export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
+  // Explicit false hides; missing/null keeps legacy rows visible.
+  if (row.public_visible === false) return null;
+
   const brand = one(row.brand);
   const category = one(row.category);
   const variants = (row.variants || []).filter((v) => v.active !== false);

@@ -69,6 +69,21 @@ type PlanningLookup = {
 /** Process-wide lock so alias + admin mounts cannot run two imports at once. */
 let activeImportRunId: string | null = null;
 
+export type AutoImportRejectLedgerSink = {
+  record(entry: {
+    runId: string;
+    supplier: SupplierCode;
+    reason: string;
+    sourceKey: string | null;
+    supplierProductId: string | null;
+    canonicalUrl: string | null;
+    title: string | null;
+    identityKey: string | null;
+    stage: "normalize" | "import" | "commit";
+    detail?: Record<string, unknown>;
+  }): Promise<void>;
+};
+
 export type AutoImportServiceDeps = {
   repository?: AutoImportRepository;
   catalogueDeps?: CatalogueFetchDeps;
@@ -78,6 +93,8 @@ export type AutoImportServiceDeps = {
   fixtureObservations?: CatalogueProductObservation[];
   /** Inject logger (tests). */
   log?: typeof logAutoImport;
+  /** Durable reject accountability (optional; best-effort). */
+  rejectLedger?: AutoImportRejectLedgerSink;
 };
 
 function isAutoImportEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -411,10 +428,36 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     let rejectedVariants = 0;
     const normalized: CatalogueProductObservation[] = [];
     const staleObservations: CatalogueProductObservation[] = [];
+    const recordReject = async (
+      obs: CatalogueProductObservation,
+      reason: string,
+      stage: "normalize" | "import" = "import",
+      detail: Record<string, unknown> = {},
+    ) => {
+      if (!deps.rejectLedger) return;
+      try {
+        await deps.rejectLedger.record({
+          runId,
+          supplier: obs.supplier,
+          reason,
+          sourceKey: obs.sourceKey,
+          supplierProductId: obs.supplierProductId,
+          canonicalUrl: obs.canonicalUrl,
+          title: obs.title,
+          identityKey: null,
+          stage,
+          detail,
+        });
+      } catch {
+        // Best-effort — never fail the sync on ledger write.
+      }
+    };
+
     for (const obs of observations) {
       const why = rejectReason(obs);
       if (why) {
         rejectedVariants += 1;
+        await recordReject(obs, why, "import");
         if (why === "missing_or_invalid_price") {
           staleObservations.push(obs);
         }
@@ -423,6 +466,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       const url = obs.canonicalUrl.trim().toLowerCase();
       if (seenUrls.has(url)) {
         rejectedVariants += 1;
+        await recordReject(obs, "duplicate_canonical_url", "import");
         continue;
       }
       seenUrls.add(url);
@@ -452,6 +496,10 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       const existingByUrl = lookup.byUrl.get(obs.canonicalUrl) ?? null;
       if (existingByUrl && existingByUrl.identityKey !== offer.groupKey) {
         rejectedVariants += 1;
+        await recordReject(obs, "url_identity_collision", "import", {
+          existingIdentityKey: existingByUrl.identityKey,
+          offeredGroupKey: offer.groupKey,
+        });
         continue;
       }
       acceptedOffers.push(offer);

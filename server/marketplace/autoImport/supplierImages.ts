@@ -13,6 +13,8 @@ export type PlannedProductImage = {
   url: string;
   sortOrder: number;
   isPrimary: boolean;
+  /** Selected commercial offer identity (never cross-offer mix). */
+  sourceKey: string;
 };
 
 const MAX_IMAGES_PER_PRODUCT = 8;
@@ -64,6 +66,7 @@ export function collectSelectedOfferImages(input: {
     url,
     sortOrder: index,
     isPrimary: index === 0,
+    sourceKey: primary.sourceKey,
   }));
 }
 
