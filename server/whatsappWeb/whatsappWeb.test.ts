@@ -418,6 +418,10 @@ console.log("PASS: inbound persist + provider-id deduplication");
   await session.disconnect();
   assert.equal(session.getSafeStatus().state, "DISCONNECTED");
 
+  // Logout requires the complete active fence — disconnect released the lease.
+  await session.connect();
+  await new Promise((r) => setTimeout(r, 20));
+
   // Logout deletes session dir
   await fsp.mkdir(path.join(authDir, WHATSAPP_WEB_SESSION_DIR_NAME), {
     recursive: true,

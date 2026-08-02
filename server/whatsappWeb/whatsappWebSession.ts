@@ -38,6 +38,7 @@ import {
   getWhatsAppWebInboundDiagnostics,
   noteInboundIgnored,
   noteInboundRawUpsert,
+  clearWhatsAppWebInboundLiveTimestamps,
 } from "./whatsappWebInboundDiagnostics.ts";
 import {
   getWhatsAppWebConnectionDiagnostics,
@@ -690,6 +691,12 @@ export class WhatsAppWebSession {
   private leaseLostHandled = false;
   /** Generation of the currently authoritative upsert binding. */
   private activeUpsertGeneration = 0;
+  /**
+   * Socket generation that last confirmed live inbound on the current process.
+   * A newer generation starts without LIVE_INBOUND_CONFIRMED until it observes
+   * its own upsert/accepted/stored events.
+   */
+  private liveInboundSocketGeneration: number | null = null;
 
   constructor(options: WhatsAppWebSessionOptions = {}) {
     this.env = options.env ?? process.env;
@@ -748,6 +755,17 @@ export class WhatsAppWebSession {
         this.state === "QR_READY"
     );
     const inbound = getWhatsAppWebInboundDiagnostics();
+    const liveInboundConfirmed =
+      this.liveInboundSocketGeneration === this.socketGeneration;
+    const lastRawUpsertAt = liveInboundConfirmed
+      ? inbound.lastRawUpsertAt
+      : null;
+    const lastInboundEventAt = liveInboundConfirmed
+      ? inbound.lastInboundEventAt
+      : null;
+    const lastInboundStoredAt = liveInboundConfirmed
+      ? inbound.lastInboundStoredAt
+      : null;
     const socketOpen = this.state === "CONNECTED" && this.socket != null;
     // Never invent attachment: missing/unverified tracking reports 0 (not operational).
     const listenerCount = this.socket?.getInboundListenerCount?.() ?? 0;
@@ -759,7 +777,7 @@ export class WhatsAppWebSession {
       env: this.env,
       lease,
       connected: socketOpen,
-      lastRawUpsertAt: inbound.lastRawUpsertAt,
+      lastRawUpsertAt,
       nowMs: this.now().getTime(),
     });
     return {
@@ -770,9 +788,9 @@ export class WhatsAppWebSession {
       qrAvailable,
       qrExpiresAt: qrAvailable ? this.qrExpiresAt : null,
       safeMessage: this.safeMessage,
-      lastRawUpsertAt: inbound.lastRawUpsertAt,
-      lastInboundEventAt: inbound.lastInboundEventAt,
-      lastInboundStoredAt: inbound.lastInboundStoredAt,
+      lastRawUpsertAt,
+      lastInboundEventAt,
+      lastInboundStoredAt,
       lastIgnoredAt: inbound.lastIgnoredAt,
       lastIgnoredReason: inbound.lastIgnoredReason,
       lastPersistFailureAt: inbound.lastPersistFailureAt,
@@ -809,9 +827,7 @@ export class WhatsAppWebSession {
         leaseOwned: connection.sessionLeaseOwnerMatch === true,
         socketOpen,
         inboundListenerOperational,
-        lastRawUpsertAt: inbound.lastRawUpsertAt,
-        lastAcceptedEventAt: inbound.lastInboundEventAt,
-        lastStoredMessageAt: inbound.lastInboundStoredAt,
+        liveInboundConfirmed,
       }),
       servingProcessInstanceId: this.processInstanceId,
       ownerProcessInstanceId: connection.sessionLeaseOwnerId,
@@ -836,6 +852,8 @@ export class WhatsAppWebSession {
       durableDiagnostics: durable.diagnostics,
       nowMs: this.now().getTime(),
       env: this.env,
+      liveInboundConfirmed:
+        this.liveInboundSocketGeneration === this.socketGeneration,
     });
     if (merged.durableOwnerMatch) {
       void this.publishOwnerDiagnostics();
@@ -956,7 +974,7 @@ export class WhatsAppWebSession {
 
   /** Soft disconnect — not desired; never auto-reconnect; keep credentials. */
   async disconnect(): Promise<WhatsAppWebSafeStatus> {
-    await this.assertSocketOwnerForMutation();
+    await this.assertCompleteActiveFence();
     this.connectionDesired = false;
     this.cancelHistorySync("disconnect");
     this.clearReconnectTimer();
@@ -982,7 +1000,7 @@ export class WhatsAppWebSession {
    * Logout — not desired; never reconnect; delete only contained session dir.
    */
   async logout(): Promise<WhatsAppWebSafeStatus> {
-    await this.assertSocketOwnerForMutation();
+    await this.assertCompleteActiveFence();
     this.connectionDesired = false;
     this.cancelHistorySync("logout");
     this.clearReconnectTimer();
@@ -1035,6 +1053,7 @@ export class WhatsAppWebSession {
     jid: string,
     text: string
   ): Promise<{ providerMessageId: string }> {
+    await this.assertCompleteActiveFence();
     if (this.state !== "CONNECTED" || !this.socket) {
       throw Object.assign(new Error("WhatsApp Web is not connected"), {
         code: "not_connected",
@@ -1070,7 +1089,7 @@ export class WhatsAppWebSession {
     joinedExisting: boolean;
     snapshot: WhatsAppWebSyncJobSnapshot;
   }> {
-    await this.assertSocketOwnerForMutation();
+    await this.assertCompleteActiveFence();
     return this.startHistorySync();
   }
 
@@ -1278,6 +1297,9 @@ export class WhatsAppWebSession {
     );
 
     const generation = ++this.socketGeneration;
+    // New generation starts without live-inbound confirmation from history.
+    clearWhatsAppWebInboundLiveTimestamps();
+    this.liveInboundSocketGeneration = null;
 
     try {
       if (this.socket) {
@@ -1313,6 +1335,7 @@ export class WhatsAppWebSession {
             return false;
           }
           noteInboundRawUpsert();
+          this.liveInboundSocketGeneration = generation;
           void this.publishOwnerDiagnostics();
           return true;
         },
@@ -1323,6 +1346,7 @@ export class WhatsAppWebSession {
             noteInboundIgnored("stale_socket");
             return;
           }
+          this.liveInboundSocketGeneration = generation;
           if (this.inboundHandler) {
             await this.inboundHandler(message);
           }
@@ -1426,7 +1450,11 @@ export class WhatsAppWebSession {
     }
   }
 
-  private async assertSocketOwnerForMutation(): Promise<void> {
+  /**
+   * Require the complete active fence before HTTP/socket mutations.
+   * Internal shutdown / lease-loss teardown must NOT call this.
+   */
+  private async assertCompleteActiveFence(): Promise<void> {
     if (!this.sessionLease) return;
     if (!this.paths) {
       const config = this.getConfig();
@@ -1434,16 +1462,31 @@ export class WhatsAppWebSession {
         this.paths = resolveWhatsAppWebAuthPaths(config);
       }
     }
-    const { lease } = await this.readDurableLeaseAndDiagnostics();
+    const sessionKey = this.resolveSessionKeyOrNull();
+    const localFence = this.sessionLease.getFence();
     const nowMs = this.now().getTime();
+
+    if (!sessionKey || !localFence || !this.sessionLease.isHeld()) {
+      throw await this.buildLeaseNotOwnedError("absent");
+    }
+    if (localFence.sessionKey !== sessionKey) {
+      throw await this.buildLeaseNotOwnedError("contested");
+    }
+
+    const lease = await this.sessionLease.readDurableLease(sessionKey);
     if (!isLeaseRowActive(lease, nowMs)) {
-      // No healthy foreign lease — local cleanup is allowed.
-      return;
+      throw await this.buildLeaseNotOwnedError(
+        lease ? "absent" : "absent",
+        lease
+      );
     }
     if (lease.ownerId !== this.processInstanceId) {
       throw await this.buildLeaseNotOwnedError("contested", lease);
     }
-    if (!this.sessionLease.isHeld()) {
+    if (lease.ownerToken !== localFence.ownerToken) {
+      throw await this.buildLeaseNotOwnedError("contested", lease);
+    }
+    if (lease.fencingVersion !== localFence.fencingVersion) {
       throw await this.buildLeaseNotOwnedError("contested", lease);
     }
   }
@@ -1470,13 +1513,13 @@ export class WhatsAppWebSession {
     if (!fence) return;
     const local = this.getSafeStatus();
     const inbound = getWhatsAppWebInboundDiagnostics();
+    const liveInboundConfirmed =
+      this.liveInboundSocketGeneration === this.socketGeneration;
     const inboundHealth = deriveWhatsAppWebInboundHealth({
       leaseOwned: true,
       socketOpen: local.socketOpen,
       inboundListenerOperational: local.inboundListenerOperational,
-      lastRawUpsertAt: inbound.lastRawUpsertAt,
-      lastAcceptedEventAt: inbound.lastInboundEventAt,
-      lastStoredMessageAt: inbound.lastInboundStoredAt,
+      liveInboundConfirmed,
     });
     await this.ownerDiagnosticsStore.write(
       fence,
@@ -1493,9 +1536,13 @@ export class WhatsAppWebSession {
         lastHeartbeatAt:
           this.sessionLease.getSnapshot().heartbeatAt ??
           this.now().toISOString(),
-        lastRawUpsertAt: inbound.lastRawUpsertAt,
-        lastAcceptedEventAt: inbound.lastInboundEventAt,
-        lastStoredMessageAt: inbound.lastInboundStoredAt,
+        lastRawUpsertAt: liveInboundConfirmed ? inbound.lastRawUpsertAt : null,
+        lastAcceptedEventAt: liveInboundConfirmed
+          ? inbound.lastInboundEventAt
+          : null,
+        lastStoredMessageAt: liveInboundConfirmed
+          ? inbound.lastInboundStoredAt
+          : null,
         lastFailureCode: inbound.lastPersistFailureCode,
         buildIdentity: getWhatsAppWebBuildIdentity(this.env),
       }
@@ -1530,6 +1577,8 @@ export class WhatsAppWebSession {
     this.reconnectAttempt = 0;
     this.reconnectAttemptInProgress = false;
     this.socketGeneration += 1;
+    clearWhatsAppWebInboundLiveTimestamps();
+    this.liveInboundSocketGeneration = null;
     if (this.socket) {
       try {
         this.socket.end();

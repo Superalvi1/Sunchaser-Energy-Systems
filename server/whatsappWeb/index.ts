@@ -65,6 +65,7 @@ export {
 export {
   getWhatsAppWebInboundDiagnostics,
   __resetWhatsAppWebInboundDiagnostics,
+  clearWhatsAppWebInboundLiveTimestamps,
 } from "./whatsappWebInboundDiagnostics.ts";
 
 export {
@@ -108,6 +109,8 @@ export {
   createLeaseNotOwnedError,
   isLeaseRowActive,
   mergeOwnerAwareSafeStatus,
+  diagnosticsMatchesActiveLease,
+  WHATSAPP_WEB_OWNER_DIAGNOSTICS_UNAVAILABLE_MESSAGE,
 } from "./whatsappWebOwnerControl.ts";
 export {
   WHATSAPP_WEB_LEASE_NOT_OWNED_CODE,

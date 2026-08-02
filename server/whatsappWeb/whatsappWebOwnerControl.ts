@@ -17,6 +17,9 @@ import {
   type WhatsAppWebOwnerDiagnosticsRow,
 } from "./whatsappWebOwnerDiagnosticsStore.ts";
 
+export const WHATSAPP_WEB_OWNER_DIAGNOSTICS_UNAVAILABLE_MESSAGE =
+  "Lease owner diagnostics are not yet published for the current fence.";
+
 export function isLeaseRowActive(
   row: WhatsAppWebLeaseRow | null | undefined,
   nowMs: number
@@ -24,6 +27,20 @@ export function isLeaseRowActive(
   if (!row) return false;
   const exp = Date.parse(row.expiresAt);
   return Number.isFinite(exp) && exp > nowMs;
+}
+
+/** Diagnostics may be used only when they match the active durable lease fence. */
+export function diagnosticsMatchesActiveLease(
+  diagnostics: WhatsAppWebOwnerDiagnosticsRow | null | undefined,
+  lease: WhatsAppWebLeaseRow | null | undefined
+): diagnostics is WhatsAppWebOwnerDiagnosticsRow {
+  if (!diagnostics || !lease) return false;
+  return (
+    diagnostics.sessionKey === lease.sessionKey &&
+    diagnostics.ownerToken === lease.ownerToken &&
+    diagnostics.fencingVersion === lease.fencingVersion &&
+    diagnostics.ownerId === lease.ownerId
+  );
 }
 
 export function createLeaseNotOwnedError(input: {
@@ -53,6 +70,24 @@ export function createLeaseNotOwnedError(input: {
   return err;
 }
 
+function asLifecycle(
+  value: string | null | undefined,
+  fallback: WhatsAppWebLifecycleState
+): WhatsAppWebLifecycleState {
+  const allowed = [
+    "DISCONNECTED",
+    "QR_READY",
+    "CONNECTING",
+    "CONNECTED",
+    "RECONNECTING",
+    "LOGGED_OUT",
+    "ERROR",
+  ] as const;
+  return (allowed as readonly string[]).includes(String(value ?? ""))
+    ? (value as WhatsAppWebLifecycleState)
+    : fallback;
+}
+
 export function mergeOwnerAwareSafeStatus(input: {
   local: WhatsAppWebSafeStatus;
   servingProcessInstanceId: string;
@@ -60,6 +95,8 @@ export function mergeOwnerAwareSafeStatus(input: {
   durableDiagnostics: WhatsAppWebOwnerDiagnosticsRow | null;
   nowMs: number;
   env?: NodeJS.ProcessEnv;
+  /** Live inbound confirmation scoped to the current socket generation. */
+  liveInboundConfirmed?: boolean;
 }): WhatsAppWebSafeStatus {
   const {
     local,
@@ -68,24 +105,35 @@ export function mergeOwnerAwareSafeStatus(input: {
     durableDiagnostics,
     nowMs,
     env = process.env,
+    liveInboundConfirmed = false,
   } = input;
   const active = isLeaseRowActive(durableLease, nowMs);
   const durableOwnerMatch =
     active === true && durableLease.ownerId === servingProcessInstanceId;
+  const matchedDiagnostics = diagnosticsMatchesActiveLease(
+    durableDiagnostics,
+    durableLease
+  )
+    ? durableDiagnostics
+    : null;
   const buildIdentity =
-    durableDiagnostics?.buildIdentity ?? getWhatsAppWebBuildIdentity(env);
+    matchedDiagnostics?.buildIdentity ?? getWhatsAppWebBuildIdentity(env);
 
   if (durableOwnerMatch) {
     const inboundHealth = deriveWhatsAppWebInboundHealth({
       leaseOwned: true,
       socketOpen: local.socketOpen,
       inboundListenerOperational: local.inboundListenerOperational,
-      lastRawUpsertAt: local.lastRawUpsertAt,
-      lastAcceptedEventAt: local.lastInboundEventAt,
-      lastStoredMessageAt: local.lastInboundStoredAt,
+      liveInboundConfirmed,
     });
     return {
       ...local,
+      // Generation-scoped: never surface predecessor live clocks as current.
+      lastRawUpsertAt: liveInboundConfirmed ? local.lastRawUpsertAt : null,
+      lastInboundEventAt: liveInboundConfirmed ? local.lastInboundEventAt : null,
+      lastInboundStoredAt: liveInboundConfirmed
+        ? local.lastInboundStoredAt
+        : null,
       processInstanceId: servingProcessInstanceId,
       servingProcessInstanceId,
       ownerProcessInstanceId: durableLease.ownerId,
@@ -98,54 +146,40 @@ export function mergeOwnerAwareSafeStatus(input: {
       listeningSilent:
         inboundHealth === "LISTENER_READY" ||
         inboundHealth === "CONNECTED_SOCKET" ||
-        inboundHealth === "INBOUND_SILENT"
-          ? true
-          : local.listeningSilent,
+        inboundHealth === "INBOUND_SILENT",
       buildIdentity,
       leaseRetryGuidance: null,
     };
   }
 
-  // Non-owner (or no local ownership): prefer durable owner diagnostics.
-  if (active && durableDiagnostics) {
-    const lifecycle = durableDiagnostics.lifecycleState as WhatsAppWebLifecycleState;
+  // Non-owner with matched current-fence diagnostics: report owner truth.
+  if (active && matchedDiagnostics) {
     const inboundHealth = deriveWhatsAppWebInboundHealth({
       leaseOwned: false,
-      socketOpen: durableDiagnostics.socketOpen,
+      socketOpen: matchedDiagnostics.socketOpen,
       inboundListenerOperational:
-        durableDiagnostics.inboundListenerOperational,
-      lastRawUpsertAt: durableDiagnostics.lastRawUpsertAt,
-      lastAcceptedEventAt: durableDiagnostics.lastAcceptedEventAt,
-      lastStoredMessageAt: durableDiagnostics.lastStoredMessageAt,
+        matchedDiagnostics.inboundListenerOperational,
+      liveInboundConfirmed:
+        matchedDiagnostics.inboundHealth === "LIVE_INBOUND_CONFIRMED",
+      lastRawUpsertAt: matchedDiagnostics.lastRawUpsertAt,
+      lastAcceptedEventAt: matchedDiagnostics.lastAcceptedEventAt,
+      lastStoredMessageAt: matchedDiagnostics.lastStoredMessageAt,
     });
     return {
       ...local,
-      // Keep QR/local secrets off non-owner responses.
       qrAvailable: false,
       qrExpiresAt: null,
-      state: (
-        [
-          "DISCONNECTED",
-          "QR_READY",
-          "CONNECTING",
-          "CONNECTED",
-          "RECONNECTING",
-          "LOGGED_OUT",
-          "ERROR",
-        ] as string[]
-      ).includes(lifecycle)
-        ? lifecycle
-        : local.state,
-      socketOpen: durableDiagnostics.socketOpen,
-      inboundListenerAttached: durableDiagnostics.inboundListenerAttached,
+      state: asLifecycle(matchedDiagnostics.lifecycleState, local.state),
+      socketOpen: matchedDiagnostics.socketOpen,
+      inboundListenerAttached: matchedDiagnostics.inboundListenerAttached,
       inboundListenerOperational:
-        durableDiagnostics.inboundListenerOperational,
-      activeSocketGeneration: durableDiagnostics.connectionGeneration,
-      lastRawUpsertAt: durableDiagnostics.lastRawUpsertAt,
-      lastInboundEventAt: durableDiagnostics.lastAcceptedEventAt,
-      lastInboundStoredAt: durableDiagnostics.lastStoredMessageAt,
-      lastPersistFailureCode: durableDiagnostics.lastFailureCode,
-      lastConnectionUpdateAt: durableDiagnostics.lastConnectionAt,
+        matchedDiagnostics.inboundListenerOperational,
+      activeSocketGeneration: matchedDiagnostics.connectionGeneration,
+      lastRawUpsertAt: matchedDiagnostics.lastRawUpsertAt,
+      lastInboundEventAt: matchedDiagnostics.lastAcceptedEventAt,
+      lastInboundStoredAt: matchedDiagnostics.lastStoredMessageAt,
+      lastPersistFailureCode: matchedDiagnostics.lastFailureCode,
+      lastConnectionUpdateAt: matchedDiagnostics.lastConnectionAt,
       sessionLeaseStatus: "contested",
       sessionLeaseOwnerMatch: false,
       sessionLeaseOwnerId: durableLease.ownerId.slice(0, 24),
@@ -163,14 +197,21 @@ export function mergeOwnerAwareSafeStatus(input: {
     };
   }
 
+  // Active foreign lease but diagnostics missing or from a predecessor fence.
   if (active) {
     return {
       ...local,
       qrAvailable: false,
       qrExpiresAt: null,
+      state: "DISCONNECTED",
       socketOpen: false,
       inboundListenerAttached: false,
       inboundListenerOperational: false,
+      lastRawUpsertAt: null,
+      lastInboundEventAt: null,
+      lastInboundStoredAt: null,
+      lastPersistFailureCode: null,
+      lastConnectionUpdateAt: null,
       sessionLeaseStatus: "contested",
       sessionLeaseOwnerMatch: false,
       sessionLeaseOwnerId: durableLease.ownerId.slice(0, 24),
@@ -182,23 +223,26 @@ export function mergeOwnerAwareSafeStatus(input: {
       durableOwnerMatch: false,
       inboundHealth: "LEASE_NOT_OWNED",
       listeningSilent: false,
-      buildIdentity,
-      safeMessage: WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE,
+      buildIdentity: getWhatsAppWebBuildIdentity(env),
+      safeMessage: WHATSAPP_WEB_OWNER_DIAGNOSTICS_UNAVAILABLE_MESSAGE,
       leaseRetryGuidance: WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE,
     };
   }
 
-  // No active foreign lease — local view with explicit health.
+  // No active foreign lease — local view with generation-scoped health.
   const inboundHealth = deriveWhatsAppWebInboundHealth({
     leaseOwned: local.sessionLeaseOwnerMatch === true,
     socketOpen: local.socketOpen,
     inboundListenerOperational: local.inboundListenerOperational,
-    lastRawUpsertAt: local.lastRawUpsertAt,
-    lastAcceptedEventAt: local.lastInboundEventAt,
-    lastStoredMessageAt: local.lastInboundStoredAt,
+    liveInboundConfirmed,
   });
   return {
     ...local,
+    lastRawUpsertAt: liveInboundConfirmed ? local.lastRawUpsertAt : null,
+    lastInboundEventAt: liveInboundConfirmed ? local.lastInboundEventAt : null,
+    lastInboundStoredAt: liveInboundConfirmed
+      ? local.lastInboundStoredAt
+      : null,
     servingProcessInstanceId,
     ownerProcessInstanceId: local.sessionLeaseOwnerId,
     fencingVersion: null,

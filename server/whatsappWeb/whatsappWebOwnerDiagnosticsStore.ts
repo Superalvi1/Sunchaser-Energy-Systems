@@ -128,16 +128,21 @@ export function deriveWhatsAppWebInboundHealth(input: {
   leaseOwned: boolean;
   socketOpen: boolean;
   inboundListenerOperational: boolean;
-  lastRawUpsertAt: string | null;
+  /** True only when the *current* socket generation observed live inbound. */
+  liveInboundConfirmed?: boolean;
+  lastRawUpsertAt?: string | null;
   lastAcceptedEventAt?: string | null;
   lastStoredMessageAt?: string | null;
 }): WhatsAppWebInboundHealth {
   if (!input.leaseOwned) return "LEASE_NOT_OWNED";
-  const liveConfirmed = Boolean(
-    input.lastStoredMessageAt ||
-      input.lastAcceptedEventAt ||
-      input.lastRawUpsertAt
-  );
+  const liveConfirmed =
+    input.liveInboundConfirmed === true ||
+    (input.liveInboundConfirmed !== false &&
+      Boolean(
+        input.lastStoredMessageAt ||
+          input.lastAcceptedEventAt ||
+          input.lastRawUpsertAt
+      ));
   if (liveConfirmed && input.socketOpen && input.inboundListenerOperational) {
     return "LIVE_INBOUND_CONFIRMED";
   }
