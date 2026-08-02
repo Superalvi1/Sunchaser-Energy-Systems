@@ -691,25 +691,34 @@ export function createSupabaseCatalogueManagerRepository(
       if (patch.publicVisible !== undefined) ceoFields.push(["public_visible", patch.publicVisible]);
       if (patch.featured !== undefined) ceoFields.push(["featured", patch.featured]);
 
-      // Validate brand/category IDs exist before setting override
+      // Validate brand/category IDs exist AND are active before setting override.
+      // Reject inactive taxonomy assignments with 422. Fail-closed on DB errors with 503.
       if (patch.brandId !== undefined) {
-        const { data: bData } = await supabase
+        const { data: bData, error: bErr } = await supabase
           .from("mp_brands")
-          .select("id")
+          .select("id, active")
           .eq("id", patch.brandId)
           .maybeSingle();
+        if (bErr) throw dbErr("patchProduct.validateBrand", bErr);
         if (!bData) {
           throw new CatalogueManagerError(422, "INVALID_BRAND", `Brand not found: ${patch.brandId}`);
         }
+        if (bData.active === false) {
+          throw new CatalogueManagerError(422, "INACTIVE_BRAND", `Brand is inactive: ${patch.brandId}`);
+        }
       }
       if (patch.categoryId !== undefined) {
-        const { data: cData } = await supabase
+        const { data: cData, error: cErr } = await supabase
           .from("mp_categories")
-          .select("id")
+          .select("id, active")
           .eq("id", patch.categoryId)
           .maybeSingle();
+        if (cErr) throw dbErr("patchProduct.validateCategory", cErr);
         if (!cData) {
           throw new CatalogueManagerError(422, "INVALID_CATEGORY", `Category not found: ${patch.categoryId}`);
+        }
+        if (cData.active === false) {
+          throw new CatalogueManagerError(422, "INACTIVE_CATEGORY", `Category is inactive: ${patch.categoryId}`);
         }
       }
 
@@ -763,32 +772,44 @@ export function createSupabaseCatalogueManagerRepository(
       input: SetOverrideInput,
       actor: CatalogueManagerActorRef,
     ): Promise<FieldOverrideRecord> {
-      // Validate referenced brand/category IDs on both PATCH and direct override endpoint
+      // Validate referenced brand/category IDs: must exist AND be active.
       if (input.fieldName === "brand_id") {
-        const { data: bData } = await supabase
+        const { data: bData, error: bErr } = await supabase
           .from("mp_brands")
-          .select("id")
+          .select("id, active")
           .eq("id", input.value as string)
           .maybeSingle();
+        if (bErr) throw dbErr("setOverride.validateBrand", bErr);
         if (!bData) {
           throw new CatalogueManagerError(
-            422,
-            "INVALID_BRAND",
+            422, "INVALID_BRAND",
             `Brand not found: ${String(input.value)}`,
+          );
+        }
+        if (bData.active === false) {
+          throw new CatalogueManagerError(
+            422, "INACTIVE_BRAND",
+            `Brand is inactive: ${String(input.value)}`,
           );
         }
       }
       if (input.fieldName === "category_id") {
-        const { data: cData } = await supabase
+        const { data: cData, error: cErr } = await supabase
           .from("mp_categories")
-          .select("id")
+          .select("id, active")
           .eq("id", input.value as string)
           .maybeSingle();
+        if (cErr) throw dbErr("setOverride.validateCategory", cErr);
         if (!cData) {
           throw new CatalogueManagerError(
-            422,
-            "INVALID_CATEGORY",
+            422, "INVALID_CATEGORY",
             `Category not found: ${String(input.value)}`,
+          );
+        }
+        if (cData.active === false) {
+          throw new CatalogueManagerError(
+            422, "INACTIVE_CATEGORY",
+            `Category is inactive: ${String(input.value)}`,
           );
         }
       }
@@ -831,14 +852,18 @@ export function createSupabaseCatalogueManagerRepository(
       input: BulkCategoryInput,
       actor: CatalogueManagerActorRef,
     ): Promise<number> {
-      // Validate category exists
-      const { data: catData } = await supabase
+      // Validate category exists AND is active
+      const { data: catData, error: catErr } = await supabase
         .from("mp_categories")
-        .select("id")
+        .select("id, active")
         .eq("id", input.categoryId)
         .maybeSingle();
+      if (catErr) throw dbErr("bulkCategory.validateCategory", catErr);
       if (!catData) {
         throw new CatalogueManagerError(422, "INVALID_CATEGORY", `Category not found: ${input.categoryId}`);
+      }
+      if (catData.active === false) {
+        throw new CatalogueManagerError(422, "INACTIVE_CATEGORY", `Category is inactive: ${input.categoryId}`);
       }
 
       let n = 0;

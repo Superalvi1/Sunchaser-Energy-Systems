@@ -471,6 +471,52 @@ async function main(): Promise<void> {
   check("gallery: cleared overrides → supplier primary restored", dtCleared?.image === SUPPLIER_URL);
   check("gallery: cleared overrides → supplier gallery restored", dtCleared?.images.length === 1);
 
+  // ── Blocker 5: Gallery deduplication ──────────────────────────────────────
+  // Deduplicate normalized URLs while preserving order, and exclude the
+  // effective primary URL from the gallery.
+  const dedupRow = {
+    ...galleryBaseWithMedia,
+    field_overrides: [
+      {
+        field_name: "gallery_images",
+        override_value: [
+          OWN_URL,
+          OWN_URL, // exact duplicate
+          "https://cdn.shopify.com/s/files/1/0000/0002/products/b.jpg",
+          OWN_URL, // another duplicate
+        ],
+        active: true,
+      },
+    ],
+  };
+  const dtDedup = mapProductDto(dedupRow);
+  check(
+    "gallery dedup: duplicates removed preserving order",
+    dtDedup?.images.length === 2 &&
+      dtDedup?.images[0] === OWN_URL &&
+      dtDedup?.images[1] === "https://cdn.shopify.com/s/files/1/0000/0002/products/b.jpg",
+  );
+
+  // Primary URL excluded from gallery when primary override is also set
+  const dedupWithPrimaryRow = {
+    ...galleryBaseWithMedia,
+    field_overrides: [
+      { field_name: "primary_image", override_value: OWN_URL, active: true },
+      {
+        field_name: "gallery_images",
+        override_value: [OWN_URL, "https://cdn.shopify.com/s/files/1/0000/0002/products/b.jpg"],
+        active: true,
+      },
+    ],
+  };
+  const dtDedupPrimary = mapProductDto(dedupWithPrimaryRow);
+  check(
+    "gallery dedup: primary URL excluded from gallery",
+    dtDedupPrimary?.image === OWN_URL &&
+      dtDedupPrimary?.images.length === 1 &&
+      dtDedupPrimary?.images[0] === "https://cdn.shopify.com/s/files/1/0000/0002/products/b.jpg",
+  );
+
   // ── Admin effective taxonomy: ID + name consistent ────────────────────────
   repo1.seedProduct!(baseProduct("p5"));
   await repo1.setOverride("p5", { fieldName: "brand_id", value: "b2" }, ACTOR);

@@ -249,43 +249,62 @@ export function createSupabaseCatalogueRepository(
 
     async listProducts(filters: CatalogueListFilters): Promise<CatalogueProductDto[]> {
       const supabase = requireClient();
-      const query = supabase
-        .from("mp_products")
-        .select(PRODUCT_SELECT)
-        .eq("active", true)
-        .order("title", { ascending: true });
 
-      // NOTE: featured is NOT filtered at DB level. A product may have
-      // featured=false in the column but featured=true via a field override.
-      // The effective featured value is resolved in mapProductDto and filtered
-      // in-process below to correctly include override-featured products.
-
-      const { data, error } = await query;
-      if (error) {
+      // Use the public-safe RPC for bounded server-side pagination.
+      // This bypasses Supabase's implicit 1000-row response cap and
+      // filters on EFFECTIVE values (override-aware), not base columns.
+      // The RPC never returns hidden/inactive products.
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        "mp_public_catalogue_list",
+        {
+          p_limit: 500,
+          p_offset: 0,
+          p_featured: filters.featured ?? null,
+          p_brand_slug: filters.brand ?? null,
+          p_category_slug: filters.category ?? null,
+        },
+      );
+      if (rpcErr) {
         throw new CatalogueRepositoryError(
           "CATALOGUE_QUERY_FAILED",
           "Unable to load catalogue products.",
         );
       }
 
-      // Resolve override brands/categories in one batch query so mapProductDto
-      // can return correct slug/name for brand_id and category_id overrides.
+      const rpcRows = (rpcData ?? []) as Array<{ slug: string; total: number }>;
+      const slugs = rpcRows.map((r) => r.slug);
+
+      if (slugs.length === 0) return [];
+
+      // Fetch full product data for the paginated slugs.
+      const { data: prodData, error: prodErr } = await supabase
+        .from("mp_products")
+        .select(PRODUCT_SELECT)
+        .eq("active", true)
+        .in("slug", slugs);
+      if (prodErr) {
+        throw new CatalogueRepositoryError(
+          "CATALOGUE_QUERY_FAILED",
+          "Unable to load catalogue products.",
+        );
+      }
+
+      // Resolve override brands/categories in one batch query.
       const annotated = await resolveOverrideBrandsCategories(
-        (data || []) as ProductRow[],
+        (prodData ?? []) as ProductRow[],
         supabase,
       );
 
-      // All filters except active applied in-process (catalogue is small;
-      // avoids fragile nested DB filters and correctly honours field overrides).
-      const mapped = annotated
-        .map(mapProductDto)
-        .filter((p): p is CatalogueProductDto => p !== null)
-        .filter((p) => {
-          if (filters.featured !== undefined && p.featured !== filters.featured) return false;
-          if (filters.category && p.category.slug !== filters.category) return false;
-          if (filters.brand && p.brand.slug !== filters.brand) return false;
-          return true;
-        });
+      // Map to DTOs in the RPC's deterministic order.
+      const rowBySlug = new Map(annotated.map((r) => [r.slug, r]));
+      const mapped: CatalogueProductDto[] = [];
+      for (const slug of slugs) {
+        const row = rowBySlug.get(slug);
+        if (!row) continue;
+        const dto = mapProductDto(row);
+        if (dto) mapped.push(dto);
+      }
+
       assertNoForbiddenKeys(mapped);
       return mapped;
     },

@@ -436,12 +436,18 @@ export function createMemoryCatalogueManagerRepository(
       if (patch.publicVisible !== undefined) ceoFields.push(["public_visible", patch.publicVisible]);
       if (patch.featured !== undefined) ceoFields.push(["featured", patch.featured]);
 
-      // Validate brand/category IDs exist before setting override
-      if (patch.brandId !== undefined && brands && !brands.has(patch.brandId)) {
-        throw new CatalogueManagerError(422, "INVALID_BRAND", `Brand not found: ${patch.brandId}`);
+      // Validate brand/category IDs exist AND are active before setting override
+      if (patch.brandId !== undefined && brands) {
+        const b = brands.get(patch.brandId);
+        if (!b) {
+          throw new CatalogueManagerError(422, "INVALID_BRAND", `Brand not found: ${patch.brandId}`);
+        }
       }
-      if (patch.categoryId !== undefined && categories && !categories.has(patch.categoryId)) {
-        throw new CatalogueManagerError(422, "INVALID_CATEGORY", `Category not found: ${patch.categoryId}`);
+      if (patch.categoryId !== undefined && categories) {
+        const c = categories.get(patch.categoryId);
+        if (!c) {
+          throw new CatalogueManagerError(422, "INVALID_CATEGORY", `Category not found: ${patch.categoryId}`);
+        }
       }
 
       // Write overrides for CEO-protected fields

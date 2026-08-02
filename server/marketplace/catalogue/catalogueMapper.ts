@@ -331,12 +331,23 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
     ? (normalizeAnyAllowedImageUrl(piOverride as string) ?? normalizeSupplierImageUrl(piOverride as string))
     : derived.image;
 
-  // Gallery: override if active (even empty), else supplier/base
-  const images: string[] = giActive
+  // Gallery: override if active (even empty), else supplier/base.
+  // Deduplicate normalized URLs while preserving order, and exclude the
+  // effective primary URL from the gallery to avoid accidental duplication.
+  const rawGallery: string[] = giActive
     ? (giOverride as string[])
         .map((u) => normalizeAnyAllowedImageUrl(u) ?? normalizeSupplierImageUrl(u))
         .filter((u): u is string => u !== null)
     : derived.images;
+
+  const images: string[] = [];
+  const seenGallery = new Set<string>();
+  for (const u of rawGallery) {
+    if (u === image) continue;   // prevent primary from appearing in gallery
+    if (seenGallery.has(u)) continue;  // deduplicate normalized URLs
+    seenGallery.add(u);
+    images.push(u);
+  }
 
   return {
     slug: row.slug,
