@@ -59,6 +59,7 @@ import {
   attachDefaultVariants,
   AutoImportDefaultVariantError,
 } from "./autoImportDefaultVariant.ts";
+import { collectSelectedOfferImages } from "./supplierImages.ts";
 
 type PlanningLookup = {
   byKey: Map<string, AutoImportListingRecord>;
@@ -122,6 +123,9 @@ function toOffer(obs: CatalogueProductObservation): AutoImportOffer {
     availability: obs.availability,
     canonicalUrl: obs.canonicalUrl,
     primaryImageUrl: obs.primaryImageUrl,
+    additionalImageUrls: Array.isArray(obs.additionalImageUrls)
+      ? obs.additionalImageUrls.filter((u): u is string => typeof u === "string")
+      : [],
     description: obs.description,
     fetchedAt: obs.fetchedAt,
     identity,
@@ -559,10 +563,15 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           fetchedAt: now().toISOString(),
           previous,
           defaultSourceKey: resolved.sourceKey,
+          images: collectSelectedOfferImages({
+            selectedSourceKey: resolved.sourceKey,
+            selectedSupplier: resolved.supplier,
+            offers,
+          }),
           offers:
             resolved.rolledBack && previous
               ? previous.offers
-              : offers.map((o) => ({
+              :               offers.map((o) => ({
                   supplier: o.supplier,
                   pricePkr: o.currentListedPricePkr,
                   url: o.canonicalUrl,

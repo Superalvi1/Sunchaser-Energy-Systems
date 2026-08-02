@@ -68,7 +68,7 @@
     "test:marketplace-live-suppliers-phase1": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/suppliers/liveCataloguePhase1.test.ts",
     "test:marketplace-ws-map-0": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWsMap0.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWsMap0.pg.test.ts",
     "test:marketplace-ws56-gates": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/marketplaceWs56FeatureGates.test.ts",
-    "test:marketplace-ceo-auto-import": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImport.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportTimeout.pg.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportPrivileges.pg.test.ts",
+    "test:marketplace-ceo-auto-import": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImport.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/supplierImages.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportTimeout.pg.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportPrivileges.pg.test.ts",
     "test:marketplace-ceo-auto-import-pg": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportTimeout.pg.test.ts",
     "test:marketplace-ceo-auto-import-privileges": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportPrivileges.pg.test.ts",
     "test:marketplace-ws5": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/cartRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/marketplaceWs5Cart.test.ts",

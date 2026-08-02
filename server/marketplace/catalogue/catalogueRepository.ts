@@ -59,6 +59,14 @@ const PRODUCT_SELECT = `
     website_price_source,
     stock_status,
     active
+  ),
+  media:mp_media!product_id (
+    source_url,
+    sort_order,
+    role,
+    published,
+    rights_status,
+    source_type
   )
 `;
 

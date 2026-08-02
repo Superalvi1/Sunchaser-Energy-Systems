@@ -36,6 +36,8 @@ export type UpsertListingInput = {
   previous: AutoImportListingRecord | null;
   /** Deterministic default-offer identity (sourceKey) chosen after price planning. */
   defaultSourceKey?: string;
+  /** Sanitized supplier images for the selected commercial offer only. */
+  images?: Array<{ url: string; sortOrder: number; isPrimary: boolean }>;
   /** Attached by attachDefaultVariants before commitBatch. */
   defaultVariant?: {
     isDefault: boolean;

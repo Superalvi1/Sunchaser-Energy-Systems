@@ -379,6 +379,17 @@ begin
     where id = v_variant_id;
     perform set_config('mp.allow_price_write', 'off', true);
 
+    -- Supplier product pictures (mp_media). Requires marketplace-ceo-auto-import-product-media.sql.
+    -- Missing function must not soft-skip: apply media SQL with this atomic script.
+    if to_regprocedure('public.mp_ceo_auto_import_sync_product_media(text, text, text, jsonb)') is not null then
+      perform public.mp_ceo_auto_import_sync_product_media(
+        v_product_id,
+        v_variant_id,
+        v_supplier,
+        coalesce(v_item->'images', '[]'::jsonb)
+      );
+    end if;
+
     perform public.mp_write_audit(
       p_actor_scope,
       case when v_is_created then 'auto_import.listing_created' else 'auto_import.listing_updated' end,
