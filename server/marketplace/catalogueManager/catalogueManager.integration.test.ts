@@ -31,6 +31,9 @@ function check(name: string, condition: boolean): void {
 
 const ACTOR = { id: "u-ceo", username: "ceo", role: "Super Admin" };
 
+// Configure own-storage host before importing image-policy functions.
+process.env.MARKETPLACE_SUPABASE_STORAGE_HOST = "projxyz.supabase.co";
+
 const OWN_URL = "https://projxyz.supabase.co/storage/v1/object/public/images/product.jpg";
 const SUPPLIER_URL = "https://cdn.shopify.com/s/files/1/0000/0001/products/a.jpg";
 

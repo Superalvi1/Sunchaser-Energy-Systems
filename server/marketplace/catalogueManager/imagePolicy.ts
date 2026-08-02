@@ -48,13 +48,17 @@ function parseUrl(raw: string): URL | null {
 }
 
 /**
- * Returns true when the URL is a Supabase Storage public path.
- * Only the public object CDN path is trusted — not arbitrary supabase.co pages.
+ * Returns true when the URL is on the explicitly configured Supabase Storage
+ * project host (MARKETPLACE_SUPABASE_STORAGE_HOST) and is a public-object CDN
+ * path. A wildcard *.supabase.co match is intentionally NOT used — any other
+ * Supabase project is treated as an untrusted external host.
  */
-function isSupabaseStoragePath(url: URL): boolean {
+function isConfiguredSupabaseStoragePath(url: URL, e: NodeJS.ProcessEnv): boolean {
+  const configuredHost = (e.MARKETPLACE_SUPABASE_STORAGE_HOST ?? "").trim().toLowerCase();
+  if (!configuredHost) return false;
   const host = url.hostname.toLowerCase();
   return (
-    host.endsWith(".supabase.co") &&
+    host === configuredHost &&
     url.pathname.includes("/storage/v1/object/public/")
   );
 }
@@ -81,7 +85,9 @@ export function normalizeOwnImageUrl(
   const ownHosts = parseHostList(e.MARKETPLACE_OWN_IMAGE_HOSTS);
 
   if (ownHosts.has(host)) return absolute;
-  if (isSupabaseStoragePath(url)) return absolute;
+  // Only the explicitly configured Supabase Storage project host is trusted.
+  // Wildcard *.supabase.co is NOT trusted — another project could serve evil.jpg.
+  if (isConfiguredSupabaseStoragePath(url, e)) return absolute;
 
   return null;
 }

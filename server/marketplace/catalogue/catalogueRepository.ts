@@ -167,15 +167,16 @@ export function createSupabaseCatalogueRepository(
 
     async listProducts(filters: CatalogueListFilters): Promise<CatalogueProductDto[]> {
       const supabase = requireClient();
-      let query = supabase
+      const query = supabase
         .from("mp_products")
         .select(PRODUCT_SELECT)
         .eq("active", true)
         .order("title", { ascending: true });
 
-      if (filters.featured !== undefined) {
-        query = query.eq("featured", filters.featured);
-      }
+      // NOTE: featured is NOT filtered at DB level. A product may have
+      // featured=false in the column but featured=true via a field override.
+      // The effective featured value is resolved in mapProductDto and filtered
+      // in-process below to correctly include override-featured products.
 
       const { data, error } = await query;
       if (error) {
@@ -185,11 +186,13 @@ export function createSupabaseCatalogueRepository(
         );
       }
 
-      // Category/brand filters applied in-process (catalogue is small; avoids fragile nested filters).
+      // All filters except active applied in-process (catalogue is small;
+      // avoids fragile nested DB filters and correctly honours field overrides).
       const mapped = ((data || []) as ProductRow[])
         .map(mapProductDto)
         .filter((p): p is CatalogueProductDto => p !== null)
         .filter((p) => {
+          if (filters.featured !== undefined && p.featured !== filters.featured) return false;
           if (filters.category && p.category.slug !== filters.category) return false;
           if (filters.brand && p.brand.slug !== filters.brand) return false;
           return true;

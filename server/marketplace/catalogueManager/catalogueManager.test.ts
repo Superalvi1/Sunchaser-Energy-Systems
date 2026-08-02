@@ -33,12 +33,21 @@ const ACTOR = {
 const GOOD = "https://cdn.shopify.com/s/files/1/0000/0001/products/a.jpg";
 /** Another supplier image */
 const GOOD2 = "https://www.kamalsolar.pk/cdn/shop/products/b.png";
-/** Own supabase storage URL (always allowed as own image) */
+/**
+ * Own supabase storage URL. Accepted because MARKETPLACE_SUPABASE_STORAGE_HOST
+ * is set to this exact project hostname in the test setup below.
+ */
 const OWN_URL = "https://abcxyz.supabase.co/storage/v1/object/public/images/product.jpg";
 /** Unapproved URL — not on any allowlist */
 const BAD = "https://evil.example/x.jpg";
 /** Unapproved non-https */
 const BAD_HTTP = "http://cdn.shopify.com/s/files/1/0000/0001/products/a.jpg";
+/** Wrong supabase project — NOT the configured own host */
+const WRONG_PROJECT_URL = "https://wrongproject.supabase.co/storage/v1/object/public/img.jpg";
+
+// Configure own-storage host for this test run.
+// Must be done before any image-policy functions are called.
+process.env.MARKETPLACE_SUPABASE_STORAGE_HOST = "abcxyz.supabase.co";
 
 function sampleProduct(id = "mpprod_1"): MemProduct {
   return {
@@ -592,6 +601,43 @@ async function main(): Promise<void> {
   threw = false;
   try { parseSetOverrideBody({ fieldName: "primary_image", value: BAD }); } catch { threw = true; }
   check("parseSetOverrideBody: unapproved URL rejected for primary_image", threw);
+
+  // primary_image: wrong Supabase project rejected (wildcard *.supabase.co NOT trusted)
+  threw = false;
+  try { parseSetOverrideBody({ fieldName: "primary_image", value: WRONG_PROJECT_URL }); } catch { threw = true; }
+  check("parseSetOverrideBody: wrong supabase project rejected (not wildcard trusted)", threw);
+
+  // parseBulkCategoryBody: max count validation
+  threw = false;
+  try {
+    const { parseBulkCategoryBody } = await import("./catalogueManagerValidation.ts");
+    parseBulkCategoryBody({ productIds: Array(201).fill("p1"), categoryId: "c1" });
+  } catch { threw = true; }
+  check("parseBulkCategoryBody: >200 productIds rejected", threw);
+
+  // parseBulkCategoryBody: non-string productIds rejected
+  threw = false;
+  try {
+    const { parseBulkCategoryBody } = await import("./catalogueManagerValidation.ts");
+    parseBulkCategoryBody({ productIds: [1, 2, 3], categoryId: "c1" });
+  } catch { threw = true; }
+  check("parseBulkCategoryBody: non-string productIds rejected", threw);
+
+  // parsePatchProductBody: specifications with numeric value rejected
+  threw = false;
+  try {
+    const { parsePatchProductBody } = await import("./catalogueManagerValidation.ts");
+    parsePatchProductBody({ specifications: { Power: 6000 } });
+  } catch { threw = true; }
+  check("parsePatchProductBody: specifications numeric value rejected", threw);
+
+  // parsePatchProductBody: specifications >40 keys rejected
+  threw = false;
+  try {
+    const { parsePatchProductBody } = await import("./catalogueManagerValidation.ts");
+    parsePatchProductBody({ specifications: Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`k${i}`, "v"])) });
+  } catch { threw = true; }
+  check("parsePatchProductBody: specifications >40 keys rejected", threw);
 
   // Legacy compatibility: product without new fields still lists
   repo.seedProduct!({

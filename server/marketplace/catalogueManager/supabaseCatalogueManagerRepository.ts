@@ -15,6 +15,7 @@
  *
  * Fail-closed: any DB error → CatalogueManagerError(503/500).
  */
+import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   activeOverridesByField,
@@ -283,14 +284,29 @@ function toSummary(row: DbProductSummaryRow): CatalogueManagerProductSummary {
     overrides: ovMap,
   }).value;
 
+  // Resolve brand_id / category_id from overrides so that clearing restores
+  // the supplier value (the column is never overwritten by patchProduct).
+  const effectiveBrandId = resolveEffectiveValue({
+    field: "brand_id",
+    supplierValue: brand?.id ?? "",
+    fallback: "",
+    overrides: ovMap,
+  }).value;
+  const effectiveCategoryId = resolveEffectiveValue({
+    field: "category_id",
+    supplierValue: category?.id ?? "",
+    fallback: "",
+    overrides: ovMap,
+  }).value;
+
   return {
     id: row.id,
     title: effectiveTitle,
     slug: row.slug,
-    brandId: brand?.id ?? "",
-    brandName: brand?.name ?? "",
-    categoryId: category?.id ?? "",
-    categoryName: category?.name ?? "",
+    brandId: effectiveBrandId,
+    brandName: brand?.name ?? "",   // name from FK join (supplier brand)
+    categoryId: effectiveCategoryId,
+    categoryName: category?.name ?? "",  // name from FK join (supplier category)
     active: row.active,
     publicVisible: Boolean(effectivePV),
     featured: Boolean(effectiveFeatured),
@@ -305,40 +321,88 @@ function toSummary(row: DbProductSummaryRow): CatalogueManagerProductSummary {
   };
 }
 
+function layered<T>(
+  field: string,
+  supplierValue: T,
+  fallback: T,
+  ovMap: Map<string, FieldOverrideRecord>,
+): { supplier: T; manual: T | null; effective: T; source: ReturnType<typeof resolveEffectiveValue>["source"] } {
+  const ov = ovMap.get(field);
+  const result = resolveEffectiveValue({ field, supplierValue, fallback, overrides: ovMap });
+  return {
+    supplier: supplierValue,
+    manual: ov && ov.active ? (ov.value as T) : null,
+    effective: result.value,
+    source: result.source,
+  };
+}
+
 function toDetail(row: DbProductDetailRow): CatalogueManagerProductDetail {
   const summary = toSummary(row);
   const overrideRows = (row.overrides ?? []).map(toFieldOverrideRecord);
   const ovMap = activeOverridesByField(overrideRows);
 
   const supplierTitle = row.title;
-  const titleOv = ovMap.get("title");
-  const titleLayered = {
-    supplier: supplierTitle,
-    manual: titleOv ? (titleOv.value as string) : null,
-    effective: resolveEffectiveValue({ field: "title", supplierValue: supplierTitle, fallback: supplierTitle, overrides: ovMap }).value,
-    source: resolveEffectiveValue({ field: "title", supplierValue: supplierTitle, fallback: supplierTitle, overrides: ovMap }).source,
-  };
+  const titleLayered = layered("title", supplierTitle, supplierTitle, ovMap);
 
   const supplierDesc = row.description ?? "";
-  const descOv = ovMap.get("description");
-  const descriptionLayered = {
-    supplier: supplierDesc,
-    manual: descOv ? (descOv.value as string) : null,
-    effective: resolveEffectiveValue({ field: "description", supplierValue: supplierDesc, fallback: supplierDesc, overrides: ovMap }).value,
-    source: resolveEffectiveValue({ field: "description", supplierValue: supplierDesc, fallback: supplierDesc, overrides: ovMap }).source,
-  };
+  const descriptionLayered = layered("description", supplierDesc, supplierDesc, ovMap);
+
+  // All other content fields resolved with override > column > null fallback
+  const effectiveShortDesc = resolveEffectiveValue({
+    field: "short_description",
+    supplierValue: row.short_description ?? null,
+    fallback: null,
+    overrides: ovMap,
+  }).value;
+  const effectiveModel = resolveEffectiveValue({
+    field: "model",
+    supplierValue: row.model ?? null,
+    fallback: null,
+    overrides: ovMap,
+  }).value;
+  const effectiveWarranty = resolveEffectiveValue({
+    field: "warranty",
+    supplierValue: row.warranty ?? null,
+    fallback: null,
+    overrides: ovMap,
+  }).value;
+  const effectiveDatasheet = resolveEffectiveValue({
+    field: "datasheet_url",
+    supplierValue: row.datasheet_url ?? null,
+    fallback: null,
+    overrides: ovMap,
+  }).value;
+  const effectiveSeoTitle = resolveEffectiveValue({
+    field: "seo_title",
+    supplierValue: row.seo_title ?? null,
+    fallback: null,
+    overrides: ovMap,
+  }).value;
+  const effectiveSeoDesc = resolveEffectiveValue({
+    field: "seo_description",
+    supplierValue: row.seo_description ?? null,
+    fallback: null,
+    overrides: ovMap,
+  }).value;
+  const effectiveSpecs = resolveEffectiveValue({
+    field: "specifications",
+    supplierValue: (row.specifications ?? {}) as Record<string, unknown>,
+    fallback: {} as Record<string, unknown>,
+    overrides: ovMap,
+  }).value;
 
   return {
     ...summary,
     title: titleLayered.effective,
     description: descriptionLayered.effective,
-    shortDescription: row.short_description ?? null,
-    model: row.model ?? null,
-    seoTitle: row.seo_title ?? null,
-    seoDescription: row.seo_description ?? null,
-    datasheetUrl: row.datasheet_url ?? null,
-    warranty: row.warranty ?? null,
-    specifications: (row.specifications ?? {}) as Record<string, unknown>,
+    shortDescription: effectiveShortDesc as string | null,
+    model: effectiveModel as string | null,
+    seoTitle: effectiveSeoTitle as string | null,
+    seoDescription: effectiveSeoDesc as string | null,
+    datasheetUrl: effectiveDatasheet as string | null,
+    warranty: effectiveWarranty as string | null,
+    specifications: effectiveSpecs as Record<string, unknown>,
     tags: row.tags ?? [],
     sourceUrls: row.source_urls ?? [],
     identityKey: row.identity_key ?? null,
@@ -352,6 +416,16 @@ function toDetail(row: DbProductDetailRow): CatalogueManagerProductDetail {
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Deterministic media row ID: mirrors the SQL function's approach so the
+ * TypeScript fallback upsert targets the primary key (id) instead of the
+ * partial unique index — avoiding "no unique constraint matching ON CONFLICT".
+ *   SQL: 'mpmedia_' || left(md5(p_product_id || '|' || v_url), 24)
+ */
+function mediaRowId(productId: string, url: string): string {
+  return "mpmedia_" + createHash("md5").update(`${productId}|${url}`).digest("hex").slice(0, 24);
+}
 
 function dbErr(label: string, err: { message?: string } | null | unknown): CatalogueManagerError {
   const msg = (err as { message?: string })?.message ?? "Unknown DB error";
@@ -521,19 +595,11 @@ export function createSupabaseCatalogueManagerRepository(
         await callSetOverride(productId, field, value, actor);
       }
 
-      // Sync brand_id / category_id columns directly so FK joins return the
-      // correct brand/category row immediately without requiring override
-      // resolution at read time (title, description etc. remain override-only).
-      const fkPatch: Record<string, unknown> = {};
-      if (patch.brandId !== undefined) fkPatch.brand_id = patch.brandId;
-      if (patch.categoryId !== undefined) fkPatch.category_id = patch.categoryId;
-      if (Object.keys(fkPatch).length > 0) {
-        const { error: fkErr } = await supabase
-          .from("mp_products")
-          .update({ ...fkPatch, updated_at: new Date().toISOString() })
-          .eq("id", productId);
-        if (fkErr) throw dbErr("patchProduct.fkColumns", fkErr);
-      }
+      // brand_id / category_id columns are intentionally NOT updated here.
+      // The column preserves the supplier's original value so that clearing
+      // the override immediately restores the supplier brand/category.
+      // Effective brand/category IDs are resolved from the override map at
+      // read time in toSummary/toDetail.
 
       // Non-protected fields: update columns directly
       const columnPatch: Record<string, unknown> = {};
@@ -574,6 +640,35 @@ export function createSupabaseCatalogueManagerRepository(
       input: SetOverrideInput,
       actor: CatalogueManagerActorRef,
     ): Promise<FieldOverrideRecord> {
+      // Validate referenced brand/category IDs on both PATCH and direct override endpoint
+      if (input.fieldName === "brand_id") {
+        const { data: bData } = await supabase
+          .from("mp_brands")
+          .select("id")
+          .eq("id", input.value as string)
+          .maybeSingle();
+        if (!bData) {
+          throw new CatalogueManagerError(
+            422,
+            "INVALID_BRAND",
+            `Brand not found: ${String(input.value)}`,
+          );
+        }
+      }
+      if (input.fieldName === "category_id") {
+        const { data: cData } = await supabase
+          .from("mp_categories")
+          .select("id")
+          .eq("id", input.value as string)
+          .maybeSingle();
+        if (!cData) {
+          throw new CatalogueManagerError(
+            422,
+            "INVALID_CATEGORY",
+            `Category not found: ${String(input.value)}`,
+          );
+        }
+      }
       return callSetOverride(productId, input.fieldName, input.value, actor);
     },
 
@@ -700,7 +795,7 @@ export function createSupabaseCatalogueManagerRepository(
           {
             p_product_id: productId,
             p_variant_id: variantId,
-            p_supplier_code: supplier,
+            p_supplier: supplier,   // SQL function uses p_supplier, not p_supplier_code
             p_images: JSON.parse(JSON.stringify(imagePayload)),
           },
         );
@@ -750,10 +845,13 @@ export function createSupabaseCatalogueManagerRepository(
 
       // Upsert new images
       for (const img of filteredImages) {
+        // Use deterministic id (mirrors SQL function) so ON CONFLICT targets
+        // the primary key — partial unique indexes cannot be used for upsert.
         const { error: upsErr } = await supabase
           .from("mp_media")
           .upsert(
             {
+              id: mediaRowId(productId, img.url),
               product_id: productId,
               source_url: img.url,
               sort_order: Math.max(0, Math.min(7, img.sortOrder || 0)),
@@ -764,9 +862,8 @@ export function createSupabaseCatalogueManagerRepository(
               manual_control: false,
               source_key: img.sourceKey ?? null,
               supplier_code: supplier,
-              updated_at: new Date().toISOString(),
             },
-            { onConflict: "product_id,source_url,supplier_code" },
+            { onConflict: "id" },
           );
         if (upsErr) throw dbErr("replaceSupplierMedia.upsert", upsErr);
       }
@@ -792,8 +889,11 @@ export function createSupabaseCatalogueManagerRepository(
         );
       }
 
-      // Insert/upsert mp_media row with manual_control=true
+      // Use deterministic id so ON CONFLICT targets the primary key.
+      // (The partial unique index on (product_id, source_url) cannot be used
+      // for upsert without a WHERE predicate matching the index's condition.)
       const mediaInsert = {
+        id: mediaRowId(productId, safe),
         product_id: productId,
         source_url: safe,
         sort_order: 0,
@@ -804,12 +904,11 @@ export function createSupabaseCatalogueManagerRepository(
         manual_control: true,
         source_key: null,
         supplier_code: null,
-        updated_at: new Date().toISOString(),
       };
 
       const { data: insertedData, error: insertErr } = await supabase
         .from("mp_media")
-        .upsert(mediaInsert, { onConflict: "product_id,source_url,supplier_code" })
+        .upsert(mediaInsert, { onConflict: "id" })
         .select("id, source_url, sort_order, role, published, source_type, rights_status, manual_control, source_key, supplier_code")
         .maybeSingle();
 

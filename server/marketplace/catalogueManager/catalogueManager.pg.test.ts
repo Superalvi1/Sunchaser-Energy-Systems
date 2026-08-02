@@ -238,6 +238,200 @@ async function main(): Promise<void> {
     );
     check("legacy public_visible default true", vis.rows[0].public_visible === true);
 
+    // ── Upsert path 1: supplier media RPC (p_supplier not p_supplier_code) ──
+    // Clear any existing media, then call RPC with the correct parameter name.
+    await client.query(`delete from public.mp_media where product_id='p1'`);
+    await client.query(
+      `select public.mp_ceo_auto_import_sync_product_media(
+        'p1','v1','kamal',
+        '[{"url":"https://cdn.shopify.com/s/files/1/rpc-path.jpg","sortOrder":0,"sourceKey":"kamal:rpc:1"}]'::jsonb
+      )`,
+    );
+    const rpcMedia = await client.query(
+      `select source_url, supplier_code, manual_control from public.mp_media
+       where product_id='p1' and source_url like '%rpc-path.jpg'`,
+    );
+    check("upsert path 1 (RPC): supplier media inserted with p_supplier arg", rpcMedia.rowCount === 1);
+    check("upsert path 1 (RPC): supplier_code set correctly", rpcMedia.rows[0].supplier_code === "kamal");
+    check("upsert path 1 (RPC): manual_control false", rpcMedia.rows[0].manual_control === false);
+
+    // ── Upsert path 1 idempotency: same URL second call updates, doesn't dup ──
+    await client.query(
+      `select public.mp_ceo_auto_import_sync_product_media(
+        'p1','v1','kamal',
+        '[{"url":"https://cdn.shopify.com/s/files/1/rpc-path.jpg","sortOrder":0}]'::jsonb
+      )`,
+    );
+    const rpcDup = await client.query(
+      `select count(*)::int as n from public.mp_media
+       where product_id='p1' and source_url like '%rpc-path.jpg'`,
+    );
+    check("upsert path 1 (RPC): idempotent - no duplicate rows", rpcDup.rows[0].n === 1);
+
+    // ── Upsert path 2: fallback supplier upsert (id-based, mirrors SQL function) ──
+    // The TypeScript fallback uses a deterministic id = "mpmedia_" + md5(product_id|url)[0:24]
+    // mirroring the SQL function, so ON CONFLICT targets the primary key (not the partial index).
+    const fallbackId = "mpmedia_pgtest_fallback001234";
+    const fallbackUrl = "https://cdn.shopify.com/s/files/1/fallback-path.jpg";
+    await client.query(`
+      insert into public.mp_media (
+        id, product_id, source_url, storage_path, sort_order, role, published,
+        source_type, rights_status, manual_control, supplier_code,
+        approved_by, approved_at
+      ) values (
+        $1, 'p1', $2, 'supplier-cdn/kamal/fallback', 1, 'gallery', true,
+        'supplier', 'supplier_approved', false, 'kamal',
+        'ceo_auto_import', timezone('utc', now())
+      ) on conflict (id) do update
+        set published = excluded.published,
+            sort_order = excluded.sort_order,
+            supplier_code = excluded.supplier_code
+    `, [fallbackId, fallbackUrl]);
+    const fallbackMedia = await client.query(
+      `select source_url, role, published from public.mp_media where id=$1`,
+      [fallbackId],
+    );
+    check("upsert path 2 (fallback supplier): row inserted via id conflict", fallbackMedia.rowCount === 1);
+    check("upsert path 2 (fallback supplier): published=true", fallbackMedia.rows[0].published === true);
+
+    // Second upsert of same id updates instead of duplicating
+    await client.query(`
+      insert into public.mp_media (
+        id, product_id, source_url, storage_path, sort_order, role, published,
+        source_type, rights_status, manual_control, supplier_code,
+        approved_by, approved_at
+      ) values (
+        $1, 'p1', $2, 'supplier-cdn/kamal/fallback', 1, 'gallery', false,
+        'supplier', 'supplier_approved', false, 'kamal',
+        'ceo_auto_import', timezone('utc', now())
+      ) on conflict (id) do update
+        set published = excluded.published
+    `, [fallbackId, fallbackUrl]);
+    const fallbackAfterUpdate = await client.query(
+      `select count(*)::int as n, bool_and(not published) as all_unpublished
+       from public.mp_media where id=$1`,
+      [fallbackId],
+    );
+    check("upsert path 2 (fallback supplier): idempotent - no duplicate row", fallbackAfterUpdate.rows[0].n === 1);
+    check("upsert path 2 (fallback supplier): do update applied", fallbackAfterUpdate.rows[0].all_unpublished === true);
+
+    // ── Upsert path 3: manual primary-image upsert (own-media row, id-based) ──
+    // Own images also use the deterministic id approach so supplier_code=null
+    // is not part of the conflict resolution — primary key is the dedup key.
+    const ownId = "mpmedia_pgtest_ownmanual00001234";
+    const ownUrl = "https://cdn.shopify.com/s/files/1/own-manual.jpg";
+    await client.query(`
+      insert into public.mp_media (
+        id, product_id, source_url, storage_path, sort_order, role, published,
+        source_type, rights_status, manual_control, supplier_code,
+        approved_by, approved_at
+      ) values (
+        $1, 'p1', $2, 'own/manual-primary', 0, 'thumbnail', true,
+        'own', 'own', true, null,
+        'ceo', timezone('utc', now())
+      ) on conflict (id) do update
+        set published = excluded.published,
+            manual_control = excluded.manual_control
+    `, [ownId, ownUrl]);
+    const ownMedia = await client.query(
+      `select source_type, manual_control, published from public.mp_media where id=$1`,
+      [ownId],
+    );
+    check("upsert path 3 (manual primary): row inserted via id conflict", ownMedia.rowCount === 1);
+    check("upsert path 3 (manual primary): source_type=own", ownMedia.rows[0].source_type === "own");
+    check("upsert path 3 (manual primary): manual_control=true", ownMedia.rows[0].manual_control === true);
+
+    // Second upsert of same own id updates, no duplicate
+    await client.query(`
+      insert into public.mp_media (
+        id, product_id, source_url, storage_path, sort_order, role, published,
+        source_type, rights_status, manual_control, supplier_code,
+        approved_by, approved_at
+      ) values (
+        $1, 'p1', $2, 'own/manual-primary', 0, 'thumbnail', false,
+        'own', 'own', true, null,
+        'ceo', timezone('utc', now())
+      ) on conflict (id) do update
+        set published = excluded.published
+    `, [ownId, ownUrl]);
+    const ownDup = await client.query(
+      `select count(*)::int as n from public.mp_media where id=$1`,
+      [ownId],
+    );
+    check("upsert path 3 (manual primary): idempotent - no duplicate row", ownDup.rows[0].n === 1);
+
+    // ── Override resolution: all supported fields set and queried ──
+    await client.query(`
+      select public.mp_set_field_override('p1','short_description','"Short desc"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','model','"KX-100"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','warranty','"5 years"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','specifications','{"Power":"8kW"}'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','datasheet_url','"https://docs.example.com/spec.pdf"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','seo_title','"SEO title"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','seo_description','"SEO desc"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','stock_status','"sold_out"'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','public_visible','false'::jsonb,'a','ceo');
+      select public.mp_set_field_override('p1','featured','true'::jsonb,'a','ceo');
+    `);
+
+    const allActiveOverrides = await client.query(
+      `select field_name from public.mp_field_overrides
+       where product_id='p1' and active=true
+       order by field_name`,
+    );
+    const activeFields = allActiveOverrides.rows.map((r: { field_name: string }) => r.field_name);
+    const requiredFields = [
+      "datasheet_url", "featured", "model", "public_visible",
+      "seo_description", "seo_title", "short_description",
+      "specifications", "stock_status", "title", "warranty",
+    ];
+    check(
+      "all supported override fields stored with active=true",
+      requiredFields.every((f) => activeFields.includes(f)),
+    );
+
+    // ── Clear override → supplier value restored ──
+    await client.query(
+      `select public.mp_clear_field_override('p1','title','a','ceo')`,
+    );
+    const titleAfterClear = await client.query(
+      `select active from public.mp_field_overrides
+       where product_id='p1' and field_name='title'
+       order by updated_at desc limit 1`,
+    );
+    check(
+      "clearing title override sets active=false (supplier value restores)",
+      titleAfterClear.rows[0]?.active === false,
+    );
+
+    // ── public_visible=false override: product can be suppressed ──
+    const pvRow = await client.query(
+      `select override_value::boolean as ov from public.mp_field_overrides
+       where product_id='p1' and field_name='public_visible' and active=true`,
+    );
+    check(
+      "public_visible=false override stored correctly",
+      pvRow.rows[0]?.ov === false,
+    );
+
+    // ── Supplier resync preserves title override ──
+    // Re-run sync (title has a cleared override, should be unaffected by sync)
+    await client.query(
+      `select public.mp_ceo_auto_import_sync_product_media(
+        'p1','v1','kamal',
+        '[{"url":"https://cdn.shopify.com/s/files/1/rpc-path.jpg","sortOrder":0}]'::jsonb
+      )`,
+    );
+    const titleStillCleared = await client.query(
+      `select active from public.mp_field_overrides
+       where product_id='p1' and field_name='title'
+       order by updated_at desc limit 1`,
+    );
+    check(
+      "supplier media resync does not revive cleared title override",
+      titleStillCleared.rows[0]?.active === false,
+    );
+
     console.log("\nCatalogue Manager PG migration tests passed.");
   } finally {
     if (client) await client.end().catch(() => {});

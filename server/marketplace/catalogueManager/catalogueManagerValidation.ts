@@ -218,8 +218,32 @@ export function parsePatchProductBody(body: unknown): CatalogueManagerPatchInput
       throw new CatalogueManagerError(
         400,
         "VALIDATION_ERROR",
-        "specifications must be an object.",
+        "specifications must be a plain object.",
       );
+    }
+    const specEntries = Object.entries(obj.specifications as Record<string, unknown>);
+    if (specEntries.length > 40) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        "specifications may contain at most 40 keys.",
+      );
+    }
+    for (const [k, v] of specEntries) {
+      if (typeof v !== "string") {
+        throw new CatalogueManagerError(
+          400,
+          "VALIDATION_ERROR",
+          `specifications: value for key "${k}" must be a string.`,
+        );
+      }
+      if ((v as string).length > 1000) {
+        throw new CatalogueManagerError(
+          400,
+          "VALIDATION_ERROR",
+          `specifications: value for key "${k}" is too long.`,
+        );
+      }
     }
     out.specifications = obj.specifications as Record<string, unknown>;
   }
@@ -454,6 +478,20 @@ export function parseBulkCategoryBody(body: unknown): BulkCategoryInput {
       400,
       "VALIDATION_ERROR",
       "productIds must be a non-empty array.",
+    );
+  }
+  if (obj.productIds.length > 200) {
+    throw new CatalogueManagerError(
+      400,
+      "VALIDATION_ERROR",
+      "productIds limit is 200.",
+    );
+  }
+  if (!obj.productIds.every((id) => typeof id === "string" && id.trim())) {
+    throw new CatalogueManagerError(
+      400,
+      "VALIDATION_ERROR",
+      "productIds must be an array of non-empty strings.",
     );
   }
   const categoryId = asOptionalString(obj.categoryId, "categoryId", { max: 80 });
