@@ -13,6 +13,11 @@
  * - Missing actor → 401
  * - accountStatus !== "Approved" → 403
  * - Role not Admin/Super Admin → 403
+ *
+ * Lease ownership:
+ * - Mutations fail closed with 409 whatsapp_lease_not_owned when this process
+ *   is not the durable lease owner.
+ * - Status merges durable owner diagnostics for every process.
  */
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { RequestActor } from "../middleware/actor.ts";
@@ -22,6 +27,9 @@ import {
 } from "../whatsappTransport/whatsappInboxHttp.ts";
 import {
   FORBIDDEN_WHATSAPP_WEB_BROWSER_FIELDS,
+  WHATSAPP_WEB_LEASE_NOT_OWNED_CODE,
+  WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE,
+  type WhatsAppWebLeaseNotOwnedDetails,
   type WhatsAppWebSafeStatus,
 } from "./whatsappWebTypes.ts";
 import { canManageWhatsAppWebQr } from "./whatsappWebPermissions.ts";
@@ -78,6 +86,37 @@ function assertNoCredentialLeak(payload: unknown): void {
   }
 }
 
+function leaseNotOwnedDetails(
+  err: unknown
+): WhatsAppWebLeaseNotOwnedDetails | null {
+  const code = (err as { code?: string })?.code;
+  if (code !== WHATSAPP_WEB_LEASE_NOT_OWNED_CODE) return null;
+  const details = (err as { details?: WhatsAppWebLeaseNotOwnedDetails }).details;
+  if (!details || details.code !== WHATSAPP_WEB_LEASE_NOT_OWNED_CODE) {
+    return {
+      code: WHATSAPP_WEB_LEASE_NOT_OWNED_CODE,
+      servingProcessInstanceId: "unknown",
+      ownerProcessInstanceId: null,
+      sessionLeaseStatus: "contested",
+      sessionLeaseOwnerMatch: false,
+      fencingVersion: null,
+      retryGuidance: WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE,
+    };
+  }
+  return details;
+}
+
+function failLeaseNotOwned(res: Response, err: unknown): Response {
+  const details = leaseNotOwnedDetails(err);
+  return inboxFail(
+    res,
+    409,
+    WHATSAPP_WEB_LEASE_NOT_OWNED_CODE,
+    WHATSAPP_WEB_LEASE_NOT_OWNED_MESSAGE,
+    details ?? undefined
+  );
+}
+
 export type WhatsAppWebRouterDeps = {
   session?: WhatsAppWebSession;
   rateLimitStore?: Map<string, { count: number; resetAt: number }>;
@@ -98,9 +137,9 @@ export function createWhatsAppWebRouter(
   router.use(rateLimit);
   router.use(requireWhatsAppWebAdmin);
 
-  router.get("/status", (_req, res) => {
+  router.get("/status", async (_req, res) => {
     noStore(res);
-    const status = session.getSafeStatus();
+    const status = await session.getPublicStatus();
     assertNoCredentialLeak(status);
     return inboxOk(res, status);
   });
@@ -129,6 +168,12 @@ export function createWhatsAppWebRouter(
           "Connection start already in progress"
         );
       }
+      if (
+        code === WHATSAPP_WEB_LEASE_NOT_OWNED_CODE ||
+        code === "session_lease_contested"
+      ) {
+        return failLeaseNotOwned(res, err);
+      }
       return inboxFail(
         res,
         500,
@@ -155,9 +200,21 @@ export function createWhatsAppWebRouter(
 
   router.post("/disconnect", async (_req, res) => {
     noStore(res);
-    const status = await session.disconnect();
-    assertNoCredentialLeak(status);
-    return inboxOk(res, status);
+    try {
+      const status = await session.disconnect();
+      assertNoCredentialLeak(status);
+      return inboxOk(res, status);
+    } catch (err) {
+      if ((err as { code?: string })?.code === WHATSAPP_WEB_LEASE_NOT_OWNED_CODE) {
+        return failLeaseNotOwned(res, err);
+      }
+      return inboxFail(
+        res,
+        500,
+        "disconnect_failed",
+        "Failed to disconnect WhatsApp Web session"
+      );
+    }
   });
 
   router.post("/logout", async (_req, res) => {
@@ -166,7 +223,10 @@ export function createWhatsAppWebRouter(
       const status = await session.logout();
       assertNoCredentialLeak(status);
       return inboxOk(res, status as WhatsAppWebSafeStatus);
-    } catch {
+    } catch (err) {
+      if ((err as { code?: string })?.code === WHATSAPP_WEB_LEASE_NOT_OWNED_CODE) {
+        return failLeaseNotOwned(res, err);
+      }
       return inboxFail(
         res,
         500,
@@ -183,22 +243,34 @@ export function createWhatsAppWebRouter(
     return inboxOk(res, snapshot);
   });
 
-  router.post("/sync", (_req, res) => {
+  router.post("/sync", async (_req, res) => {
     noStore(res);
-    const result = session.startHistorySync();
-    assertNoCredentialLeak(result.snapshot);
-    if (!result.accepted && result.snapshot.status === "failed") {
+    try {
+      const result = await session.startHistorySyncOwned();
+      assertNoCredentialLeak(result.snapshot);
+      if (!result.accepted && result.snapshot.status === "failed") {
+        return inboxFail(
+          res,
+          409,
+          "sync_unavailable",
+          result.snapshot.errorSummary || "Sync unavailable"
+        );
+      }
+      return inboxOk(res, {
+        ...result.snapshot,
+        joinedExisting: result.joinedExisting,
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === WHATSAPP_WEB_LEASE_NOT_OWNED_CODE) {
+        return failLeaseNotOwned(res, err);
+      }
       return inboxFail(
         res,
-        409,
-        "sync_unavailable",
-        result.snapshot.errorSummary || "Sync unavailable"
+        500,
+        "sync_failed",
+        "Failed to start WhatsApp Web sync"
       );
     }
-    return inboxOk(res, {
-      ...result.snapshot,
-      joinedExisting: result.joinedExisting,
-    });
   });
 
   return router;

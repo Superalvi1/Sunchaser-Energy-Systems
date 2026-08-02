@@ -68,11 +68,30 @@ export function noteInboundStored(): void {
 export function noteInboundIgnored(reason: string): void {
   const safe = ALLOWED_IGNORE_REASONS.has(reason) ? reason : "ignored";
   const at = nowIso();
+  // Stale-generation ignores must never advance accepted/live inbound clocks.
+  if (safe === "stale_socket") {
+    snapshot = {
+      ...snapshot,
+      lastIgnoredAt: at,
+      lastIgnoredReason: safe,
+    };
+    return;
+  }
   snapshot = {
     ...snapshot,
     lastInboundEventAt: snapshot.lastInboundEventAt ?? at,
     lastIgnoredAt: at,
     lastIgnoredReason: safe,
+  };
+}
+
+/** Clear live-inbound clocks when a new socket generation becomes active. */
+export function clearWhatsAppWebInboundLiveTimestamps(): void {
+  snapshot = {
+    ...snapshot,
+    lastRawUpsertAt: null,
+    lastInboundEventAt: null,
+    lastInboundStoredAt: null,
   };
 }
 

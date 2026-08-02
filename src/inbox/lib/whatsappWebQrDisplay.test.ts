@@ -82,6 +82,14 @@ function status(
     credentialsFilePresent: partial.credentialsFilePresent ?? null,
     authKeyFileCount: partial.authKeyFileCount ?? null,
     listeningSilent: partial.listeningSilent ?? false,
+    inboundHealth: partial.inboundHealth ?? "INBOUND_SILENT",
+    servingProcessInstanceId:
+      partial.servingProcessInstanceId ?? partial.processInstanceId ?? "proc:test",
+    ownerProcessInstanceId: partial.ownerProcessInstanceId ?? null,
+    fencingVersion: partial.fencingVersion ?? null,
+    buildIdentity: partial.buildIdentity ?? "unknown",
+    durableOwnerMatch: partial.durableOwnerMatch ?? false,
+    leaseRetryGuidance: partial.leaseRetryGuidance ?? null,
   };
 }
 

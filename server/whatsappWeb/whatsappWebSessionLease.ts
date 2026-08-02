@@ -143,6 +143,39 @@ export class WhatsAppWebSessionLease {
     );
   }
 
+  /** Current CAS fence credentials for guarded diagnostics writes. */
+  getFence(): {
+    sessionKey: string;
+    ownerToken: string;
+    fencingVersion: number;
+  } | null {
+    if (
+      !this.held ||
+      !this.sessionKey ||
+      !this.ownerToken ||
+      this.fencingVersion == null
+    ) {
+      return null;
+    }
+    return {
+      sessionKey: this.sessionKey,
+      ownerToken: this.ownerToken,
+      fencingVersion: this.fencingVersion,
+    };
+  }
+
+  /** Durable lease row read (shared store). */
+  async readDurableLease(
+    sessionKey: string
+  ): Promise<WhatsAppWebLeaseRow | null> {
+    return this.store.read(sessionKey);
+  }
+
+  /** Test/inspection: underlying store. */
+  getStore(): WhatsAppWebSessionLeaseStore {
+    return this.store;
+  }
+
   async acquire(paths: {
     sessionDir: string;
     authRoot: string;

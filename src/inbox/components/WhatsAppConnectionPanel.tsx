@@ -705,6 +705,25 @@ export default function WhatsAppConnectionPanel({
                     listeningSilent=
                     {webStatus.listeningSilent === true ? "yes" : "no"}
                   </li>
+                  <li>
+                    inboundHealth={webStatus.inboundHealth ?? "—"}
+                  </li>
+                  <li>
+                    serving=
+                    {webStatus.servingProcessInstanceId ??
+                      webStatus.processInstanceId ??
+                      "—"}
+                  </li>
+                  <li>
+                    owner={webStatus.ownerProcessInstanceId ?? "—"}
+                    {webStatus.durableOwnerMatch === true ? "/match" : "/diff"}
+                  </li>
+                  <li>
+                    fence={webStatus.fencingVersion ?? "—"}
+                  </li>
+                  <li>
+                    build={webStatus.buildIdentity ?? "—"}
+                  </li>
                 </ul>
               </div>
             ) : null}
