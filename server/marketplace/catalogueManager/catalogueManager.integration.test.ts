@@ -116,6 +116,12 @@ async function main(): Promise<void> {
   const repo1 = createMemoryCatalogueManagerRepository(sharedState);
   const repo2 = createMemoryCatalogueManagerRepository(sharedState);
 
+  // Seed brands and categories for override resolution (fail-closed)
+  repo1.seedBrand!({ id: "b1", name: "Knox", slug: "knox" });
+  repo1.seedBrand!({ id: "b2", name: "SolaX", slug: "solax" });
+  repo1.seedCategory!({ id: "c1", name: "Inverters", slug: "inverters" });
+  repo1.seedCategory!({ id: "c2", name: "Batteries", slug: "batteries" });
+
   repo1.seedProduct!(baseProduct("p1"));
 
   await repo1.setOverride("p1", { fieldName: "title", value: "Shared CEO Title" }, ACTOR);
@@ -300,9 +306,10 @@ async function main(): Promise<void> {
   check("public DTO: brand_id override uses resolved slug", dtBrandOverride?.brand.slug === "solax");
   check("public DTO: brand_id override uses resolved name", dtBrandOverride?.brand.name === "SolaX");
 
-  // Without resolved record, falls back to FK-joined brand
+  // Without resolved record, fail-closed: product hidden (null) — never
+  // shows override ID with supplier name.
   const dtBrandFallback = mapProductDto(overriddenBrandRow);
-  check("public DTO: without resolvedOverrideBrand, falls back to join brand", dtBrandFallback?.brand.slug === "knox");
+  check("public DTO: without resolvedOverrideBrand, fails closed (null)", dtBrandFallback === null);
 
   const overriddenCategoryRow = productRow([
     { field_name: "category_id", override_value: "c2", active: true },
@@ -400,6 +407,138 @@ async function main(): Promise<void> {
   check("clearing short_description restores supplier null", p4AfterClear?.shortDescription === null);
   check("clearing warranty restores supplier '1 year'", p4AfterClear?.warranty === "1 year");
   check("model override still active after clearing other fields", p4AfterClear?.model === "KX-300");
+
+  // ── Gallery override independence ────────────────────────────────────────
+  // primary override only: override primary + supplier/base gallery
+  const galleryBaseRow = productRow();
+  // Add supplier media to the base row
+  const galleryBaseWithMedia = {
+    ...galleryBaseRow,
+    media: [
+      { source_url: SUPPLIER_URL, sort_order: 0, role: "thumbnail", published: true, rights_status: "supplier_approved", source_type: "supplier" },
+      { source_url: "https://cdn.shopify.com/s/files/1/0000/0002/products/b.jpg", sort_order: 1, role: "gallery", published: true, rights_status: "supplier_approved", source_type: "supplier" },
+    ],
+  };
+
+  // No overrides: supplier media for both
+  const dtGalleryBase = mapProductDto(galleryBaseWithMedia);
+  check("gallery: no overrides → supplier primary", dtGalleryBase?.image === SUPPLIER_URL);
+  check("gallery: no overrides → supplier gallery has 1 item", dtGalleryBase?.images.length === 1);
+
+  // primary override only: override primary + supplier gallery
+  const dtPiOnlyWithMedia = mapProductDto({
+    ...galleryBaseWithMedia,
+    field_overrides: [{ field_name: "primary_image", override_value: OWN_URL, active: true }],
+  });
+  check("gallery: primary override only → override primary", dtPiOnlyWithMedia?.image === OWN_URL);
+  check("gallery: primary override only → supplier gallery preserved", dtPiOnlyWithMedia?.images.length === 1);
+
+  // gallery override only: supplier primary + override gallery
+  const dtGiOnly = mapProductDto({
+    ...galleryBaseWithMedia,
+    field_overrides: [{ field_name: "gallery_images", override_value: [OWN_URL], active: true }],
+  });
+  check("gallery: gallery override only → supplier primary", dtGiOnly?.image === SUPPLIER_URL);
+  check("gallery: gallery override only → override gallery", dtGiOnly?.images.length === 1 && dtGiOnly?.images[0] === OWN_URL);
+
+  // both overrides: override primary + override gallery
+  const dtBoth = mapProductDto({
+    ...galleryBaseWithMedia,
+    field_overrides: [
+      { field_name: "primary_image", override_value: OWN_URL, active: true },
+      { field_name: "gallery_images", override_value: ["https://cdn.shopify.com/s/files/1/0000/0002/products/b.jpg"], active: true },
+    ],
+  });
+  check("gallery: both overrides → override primary", dtBoth?.image === OWN_URL);
+  check("gallery: both overrides → override gallery", dtBoth?.images.length === 1 && dtBoth?.images[0] !== OWN_URL);
+
+  // empty gallery override: intentionally empty gallery
+  const dtEmptyGi = mapProductDto({
+    ...galleryBaseWithMedia,
+    field_overrides: [{ field_name: "gallery_images", override_value: [], active: true }],
+  });
+  check("gallery: empty gallery override → empty gallery", dtEmptyGi?.images.length === 0);
+  check("gallery: empty gallery override → supplier primary still used", dtEmptyGi?.image === SUPPLIER_URL);
+
+  // cleared override: supplier media restored
+  const dtCleared = mapProductDto({
+    ...galleryBaseWithMedia,
+    field_overrides: [
+      { field_name: "primary_image", override_value: OWN_URL, active: false },
+      { field_name: "gallery_images", override_value: [OWN_URL], active: false },
+    ],
+  });
+  check("gallery: cleared overrides → supplier primary restored", dtCleared?.image === SUPPLIER_URL);
+  check("gallery: cleared overrides → supplier gallery restored", dtCleared?.images.length === 1);
+
+  // ── Admin effective taxonomy: ID + name consistent ────────────────────────
+  repo1.seedProduct!(baseProduct("p5"));
+  await repo1.setOverride("p5", { fieldName: "brand_id", value: "b2" }, ACTOR);
+  await repo1.setOverride("p5", { fieldName: "category_id", value: "c2" }, ACTOR);
+  const p5Detail = await repo1.getProduct("p5");
+  check("admin: brand_id override → effective ID = b2", p5Detail?.brandId === "b2");
+  check("admin: brand_id override → effective name = SolaX", p5Detail?.brandName === "SolaX");
+  check("admin: category_id override → effective ID = c2", p5Detail?.categoryId === "c2");
+  check("admin: category_id override → effective name = Batteries", p5Detail?.categoryName === "Batteries");
+
+  // Clear brand override → supplier ID + name restored
+  await repo1.clearOverride("p5", "brand_id", ACTOR);
+  const p5AfterBrandClear = await repo1.getProduct("p5");
+  check("admin: clearing brand_id → supplier ID b1 restored", p5AfterBrandClear?.brandId === "b1");
+  check("admin: clearing brand_id → supplier name Knox restored", p5AfterBrandClear?.brandName === "Knox");
+  check("admin: clearing brand_id → category override still active", p5AfterBrandClear?.categoryId === "c2");
+
+  // Clear category override → supplier ID + name restored
+  await repo1.clearOverride("p5", "category_id", ACTOR);
+  const p5AfterCatClear = await repo1.getProduct("p5");
+  check("admin: clearing category_id → supplier ID c1 restored", p5AfterCatClear?.categoryId === "c1");
+  check("admin: clearing category_id → supplier name Inverters restored", p5AfterCatClear?.categoryName === "Inverters");
+
+  // ── Admin override-aware search ──────────────────────────────────────────
+  repo1.seedProduct!(baseProduct("p6"));
+  await repo1.setOverride("p6", { fieldName: "title", value: "Renamed CEO Product" }, ACTOR);
+  // Search by overridden title
+  const searchResults = await repo1.listProducts({ limit: 100, offset: 0, q: "Renamed CEO" });
+  check("admin search: finds product by overridden title", searchResults.items.some((i) => i.id === "p6"));
+  // Search by old title should NOT find it (effective title is "Renamed CEO Product")
+  const oldTitleSearch = await repo1.listProducts({ limit: 100, offset: 0, q: "Supplier Title" });
+  // p6 should not appear under its old title since effective title is different
+  // (but p1 has "Supplier Title" as base and no title override, so it should appear)
+  const p6InOldSearch = oldTitleSearch.items.find((i) => i.id === "p6");
+  check("admin search: renamed product not found by old title", p6InOldSearch === undefined);
+
+  // ── Admin effective brand/category filters ───────────────────────────────
+  await repo1.setOverride("p6", { fieldName: "brand_id", value: "b2" }, ACTOR);
+  const brandFilterResults = await repo1.listProducts({ limit: 100, offset: 0, brandId: "b2" });
+  check("admin filter: product with brand_id override found under effective brand", brandFilterResults.items.some((i) => i.id === "p6"));
+  const brandFilterExcluded = await repo1.listProducts({ limit: 100, offset: 0, brandId: "b1" });
+  check("admin filter: product with brand_id override NOT found under supplier brand", !brandFilterExcluded.items.some((i) => i.id === "p6"));
+
+  // ── Fail-closed: missing active override taxonomy ────────────────────────
+  repo1.seedProduct!(baseProduct("p7"));
+  // Set a brand_id override to a non-existent brand (b999 not seeded)
+  await repo1.setOverride("p7", { fieldName: "brand_id", value: "b999" }, ACTOR);
+  let failClosed = false;
+  try {
+    await repo1.getProduct("p7");
+  } catch (err) {
+    failClosed = (err as { code?: string }).code === "OVERRIDE_BRAND_UNRESOLVED";
+  }
+  check("fail-closed: missing override brand throws OVERRIDE_BRAND_UNRESOLVED", failClosed);
+
+  // ── patchProduct: CEO-protected fields use overrides (aligned with prod) ─
+  repo1.seedProduct!(baseProduct("p8"));
+  await repo1.patchProduct("p8", { title: "Patched CEO Title", brandId: "b2" }, ACTOR);
+  const p8Detail = await repo1.getProduct("p8");
+  check("patchProduct: title override effective", p8Detail?.title === "Patched CEO Title");
+  check("patchProduct: brand_id override effective", p8Detail?.brandId === "b2");
+  check("patchProduct: brand name from override", p8Detail?.brandName === "SolaX");
+  // Base column NOT mutated — clearing restores supplier value
+  await repo1.clearOverride("p8", "title", ACTOR);
+  await repo1.clearOverride("p8", "brand_id", ACTOR);
+  const p8Cleared = await repo1.getProduct("p8");
+  check("patchProduct: clearing title restores supplier value", p8Cleared?.title === "Supplier Title");
+  check("patchProduct: clearing brand_id restores supplier brand", p8Cleared?.brandId === "b1" && p8Cleared?.brandName === "Knox");
 
   console.log("\nCatalogue Manager integration tests passed.");
 }

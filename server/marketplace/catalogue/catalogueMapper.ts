@@ -272,10 +272,23 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
     })()
     : undefined;
 
-  // brand_id / category_id overrides: use pre-resolved record if available
-  // (set by catalogueRepository after a batch lookup for active brand/category overrides).
-  const effectiveBrand = row.resolvedOverrideBrand ?? brand;
-  const effectiveCategory = row.resolvedOverrideCategory ?? category;
+  // brand_id / category_id overrides: use pre-resolved record if available.
+  // Fail-closed: if an override is active but resolvedOverrideBrand/Category
+  // is null/undefined, do NOT fall back to the supplier FK join — that would
+  // show an override ID with the supplier name. Instead, return null brand/category.
+  const hasBrandOverride = overrides.has("brand_id");
+  const hasCategoryOverride = overrides.has("category_id");
+
+  if (hasBrandOverride && !row.resolvedOverrideBrand) {
+    // Active override but record could not be resolved — fail closed.
+    return null;
+  }
+  if (hasCategoryOverride && !row.resolvedOverrideCategory) {
+    return null;
+  }
+
+  const effectiveBrand = hasBrandOverride ? row.resolvedOverrideBrand : brand;
+  const effectiveCategory = hasCategoryOverride ? row.resolvedOverrideCategory : category;
 
   // Additional content fields (override > column > null)
   const effectiveShortDescription = overrides.has("short_description")
@@ -298,28 +311,32 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
     ? (overrides.get("datasheet_url") as string | null) ?? null
     : row.datasheet_url ?? null;
 
-  // Image overrides
-  let image: string | null;
-  let images: string[];
-
+  // Image overrides — primary_image and gallery_images apply INDEPENDENTLY.
+  // - primary override only: override primary + supplier/base gallery
+  // - gallery override only: supplier/base primary + override gallery
+  // - both overrides: override primary + override gallery
+  // - cleared override: corresponding supplier media restored
+  // - empty gallery override: intentionally empty gallery
   const piOverride = overrides.get("primary_image");
   const giOverride = overrides.get("gallery_images");
 
-  if (typeof piOverride === "string" && piOverride) {
-    image = normalizeAnyAllowedImageUrl(piOverride) ?? normalizeSupplierImageUrl(piOverride);
-    if (typeof giOverride !== "undefined" && Array.isArray(giOverride)) {
-      images = (giOverride as string[])
+  const piActive = typeof piOverride === "string" && piOverride.length > 0;
+  const giActive = Array.isArray(giOverride);
+
+  // Supplier/base media as fallback
+  const derived = mapPublishedImageUrls(row.media);
+
+  // Primary: override if active, else supplier/base
+  const image: string | null = piActive
+    ? (normalizeAnyAllowedImageUrl(piOverride as string) ?? normalizeSupplierImageUrl(piOverride as string))
+    : derived.image;
+
+  // Gallery: override if active (even empty), else supplier/base
+  const images: string[] = giActive
+    ? (giOverride as string[])
         .map((u) => normalizeAnyAllowedImageUrl(u) ?? normalizeSupplierImageUrl(u))
-        .filter((u): u is string => u !== null);
-    } else {
-      const { images: mediaImages } = mapPublishedImageUrls(row.media);
-      images = mediaImages;
-    }
-  } else {
-    const derived = mapPublishedImageUrls(row.media);
-    image = derived.image;
-    images = derived.images;
-  }
+        .filter((u): u is string => u !== null)
+    : derived.images;
 
   return {
     slug: row.slug,

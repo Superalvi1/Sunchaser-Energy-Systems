@@ -99,9 +99,11 @@ async function main(): Promise<void> {
     await apply(client, "scripts/marketplace-ws1-additive-schema.sql");
     await apply(client, "scripts/marketplace-catalogue-manager-core.sql");
     await apply(client, "scripts/marketplace-ceo-auto-import-product-media.sql");
+    await apply(client, "scripts/marketplace-catalogue-manager-list-rpc.sql");
     // Idempotent re-apply
     await apply(client, "scripts/marketplace-catalogue-manager-core.sql");
     await apply(client, "scripts/marketplace-ceo-auto-import-product-media.sql");
+    await apply(client, "scripts/marketplace-catalogue-manager-list-rpc.sql");
 
     const cols = await client.query(`
       select column_name from information_schema.columns
@@ -431,6 +433,142 @@ async function main(): Promise<void> {
       "supplier media resync does not revive cleared title override",
       titleStillCleared.rows[0]?.active === false,
     );
+
+    // ── RPC: mp_catalogue_manager_list — effective-value filtering ────────
+    // Seed a second brand/category/product for filter tests
+    await client.query(`
+      insert into public.mp_brands (id, name, slug) values ('b2','SolaX','solax')
+      on conflict do nothing;
+      insert into public.mp_categories (id, name, slug) values ('c2','Batteries','batteries')
+      on conflict do nothing;
+      insert into public.mp_products (id, brand_id, category_id, title, slug, description)
+      values ('p2','b1','c1','Alpha Product','alpha-product','D')
+      on conflict do nothing;
+      insert into public.mp_product_variants (id, product_id, sku, title, is_default, active)
+      values ('v2','p2','SKU2','Default',true,true)
+      on conflict do nothing;
+    `);
+
+    // Set a title override on p2 so we can test effective-title search
+    await client.query(
+      `select public.mp_set_field_override('p2','title','"Renamed CEO Product"'::jsonb,'a','ceo')`,
+    );
+    // Set a brand_id override on p2 so we can test effective-brand filter
+    await client.query(
+      `select public.mp_set_field_override('p2','brand_id','"b2"'::jsonb,'a','ceo')`,
+    );
+
+    // Search by overridden title — should find p2
+    const searchByOvTitle = await client.query(
+      `select * from public.mp_catalogue_manager_list(50, 0, 'Renamed CEO', null, null, null, null, null, null, null)`,
+    );
+    check(
+      "RPC: search by overridden title finds product",
+      searchByOvTitle.rows.some((r: { id: string }) => r.id === "p2"),
+    );
+
+    // Search by old title — should NOT find p2 (effective title is "Renamed CEO Product")
+    const searchByOldTitle = await client.query(
+      `select * from public.mp_catalogue_manager_list(50, 0, 'Alpha Product', null, null, null, null, null, null, null)`,
+    );
+    check(
+      "RPC: search by old title does not find renamed product",
+      !searchByOldTitle.rows.some((r: { id: string }) => r.id === "p2"),
+    );
+
+    // Filter by effective brand_id (b2 = override brand)
+    const filterByOvBrand = await client.query(
+      `select * from public.mp_catalogue_manager_list(50, 0, null, 'b2', null, null, null, null, null, null)`,
+    );
+    check(
+      "RPC: filter by override brand_id finds product",
+      filterByOvBrand.rows.some((r: { id: string }) => r.id === "p2"),
+    );
+
+    // Filter by supplier brand_id (b1) — p2 should NOT appear (effective brand is b2)
+    const filterBySupplierBrand = await client.query(
+      `select * from public.mp_catalogue_manager_list(50, 0, null, 'b1', null, null, null, null, null, null)`,
+    );
+    check(
+      "RPC: filter by supplier brand_id excludes overridden product",
+      !filterBySupplierBrand.rows.some((r: { id: string }) => r.id === "p2"),
+    );
+
+    // ── RPC: pagination beyond 1000 rows ────────────────────────────────────
+    // Seed 1100 products to verify pagination reaches all of them
+    await client.query(`
+      insert into public.mp_brands (id, name, slug) values ('b3','BulkBrand','bulkbrand')
+      on conflict do nothing;
+      insert into public.mp_categories (id, name, slug) values ('c3','BulkCat','bulkcat')
+      on conflict do nothing;
+    `);
+    // Bulk insert 1100 products with a deterministic naming pattern
+    const bulkProductIds: string[] = [];
+    for (let i = 0; i < 1100; i++) {
+      const id = `pbulk_${String(i).padStart(5, "0")}`;
+      bulkProductIds.push(id);
+    }
+    // Insert in batches of 100
+    for (let batch = 0; batch < bulkProductIds.length; batch += 100) {
+      const chunk = bulkProductIds.slice(batch, batch + 100);
+      const values = chunk
+        .map((id, i) => `('${id}','b3','c3','Bulk ${String(batch + i).padStart(5, "0")}','${id}','D')`)
+        .join(",");
+      await client.query(`
+        insert into public.mp_products (id, brand_id, category_id, title, slug, description)
+        values ${values}
+        on conflict do nothing;
+      `);
+      const varValues = chunk
+        .map((id) => `('${id}_v','${id}','${id}_sku','Default',true,true)`)
+        .join(",");
+      await client.query(`
+        insert into public.mp_product_variants (id, product_id, sku, title, is_default, active)
+        values ${varValues}
+        on conflict do nothing;
+      `);
+    }
+
+    // Page 1: limit=500, offset=0 — should return 500 rows with total >= 1102
+    const page1 = await client.query(
+      `select * from public.mp_catalogue_manager_list(500, 0, 'Bulk', 'b3', 'c3', null, null, null, null, null)`,
+    );
+    check("RPC: page 1 returns 500 rows", page1.rowCount === 500);
+    check("RPC: page 1 total >= 1100", Number(page1.rows[0]?.total) >= 1100);
+
+    // Page 2: limit=500, offset=500 — should return 500 rows
+    const page2 = await client.query(
+      `select * from public.mp_catalogue_manager_list(500, 500, 'Bulk', 'b3', 'c3', null, null, null, null, null)`,
+    );
+    check("RPC: page 2 returns 500 rows", page2.rowCount === 500);
+
+    // Page 3: limit=500, offset=1000 — should return remaining rows (>= 100)
+    const page3 = await client.query(
+      `select * from public.mp_catalogue_manager_list(500, 1000, 'Bulk', 'b3', 'c3', null, null, null, null, null)`,
+    );
+    check("RPC: page 3 returns remaining rows (>= 100)", (page3.rowCount ?? 0) >= 100);
+
+    // No duplication between pages
+    const page1Ids = new Set(page1.rows.map((r: { id: string }) => r.id));
+    const page2Ids = new Set(page2.rows.map((r: { id: string }) => r.id));
+    const page3Ids = new Set(page3.rows.map((r: { id: string }) => r.id));
+    const overlap12 = [...page1Ids].filter((id) => page2Ids.has(id));
+    const overlap23 = [...page2Ids].filter((id) => page3Ids.has(id));
+    check("RPC: no overlap between page 1 and 2", overlap12.length === 0);
+    check("RPC: no overlap between page 2 and 3", overlap23.length === 0);
+
+    // Total across pages matches reported total
+    const totalReported = Number(page1.rows[0]?.total);
+    const totalFetched = page1.rowCount + page2.rowCount + page3.rowCount;
+    check("RPC: total fetched matches reported total", totalFetched === totalReported);
+
+    // ── RPC: deterministic ordering (title, then id) ────────────────────────
+    const orderedPage = await client.query(
+      `select * from public.mp_catalogue_manager_list(10, 0, 'Bulk', 'b3', 'c3', null, null, null, null, null)`,
+    );
+    const titles = orderedPage.rows.map((r: { id: string }) => r.id);
+    const sortedIds = [...titles].sort();
+    check("RPC: deterministic ordering by title then id", JSON.stringify(titles) === JSON.stringify(sortedIds));
 
     console.log("\nCatalogue Manager PG migration tests passed.");
   } finally {

@@ -256,7 +256,18 @@ function primaryImageFor(productId: string, overrides: Map<string, FieldOverride
   return published[0]?.source_url ?? null;
 }
 
-function toSummary(row: DbProductSummaryRow): CatalogueManagerProductSummary {
+/**
+ * Resolve effective brand/category ID + name.
+ * When an override is active, the override brand/category record (looked up
+ * by the caller and passed via resolvedOverrideBrand/Category) provides BOTH
+ * the ID and the name. If the override is active but the record is missing,
+ * fail closed — never show an override ID with the supplier name.
+ */
+function toSummary(
+  row: DbProductSummaryRow,
+  resolvedOverrideBrand?: { id: string; name: string; slug: string } | null,
+  resolvedOverrideCategory?: { id: string; name: string; slug: string } | null,
+): CatalogueManagerProductSummary {
   const brand = one(row.brand);
   const category = one(row.category);
   const overrideRows = (row.overrides ?? []).map(toFieldOverrideRecord);
@@ -284,29 +295,48 @@ function toSummary(row: DbProductSummaryRow): CatalogueManagerProductSummary {
     overrides: ovMap,
   }).value;
 
-  // Resolve brand_id / category_id from overrides so that clearing restores
-  // the supplier value (the column is never overwritten by patchProduct).
-  const effectiveBrandId = resolveEffectiveValue({
-    field: "brand_id",
-    supplierValue: brand?.id ?? "",
-    fallback: "",
-    overrides: ovMap,
-  }).value;
-  const effectiveCategoryId = resolveEffectiveValue({
-    field: "category_id",
-    supplierValue: category?.id ?? "",
-    fallback: "",
-    overrides: ovMap,
-  }).value;
+  // Brand: override record if active and resolved, else supplier FK join.
+  // Fail-closed: if override is active but record is missing, throw — never
+  // combine an override ID with the supplier name.
+  const brandOvActive = ovMap.has("brand_id");
+  const categoryOvActive = ovMap.has("category_id");
+
+  if (brandOvActive && !resolvedOverrideBrand) {
+    throw new CatalogueManagerError(
+      500,
+      "OVERRIDE_BRAND_UNRESOLVED",
+      "Active brand_id override could not be resolved.",
+    );
+  }
+  if (categoryOvActive && !resolvedOverrideCategory) {
+    throw new CatalogueManagerError(
+      500,
+      "OVERRIDE_CATEGORY_UNRESOLVED",
+      "Active category_id override could not be resolved.",
+    );
+  }
+
+  const effectiveBrandId = brandOvActive
+    ? (resolvedOverrideBrand!.id)
+    : (brand?.id ?? "");
+  const effectiveBrandName = brandOvActive
+    ? (resolvedOverrideBrand!.name)
+    : (brand?.name ?? "");
+  const effectiveCategoryId = categoryOvActive
+    ? (resolvedOverrideCategory!.id)
+    : (category?.id ?? "");
+  const effectiveCategoryName = categoryOvActive
+    ? (resolvedOverrideCategory!.name)
+    : (category?.name ?? "");
 
   return {
     id: row.id,
     title: effectiveTitle,
     slug: row.slug,
     brandId: effectiveBrandId,
-    brandName: brand?.name ?? "",   // name from FK join (supplier brand)
+    brandName: effectiveBrandName,
     categoryId: effectiveCategoryId,
-    categoryName: category?.name ?? "",  // name from FK join (supplier category)
+    categoryName: effectiveCategoryName,
     active: row.active,
     publicVisible: Boolean(effectivePV),
     featured: Boolean(effectiveFeatured),
@@ -337,8 +367,12 @@ function layered<T>(
   };
 }
 
-function toDetail(row: DbProductDetailRow): CatalogueManagerProductDetail {
-  const summary = toSummary(row);
+function toDetail(
+  row: DbProductDetailRow,
+  resolvedOverrideBrand?: { id: string; name: string; slug: string } | null,
+  resolvedOverrideCategory?: { id: string; name: string; slug: string } | null,
+): CatalogueManagerProductDetail {
+  const summary = toSummary(row, resolvedOverrideBrand, resolvedOverrideCategory);
   const overrideRows = (row.overrides ?? []).map(toFieldOverrideRecord);
   const ovMap = activeOverridesByField(overrideRows);
 
@@ -433,6 +467,58 @@ function dbErr(label: string, err: { message?: string } | null | unknown): Catal
   return new CatalogueManagerError(500, "DB_ERROR", `Catalogue manager database error: ${label}.`);
 }
 
+/**
+ * Batch-resolve override brand/category records for a set of product rows.
+ * Fail-closed: if the DB query errors, throw — never silently fall back to
+ * the supplier brand/category when an override is active.
+ */
+async function resolveOverrideTaxonomy(
+  rows: DbProductSummaryRow[],
+  supabase: SupabaseClient,
+): Promise<{
+  brandCache: Map<string, { id: string; name: string; slug: string }>;
+  categoryCache: Map<string, { id: string; name: string; slug: string }>;
+}> {
+  const brandIds = new Set<string>();
+  const categoryIds = new Set<string>();
+
+  for (const row of rows) {
+    const ovRows = (row.overrides ?? []).map(toFieldOverrideRecord);
+    const ovMap = activeOverridesByField(ovRows);
+    const bid = ovMap.get("brand_id")?.value as string | undefined;
+    const cid = ovMap.get("category_id")?.value as string | undefined;
+    if (bid && typeof bid === "string") brandIds.add(bid);
+    if (cid && typeof cid === "string") categoryIds.add(cid);
+  }
+
+  const brandCache = new Map<string, { id: string; name: string; slug: string }>();
+  const categoryCache = new Map<string, { id: string; name: string; slug: string }>();
+
+  if (brandIds.size > 0) {
+    const { data, error } = await supabase
+      .from("mp_brands")
+      .select("id, name, slug")
+      .in("id", [...brandIds]);
+    if (error) throw dbErr("resolveOverrideTaxonomy.brands", error);
+    for (const b of (data ?? []) as Array<{ id: string; name: string; slug: string }>) {
+      brandCache.set(b.id, b);
+    }
+  }
+
+  if (categoryIds.size > 0) {
+    const { data, error } = await supabase
+      .from("mp_categories")
+      .select("id, name, slug")
+      .in("id", [...categoryIds]);
+    if (error) throw dbErr("resolveOverrideTaxonomy.categories", error);
+    for (const c of (data ?? []) as Array<{ id: string; name: string; slug: string }>) {
+      categoryCache.set(c.id, c);
+    }
+  }
+
+  return { brandCache, categoryCache };
+}
+
 // ---------------------------------------------------------------------------
 // Main factory
 // ---------------------------------------------------------------------------
@@ -502,36 +588,63 @@ export function createSupabaseCatalogueManagerRepository(
     seedProduct: undefined,
 
     async listProducts(filters: CatalogueManagerListFilters): Promise<CatalogueManagerListResult> {
-      let query = supabase
+      // Use the effective-value RPC for server-side pagination + filtering.
+      // This bypasses Supabase's implicit 1000-row response cap and filters
+      // on EFFECTIVE values (override-aware), not base columns.
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        "mp_catalogue_manager_list",
+        {
+          p_limit: filters.limit,
+          p_offset: filters.offset,
+          p_q: filters.q ?? null,
+          p_brand_id: filters.brandId ?? null,
+          p_category_id: filters.categoryId ?? null,
+          p_supplier: filters.supplier ?? null,
+          p_active: filters.active ?? null,
+          p_public_visible: filters.publicVisible ?? null,
+          p_featured: filters.featured ?? null,
+          p_stock_status: filters.stockStatus ?? null,
+        },
+      );
+      if (rpcErr) throw dbErr("listProducts.rpc", rpcErr);
+
+      const rpcRows = (rpcData ?? []) as Array<{ id: string; total: number }>;
+      const total = rpcRows.length > 0 ? Number(rpcRows[0].total) : 0;
+      const ids = rpcRows.map((r) => r.id);
+
+      if (ids.length === 0) {
+        return { items: [], total: 0, limit: filters.limit, offset: filters.offset };
+      }
+
+      // Fetch full summary data for the paginated IDs.
+      const { data: prodData, error: prodErr } = await supabase
         .from("mp_products")
         .select(SUMMARY_SELECT)
-        .order("title", { ascending: true });
+        .in("id", ids);
+      if (prodErr) throw dbErr("listProducts.fetch", prodErr);
 
-      if (filters.active !== undefined) query = query.eq("active", filters.active);
-      if (filters.brandId) query = query.eq("brand_id", filters.brandId);
-      if (filters.categoryId) query = query.eq("category_id", filters.categoryId);
-      if (filters.supplier) query = query.eq("selected_supplier", filters.supplier);
-      if (filters.q) query = query.ilike("title", `%${filters.q}%`);
+      const prodRows = (prodData ?? []) as DbProductSummaryRow[];
+      const rowById = new Map(prodRows.map((r) => [r.id, r]));
 
-      const { data, error, count } = await query;
-      if (error) throw dbErr("listProducts", error);
+      // Batch-resolve override brand/category records.
+      const { brandCache, categoryCache } = await resolveOverrideTaxonomy(prodRows, supabase);
 
-      let items = ((data ?? []) as DbProductSummaryRow[]).map(toSummary);
-
-      // In-process filters that can't be pushed to DB (override-dependent)
-      if (filters.publicVisible !== undefined) {
-        items = items.filter((i) => i.publicVisible === filters.publicVisible);
+      // Map to summaries in the RPC's deterministic order.
+      const items: CatalogueManagerProductSummary[] = [];
+      for (const id of ids) {
+        const row = rowById.get(id);
+        if (!row) continue;
+        const ovMap = activeOverridesByField((row.overrides ?? []).map(toFieldOverrideRecord));
+        const bid = ovMap.get("brand_id")?.value as string | undefined;
+        const cid = ovMap.get("category_id")?.value as string | undefined;
+        items.push(toSummary(
+          row,
+          bid ? (brandCache.get(bid) ?? null) : undefined,
+          cid ? (categoryCache.get(cid) ?? null) : undefined,
+        ));
       }
-      if (filters.featured !== undefined) {
-        items = items.filter((i) => i.featured === filters.featured);
-      }
-      if (filters.stockStatus !== undefined) {
-        items = items.filter((i) => i.stockStatus === filters.stockStatus);
-      }
 
-      const total = count ?? items.length;
-      const page = items.slice(filters.offset, filters.offset + filters.limit);
-      return { items: page, total, limit: filters.limit, offset: filters.offset };
+      return { items, total, limit: filters.limit, offset: filters.offset };
     },
 
     async getProduct(productId: string): Promise<CatalogueManagerProductDetail | null> {
@@ -542,7 +655,17 @@ export function createSupabaseCatalogueManagerRepository(
         .maybeSingle();
       if (error) throw dbErr("getProduct", error);
       if (!data) return null;
-      return toDetail(data as DbProductDetailRow);
+      const row = data as DbProductDetailRow;
+      // Resolve override brand/category for this single product.
+      const { brandCache, categoryCache } = await resolveOverrideTaxonomy([row], supabase);
+      const ovMap = activeOverridesByField((row.overrides ?? []).map(toFieldOverrideRecord));
+      const bid = ovMap.get("brand_id")?.value as string | undefined;
+      const cid = ovMap.get("category_id")?.value as string | undefined;
+      return toDetail(
+        row,
+        bid ? (brandCache.get(bid) ?? null) : undefined,
+        cid ? (categoryCache.get(cid) ?? null) : undefined,
+      );
     },
 
     async patchProduct(

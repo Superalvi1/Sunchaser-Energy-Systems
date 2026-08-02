@@ -139,19 +139,33 @@ async function resolveOverrideBrandsCategories(
   const categoryCache = new Map<string, CategoryRow>();
 
   if (overrideBrandIds.size > 0) {
-    const { data: brands } = await supabase
+    const { data: brands, error: brandErr } = await supabase
       .from("mp_brands")
       .select("id, slug, name, active")
       .in("id", [...overrideBrandIds]);
+    // Fail-closed: if the lookup errors, do NOT silently fall back to
+    // the supplier brand/category. Throw so the API returns an error.
+    if (brandErr) {
+      throw new CatalogueRepositoryError(
+        "CATALOGUE_OVERRIDE_TAXONOMY_ERROR",
+        "Unable to resolve overridden brand records.",
+      );
+    }
     for (const b of (brands ?? []) as Array<BrandRow & { id: string }>) {
       brandCache.set(b.id, b);
     }
   }
   if (overrideCategoryIds.size > 0) {
-    const { data: cats } = await supabase
+    const { data: cats, error: catErr } = await supabase
       .from("mp_categories")
       .select("id, slug, name, description, sort_order, active")
       .in("id", [...overrideCategoryIds]);
+    if (catErr) {
+      throw new CatalogueRepositoryError(
+        "CATALOGUE_OVERRIDE_TAXONOMY_ERROR",
+        "Unable to resolve overridden category records.",
+      );
+    }
     for (const c of (cats ?? []) as Array<CategoryRow & { id: string }>) {
       categoryCache.set(c.id, c);
     }

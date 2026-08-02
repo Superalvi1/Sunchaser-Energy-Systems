@@ -85,6 +85,8 @@ export type MemSharedState = {
   media: Map<string, CatalogueManagerMediaRow[]>;
   audits: CatalogueManagerAuditEvent[];
   rejects: MemReject[];
+  brands: Map<string, { id: string; name: string; slug: string }>;
+  categories: Map<string, { id: string; name: string; slug: string }>;
 };
 
 export function createMemSharedState(): MemSharedState {
@@ -94,6 +96,8 @@ export function createMemSharedState(): MemSharedState {
     media: new Map(),
     audits: [],
     rejects: [],
+    brands: new Map(),
+    categories: new Map(),
   };
 }
 
@@ -112,6 +116,8 @@ function auditId(): string {
 
 export type CatalogueManagerRepository = {
   seedProduct?(product: MemProduct): void;
+  seedBrand?(brand: { id: string; name: string; slug: string }): void;
+  seedCategory?(cat: { id: string; name: string; slug: string }): void;
   listProducts(filters: CatalogueManagerListFilters): Promise<CatalogueManagerListResult>;
   getProduct(productId: string): Promise<CatalogueManagerProductDetail | null>;
   patchProduct(
@@ -156,7 +162,7 @@ export type CatalogueManagerRepository = {
 export function createMemoryCatalogueManagerRepository(
   state?: MemSharedState,
 ): CatalogueManagerRepository {
-  const { products, overrides, media, audits, rejects } =
+  const { products, overrides, media, audits, rejects, brands, categories } =
     state ?? createMemSharedState();
 
   function requireProduct(productId: string): MemProduct {
@@ -219,14 +225,41 @@ export function createMemoryCatalogueManagerRepository(
       fallback: p.categoryId,
       overrides: ov,
     }).value;
+    // Resolve brand/category names: if override is active, look up the override
+    // brand/category record. Fail-closed: if the override brand/category can't
+    // be found, throw — never show override ID with supplier name.
+    const brandOvActive = ov.has("brand_id");
+    const categoryOvActive = ov.has("category_id");
+    let effectiveBrandName = p.brandName;
+    let effectiveCategoryName = p.categoryName;
+    if (brandOvActive) {
+      const ob = brands.get(effectiveBrandId);
+      if (!ob) {
+        throw new CatalogueManagerError(
+          500, "OVERRIDE_BRAND_UNRESOLVED",
+          "Active brand_id override could not be resolved.",
+        );
+      }
+      effectiveBrandName = ob.name;
+    }
+    if (categoryOvActive) {
+      const oc = categories.get(effectiveCategoryId);
+      if (!oc) {
+        throw new CatalogueManagerError(
+          500, "OVERRIDE_CATEGORY_UNRESOLVED",
+          "Active category_id override could not be resolved.",
+        );
+      }
+      effectiveCategoryName = oc.name;
+    }
     return {
       id: p.id,
       title: resolveTitle(p).effective,
       slug: p.slug,
       brandId: effectiveBrandId,
-      brandName: p.brandName,   // name from base (lookup not available in memory repo)
+      brandName: effectiveBrandName,
       categoryId: effectiveCategoryId,
-      categoryName: p.categoryName,  // name from base
+      categoryName: effectiveCategoryName,
       active: p.active,
       publicVisible: resolvePublicVisible(p),
       featured: resolveFeatured(p),
@@ -335,6 +368,14 @@ export function createMemoryCatalogueManagerRepository(
       if (!media.has(product.id)) media.set(product.id, []);
     },
 
+    seedBrand(brand: { id: string; name: string; slug: string }): void {
+      brands.set(brand.id, { ...brand });
+    },
+
+    seedCategory(cat: { id: string; name: string; slug: string }): void {
+      categories.set(cat.id, { ...cat });
+    },
+
     async listProducts(filters) {
       let items = [...products.values()].map(toSummary);
       if (filters.q) {
@@ -377,33 +418,56 @@ export function createMemoryCatalogueManagerRepository(
 
     async patchProduct(productId, patch, actor) {
       const p = requireProduct(productId);
-      if (patch.title !== undefined) {
-        p.title = patch.title;
-        p.supplier.title = patch.title;
+
+      // CEO-protected content fields → write overrides (aligned with Supabase repo).
+      // The base/supplier column is NOT mutated so clearing restores the supplier value.
+      const ceoFields: Array<[string, unknown]> = [];
+      if (patch.title !== undefined) ceoFields.push(["title", patch.title]);
+      if (patch.description !== undefined) ceoFields.push(["description", patch.description]);
+      if (patch.shortDescription !== undefined) ceoFields.push(["short_description", patch.shortDescription]);
+      if (patch.model !== undefined) ceoFields.push(["model", patch.model]);
+      if (patch.brandId !== undefined) ceoFields.push(["brand_id", patch.brandId]);
+      if (patch.categoryId !== undefined) ceoFields.push(["category_id", patch.categoryId]);
+      if (patch.seoTitle !== undefined) ceoFields.push(["seo_title", patch.seoTitle]);
+      if (patch.seoDescription !== undefined) ceoFields.push(["seo_description", patch.seoDescription]);
+      if (patch.datasheetUrl !== undefined) ceoFields.push(["datasheet_url", patch.datasheetUrl]);
+      if (patch.warranty !== undefined) ceoFields.push(["warranty", patch.warranty]);
+      if (patch.specifications !== undefined) ceoFields.push(["specifications", patch.specifications]);
+      if (patch.publicVisible !== undefined) ceoFields.push(["public_visible", patch.publicVisible]);
+      if (patch.featured !== undefined) ceoFields.push(["featured", patch.featured]);
+
+      // Validate brand/category IDs exist before setting override
+      if (patch.brandId !== undefined && brands && !brands.has(patch.brandId)) {
+        throw new CatalogueManagerError(422, "INVALID_BRAND", `Brand not found: ${patch.brandId}`);
       }
-      if (patch.description !== undefined) {
-        p.description = patch.description;
-        p.supplier.description = patch.description;
+      if (patch.categoryId !== undefined && categories && !categories.has(patch.categoryId)) {
+        throw new CatalogueManagerError(422, "INVALID_CATEGORY", `Category not found: ${patch.categoryId}`);
       }
-      if (patch.shortDescription !== undefined) p.shortDescription = patch.shortDescription;
-      if (patch.model !== undefined) p.model = patch.model;
-      if (patch.brandId !== undefined) p.brandId = patch.brandId;
-      if (patch.categoryId !== undefined) p.categoryId = patch.categoryId;
-      if (patch.seoTitle !== undefined) p.seoTitle = patch.seoTitle;
-      if (patch.seoDescription !== undefined) p.seoDescription = patch.seoDescription;
-      if (patch.datasheetUrl !== undefined) p.datasheetUrl = patch.datasheetUrl;
-      if (patch.warranty !== undefined) p.warranty = patch.warranty;
-      if (patch.specifications !== undefined) p.specifications = { ...patch.specifications };
+
+      // Write overrides for CEO-protected fields
+      for (const [field, value] of ceoFields) {
+        // Deactivate previous active override for this field
+        const list = (overrides.get(productId) ?? []).map((o) =>
+          o.fieldName === field && o.active
+            ? { ...o, active: false, clearedAt: nowIso(), updatedAt: nowIso() }
+            : o,
+        );
+        list.push({
+          fieldName: field,
+          value,
+          active: true,
+          actorId: actor.id,
+          actorUsername: actor.username,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          clearedAt: null,
+        });
+        overrides.set(productId, list);
+      }
+
+      // Non-protected fields: update columns directly
       if (patch.tags !== undefined) p.tags = [...patch.tags];
       if (patch.active !== undefined) p.active = patch.active;
-      if (patch.publicVisible !== undefined) {
-        p.publicVisible = patch.publicVisible;
-        p.supplier.publicVisible = patch.publicVisible;
-      }
-      if (patch.featured !== undefined) {
-        p.featured = patch.featured;
-        p.supplier.featured = patch.featured;
-      }
       if (patch.compareAtPrice !== undefined) p.compareAtPrice = patch.compareAtPrice;
       p.lastManualEditAt = nowIso();
       writeAudit(actor, "product.patch", "mp_products", productId, {
