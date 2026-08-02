@@ -408,6 +408,13 @@ export function parseSetOverrideBody(
           `specifications.${k} must be a string.`,
         );
       }
+      if ((spec[k] as string).length > 1000) {
+        throw new CatalogueManagerError(
+          400,
+          "VALIDATION_ERROR",
+          `specifications.${k} value is too long (max 1000 characters).`,
+        );
+      }
     }
     return { fieldName, value: spec as Record<string, string> };
   }

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
 import {
+  loadActiveOverrides,
   mapBrandDto,
   mapCategoryDto,
   mapProductDto,
@@ -106,6 +107,73 @@ function assertNoForbiddenKeys(payload: unknown): void {
   }
 }
 
+/**
+ * For every row with an active brand_id or category_id override, batch-fetch
+ * the referenced brand/category records and set resolvedOverrideBrand /
+ * resolvedOverrideCategory so mapProductDto can use the correct slug + name.
+ *
+ * This is the only DB call in the public catalogue that isn't covered by the
+ * product SELECT — one extra round-trip per page, not per product.
+ */
+async function resolveOverrideBrandsCategories(
+  rows: ProductRow[],
+  supabase: SupabaseClient,
+): Promise<ProductRow[]> {
+  const overrideBrandIds = new Set<string>();
+  const overrideCategoryIds = new Set<string>();
+
+  for (const row of rows) {
+    const ovRows = Array.isArray(row.field_overrides)
+      ? row.field_overrides
+      : row.field_overrides
+        ? [row.field_overrides]
+        : [];
+    const ov = loadActiveOverrides(ovRows);
+    const bid = ov.get("brand_id");
+    const cid = ov.get("category_id");
+    if (typeof bid === "string" && bid) overrideBrandIds.add(bid);
+    if (typeof cid === "string" && cid) overrideCategoryIds.add(cid);
+  }
+
+  const brandCache = new Map<string, BrandRow>();
+  const categoryCache = new Map<string, CategoryRow>();
+
+  if (overrideBrandIds.size > 0) {
+    const { data: brands } = await supabase
+      .from("mp_brands")
+      .select("id, slug, name, active")
+      .in("id", [...overrideBrandIds]);
+    for (const b of (brands ?? []) as Array<BrandRow & { id: string }>) {
+      brandCache.set(b.id, b);
+    }
+  }
+  if (overrideCategoryIds.size > 0) {
+    const { data: cats } = await supabase
+      .from("mp_categories")
+      .select("id, slug, name, description, sort_order, active")
+      .in("id", [...overrideCategoryIds]);
+    for (const c of (cats ?? []) as Array<CategoryRow & { id: string }>) {
+      categoryCache.set(c.id, c);
+    }
+  }
+
+  return rows.map((row) => {
+    const ovRows = Array.isArray(row.field_overrides)
+      ? row.field_overrides
+      : row.field_overrides
+        ? [row.field_overrides]
+        : [];
+    const ov = loadActiveOverrides(ovRows);
+    const bid = ov.get("brand_id") as string | undefined;
+    const cid = ov.get("category_id") as string | undefined;
+    return {
+      ...row,
+      resolvedOverrideBrand: (bid && brandCache.has(bid)) ? brandCache.get(bid)! : null,
+      resolvedOverrideCategory: (cid && categoryCache.has(cid)) ? categoryCache.get(cid)! : null,
+    };
+  });
+}
+
 export function createSupabaseCatalogueRepository(
   clientFactory: () => SupabaseClient | null = getSupabase,
 ): CatalogueRepository {
@@ -186,9 +254,16 @@ export function createSupabaseCatalogueRepository(
         );
       }
 
+      // Resolve override brands/categories in one batch query so mapProductDto
+      // can return correct slug/name for brand_id and category_id overrides.
+      const annotated = await resolveOverrideBrandsCategories(
+        (data || []) as ProductRow[],
+        supabase,
+      );
+
       // All filters except active applied in-process (catalogue is small;
       // avoids fragile nested DB filters and correctly honours field overrides).
-      const mapped = ((data || []) as ProductRow[])
+      const mapped = annotated
         .map(mapProductDto)
         .filter((p): p is CatalogueProductDto => p !== null)
         .filter((p) => {
@@ -216,7 +291,12 @@ export function createSupabaseCatalogueRepository(
         );
       }
       if (!data) return null;
-      const mapped = mapProductDto(data as ProductRow);
+      // Resolve override brand/category for this single product.
+      const [annotatedRow] = await resolveOverrideBrandsCategories(
+        [data as ProductRow],
+        supabase,
+      );
+      const mapped = mapProductDto(annotatedRow);
       if (mapped) assertNoForbiddenKeys(mapped);
       return mapped;
     },

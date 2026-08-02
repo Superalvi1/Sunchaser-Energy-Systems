@@ -204,15 +204,29 @@ export function createMemoryCatalogueManagerRepository(
   }
 
   function toSummary(p: MemProduct): CatalogueManagerProductSummary {
+    const ov = activeOverridesByField(productOverrides(p.id));
     const active = productOverrides(p.id).filter((o) => o.active).map((o) => o.fieldName);
+    // Resolve brand/category IDs from overrides so clearing restores the supplier value.
+    const effectiveBrandId = resolveEffectiveValue({
+      field: "brand_id",
+      supplierValue: p.brandId,
+      fallback: p.brandId,
+      overrides: ov,
+    }).value;
+    const effectiveCategoryId = resolveEffectiveValue({
+      field: "category_id",
+      supplierValue: p.categoryId,
+      fallback: p.categoryId,
+      overrides: ov,
+    }).value;
     return {
       id: p.id,
       title: resolveTitle(p).effective,
       slug: p.slug,
-      brandId: p.brandId,
-      brandName: p.brandName,
-      categoryId: p.categoryId,
-      categoryName: p.categoryName,
+      brandId: effectiveBrandId,
+      brandName: p.brandName,   // name from base (lookup not available in memory repo)
+      categoryId: effectiveCategoryId,
+      categoryName: p.categoryName,  // name from base
       active: p.active,
       publicVisible: resolvePublicVisible(p),
       featured: resolveFeatured(p),
@@ -282,6 +296,7 @@ export function createMemoryCatalogueManagerRepository(
   }
 
   function toDetail(p: MemProduct): CatalogueManagerProductDetail {
+    const ov = activeOverridesByField(productOverrides(p.id));
     const titleLayered = resolveTitle(p);
     const descriptionLayered = resolveDescription(p);
     const summary = toSummary(p);
@@ -289,13 +304,14 @@ export function createMemoryCatalogueManagerRepository(
       ...summary,
       title: titleLayered.effective,
       description: descriptionLayered.effective,
-      shortDescription: p.shortDescription,
-      model: p.model,
-      seoTitle: p.seoTitle,
-      seoDescription: p.seoDescription,
-      datasheetUrl: p.datasheetUrl,
-      warranty: p.warranty,
-      specifications: { ...p.specifications },
+      // Resolve all content fields: override > supplier column > null
+      shortDescription: resolveEffectiveValue({ field: "short_description", supplierValue: p.supplier.shortDescription ?? null, fallback: null, overrides: ov }).value as string | null,
+      model: resolveEffectiveValue({ field: "model", supplierValue: p.supplier.model ?? null, fallback: null, overrides: ov }).value as string | null,
+      seoTitle: resolveEffectiveValue({ field: "seo_title", supplierValue: p.supplier.seoTitle ?? null, fallback: null, overrides: ov }).value as string | null,
+      seoDescription: resolveEffectiveValue({ field: "seo_description", supplierValue: p.supplier.seoDescription ?? null, fallback: null, overrides: ov }).value as string | null,
+      datasheetUrl: resolveEffectiveValue({ field: "datasheet_url", supplierValue: p.supplier.datasheetUrl ?? null, fallback: null, overrides: ov }).value as string | null,
+      warranty: resolveEffectiveValue({ field: "warranty", supplierValue: p.supplier.warranty ?? null, fallback: null, overrides: ov }).value as string | null,
+      specifications: resolveEffectiveValue({ field: "specifications", supplierValue: p.supplier.specifications ?? {}, fallback: {}, overrides: ov }).value as Record<string, unknown>,
       tags: [...p.tags],
       sourceUrls: [...p.sourceUrls],
       identityKey: p.identityKey,
@@ -487,9 +503,9 @@ export function createMemoryCatalogueManagerRepository(
       for (const id of input.productIds) {
         const p = products.get(id);
         if (!p) continue;
-        p.categoryId = input.categoryId;
         p.lastManualEditAt = nowIso();
-        // Set category_id override so supplier resync cannot overwrite this CEO edit.
+        // Preserve supplier/base categoryId — store CEO value only as override.
+        // Clearing restores the supplier column value.
         const list = (overrides.get(id) ?? []).map((o) =>
           o.fieldName === "category_id" && o.active
             ? { ...o, active: false, clearedAt: nowIso(), updatedAt: nowIso() }

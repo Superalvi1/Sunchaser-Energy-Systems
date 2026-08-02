@@ -721,14 +721,9 @@ export function createSupabaseCatalogueManagerRepository(
       let n = 0;
       for (const productId of input.productIds) {
         try {
-          // Set override so sync cannot overwrite CEO bulk edit
+          // Store ONLY as an override so the supplier/base column is preserved.
+          // Clearing the override immediately restores the supplier category.
           await callSetOverride(productId, "category_id", input.categoryId, actor);
-          // Also update column so joins work immediately
-          const { error: colErr } = await supabase
-            .from("mp_products")
-            .update({ category_id: input.categoryId, updated_at: new Date().toISOString() })
-            .eq("id", productId);
-          if (colErr) throw dbErr("bulkCategory.column", colErr);
           n += 1;
         } catch (err) {
           if (err instanceof CatalogueManagerError && err.status === 404) continue;

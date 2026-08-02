@@ -79,6 +79,17 @@ export type ProductRow = {
   variants: VariantRow[] | null;
   media?: MediaRow[] | MediaRow | null;
   field_overrides?: FieldOverrideRow[] | FieldOverrideRow | null;
+  /**
+   * Pre-resolved brand record for an active brand_id override.
+   * Set by the catalogue repository before calling mapProductDto so the pure
+   * mapper never makes DB calls. Null = no brand_id override active.
+   */
+  resolvedOverrideBrand?: BrandRow | null;
+  /**
+   * Pre-resolved category record for an active category_id override.
+   * Null = no category_id override active.
+   */
+  resolvedOverrideCategory?: CategoryRow | null;
 };
 
 function one<T>(value: T | T[] | null | undefined): T | null {
@@ -196,8 +207,9 @@ export function mapCategoryDto(row: CategoryRow): CatalogueCategoryDto {
 
 /**
  * Load active field overrides keyed by field_name.
+ * Exported so catalogueRepository can inspect overrides before calling mapProductDto.
  */
-function loadActiveOverrides(rows: FieldOverrideRow[] | null | undefined): Map<string, unknown> {
+export function loadActiveOverrides(rows: FieldOverrideRow[] | null | undefined): Map<string, unknown> {
   const map = new Map<string, unknown>();
   if (!rows) return map;
   const overrideRows = Array.isArray(rows) ? rows : [rows as FieldOverrideRow];
@@ -260,9 +272,31 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
     })()
     : undefined;
 
-  // brand_id / category_id overrides: keep base join if cannot resolve
-  const effectiveBrand = brand;
-  const effectiveCategory = category;
+  // brand_id / category_id overrides: use pre-resolved record if available
+  // (set by catalogueRepository after a batch lookup for active brand/category overrides).
+  const effectiveBrand = row.resolvedOverrideBrand ?? brand;
+  const effectiveCategory = row.resolvedOverrideCategory ?? category;
+
+  // Additional content fields (override > column > null)
+  const effectiveShortDescription = overrides.has("short_description")
+    ? (overrides.get("short_description") as string | null) ?? null
+    : row.short_description ?? null;
+
+  const effectiveModel = overrides.has("model")
+    ? (overrides.get("model") as string | null) ?? null
+    : row.model ?? null;
+
+  const effectiveSeoTitle = overrides.has("seo_title")
+    ? (overrides.get("seo_title") as string | null) ?? null
+    : row.seo_title ?? null;
+
+  const effectiveSeoDescription = overrides.has("seo_description")
+    ? (overrides.get("seo_description") as string | null) ?? null
+    : row.seo_description ?? null;
+
+  const effectiveDatasheetUrl = overrides.has("datasheet_url")
+    ? (overrides.get("datasheet_url") as string | null) ?? null
+    : row.datasheet_url ?? null;
 
   // Image overrides
   let image: string | null;
@@ -291,12 +325,17 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
     slug: row.slug,
     title: effectiveTitle,
     description: effectiveDescription,
+    shortDescription: effectiveShortDescription,
+    model: effectiveModel,
     brand: mapBrandDto(effectiveBrand),
     category: mapCategoryDto(effectiveCategory),
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     featured: effectiveFeatured,
     specifications: effectiveSpecifications,
     warranty: effectiveWarranty,
+    seoTitle: effectiveSeoTitle,
+    seoDescription: effectiveSeoDescription,
+    datasheetUrl: effectiveDatasheetUrl,
     image,
     images,
     defaultVariant: mapVariant(defaultVariant, stockStatusOverride),

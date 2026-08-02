@@ -259,6 +259,148 @@ async function main(): Promise<void> {
       afterSync.every((m) => m.sourceUrl !== SUPPLIER_URL || m.manualControl),
   );
 
+  // ── bulkCategory: does NOT mutate supplier/base column ────────────────────
+  repo1.seedProduct!(baseProduct("p3"));
+  const p3Before = await repo1.getProduct("p3");
+  check("p3 starts with supplier categoryId c1", p3Before?.categoryId === "c1");
+
+  // Bulk-move to c2
+  await repo1.bulkCategory({ productIds: ["p3"], categoryId: "c2" }, ACTOR);
+  const p3After = await repo1.getProduct("p3");
+  check("bulkCategory: effective categoryId changed to c2 (via override)", p3After?.categoryId === "c2");
+
+  // Verify the base MemProduct.categoryId is still c1 (not mutated)
+  check(
+    "bulkCategory: override is active (category_id in overrideFields)",
+    (p3After?.overrideFields ?? []).includes("category_id"),
+  );
+
+  // Clear override → supplier value restored
+  await repo1.clearOverride("p3", "category_id", ACTOR);
+  const p3Cleared = await repo1.getProduct("p3");
+  check(
+    "clearing category_id override: supplier category c1 restored",
+    p3Cleared?.categoryId === "c1",
+  );
+  check(
+    "clearing category_id override: category_id not in overrideFields",
+    !(p3Cleared?.overrideFields ?? []).includes("category_id"),
+  );
+
+  // ── Public DTO: overridden brand/category uses resolved slug/name ─────────
+  const overriddenBrandRow = productRow([
+    { field_name: "brand_id", override_value: "b2", active: true },
+  ]);
+  // Simulate repository pre-resolving the override brand record
+  const rowWithResolvedBrand = {
+    ...overriddenBrandRow,
+    resolvedOverrideBrand: { id: "b2", slug: "solax", name: "SolaX", active: true },
+  };
+  const dtBrandOverride = mapProductDto(rowWithResolvedBrand);
+  check("public DTO: brand_id override uses resolved slug", dtBrandOverride?.brand.slug === "solax");
+  check("public DTO: brand_id override uses resolved name", dtBrandOverride?.brand.name === "SolaX");
+
+  // Without resolved record, falls back to FK-joined brand
+  const dtBrandFallback = mapProductDto(overriddenBrandRow);
+  check("public DTO: without resolvedOverrideBrand, falls back to join brand", dtBrandFallback?.brand.slug === "knox");
+
+  const overriddenCategoryRow = productRow([
+    { field_name: "category_id", override_value: "c2", active: true },
+  ]);
+  const rowWithResolvedCategory = {
+    ...overriddenCategoryRow,
+    resolvedOverrideCategory: { id: "c2", slug: "batteries", name: "Batteries", description: null, sort_order: 2, active: true },
+  };
+  const dtCatOverride = mapProductDto(rowWithResolvedCategory);
+  check("public DTO: category_id override uses resolved slug", dtCatOverride?.category.slug === "batteries");
+  check("public DTO: category_id override uses resolved name", dtCatOverride?.category.name === "Batteries");
+
+  // ── Public DTO: brand/category slug filter uses effective values ──────────
+  // A product with brand_id override to "b2" (slug "solax") must be found
+  // by brand filter "solax" and excluded by "knox".
+  check(
+    "public DTO brand filter: effective brand slug matches override",
+    dtBrandOverride?.brand.slug === "solax" && dtBrandOverride?.brand.slug !== "knox",
+  );
+
+  // ── Public DTO: shortDescription, model, seo, datasheetUrl overrides ─────
+  const dtShortDesc = mapProductDto(
+    productRow([{ field_name: "short_description", override_value: "CEO short desc", active: true }]),
+  );
+  check("public DTO: short_description override applied", dtShortDesc?.shortDescription === "CEO short desc");
+
+  const dtModel = mapProductDto(
+    productRow([{ field_name: "model", override_value: "KX-200", active: true }]),
+  );
+  check("public DTO: model override applied", dtModel?.model === "KX-200");
+
+  const dtSeoTitle = mapProductDto(
+    productRow([{ field_name: "seo_title", override_value: "CEO SEO title", active: true }]),
+  );
+  check("public DTO: seo_title override applied", dtSeoTitle?.seoTitle === "CEO SEO title");
+
+  const dtSeoDesc = mapProductDto(
+    productRow([{ field_name: "seo_description", override_value: "CEO SEO desc", active: true }]),
+  );
+  check("public DTO: seo_description override applied", dtSeoDesc?.seoDescription === "CEO SEO desc");
+
+  const dtDatasheet = mapProductDto(
+    productRow([{ field_name: "datasheet_url", override_value: "https://docs.example.com/spec.pdf", active: true }]),
+  );
+  check("public DTO: datasheet_url override applied", dtDatasheet?.datasheetUrl === "https://docs.example.com/spec.pdf");
+
+  // Inactive overrides → base column values
+  const baseRow = productRow([
+    { field_name: "short_description", override_value: "Old CEO", active: false },
+    { field_name: "model", override_value: "OLD", active: false },
+  ]);
+  // Add base column values
+  const baseRowWithCols = { ...baseRow, short_description: "Supplier short", model: "K-1" };
+  const dtBaseValues = mapProductDto(baseRowWithCols);
+  check("inactive short_description override → base column value", dtBaseValues?.shortDescription === "Supplier short");
+  check("inactive model override → base column value", dtBaseValues?.model === "K-1");
+
+  // ── parseSetOverrideBody: specifications per-value >1000 chars rejected ───
+  let threw = false;
+  try {
+    const { parseSetOverrideBody } = await import("./catalogueManagerValidation.ts");
+    parseSetOverrideBody({ fieldName: "specifications", value: { Power: "x".repeat(1001) } });
+  } catch { threw = true; }
+  check("parseSetOverrideBody: specifications value >1000 chars rejected", threw);
+
+  // Exactly 1000 chars accepted
+  threw = false;
+  try {
+    const { parseSetOverrideBody } = await import("./catalogueManagerValidation.ts");
+    parseSetOverrideBody({ fieldName: "specifications", value: { Power: "x".repeat(1000) } });
+  } catch { threw = true; }
+  check("parseSetOverrideBody: specifications value exactly 1000 chars accepted", !threw);
+
+  // ── Memory repo detail: all content fields resolved from overrides ────────
+  repo1.seedProduct!(baseProduct("p4"));
+  await repo1.setOverride("p4", { fieldName: "short_description", value: "CEO short" }, ACTOR);
+  await repo1.setOverride("p4", { fieldName: "model", value: "KX-300" }, ACTOR);
+  await repo1.setOverride("p4", { fieldName: "warranty", value: "10 years" }, ACTOR);
+  await repo1.setOverride("p4", { fieldName: "seo_title", value: "CEO SEO" }, ACTOR);
+  await repo1.setOverride("p4", { fieldName: "seo_description", value: "CEO SEO desc" }, ACTOR);
+  await repo1.setOverride("p4", { fieldName: "datasheet_url", value: "https://docs.example.com/p4.pdf" }, ACTOR);
+
+  const p4Detail = await repo1.getProduct("p4");
+  check("detail: short_description override applied", p4Detail?.shortDescription === "CEO short");
+  check("detail: model override applied", p4Detail?.model === "KX-300");
+  check("detail: warranty override applied", p4Detail?.warranty === "10 years");
+  check("detail: seo_title override applied", p4Detail?.seoTitle === "CEO SEO");
+  check("detail: seo_description override applied", p4Detail?.seoDescription === "CEO SEO desc");
+  check("detail: datasheet_url override applied", p4Detail?.datasheetUrl === "https://docs.example.com/p4.pdf");
+
+  // Clearing each restores supplier value
+  await repo1.clearOverride("p4", "short_description", ACTOR);
+  await repo1.clearOverride("p4", "warranty", ACTOR);
+  const p4AfterClear = await repo1.getProduct("p4");
+  check("clearing short_description restores supplier null", p4AfterClear?.shortDescription === null);
+  check("clearing warranty restores supplier '1 year'", p4AfterClear?.warranty === "1 year");
+  check("model override still active after clearing other fields", p4AfterClear?.model === "KX-300");
+
   console.log("\nCatalogue Manager integration tests passed.");
 }
 
