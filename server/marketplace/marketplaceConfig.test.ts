@@ -6,6 +6,8 @@ import {
   isMarketplaceEnabled,
   isMarketplaceGatewayEnabled,
   isMarketplacePaymentsEnabled,
+  publicWouldShowSyncedProducts,
+  readCatalogueSource,
   readMarketplaceConfig,
 } from "./marketplaceConfig.ts";
 
@@ -21,6 +23,20 @@ check("MARKETPLACE_CART_ENABLED defaults false", defaults.cartEnabled === false)
 check("MARKETPLACE_PAYMENTS_ENABLED defaults false", defaults.paymentsEnabled === false);
 check("MARKETPLACE_COD_ENABLED defaults false", defaults.codEnabled === false);
 check("catalogue source defaults static", defaults.catalogueSource === "static");
+check(
+  "publicWouldShowSyncedProducts false by default",
+  publicWouldShowSyncedProducts(defaults) === false,
+);
+check(
+  "invalid MARKETPLACE_CATALOGUE_SOURCE fails closed to static",
+  readCatalogueSource({ MARKETPLACE_CATALOGUE_SOURCE: "yes-please" }) ===
+    "static",
+);
+check(
+  "readCatalogueSource database exact match",
+  readCatalogueSource({ MARKETPLACE_CATALOGUE_SOURCE: "database" }) ===
+    "database",
+);
 check("receipt bucket default set", defaults.receiptBucket === "mp-receipts-private");
 check("isMarketplaceEnabled false by default", isMarketplaceEnabled(defaults) === false);
 check("cart helper false by default", isMarketplaceCartEnabled(defaults) === false);

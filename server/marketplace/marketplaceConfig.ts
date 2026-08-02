@@ -52,7 +52,14 @@ function readInt(
   return Math.max(min, n);
 }
 
-function readCatalogueSource(env: NodeJS.ProcessEnv): "static" | "database" {
+/**
+ * Fail-closed catalogue publication source.
+ * Only the exact value "database" (case-insensitive) selects the live DB
+ * catalogue. unset / empty / "static" / any malformed value → static.
+ */
+export function readCatalogueSource(
+  env: NodeJS.ProcessEnv,
+): "static" | "database" {
   const raw = String(env.MARKETPLACE_CATALOGUE_SOURCE ?? "static")
     .trim()
     .toLowerCase();
@@ -108,4 +115,11 @@ export function isMarketplaceCodEnabled(config: MarketplaceConfig): boolean {
 
 export function isDatabaseCatalogueSource(config: MarketplaceConfig): boolean {
   return config.catalogueSource === "database";
+}
+
+/** True only when the public catalogue router uses the database source. */
+export function publicWouldShowSyncedProducts(
+  config: MarketplaceConfig,
+): boolean {
+  return isDatabaseCatalogueSource(config);
 }

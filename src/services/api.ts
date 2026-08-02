@@ -3217,6 +3217,8 @@ export async function fetchMarketplaceAutoImportHealth(_staff?: {
     rolledBackPrices: number;
     errors: string[];
     note: string;
+    effectivePublicCatalogueSource?: "static" | "database";
+    publicWouldShowSyncedProducts?: boolean;
   };
 }
 
@@ -3274,6 +3276,8 @@ export async function fetchMarketplaceAutoImportPreflight(_staff?: {
     autoImportEnabled: boolean;
     persistenceEnabled: boolean;
     catalogueSource: "static" | "database";
+    effectivePublicCatalogueSource: "static" | "database";
+    publicWouldShowSyncedProducts: boolean;
     supabaseConfigured: boolean;
     objects: {
       tableMpAutoImportListings: string;

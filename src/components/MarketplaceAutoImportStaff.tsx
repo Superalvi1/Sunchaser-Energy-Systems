@@ -31,6 +31,8 @@ type Health = {
   rolledBackPrices: number;
   errors: string[];
   note: string;
+  effectivePublicCatalogueSource?: "static" | "database";
+  publicWouldShowSyncedProducts?: boolean;
 };
 
 type Preflight = Awaited<ReturnType<typeof fetchMarketplaceAutoImportPreflight>>;
@@ -200,6 +202,13 @@ export default function MarketplaceAutoImportStaff({ staffUser }: Props) {
           <ul className="mt-2 space-y-1">
             <li>Persistence enabled: {String(preflight.persistenceEnabled)}</li>
             <li>Catalogue source: {preflight.catalogueSource}</li>
+            <li>
+              Effective public source: {preflight.effectivePublicCatalogueSource}
+            </li>
+            <li>
+              Public would show synced products:{" "}
+              {String(preflight.publicWouldShowSyncedProducts)}
+            </li>
             <li>
               Timeout protection: {preflight.objects.timeoutProtection}
             </li>

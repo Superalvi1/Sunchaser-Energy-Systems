@@ -32,6 +32,8 @@ import {
   type AutoImportPreflightDeps,
   type AutoImportPreflightReport,
 } from "./autoImportPreflight.ts";
+import { findLegacySnapshotGaps } from "./legacySnapshotDiagnostic.ts";
+import { resolvePublicCataloguePublication } from "../catalogue/resolveCatalogueRepository.ts";
 
 export type AutoImportRouterDeps = {
   env?: NodeJS.ProcessEnv;
@@ -45,12 +47,16 @@ export const AUTO_IMPORT_ADMIN_RUN_PATH = "/suppliers/auto-import/run";
 export const AUTO_IMPORT_ADMIN_HEALTH_PATH = "/suppliers/auto-import/health";
 export const AUTO_IMPORT_ADMIN_LISTINGS_PATH = "/suppliers/auto-import/listings";
 export const AUTO_IMPORT_ADMIN_PREFLIGHT_PATH = "/suppliers/auto-import/preflight";
+export const AUTO_IMPORT_ADMIN_LEGACY_SNAPSHOTS_PATH =
+  "/suppliers/auto-import/diagnostics/legacy-snapshots";
 
 /** Compatibility alias paths (relative to /api/marketplace/auto-import). */
 export const AUTO_IMPORT_ALIAS_RUN_PATH = "/run";
 export const AUTO_IMPORT_ALIAS_HEALTH_PATH = "/health";
 export const AUTO_IMPORT_ALIAS_LISTINGS_PATH = "/listings";
 export const AUTO_IMPORT_ALIAS_PREFLIGHT_PATH = "/preflight";
+export const AUTO_IMPORT_ALIAS_LEGACY_SNAPSHOTS_PATH =
+  "/diagnostics/legacy-snapshots";
 
 function setApiVersion(res: Response): void {
   res.setHeader(MARKETPLACE_API_VERSION_HEADER, MARKETPLACE_API_VERSION);
@@ -102,6 +108,7 @@ function attachAutoImportHandlers(
     healthPath: string;
     listingsPath: string;
     preflightPath: string;
+    legacySnapshotsPath: string;
   },
 ): void {
   const {
@@ -113,6 +120,7 @@ function attachAutoImportHandlers(
     healthPath,
     listingsPath,
     preflightPath,
+    legacySnapshotsPath,
   } = deps;
 
   router.get(preflightPath, async (req, res) => {
@@ -180,7 +188,15 @@ function attachAutoImportHandlers(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
-      return sendOk(res, await service.getHealth());
+      const health = await service.getHealth();
+      const publication = resolvePublicCataloguePublication(env);
+      return sendOk(res, {
+        ...health,
+        effectivePublicCatalogueSource:
+          publication.effectivePublicCatalogueSource,
+        publicWouldShowSyncedProducts:
+          publication.publicWouldShowSyncedProducts,
+      });
     } catch (err) {
       const sanitized = sanitizeAutoImportError(err);
       log({
@@ -228,6 +244,31 @@ function attachAutoImportHandlers(
       return sendError(res, 500, "INTERNAL_ERROR", "Unable to list import listings.");
     }
   });
+
+  router.get(legacySnapshotsPath, async (req, res) => {
+    const actor = requireSuperAdmin(req, res);
+    if (!actor) return;
+    try {
+      const listings = await service.listListings();
+      return sendOk(res, findLegacySnapshotGaps(listings), 200);
+    } catch (err) {
+      const sanitized = sanitizeAutoImportError(err);
+      log({
+        runId: "route",
+        stage: "route_error",
+        status: "failed",
+        errorClass: sanitized.errorClass,
+        errorCode: sanitized.errorCode,
+        detail: sanitized.message,
+      });
+      return sendError(
+        res,
+        500,
+        "INTERNAL_ERROR",
+        "Unable to run legacy snapshot diagnostic.",
+      );
+    }
+  });
 }
 
 function buildAutoImportRouter(
@@ -237,6 +278,7 @@ function buildAutoImportRouter(
     healthPath: string;
     listingsPath: string;
     preflightPath: string;
+    legacySnapshotsPath: string;
   },
 ): Router {
   const router = express.Router();
@@ -258,7 +300,7 @@ function buildAutoImportRouter(
 
 /**
  * Canonical router for mount at `/api/marketplace/admin`.
- * Routes: POST/GET `/suppliers/auto-import/{run,health,listings,preflight}`.
+ * Routes: POST/GET `/suppliers/auto-import/{run,health,listings,preflight,diagnostics/legacy-snapshots}`.
  */
 export function createMarketplaceAutoImportRouter(
   deps: AutoImportRouterDeps = {},
@@ -268,6 +310,7 @@ export function createMarketplaceAutoImportRouter(
     healthPath: AUTO_IMPORT_ADMIN_HEALTH_PATH,
     listingsPath: AUTO_IMPORT_ADMIN_LISTINGS_PATH,
     preflightPath: AUTO_IMPORT_ADMIN_PREFLIGHT_PATH,
+    legacySnapshotsPath: AUTO_IMPORT_ADMIN_LEGACY_SNAPSHOTS_PATH,
   });
 }
 
@@ -284,5 +327,6 @@ export function createMarketplaceAutoImportAliasRouter(
     healthPath: AUTO_IMPORT_ALIAS_HEALTH_PATH,
     listingsPath: AUTO_IMPORT_ALIAS_LISTINGS_PATH,
     preflightPath: AUTO_IMPORT_ALIAS_PREFLIGHT_PATH,
+    legacySnapshotsPath: AUTO_IMPORT_ALIAS_LEGACY_SNAPSHOTS_PATH,
   });
 }
