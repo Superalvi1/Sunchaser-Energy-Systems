@@ -1,4 +1,5 @@
 import { normalizeSupplierImageUrl } from "../suppliers/safeHttp.ts";
+import { normalizeAnyAllowedImageUrl } from "../catalogueManager/imagePolicy.ts";
 import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
@@ -6,8 +7,9 @@ import type {
   CatalogueProductDto,
 } from "./catalogueTypes.ts";
 
-type BrandRow = { slug: string; name: string; active?: boolean };
-type CategoryRow = {
+export type BrandRow = { id?: string; slug: string; name: string; active?: boolean };
+export type CategoryRow = {
+  id?: string;
   slug: string;
   name: string;
   description: string | null;
@@ -24,6 +26,7 @@ type VariantRow = {
   website_price_source: string | null;
   stock_status: string;
   active: boolean;
+  compare_at_price?: string | number | null;
 };
 
 type MediaRow = {
@@ -33,6 +36,12 @@ type MediaRow = {
   published: boolean | null;
   rights_status: string | null;
   source_type: string | null;
+};
+
+type FieldOverrideRow = {
+  field_name: string;
+  override_value: unknown;
+  active: boolean;
 };
 
 const PUBLIC_MEDIA_SOURCE_TYPES = new Set([
@@ -49,7 +58,8 @@ const PUBLIC_MEDIA_RIGHTS = new Set([
   "licensed",
 ]);
 
-type ProductRow = {
+export type ProductRow = {
+  id?: string;
   slug: string;
   title: string;
   description: string;
@@ -68,6 +78,7 @@ type ProductRow = {
   category: CategoryRow | CategoryRow[] | null;
   variants: VariantRow[] | null;
   media?: MediaRow[] | MediaRow | null;
+  field_overrides?: FieldOverrideRow[] | FieldOverrideRow | null;
 };
 
 function one<T>(value: T | T[] | null | undefined): T | null {
@@ -93,9 +104,16 @@ function asPrice(value: string | number | null): number | null {
   return n;
 }
 
-function mapVariant(row: VariantRow): CatalogueDefaultVariantDto {
+function mapVariant(row: VariantRow, stockStatusOverride?: string): CatalogueDefaultVariantDto {
   const state = row.website_price_state;
   const source = row.website_price_source;
+  const stockStatus = stockStatusOverride ??
+    (row.stock_status === "in_stock" ||
+      row.stock_status === "sold_out" ||
+      row.stock_status === "backorder" ||
+      row.stock_status === "unknown"
+      ? row.stock_status
+      : "unknown");
   return {
     sku: row.sku,
     title: row.title,
@@ -107,25 +125,20 @@ function mapVariant(row: VariantRow): CatalogueDefaultVariantDto {
         : "confirm_price",
     websitePriceSource:
       source === "kamal" ||
-      source === "alladin" ||
-      source === "seed" ||
-      source === "override" ||
-      source === "last_approved"
+        source === "alladin" ||
+        source === "seed" ||
+        source === "override" ||
+        source === "last_approved"
         ? source
         : null,
-    stockStatus:
-      row.stock_status === "in_stock" ||
-      row.stock_status === "sold_out" ||
-      row.stock_status === "backorder" ||
-      row.stock_status === "unknown"
-        ? row.stock_status
-        : "unknown",
+    stockStatus: stockStatus as CatalogueDefaultVariantDto["stockStatus"],
   };
 }
 
 /**
- * Published supplier media → safe public URLs.
- * Re-validates host/protocol; never returns unallowlisted URLs.
+ * Published media → safe public URLs.
+ * Accepts supplier, own (supabase storage / env hosts), and licensed URLs.
+ * Falls back to supplier normalization for backward compatibility.
  */
 export function mapPublishedImageUrls(
   media: MediaRow[] | MediaRow | null | undefined,
@@ -143,7 +156,7 @@ export function mapPublishedImageUrls(
         PUBLIC_MEDIA_RIGHTS.has(m.rights_status),
     )
     .map((m) => ({
-      url: normalizeSupplierImageUrl(m.source_url),
+      url: normalizeAnyAllowedImageUrl(m.source_url) ?? normalizeSupplierImageUrl(m.source_url),
       sort: Number(m.sort_order) || 0,
       role: m.role || "gallery",
     }))
@@ -181,9 +194,34 @@ export function mapCategoryDto(row: CategoryRow): CatalogueCategoryDto {
   };
 }
 
+/**
+ * Load active field overrides keyed by field_name.
+ */
+function loadActiveOverrides(rows: FieldOverrideRow[] | null | undefined): Map<string, unknown> {
+  const map = new Map<string, unknown>();
+  if (!rows) return map;
+  const overrideRows = Array.isArray(rows) ? rows : [rows as FieldOverrideRow];
+  for (const ov of overrideRows) {
+    if (ov.active && !map.has(ov.field_name)) {
+      map.set(ov.field_name, ov.override_value);
+    }
+  }
+  return map;
+}
+
 export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
-  // Explicit false hides; missing/null keeps legacy rows visible.
-  if (row.public_visible === false) return null;
+  const overrides = loadActiveOverrides(
+    Array.isArray(row.field_overrides)
+      ? row.field_overrides
+      : row.field_overrides
+        ? [row.field_overrides as FieldOverrideRow]
+        : [],
+  );
+
+  // Apply public_visible: override false OR column false → hide product
+  const pvOverride = overrides.get("public_visible");
+  if (pvOverride === false) return null;
+  if (pvOverride === undefined && row.public_visible === false) return null;
 
   const brand = one(row.brand);
   const category = one(row.category);
@@ -191,22 +229,78 @@ export function mapProductDto(row: ProductRow): CatalogueProductDto | null {
   const defaultVariant = variants.find((v) => v.is_default) || null;
   if (!brand || !category || !defaultVariant) return null;
 
-  const { image, images } = mapPublishedImageUrls(row.media);
+  // Apply content overrides
+  const effectiveTitle = overrides.has("title")
+    ? String(overrides.get("title") ?? row.title)
+    : row.title;
+
+  const effectiveDescription = overrides.has("description")
+    ? String(overrides.get("description") ?? row.description)
+    : row.description || "";
+
+  const effectiveFeatured = overrides.has("featured")
+    ? Boolean(overrides.get("featured"))
+    : Boolean(row.featured);
+
+  const effectiveSpecifications = overrides.has("specifications")
+    ? asSpecMap(overrides.get("specifications") as Record<string, unknown> | null)
+    : asSpecMap(row.specifications);
+
+  const effectiveWarranty = overrides.has("warranty")
+    ? (overrides.get("warranty") as string | null) ?? null
+    : row.warranty ?? null;
+
+  // stock_status override applies to the default variant
+  const stockStatusOverride = overrides.has("stock_status")
+    ? (() => {
+      const v = overrides.get("stock_status") as string;
+      return (v === "in_stock" || v === "sold_out" || v === "backorder" || v === "unknown")
+        ? v
+        : undefined;
+    })()
+    : undefined;
+
+  // brand_id / category_id overrides: keep base join if cannot resolve
+  const effectiveBrand = brand;
+  const effectiveCategory = category;
+
+  // Image overrides
+  let image: string | null;
+  let images: string[];
+
+  const piOverride = overrides.get("primary_image");
+  const giOverride = overrides.get("gallery_images");
+
+  if (typeof piOverride === "string" && piOverride) {
+    image = normalizeAnyAllowedImageUrl(piOverride) ?? normalizeSupplierImageUrl(piOverride);
+    if (typeof giOverride !== "undefined" && Array.isArray(giOverride)) {
+      images = (giOverride as string[])
+        .map((u) => normalizeAnyAllowedImageUrl(u) ?? normalizeSupplierImageUrl(u))
+        .filter((u): u is string => u !== null);
+    } else {
+      const { images: mediaImages } = mapPublishedImageUrls(row.media);
+      images = mediaImages;
+    }
+  } else {
+    const derived = mapPublishedImageUrls(row.media);
+    image = derived.image;
+    images = derived.images;
+  }
 
   return {
     slug: row.slug,
-    title: row.title,
-    description: row.description || "",
-    brand: mapBrandDto(brand),
-    category: mapCategoryDto(category),
+    title: effectiveTitle,
+    description: effectiveDescription,
+    brand: mapBrandDto(effectiveBrand),
+    category: mapCategoryDto(effectiveCategory),
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
-    featured: Boolean(row.featured),
-    specifications: asSpecMap(row.specifications),
-    warranty: row.warranty ?? null,
+    featured: effectiveFeatured,
+    specifications: effectiveSpecifications,
+    warranty: effectiveWarranty,
     image,
     images,
-    defaultVariant: mapVariant(defaultVariant),
+    defaultVariant: mapVariant(defaultVariant, stockStatusOverride),
   };
 }
 
-export type { ProductRow, BrandRow, CategoryRow, MediaRow };
+export type { MediaRow };

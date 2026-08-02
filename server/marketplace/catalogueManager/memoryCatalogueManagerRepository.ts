@@ -3,6 +3,7 @@
  */
 import { createHash } from "node:crypto";
 import { normalizeSupplierImageUrl } from "../suppliers/safeHttp.ts";
+import { normalizeOwnImageUrl } from "./imagePolicy.ts";
 import {
   activeOverridesByField,
   isMediaMutationLocked,
@@ -73,6 +74,29 @@ export type MemProduct = {
 
 type MemReject = RejectLedgerEntry & { id: string; createdAt: string };
 
+/**
+ * Shared mutable state that multiple repository instances can reference.
+ * Use createMemSharedState() to create and pass to createMemoryCatalogueManagerRepository()
+ * in integration tests that need to verify persistence across repo recreation.
+ */
+export type MemSharedState = {
+  products: Map<string, MemProduct>;
+  overrides: Map<string, FieldOverrideRecord[]>;
+  media: Map<string, CatalogueManagerMediaRow[]>;
+  audits: CatalogueManagerAuditEvent[];
+  rejects: MemReject[];
+};
+
+export function createMemSharedState(): MemSharedState {
+  return {
+    products: new Map(),
+    overrides: new Map(),
+    media: new Map(),
+    audits: [],
+    rejects: [],
+  };
+}
+
 function mediaId(productId: string, url: string): string {
   const hash = createHash("md5").update(`${productId}|${url}`).digest("hex").slice(0, 24);
   return `mpmedia_${hash}`;
@@ -129,12 +153,11 @@ export type CatalogueManagerRepository = {
   reconciliation(input?: ReconciliationInput): Promise<ReconciliationCounts>;
 };
 
-export function createMemoryCatalogueManagerRepository(): CatalogueManagerRepository {
-  const products = new Map<string, MemProduct>();
-  const overrides = new Map<string, FieldOverrideRecord[]>();
-  const media = new Map<string, CatalogueManagerMediaRow[]>();
-  const audits: CatalogueManagerAuditEvent[] = [];
-  const rejects: MemReject[] = [];
+export function createMemoryCatalogueManagerRepository(
+  state?: MemSharedState,
+): CatalogueManagerRepository {
+  const { products, overrides, media, audits, rejects } =
+    state ?? createMemSharedState();
 
   function requireProduct(productId: string): MemProduct {
     const p = products.get(productId);
@@ -432,6 +455,23 @@ export function createMemoryCatalogueManagerRepository(): CatalogueManagerReposi
         p.publicVisible = input.publicVisible;
         p.supplier.publicVisible = input.publicVisible;
         p.lastManualEditAt = nowIso();
+        // Set public_visible override so supplier resync cannot overwrite CEO bulk-hide.
+        const list = (overrides.get(id) ?? []).map((o) =>
+          o.fieldName === "public_visible" && o.active
+            ? { ...o, active: false, clearedAt: nowIso(), updatedAt: nowIso() }
+            : o,
+        );
+        list.push({
+          fieldName: "public_visible",
+          value: input.publicVisible,
+          active: true,
+          actorId: actor.id,
+          actorUsername: actor.username,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          clearedAt: null,
+        });
+        overrides.set(id, list);
         n += 1;
       }
       writeAudit(actor, "products.bulk_publish", "mp_products", "bulk", {
@@ -449,6 +489,23 @@ export function createMemoryCatalogueManagerRepository(): CatalogueManagerReposi
         if (!p) continue;
         p.categoryId = input.categoryId;
         p.lastManualEditAt = nowIso();
+        // Set category_id override so supplier resync cannot overwrite this CEO edit.
+        const list = (overrides.get(id) ?? []).map((o) =>
+          o.fieldName === "category_id" && o.active
+            ? { ...o, active: false, clearedAt: nowIso(), updatedAt: nowIso() }
+            : o,
+        );
+        list.push({
+          fieldName: "category_id",
+          value: input.categoryId,
+          active: true,
+          actorId: actor.id,
+          actorUsername: actor.username,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          clearedAt: null,
+        });
+        overrides.set(id, list);
         n += 1;
       }
       writeAudit(actor, "products.bulk_category", "mp_products", "bulk", {
@@ -515,12 +572,12 @@ export function createMemoryCatalogueManagerRepository(): CatalogueManagerReposi
 
     async setManualPrimaryImage(productId, url, actor) {
       requireProduct(productId);
-      const safe = normalizeSupplierImageUrl(url);
+      const safe = normalizeOwnImageUrl(url);
       if (!safe) {
         throw new CatalogueManagerError(
           400,
           "VALIDATION_ERROR",
-          "url must be an allowlisted https image URL.",
+          "url must be an allowlisted own/supabase-storage https image URL.",
         );
       }
       const id = mediaId(productId, safe);

@@ -12,10 +12,8 @@ import {
   MARKETPLACE_API_VERSION_HEADER,
 } from "../catalogue/catalogueTypes.ts";
 import { CatalogueManagerError } from "./catalogueManagerTypes.ts";
-import {
-  createMemoryCatalogueManagerRepository,
-  type CatalogueManagerRepository,
-} from "./memoryCatalogueManagerRepository.ts";
+import type { CatalogueManagerRepository } from "./memoryCatalogueManagerRepository.ts";
+import { resolveCatalogueManagerRepository } from "./catalogueManagerRepository.ts";
 import {
   parseBulkCategoryBody,
   parseBulkPublishBody,
@@ -89,7 +87,18 @@ export function createCatalogueManagerRouter(
 ): Router {
   const router = express.Router();
   const env = deps.env ?? process.env;
-  const repo = deps.repository ?? createMemoryCatalogueManagerRepository();
+
+  /**
+   * Fail-closed repository resolution. Resolved lazily per-request so that
+   * the router can be mounted at startup without requiring Supabase to be
+   * available at that instant. When Supabase is unavailable and no test
+   * repository is injected this throws CatalogueManagerError(503) which is
+   * caught by each handler and returned as a structured 503 JSON error.
+   * NEVER falls back to the memory repository — memory is test-only.
+   */
+  function getRepo(): CatalogueManagerRepository {
+    return resolveCatalogueManagerRepository(deps, env);
+  }
 
   router.use(createMarketplaceRouteLockdown({ env }));
 
@@ -97,6 +106,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const filters = parseProductListQuery(req.query as Record<string, unknown>);
       const data = await repo.listProducts(filters);
       return sendOk(res, data);
@@ -109,6 +119,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const input = parseBulkPublishBody(req.body);
       const updated = await repo.bulkPublish(input, actorRef(actor));
       return sendOk(res, { updated });
@@ -121,6 +132,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const input = parseBulkCategoryBody(req.body);
       const updated = await repo.bulkCategory(input, actorRef(actor));
       return sendOk(res, { updated });
@@ -133,6 +145,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const data = await repo.getProduct(String(req.params.id || ""));
       if (!data) {
         return sendError(res, 404, "PRODUCT_NOT_FOUND", "Product not found.");
@@ -147,6 +160,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const patch = parsePatchProductBody(req.body);
       const data = await repo.patchProduct(
         String(req.params.id || ""),
@@ -163,6 +177,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const input = parseSetOverrideBody(req.body);
       const data = await repo.setOverride(
         String(req.params.id || ""),
@@ -179,6 +194,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const cleared = await repo.clearOverride(
         String(req.params.id || ""),
         String(req.params.fieldName || ""),
@@ -194,6 +210,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const data = await repo.listMedia(String(req.params.id || ""));
       return sendOk(res, data);
     } catch (err) {
@@ -205,6 +222,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const { images, supplier } = parseSupplierMediaBody(req.body);
       const data = await repo.replaceSupplierMedia(
         String(req.params.id || ""),
@@ -221,6 +239,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const url = parseManualPrimaryImageBody(req.body);
       const data = await repo.setManualPrimaryImage(
         String(req.params.id || ""),
@@ -237,6 +256,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const data = await repo.listAudit(String(req.params.id || ""));
       return sendOk(res, data);
     } catch (err) {
@@ -248,6 +268,7 @@ export function createCatalogueManagerRouter(
     const actor = requireSuperAdmin(req, res);
     if (!actor) return;
     try {
+      const repo = getRepo();
       const data = await repo.reconciliation({
         discoveredProducts:
           req.query.discoveredProducts !== undefined

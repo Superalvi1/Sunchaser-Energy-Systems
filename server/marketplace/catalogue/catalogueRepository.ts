@@ -74,6 +74,11 @@ const PRODUCT_SELECT = `
     published,
     rights_status,
     source_type
+  ),
+  field_overrides:mp_field_overrides!product_id (
+    field_name,
+    override_value,
+    active
   )
 `;
 

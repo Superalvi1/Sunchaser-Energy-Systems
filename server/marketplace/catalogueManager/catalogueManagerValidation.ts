@@ -1,7 +1,19 @@
 /**
  * Strict allowlists for Catalogue Manager Super-Admin payloads.
+ *
+ * parseSetOverrideBody: strict per-field type enforcement
+ *   - public_visible / featured → boolean only
+ *   - stock_status → enum ('in_stock'|'sold_out'|'backorder'|'unknown')
+ *   - specifications → object with string values, max 40 keys
+ *   - gallery_images → array max 8 URLs (supplier OR own OR licensed)
+ *   - primary_image → single URL (supplier OR own OR licensed)
+ *   - brand_id / category_id → non-empty strings
+ *   - string fields → enforced length limits
  */
-import { normalizeSupplierImageUrl } from "../suppliers/safeHttp.ts";
+import {
+  normalizeAnyAllowedImageUrl,
+  normalizeOwnImageUrl,
+} from "./imagePolicy.ts";
 import { isCatalogueOverrideField } from "./fieldOverrides.ts";
 import {
   CatalogueManagerError,
@@ -33,6 +45,19 @@ const PATCH_KEYS = new Set([
   "featured",
   "compareAtPrice",
 ]);
+
+const STOCK_STATUS_VALUES = new Set(["in_stock", "sold_out", "backorder", "unknown"]);
+
+const STRING_FIELD_MAX: Record<string, number> = {
+  title: 300,
+  description: 20_000,
+  short_description: 2000,
+  model: 200,
+  warranty: 500,
+  datasheet_url: 2000,
+  seo_title: 300,
+  seo_description: 2000,
+};
 
 function assertPlainObject(body: unknown, label: string): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -231,7 +256,33 @@ export function parsePatchProductBody(body: unknown): CatalogueManagerPatchInput
   return out;
 }
 
-export function parseSetOverrideBody(body: unknown): SetOverrideInput {
+function validateOverrideImageUrl(
+  raw: unknown,
+  field: string,
+  env?: NodeJS.ProcessEnv,
+): string {
+  if (typeof raw !== "string") {
+    throw new CatalogueManagerError(
+      400,
+      "VALIDATION_ERROR",
+      `${field} override must be a string URL.`,
+    );
+  }
+  const safe = normalizeAnyAllowedImageUrl(raw, env);
+  if (!safe) {
+    throw new CatalogueManagerError(
+      400,
+      "VALIDATION_ERROR",
+      `${field} override must be an allowlisted https image URL (supplier, own, or licensed host).`,
+    );
+  }
+  return safe;
+}
+
+export function parseSetOverrideBody(
+  body: unknown,
+  env?: NodeJS.ProcessEnv,
+): SetOverrideInput {
   const obj = assertPlainObject(body, "body");
   assertKnownKeys(obj, new Set(["fieldName", "value"]));
   const fieldName = asOptionalString(obj.fieldName, "fieldName", { max: 80 });
@@ -245,34 +296,125 @@ export function parseSetOverrideBody(body: unknown): SetOverrideInput {
   if (!("value" in obj)) {
     throw new CatalogueManagerError(400, "VALIDATION_ERROR", "value is required.");
   }
-  if (fieldName === "primary_image" || fieldName === "gallery_images") {
-    if (fieldName === "primary_image") {
-      if (typeof obj.value !== "string" || !normalizeSupplierImageUrl(obj.value)) {
-        throw new CatalogueManagerError(
-          400,
-          "VALIDATION_ERROR",
-          "primary_image override must be an allowlisted https image URL.",
-        );
-      }
-    } else if (!Array.isArray(obj.value)) {
+
+  const value = obj.value;
+
+  if (fieldName === "public_visible" || fieldName === "featured") {
+    if (typeof value !== "boolean") {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        `${fieldName} override must be a boolean.`,
+      );
+    }
+    return { fieldName, value };
+  }
+
+  if (fieldName === "stock_status") {
+    if (typeof value !== "string" || !STOCK_STATUS_VALUES.has(value)) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        `stock_status override must be one of: ${[...STOCK_STATUS_VALUES].join(", ")}.`,
+      );
+    }
+    return { fieldName, value };
+  }
+
+  if (fieldName === "brand_id" || fieldName === "category_id") {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        `${fieldName} override must be a non-empty string.`,
+      );
+    }
+    return { fieldName, value: value.trim() };
+  }
+
+  if (fieldName === "primary_image") {
+    const safe = validateOverrideImageUrl(value, "primary_image", env);
+    return { fieldName, value: safe };
+  }
+
+  if (fieldName === "gallery_images") {
+    if (!Array.isArray(value)) {
       throw new CatalogueManagerError(
         400,
         "VALIDATION_ERROR",
         "gallery_images override must be an array of URLs.",
       );
-    } else {
-      for (const u of obj.value) {
-        if (typeof u !== "string" || !normalizeSupplierImageUrl(u)) {
-          throw new CatalogueManagerError(
-            400,
-            "VALIDATION_ERROR",
-            "gallery_images contains an unsafe URL.",
-          );
-        }
+    }
+    if (value.length > 8) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        "gallery_images override may contain at most 8 URLs.",
+      );
+    }
+    const safeUrls: string[] = [];
+    for (const u of value) {
+      safeUrls.push(validateOverrideImageUrl(u, "gallery_images[item]", env));
+    }
+    return { fieldName, value: safeUrls };
+  }
+
+  if (fieldName === "specifications") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        "specifications override must be an object.",
+      );
+    }
+    const spec = value as Record<string, unknown>;
+    const keys = Object.keys(spec);
+    if (keys.length > 40) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        "specifications override may have at most 40 keys.",
+      );
+    }
+    for (const k of keys) {
+      if (typeof spec[k] !== "string") {
+        throw new CatalogueManagerError(
+          400,
+          "VALIDATION_ERROR",
+          `specifications.${k} must be a string.`,
+        );
       }
     }
+    return { fieldName, value: spec as Record<string, string> };
   }
-  return { fieldName, value: obj.value };
+
+  if (fieldName in STRING_FIELD_MAX) {
+    if (typeof value !== "string") {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        `${fieldName} override must be a string.`,
+      );
+    }
+    const trimmed = value.trim();
+    if (trimmed.length > STRING_FIELD_MAX[fieldName]) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        `${fieldName} override is too long (max ${STRING_FIELD_MAX[fieldName]}).`,
+      );
+    }
+    if (fieldName === "datasheet_url" && trimmed && !/^https:\/\//i.test(trimmed)) {
+      throw new CatalogueManagerError(
+        400,
+        "VALIDATION_ERROR",
+        "datasheet_url override must be https.",
+      );
+    }
+    return { fieldName, value: trimmed };
+  }
+
+  return { fieldName, value };
 }
 
 export function parseBulkPublishBody(body: unknown): BulkPublishInput {
@@ -350,16 +492,27 @@ export function parseSupplierMediaBody(body: unknown): {
   return { images, supplier };
 }
 
-export function parseManualPrimaryImageBody(body: unknown): string {
+/**
+ * parseManualPrimaryImageBody validates using OWN image policy.
+ * Only supabase-storage paths and MARKETPLACE_OWN_IMAGE_HOSTS are accepted.
+ */
+export function parseManualPrimaryImageBody(
+  body: unknown,
+  env?: NodeJS.ProcessEnv,
+): string {
   const obj = assertPlainObject(body, "body");
   assertKnownKeys(obj, new Set(["url"]));
   const url = asOptionalString(obj.url, "url", { max: 2000 });
-  if (!url || !normalizeSupplierImageUrl(url)) {
+  if (!url) {
+    throw new CatalogueManagerError(400, "VALIDATION_ERROR", "url is required.");
+  }
+  const ownSafe = normalizeOwnImageUrl(url, env);
+  if (!ownSafe) {
     throw new CatalogueManagerError(
       400,
       "VALIDATION_ERROR",
-      "url must be an allowlisted https image URL.",
+      "url must be an allowlisted own/supabase-storage https image URL.",
     );
   }
-  return url;
+  return ownSafe;
 }
