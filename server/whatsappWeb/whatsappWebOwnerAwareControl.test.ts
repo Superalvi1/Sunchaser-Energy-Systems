@@ -357,6 +357,14 @@ __resetSharedInMemoryWhatsAppWebOwnerDiagnosticsStore();
         lastStoredMessageAt: null,
         lastFailureCode: null,
         buildIdentity: "build-a",
+        connectionOpenAt: null,
+        receivedPendingNotifications: null,
+        pendingNotificationsReceivedAt: null,
+        isOnline: null,
+        isNewLogin: null,
+        phoneConnected: null,
+        lastProtocolEventAt: null,
+        protocolEventCounts: null,
       }
     );
     assert.equal(write1, "ok");
@@ -379,6 +387,14 @@ __resetSharedInMemoryWhatsAppWebOwnerDiagnosticsStore();
         lastStoredMessageAt: null,
         lastFailureCode: null,
         buildIdentity: "build-b",
+        connectionOpenAt: null,
+        receivedPendingNotifications: null,
+        pendingNotificationsReceivedAt: null,
+        isOnline: null,
+        isNewLogin: null,
+        phoneConnected: null,
+        lastProtocolEventAt: null,
+        protocolEventCounts: null,
       }
     );
     assert.equal(write2, "ok");
@@ -401,6 +417,14 @@ __resetSharedInMemoryWhatsAppWebOwnerDiagnosticsStore();
         lastStoredMessageAt: null,
         lastFailureCode: "should_not_land",
         buildIdentity: "stale",
+        connectionOpenAt: null,
+        receivedPendingNotifications: null,
+        pendingNotificationsReceivedAt: null,
+        isOnline: null,
+        isNewLogin: null,
+        phoneConnected: null,
+        lastProtocolEventAt: null,
+        protocolEventCounts: null,
       }
     );
     assert.equal(stale, "not_owner");

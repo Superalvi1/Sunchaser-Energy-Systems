@@ -46,6 +46,14 @@ export type WhatsAppWebOwnerDiagnosticsRow = {
   lastFailureCode: string | null;
   buildIdentity: string | null;
   updatedAt: string;
+  connectionOpenAt: string | null;
+  receivedPendingNotifications: boolean | null;
+  pendingNotificationsReceivedAt: string | null;
+  isOnline: boolean | null;
+  isNewLogin: boolean | null;
+  phoneConnected: boolean | null;
+  lastProtocolEventAt: string | null;
+  protocolEventCounts: Record<string, number> | null;
 };
 
 export type WhatsAppWebOwnerDiagnosticsFence = {
@@ -69,6 +77,14 @@ export type WhatsAppWebOwnerDiagnosticsPatch = {
   lastStoredMessageAt: string | null;
   lastFailureCode: string | null;
   buildIdentity: string | null;
+  connectionOpenAt: string | null;
+  receivedPendingNotifications: boolean | null;
+  pendingNotificationsReceivedAt: string | null;
+  isOnline: boolean | null;
+  isNewLogin: boolean | null;
+  phoneConnected: boolean | null;
+  lastProtocolEventAt: string | null;
+  protocolEventCounts: Record<string, number> | null;
 };
 
 export type WhatsAppWebOwnerDiagnosticsMutateResult =
@@ -90,6 +106,22 @@ function asIso(value: Date | string | null | undefined): string | null {
   if (value instanceof Date) return value.toISOString();
   const d = new Date(value);
   return Number.isFinite(d.getTime()) ? d.toISOString() : String(value);
+}
+
+function safeJsonCounts(raw: unknown): Record<string, number> | null {
+  if (raw == null) return null;
+  try {
+    const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      return null;
+    const result: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "number") result[k] = v;
+    }
+    return result;
+  } catch {
+    return null;
+  }
 }
 
 function mapSqlRow(row: Record<string, unknown>): WhatsAppWebOwnerDiagnosticsRow {
@@ -125,6 +157,22 @@ function mapSqlRow(row: Record<string, unknown>): WhatsAppWebOwnerDiagnosticsRow
     buildIdentity:
       row.build_identity == null ? null : String(row.build_identity),
     updatedAt: asIso(row.updated_at as string | Date) ?? new Date(0).toISOString(),
+    connectionOpenAt: asIso(row.connection_open_at as string | Date | null),
+    receivedPendingNotifications:
+      row.received_pending_notifications == null
+        ? null
+        : row.received_pending_notifications === true,
+    pendingNotificationsReceivedAt: asIso(
+      row.pending_notifications_received_at as string | Date | null
+    ),
+    isOnline: row.is_online == null ? null : row.is_online === true,
+    isNewLogin: row.is_new_login == null ? null : row.is_new_login === true,
+    phoneConnected:
+      row.phone_connected == null ? null : row.phone_connected === true,
+    lastProtocolEventAt: asIso(
+      row.last_protocol_event_at as string | Date | null
+    ),
+    protocolEventCounts: safeJsonCounts(row.protocol_event_counts),
   };
 }
 
@@ -236,6 +284,14 @@ export function createInMemoryWhatsAppWebOwnerDiagnosticsStore(): WhatsAppWebOwn
           lastStoredMessageAt: patch.lastStoredMessageAt,
           lastFailureCode: patch.lastFailureCode,
           buildIdentity: patch.buildIdentity,
+          connectionOpenAt: patch.connectionOpenAt,
+          receivedPendingNotifications: patch.receivedPendingNotifications,
+          pendingNotificationsReceivedAt: patch.pendingNotificationsReceivedAt,
+          isOnline: patch.isOnline,
+          isNewLogin: patch.isNewLogin,
+          phoneConnected: patch.phoneConnected,
+          lastProtocolEventAt: patch.lastProtocolEventAt,
+          protocolEventCounts: patch.protocolEventCounts,
           updatedAt: stamp,
         };
         rows.set(fence.sessionKey, next);
@@ -260,7 +316,10 @@ export function createSqlWhatsAppWebOwnerDiagnosticsStore(
                  socket_open, inbound_listener_attached, inbound_listener_operational,
                  inbound_health, last_connection_at, last_heartbeat_at,
                  last_raw_upsert_at, last_accepted_event_at, last_stored_message_at,
-                 last_failure_code, build_identity, updated_at
+                 last_failure_code, build_identity, updated_at,
+                 connection_open_at, received_pending_notifications,
+                 pending_notifications_received_at, is_online, is_new_login,
+                 phone_connected, last_protocol_event_at, protocol_event_counts
           FROM public.${table}
           WHERE session_key = $1
           `,
@@ -294,6 +353,14 @@ export function createSqlWhatsAppWebOwnerDiagnosticsStore(
               last_stored_message_at = $16::timestamptz,
               last_failure_code = $17,
               build_identity = $18,
+              connection_open_at = $19::timestamptz,
+              received_pending_notifications = $20,
+              pending_notifications_received_at = $21::timestamptz,
+              is_online = $22,
+              is_new_login = $23,
+              phone_connected = $24,
+              last_protocol_event_at = $25::timestamptz,
+              protocol_event_counts = $26::jsonb,
               updated_at = clock_timestamp()
             WHERE session_key = $1
               AND owner_token = $2
@@ -319,6 +386,14 @@ export function createSqlWhatsAppWebOwnerDiagnosticsStore(
               patch.lastStoredMessageAt,
               patch.lastFailureCode,
               patch.buildIdentity,
+              patch.connectionOpenAt,
+              patch.receivedPendingNotifications,
+              patch.pendingNotificationsReceivedAt,
+              patch.isOnline,
+              patch.isNewLogin,
+              patch.phoneConnected,
+              patch.lastProtocolEventAt,
+              patch.protocolEventCounts != null ? JSON.stringify(patch.protocolEventCounts) : null,
             ]
           );
           if ((updated.rowCount ?? 0) === 1) return "ok" as const;
@@ -331,13 +406,19 @@ export function createSqlWhatsAppWebOwnerDiagnosticsStore(
               socket_open, inbound_listener_attached, inbound_listener_operational,
               inbound_health, last_connection_at, last_heartbeat_at,
               last_raw_upsert_at, last_accepted_event_at, last_stored_message_at,
-              last_failure_code, build_identity
+              last_failure_code, build_identity,
+              connection_open_at, received_pending_notifications,
+              pending_notifications_received_at, is_online, is_new_login,
+              phone_connected, last_protocol_event_at, protocol_event_counts
             ) VALUES (
               $1, $2, $3, $4::bigint,
               $5, $6::bigint, $7,
               $8::boolean, $9::boolean, $10::boolean,
               $11, $12::timestamptz, $13::timestamptz, $14::timestamptz,
-              $15::timestamptz, $16::timestamptz, $17, $18
+              $15::timestamptz, $16::timestamptz, $17, $18,
+              $19::timestamptz, $20, $21::timestamptz,
+              $22, $23, $24,
+              $25::timestamptz, $26::jsonb
             )
             ON CONFLICT (session_key) DO UPDATE SET
               owner_id = EXCLUDED.owner_id,
@@ -357,6 +438,14 @@ export function createSqlWhatsAppWebOwnerDiagnosticsStore(
               last_stored_message_at = EXCLUDED.last_stored_message_at,
               last_failure_code = EXCLUDED.last_failure_code,
               build_identity = EXCLUDED.build_identity,
+              connection_open_at = EXCLUDED.connection_open_at,
+              received_pending_notifications = EXCLUDED.received_pending_notifications,
+              pending_notifications_received_at = EXCLUDED.pending_notifications_received_at,
+              is_online = EXCLUDED.is_online,
+              is_new_login = EXCLUDED.is_new_login,
+              phone_connected = EXCLUDED.phone_connected,
+              last_protocol_event_at = EXCLUDED.last_protocol_event_at,
+              protocol_event_counts = EXCLUDED.protocol_event_counts,
               updated_at = clock_timestamp()
             WHERE public.${table}.fencing_version < EXCLUDED.fencing_version
             RETURNING session_key
@@ -380,6 +469,14 @@ export function createSqlWhatsAppWebOwnerDiagnosticsStore(
               patch.lastStoredMessageAt,
               patch.lastFailureCode,
               patch.buildIdentity,
+              patch.connectionOpenAt,
+              patch.receivedPendingNotifications,
+              patch.pendingNotificationsReceivedAt,
+              patch.isOnline,
+              patch.isNewLogin,
+              patch.phoneConnected,
+              patch.lastProtocolEventAt,
+              patch.protocolEventCounts != null ? JSON.stringify(patch.protocolEventCounts) : null,
             ]
           );
           if ((inserted.rowCount ?? 0) === 1) return "ok" as const;

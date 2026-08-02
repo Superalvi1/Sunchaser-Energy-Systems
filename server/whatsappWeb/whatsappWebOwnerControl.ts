@@ -125,6 +125,11 @@ export function mergeOwnerAwareSafeStatus(input: {
       socketOpen: local.socketOpen,
       inboundListenerOperational: local.inboundListenerOperational,
       liveInboundConfirmed,
+      lastRawUpsertAt: liveInboundConfirmed ? local.lastRawUpsertAt : null,
+      lastStoredMessageAt: liveInboundConfirmed ? local.lastInboundStoredAt : null,
+      protocolEventActive:
+        local.protocolReadiness.lastProtocolEventAt !== null &&
+        local.protocolReadiness.protocolEventCounts["messages.upsert"] === 0,
     });
     return {
       ...local,
@@ -145,6 +150,7 @@ export function mergeOwnerAwareSafeStatus(input: {
       inboundHealth,
       listeningSilent:
         inboundHealth === "LISTENER_READY" ||
+        inboundHealth === "AWAITING_PROTOCOL_SYNC" ||
         inboundHealth === "CONNECTED_SOCKET" ||
         inboundHealth === "INBOUND_SILENT",
       buildIdentity,
@@ -164,6 +170,8 @@ export function mergeOwnerAwareSafeStatus(input: {
       lastRawUpsertAt: matchedDiagnostics.lastRawUpsertAt,
       lastAcceptedEventAt: matchedDiagnostics.lastAcceptedEventAt,
       lastStoredMessageAt: matchedDiagnostics.lastStoredMessageAt,
+      protocolEventActive: matchedDiagnostics.lastProtocolEventAt !== null &&
+        (matchedDiagnostics.protocolEventCounts?.["messages.upsert"] ?? 0) === 0,
     });
     return {
       ...local,
@@ -189,6 +197,19 @@ export function mergeOwnerAwareSafeStatus(input: {
       ownerProcessInstanceId: durableLease.ownerId,
       fencingVersion: durableLease.fencingVersion,
       durableOwnerMatch: false,
+      protocolReadiness: {
+        ...local.protocolReadiness,
+        connectionOpenAt: matchedDiagnostics.connectionOpenAt,
+        receivedPendingNotifications: matchedDiagnostics.receivedPendingNotifications,
+        pendingNotificationsReceivedAt: matchedDiagnostics.pendingNotificationsReceivedAt,
+        isOnline: matchedDiagnostics.isOnline,
+        isNewLogin: matchedDiagnostics.isNewLogin,
+        phoneConnected: matchedDiagnostics.phoneConnected,
+        lastProtocolEventAt: matchedDiagnostics.lastProtocolEventAt,
+        protocolEventCounts: matchedDiagnostics.protocolEventCounts != null
+          ? matchedDiagnostics.protocolEventCounts as import("./whatsappWebConnectionDiagnostics.ts").WhatsAppWebProtocolEventCounts
+          : local.protocolReadiness.protocolEventCounts,
+      },
       inboundHealth: "LEASE_NOT_OWNED",
       listeningSilent: false,
       buildIdentity,
@@ -235,6 +256,11 @@ export function mergeOwnerAwareSafeStatus(input: {
     socketOpen: local.socketOpen,
     inboundListenerOperational: local.inboundListenerOperational,
     liveInboundConfirmed,
+    lastRawUpsertAt: liveInboundConfirmed ? local.lastRawUpsertAt : null,
+    lastStoredMessageAt: liveInboundConfirmed ? local.lastInboundStoredAt : null,
+    protocolEventActive:
+      local.protocolReadiness.lastProtocolEventAt !== null &&
+      local.protocolReadiness.protocolEventCounts["messages.upsert"] === 0,
   });
   return {
     ...local,

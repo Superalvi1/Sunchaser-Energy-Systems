@@ -597,6 +597,11 @@ async function defaultSocketFactory(input: {
       (chats ?? []) as unknown as Array<Record<string, unknown>>
     );
   });
+  sock.ev.on("messages.update", () => {
+    // Record protocol activity. messages.update covers read receipts, delivery status,
+    // and reactions — it does NOT count as accepted/stored inbound delivery.
+    noteProtocolEvent({ eventName: "messages.update", generation: gen });
+  });
   sock.ev.on("messaging-history.set", (payload) => {
     noteProtocolEvent({ eventName: "messaging-history.set", generation: gen });
     const p = payload as unknown as {
@@ -903,6 +908,11 @@ export class WhatsAppWebSession {
         socketOpen,
         inboundListenerOperational,
         liveInboundConfirmed,
+        lastRawUpsertAt,
+        lastStoredMessageAt: liveInboundConfirmed ? inbound.lastInboundStoredAt : null,
+        protocolEventActive:
+          connection.protocolReadiness.lastProtocolEventAt !== null &&
+          connection.protocolReadiness.protocolEventCounts["messages.upsert"] === 0,
       }),
       servingProcessInstanceId: this.processInstanceId,
       ownerProcessInstanceId: connection.sessionLeaseOwnerId,
@@ -1596,6 +1606,8 @@ export class WhatsAppWebSession {
       socketOpen: local.socketOpen,
       inboundListenerOperational: local.inboundListenerOperational,
       liveInboundConfirmed,
+      lastRawUpsertAt: liveInboundConfirmed ? inbound.lastRawUpsertAt : null,
+      lastStoredMessageAt: liveInboundConfirmed ? inbound.lastInboundStoredAt : null,
       protocolEventActive: local.protocolReadiness.lastProtocolEventAt !== null &&
         local.protocolReadiness.protocolEventCounts["messages.upsert"] === 0,
     });
@@ -1623,6 +1635,14 @@ export class WhatsAppWebSession {
           : null,
         lastFailureCode: inbound.lastPersistFailureCode,
         buildIdentity: getWhatsAppWebBuildIdentity(this.env),
+        connectionOpenAt: local.protocolReadiness.connectionOpenAt,
+        receivedPendingNotifications: local.protocolReadiness.receivedPendingNotifications,
+        pendingNotificationsReceivedAt: local.protocolReadiness.pendingNotificationsReceivedAt,
+        isOnline: local.protocolReadiness.isOnline,
+        isNewLogin: local.protocolReadiness.isNewLogin,
+        phoneConnected: local.protocolReadiness.phoneConnected,
+        lastProtocolEventAt: local.protocolReadiness.lastProtocolEventAt,
+        protocolEventCounts: local.protocolReadiness.protocolEventCounts as Record<string, number> | null,
       }
     );
   }

@@ -409,6 +409,14 @@ function noopInterval() {
       lastFailureCode: null,
       buildIdentity: "old",
       updatedAt: "2026-08-02T00:00:00.000Z",
+      connectionOpenAt: null,
+      receivedPendingNotifications: null,
+      pendingNotificationsReceivedAt: null,
+      isOnline: null,
+      isNewLogin: null,
+      phoneConnected: null,
+      lastProtocolEventAt: null,
+      protocolEventCounts: null,
     };
     assert.equal(diagnosticsMatchesActiveLease(predDiag, lease), false);
   }
@@ -456,6 +464,14 @@ function noopInterval() {
       lastFailureCode: null,
       buildIdentity: "pred",
       updatedAt: "2026-08-02T00:00:00.000Z",
+      connectionOpenAt: null,
+      receivedPendingNotifications: null,
+      pendingNotificationsReceivedAt: null,
+      isOnline: null,
+      isNewLogin: null,
+      phoneConnected: null,
+      lastProtocolEventAt: null,
+      protocolEventCounts: null,
     };
     const merged = mergeOwnerAwareSafeStatus({
       local,
