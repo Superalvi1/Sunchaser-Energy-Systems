@@ -727,6 +727,122 @@ async function defaultSocketFactory(input: {
   };
 }
 
+// ─── Test seam ───────────────────────────────────────────────────────────────
+// Exported only for integration-level tests. Not called by production paths.
+
+/** Minimal mock event bus accepted by __registerDefaultSocketHandlersForTest. */
+export type TestBaileysEventBus = {
+  on(event: string, handler: (...args: unknown[]) => void): void;
+};
+
+/**
+ * Registers the exact same Baileys event handlers that defaultSocketFactory
+ * wires onto a real Baileys sock, but using a controllable mock event bus.
+ * Allows integration-level tests to exercise the handler logic without
+ * importing Baileys.
+ * @internal DO NOT call from production code.
+ */
+export function __registerDefaultSocketHandlersForTest(
+  ev: TestBaileysEventBus,
+  input: {
+    gen: number;
+    onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
+    onCredentialsSaved?: () => void;
+    onRawUpsert?: () => boolean;
+    onInbound?: WhatsAppWebInboundHandler;
+  }
+): void {
+  const gen = input.gen;
+
+  ev.on("creds.update", () => {
+    noteProtocolEvent({ eventName: "creds.update", generation: gen });
+    input.onCredentialsSaved?.();
+  });
+
+  ev.on("connection.update", (rawUpdate: unknown) => {
+    noteProtocolEvent({ eventName: "connection.update", generation: gen });
+    const update = rawUpdate as {
+      connection?: string;
+      receivedPendingNotifications?: boolean;
+      isOnline?: boolean;
+      isNewLogin?: boolean;
+      legacy?: { phoneConnected?: boolean };
+    };
+    if (update.connection === "open") {
+      noteConnectionOpenDiagnostic({ generation: gen });
+      noteConnectionReadiness({
+        generation: gen,
+        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
+        isOnline: update.isOnline ?? null,
+        isNewLogin: update.isNewLogin ?? null,
+        phoneConnected: update.legacy?.phoneConnected ?? null,
+      });
+      input.onConnectionUpdate({
+        connection: "open",
+        userId: null,
+        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
+        isOnline: update.isOnline ?? null,
+        isNewLogin: update.isNewLogin ?? null,
+        phoneConnected: update.legacy?.phoneConnected ?? null,
+      });
+      return;
+    }
+    // Subsequent readiness-only updates (connection field absent/null)
+    if (
+      update.connection == null &&
+      (update.receivedPendingNotifications != null ||
+        update.isOnline != null ||
+        update.isNewLogin != null ||
+        update.legacy?.phoneConnected != null)
+    ) {
+      noteConnectionReadiness({
+        generation: gen,
+        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
+        isOnline: update.isOnline ?? null,
+        isNewLogin: update.isNewLogin ?? null,
+        phoneConnected: update.legacy?.phoneConnected ?? null,
+      });
+      input.onConnectionUpdate({
+        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
+        isOnline: update.isOnline ?? null,
+        isNewLogin: update.isNewLogin ?? null,
+        phoneConnected: update.legacy?.phoneConnected ?? null,
+      });
+    }
+  });
+
+  ev.on("contacts.upsert", () => {
+    noteProtocolEvent({ eventName: "contacts.upsert", generation: gen });
+  });
+  ev.on("contacts.update", () => {
+    noteProtocolEvent({ eventName: "contacts.update", generation: gen });
+  });
+  ev.on("chats.upsert", () => {
+    noteProtocolEvent({ eventName: "chats.upsert", generation: gen });
+  });
+  ev.on("chats.update", () => {
+    noteProtocolEvent({ eventName: "chats.update", generation: gen });
+  });
+  ev.on("messaging-history.set", () => {
+    noteProtocolEvent({ eventName: "messaging-history.set", generation: gen });
+  });
+
+  // messages.update — covers read receipts, delivery status, reactions.
+  // MUST call noteProtocolEvent but MUST NOT be treated as new inbound delivery.
+  ev.on("messages.update", () => {
+    noteProtocolEvent({ eventName: "messages.update", generation: gen });
+  });
+
+  ev.on("messages.upsert", (upsert: unknown) => {
+    noteProtocolEvent({ eventName: "messages.upsert", generation: gen });
+    if (input.onRawUpsert && !input.onRawUpsert()) return;
+    if (!input.onRawUpsert) {
+      noteInboundRawUpsert();
+    }
+    input.onInbound?.(upsert as never);
+  });
+}
+
 export class WhatsAppWebSession {
   private readonly env: NodeJS.ProcessEnv;
   private readonly socketFactory: WhatsAppWebSocketFactory;
