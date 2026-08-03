@@ -409,7 +409,10 @@ function makeRecordingSqlExecutor(overrides?: {
   console.log("PASS A-4: messages.upsert counted and calls onInbound");
 }
 
-// A-5: onRawUpsert returning false drops the upsert without calling onInbound
+// A-5: onRawUpsert returning false drops the upsert:
+//      - noteProtocolEvent is NOT called (guard fires BEFORE it)
+//      - onInbound is NOT called
+//      - lastRawUpsertAt remains null
 {
   __resetWhatsAppWebConnectionDiagnostics();
   __resetWhatsAppWebInboundDiagnostics();
@@ -428,13 +431,27 @@ function makeRecordingSqlExecutor(overrides?: {
 
   bus.emit("messages.upsert", { messages: [], type: "notify" });
 
-  // Protocol event still counted
   const pr = getWhatsAppWebConnectionDiagnostics({}).protocolReadiness;
-  assert.strictEqual(pr.protocolEventCounts["messages.upsert"], 1);
-  // But inbound must not be called
+
+  // Guard fires BEFORE noteProtocolEvent — stale upserts must NOT increment the count.
+  assert.strictEqual(
+    pr.protocolEventCounts["messages.upsert"],
+    0,
+    "guard fires before noteProtocolEvent: stale upsert must not be counted"
+  );
+  assert.strictEqual(
+    pr.lastProtocolEventAt,
+    null,
+    "no protocol events emitted when upsert is dropped"
+  );
+  // onInbound must also not be called
   assert.strictEqual(inboundCalls, 0, "onInbound dropped by onRawUpsert=false");
 
-  console.log("PASS A-5: Stale-generation guard drops upsert without calling onInbound");
+  // lastRawUpsertAt must remain null (no noteInboundRawUpsert call)
+  const inboundDiag = getWhatsAppWebInboundDiagnostics();
+  assert.strictEqual(inboundDiag.lastRawUpsertAt, null, "lastRawUpsertAt must remain null");
+
+  console.log("PASS A-5: Stale-generation guard drops upsert; noteProtocolEvent NOT called (guard-before-count ordering proven)");
 }
 
 // A-6: Stale-generation events (gen mismatch) do not overwrite current readiness

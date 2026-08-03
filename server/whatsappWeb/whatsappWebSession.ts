@@ -427,6 +427,181 @@ export type WhatsAppWebSessionOptions = {
   ownerDiagnosticsStore?: WhatsAppWebOwnerDiagnosticsStore;
 };
 
+// ─── Shared Baileys event-handler registration ────────────────────────────────
+//
+// Both defaultSocketFactory (production) and __registerDefaultSocketHandlersForTest
+// (test seam) call these helpers.  Having a single source of truth ensures the
+// test seam exercises exactly the same handler logic as production.
+
+/**
+ * Minimal event bus interface accepted by registerBaileysProtocolHandlers and
+ * __registerDefaultSocketHandlersForTest.
+ *
+ * Compatible with both a real Baileys sock.ev (cast) and test mock buses.
+ */
+export type TestBaileysEventBus = {
+  on(event: string, handler: (...args: unknown[]) => void): void;
+};
+
+/**
+ * Shared guard + bookkeeping for messages.upsert.
+ *
+ * The stale-generation guard fires BEFORE noteProtocolEvent so that
+ * generation-dropped upserts are never counted as protocol events.
+ *
+ * @returns true when the upsert should proceed to inbound processing; false when dropped.
+ */
+function handleMessagesUpsertProtocol(input: {
+  gen: number;
+  onRawUpsert?: () => boolean;
+  /** Called when the stale-generation guard fires (before returning false). */
+  onStaleUpsert?: () => void;
+}): boolean {
+  if (input.onRawUpsert && !input.onRawUpsert()) {
+    input.onStaleUpsert?.();
+    return false;
+  }
+  noteProtocolEvent({ eventName: "messages.upsert", generation: input.gen });
+  if (!input.onRawUpsert) {
+    noteInboundRawUpsert();
+  }
+  return true;
+}
+
+type BaileysProtocolHandlerCallbacks = {
+  gen: number;
+  onConnectionUpdate: (update: WhatsAppWebConnectionUpdate) => void;
+  onCredentialsSaved?: () => void;
+  onQr?: (qr: string) => void;
+  /**
+   * Invoked when connection:"open" fires, after readiness bookkeeping.
+   * Must call onConnectionUpdate with connection:"open" and the resolved userId.
+   * When absent the shared function calls onConnectionUpdate with userId:null.
+   */
+  onConnectionOpen?: (readiness: {
+    receivedPendingNotifications: boolean | null;
+    isOnline: boolean | null;
+    isNewLogin: boolean | null;
+    phoneConnected: boolean | null;
+  }) => void;
+  /**
+   * Invoked when connection:"close" fires.
+   * Must call onConnectionUpdate with the appropriate update payload.
+   */
+  onConnectionClose?: (rawUpdate: unknown) => void;
+  onContactsUpsert?: (contacts: unknown) => void;
+  onContactsUpdate?: (contacts: unknown) => void;
+  onChatsUpsert?: (chats: unknown) => void;
+  onChatsUpdate?: (chats: unknown) => void;
+  onHistorySet?: (payload: unknown) => void;
+};
+
+/**
+ * Registers Baileys event handlers for all protocol events EXCEPT messages.upsert.
+ * (messages.upsert uses attachTrackedMessagesUpsertListener in production for
+ * listener-count tracking and must be registered separately by the caller.)
+ *
+ * Contains no Baileys imports. Baileys-specific side effects (syncSource operations,
+ * loggedOut detection, userId resolution) are injected via the callbacks above.
+ */
+function registerBaileysProtocolHandlers(
+  ev: TestBaileysEventBus,
+  input: BaileysProtocolHandlerCallbacks
+): void {
+  const { gen } = input;
+
+  ev.on("creds.update", () => {
+    noteProtocolEvent({ eventName: "creds.update", generation: gen });
+    input.onCredentialsSaved?.();
+  });
+
+  ev.on("connection.update", (rawUpdate: unknown) => {
+    noteProtocolEvent({ eventName: "connection.update", generation: gen });
+    const update = rawUpdate as {
+      connection?: string;
+      qr?: string;
+      receivedPendingNotifications?: boolean;
+      isOnline?: boolean;
+      isNewLogin?: boolean;
+      legacy?: { phoneConnected?: boolean };
+    };
+
+    if (typeof update.qr === "string" && update.qr.trim()) {
+      input.onQr?.(update.qr);
+    }
+
+    if (update.connection === "open") {
+      noteConnectionOpenDiagnostic({ generation: gen });
+      const readiness = {
+        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
+        isOnline: update.isOnline ?? null,
+        isNewLogin: update.isNewLogin ?? null,
+        phoneConnected: update.legacy?.phoneConnected ?? null,
+      };
+      noteConnectionReadiness({ generation: gen, ...readiness });
+      if (input.onConnectionOpen) {
+        // Production: Baileys side effects + onConnectionUpdate with resolved userId.
+        input.onConnectionOpen(readiness);
+      } else {
+        // Test seam: no side effects; userId is not yet known.
+        input.onConnectionUpdate({ connection: "open", userId: null, ...readiness });
+      }
+      return;
+    }
+
+    if (update.connection === "close") {
+      input.onConnectionClose?.(rawUpdate);
+      return;
+    }
+
+    // Subsequent readiness-only updates (connection field absent or null) —
+    // Baileys emits these after an initial "open" when e.g. receivedPendingNotifications
+    // transitions to true on the companion device.
+    if (
+      update.connection == null &&
+      (update.receivedPendingNotifications != null ||
+        update.isOnline != null ||
+        update.isNewLogin != null ||
+        update.legacy?.phoneConnected != null)
+    ) {
+      const readiness = {
+        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
+        isOnline: update.isOnline ?? null,
+        isNewLogin: update.isNewLogin ?? null,
+        phoneConnected: update.legacy?.phoneConnected ?? null,
+      };
+      noteConnectionReadiness({ generation: gen, ...readiness });
+      input.onConnectionUpdate(readiness);
+    }
+  });
+
+  ev.on("contacts.upsert", (contacts: unknown) => {
+    noteProtocolEvent({ eventName: "contacts.upsert", generation: gen });
+    input.onContactsUpsert?.(contacts);
+  });
+  ev.on("contacts.update", (contacts: unknown) => {
+    noteProtocolEvent({ eventName: "contacts.update", generation: gen });
+    input.onContactsUpdate?.(contacts);
+  });
+  ev.on("chats.upsert", (chats: unknown) => {
+    noteProtocolEvent({ eventName: "chats.upsert", generation: gen });
+    input.onChatsUpsert?.(chats);
+  });
+  ev.on("chats.update", (chats: unknown) => {
+    noteProtocolEvent({ eventName: "chats.update", generation: gen });
+    input.onChatsUpdate?.(chats);
+  });
+  // messages.update covers read receipts, delivery status, and reactions.
+  // MUST call noteProtocolEvent but MUST NOT be treated as new inbound delivery.
+  ev.on("messages.update", () => {
+    noteProtocolEvent({ eventName: "messages.update", generation: gen });
+  });
+  ev.on("messaging-history.set", (payload: unknown) => {
+    noteProtocolEvent({ eventName: "messaging-history.set", generation: gen });
+    input.onHistorySet?.(payload);
+  });
+}
+
 async function defaultSocketFactory(input: {
   sessionDir: string;
   onQr: (qr: string) => void;
@@ -471,158 +646,83 @@ async function defaultSocketFactory(input: {
 
   const gen = input.socketGeneration ?? 0;
 
-  sock.ev.on("creds.update", () => {
-    noteProtocolEvent({ eventName: "creds.update", generation: gen });
-    void saveCreds().then(() => input.onCredentialsSaved());
-  });
-
-  sock.ev.on("connection.update", (update) => {
-    noteProtocolEvent({ eventName: "connection.update", generation: gen });
-
-    const qr = (update as { qr?: string }).qr;
-    if (typeof qr === "string" && qr.trim()) {
-      input.onQr(qr);
-    }
-
-    if (update.connection === "open") {
-      syncSource.setConnected(true, sock.user?.id ?? null);
-      syncSource.setHistoryFetcher(
-        async (count, oldestMsgKey, oldestMsgTimestamp) =>
-          sock.fetchMessageHistory(
-            count,
-            oldestMsgKey as never,
-            oldestMsgTimestamp
-          )
-      );
-      // Record connection-open timestamp and readiness fields. Phase 1 observability only.
-      noteConnectionOpenDiagnostic({ generation: gen });
-      const rawUpdate = update as {
-        receivedPendingNotifications?: boolean;
-        isOnline?: boolean;
-        isNewLogin?: boolean;
-        legacy?: { phoneConnected?: boolean };
-      };
-      noteConnectionReadiness({
-        generation: gen,
-        receivedPendingNotifications: rawUpdate.receivedPendingNotifications ?? null,
-        isOnline: rawUpdate.isOnline ?? null,
-        isNewLogin: rawUpdate.isNewLogin ?? null,
-        phoneConnected: rawUpdate.legacy?.phoneConnected ?? null,
-      });
-      input.onConnectionUpdate({
-        connection: "open",
-        userId: sock.user?.id ?? null,
-        receivedPendingNotifications: rawUpdate.receivedPendingNotifications ?? null,
-        isOnline: rawUpdate.isOnline ?? null,
-        isNewLogin: rawUpdate.isNewLogin ?? null,
-        phoneConnected: rawUpdate.legacy?.phoneConnected ?? null,
-      });
-      return;
-    }
-
-    if (update.connection === "close") {
-      syncSource.setConnected(false);
-      const statusCode = (
-        update.lastDisconnect as { error?: { output?: { statusCode?: number } } }
-      )?.error?.output?.statusCode;
-
-      // Logged-out is exclusive — never also emit ordinary "close".
-      if (statusCode === DisconnectReason.loggedOut) {
+  // Delegate all protocol-event + readiness bookkeeping to the shared helper.
+  // Baileys-specific side effects (syncSource, loggedOut detection, userId) are
+  // injected via callbacks so they do not live in the shared function.
+  registerBaileysProtocolHandlers(
+    sock.ev as unknown as TestBaileysEventBus,
+    {
+      gen,
+      onConnectionUpdate: input.onConnectionUpdate,
+      onCredentialsSaved: () => void saveCreds().then(() => input.onCredentialsSaved()),
+      onQr: input.onQr,
+      onConnectionOpen: (readiness) => {
+        syncSource.setConnected(true, sock.user?.id ?? null);
+        // Re-register the history fetcher on each open (socket may be a new instance).
+        syncSource.setHistoryFetcher(
+          async (count, oldestMsgKey, oldestMsgTimestamp) =>
+            sock.fetchMessageHistory(count, oldestMsgKey as never, oldestMsgTimestamp)
+        );
+        // Phase 1 observability note: userId is resolved here from the live socket.
         input.onConnectionUpdate({
-          connection: "logged_out",
-          statusCode,
+          connection: "open",
+          userId: sock.user?.id ?? null,
+          ...readiness,
         });
-        return;
-      }
-
-      input.onConnectionUpdate({
-        connection: "close",
-        statusCode,
-      });
-      return;
+      },
+      onConnectionClose: (rawUpdate) => {
+        syncSource.setConnected(false);
+        const statusCode = (
+          rawUpdate as { lastDisconnect?: { error?: { output?: { statusCode?: number } } } }
+        )?.lastDisconnect?.error?.output?.statusCode;
+        // Logged-out is exclusive — never also emit ordinary "close".
+        if (statusCode === DisconnectReason.loggedOut) {
+          input.onConnectionUpdate({ connection: "logged_out", statusCode });
+          return;
+        }
+        input.onConnectionUpdate({ connection: "close", statusCode });
+      },
+      onContactsUpsert: (c) =>
+        syncSource.ingestContacts(
+          (c ?? []) as unknown as Array<Record<string, unknown>>
+        ),
+      onContactsUpdate: (c) =>
+        syncSource.ingestContacts(
+          (c ?? []) as unknown as Array<Record<string, unknown>>
+        ),
+      onChatsUpsert: (c) =>
+        syncSource.ingestChats(
+          (c ?? []) as unknown as Array<Record<string, unknown>>
+        ),
+      onChatsUpdate: (c) =>
+        syncSource.ingestChats(
+          (c ?? []) as unknown as Array<Record<string, unknown>>
+        ),
+      onHistorySet: (payload) => {
+        const p = payload as {
+          chats?: Array<Record<string, unknown>>;
+          contacts?: Array<Record<string, unknown>>;
+          messages?: Array<Record<string, unknown>>;
+          peerDataRequestSessionId?: string | null;
+        };
+        // Ingest then correlate by request id (null/unrelated ids do not release waiters).
+        syncSource.handleHistorySet(p);
+      },
     }
-
-    // Subsequent connection.update events may carry receivedPendingNotifications=true
-    // after the initial open event. Capture without changing connection lifecycle.
-    const rawUpdateAny = update as {
-      receivedPendingNotifications?: boolean;
-      isOnline?: boolean;
-      isNewLogin?: boolean;
-      legacy?: { phoneConnected?: boolean };
-    };
-    if (
-      update.connection == null &&
-      (rawUpdateAny.receivedPendingNotifications != null ||
-       rawUpdateAny.isOnline != null ||
-       rawUpdateAny.isNewLogin != null ||
-       rawUpdateAny.legacy?.phoneConnected != null)
-    ) {
-      noteConnectionReadiness({
-        generation: gen,
-        receivedPendingNotifications: rawUpdateAny.receivedPendingNotifications ?? null,
-        isOnline: rawUpdateAny.isOnline ?? null,
-        isNewLogin: rawUpdateAny.isNewLogin ?? null,
-        phoneConnected: rawUpdateAny.legacy?.phoneConnected ?? null,
-      });
-      input.onConnectionUpdate({
-        receivedPendingNotifications: rawUpdateAny.receivedPendingNotifications ?? null,
-        isOnline: rawUpdateAny.isOnline ?? null,
-        isNewLogin: rawUpdateAny.isNewLogin ?? null,
-        phoneConnected: rawUpdateAny.legacy?.phoneConnected ?? null,
-      });
-    }
-  });
-
-  sock.ev.on("contacts.upsert", (contacts) => {
-    noteProtocolEvent({ eventName: "contacts.upsert", generation: gen });
-    syncSource.ingestContacts(
-      (contacts ?? []) as unknown as Array<Record<string, unknown>>
-    );
-  });
-  sock.ev.on("contacts.update", (contacts) => {
-    noteProtocolEvent({ eventName: "contacts.update", generation: gen });
-    syncSource.ingestContacts(
-      (contacts ?? []) as unknown as Array<Record<string, unknown>>
-    );
-  });
-  sock.ev.on("chats.upsert", (chats) => {
-    noteProtocolEvent({ eventName: "chats.upsert", generation: gen });
-    syncSource.ingestChats(
-      (chats ?? []) as unknown as Array<Record<string, unknown>>
-    );
-  });
-  sock.ev.on("chats.update", (chats) => {
-    noteProtocolEvent({ eventName: "chats.update", generation: gen });
-    syncSource.ingestChats(
-      (chats ?? []) as unknown as Array<Record<string, unknown>>
-    );
-  });
-  sock.ev.on("messages.update", () => {
-    // Record protocol activity. messages.update covers read receipts, delivery status,
-    // and reactions — it does NOT count as accepted/stored inbound delivery.
-    noteProtocolEvent({ eventName: "messages.update", generation: gen });
-  });
-  sock.ev.on("messaging-history.set", (payload) => {
-    noteProtocolEvent({ eventName: "messaging-history.set", generation: gen });
-    const p = payload as unknown as {
-      chats?: Array<Record<string, unknown>>;
-      contacts?: Array<Record<string, unknown>>;
-      messages?: Array<Record<string, unknown>>;
-      peerDataRequestSessionId?: string | null;
-    };
-    // Ingest then correlate by request id (null/unrelated ids do not release waiters).
-    syncSource.handleHistorySet(p);
-  });
+  );
 
   // Named handler so sock.ev.off can detach exactly this listener.
+  // Delegates guard + bookkeeping to handleMessagesUpsertProtocol so that
+  // the guard-before-noteProtocolEvent ordering is always enforced.
   function onMessagesUpsert(upsert: WhatsAppWebMessagesUpsert): void {
-    if (input.onRawUpsert && !input.onRawUpsert()) {
-      noteInboundIgnored("stale_socket");
+    if (
+      !handleMessagesUpsertProtocol({
+        gen,
+        onRawUpsert: input.onRawUpsert,
+        onStaleUpsert: () => noteInboundIgnored("stale_socket"),
+      })
+    ) {
       return;
-    }
-    noteProtocolEvent({ eventName: "messages.upsert", generation: gen });
-    if (!input.onRawUpsert) {
-      noteInboundRawUpsert();
     }
     const messages = upsert.messages ?? [];
     // Baileys online receipts use "notify"; offline-flagged nodes use "append".
@@ -728,18 +828,16 @@ async function defaultSocketFactory(input: {
 }
 
 // ─── Test seam ───────────────────────────────────────────────────────────────
-// Exported only for integration-level tests. Not called by production paths.
-
-/** Minimal mock event bus accepted by __registerDefaultSocketHandlersForTest. */
-export type TestBaileysEventBus = {
-  on(event: string, handler: (...args: unknown[]) => void): void;
-};
+// Exported for integration-level tests only.
 
 /**
- * Registers the exact same Baileys event handlers that defaultSocketFactory
- * wires onto a real Baileys sock, but using a controllable mock event bus.
- * Allows integration-level tests to exercise the handler logic without
- * importing Baileys.
+ * Thin wrapper that exercises the actual shared handler registration
+ * (registerBaileysProtocolHandlers + handleMessagesUpsertProtocol) used by
+ * defaultSocketFactory, through a controllable mock event bus.
+ *
+ * Because this delegates to the same private helpers, any change to production
+ * handler logic is automatically reflected in tests — no separate copy to maintain.
+ *
  * @internal DO NOT call from production code.
  */
 export function __registerDefaultSocketHandlersForTest(
@@ -752,92 +850,24 @@ export function __registerDefaultSocketHandlersForTest(
     onInbound?: WhatsAppWebInboundHandler;
   }
 ): void {
-  const gen = input.gen;
-
-  ev.on("creds.update", () => {
-    noteProtocolEvent({ eventName: "creds.update", generation: gen });
-    input.onCredentialsSaved?.();
+  // Handles creds.update, connection.update, contacts.*, chats.*,
+  // messages.update, messaging-history.set — same code as defaultSocketFactory.
+  registerBaileysProtocolHandlers(ev, {
+    gen: input.gen,
+    onConnectionUpdate: input.onConnectionUpdate,
+    onCredentialsSaved: input.onCredentialsSaved,
   });
 
-  ev.on("connection.update", (rawUpdate: unknown) => {
-    noteProtocolEvent({ eventName: "connection.update", generation: gen });
-    const update = rawUpdate as {
-      connection?: string;
-      receivedPendingNotifications?: boolean;
-      isOnline?: boolean;
-      isNewLogin?: boolean;
-      legacy?: { phoneConnected?: boolean };
-    };
-    if (update.connection === "open") {
-      noteConnectionOpenDiagnostic({ generation: gen });
-      noteConnectionReadiness({
-        generation: gen,
-        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
-        isOnline: update.isOnline ?? null,
-        isNewLogin: update.isNewLogin ?? null,
-        phoneConnected: update.legacy?.phoneConnected ?? null,
-      });
-      input.onConnectionUpdate({
-        connection: "open",
-        userId: null,
-        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
-        isOnline: update.isOnline ?? null,
-        isNewLogin: update.isNewLogin ?? null,
-        phoneConnected: update.legacy?.phoneConnected ?? null,
-      });
-      return;
-    }
-    // Subsequent readiness-only updates (connection field absent/null)
-    if (
-      update.connection == null &&
-      (update.receivedPendingNotifications != null ||
-        update.isOnline != null ||
-        update.isNewLogin != null ||
-        update.legacy?.phoneConnected != null)
-    ) {
-      noteConnectionReadiness({
-        generation: gen,
-        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
-        isOnline: update.isOnline ?? null,
-        isNewLogin: update.isNewLogin ?? null,
-        phoneConnected: update.legacy?.phoneConnected ?? null,
-      });
-      input.onConnectionUpdate({
-        receivedPendingNotifications: update.receivedPendingNotifications ?? null,
-        isOnline: update.isOnline ?? null,
-        isNewLogin: update.isNewLogin ?? null,
-        phoneConnected: update.legacy?.phoneConnected ?? null,
-      });
-    }
-  });
-
-  ev.on("contacts.upsert", () => {
-    noteProtocolEvent({ eventName: "contacts.upsert", generation: gen });
-  });
-  ev.on("contacts.update", () => {
-    noteProtocolEvent({ eventName: "contacts.update", generation: gen });
-  });
-  ev.on("chats.upsert", () => {
-    noteProtocolEvent({ eventName: "chats.upsert", generation: gen });
-  });
-  ev.on("chats.update", () => {
-    noteProtocolEvent({ eventName: "chats.update", generation: gen });
-  });
-  ev.on("messaging-history.set", () => {
-    noteProtocolEvent({ eventName: "messaging-history.set", generation: gen });
-  });
-
-  // messages.update — covers read receipts, delivery status, reactions.
-  // MUST call noteProtocolEvent but MUST NOT be treated as new inbound delivery.
-  ev.on("messages.update", () => {
-    noteProtocolEvent({ eventName: "messages.update", generation: gen });
-  });
-
+  // messages.upsert: uses the shared guard helper so guard-before-noteProtocolEvent
+  // ordering is identical to production.
   ev.on("messages.upsert", (upsert: unknown) => {
-    noteProtocolEvent({ eventName: "messages.upsert", generation: gen });
-    if (input.onRawUpsert && !input.onRawUpsert()) return;
-    if (!input.onRawUpsert) {
-      noteInboundRawUpsert();
+    if (
+      !handleMessagesUpsertProtocol({
+        gen: input.gen,
+        onRawUpsert: input.onRawUpsert,
+      })
+    ) {
+      return;
     }
     input.onInbound?.(upsert as never);
   });
