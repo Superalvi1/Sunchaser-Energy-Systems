@@ -32,12 +32,22 @@ export type CatalogueProductDto = {
   slug: string;
   title: string;
   description: string;
+  /** Short marketing description; null when not set. */
+  shortDescription: string | null;
+  /** Model/SKU identifier from the supplier or CEO override; null when not set. */
+  model: string | null;
   brand: CatalogueBrandDto;
   category: CatalogueCategoryDto;
   tags: string[];
   featured: boolean;
   specifications: Record<string, string>;
   warranty: string | null;
+  /** SEO page title override; null falls back to title. */
+  seoTitle: string | null;
+  /** SEO meta description; null when not set. */
+  seoDescription: string | null;
+  /** Link to manufacturer/supplier datasheet PDF; null when not set. */
+  datasheetUrl: string | null;
   /** Primary supplier image URL (HTTPS allowlisted), or null when none. */
   image: string | null;
   /** Additional gallery URLs in deterministic sort order (excludes primary). */
@@ -49,6 +59,22 @@ export type CatalogueListFilters = {
   category?: string;
   brand?: string;
   featured?: boolean;
+  /** Skip the first N matching products (server-side, default 0). */
+  offset?: number;
+  /** Maximum products to return; when absent the repository collects all pages. */
+  limit?: number;
+};
+
+/**
+ * Paginated public catalogue result.
+ * `total` is the count of all matching products, accurate even when
+ * `items` is empty (offset beyond the last page).
+ */
+export type CataloguePage = {
+  items: CatalogueProductDto[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type CatalogueErrorBody = {

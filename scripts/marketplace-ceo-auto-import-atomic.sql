@@ -306,17 +306,54 @@ begin
         v_supplier, v_price, v_avail, v_urls, v_match, v_price_reason, v_offers,
         v_fetched, v_price, v_supplier, v_fetched, v_source_key, v_avail, v_avail <> 'sold_out'
       );
+
+      if exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'mp_products'
+          and column_name = 'last_supplier_sync_at'
+      ) then
+        execute 'update public.mp_products set last_supplier_sync_at = $1 where id = $2'
+          using v_fetched, v_product_id;
+      end if;
     else
       v_updated := v_updated + 1;
       v_product_id := v_existing.product_id;
       v_variant_id := v_existing.variant_id;
-      update public.mp_products
-      set title = v_title,
-          brand_id = v_brand_id,
-          category_id = v_category_id,
+      -- Field overrides (Catalogue Manager): skip protected columns when helper exists.
+      update public.mp_products p
+      set title = case
+            when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
+              and public.mp_has_active_field_override(p.id, 'title')
+            then p.title
+            else v_title
+          end,
+          brand_id = case
+            when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
+              and public.mp_has_active_field_override(p.id, 'brand_id')
+            then p.brand_id
+            else v_brand_id
+          end,
+          category_id = case
+            when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
+              and public.mp_has_active_field_override(p.id, 'category_id')
+            then p.category_id
+            else v_category_id
+          end,
           active = true,
           updated_at = timezone('utc', now())
-      where id = v_product_id;
+      where p.id = v_product_id;
+
+      -- Optional Catalogue Manager column (present after core migration).
+      if exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'mp_products'
+          and column_name = 'last_supplier_sync_at'
+      ) then
+        execute 'update public.mp_products set last_supplier_sync_at = $1 where id = $2'
+          using v_fetched, v_product_id;
+      end if;
 
       update public.mp_auto_import_listings
       set title = v_title,

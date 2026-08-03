@@ -346,6 +346,7 @@ import {
   createMarketplaceAutoImportAliasRouter,
   createMarketplaceAutoImportRouter,
 } from "./server/marketplace/autoImport/index.ts";
+import { createCatalogueManagerRouter } from "./server/marketplace/catalogueManager/index.ts";
 import { createCartRouter } from "./server/marketplace/cart/index.ts";
 import { createPaymentRouter } from "./server/marketplace/payments/index.ts";
 import { createCodRouter } from "./server/marketplace/cod/index.ts";
@@ -720,6 +721,11 @@ const marketplaceAutoImportService = createAutoImportService();
 app.use(
   "/api/marketplace/admin",
   createMarketplaceAutoImportRouter({ service: marketplaceAutoImportService }),
+);
+// Super-Admin Catalogue Manager (field overrides, media, reconciliation).
+app.use(
+  "/api/marketplace/admin/catalogue-manager",
+  createCatalogueManagerRouter(),
 );
 // Compatibility alias for misreported/legacy clients. Same Super-Admin auth;
 // not public (see publicRoutes carve-out). Canonical UI uses /admin/... path.

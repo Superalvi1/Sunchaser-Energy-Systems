@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
 import {
+  loadActiveOverrides,
   mapBrandDto,
   mapCategoryDto,
   mapProductDto,
@@ -12,6 +13,7 @@ import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
   CatalogueListFilters,
+  CataloguePage,
   CatalogueProductDto,
 } from "./catalogueTypes.ts";
 
@@ -26,7 +28,12 @@ export class CatalogueRepositoryError extends Error {
 export type CatalogueRepository = {
   listCategories(): Promise<CatalogueCategoryDto[]>;
   listBrands(): Promise<CatalogueBrandDto[]>;
-  listProducts(filters: CatalogueListFilters): Promise<CatalogueProductDto[]>;
+  /**
+   * Returns a paginated CataloguePage result.
+   * `total` is accurate even when `items` is empty (offset beyond end).
+   * When no `offset`/`limit` are supplied, iterates all RPC pages internally.
+   */
+  listProducts(filters: CatalogueListFilters): Promise<CataloguePage>;
   getProductBySlug(slug: string): Promise<CatalogueProductDto | null>;
 };
 
@@ -38,6 +45,12 @@ const PRODUCT_SELECT = `
   featured,
   specifications,
   warranty,
+  public_visible,
+  short_description,
+  model,
+  seo_title,
+  seo_description,
+  datasheet_url,
   brand:mp_brands!brand_id (
     slug,
     name,
@@ -58,7 +71,8 @@ const PRODUCT_SELECT = `
     website_price_state,
     website_price_source,
     stock_status,
-    active
+    active,
+    compare_at_price
   ),
   media:mp_media!product_id (
     source_url,
@@ -67,6 +81,11 @@ const PRODUCT_SELECT = `
     published,
     rights_status,
     source_type
+  ),
+  field_overrides:mp_field_overrides!product_id (
+    field_name,
+    override_value,
+    active
   )
 `;
 
@@ -94,11 +113,93 @@ function assertNoForbiddenKeys(payload: unknown): void {
   }
 }
 
+/**
+ * For every row with an active brand_id or category_id override, batch-fetch
+ * the referenced brand/category records and set resolvedOverrideBrand /
+ * resolvedOverrideCategory so mapProductDto can use the correct slug + name.
+ *
+ * This is the only DB call in the public catalogue that isn't covered by the
+ * product SELECT — one extra round-trip per page, not per product.
+ */
+async function resolveOverrideBrandsCategories(
+  rows: ProductRow[],
+  supabase: SupabaseClient,
+): Promise<ProductRow[]> {
+  const overrideBrandIds = new Set<string>();
+  const overrideCategoryIds = new Set<string>();
+
+  for (const row of rows) {
+    const ovRows = Array.isArray(row.field_overrides)
+      ? row.field_overrides
+      : row.field_overrides
+        ? [row.field_overrides]
+        : [];
+    const ov = loadActiveOverrides(ovRows);
+    const bid = ov.get("brand_id");
+    const cid = ov.get("category_id");
+    if (typeof bid === "string" && bid) overrideBrandIds.add(bid);
+    if (typeof cid === "string" && cid) overrideCategoryIds.add(cid);
+  }
+
+  const brandCache = new Map<string, BrandRow>();
+  const categoryCache = new Map<string, CategoryRow>();
+
+  if (overrideBrandIds.size > 0) {
+    const { data: brands, error: brandErr } = await supabase
+      .from("mp_brands")
+      .select("id, slug, name, active")
+      .in("id", [...overrideBrandIds]);
+    // Fail-closed: if the lookup errors, do NOT silently fall back to
+    // the supplier brand/category. Throw so the API returns an error.
+    if (brandErr) {
+      throw new CatalogueRepositoryError(
+        "CATALOGUE_OVERRIDE_TAXONOMY_ERROR",
+        "Unable to resolve overridden brand records.",
+      );
+    }
+    for (const b of (brands ?? []) as Array<BrandRow & { id: string }>) {
+      brandCache.set(b.id, b);
+    }
+  }
+  if (overrideCategoryIds.size > 0) {
+    const { data: cats, error: catErr } = await supabase
+      .from("mp_categories")
+      .select("id, slug, name, description, sort_order, active")
+      .in("id", [...overrideCategoryIds]);
+    if (catErr) {
+      throw new CatalogueRepositoryError(
+        "CATALOGUE_OVERRIDE_TAXONOMY_ERROR",
+        "Unable to resolve overridden category records.",
+      );
+    }
+    for (const c of (cats ?? []) as Array<CategoryRow & { id: string }>) {
+      categoryCache.set(c.id, c);
+    }
+  }
+
+  return rows.map((row) => {
+    const ovRows = Array.isArray(row.field_overrides)
+      ? row.field_overrides
+      : row.field_overrides
+        ? [row.field_overrides]
+        : [];
+    const ov = loadActiveOverrides(ovRows);
+    const bid = ov.get("brand_id") as string | undefined;
+    const cid = ov.get("category_id") as string | undefined;
+    return {
+      ...row,
+      resolvedOverrideBrand: (bid && brandCache.has(bid)) ? brandCache.get(bid)! : null,
+      resolvedOverrideCategory: (cid && categoryCache.has(cid)) ? categoryCache.get(cid)! : null,
+    };
+  });
+}
+
 export function createSupabaseCatalogueRepository(
   clientFactory: () => SupabaseClient | null = getSupabase,
+  activeCheck: () => boolean = isSupabaseActive,
 ): CatalogueRepository {
   function requireClient(): SupabaseClient {
-    if (!isSupabaseActive()) {
+    if (!activeCheck()) {
       throw new CatalogueRepositoryError(
         "CATALOGUE_UNAVAILABLE",
         "Catalogue database is unavailable.",
@@ -153,37 +254,71 @@ export function createSupabaseCatalogueRepository(
       return mapped;
     },
 
-    async listProducts(filters: CatalogueListFilters): Promise<CatalogueProductDto[]> {
+    async listProducts(filters: CatalogueListFilters): Promise<CataloguePage> {
       const supabase = requireClient();
-      let query = supabase
-        .from("mp_products")
-        .select(PRODUCT_SELECT)
-        .eq("active", true)
-        .order("title", { ascending: true });
+      const RPC_PAGE = 500;
+      const callerOffset = filters.offset ?? 0;
+      const callerLimit = filters.limit;
+      const orderedSlugs: string[] = [];
+      let total = 0;
+      let rpcOffset = callerOffset;
 
-      if (filters.featured !== undefined) {
-        query = query.eq("featured", filters.featured);
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        throw new CatalogueRepositoryError(
-          "CATALOGUE_QUERY_FAILED",
-          "Unable to load catalogue products.",
-        );
-      }
-
-      // Category/brand filters applied in-process (catalogue is small; avoids fragile nested filters).
-      const mapped = ((data || []) as ProductRow[])
-        .map(mapProductDto)
-        .filter((p): p is CatalogueProductDto => p !== null)
-        .filter((p) => {
-          if (filters.category && p.category.slug !== filters.category) return false;
-          if (filters.brand && p.brand.slug !== filters.brand) return false;
-          return true;
+      while (true) {
+        const remaining = callerLimit !== undefined ? callerLimit - orderedSlugs.length : RPC_PAGE;
+        const rpcLimit = Math.min(remaining, RPC_PAGE);
+        if (rpcLimit <= 0) break;
+        const { data: rpcData, error: rpcErr } = await supabase.rpc("mp_public_catalogue_list", {
+          p_limit: rpcLimit,
+          p_offset: rpcOffset,
+          p_featured: filters.featured ?? null,
+          p_brand_slug: filters.brand ?? null,
+          p_category_slug: filters.category ?? null,
         });
-      assertNoForbiddenKeys(mapped);
-      return mapped;
+        if (rpcErr) {
+          throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
+        }
+        const rows = (rpcData ?? []) as Array<{ slug: string | null; total: number }>;
+        if (rows.length > 0) total = Number(rows[0].total);
+        const pageSlugs = rows.filter((r) => r.slug !== null).map((r) => r.slug as string);
+        orderedSlugs.push(...pageSlugs);
+        if (pageSlugs.length < rpcLimit) break;
+        if (callerLimit !== undefined && orderedSlugs.length >= callerLimit) break;
+        rpcOffset += rpcLimit;
+      }
+
+      if (orderedSlugs.length === 0) {
+        return { items: [], total, limit: callerLimit ?? 0, offset: callerOffset };
+      }
+
+      // Hydrate full product rows in bounded batches to avoid PostgREST's
+      // implicit 1,000-row cap silently omitting products beyond that threshold.
+      const HYDRATE_BATCH = 500;
+      const allProdRows: ProductRow[] = [];
+      for (let i = 0; i < orderedSlugs.length; i += HYDRATE_BATCH) {
+        const batch = orderedSlugs.slice(i, i + HYDRATE_BATCH);
+        const { data: batchData, error: batchErr } = await supabase
+          .from("mp_products")
+          .select(PRODUCT_SELECT)
+          .eq("active", true)
+          .in("slug", batch);
+        if (batchErr) {
+          throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
+        }
+        allProdRows.push(...((batchData ?? []) as ProductRow[]));
+      }
+      const annotated = await resolveOverrideBrandsCategories(allProdRows, supabase);
+      // Reassemble in RPC's deterministic order; rows collected across batches
+      // are keyed by slug so the ordering is driven entirely by orderedSlugs.
+      const rowBySlug = new Map(annotated.map((r) => [r.slug, r]));
+      const items: CatalogueProductDto[] = [];
+      for (const slug of orderedSlugs) {
+        const row = rowBySlug.get(slug);
+        if (!row) continue;
+        const dto = mapProductDto(row);
+        if (dto) items.push(dto);
+      }
+      assertNoForbiddenKeys(items);
+      return { items, total, limit: callerLimit ?? orderedSlugs.length, offset: callerOffset };
     },
 
     async getProductBySlug(slug: string): Promise<CatalogueProductDto | null> {
@@ -201,7 +336,12 @@ export function createSupabaseCatalogueRepository(
         );
       }
       if (!data) return null;
-      const mapped = mapProductDto(data as ProductRow);
+      // Resolve override brand/category for this single product.
+      const [annotatedRow] = await resolveOverrideBrandsCategories(
+        [data as ProductRow],
+        supabase,
+      );
+      const mapped = mapProductDto(annotatedRow);
       if (mapped) assertNoForbiddenKeys(mapped);
       return mapped;
     },

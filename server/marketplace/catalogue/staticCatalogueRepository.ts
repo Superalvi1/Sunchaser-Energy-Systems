@@ -11,6 +11,7 @@ import type { CatalogueRepository } from "./catalogueRepository.ts";
 import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
+  CataloguePage,
   CatalogueListFilters,
   CatalogueProductDto,
 } from "./catalogueTypes.ts";
@@ -54,6 +55,11 @@ function buildStaticCatalogue(): {
       slug: p.slug,
       title: p.title,
       description: p.description,
+      shortDescription: null,
+      model: null,
+      seoTitle: null,
+      seoDescription: null,
+      datasheetUrl: null,
       brand: { slug: p.brandSlug, name: p.brandName },
       category,
       tags: [...p.tags],
@@ -65,11 +71,11 @@ function buildStaticCatalogue(): {
       defaultVariant: {
         sku: p.sku,
         title: "Default",
-        isDefault: true,
+        isDefault: true as const,
         websitePrice: p.websitePrice,
-        websitePriceState: "priced_auto",
-        websitePriceSource: "seed",
-        stockStatus: "unknown",
+        websitePriceState: "priced_auto" as const,
+        websitePriceSource: "seed" as const,
+        stockStatus: "unknown" as const,
       },
     };
   }).sort((a, b) => a.title.localeCompare(b.title));
@@ -88,27 +94,28 @@ export function createStaticCatalogueRepository(): CatalogueRepository {
     async listBrands() {
       return brands.map((b) => ({ ...b }));
     },
-    async listProducts(filters: CatalogueListFilters) {
-      return products
-        .filter((p) => {
-          if (filters.featured !== undefined && p.featured !== filters.featured) {
-            return false;
-          }
-          if (filters.category && p.category.slug !== filters.category) {
-            return false;
-          }
-          if (filters.brand && p.brand.slug !== filters.brand) return false;
-          return true;
-        })
-        .map((p) => ({
-          ...p,
-          brand: { ...p.brand },
-          category: { ...p.category },
-          tags: [...p.tags],
-          specifications: { ...p.specifications },
-          images: [...p.images],
-          defaultVariant: { ...p.defaultVariant },
-        }));
+    async listProducts(filters: CatalogueListFilters): Promise<CataloguePage> {
+      const offset = filters.offset ?? 0;
+      const allMatched = products.filter((p) => {
+        if (filters.featured !== undefined && p.featured !== filters.featured) return false;
+        if (filters.category && p.category.slug !== filters.category) return false;
+        if (filters.brand && p.brand.slug !== filters.brand) return false;
+        return true;
+      });
+      const total = allMatched.length;
+      const sliced = filters.limit !== undefined
+        ? allMatched.slice(offset, offset + filters.limit)
+        : allMatched.slice(offset);
+      const items = sliced.map((p) => ({
+        ...p,
+        brand: { ...p.brand },
+        category: { ...p.category },
+        tags: [...p.tags],
+        specifications: { ...p.specifications },
+        images: [...p.images],
+        defaultVariant: { ...p.defaultVariant },
+      })) as CatalogueProductDto[];
+      return { items, total, limit: filters.limit ?? total, offset };
     },
     async getProductBySlug(slug: string) {
       const product = products.find((p) => p.slug === slug);
