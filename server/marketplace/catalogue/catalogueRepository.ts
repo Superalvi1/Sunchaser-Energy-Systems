@@ -196,9 +196,10 @@ async function resolveOverrideBrandsCategories(
 
 export function createSupabaseCatalogueRepository(
   clientFactory: () => SupabaseClient | null = getSupabase,
+  activeCheck: () => boolean = isSupabaseActive,
 ): CatalogueRepository {
   function requireClient(): SupabaseClient {
-    if (!isSupabaseActive()) {
+    if (!activeCheck()) {
       throw new CatalogueRepositoryError(
         "CATALOGUE_UNAVAILABLE",
         "Catalogue database is unavailable.",
@@ -289,14 +290,25 @@ export function createSupabaseCatalogueRepository(
         return { items: [], total, limit: callerLimit ?? 0, offset: callerOffset };
       }
 
-      const { data: prodData, error: prodErr } = await supabase
-        .from("mp_products").select(PRODUCT_SELECT).eq("active", true).in("slug", orderedSlugs);
-      if (prodErr) {
-        throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
+      // Hydrate full product rows in bounded batches to avoid PostgREST's
+      // implicit 1,000-row cap silently omitting products beyond that threshold.
+      const HYDRATE_BATCH = 500;
+      const allProdRows: ProductRow[] = [];
+      for (let i = 0; i < orderedSlugs.length; i += HYDRATE_BATCH) {
+        const batch = orderedSlugs.slice(i, i + HYDRATE_BATCH);
+        const { data: batchData, error: batchErr } = await supabase
+          .from("mp_products")
+          .select(PRODUCT_SELECT)
+          .eq("active", true)
+          .in("slug", batch);
+        if (batchErr) {
+          throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
+        }
+        allProdRows.push(...((batchData ?? []) as ProductRow[]));
       }
-      const annotated = await resolveOverrideBrandsCategories(
-        (prodData ?? []) as ProductRow[], supabase,
-      );
+      const annotated = await resolveOverrideBrandsCategories(allProdRows, supabase);
+      // Reassemble in RPC's deterministic order; rows collected across batches
+      // are keyed by slug so the ordering is driven entirely by orderedSlugs.
       const rowBySlug = new Map(annotated.map((r) => [r.slug, r]));
       const items: CatalogueProductDto[] = [];
       for (const slug of orderedSlugs) {

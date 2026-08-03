@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { createSupabaseCatalogueRepository } from "../catalogue/catalogueRepository.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "../../..");
@@ -736,6 +737,162 @@ async function main(): Promise<void> {
     check(
       "gallery_images override stored with duplicates (dedup happens in mapper)",
       giOverride.rows[0]?.override_value !== undefined,
+    );
+
+    // ── Blocker: Hydration beyond 1,000 rows — production-path TS repo test ─
+    // Prove that createSupabaseCatalogueRepository().listProducts({}) hydrates
+    // ALL 1,100+ eligible products via bounded batches; no silent truncation.
+
+    /** Minimal pg-backed Supabase query adapter for the catalogue repository.
+     *
+     * The repository uses exactly four query shapes:
+     *   supabase.rpc("mp_public_catalogue_list", params)
+     *   supabase.from("mp_products").select(COLS).eq("active",true).in("slug", batch)
+     *   supabase.from("mp_brands").select(COLS).in("id", ids)
+     *   supabase.from("mp_categories").select(COLS).in("id", ids)
+     *
+     * This adapter translates each to direct pg SQL, returning {data, error}.
+     */
+    type PgRow = Record<string, unknown>;
+    type SupabaseResult = { data: PgRow[] | null; error: unknown };
+
+    const PRODUCTS_HYDRATE_SQL = `
+      SELECT
+        p.slug, p.title, p.description,
+        COALESCE(p.tags, '{}') AS tags,
+        COALESCE(p.featured, false) AS featured,
+        p.specifications, p.warranty, p.public_visible,
+        p.short_description, p.model, p.seo_title, p.seo_description, p.datasheet_url,
+        CASE WHEN b.id IS NOT NULL THEN
+          jsonb_build_object('slug', b.slug, 'name', b.name, 'active', b.active)
+        END AS brand,
+        CASE WHEN c.id IS NOT NULL THEN
+          jsonb_build_object('slug', c.slug, 'name', c.name, 'description', c.description,
+            'sort_order', c.sort_order, 'active', c.active)
+        END AS category,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'sku', v.sku, 'title', v.title, 'is_default', v.is_default,
+            'website_price', v.website_price,
+            'website_price_state', v.website_price_state,
+            'website_price_source', v.website_price_source,
+            'stock_status', v.stock_status, 'active', v.active,
+            'compare_at_price', v.compare_at_price
+          ))
+          FROM mp_product_variants v WHERE v.product_id = p.id AND v.active = true
+        ), '[]'::jsonb) AS variants,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'source_url', m.source_url, 'sort_order', m.sort_order, 'role', m.role,
+            'published', m.published, 'rights_status', m.rights_status, 'source_type', m.source_type
+          ) ORDER BY m.sort_order)
+          FROM mp_media m WHERE m.product_id = p.id
+        ), '[]'::jsonb) AS media,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'field_name', fo.field_name, 'override_value', fo.override_value, 'active', fo.active
+          ))
+          FROM mp_field_overrides fo WHERE fo.product_id = p.id
+        ), '[]'::jsonb) AS field_overrides
+      FROM mp_products p
+      LEFT JOIN mp_brands b ON b.id = p.brand_id
+      LEFT JOIN mp_categories c ON c.id = p.category_id
+      WHERE p.active = true AND p.slug = ANY($1::text[])
+    `;
+
+    async function pgTableQuery(
+      pgClient: pg.Client,
+      table: string,
+      inVals: unknown[],
+    ): Promise<SupabaseResult> {
+      try {
+        if (table === "mp_products") {
+          const { rows } = await pgClient.query(PRODUCTS_HYDRATE_SQL, [inVals]);
+          return { data: rows, error: null };
+        }
+        if (table === "mp_brands") {
+          const { rows } = await pgClient.query(
+            `SELECT id, slug, name, active FROM mp_brands WHERE id = ANY($1::text[])`,
+            [inVals],
+          );
+          return { data: rows, error: null };
+        }
+        if (table === "mp_categories") {
+          const { rows } = await pgClient.query(
+            `SELECT id, slug, name, description, sort_order, active FROM mp_categories WHERE id = ANY($1::text[])`,
+            [inVals],
+          );
+          return { data: rows, error: null };
+        }
+        return { data: [], error: null };
+      } catch (err) {
+        return { data: null, error: err };
+      }
+    }
+
+    function createPgCatalogueAdapter(pgClient: pg.Client) {
+      return {
+        rpc(name: string, params: Record<string, unknown>): Promise<SupabaseResult> {
+          return pgClient.query(
+            `SELECT * FROM public.mp_public_catalogue_list($1::int, $2::int, $3::boolean, $4::text, $5::text)`,
+            [
+              params.p_limit ?? null,
+              params.p_offset ?? null,
+              params.p_featured ?? null,
+              params.p_brand_slug ?? null,
+              params.p_category_slug ?? null,
+            ],
+          ).then(
+            (r) => ({ data: r.rows as PgRow[], error: null }),
+            (err: unknown) => ({ data: null, error: err }),
+          );
+        },
+        from(table: string) {
+          const builder = {
+            // PostgREST select string — ignored by the pg adapter; handled in pgTableQuery.
+            select(_cols: string) { return builder; },
+            // eq() is used for the `active=true` filter, which is hardcoded in the SQL above.
+            eq(_col: string, _val: unknown) { return builder; },
+            in(_col: string, vals: unknown[]): Promise<SupabaseResult> {
+              return pgTableQuery(pgClient, table, vals);
+            },
+          };
+          return builder;
+        },
+      };
+    }
+
+    const pgAdapter = createPgCatalogueAdapter(client);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tsRepo = createSupabaseCatalogueRepository(() => pgAdapter as any, () => true);
+
+    // ① listProducts({}) — no caller limit: repository must collect ALL pages.
+    const allPage = await tsRepo.listProducts({});
+    check("TS repo: total >= 1100 products", allPage.total >= 1100);
+    check("TS repo: items.length >= 1100", allPage.items.length >= 1100);
+    check(
+      "TS repo: items.length equals reported total",
+      allPage.items.length === allPage.total,
+    );
+    const allSlugs = allPage.items.map((p) => p.slug);
+    const uniqueSlugs = new Set(allSlugs);
+    check("TS repo: no duplicate slugs", uniqueSlugs.size === allSlugs.length);
+    // Confirm the last bulk product (highest sort index) is present.
+    check(
+      "TS repo: final bulk product is present in results",
+      uniqueSlugs.has("pbulk_01099"),
+    );
+
+    // ② listProducts({ limit: 1100, offset: 0 }) — caller limit > 1000.
+    // Exercises hydration across THREE 500-slug batches.
+    const limitedPage = await tsRepo.listProducts({ limit: 1100, offset: 0 });
+    check("TS repo: limit=1100 returns >= 1100 items", limitedPage.items.length >= 1100);
+    check("TS repo: total >= 1100 with explicit limit", limitedPage.total >= 1100);
+    const limitedSlugs = limitedPage.items.map((p) => p.slug);
+    const uniqueLimited = new Set(limitedSlugs);
+    check(
+      "TS repo: no duplicate slugs when limit > 1000",
+      uniqueLimited.size === limitedSlugs.length,
     );
 
     console.log("\nCatalogue Manager PG migration tests passed.");

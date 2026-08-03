@@ -578,7 +578,7 @@ export function createSupabaseCatalogueManagerRepository(
         clearedAt: null,
       };
     }
-    return toFieldOverrideRecord(ov as DbOverrideRow);
+    return toFieldOverrideRecord(ov as unknown as DbOverrideRow);
   }
 
   // ── Repository ───────────────────────────────────────────────────────────
@@ -624,7 +624,7 @@ export function createSupabaseCatalogueManagerRepository(
         .in("id", ids);
       if (prodErr) throw dbErr("listProducts.fetch", prodErr);
 
-      const prodRows = (prodData ?? []) as DbProductSummaryRow[];
+      const prodRows = (prodData ?? []) as unknown as DbProductSummaryRow[];
       const rowById = new Map(prodRows.map((r) => [r.id, r]));
 
       // Batch-resolve override brand/category records.
@@ -656,7 +656,7 @@ export function createSupabaseCatalogueManagerRepository(
         .maybeSingle();
       if (error) throw dbErr("getProduct", error);
       if (!data) return null;
-      const row = data as DbProductDetailRow;
+      const row = data as unknown as DbProductDetailRow;
       // Resolve override brand/category for this single product.
       const { brandCache, categoryCache } = await resolveOverrideTaxonomy([row], supabase);
       const ovMap = activeOverridesByField((row.overrides ?? []).map(toFieldOverrideRecord));
