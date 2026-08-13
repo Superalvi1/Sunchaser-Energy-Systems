@@ -1,17 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
-import {
-  loadActiveOverrides,
-  mapBrandDto,
-  mapCategoryDto,
-  mapProductDto,
-  type BrandRow,
-  type CategoryRow,
-  type ProductRow,
-} from "./catalogueMapper.ts";
 import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
+  CatalogueDefaultVariantDto,
   CatalogueListFilters,
   CataloguePage,
   CatalogueProductDto,
@@ -37,161 +29,151 @@ export type CatalogueRepository = {
   getProductBySlug(slug: string): Promise<CatalogueProductDto | null>;
 };
 
-const PRODUCT_SELECT = `
-  slug,
-  title,
-  description,
-  tags,
-  featured,
-  specifications,
-  warranty,
-  public_visible,
-  short_description,
-  model,
-  seo_title,
-  seo_description,
-  datasheet_url,
-  brand:mp_brands!brand_id (
-    slug,
-    name,
-    active
-  ),
-  category:mp_categories!category_id (
-    slug,
-    name,
-    description,
-    sort_order,
-    active
-  ),
-  variants:mp_product_variants!product_id (
-    sku,
-    title,
-    is_default,
-    website_price,
-    website_price_state,
-    website_price_source,
-    stock_status,
-    active,
-    compare_at_price
-  ),
-  media:mp_media!product_id (
-    source_url,
-    sort_order,
-    role,
-    published,
-    rights_status,
-    source_type
-  ),
-  field_overrides:mp_field_overrides!product_id (
-    field_name,
-    override_value,
-    active
-  )
-`;
+const FORBIDDEN_KEYS = [
+  "actual_purchase_cost",
+  "actualPurchaseCost",
+  "delivery_charge",
+  "deliveryCharge",
+  "delivery_fee",
+  "deliveryFee",
+  "margin",
+  "supplier_public_price",
+  "supplierPublicPrice",
+  "service_role",
+];
 
-function assertNoForbiddenKeys(payload: unknown): void {
-  const forbidden = [
-    "actual_purchase_cost",
-    "actualPurchaseCost",
-    "delivery_charge",
-    "deliveryCharge",
-    "delivery_fee",
-    "deliveryFee",
-    "margin",
-    "supplier_public_price",
-    "supplierPublicPrice",
-    "service_role",
-  ];
+function hasForbiddenKeys(payload: unknown): boolean {
   const text = JSON.stringify(payload);
-  for (const key of forbidden) {
-    if (text.includes(`"${key}"`)) {
-      throw new CatalogueRepositoryError(
-        "CATALOGUE_DTO_LEAK",
-        "Catalogue payload failed safety validation.",
-      );
-    }
+  return FORBIDDEN_KEYS.some((key) => text.includes(`"${key}"`));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isOptionalString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+function isNumberOrNull(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isSpecMap(value: unknown): value is Record<string, string> {
+  if (!isPlainObject(value)) return false;
+  return Object.entries(value).every(([_, v]) => typeof v === "string");
+}
+
+function isCatalogueBrandDto(value: unknown): value is CatalogueBrandDto {
+  if (!isPlainObject(value)) return false;
+  return isNonEmptyString(value.slug) && isNonEmptyString(value.name);
+}
+
+function isCatalogueCategoryDto(value: unknown): value is CatalogueCategoryDto {
+  if (!isPlainObject(value)) return false;
+  return (
+    isNonEmptyString(value.slug) &&
+    isNonEmptyString(value.name) &&
+    isOptionalString(value.description) &&
+    typeof value.sortOrder === "number"
+  );
+}
+
+function isCatalogueDefaultVariantDto(
+  value: unknown,
+): value is CatalogueDefaultVariantDto {
+  if (!isPlainObject(value)) return false;
+  const validStates = ["priced_auto", "priced_override", "confirm_price"] as const;
+  const validSources = [
+    "kamal",
+    "alladin",
+    "seed",
+    "override",
+    "last_approved",
+  ] as const;
+  const validStock = ["in_stock", "sold_out", "backorder", "unknown"] as const;
+  return (
+    isNonEmptyString(value.sku) &&
+    isNonEmptyString(value.title) &&
+    value.isDefault === true &&
+    isNumberOrNull(value.websitePrice) &&
+    validStates.includes(value.websitePriceState as typeof validStates[number]) &&
+    (value.websitePriceSource === null ||
+      validSources.includes(value.websitePriceSource as typeof validSources[number])) &&
+    validStock.includes(value.stockStatus as typeof validStock[number])
+  );
+}
+
+function isCatalogueProductDto(value: unknown): value is CatalogueProductDto {
+  if (!isPlainObject(value)) return false;
+  return (
+    isNonEmptyString(value.slug) &&
+    isNonEmptyString(value.title) &&
+    typeof value.description === "string" &&
+    isOptionalString(value.shortDescription) &&
+    isOptionalString(value.model) &&
+    isCatalogueBrandDto(value.brand) &&
+    isCatalogueCategoryDto(value.category) &&
+    isStringArray(value.tags) &&
+    isBoolean(value.featured) &&
+    isSpecMap(value.specifications) &&
+    isOptionalString(value.warranty) &&
+    isOptionalString(value.seoTitle) &&
+    isOptionalString(value.seoDescription) &&
+    isOptionalString(value.datasheetUrl) &&
+    isOptionalString(value.image) &&
+    isStringArray(value.images) &&
+    isCatalogueDefaultVariantDto(value.defaultVariant)
+  );
+}
+
+function assertSafePayload(payload: unknown): void {
+  if (hasForbiddenKeys(payload)) {
+    throw new CatalogueRepositoryError(
+      "CATALOGUE_DTO_LEAK",
+      "Catalogue payload failed safety validation.",
+    );
   }
 }
 
-/**
- * For every row with an active brand_id or category_id override, batch-fetch
- * the referenced brand/category records and set resolvedOverrideBrand /
- * resolvedOverrideCategory so mapProductDto can use the correct slug + name.
- *
- * This is the only DB call in the public catalogue that isn't covered by the
- * product SELECT — one extra round-trip per page, not per product.
- */
-async function resolveOverrideBrandsCategories(
-  rows: ProductRow[],
-  supabase: SupabaseClient,
-): Promise<ProductRow[]> {
-  const overrideBrandIds = new Set<string>();
-  const overrideCategoryIds = new Set<string>();
+function mapRpcProductDto(raw: unknown): CatalogueProductDto | null {
+  if (!isPlainObject(raw)) return null;
 
-  for (const row of rows) {
-    const ovRows = Array.isArray(row.field_overrides)
-      ? row.field_overrides
-      : row.field_overrides
-        ? [row.field_overrides]
-        : [];
-    const ov = loadActiveOverrides(ovRows);
-    const bid = ov.get("brand_id");
-    const cid = ov.get("category_id");
-    if (typeof bid === "string" && bid) overrideBrandIds.add(bid);
-    if (typeof cid === "string" && cid) overrideCategoryIds.add(cid);
-  }
+  const product: CatalogueProductDto = {
+    slug: raw.slug as string,
+    title: raw.title as string,
+    description: raw.description as string,
+    shortDescription: raw.shortDescription as string | null,
+    model: raw.model as string | null,
+    brand: raw.brand as CatalogueBrandDto,
+    category: raw.category as CatalogueCategoryDto,
+    tags: raw.tags as string[],
+    featured: raw.featured as boolean,
+    specifications: raw.specifications as Record<string, string>,
+    warranty: raw.warranty as string | null,
+    seoTitle: raw.seoTitle as string | null,
+    seoDescription: raw.seoDescription as string | null,
+    datasheetUrl: raw.datasheetUrl as string | null,
+    image: raw.image as string | null,
+    images: raw.images as string[],
+    defaultVariant: raw.defaultVariant as CatalogueDefaultVariantDto,
+  };
 
-  const brandCache = new Map<string, BrandRow>();
-  const categoryCache = new Map<string, CategoryRow>();
-
-  if (overrideBrandIds.size > 0) {
-    const { data: brands, error: brandErr } = await supabase
-      .from("mp_brands")
-      .select("id, slug, name, active")
-      .in("id", [...overrideBrandIds]);
-    // Fail-closed: if the lookup errors, do NOT silently fall back to
-    // the supplier brand/category. Throw so the API returns an error.
-    if (brandErr) {
-      throw new CatalogueRepositoryError(
-        "CATALOGUE_OVERRIDE_TAXONOMY_ERROR",
-        "Unable to resolve overridden brand records.",
-      );
-    }
-    for (const b of (brands ?? []) as Array<BrandRow & { id: string }>) {
-      brandCache.set(b.id, b);
-    }
-  }
-  if (overrideCategoryIds.size > 0) {
-    const { data: cats, error: catErr } = await supabase
-      .from("mp_categories")
-      .select("id, slug, name, description, sort_order, active")
-      .in("id", [...overrideCategoryIds]);
-    if (catErr) {
-      throw new CatalogueRepositoryError(
-        "CATALOGUE_OVERRIDE_TAXONOMY_ERROR",
-        "Unable to resolve overridden category records.",
-      );
-    }
-    for (const c of (cats ?? []) as Array<CategoryRow & { id: string }>) {
-      categoryCache.set(c.id, c);
-    }
-  }
-
-  return rows.map((row) => {
-    const ovRows = Array.isArray(row.field_overrides)
-      ? row.field_overrides
-      : row.field_overrides
-        ? [row.field_overrides]
-        : [];
-    const ov = loadActiveOverrides(ovRows);
-    const bid = ov.get("brand_id") as string | undefined;
-    const cid = ov.get("category_id") as string | undefined;
-    return {
-      ...row,
-      resolvedOverrideBrand: (bid && brandCache.has(bid)) ? brandCache.get(bid)! : null,
-      resolvedOverrideCategory: (cid && categoryCache.has(cid)) ? categoryCache.get(cid)! : null,
-    };
-  });
+  if (!isCatalogueProductDto(product)) return null;
+  assertSafePayload(product);
+  return product;
 }
 
 export function createSupabaseCatalogueRepository(
@@ -229,9 +211,20 @@ export function createSupabaseCatalogueRepository(
           "Unable to load catalogue categories.",
         );
       }
-      const rows = (data || []) as CategoryRow[];
-      const mapped = rows.map(mapCategoryDto);
-      assertNoForbiddenKeys(mapped);
+      const rows = (data || []) as Array<{
+        slug: string;
+        name: string;
+        description: string | null;
+        sort_order: number;
+        active: boolean;
+      }>;
+      const mapped = rows.map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        description: r.description ?? null,
+        sortOrder: Number(r.sort_order) || 0,
+      }));
+      assertSafePayload(mapped);
       return mapped;
     },
 
@@ -248,9 +241,9 @@ export function createSupabaseCatalogueRepository(
           "Unable to load catalogue brands.",
         );
       }
-      const rows = (data || []) as BrandRow[];
-      const mapped = rows.map(mapBrandDto);
-      assertNoForbiddenKeys(mapped);
+      const rows = (data || []) as Array<{ slug: string; name: string; active: boolean }>;
+      const mapped = rows.map((r) => ({ slug: r.slug, name: r.name }));
+      assertSafePayload(mapped);
       return mapped;
     },
 
@@ -259,91 +252,81 @@ export function createSupabaseCatalogueRepository(
       const RPC_PAGE = 500;
       const callerOffset = filters.offset ?? 0;
       const callerLimit = filters.limit;
-      const orderedSlugs: string[] = [];
+      const products: CatalogueProductDto[] = [];
       let total = 0;
       let rpcOffset = callerOffset;
 
       while (true) {
-        const remaining = callerLimit !== undefined ? callerLimit - orderedSlugs.length : RPC_PAGE;
+        const remaining =
+          callerLimit !== undefined ? callerLimit - products.length : RPC_PAGE;
         const rpcLimit = Math.min(remaining, RPC_PAGE);
         if (rpcLimit <= 0) break;
-        const { data: rpcData, error: rpcErr } = await supabase.rpc("mp_public_catalogue_list", {
-          p_limit: rpcLimit,
-          p_offset: rpcOffset,
-          p_featured: filters.featured ?? null,
-          p_brand_slug: filters.brand ?? null,
-          p_category_slug: filters.category ?? null,
-        });
+
+        const { data: rpcData, error: rpcErr } = await supabase.rpc(
+          "mp_public_catalogue_list",
+          {
+            p_category_slug: filters.category ?? null,
+            p_brand_slug: filters.brand ?? null,
+            p_featured_only: filters.featured ?? null,
+            p_limit: rpcLimit,
+            p_offset: rpcOffset,
+          },
+        );
+
         if (rpcErr) {
-          throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
+          throw new CatalogueRepositoryError(
+            "CATALOGUE_QUERY_FAILED",
+            "Unable to load catalogue products.",
+          );
         }
-        const rows = (rpcData ?? []) as Array<{ slug: string | null; total: number }>;
-        if (rows.length > 0) total = Number(rows[0].total);
-        const pageSlugs = rows.filter((r) => r.slug !== null).map((r) => r.slug as string);
-        orderedSlugs.push(...pageSlugs);
-        if (pageSlugs.length < rpcLimit) break;
-        if (callerLimit !== undefined && orderedSlugs.length >= callerLimit) break;
+
+        const rows = (rpcData ?? []) as Array<{
+          product: unknown;
+          total: number;
+        }>;
+
+        if (rows.length > 0) {
+          total = Number(rows[0].total);
+        }
+
+        for (const row of rows) {
+          if (row.product === null) continue;
+          const dto = mapRpcProductDto(row.product);
+          if (dto) products.push(dto);
+        }
+
+        const pageCount = rows.filter((r) => r.product !== null).length;
+        if (pageCount < rpcLimit) break;
+        if (callerLimit !== undefined && products.length >= callerLimit) break;
         rpcOffset += rpcLimit;
       }
 
-      if (orderedSlugs.length === 0) {
-        return { items: [], total, limit: callerLimit ?? 0, offset: callerOffset };
-      }
-
-      // Hydrate full product rows in bounded batches to avoid PostgREST's
-      // implicit 1,000-row cap silently omitting products beyond that threshold.
-      const HYDRATE_BATCH = 500;
-      const allProdRows: ProductRow[] = [];
-      for (let i = 0; i < orderedSlugs.length; i += HYDRATE_BATCH) {
-        const batch = orderedSlugs.slice(i, i + HYDRATE_BATCH);
-        const { data: batchData, error: batchErr } = await supabase
-          .from("mp_products")
-          .select(PRODUCT_SELECT)
-          .eq("active", true)
-          .in("slug", batch);
-        if (batchErr) {
-          throw new CatalogueRepositoryError("CATALOGUE_QUERY_FAILED", "Unable to load catalogue products.");
-        }
-        allProdRows.push(...((batchData ?? []) as ProductRow[]));
-      }
-      const annotated = await resolveOverrideBrandsCategories(allProdRows, supabase);
-      // Reassemble in RPC's deterministic order; rows collected across batches
-      // are keyed by slug so the ordering is driven entirely by orderedSlugs.
-      const rowBySlug = new Map(annotated.map((r) => [r.slug, r]));
-      const items: CatalogueProductDto[] = [];
-      for (const slug of orderedSlugs) {
-        const row = rowBySlug.get(slug);
-        if (!row) continue;
-        const dto = mapProductDto(row);
-        if (dto) items.push(dto);
-      }
-      assertNoForbiddenKeys(items);
-      return { items, total, limit: callerLimit ?? orderedSlugs.length, offset: callerOffset };
+      return {
+        items: products,
+        total,
+        limit: callerLimit ?? products.length,
+        offset: callerOffset,
+      };
     },
 
     async getProductBySlug(slug: string): Promise<CatalogueProductDto | null> {
       const supabase = requireClient();
-      const { data, error } = await supabase
-        .from("mp_products")
-        .select(PRODUCT_SELECT)
-        .eq("active", true)
-        .eq("slug", slug)
-        .maybeSingle();
+      const { data, error } = await supabase.rpc("mp_public_catalogue_get_by_slug", {
+        p_slug: slug,
+      });
+
       if (error) {
         throw new CatalogueRepositoryError(
           "CATALOGUE_QUERY_FAILED",
           "Unable to load catalogue product.",
         );
       }
-      if (!data) return null;
-      // Resolve override brand/category for this single product.
-      const [annotatedRow] = await resolveOverrideBrandsCategories(
-        [data as ProductRow],
-        supabase,
-      );
-      const mapped = mapProductDto(annotatedRow);
-      if (mapped) assertNoForbiddenKeys(mapped);
-      return mapped;
+
+      const rows = (data ?? []) as Array<{ product: unknown }>;
+      const row = rows[0];
+      if (!row || row.product === null || row.product === undefined) return null;
+
+      return mapRpcProductDto(row.product);
     },
   };
 }

@@ -96,7 +96,12 @@ function buildDatabaseRepo(): CatalogueRepository {
           filters.featured === DB_ONLY_PRODUCT.featured)
           ? [DB_ONLY_PRODUCT]
           : [];
-      return [...seed, ...extra];
+      return {
+        items: [...seed.items, ...extra],
+        total: seed.total + extra.length,
+        limit: seed.limit,
+        offset: seed.offset,
+      };
     },
     async getProductBySlug(slug) {
       if (slug === DB_ONLY_SLUG) return DB_ONLY_PRODUCT;
@@ -198,18 +203,18 @@ async function main(): Promise<void> {
         check("A products HTTP 200", list.status === 200);
         check(
           "A returns WS1 seed count",
-          Array.isArray(listBody.data) &&
-            listBody.data.length === WS1_SEED_PRODUCTS.length,
+          Array.isArray(listBody.data?.items) &&
+            listBody.data.items.length === WS1_SEED_PRODUCTS.length,
         );
         check(
           "A no auto-import tags",
-          listBody.data.every(
+          listBody.data.items.every(
             (p: CatalogueProductDto) => !(p.tags || []).includes("auto-import"),
           ),
         );
         check(
           "A no DB-only product in list",
-          !listBody.data.some((p: CatalogueProductDto) => p.slug === DB_ONLY_SLUG),
+          !listBody.data.items.some((p: CatalogueProductDto) => p.slug === DB_ONLY_SLUG),
         );
         check("A database repository not called", dbCalls.calls === 0);
         check("A static repository was called", staticCalls.calls > 0);
@@ -274,7 +279,7 @@ async function main(): Promise<void> {
         check("B products HTTP 200", list.status === 200);
         check(
           "B includes DB-only product",
-          listBody.data.some((p: CatalogueProductDto) => p.slug === DB_ONLY_SLUG),
+          listBody.data.items.some((p: CatalogueProductDto) => p.slug === DB_ONLY_SLUG),
         );
         check("B database repository called", dbCalls.calls > 0);
 
@@ -317,7 +322,7 @@ async function main(): Promise<void> {
         const listBody = await list.json();
         check(
           `C ${label} seed count`,
-          listBody.data.length === WS1_SEED_PRODUCTS.length,
+          listBody.data.items.length === WS1_SEED_PRODUCTS.length,
         );
         check(`C ${label} DB repo not called`, dbCalls.calls === 0);
         const missing = await fetch(
