@@ -140,7 +140,7 @@ async function main(): Promise<void> {
       brand: "knox",
       featured: true,
       limit: 10,
-      offset: 5,
+      offset: 0,
     });
 
     check("listProducts calls mp_public_catalogue_list_v2", capturedName === "mp_public_catalogue_list_v2");
@@ -148,12 +148,12 @@ async function main(): Promise<void> {
     check("listProducts passes brand slug", capturedArgs?.p_brand_slug === "knox");
     check("listProducts passes featured flag", capturedArgs?.p_featured_only === true);
     check("listProducts passes bounded limit", capturedArgs?.p_limit === 10);
-    check("listProducts passes offset", capturedArgs?.p_offset === 5);
+    check("listProducts passes offset", capturedArgs?.p_offset === 0);
     check("listProducts maps DTO", page.items.length === 1);
     check("listProducts preserves slug", page.items[0]?.slug === VALID_PRODUCT.slug);
     check("listProducts preserves total", page.total === 1);
     check("listProducts preserves limit", page.limit === 10);
-    check("listProducts preserves offset", page.offset === 5);
+    check("listProducts preserves offset", page.offset === 0);
     check("listProducts defaultVariant isDefault true", page.items[0]?.defaultVariant.isDefault === true);
     check("listProducts no media returns null/empty", page.items[0]?.image === null && page.items[0]?.images.length === 0);
   }
@@ -448,10 +448,10 @@ async function main(): Promise<void> {
           if (!V2_RPCS.has(name)) {
             throw new Error(`Unexpected RPC call: ${name}`);
           }
-          if (name === "mp_public_catalogue_categories_v2") {
-            return { data: [], error: null };
+          if (name === "mp_public_catalogue_list_v2") {
+            return { data: [{ product: null, total: 0 }], error: null };
           }
-          if (name === "mp_public_catalogue_brands_v2") {
+          if (name === "mp_public_catalogue_get_by_slug_v2") {
             return { data: [], error: null };
           }
           return { data: [], error: null };
@@ -591,6 +591,106 @@ async function main(): Promise<void> {
       stockStatus: "in_stock",
     });
     check("price matrix: negative price is hidden", negativePrice?.websitePrice === null);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Strict DTO whitelist: sensitive nested keys fail-closed; unknown keys stripped
+  // ---------------------------------------------------------------------------
+  {
+    const hasKey = (obj: unknown, key: string): boolean =>
+      typeof obj === "object" && obj !== null && Object.prototype.hasOwnProperty.call(obj, key);
+
+    const sensitiveCases = [
+      {
+        name: "defaultVariant.supplier_cost",
+        product: {
+          ...VALID_PRODUCT,
+          defaultVariant: { ...VALID_PRODUCT.defaultVariant, supplier_cost: 95000 },
+        },
+      },
+      {
+        name: "defaultVariant.purchase_price",
+        product: {
+          ...VALID_PRODUCT,
+          defaultVariant: { ...VALID_PRODUCT.defaultVariant, purchase_price: 90000 },
+        },
+      },
+      {
+        name: "defaultVariant.profit",
+        product: {
+          ...VALID_PRODUCT,
+          defaultVariant: { ...VALID_PRODUCT.defaultVariant, profit: 21000 },
+        },
+      },
+      {
+        name: "top-level internal_notes",
+        product: { ...VALID_PRODUCT, internal_notes: "do not expose" },
+      },
+      {
+        name: "category.internal_code",
+        product: {
+          ...VALID_PRODUCT,
+          category: { ...VALID_PRODUCT.category, internal_code: "cat-007" },
+        },
+      },
+      {
+        name: "brand.supplier_account",
+        product: {
+          ...VALID_PRODUCT,
+          brand: { ...VALID_PRODUCT.brand, supplier_account: "secret-123" },
+        },
+      },
+    ];
+    for (const { name, product } of sensitiveCases) {
+      await expectErrorCode(
+        `sensitive key ${name} fails-closed with CATALOGUE_DTO_LEAK`,
+        "CATALOGUE_DTO_LEAK",
+        () => repoWithRows([{ product, total: 1 }]).listProducts({}),
+      );
+    }
+
+    const nonSensitive = {
+      ...VALID_PRODUCT,
+      brand: { ...VALID_PRODUCT.brand, logoUrl: "https://cdn.shopify.com/logo.jpg" },
+      category: { ...VALID_PRODUCT.category, extraDescription: "extra" },
+      defaultVariant: { ...VALID_PRODUCT.defaultVariant, extraField: "x" },
+    };
+    const page = await repoWithRows([{ product: nonSensitive, total: 1 }]).listProducts({});
+    const p = page.items[0];
+    check("whitelist strips non-forbidden brand keys", !hasKey(p?.brand, "logoUrl"));
+    check("whitelist strips non-forbidden category keys", !hasKey(p?.category, "extraDescription"));
+    check("whitelist strips non-forbidden defaultVariant keys", !hasKey(p?.defaultVariant, "extraField"));
+    check("whitelist preserves expected brand keys", Object.keys(p?.brand ?? {}).length === 2);
+    check("whitelist preserves expected category keys", Object.keys(p?.category ?? {}).length === 4);
+    check("whitelist preserves expected defaultVariant keys", Object.keys(p?.defaultVariant ?? {}).length === 7);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Response edge cases
+  // ---------------------------------------------------------------------------
+  {
+    await expectErrorCode(
+      "list RPC empty array instead of sentinel throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([]).listProducts({}),
+    );
+    await expectErrorCode(
+      "slug RPC returning more than one row throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () =>
+        repoWithRows([
+          { product: VALID_PRODUCT },
+          { product: { ...VALID_PRODUCT, slug: "other", title: "Other" } },
+        ]).getProductBySlug("any"),
+    );
+    await expectErrorCode(
+      "items at offset beyond total throw CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () =>
+        repoWithRows([
+          { product: VALID_PRODUCT, total: 0 },
+        ]).listProducts({ offset: 5 }),
+    );
   }
 
   console.log("catalogueRepository.test.ts: all checks passed");

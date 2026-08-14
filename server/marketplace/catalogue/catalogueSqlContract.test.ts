@@ -2,12 +2,13 @@
  * WS1 public catalogue RPC contract — static SQL + wiring tests (no Docker).
  * Verifies the migration file and repository wiring without executing SQL:
  * v2 RPC naming, v1 untouched, RPC-only repository, privileges, fail-closed
- * gate column, media/price/scope defences, and absence of activation DML.
+ * gate column, transactional migration, RLS audit, media/price/scope defences,
+ * and absence of activation DML.
  *
  * Run: PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/catalogueSqlContract.test.ts
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,6 +27,20 @@ const ROUTES = readFileSync(
   path.join(__dirname, "catalogueRoutes.ts"),
   "utf8",
 );
+const WS0 = readFileSync(
+  path.join(ROOT, "scripts/marketplace-ws0-foundation-schema.sql"),
+  "utf8",
+);
+const WS1_ADDITIVE = readFileSync(
+  path.join(ROOT, "scripts/marketplace-ws1-additive-schema.sql"),
+  "utf8",
+);
+
+const SCRIPTS_DIR = path.join(ROOT, "scripts");
+const ALL_SQL = readdirSync(SCRIPTS_DIR)
+  .filter((f) => f.endsWith(".sql"))
+  .map((f) => readFileSync(path.join(SCRIPTS_DIR, f), "utf8"))
+  .join("\n");
 
 function check(name: string, condition: boolean): void {
   assert.equal(condition, true, name);
@@ -39,6 +54,23 @@ function count(haystack: string, needle: string): number {
 /** Strip SQL line comments so only executable statements are inspected. */
 function stripComments(sql: string): string {
   return sql.replace(/--[^\n]*/g, "");
+}
+
+function firstNonEmptyExecutable(sql: string): string {
+  return (
+    stripComments(sql)
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? ""
+  );
+}
+
+function lastNonEmptyExecutable(sql: string): string {
+  const lines = stripComments(sql)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return lines[lines.length - 1] ?? "";
 }
 
 async function main(): Promise<void> {
@@ -150,11 +182,70 @@ async function main(): Promise<void> {
   );
 
   // ---------------------------------------------------------------------------
+  // Transactional migration
+  // ---------------------------------------------------------------------------
+  check(
+    "migration starts with BEGIN",
+    firstNonEmptyExecutable(SQL).toLowerCase() === "begin;",
+  );
+  check(
+    "migration ends with COMMIT",
+    lastNonEmptyExecutable(SQL).toLowerCase() === "commit;",
+  );
+  check(
+    "migration has exactly one executable BEGIN",
+    count(stripComments(SQL).toLowerCase(), "begin;") === 1,
+  );
+  check(
+    "migration has exactly one executable COMMIT",
+    count(stripComments(SQL).toLowerCase(), "commit;") === 1,
+  );
+
+  // ---------------------------------------------------------------------------
   // Fail-closed gate column
   // ---------------------------------------------------------------------------
   check(
     "ws1_public is boolean NOT NULL DEFAULT false",
     /add column if not exists ws1_public boolean not null default false/.test(SQL),
+  );
+
+  // ---------------------------------------------------------------------------
+  // RLS audit: this migration does not manage RLS; it is managed elsewhere
+  // ---------------------------------------------------------------------------
+  check(
+    "migration does not enable row level security for mp_products",
+    !SQL.includes("alter table public.mp_products enable row level security"),
+  );
+  check(
+    "migration does not force row level security for mp_products",
+    !SQL.includes("alter table public.mp_products force row level security"),
+  );
+  check(
+    "WS0 foundation schema mentions mp_products in RLS loop",
+    WS0.includes("'mp_products'") &&
+      WS0.includes("enable row level security") &&
+      WS0.includes("force row level security"),
+  );
+  check(
+    "WS1 additive schema enables RLS for mp_products",
+    WS1_ADDITIVE.includes("alter table public.mp_products enable row level security") &&
+      WS1_ADDITIVE.includes("alter table public.mp_products force row level security"),
+  );
+  check(
+    "no create policy on public.mp_products exists in any script",
+    !/create\s+policy\s+[^\n]+on\s+public\.mp_products/is.test(ALL_SQL),
+  );
+  check(
+    "no grant on public.mp_products to anon exists",
+    !/grant\s+[^;]*on\s+(table\s+)?public\.mp_products[^;]*to\s+anon\b/is.test(ALL_SQL),
+  );
+  check(
+    "no grant on public.mp_products to authenticated exists",
+    !/grant\s+[^;]*on\s+(table\s+)?public\.mp_products[^;]*to\s+authenticated\b/is.test(ALL_SQL),
+  );
+  check(
+    "service_role grant on public.mp_products exists",
+    /grant\s+[^;]*on\s+(table\s+)?public\.mp_products[^;]*to\s+service_role\b/is.test(ALL_SQL),
   );
 
   // ---------------------------------------------------------------------------
@@ -175,8 +266,23 @@ async function main(): Promise<void> {
   );
 
   // ---------------------------------------------------------------------------
-  // Media defence (SQL layer — applies to list_v2 and get_by_slug_v2)
+  // Media defence (SQL layer — supplier-only until separate design approved)
   // ---------------------------------------------------------------------------
+  check(
+    "media gate: supplier-only source_type",
+    count(SQL, "m.source_type = 'supplier'") >= 2,
+  );
+  check(
+    "media gate: supplier_approved rights status",
+    count(SQL, "m.rights_status = 'supplier_approved'") >= 2,
+  );
+  check(
+    "media gate: no silent broadening to own/licensed/user_upload/manufacturer",
+    !SQL.includes("'own'") &&
+      !SQL.includes("'licensed'") &&
+      !SQL.includes("'user_upload'") &&
+      !SQL.includes("'manufacturer'"),
+  );
   check(
     "media gate: unpublished media excluded (published = true)",
     count(SQL, "m.published = true") >= 2,
@@ -186,15 +292,11 @@ async function main(): Promise<void> {
     count(SQL, "m.role <> 'receipt'") >= 2,
   );
   check(
-    "media gate: only approved rights statuses pass",
-    count(SQL, "m.rights_status in ('own', 'licensed', 'supplier_approved')") >= 2,
-  );
-  check(
-    "media gate: missing approver excluded (approved_by is not null)",
+    "media gate: approver metadata required (approved_by is not null)",
     count(SQL, "m.approved_by is not null") >= 2,
   );
   check(
-    "media gate: missing approval timestamp excluded (approved_at is not null)",
+    "media gate: approval timestamp metadata required (approved_at is not null)",
     count(SQL, "m.approved_at is not null") >= 2,
   );
   check(
@@ -240,6 +342,18 @@ async function main(): Promise<void> {
     ) &&
       SQL.includes("and e.variant_stock_status = 'in_stock'") &&
       SQL.includes("then e.variant_website_price"),
+  );
+
+  // ---------------------------------------------------------------------------
+  // Document references
+  // ---------------------------------------------------------------------------
+  check(
+    "migration references RLS audit document",
+    SQL.includes("docs/marketplace-ws1-public-rls-audit.md"),
+  );
+  check(
+    "migration references media contract document",
+    SQL.includes("docs/marketplace-ws1-public-media-contract.md"),
   );
 
   console.log("catalogueSqlContract.test.ts: all checks passed");

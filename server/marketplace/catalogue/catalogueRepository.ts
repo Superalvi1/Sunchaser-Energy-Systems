@@ -41,11 +41,26 @@ const FORBIDDEN_KEYS = [
   "supplier_public_price",
   "supplierPublicPrice",
   "service_role",
+  "supplier_cost",
+  "purchase_price",
+  "profit",
+  "internal_notes",
+  "internal_code",
+  "supplier_account",
 ];
 
 function hasForbiddenKeys(payload: unknown): boolean {
   const text = JSON.stringify(payload);
   return FORBIDDEN_KEYS.some((key) => text.includes(`"${key}"`));
+}
+
+function assertSafePayload(payload: unknown): void {
+  if (hasForbiddenKeys(payload)) {
+    throw new CatalogueRepositoryError(
+      "CATALOGUE_DTO_LEAK",
+      "Catalogue payload failed safety validation.",
+    );
+  }
 }
 
 function invalidResponse(detail: string): CatalogueRepositoryError {
@@ -84,77 +99,46 @@ function isSpecMap(value: unknown): value is Record<string, string> {
   return Object.entries(value).every(([_, v]) => typeof v === "string");
 }
 
-function isCatalogueBrandDto(value: unknown): value is CatalogueBrandDto {
-  if (!isPlainObject(value)) return false;
-  return isNonEmptyString(value.slug) && isNonEmptyString(value.name);
-}
-
-function isCatalogueCategoryDto(value: unknown): value is CatalogueCategoryDto {
-  if (!isPlainObject(value)) return false;
-  return (
-    isNonEmptyString(value.slug) &&
-    isNonEmptyString(value.name) &&
-    isOptionalString(value.description) &&
-    typeof value.sortOrder === "number" &&
-    Number.isFinite(value.sortOrder)
-  );
-}
-
-function isCatalogueDefaultVariantDto(
-  value: unknown,
-): value is CatalogueDefaultVariantDto {
-  if (!isPlainObject(value)) return false;
-  const validStates = ["priced_auto", "priced_override", "confirm_price"] as const;
-  const validSources = [
-    "kamal",
-    "alladin",
-    "seed",
-    "override",
-    "last_approved",
-  ] as const;
-  const validStock = ["in_stock", "sold_out", "backorder", "unknown"] as const;
-  return (
-    isNonEmptyString(value.sku) &&
-    isNonEmptyString(value.title) &&
-    value.isDefault === true &&
-    isNumberOrNull(value.websitePrice) &&
-    validStates.includes(value.websitePriceState as typeof validStates[number]) &&
-    (value.websitePriceSource === null ||
-      validSources.includes(value.websitePriceSource as typeof validSources[number])) &&
-    validStock.includes(value.stockStatus as typeof validStock[number])
-  );
-}
-
-function isCatalogueProductDto(value: unknown): value is CatalogueProductDto {
-  if (!isPlainObject(value)) return false;
-  return (
-    isNonEmptyString(value.slug) &&
-    isNonEmptyString(value.title) &&
-    typeof value.description === "string" &&
-    isOptionalString(value.shortDescription) &&
-    isOptionalString(value.model) &&
-    isCatalogueBrandDto(value.brand) &&
-    isCatalogueCategoryDto(value.category) &&
-    isStringArray(value.tags) &&
-    isBoolean(value.featured) &&
-    isSpecMap(value.specifications) &&
-    isOptionalString(value.warranty) &&
-    isOptionalString(value.seoTitle) &&
-    isOptionalString(value.seoDescription) &&
-    isOptionalString(value.datasheetUrl) &&
-    isOptionalString(value.image) &&
-    isStringArray(value.images) &&
-    isCatalogueDefaultVariantDto(value.defaultVariant)
-  );
-}
-
-function assertSafePayload(payload: unknown): void {
-  if (hasForbiddenKeys(payload)) {
-    throw new CatalogueRepositoryError(
-      "CATALOGUE_DTO_LEAK",
-      "Catalogue payload failed safety validation.",
-    );
+function asNonEmptyString(value: unknown, field: string): string {
+  if (!isNonEmptyString(value)) {
+    throw invalidResponse(`${field} must be a non-empty string`);
   }
+  return value;
+}
+
+function asString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw invalidResponse(`${field} must be a string`);
+  }
+  return value;
+}
+
+function asOptionalString(value: unknown, field: string): string | null {
+  if (!isOptionalString(value)) {
+    throw invalidResponse(`${field} must be a string or null`);
+  }
+  return value;
+}
+
+function asStringArray(value: unknown, field: string): string[] {
+  if (!isStringArray(value)) {
+    throw invalidResponse(`${field} must be an array of strings`);
+  }
+  return value;
+}
+
+function asBoolean(value: unknown, field: string): boolean {
+  if (!isBoolean(value)) {
+    throw invalidResponse(`${field} must be a boolean`);
+  }
+  return value;
+}
+
+function asSpecMap(value: unknown, field: string): Record<string, string> {
+  if (!isSpecMap(value)) {
+    throw invalidResponse(`${field} must be a string->string map`);
+  }
+  return value;
 }
 
 function assertFiniteNonNegativeInteger(value: unknown, context: string): number {
@@ -170,7 +154,92 @@ function assertFiniteNonNegativeInteger(value: unknown, context: string): number
 }
 
 /**
- * Public price policy ( defence in depth — also enforced inside the v2 RPCs):
+ * Reconstruct a brand DTO from the RPC payload, keeping only the exact public
+ * keys. Any unexpected nested keys are dropped here rather than leaked.
+ */
+function reconstructBrand(raw: unknown): CatalogueBrandDto {
+  if (!isPlainObject(raw)) {
+    throw invalidResponse("brand payload is not an object");
+  }
+  return {
+    slug: asNonEmptyString(raw.slug, "brand.slug"),
+    name: asNonEmptyString(raw.name, "brand.name"),
+  };
+}
+
+/**
+ * Reconstruct a category DTO from the RPC payload, keeping only the exact
+ * public keys.
+ */
+function reconstructCategory(raw: unknown): CatalogueCategoryDto {
+  if (!isPlainObject(raw)) {
+    throw invalidResponse("category payload is not an object");
+  }
+  const sortOrder = raw.sortOrder;
+  if (typeof sortOrder !== "number" || !Number.isFinite(sortOrder)) {
+    throw invalidResponse("category.sortOrder must be a finite number");
+  }
+  return {
+    slug: asNonEmptyString(raw.slug, "category.slug"),
+    name: asNonEmptyString(raw.name, "category.name"),
+    description: asOptionalString(raw.description, "category.description"),
+    sortOrder,
+  };
+}
+
+/**
+ * Reconstruct a defaultVariant DTO from the RPC payload, keeping only the exact
+ * public keys. The websitePrice is NOT taken at face value; the public price
+ * policy is applied afterwards.
+ */
+function reconstructDefaultVariant(raw: unknown): CatalogueDefaultVariantDto {
+  if (!isPlainObject(raw)) {
+    throw invalidResponse("defaultVariant payload is not an object");
+  }
+  const state = raw.websitePriceState;
+  const validStates = ["priced_auto", "priced_override", "confirm_price"] as const;
+  if (!validStates.includes(state as typeof validStates[number])) {
+    throw invalidResponse("defaultVariant.websitePriceState is invalid");
+  }
+  const source = raw.websitePriceSource;
+  const validSources = [
+    "kamal",
+    "alladin",
+    "seed",
+    "override",
+    "last_approved",
+  ] as const;
+  if (
+    source !== null &&
+    !validSources.includes(source as typeof validSources[number])
+  ) {
+    throw invalidResponse("defaultVariant.websitePriceSource is invalid");
+  }
+  const stock = raw.stockStatus;
+  const validStock = ["in_stock", "sold_out", "backorder", "unknown"] as const;
+  if (!validStock.includes(stock as typeof validStock[number])) {
+    throw invalidResponse("defaultVariant.stockStatus is invalid");
+  }
+  const price = raw.websitePrice;
+  if (price !== null && (typeof price !== "number" || !Number.isFinite(price))) {
+    throw invalidResponse("defaultVariant.websitePrice must be a finite number or null");
+  }
+  if (raw.isDefault !== true) {
+    throw invalidResponse("defaultVariant.isDefault must be true");
+  }
+  return {
+    sku: asNonEmptyString(raw.sku, "defaultVariant.sku"),
+    title: asNonEmptyString(raw.title, "defaultVariant.title"),
+    isDefault: true,
+    websitePrice: price as number | null,
+    websitePriceState: state as CatalogueDefaultVariantDto["websitePriceState"],
+    websitePriceSource: source as CatalogueDefaultVariantDto["websitePriceSource"],
+    stockStatus: stock as CatalogueDefaultVariantDto["stockStatus"],
+  };
+}
+
+/**
+ * Public price policy (defence in depth — also enforced inside the v2 RPCs):
  * a website price is only publishable when the price state is priced_auto or
  * priced_override, stock is in_stock, and the price is positive and finite.
  * confirm_price keeps its state but never exposes a price. unknown, sold_out
@@ -223,47 +292,50 @@ export function sanitizeRpcMediaUrls(
 /**
  * Maps one RPC product payload to the public DTO. Fail-closed: any malformed
  * or unsafe payload throws CATALOGUE_RESPONSE_INVALID instead of being
- * silently dropped.
+ * silently dropped. Nested objects are reconstructed from whitelisted keys
+ * only; any unexpected nested fields are stripped and never reach routes.
  */
 function mapRpcProductDto(raw: unknown): CatalogueProductDto {
   if (!isPlainObject(raw)) {
     throw invalidResponse("product payload is not an object");
   }
+  assertSafePayload(raw);
 
-  const candidate: CatalogueProductDto = {
-    slug: raw.slug as string,
-    title: raw.title as string,
-    description: raw.description as string,
-    shortDescription: raw.shortDescription as string | null,
-    model: raw.model as string | null,
-    brand: raw.brand as CatalogueBrandDto,
-    category: raw.category as CatalogueCategoryDto,
-    tags: raw.tags as string[],
-    featured: raw.featured as boolean,
-    specifications: raw.specifications as Record<string, string>,
-    warranty: raw.warranty as string | null,
-    seoTitle: raw.seoTitle as string | null,
-    seoDescription: raw.seoDescription as string | null,
-    datasheetUrl: raw.datasheetUrl as string | null,
-    image: raw.image as string | null,
-    images: raw.images as string[],
-    defaultVariant: raw.defaultVariant as CatalogueDefaultVariantDto,
+  const brand = reconstructBrand(raw.brand);
+  const category = reconstructCategory(raw.category);
+  const defaultVariant = applyPublicPricePolicy(
+    reconstructDefaultVariant(raw.defaultVariant),
+  );
+
+  const product: CatalogueProductDto = {
+    slug: asNonEmptyString(raw.slug, "slug"),
+    title: asNonEmptyString(raw.title, "title"),
+    description: asString(raw.description, "description"),
+    shortDescription: asOptionalString(raw.shortDescription, "shortDescription"),
+    model: asOptionalString(raw.model, "model"),
+    brand,
+    category,
+    tags: asStringArray(raw.tags, "tags"),
+    featured: asBoolean(raw.featured, "featured"),
+    specifications: asSpecMap(raw.specifications, "specifications"),
+    warranty: asOptionalString(raw.warranty, "warranty"),
+    seoTitle: asOptionalString(raw.seoTitle, "seoTitle"),
+    seoDescription: asOptionalString(raw.seoDescription, "seoDescription"),
+    datasheetUrl: asOptionalString(raw.datasheetUrl, "datasheetUrl"),
+    image: asOptionalString(raw.image, "image"),
+    images: asStringArray(raw.images, "images"),
+    defaultVariant,
   };
-
-  if (!isCatalogueProductDto(candidate)) {
-    throw invalidResponse("product payload failed DTO validation");
-  }
 
   const media = sanitizeRpcMediaUrls(raw.image, raw.images);
-  const product: CatalogueProductDto = {
-    ...candidate,
+  const withMedia: CatalogueProductDto = {
+    ...product,
     image: media.image,
     images: media.images,
-    defaultVariant: applyPublicPricePolicy(candidate.defaultVariant),
   };
 
-  assertSafePayload(product);
-  return product;
+  assertSafePayload(withMedia);
+  return withMedia;
 }
 
 export function createSupabaseCatalogueRepository(
@@ -308,11 +380,7 @@ export function createSupabaseCatalogueRepository(
         if (!isPlainObject(row) || !("category" in row)) {
           throw invalidResponse("category row shape invalid");
         }
-        const candidate = row.category;
-        if (!isCatalogueCategoryDto(candidate)) {
-          throw invalidResponse("category payload failed DTO validation");
-        }
-        mapped.push(candidate);
+        mapped.push(reconstructCategory(row.category));
       }
       assertSafePayload(mapped);
       return mapped;
@@ -338,11 +406,7 @@ export function createSupabaseCatalogueRepository(
         if (!isPlainObject(row) || !("brand" in row)) {
           throw invalidResponse("brand row shape invalid");
         }
-        const candidate = row.brand;
-        if (!isCatalogueBrandDto(candidate)) {
-          throw invalidResponse("brand payload failed DTO validation");
-        }
-        mapped.push(candidate);
+        mapped.push(reconstructBrand(row.brand));
       }
       assertSafePayload(mapped);
       return mapped;
@@ -385,6 +449,11 @@ export function createSupabaseCatalogueRepository(
         if (!Array.isArray(rpcData)) {
           throw invalidResponse("list RPC did not return a row array");
         }
+        if (rpcData.length === 0) {
+          throw invalidResponse(
+            "list RPC returned empty array instead of required sentinel row",
+          );
+        }
 
         let pageCount = 0;
         for (const row of rpcData) {
@@ -417,6 +486,11 @@ export function createSupabaseCatalogueRepository(
       if (sawTotal && total < products.length) {
         throw invalidResponse("total is smaller than returned item count");
       }
+      if (products.length > 0 && callerOffset >= total) {
+        throw invalidResponse(
+          "items returned at an offset beyond the declared total",
+        );
+      }
 
       return {
         items: products,
@@ -444,6 +518,9 @@ export function createSupabaseCatalogueRepository(
 
       if (!Array.isArray(data)) {
         throw invalidResponse("slug RPC did not return a row array");
+      }
+      if (data.length > 1) {
+        throw invalidResponse("slug RPC returned more than one row");
       }
       if (data.length === 0) return null;
 

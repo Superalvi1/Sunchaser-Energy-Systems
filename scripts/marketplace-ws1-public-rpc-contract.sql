@@ -4,6 +4,7 @@
 -- *****************************************************************************
 -- DO NOT AUTO-APPLY TO PRODUCTION.
 -- DO NOT apply to staging without separate owner authorization.
+-- This file is wrapped in a single transaction.
 -- *****************************************************************************
 --
 -- Versioning rule:
@@ -28,20 +29,43 @@
 -- activation. See the non-executable review document:
 --   docs/marketplace-ws1-public-activation-review.md
 --
+-- RLS/gate audit:
+--   This migration deliberately does NOT manage RLS for mp_products. RLS is
+--   already enabled and forced, and privileges are already revoked from
+--   public/anon/authenticated, in:
+--     - scripts/marketplace-ws0-foundation-schema.sql
+--     - scripts/marketplace-ws1-additive-schema.sql
+--   No mp_products RLS policies currently exist; therefore public roles cannot
+--   read mp_products directly. The ws1_public gate is enforced ONLY inside
+--   these v2 RPC functions. See the audit document:
+--     docs/marketplace-ws1-public-rls-audit.md
+--
+-- Media contract:
+--   The v2 public media contract is intentionally supplier-only until a
+--   separate owned/licensed/user-upload/manufacturer design is approved.
+--   Required conditions: published=true, role<>'receipt',
+--   source_type='supplier', rights_status='supplier_approved',
+--   approved_by IS NOT NULL, approved_at IS NOT NULL,
+--   source_url IS NOT NULL and HTTPS.
+--   approved_by/approved_at are operational metadata required by the publish
+--   gate; they are NOT presented as documentary rights evidence.
+--   The exact hostname allowlist is additionally enforced server-side in the
+--   repository DTO mapping path. See:
+--     docs/marketplace-ws1-public-media-contract.md
+--
 -- Defence layers implemented here:
 --   - Eligibility: active + public_visible + ws1_public + active default
 --     variant + active brand + active category.
---   - Media: published=true, role<>'receipt', rights_status in
---     ('own','licensed','supplier_approved'), approved_by IS NOT NULL,
---     approved_at IS NOT NULL, source_url IS NOT NULL, HTTPS-only.
---     (The exact hostname allowlist is additionally enforced server-side in
---     the repository DTO mapping path.)
+--   - Media: supplier-only, supplier_approved rights, published, non-receipt,
+--     approver metadata present, HTTPS source URL.
 --   - Price: websitePrice is only emitted when website_price_state is
 --     priced_auto/priced_override, stock_status='in_stock', and the price is
 --     positive. confirm_price and non-in-stock variants emit null price.
 --   - Categories/brands: only values connected to eligible products.
 --
 -- Prerequisites: WS0 foundation + WS1 additive schema applied.
+
+begin;
 
 -- =============================================================================
 -- 1. Explicit WS1 public-scope gate
@@ -130,8 +154,8 @@ as $$
     from public.mp_media m
     where m.published = true
       and m.role <> 'receipt'
-      and m.source_type in ('supplier', 'own', 'licensed', 'user_upload', 'manufacturer')
-      and m.rights_status in ('own', 'licensed', 'supplier_approved')
+      and m.source_type = 'supplier'
+      and m.rights_status = 'supplier_approved'
       and m.approved_by is not null
       and m.approved_at is not null
       and m.source_url is not null
@@ -270,8 +294,8 @@ as $$
     from public.mp_media m
     where m.published = true
       and m.role <> 'receipt'
-      and m.source_type in ('supplier', 'own', 'licensed', 'user_upload', 'manufacturer')
-      and m.rights_status in ('own', 'licensed', 'supplier_approved')
+      and m.source_type = 'supplier'
+      and m.rights_status = 'supplier_approved'
       and m.approved_by is not null
       and m.approved_at is not null
       and m.source_url is not null
@@ -460,10 +484,6 @@ begin
   end if;
 end $ws1_v2_priv$;
 
--- Reaffirm table RLS so the gate cannot be bypassed by direct table reads.
-alter table public.mp_products enable row level security;
-alter table public.mp_products force row level security;
-
 -- =============================================================================
 -- 7. Schema-cache reload notification
 -- =============================================================================
@@ -476,3 +496,5 @@ notify pgrst, 'reload schema';
 -- commented. Any future activation requires the separately reviewed,
 -- non-executable plan in docs/marketplace-ws1-public-activation-review.md
 -- plus explicit owner authorization and a standalone DML review.
+
+commit;
