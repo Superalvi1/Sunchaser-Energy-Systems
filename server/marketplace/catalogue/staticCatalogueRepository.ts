@@ -44,41 +44,43 @@ function buildStaticCatalogue(): {
 
   const categoryBySlug = new Map(categories.map((c) => [c.slug, c]));
 
-  const products: CatalogueProductDto[] = WS1_SEED_PRODUCTS.map((p) => {
-    const category = categoryBySlug.get(p.categorySlug) ?? {
-      slug: p.categorySlug,
-      name: p.categorySlug,
-      description: null,
-      sortOrder: 0,
-    };
-    return {
-      slug: p.slug,
-      title: p.title,
-      description: p.description,
-      shortDescription: null,
-      model: null,
-      seoTitle: null,
-      seoDescription: null,
-      datasheetUrl: null,
-      brand: { slug: p.brandSlug, name: p.brandName },
-      category,
-      tags: [...p.tags],
-      featured: p.featured,
-      specifications: { ...p.specifications },
-      warranty: p.warranty,
-      image: null,
-      images: [],
-      defaultVariant: {
-        sku: p.sku,
-        title: "Default",
-        isDefault: true as const,
-        websitePrice: p.websitePrice,
-        websitePriceState: "priced_auto" as const,
-        websitePriceSource: "seed" as const,
-        stockStatus: "unknown" as const,
-      },
-    };
-  }).sort((a, b) => a.title.localeCompare(b.title));
+  const products: CatalogueProductDto[] = WS1_SEED_PRODUCTS.map(
+    (p): CatalogueProductDto => {
+      const category = categoryBySlug.get(p.categorySlug) ?? {
+        slug: p.categorySlug,
+        name: p.categorySlug,
+        description: null,
+        sortOrder: 0,
+      };
+      return {
+        slug: p.slug,
+        title: p.title,
+        description: p.description,
+        shortDescription: null,
+        model: null,
+        seoTitle: null,
+        seoDescription: null,
+        datasheetUrl: null,
+        brand: { slug: p.brandSlug, name: p.brandName },
+        category,
+        tags: [...p.tags],
+        featured: p.featured,
+        specifications: { ...p.specifications },
+        warranty: p.warranty,
+        image: null,
+        images: [],
+        defaultVariant: {
+          sku: p.sku,
+          title: "Default",
+          isDefault: true,
+          websitePrice: p.websitePrice,
+          websitePriceState: "priced_auto",
+          websitePriceSource: "seed",
+          stockStatus: "unknown",
+        },
+      };
+    },
+  ).sort((a, b) => a.title.localeCompare(b.title));
 
   return { categories, brands, products };
 }
