@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseActive } from "../../../dbManager.ts";
+import { normalizeAnyAllowedImageUrl } from "../catalogueManager/imagePolicy.ts";
 import type {
   CatalogueBrandDto,
   CatalogueCategoryDto,
@@ -47,6 +48,13 @@ function hasForbiddenKeys(payload: unknown): boolean {
   return FORBIDDEN_KEYS.some((key) => text.includes(`"${key}"`));
 }
 
+function invalidResponse(detail: string): CatalogueRepositoryError {
+  return new CatalogueRepositoryError(
+    "CATALOGUE_RESPONSE_INVALID",
+    `Catalogue RPC response failed validation: ${detail}`,
+  );
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -87,7 +95,8 @@ function isCatalogueCategoryDto(value: unknown): value is CatalogueCategoryDto {
     isNonEmptyString(value.slug) &&
     isNonEmptyString(value.name) &&
     isOptionalString(value.description) &&
-    typeof value.sortOrder === "number"
+    typeof value.sortOrder === "number" &&
+    Number.isFinite(value.sortOrder)
   );
 }
 
@@ -148,10 +157,80 @@ function assertSafePayload(payload: unknown): void {
   }
 }
 
-function mapRpcProductDto(raw: unknown): CatalogueProductDto | null {
-  if (!isPlainObject(raw)) return null;
+function assertFiniteNonNegativeInteger(value: unknown, context: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < 0
+  ) {
+    throw invalidResponse(`${context} is not a finite non-negative integer`);
+  }
+  return value;
+}
 
-  const product: CatalogueProductDto = {
+/**
+ * Public price policy ( defence in depth — also enforced inside the v2 RPCs):
+ * a website price is only publishable when the price state is priced_auto or
+ * priced_override, stock is in_stock, and the price is positive and finite.
+ * confirm_price keeps its state but never exposes a price. unknown, sold_out
+ * and backorder remain non-purchasable and never expose an automatic price.
+ */
+export function applyPublicPricePolicy(
+  variant: CatalogueDefaultVariantDto,
+): CatalogueDefaultVariantDto {
+  const price = variant.websitePrice;
+  const positiveFinite =
+    typeof price === "number" && Number.isFinite(price) && price > 0;
+  const publishable =
+    positiveFinite &&
+    variant.stockStatus === "in_stock" &&
+    (variant.websitePriceState === "priced_auto" ||
+      variant.websitePriceState === "priced_override");
+  return { ...variant, websitePrice: publishable ? price : null };
+}
+
+/**
+ * Media defence for the RPC DTO mapping path. Every image URL returned by the
+ * v2 RPCs must be HTTPS and pass the server's exact hostname allowlist
+ * (supplier hosts + configured own/licensed hosts). Invalid URLs are removed;
+ * the primary image is the first surviving URL.
+ */
+export function sanitizeRpcMediaUrls(
+  image: unknown,
+  images: unknown,
+): { image: string | null; images: string[] } {
+  const candidates: unknown[] = [];
+  if (image !== null && image !== undefined) candidates.push(image);
+  if (Array.isArray(images)) candidates.push(...images);
+  const valid: string[] = [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.length === 0) continue;
+    const normalized = normalizeAnyAllowedImageUrl(candidate);
+    if (normalized !== null) valid.push(normalized);
+  }
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const url of valid) {
+    if (!seen.has(url)) {
+      seen.add(url);
+      deduped.push(url);
+    }
+  }
+  return { image: deduped[0] ?? null, images: deduped.slice(1) };
+}
+
+/**
+ * Maps one RPC product payload to the public DTO. Fail-closed: any malformed
+ * or unsafe payload throws CATALOGUE_RESPONSE_INVALID instead of being
+ * silently dropped.
+ */
+function mapRpcProductDto(raw: unknown): CatalogueProductDto {
+  if (!isPlainObject(raw)) {
+    throw invalidResponse("product payload is not an object");
+  }
+
+  const candidate: CatalogueProductDto = {
     slug: raw.slug as string,
     title: raw.title as string,
     description: raw.description as string,
@@ -171,7 +250,18 @@ function mapRpcProductDto(raw: unknown): CatalogueProductDto | null {
     defaultVariant: raw.defaultVariant as CatalogueDefaultVariantDto,
   };
 
-  if (!isCatalogueProductDto(product)) return null;
+  if (!isCatalogueProductDto(candidate)) {
+    throw invalidResponse("product payload failed DTO validation");
+  }
+
+  const media = sanitizeRpcMediaUrls(raw.image, raw.images);
+  const product: CatalogueProductDto = {
+    ...candidate,
+    image: media.image,
+    images: media.images,
+    defaultVariant: applyPublicPricePolicy(candidate.defaultVariant),
+  };
+
   assertSafePayload(product);
   return product;
 }
@@ -200,49 +290,60 @@ export function createSupabaseCatalogueRepository(
   return {
     async listCategories(): Promise<CatalogueCategoryDto[]> {
       const supabase = requireClient();
-      const { data, error } = await supabase
-        .from("mp_categories")
-        .select("slug, name, description, sort_order, active")
-        .eq("active", true)
-        .order("sort_order", { ascending: true });
+      const { data, error } = await supabase.rpc(
+        "mp_public_catalogue_categories_v2",
+        {},
+      );
       if (error) {
         throw new CatalogueRepositoryError(
           "CATALOGUE_QUERY_FAILED",
           "Unable to load catalogue categories.",
         );
       }
-      const rows = (data || []) as Array<{
-        slug: string;
-        name: string;
-        description: string | null;
-        sort_order: number;
-        active: boolean;
-      }>;
-      const mapped = rows.map((r) => ({
-        slug: r.slug,
-        name: r.name,
-        description: r.description ?? null,
-        sortOrder: Number(r.sort_order) || 0,
-      }));
+      if (!Array.isArray(data)) {
+        throw invalidResponse("categories RPC did not return a row array");
+      }
+      const mapped: CatalogueCategoryDto[] = [];
+      for (const row of data) {
+        if (!isPlainObject(row) || !("category" in row)) {
+          throw invalidResponse("category row shape invalid");
+        }
+        const candidate = row.category;
+        if (!isCatalogueCategoryDto(candidate)) {
+          throw invalidResponse("category payload failed DTO validation");
+        }
+        mapped.push(candidate);
+      }
       assertSafePayload(mapped);
       return mapped;
     },
 
     async listBrands(): Promise<CatalogueBrandDto[]> {
       const supabase = requireClient();
-      const { data, error } = await supabase
-        .from("mp_brands")
-        .select("slug, name, active")
-        .eq("active", true)
-        .order("name", { ascending: true });
+      const { data, error } = await supabase.rpc(
+        "mp_public_catalogue_brands_v2",
+        {},
+      );
       if (error) {
         throw new CatalogueRepositoryError(
           "CATALOGUE_QUERY_FAILED",
           "Unable to load catalogue brands.",
         );
       }
-      const rows = (data || []) as Array<{ slug: string; name: string; active: boolean }>;
-      const mapped = rows.map((r) => ({ slug: r.slug, name: r.name }));
+      if (!Array.isArray(data)) {
+        throw invalidResponse("brands RPC did not return a row array");
+      }
+      const mapped: CatalogueBrandDto[] = [];
+      for (const row of data) {
+        if (!isPlainObject(row) || !("brand" in row)) {
+          throw invalidResponse("brand row shape invalid");
+        }
+        const candidate = row.brand;
+        if (!isCatalogueBrandDto(candidate)) {
+          throw invalidResponse("brand payload failed DTO validation");
+        }
+        mapped.push(candidate);
+      }
       assertSafePayload(mapped);
       return mapped;
     },
@@ -254,6 +355,7 @@ export function createSupabaseCatalogueRepository(
       const callerLimit = filters.limit;
       const products: CatalogueProductDto[] = [];
       let total = 0;
+      let sawTotal = false;
       let rpcOffset = callerOffset;
 
       while (true) {
@@ -263,7 +365,7 @@ export function createSupabaseCatalogueRepository(
         if (rpcLimit <= 0) break;
 
         const { data: rpcData, error: rpcErr } = await supabase.rpc(
-          "mp_public_catalogue_list",
+          "mp_public_catalogue_list_v2",
           {
             p_category_slug: filters.category ?? null,
             p_brand_slug: filters.brand ?? null,
@@ -280,25 +382,40 @@ export function createSupabaseCatalogueRepository(
           );
         }
 
-        const rows = (rpcData ?? []) as Array<{
-          product: unknown;
-          total: number;
-        }>;
-
-        if (rows.length > 0) {
-          total = Number(rows[0].total);
+        if (!Array.isArray(rpcData)) {
+          throw invalidResponse("list RPC did not return a row array");
         }
 
-        for (const row of rows) {
+        let pageCount = 0;
+        for (const row of rpcData) {
+          if (!isPlainObject(row) || !("product" in row) || !("total" in row)) {
+            throw invalidResponse("list row shape invalid");
+          }
+          const rowTotal = assertFiniteNonNegativeInteger(
+            row.total,
+            "list row total",
+          );
+          if (!sawTotal) {
+            total = rowTotal;
+            sawTotal = true;
+          } else if (rowTotal !== total) {
+            throw invalidResponse("list row total inconsistent across rows");
+          }
           if (row.product === null) continue;
-          const dto = mapRpcProductDto(row.product);
-          if (dto) products.push(dto);
+          products.push(mapRpcProductDto(row.product));
+          pageCount += 1;
         }
 
-        const pageCount = rows.filter((r) => r.product !== null).length;
         if (pageCount < rpcLimit) break;
         if (callerLimit !== undefined && products.length >= callerLimit) break;
         rpcOffset += rpcLimit;
+      }
+
+      if (callerLimit !== undefined && products.length > callerLimit) {
+        throw invalidResponse("returned more items than requested limit");
+      }
+      if (sawTotal && total < products.length) {
+        throw invalidResponse("total is smaller than returned item count");
       }
 
       return {
@@ -311,9 +428,12 @@ export function createSupabaseCatalogueRepository(
 
     async getProductBySlug(slug: string): Promise<CatalogueProductDto | null> {
       const supabase = requireClient();
-      const { data, error } = await supabase.rpc("mp_public_catalogue_get_by_slug", {
-        p_slug: slug,
-      });
+      const { data, error } = await supabase.rpc(
+        "mp_public_catalogue_get_by_slug_v2",
+        {
+          p_slug: slug,
+        },
+      );
 
       if (error) {
         throw new CatalogueRepositoryError(
@@ -322,9 +442,16 @@ export function createSupabaseCatalogueRepository(
         );
       }
 
-      const rows = (data ?? []) as Array<{ product: unknown }>;
-      const row = rows[0];
-      if (!row || row.product === null || row.product === undefined) return null;
+      if (!Array.isArray(data)) {
+        throw invalidResponse("slug RPC did not return a row array");
+      }
+      if (data.length === 0) return null;
+
+      const row = data[0];
+      if (!isPlainObject(row) || !("product" in row)) {
+        throw invalidResponse("slug row shape invalid");
+      }
+      if (row.product === null || row.product === undefined) return null;
 
       return mapRpcProductDto(row.product);
     },

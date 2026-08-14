@@ -1,7 +1,8 @@
 /**
  * WS1 public catalogue repository contract tests (no Docker).
- * Mocks the Supabase client to verify RPC-only access, DTO mapping,
- * defensive validation, and media semantics.
+ * Mocks the Supabase client to verify v2 RPC-only access, DTO mapping,
+ * fail-closed response validation, media URL defence in the RPC DTO mapping
+ * path, and the public price policy.
  *
  * Run: PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogue/catalogueRepository.test.ts
  */
@@ -11,8 +12,10 @@ import {
   createSupabaseCatalogueRepository,
   CatalogueRepositoryError,
 } from "./catalogueRepository.ts";
-import type { CatalogueProductDto } from "./catalogueTypes.ts";
-import { mapPublishedImageUrls } from "./catalogueMapper.ts";
+import type {
+  CatalogueDefaultVariantDto,
+  CatalogueProductDto,
+} from "./catalogueTypes.ts";
 
 function check(name: string, condition: boolean): void {
   assert.equal(condition, true, name);
@@ -52,6 +55,13 @@ const VALID_PRODUCT: CatalogueProductDto = {
   },
 };
 
+const V2_RPCS = new Set([
+  "mp_public_catalogue_list_v2",
+  "mp_public_catalogue_get_by_slug_v2",
+  "mp_public_catalogue_categories_v2",
+  "mp_public_catalogue_brands_v2",
+]);
+
 function buildMockClient(
   rpcHandler: (name: string, args: Record<string, unknown>) => unknown,
 ): SupabaseClient {
@@ -66,9 +76,48 @@ function buildMockClient(
   } as unknown as SupabaseClient;
 }
 
+function repoWithRows(rows: unknown) {
+  return createSupabaseCatalogueRepository(
+    () => buildMockClient(() => ({ data: rows, error: null })),
+    () => true,
+  );
+}
+
+function productWithVariant(
+  overrides: Partial<CatalogueDefaultVariantDto>,
+): CatalogueProductDto {
+  return {
+    ...VALID_PRODUCT,
+    defaultVariant: { ...VALID_PRODUCT.defaultVariant, ...overrides },
+  };
+}
+
+function productWithMedia(
+  image: string | null,
+  images: string[],
+): CatalogueProductDto {
+  return { ...VALID_PRODUCT, image, images };
+}
+
+async function expectErrorCode(
+  name: string,
+  code: string,
+  fn: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await fn();
+    check(name, false);
+  } catch (err) {
+    check(
+      name,
+      err instanceof CatalogueRepositoryError && err.code === code,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   // ---------------------------------------------------------------------------
-  // listProducts: full response mapping and pagination
+  // listProducts: v2 RPC call shape, mapping, pagination
   // ---------------------------------------------------------------------------
   {
     let capturedName: string | null = null;
@@ -94,7 +143,7 @@ async function main(): Promise<void> {
       offset: 5,
     });
 
-    check("listProducts calls mp_public_catalogue_list", capturedName === "mp_public_catalogue_list");
+    check("listProducts calls mp_public_catalogue_list_v2", capturedName === "mp_public_catalogue_list_v2");
     check("listProducts passes category slug", capturedArgs?.p_category_slug === "solar-inverters");
     check("listProducts passes brand slug", capturedArgs?.p_brand_slug === "knox");
     check("listProducts passes featured flag", capturedArgs?.p_featured_only === true);
@@ -110,64 +159,104 @@ async function main(): Promise<void> {
   }
 
   // ---------------------------------------------------------------------------
-  // listProducts: empty page still returns total
+  // listProducts: empty page sentinel still returns total
   // ---------------------------------------------------------------------------
   {
-    const repo = createSupabaseCatalogueRepository(
-      () =>
-        buildMockClient(() => ({
-          data: [{ product: null, total: 42 }],
-          error: null,
-        })),
-      () => true,
-    );
+    const repo = repoWithRows([{ product: null, total: 42 }]);
     const page = await repo.listProducts({ limit: 10, offset: 100 });
     check("empty page has zero items", page.items.length === 0);
     check("empty page preserves total", page.total === 42);
   }
 
   // ---------------------------------------------------------------------------
-  // listProducts: invalid payload is rejected
+  // Fail closed: malformed product payloads throw (never silently dropped)
   // ---------------------------------------------------------------------------
   {
-    const badProduct = { ...VALID_PRODUCT, defaultVariant: { ...VALID_PRODUCT.defaultVariant, isDefault: false } };
-    const repo = createSupabaseCatalogueRepository(
-      () =>
-        buildMockClient(() => ({
-          data: [{ product: badProduct, total: 1 }],
-          error: null,
-        })),
-      () => true,
+    const badProduct = {
+      ...VALID_PRODUCT,
+      defaultVariant: { ...VALID_PRODUCT.defaultVariant, isDefault: false },
+    };
+    const repo = repoWithRows([{ product: badProduct, total: 1 }]);
+    await expectErrorCode(
+      "malformed product throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repo.listProducts({}),
     );
-    const page = await repo.listProducts({});
-    check("invalid product payload is dropped", page.items.length === 0);
   }
 
   // ---------------------------------------------------------------------------
-  // listProducts: RPC error is surfaced as controlled repository error
+  // Fail closed: invalid totals
   // ---------------------------------------------------------------------------
   {
-    const repo = createSupabaseCatalogueRepository(
-      () =>
-        buildMockClient(() => ({
-          data: null,
-          error: { message: "db down" },
-        })),
-      () => true,
+    await expectErrorCode(
+      "non-numeric total throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ product: VALID_PRODUCT, total: "42" }]).listProducts({}),
     );
-    try {
-      await repo.listProducts({});
-      check("database error throws", false);
-    } catch (err) {
-      check(
-        "database error code is CATALOGUE_QUERY_FAILED",
-        err instanceof CatalogueRepositoryError && err.code === "CATALOGUE_QUERY_FAILED",
-      );
-    }
+    await expectErrorCode(
+      "negative total throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ product: VALID_PRODUCT, total: -1 }]).listProducts({}),
+    );
+    await expectErrorCode(
+      "fractional total throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ product: VALID_PRODUCT, total: 1.5 }]).listProducts({}),
+    );
+    await expectErrorCode(
+      "NaN total throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ product: VALID_PRODUCT, total: Number.NaN }]).listProducts({}),
+    );
   }
 
   // ---------------------------------------------------------------------------
-  // getProductBySlug: exact lookup and unknown slug
+  // Fail closed: row shape and response shape
+  // ---------------------------------------------------------------------------
+  {
+    await expectErrorCode(
+      "row without total throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ product: VALID_PRODUCT }]).listProducts({}),
+    );
+    await expectErrorCode(
+      "non-object row throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows(["junk"]).listProducts({}),
+    );
+    await expectErrorCode(
+      "non-array RPC response throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows({ product: VALID_PRODUCT }).listProducts({}),
+    );
+    await expectErrorCode(
+      "total smaller than item count throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () =>
+        repoWithRows([
+          { product: { ...VALID_PRODUCT, slug: "aaa", title: "Aaa" }, total: 1 },
+          { product: { ...VALID_PRODUCT, slug: "bbb", title: "Bbb" }, total: 1 },
+        ]).listProducts({}),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // listProducts: RPC transport error surfaces as controlled error
+  // ---------------------------------------------------------------------------
+  {
+    const repo = createSupabaseCatalogueRepository(
+      () => buildMockClient(() => ({ data: null, error: { message: "db down" } })),
+      () => true,
+    );
+    await expectErrorCode(
+      "database error code is CATALOGUE_QUERY_FAILED",
+      "CATALOGUE_QUERY_FAILED",
+      () => repo.listProducts({}),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // getProductBySlug: v2 RPC, exact lookup, unknown slug, transport error
   // ---------------------------------------------------------------------------
   {
     let capturedName: string | null = null;
@@ -177,50 +266,123 @@ async function main(): Promise<void> {
         buildMockClient((name, args) => {
           capturedName = name;
           capturedArgs = args;
-          return {
-            data: [{ product: VALID_PRODUCT }],
-            error: null,
-          };
+          return { data: [{ product: VALID_PRODUCT }], error: null };
         }),
       () => true,
     );
     const product = await repo.getProductBySlug(VALID_PRODUCT.slug);
-    check("getProductBySlug calls mp_public_catalogue_get_by_slug", capturedName === "mp_public_catalogue_get_by_slug");
+    check("getProductBySlug calls mp_public_catalogue_get_by_slug_v2", capturedName === "mp_public_catalogue_get_by_slug_v2");
     check("getProductBySlug passes slug", capturedArgs?.p_slug === VALID_PRODUCT.slug);
     check("getProductBySlug maps DTO", product?.slug === VALID_PRODUCT.slug);
   }
 
   {
-    const repo = createSupabaseCatalogueRepository(
-      () =>
-        buildMockClient(() => ({
-          data: [],
-          error: null,
-        })),
-      () => true,
-    );
+    const repo = repoWithRows([]);
     const product = await repo.getProductBySlug("does-not-exist");
     check("unknown slug returns null", product === null);
   }
 
   {
-    const repo = createSupabaseCatalogueRepository(
+    await expectErrorCode(
+      "slug row shape invalid throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ wrong: true }]).getProductBySlug("any"),
+    );
+    await expectErrorCode(
+      "slug malformed product throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
       () =>
-        buildMockClient(() => ({
-          data: null,
-          error: { message: "db down" },
-        })),
+        repoWithRows([
+          { product: { ...VALID_PRODUCT, title: "" } },
+        ]).getProductBySlug("any"),
+    );
+    const repo = createSupabaseCatalogueRepository(
+      () => buildMockClient(() => ({ data: null, error: { message: "db down" } })),
       () => true,
     );
-    try {
-      await repo.getProductBySlug(VALID_PRODUCT.slug);
-      check("slug database error throws", false);
-    } catch (err) {
-      check(
-        "slug database error code is CATALOGUE_QUERY_FAILED",
-        err instanceof CatalogueRepositoryError && err.code === "CATALOGUE_QUERY_FAILED",
-      );
-    }
+    await expectErrorCode(
+      "slug database error code is CATALOGUE_QUERY_FAILED",
+      "CATALOGUE_QUERY_FAILED",
+      () => repo.getProductBySlug(VALID_PRODUCT.slug),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // categories / brands: v2 RPCs, mapping, fail-closed shape validation
+  // ---------------------------------------------------------------------------
+  {
+    let capturedName: string | null = null;
+    const repo = createSupabaseCatalogueRepository(
+      () =>
+        buildMockClient((name) => {
+          capturedName = name;
+          return {
+            data: [
+              {
+                category: {
+                  slug: "solar-inverters",
+                  name: "Solar Inverters",
+                  description: null,
+                  sortOrder: 1,
+                },
+              },
+            ],
+            error: null,
+          };
+        }),
+      () => true,
+    );
+    const cats = await repo.listCategories();
+    check("listCategories calls mp_public_catalogue_categories_v2", capturedName === "mp_public_catalogue_categories_v2");
+    check("listCategories maps DTO", cats.length === 1 && cats[0]?.slug === "solar-inverters");
+
+    await expectErrorCode(
+      "category row shape invalid throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ wrong: true }]).listCategories(),
+    );
+    await expectErrorCode(
+      "category DTO invalid throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () =>
+        repoWithRows([
+          { category: { slug: "", name: "Bad", description: null, sortOrder: 1 } },
+        ]).listCategories(),
+    );
+    await expectErrorCode(
+      "categories non-array throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows({}).listCategories(),
+    );
+  }
+
+  {
+    let capturedName: string | null = null;
+    const repo = createSupabaseCatalogueRepository(
+      () =>
+        buildMockClient((name) => {
+          capturedName = name;
+          return {
+            data: [{ brand: { slug: "knox", name: "Knox" } }],
+            error: null,
+          };
+        }),
+      () => true,
+    );
+    const brands = await repo.listBrands();
+    check("listBrands calls mp_public_catalogue_brands_v2", capturedName === "mp_public_catalogue_brands_v2");
+    check("listBrands maps DTO", brands.length === 1 && brands[0]?.slug === "knox");
+
+    await expectErrorCode(
+      "brand row shape invalid throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ wrong: true }]).listBrands(),
+    );
+    await expectErrorCode(
+      "brand DTO invalid throws CATALOGUE_RESPONSE_INVALID",
+      "CATALOGUE_RESPONSE_INVALID",
+      () => repoWithRows([{ brand: { slug: "", name: "" } }]).listBrands(),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -252,14 +414,7 @@ async function main(): Promise<void> {
       { ...VALID_PRODUCT, slug: "aaa-product", title: "Aaa Product" },
       { ...VALID_PRODUCT, slug: "bbb-product", title: "Bbb Product" },
     ];
-    const repo = createSupabaseCatalogueRepository(
-      () =>
-        buildMockClient(() => ({
-          data: ordered.map((p) => ({ product: p, total: 2 })),
-          error: null,
-        })),
-      () => true,
-    );
+    const repo = repoWithRows(ordered.map((p) => ({ product: p, total: 2 })));
     const page = await repo.listProducts({});
     check("repository preserves RPC ordering", page.items[0]?.slug === "aaa-product" && page.items[1]?.slug === "bbb-product");
   }
@@ -275,83 +430,167 @@ async function main(): Promise<void> {
         actual_purchase_cost: 50000,
       },
     };
-    const repo = createSupabaseCatalogueRepository(
-      () =>
-        buildMockClient(() => ({
-          data: [{ product: leakyProduct, total: 1 }],
-          error: null,
-        })),
-      () => true,
+    const repo = repoWithRows([{ product: leakyProduct, total: 1 }]);
+    await expectErrorCode(
+      "confidential field error code is CATALOGUE_DTO_LEAK",
+      "CATALOGUE_DTO_LEAK",
+      () => repo.listProducts({}),
     );
-    try {
-      await repo.listProducts({});
-      check("confidential field is rejected", false);
-    } catch (err) {
-      check(
-        "confidential field error code is CATALOGUE_DTO_LEAK",
-        err instanceof CatalogueRepositoryError && err.code === "CATALOGUE_DTO_LEAK",
-      );
-    }
   }
 
   // ---------------------------------------------------------------------------
-  // Database mode does not use direct table reads
+  // Database mode uses only the four v2 public RPCs
   // ---------------------------------------------------------------------------
   {
     const repo = createSupabaseCatalogueRepository(
       () =>
         buildMockClient((name) => {
-          if (name !== "mp_public_catalogue_list" && name !== "mp_public_catalogue_get_by_slug") {
+          if (!V2_RPCS.has(name)) {
             throw new Error(`Unexpected RPC call: ${name}`);
           }
-          return name === "mp_public_catalogue_list"
-            ? { data: [], error: null }
-            : { data: [], error: null };
+          if (name === "mp_public_catalogue_categories_v2") {
+            return { data: [], error: null };
+          }
+          if (name === "mp_public_catalogue_brands_v2") {
+            return { data: [], error: null };
+          }
+          return { data: [], error: null };
         }),
       () => true,
     );
     await repo.listProducts({});
     await repo.getProductBySlug("any");
-    check("database mode uses only public RPCs", true);
+    await repo.listCategories();
+    await repo.listBrands();
+    check("database mode uses only v2 public RPCs", true);
   }
 
   // ---------------------------------------------------------------------------
-  // Media semantics regression
+  // Media defence in the actual RPC DTO mapping path
+  // (row-level gates — approver/approval timestamp/receipt/unpublished — are
+  //  enforced inside the v2 SQL and asserted by catalogueSqlContract.test.ts)
   // ---------------------------------------------------------------------------
   {
-    const baseMedia = {
-      source_url: "https://cdn.shopify.com/img.jpg",
-      sort_order: 0,
-      role: "gallery",
-      published: true,
-      rights_status: "supplier_approved",
-      source_type: "supplier",
+    const mediaCase = async (product: CatalogueProductDto) => {
+      const page = await repoWithRows([{ product, total: 1 }]).listProducts({});
+      return page.items[0];
     };
 
-    check(
-      "unpublished media is rejected",
-      mapPublishedImageUrls([{ ...baseMedia, published: false }]).image === null,
+    const http = await mediaCase(productWithMedia("http://cdn.shopify.com/img.jpg", []));
+    check("RPC media: HTTP URL is removed", http?.image === null && http?.images.length === 0);
+
+    const malicious = await mediaCase(productWithMedia("https://evil.com/img.jpg", []));
+    check("RPC media: malicious hostname is removed", malicious?.image === null);
+
+    const deceptive = await mediaCase(
+      productWithMedia("https://cdn.shopify.com.evil.com/img.jpg", []),
+    );
+    check("RPC media: deceptive hostname suffix is removed", deceptive?.image === null);
+
+    const invalid = await mediaCase(productWithMedia("not a valid url", []));
+    check("RPC media: invalid URL is removed", invalid?.image === null);
+
+    const absent = await mediaCase(productWithMedia(null, []));
+    check("RPC media: null URL stays null/empty", absent?.image === null && absent?.images.length === 0);
+
+    const approved = await mediaCase(
+      productWithMedia("https://cdn.shopify.com/s/files/primary.jpg", []),
     );
     check(
-      "receipt media is rejected",
-      mapPublishedImageUrls([{ ...baseMedia, role: "receipt" }]).image === null,
+      "RPC media: approved allowlisted URL is preserved",
+      approved?.image === "https://cdn.shopify.com/s/files/primary.jpg",
+    );
+
+    const gallery = await mediaCase(
+      productWithMedia("https://cdn.shopify.com/a.jpg", [
+        "https://kamalsolar.pk/b.jpg",
+        "https://evil.com/c.jpg",
+      ]),
     );
     check(
-      "unapproved rights are rejected",
-      mapPublishedImageUrls([{ ...baseMedia, rights_status: "pending" }]).image === null,
+      "RPC media: gallery keeps only allowlisted URLs in order",
+      gallery?.image === "https://cdn.shopify.com/a.jpg" &&
+        gallery?.images.length === 1 &&
+        gallery?.images[0] === "https://kamalsolar.pk/b.jpg",
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public price policy matrix (RPC DTO mapping path)
+  // ---------------------------------------------------------------------------
+  {
+    const priceCase = async (overrides: Partial<CatalogueDefaultVariantDto>) => {
+      const page = await repoWithRows([
+        { product: productWithVariant(overrides), total: 1 },
+      ]).listProducts({});
+      return page.items[0]?.defaultVariant;
+    };
+
+    const inStockAuto = await priceCase({
+      websitePrice: 111000,
+      websitePriceState: "priced_auto",
+      stockStatus: "in_stock",
+    });
+    check("price matrix: in_stock + priced_auto exposes price", inStockAuto?.websitePrice === 111000);
+
+    const inStockOverride = await priceCase({
+      websitePrice: 222000,
+      websitePriceState: "priced_override",
+      stockStatus: "in_stock",
+    });
+    check("price matrix: in_stock + priced_override exposes price", inStockOverride?.websitePrice === 222000);
+
+    const unknownStock = await priceCase({
+      websitePrice: 111000,
+      websitePriceState: "priced_auto",
+      stockStatus: "unknown",
+    });
+    check("price matrix: unknown stock hides price", unknownStock?.websitePrice === null);
+
+    const soldOut = await priceCase({
+      websitePrice: 111000,
+      websitePriceState: "priced_auto",
+      stockStatus: "sold_out",
+    });
+    check("price matrix: sold_out hides price", soldOut?.websitePrice === null);
+
+    const backorder = await priceCase({
+      websitePrice: 111000,
+      websitePriceState: "priced_override",
+      stockStatus: "backorder",
+    });
+    check("price matrix: backorder hides price", backorder?.websitePrice === null);
+
+    const confirm = await priceCase({
+      websitePrice: 111000,
+      websitePriceState: "confirm_price",
+      stockStatus: "in_stock",
+    });
     check(
-      "invalid host is rejected",
-      mapPublishedImageUrls([{ ...baseMedia, source_url: "http://evil.com/img.jpg" }]).image === null,
+      "price matrix: confirm_price hides price but preserves state",
+      confirm?.websitePrice === null && confirm?.websitePriceState === "confirm_price",
     );
-    check(
-      "absent media returns null/empty",
-      mapPublishedImageUrls(null).image === null && mapPublishedImageUrls(null).images.length === 0,
-    );
-    check(
-      "owned media is not labeled as supplier media",
-      mapPublishedImageUrls([{ ...baseMedia, source_type: "own" }]).image !== null,
-    );
+
+    const nullPrice = await priceCase({
+      websitePrice: null,
+      websitePriceState: "priced_auto",
+      stockStatus: "in_stock",
+    });
+    check("price matrix: null price stays null", nullPrice?.websitePrice === null);
+
+    const zeroPrice = await priceCase({
+      websitePrice: 0,
+      websitePriceState: "priced_auto",
+      stockStatus: "in_stock",
+    });
+    check("price matrix: zero price is hidden", zeroPrice?.websitePrice === null);
+
+    const negativePrice = await priceCase({
+      websitePrice: -5,
+      websitePriceState: "priced_auto",
+      stockStatus: "in_stock",
+    });
+    check("price matrix: negative price is hidden", negativePrice?.websitePrice === null);
   }
 
   console.log("catalogueRepository.test.ts: all checks passed");
