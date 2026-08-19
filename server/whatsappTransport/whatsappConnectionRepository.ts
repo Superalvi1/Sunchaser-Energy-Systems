@@ -28,12 +28,19 @@ export type WhatsAppConnectionStateOverride =
 
 /**
  * Business discovery status recorded during Meta Embedded Signup onboarding.
- * "success"    — /me/businesses returned ≥1 portfolio and metadata was stored.
+ * "success"    — Graph identified the authorized business portfolio.
  * "failed"     — Graph call was made but errored (permission denied, network, etc.).
- * "unresolved" — Multiple portfolios returned; association with this WABA is ambiguous.
+ * "unresolved" — Multiple portfolios and WABA ownership could not be proven.
  * null         — Discovery not yet attempted (pre-feature records or disconnected).
  */
 export type BusinessDiscoveryStatus = "success" | "failed" | "unresolved" | null;
+
+export type BusinessAssociationStatus =
+  | "confirmed"
+  | "unresolved"
+  | "mismatch"
+  | "not_available"
+  | null;
 
 export type WhatsAppConnectionRecord = {
   companyId: string;
@@ -47,15 +54,20 @@ export type WhatsAppConnectionRecord = {
   lastError: string | null;
   stateOverride: WhatsAppConnectionStateOverride | null;
   /**
-   * Business portfolio ID from /me/businesses (Meta business_management scope).
-   * Only set when exactly one portfolio is returned (unambiguous association).
-   * Never expose raw in API responses — always mask before surfacing.
+   * Business portfolio ID verified from Graph (WABA owner_business_info and/or
+   * GET /{business-id}). Never expose raw in API responses — always mask.
    */
   businessPortfolioId: string | null;
-  /** Business portfolio display name from /me/businesses. Safe to surface. */
+  /** Business portfolio display name from Graph. Safe to surface. */
   businessPortfolioName: string | null;
   /** Whether server-side business discovery succeeded, failed, or is unresolved. */
   businessDiscoveryStatus: BusinessDiscoveryStatus;
+  /** Sanitized discovery failure/unresolved reason. Never contains tokens. */
+  businessDiscoveryReason: string | null;
+  /** Verified WABA-to-business association. */
+  businessAssociationStatus: BusinessAssociationStatus;
+  /** WABA display name from Graph GET /{wabaId}?fields=name. Safe to surface. */
+  wabaName: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -107,6 +119,13 @@ function mapRow(row: Record<string, unknown>): WhatsAppConnectionRecord {
         : null,
     businessDiscoveryStatus:
       (row.business_discovery_status as BusinessDiscoveryStatus) ?? null,
+    businessDiscoveryReason:
+      row.business_discovery_reason != null
+        ? String(row.business_discovery_reason)
+        : null,
+    businessAssociationStatus:
+      (row.business_association_status as BusinessAssociationStatus) ?? null,
+    wabaName: row.waba_name != null ? String(row.waba_name) : null,
     createdAt: row.created_at != null ? String(row.created_at) : undefined,
     updatedAt: row.updated_at != null ? String(row.updated_at) : undefined,
   };
@@ -139,6 +158,9 @@ function toDbPayload(record: WhatsAppConnectionRecord): Record<string, unknown> 
     business_portfolio_id: record.businessPortfolioId,
     business_portfolio_name: record.businessPortfolioName,
     business_discovery_status: record.businessDiscoveryStatus,
+    business_discovery_reason: record.businessDiscoveryReason,
+    business_association_status: record.businessAssociationStatus,
+    waba_name: record.wabaName,
     updated_at: new Date().toISOString(),
   };
 }
@@ -168,6 +190,9 @@ export class InMemoryWhatsAppConnectionRepository
       businessPortfolioId: record.businessPortfolioId ?? null,
       businessPortfolioName: record.businessPortfolioName ?? null,
       businessDiscoveryStatus: record.businessDiscoveryStatus ?? null,
+      businessDiscoveryReason: record.businessDiscoveryReason ?? null,
+      businessAssociationStatus: record.businessAssociationStatus ?? null,
+      wabaName: record.wabaName ?? null,
       updatedAt: new Date().toISOString(),
       createdAt: record.createdAt ?? new Date().toISOString(),
     };

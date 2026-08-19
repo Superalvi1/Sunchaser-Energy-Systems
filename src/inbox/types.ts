@@ -172,9 +172,11 @@ export type MetaBusinessDiagnostics = {
   businessDiscovery: "success" | "unresolved" | "failed" | "not_attempted";
   businessPortfolioIdMasked: string | null;
   businessPortfolioName: string | null;
+  wabaName: string | null;
   wabaIdMasked: string | null;
   phoneNumberIdMasked: string | null;
-  associationStatus: "confirmed" | "unresolved" | "not_available";
+  associationStatus: "confirmed" | "unresolved" | "mismatch" | "not_available";
+  discoveryDetail: string | null;
 };
 
 export type WhatsAppOnboardingDiagnostics = {

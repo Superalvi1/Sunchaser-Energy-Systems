@@ -195,6 +195,8 @@ await test("businessDiagnostics is present and structurally valid", async () => 
   // Default (no connection) must be not_attempted
   assert.equal(bd.businessDiscovery, "not_attempted");
   assert.equal(bd.associationStatus, "not_available");
+  assert.equal(diag.graphApi.connectivityOk, true);
+  assert.equal(diag.graphApi.detail, null);
 
   // Must not include raw token fields
   const serialized = JSON.stringify(diag);
@@ -210,6 +212,7 @@ await test("businessDiagnostics shows success when record has successful discove
     businessPortfolioId: "111222333444555",
     businessPortfolioName: "Sunchaser Energy",
     businessDiscoveryStatus: "success",
+    businessAssociationStatus: "confirmed",
   });
   const diag = await getWhatsAppOnboardingDiagnostics({
     fetchImpl: async () => new Response("{}", { status: 200 }),
@@ -218,6 +221,7 @@ await test("businessDiagnostics shows success when record has successful discove
   assert.equal(bd.businessDiscovery, "success");
   assert.equal(bd.businessPortfolioName, "Sunchaser Energy");
   assert.equal(bd.associationStatus, "confirmed");
+  assert.equal(bd.wabaName ?? null, null);
   // ID must be masked, not raw
   assert.ok(bd.businessPortfolioIdMasked != null);
   assert.ok(!bd.businessPortfolioIdMasked?.includes("111222333444555"), "raw portfolio ID must be masked");
@@ -234,6 +238,7 @@ await test("businessDiagnostics never exposes access_token, app_secret or raw Gr
     businessPortfolioId: "9998887776665",
     businessPortfolioName: "Test Biz",
     businessDiscoveryStatus: "success",
+    businessAssociationStatus: "confirmed",
   });
   const prevSecret = process.env.WHATSAPP_APP_SECRET;
   process.env.WHATSAPP_APP_SECRET = "APP_SECRET_MUST_NOT_APPEAR";
@@ -248,6 +253,23 @@ await test("businessDiagnostics never exposes access_token, app_secret or raw Gr
     if (prevSecret === undefined) delete process.env.WHATSAPP_APP_SECRET;
     else process.env.WHATSAPP_APP_SECRET = prevSecret;
   }
+});
+
+await test("association is not confirmed unless the record stores confirmed", async () => {
+  await resetConnectionStoreForTests({
+    wabaId: "123456789098765",
+    phoneNumberId: "987654321012345",
+    accessToken: "EAAG_test",
+    businessPortfolioId: "111222333444555",
+    businessPortfolioName: "Sunchaser Energy",
+    businessDiscoveryStatus: "success",
+    businessAssociationStatus: "unresolved",
+  });
+  const diag = await getWhatsAppOnboardingDiagnostics({
+    fetchImpl: async () => new Response("{}", { status: 200 }),
+  });
+  assert.equal(diag.businessDiagnostics.businessDiscovery, "success");
+  assert.equal(diag.businessDiagnostics.associationStatus, "unresolved");
 });
 
 if (failed > 0) {

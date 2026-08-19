@@ -93,6 +93,7 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
         wabaId: signup.wabaId,
         phoneNumberId: signup.phoneNumberId,
         state: signup.state,
+        ...(signup.businessId ? { businessId: signup.businessId } : {}),
       });
       await load();
     } catch (err) {
@@ -282,9 +283,8 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
           </div>
 
           <div className="rounded-xl border border-neutral-800 bg-neutral-900/80 p-4 text-xs text-neutral-400">
-            Graph API {diagnostics.graphApi.version}:{" "}
-            {diagnostics.graphApi.connectivityOk ? "reachable" : "unreachable"}
-            {diagnostics.graphApi.detail ? ` — ${diagnostics.graphApi.detail}` : ""}
+            Graph API:{" "}
+            {diagnostics.graphApi.connectivityOk ? "Reachable" : "Unreachable"}
           </div>
 
           {/* Meta Business Diagnostics — read-only, admin only */}
@@ -296,13 +296,13 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
               Meta Business Diagnostics
             </div>
             <p className="text-[11px] leading-relaxed text-neutral-400">
-              Sunchaser CRM uses{" "}
+              During Meta onboarding, Sunchaser CRM uses{" "}
               <span className="font-mono text-neutral-300">
                 business_management
               </span>{" "}
-              during Meta onboarding to identify the business portfolio
-              authorized by the administrator and associate WhatsApp business
-              assets with the correct business context.
+              to identify the Business Portfolio authorized by the administrator
+              and associate the selected WhatsApp Business Account with the
+              correct business context.
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
               {/* Authorization status */}
@@ -336,10 +336,16 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
                     ? "Successful"
                     : diagnostics.businessDiagnostics.businessDiscovery === "failed"
                       ? "Failed"
-                      : diagnostics.businessDiagnostics.businessDiscovery === "unresolved"
-                        ? "Multiple portfolios (unresolved)"
-                        : "Not attempted"}
+                    : diagnostics.businessDiagnostics.businessDiscovery === "unresolved"
+                      ? "Unresolved"
+                      : "Not attempted"}
                 </div>
+                {diagnostics.businessDiagnostics.discoveryDetail &&
+                diagnostics.businessDiagnostics.associationStatus !== "confirmed" ? (
+                  <div className="mt-0.5 text-[10px] leading-relaxed text-amber-200/80">
+                    {diagnostics.businessDiagnostics.discoveryDetail}
+                  </div>
+                ) : null}
               </div>
               {/* Business Portfolio name */}
               <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
@@ -359,6 +365,9 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
               <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
                 <div className="text-[10px] uppercase tracking-wider text-neutral-500">
                   WABA
+                </div>
+                <div className="mt-0.5 text-xs font-semibold text-neutral-200">
+                  {diagnostics.businessDiagnostics.wabaName ?? "—"}
                 </div>
                 <div className="mt-0.5 font-mono text-[10px] text-neutral-300">
                   {diagnostics.businessDiagnostics.wabaIdMasked ?? "—"}
@@ -382,14 +391,17 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
                   className={`mt-0.5 text-xs font-semibold ${
                     diagnostics.businessDiagnostics.associationStatus === "confirmed"
                       ? "text-emerald-400"
-                      : diagnostics.businessDiagnostics.associationStatus === "unresolved"
+                      : diagnostics.businessDiagnostics.associationStatus === "unresolved" ||
+                          diagnostics.businessDiagnostics.associationStatus === "mismatch"
                         ? "text-amber-300"
                         : "text-neutral-500"
                   }`}
                 >
                   {diagnostics.businessDiagnostics.associationStatus === "confirmed"
                     ? "Confirmed"
-                    : diagnostics.businessDiagnostics.associationStatus === "unresolved"
+                    : diagnostics.businessDiagnostics.associationStatus === "mismatch"
+                      ? "Mismatch"
+                      : diagnostics.businessDiagnostics.associationStatus === "unresolved"
                       ? "Unresolved"
                       : "Not available"}
                 </div>

@@ -43,6 +43,8 @@ export type MetaEmbeddedSignupResult = {
   state: string;
   wabaId: string;
   phoneNumberId: string;
+  /** Optional FINISH business_id — verified server-side, never trusted alone. */
+  businessId?: string;
 };
 
 export type MetaEmbeddedSignupErrorCode =
@@ -570,6 +572,7 @@ export type ParsedEmbeddedSignupMessage =
       event: string;
       wabaId: string;
       phoneNumberId: string;
+      businessId?: string;
     }
   | { status: "cancelled"; event: string }
   | {
@@ -617,6 +620,8 @@ export function parseEmbeddedSignupMessageData(
     data && data.phone_number_id != null
       ? String(data.phone_number_id).trim()
       : "";
+  const businessId =
+    data && data.business_id != null ? String(data.business_id).trim() : "";
 
   // Cancel / error before requiring asset IDs.
   if (eventKey === "CANCEL" || eventKey.startsWith("CANCEL")) {
@@ -651,6 +656,7 @@ export function parseEmbeddedSignupMessageData(
         event: event || "FINISH",
         wabaId,
         phoneNumberId,
+        ...(businessId ? { businessId } : {}),
       };
     }
     return { status: "malformed" };
@@ -907,6 +913,7 @@ export async function launchMetaEmbeddedSignup(
   let code: string | null = null;
   let wabaId: string | null = null;
   let phoneNumberId: string | null = null;
+  let businessId: string | null = null;
   let loginCallbackReceived = false;
   let finishEventReceived = false;
   let messageCount = 0;
@@ -954,6 +961,7 @@ export async function launchMetaEmbeddedSignup(
       state: oauthState,
       wabaId,
       phoneNumberId,
+      ...(businessId ? { businessId } : {}),
     });
   };
 
@@ -1080,6 +1088,7 @@ export async function launchMetaEmbeddedSignup(
 
     wabaId = parsed.wabaId;
     phoneNumberId = parsed.phoneNumberId;
+    businessId = parsed.businessId ?? null;
     finishEventReceived = true;
     settleOk();
   };

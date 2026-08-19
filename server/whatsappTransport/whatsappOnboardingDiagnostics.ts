@@ -12,6 +12,7 @@ import {
   getWhatsAppConnectionRepository,
   getWhatsAppConnectionStatus,
   maskId,
+  refreshBusinessDiscoveryIfStale,
   testWhatsAppConnection,
   type WhatsAppConnectionStatusPayload,
   type WhatsAppConnectionTestResult,
@@ -45,23 +46,24 @@ export type ChecklistItem = {
  */
 export type MetaBusinessDiagnostics = {
   /**
-   * Whether business_management discovery was successfully exercised.
-   * "success"    — GET /me/businesses succeeded and captured exactly one portfolio.
-   * "unresolved" — Multiple portfolios returned; association ambiguous.
-   * "failed"     — Graph call failed (permission denied, network, etc.).
-   * "not_attempted" — Discovery not yet run for this connection.
+   * Whether business discovery succeeded from real Graph results.
+   * "success" only when Graph identified the authorized portfolio.
    */
   businessDiscovery: "success" | "unresolved" | "failed" | "not_attempted";
   /** Masked Business Portfolio ID (first 2 + **** + last 4). */
   businessPortfolioIdMasked: string | null;
   /** Display name of the authorized business portfolio (safe to surface). */
   businessPortfolioName: string | null;
+  /** WABA display name from Graph, when retrieved. */
+  wabaName: string | null;
   /** Masked WABA ID (same masking as connection.wabaIdMasked). */
   wabaIdMasked: string | null;
   /** Masked Phone Number ID. */
   phoneNumberIdMasked: string | null;
   /** Human-readable status of the business-to-WABA association. */
-  associationStatus: "confirmed" | "unresolved" | "not_available";
+  associationStatus: "confirmed" | "unresolved" | "mismatch" | "not_available";
+  /** Sanitized discovery detail. Never contains tokens or raw Graph JSON. */
+  discoveryDetail: string | null;
 };
 
 export type WhatsAppOnboardingDiagnostics = {
@@ -167,9 +169,9 @@ async function probeGraphConnectivity(
       `https://graph.facebook.com/${version}/`,
       { method: "GET", signal: AbortSignal.timeout(5_000) }
     );
-    // Graph root often returns 400 without token — still proves connectivity.
+    // Graph root without a token commonly returns 400 — that still proves reachability.
     if (res.status >= 200 && res.status < 500) {
-      return { ok: true, version, detail: `Graph API reachable (HTTP ${res.status})` };
+      return { ok: true, version, detail: null };
     }
     return {
       ok: false,
@@ -201,6 +203,11 @@ export async function getWhatsAppOnboardingDiagnostics(
   deps: DiagnosticsDeps = {}
 ): Promise<WhatsAppOnboardingDiagnostics> {
   const fetchImpl = deps.fetchImpl ?? fetch;
+  try {
+    await refreshBusinessDiscoveryIfStale(deps.companyId, fetchImpl);
+  } catch {
+    // Best-effort refresh must never fail the diagnostics page.
+  }
   const config = readWhatsAppConfig();
   const connection = await getWhatsAppConnectionStatus(deps.companyId);
   const { url: webhookCallbackUrl, publicBaseUrlConfigured } =
@@ -335,19 +342,24 @@ export async function getWhatsAppOnboardingDiagnostics(
   const phoneNumberIdMasked = connection.phoneNumberIdMasked;
 
   const associationStatus: MetaBusinessDiagnostics["associationStatus"] =
-    rawDiscovery === "success" && connectionRecord?.businessPortfolioId
+    connectionRecord?.businessAssociationStatus === "confirmed"
       ? "confirmed"
-      : rawDiscovery === "unresolved"
-        ? "unresolved"
-        : "not_available";
+      : connectionRecord?.businessAssociationStatus === "mismatch"
+        ? "mismatch"
+        : connectionRecord?.businessAssociationStatus === "unresolved" ||
+            rawDiscovery === "unresolved"
+          ? "unresolved"
+          : "not_available";
 
   const businessDiagnostics: MetaBusinessDiagnostics = {
     businessDiscovery,
     businessPortfolioIdMasked,
     businessPortfolioName,
+    wabaName: connectionRecord?.wabaName ?? null,
     wabaIdMasked,
     phoneNumberIdMasked,
     associationStatus,
+    discoveryDetail: connectionRecord?.businessDiscoveryReason ?? null,
   };
 
   return {

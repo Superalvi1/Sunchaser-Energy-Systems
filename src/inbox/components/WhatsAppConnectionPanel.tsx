@@ -447,6 +447,7 @@ export default function WhatsAppConnectionPanel({
         wabaId: signup.wabaId,
         phoneNumberId: signup.phoneNumberId,
         state: attemptState,
+        ...(signup.businessId ? { businessId: signup.businessId } : {}),
       });
       setMetaStatus(updated);
     } catch (err) {
