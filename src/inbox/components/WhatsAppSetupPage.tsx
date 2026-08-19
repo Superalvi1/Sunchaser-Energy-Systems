@@ -287,6 +287,116 @@ export default function WhatsAppSetupPage({ staffUser }: WhatsAppSetupPageProps)
             {diagnostics.graphApi.detail ? ` — ${diagnostics.graphApi.detail}` : ""}
           </div>
 
+          {/* Meta Business Diagnostics — read-only, admin only */}
+          <div
+            className="rounded-xl border border-neutral-800 bg-neutral-900/80 p-4 space-y-3"
+            data-testid="meta-business-diagnostics"
+          >
+            <div className="text-[11px] uppercase tracking-wider text-neutral-500">
+              Meta Business Diagnostics
+            </div>
+            <p className="text-[11px] leading-relaxed text-neutral-400">
+              Sunchaser CRM uses{" "}
+              <span className="font-mono text-neutral-300">
+                business_management
+              </span>{" "}
+              during Meta onboarding to identify the business portfolio
+              authorized by the administrator and associate WhatsApp business
+              assets with the correct business context.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {/* Authorization status */}
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Meta Authorization
+                </div>
+                <div className="mt-0.5 text-xs font-semibold text-neutral-200">
+                  {diagnostics.connection.status !== "DISCONNECTED"
+                    ? "Authorized"
+                    : "Not available"}
+                </div>
+              </div>
+              {/* Business discovery */}
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Business Discovery
+                </div>
+                <div
+                  className={`mt-0.5 text-xs font-semibold ${
+                    diagnostics.businessDiagnostics.businessDiscovery === "success"
+                      ? "text-emerald-400"
+                      : diagnostics.businessDiagnostics.businessDiscovery === "failed"
+                        ? "text-amber-300"
+                        : diagnostics.businessDiagnostics.businessDiscovery === "unresolved"
+                          ? "text-amber-300"
+                          : "text-neutral-500"
+                  }`}
+                >
+                  {diagnostics.businessDiagnostics.businessDiscovery === "success"
+                    ? "Successful"
+                    : diagnostics.businessDiagnostics.businessDiscovery === "failed"
+                      ? "Failed"
+                      : diagnostics.businessDiagnostics.businessDiscovery === "unresolved"
+                        ? "Multiple portfolios (unresolved)"
+                        : "Not attempted"}
+                </div>
+              </div>
+              {/* Business Portfolio name */}
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Business Portfolio
+                </div>
+                <div className="mt-0.5 text-xs font-semibold text-neutral-200">
+                  {diagnostics.businessDiagnostics.businessPortfolioName ?? "—"}
+                </div>
+                {diagnostics.businessDiagnostics.businessPortfolioIdMasked ? (
+                  <div className="mt-0.5 font-mono text-[10px] text-neutral-500">
+                    ID: {diagnostics.businessDiagnostics.businessPortfolioIdMasked}
+                  </div>
+                ) : null}
+              </div>
+              {/* WABA */}
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  WABA
+                </div>
+                <div className="mt-0.5 font-mono text-[10px] text-neutral-300">
+                  {diagnostics.businessDiagnostics.wabaIdMasked ?? "—"}
+                </div>
+              </div>
+              {/* Phone Number ID */}
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Phone Number ID
+                </div>
+                <div className="mt-0.5 font-mono text-[10px] text-neutral-300">
+                  {diagnostics.businessDiagnostics.phoneNumberIdMasked ?? "—"}
+                </div>
+              </div>
+              {/* Association status */}
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Business Association
+                </div>
+                <div
+                  className={`mt-0.5 text-xs font-semibold ${
+                    diagnostics.businessDiagnostics.associationStatus === "confirmed"
+                      ? "text-emerald-400"
+                      : diagnostics.businessDiagnostics.associationStatus === "unresolved"
+                        ? "text-amber-300"
+                        : "text-neutral-500"
+                  }`}
+                >
+                  {diagnostics.businessDiagnostics.associationStatus === "confirmed"
+                    ? "Confirmed"
+                    : diagnostics.businessDiagnostics.associationStatus === "unresolved"
+                      ? "Unresolved"
+                      : "Not available"}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {testResult ? (
             <div
               className={`rounded-lg border px-3 py-2 text-xs ${

@@ -1512,6 +1512,16 @@ await test("rbac: diagnostics requires Admin; never returns verify token", async
         false
       );
       assert.equal(serialized.includes('"webhookVerifyToken"'), false);
+      assert.ok(data.businessDiagnostics);
+      assert.ok(
+        ["success", "unresolved", "failed", "not_attempted"].includes(
+          data.businessDiagnostics.businessDiscovery
+        )
+      );
+      assert.ok(
+        !serialized.includes("EAAG"),
+        "diagnostics must not leak access-token-shaped strings"
+      );
     });
   } finally {
     if (prevVerify === undefined) delete process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;

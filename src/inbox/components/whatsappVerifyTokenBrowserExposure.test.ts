@@ -55,6 +55,21 @@ await test("connection panel does not retain or display the verify token secret"
   assert.match(src, /Webhook callback URL/);
 });
 
+await test("setup page shows Meta Business Diagnostics without secrets", () => {
+  const src = readComponent("WhatsAppSetupPage.tsx");
+  assert.match(src, /Meta Business Diagnostics/);
+  assert.match(
+    src,
+    /Sunchaser CRM uses/
+  );
+  assert.match(src, /business_management/);
+  assert.match(src, /data-testid="meta-business-diagnostics"/);
+  assert.equal(src.includes("accessToken"), false);
+  assert.equal(src.includes("appSecret"), false);
+  assert.equal(src.includes("system-user"), false);
+  assert.equal(/\baccess_token\b/.test(src), false);
+});
+
 await test("inbox types expose configured flag only, never the secret field", () => {
   const types = fs.readFileSync(
     path.join(here, "..", "types.ts"),

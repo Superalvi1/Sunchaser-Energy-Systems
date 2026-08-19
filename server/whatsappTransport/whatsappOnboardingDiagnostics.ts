@@ -9,12 +9,14 @@ import {
   readWhatsAppConfig,
 } from "./whatsappConfig.ts";
 import {
+  getWhatsAppConnectionRepository,
   getWhatsAppConnectionStatus,
+  maskId,
   testWhatsAppConnection,
   type WhatsAppConnectionStatusPayload,
   type WhatsAppConnectionTestResult,
 } from "./whatsappConnectionService.ts";
-import { WHATSAPP_WEBHOOK_PATH } from "./whatsappConstants.ts";
+import { DEFAULT_COMPANY_ID, WHATSAPP_WEBHOOK_PATH } from "./whatsappConstants.ts";
 import { resolveWhatsAppTokenEncryptionKey, WhatsAppTokenCryptoError } from "./whatsappTokenCrypto.ts";
 
 export type ChecklistItemId =
@@ -36,6 +38,32 @@ export type ChecklistItem = {
   detail: string | null;
 };
 
+/**
+ * Read-only business portfolio diagnostics section.
+ * Never includes access tokens, raw Graph responses, or unmasked sensitive IDs.
+ * All IDs are masked in the same format as wabaIdMasked (first 2 + **** + last 4).
+ */
+export type MetaBusinessDiagnostics = {
+  /**
+   * Whether business_management discovery was successfully exercised.
+   * "success"    — GET /me/businesses succeeded and captured exactly one portfolio.
+   * "unresolved" — Multiple portfolios returned; association ambiguous.
+   * "failed"     — Graph call failed (permission denied, network, etc.).
+   * "not_attempted" — Discovery not yet run for this connection.
+   */
+  businessDiscovery: "success" | "unresolved" | "failed" | "not_attempted";
+  /** Masked Business Portfolio ID (first 2 + **** + last 4). */
+  businessPortfolioIdMasked: string | null;
+  /** Display name of the authorized business portfolio (safe to surface). */
+  businessPortfolioName: string | null;
+  /** Masked WABA ID (same masking as connection.wabaIdMasked). */
+  wabaIdMasked: string | null;
+  /** Masked Phone Number ID. */
+  phoneNumberIdMasked: string | null;
+  /** Human-readable status of the business-to-WABA association. */
+  associationStatus: "confirmed" | "unresolved" | "not_available";
+};
+
 export type WhatsAppOnboardingDiagnostics = {
   checklist: ChecklistItem[];
   connection: WhatsAppConnectionStatusPayload;
@@ -55,6 +83,8 @@ export type WhatsAppOnboardingDiagnostics = {
     encryptionKeyConfigured: boolean;
     conversationsEnabled: boolean;
   };
+  /** Read-only Meta Business Portfolio diagnostics. Admin-only. */
+  businessDiagnostics: MetaBusinessDiagnostics;
 };
 
 function envPresent(...keys: string[]): boolean {
@@ -285,6 +315,41 @@ export async function getWhatsAppOnboardingDiagnostics(
     },
   ];
 
+  // ── Business diagnostics (read from stored record — never re-calls Graph) ──
+  const companyId = deps.companyId ?? DEFAULT_COMPANY_ID;
+  const connectionRecord = await getWhatsAppConnectionRepository().get(companyId).catch(() => null);
+
+  const rawDiscovery = connectionRecord?.businessDiscoveryStatus ?? null;
+  const businessDiscovery: MetaBusinessDiagnostics["businessDiscovery"] =
+    rawDiscovery === "success"
+      ? "success"
+      : rawDiscovery === "unresolved"
+        ? "unresolved"
+        : rawDiscovery === "failed"
+          ? "failed"
+          : "not_attempted";
+
+  const businessPortfolioIdMasked = maskId(connectionRecord?.businessPortfolioId ?? null);
+  const businessPortfolioName = connectionRecord?.businessPortfolioName ?? null;
+  const wabaIdMasked = connection.wabaIdMasked;
+  const phoneNumberIdMasked = connection.phoneNumberIdMasked;
+
+  const associationStatus: MetaBusinessDiagnostics["associationStatus"] =
+    rawDiscovery === "success" && connectionRecord?.businessPortfolioId
+      ? "confirmed"
+      : rawDiscovery === "unresolved"
+        ? "unresolved"
+        : "not_available";
+
+  const businessDiagnostics: MetaBusinessDiagnostics = {
+    businessDiscovery,
+    businessPortfolioIdMasked,
+    businessPortfolioName,
+    wabaIdMasked,
+    phoneNumberIdMasked,
+    associationStatus,
+  };
+
   return {
     checklist,
     connection,
@@ -303,6 +368,7 @@ export async function getWhatsAppOnboardingDiagnostics(
       encryptionKeyConfigured: encOk,
       conversationsEnabled: config.enabled,
     },
+    businessDiagnostics,
   };
 }
 

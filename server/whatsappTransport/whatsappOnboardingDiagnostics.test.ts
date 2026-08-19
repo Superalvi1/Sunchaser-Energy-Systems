@@ -178,6 +178,78 @@ await test("test connection validates token/waba/phone via Graph", async () => {
   assert.equal(result.phoneAccessOk, true);
 });
 
+await test("businessDiagnostics is present and structurally valid", async () => {
+  await resetConnectionStoreForTests();
+  const diag = await getWhatsAppOnboardingDiagnostics({
+    fetchImpl: async () => new Response("{}", { status: 200 }),
+  });
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(diag, "businessDiagnostics"),
+    "diagnostics must have businessDiagnostics property"
+  );
+  const bd = diag.businessDiagnostics;
+  assert.ok(
+    ["success", "unresolved", "failed", "not_attempted"].includes(bd.businessDiscovery),
+    "businessDiscovery must be a valid status"
+  );
+  // Default (no connection) must be not_attempted
+  assert.equal(bd.businessDiscovery, "not_attempted");
+  assert.equal(bd.associationStatus, "not_available");
+
+  // Must not include raw token fields
+  const serialized = JSON.stringify(diag);
+  assert.equal(serialized.includes('"accessToken"'), false);
+  assert.equal(serialized.includes('"webhookVerifyToken"'), false);
+});
+
+await test("businessDiagnostics shows success when record has successful discovery", async () => {
+  await resetConnectionStoreForTests({
+    wabaId: "123456789098765",
+    phoneNumberId: "987654321012345",
+    accessToken: "EAAG_test",
+    businessPortfolioId: "111222333444555",
+    businessPortfolioName: "Sunchaser Energy",
+    businessDiscoveryStatus: "success",
+  });
+  const diag = await getWhatsAppOnboardingDiagnostics({
+    fetchImpl: async () => new Response("{}", { status: 200 }),
+  });
+  const bd = diag.businessDiagnostics;
+  assert.equal(bd.businessDiscovery, "success");
+  assert.equal(bd.businessPortfolioName, "Sunchaser Energy");
+  assert.equal(bd.associationStatus, "confirmed");
+  // ID must be masked, not raw
+  assert.ok(bd.businessPortfolioIdMasked != null);
+  assert.ok(!bd.businessPortfolioIdMasked?.includes("111222333444555"), "raw portfolio ID must be masked");
+  // Raw portfolio ID must not appear anywhere in serialized response
+  const serialized = JSON.stringify(diag);
+  assert.ok(!serialized.includes("111222333444555"), "raw business portfolio ID must never appear in diagnostics");
+});
+
+await test("businessDiagnostics never exposes access_token, app_secret or raw Graph fields", async () => {
+  await resetConnectionStoreForTests({
+    wabaId: "123456789098765",
+    phoneNumberId: "987654321012345",
+    accessToken: "EAAG_MUST_NOT_APPEAR_IN_DIAG",
+    businessPortfolioId: "9998887776665",
+    businessPortfolioName: "Test Biz",
+    businessDiscoveryStatus: "success",
+  });
+  const prevSecret = process.env.WHATSAPP_APP_SECRET;
+  process.env.WHATSAPP_APP_SECRET = "APP_SECRET_MUST_NOT_APPEAR";
+  try {
+    const diag = await getWhatsAppOnboardingDiagnostics({
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+    });
+    const serialized = JSON.stringify(diag);
+    assert.ok(!serialized.includes("EAAG_MUST_NOT_APPEAR_IN_DIAG"), "access token must not appear");
+    assert.ok(!serialized.includes("APP_SECRET_MUST_NOT_APPEAR"), "app secret must not appear");
+  } finally {
+    if (prevSecret === undefined) delete process.env.WHATSAPP_APP_SECRET;
+    else process.env.WHATSAPP_APP_SECRET = prevSecret;
+  }
+});
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);

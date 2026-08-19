@@ -80,6 +80,9 @@ await test("connection repository binds records to companyId", async () => {
     lastWebhookAt: null,
     lastError: null,
     stateOverride: null,
+    businessPortfolioId: null,
+    businessPortfolioName: null,
+    businessDiscoveryStatus: null,
   });
   const row = await repo.get("sunchaser");
   assert.equal(row?.phoneNumberId, "p1");

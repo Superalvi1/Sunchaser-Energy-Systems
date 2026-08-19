@@ -26,6 +26,15 @@ export type WhatsAppConnectionStateOverride =
   | "NOT_CONNECTED"
   | "REAUTHORIZATION_REQUIRED";
 
+/**
+ * Business discovery status recorded during Meta Embedded Signup onboarding.
+ * "success"    — /me/businesses returned ≥1 portfolio and metadata was stored.
+ * "failed"     — Graph call was made but errored (permission denied, network, etc.).
+ * "unresolved" — Multiple portfolios returned; association with this WABA is ambiguous.
+ * null         — Discovery not yet attempted (pre-feature records or disconnected).
+ */
+export type BusinessDiscoveryStatus = "success" | "failed" | "unresolved" | null;
+
 export type WhatsAppConnectionRecord = {
   companyId: string;
   wabaId: string | null;
@@ -37,6 +46,16 @@ export type WhatsAppConnectionRecord = {
   lastWebhookAt: string | null;
   lastError: string | null;
   stateOverride: WhatsAppConnectionStateOverride | null;
+  /**
+   * Business portfolio ID from /me/businesses (Meta business_management scope).
+   * Only set when exactly one portfolio is returned (unambiguous association).
+   * Never expose raw in API responses — always mask before surfacing.
+   */
+  businessPortfolioId: string | null;
+  /** Business portfolio display name from /me/businesses. Safe to surface. */
+  businessPortfolioName: string | null;
+  /** Whether server-side business discovery succeeded, failed, or is unresolved. */
+  businessDiscoveryStatus: BusinessDiscoveryStatus;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -78,6 +97,16 @@ function mapRow(row: Record<string, unknown>): WhatsAppConnectionRecord {
     lastError: row.last_error != null ? String(row.last_error) : null,
     stateOverride:
       (row.state_override as WhatsAppConnectionStateOverride | null) ?? null,
+    businessPortfolioId:
+      row.business_portfolio_id != null
+        ? String(row.business_portfolio_id)
+        : null,
+    businessPortfolioName:
+      row.business_portfolio_name != null
+        ? String(row.business_portfolio_name)
+        : null,
+    businessDiscoveryStatus:
+      (row.business_discovery_status as BusinessDiscoveryStatus) ?? null,
     createdAt: row.created_at != null ? String(row.created_at) : undefined,
     updatedAt: row.updated_at != null ? String(row.updated_at) : undefined,
   };
@@ -107,6 +136,9 @@ function toDbPayload(record: WhatsAppConnectionRecord): Record<string, unknown> 
     last_webhook_at: record.lastWebhookAt,
     last_error: record.lastError,
     state_override: record.stateOverride,
+    business_portfolio_id: record.businessPortfolioId,
+    business_portfolio_name: record.businessPortfolioName,
+    business_discovery_status: record.businessDiscoveryStatus,
     updated_at: new Date().toISOString(),
   };
 }
@@ -133,6 +165,9 @@ export class InMemoryWhatsAppConnectionRepository
     const next: WhatsAppConnectionRecord = {
       ...record,
       companyId: id,
+      businessPortfolioId: record.businessPortfolioId ?? null,
+      businessPortfolioName: record.businessPortfolioName ?? null,
+      businessDiscoveryStatus: record.businessDiscoveryStatus ?? null,
       updatedAt: new Date().toISOString(),
       createdAt: record.createdAt ?? new Date().toISOString(),
     };

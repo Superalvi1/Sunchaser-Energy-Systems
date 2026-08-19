@@ -11,6 +11,8 @@
  *     stored; the nonce is burned on first use.
  *   - WABA ownership verification: after token exchange, GET /{wabaId} confirms the
  *     token can access the claimed WhatsApp Business Account (not Business Portfolio IDs).
+ *   - Best-effort business discovery: GET /me/businesses?fields=id,name exercises
+ *     business_management after code exchange. Failure never fails onboarding.
  *   - Phone Number ID ownership: /WABA_ID/phone_numbers is queried to confirm the
  *     phone_number_id belongs to the WABA.
  *   - subscribed_apps registration: POST /{wabaId}/subscribed_apps registers
@@ -35,6 +37,12 @@ import {
 } from "./whatsappConstants.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 import { sanitizeProviderError } from "./whatsappGraphClient.ts";
+import type {
+  BusinessDiscoveryStatus,
+  WhatsAppConnectionRecord,
+  WhatsAppConnectionRepository,
+} from "./whatsappConnectionRepository.ts";
+import { InMemoryWhatsAppConnectionRepository } from "./whatsappConnectionRepository.ts";
 import type { OAuthStateStore } from "./whatsappOAuthStateStore.ts";
 import { memoryOAuthStateStore } from "./whatsappOAuthStateStore.ts";
 
@@ -48,13 +56,6 @@ export function setWhatsAppOAuthStateStore(store: OAuthStateStore): void {
 export function getWhatsAppOAuthStateStore(): OAuthStateStore {
   return oauthStateStore;
 }
-import type {
-  WhatsAppConnectionRecord,
-  WhatsAppConnectionRepository,
-} from "./whatsappConnectionRepository.ts";
-import {
-  InMemoryWhatsAppConnectionRepository,
-} from "./whatsappConnectionRepository.ts";
 
 // ─── Connection state types ────────────────────────────────────────────────
 
@@ -151,6 +152,9 @@ export async function resetConnectionStoreForTests(
       lastWebhookAt: initial.lastWebhookAt ?? null,
       lastError: initial.lastError ?? null,
       stateOverride: initial.stateOverride ?? null,
+      businessPortfolioId: initial.businessPortfolioId ?? null,
+      businessPortfolioName: initial.businessPortfolioName ?? null,
+      businessDiscoveryStatus: initial.businessDiscoveryStatus ?? null,
     });
   }
 }
@@ -183,6 +187,9 @@ async function getOrCreateRecord(
     lastWebhookAt: null,
     lastError: null,
     stateOverride: null,
+    businessPortfolioId: null,
+    businessPortfolioName: null,
+    businessDiscoveryStatus: null,
   };
 }
 
@@ -439,6 +446,95 @@ async function graphDelete(
   }
 }
 
+// ─── Meta Business Portfolio discovery (business_management) ─────────────────
+
+/**
+ * Raw business record from GET /me/businesses?fields=id,name.
+ * Only id and name are captured — we never store raw Graph payloads.
+ */
+type MetaBusinessPortfolio = {
+  id: string;
+  name: string;
+};
+
+/**
+ * Best-effort result of server-side business portfolio discovery.
+ *
+ * Requires the business_management Graph permission.
+ * Uses GET /me/businesses?fields=id,name — the smallest documented Graph
+ * operation that genuinely exercises business_management.
+ *
+ * The status semantics:
+ *   "success"    — exactly one portfolio found and captured.
+ *   "unresolved" — multiple portfolios found; no selection made (per policy).
+ *   "failed"     — Graph call errored (permission denied, network, etc.).
+ */
+export type BusinessDiscoveryResult =
+  | { status: "success"; portfolioId: string; portfolioName: string }
+  | { status: "unresolved"; portfolioCount: number }
+  | { status: "failed"; sanitizedReason: string };
+
+/**
+ * Call GET /me/businesses?fields=id,name with the given user access token.
+ *
+ * Requires business_management permission.
+ * Never throws — returns a discriminated result object so callers can
+ * safely apply best-effort behavior without blocking existing onboarding.
+ *
+ * Security: only id and name are captured from each business entry.
+ * Raw Graph responses are never forwarded to callers.
+ */
+export async function discoverBusinessPortfolio(
+  accessToken: string,
+  version: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<BusinessDiscoveryResult> {
+  const url = `https://graph.facebook.com/${version}/me/businesses?fields=id,name`;
+  let data: Record<string, unknown>;
+
+  try {
+    data = await graphGet(url, accessToken, fetchImpl);
+  } catch (err) {
+    const sanitized =
+      err instanceof InboxServiceError
+        ? err.message
+        : sanitizeProviderError(
+            err instanceof Error ? err.message : "Business discovery failed"
+          );
+    return { status: "failed", sanitizedReason: sanitized };
+  }
+
+  // Normalize the response — graph returns { data: [...] } for list endpoints.
+  const rawList = Array.isArray(data.data)
+    ? (data.data as Record<string, unknown>[])
+    : Array.isArray(data)
+      ? (data as Record<string, unknown>[])
+      : [];
+
+  const portfolios: MetaBusinessPortfolio[] = [];
+  for (const entry of rawList) {
+    const id = typeof entry.id === "string" ? entry.id.trim() : "";
+    const name = typeof entry.name === "string" ? entry.name.trim() : "";
+    if (id) portfolios.push({ id, name: name || id });
+  }
+
+  if (portfolios.length === 0) {
+    // Zero portfolios is unusual but not a permission error per se.
+    return { status: "failed", sanitizedReason: "No business portfolios returned by Meta" };
+  }
+
+  if (portfolios.length === 1) {
+    return {
+      status: "success",
+      portfolioId: portfolios[0].id,
+      portfolioName: portfolios[0].name,
+    };
+  }
+
+  // Multiple portfolios: per policy, do not select arbitrarily.
+  return { status: "unresolved", portfolioCount: portfolios.length };
+}
+
 // ─── WABA & Phone Number ID ownership verification ─────────────────────────
 
 /**
@@ -637,6 +733,8 @@ export type EmbeddedSignupOnboardingDeps = {
   fetchImpl?: typeof fetch;
   /** Skip Graph API ownership verification (tests only). */
   skipOwnershipVerification?: boolean;
+  /** Skip business discovery (tests that focus on non-business-discovery behavior). */
+  skipBusinessDiscovery?: boolean;
 };
 
 /**
@@ -760,6 +858,34 @@ export async function processEmbeddedSignupOnboarding(
       );
     }
 
+    // ── Step 5b: Best-effort business portfolio discovery (business_management) ──
+    // This call exercises business_management permission: GET /me/businesses?fields=id,name
+    // It is non-blocking — a failure here NEVER fails the entire onboarding.
+    let businessPortfolioId: string | null = null;
+    let businessPortfolioName: string | null = null;
+    let businessDiscoveryStatus: BusinessDiscoveryStatus = null;
+
+    // Default: skip discovery when Graph ownership checks are skipped (existing tests).
+    const skipDiscovery =
+      deps.skipBusinessDiscovery ?? deps.skipOwnershipVerification ?? false;
+
+    if (!skipDiscovery) {
+      const discovery = await discoverBusinessPortfolio(
+        result.accessToken,
+        version,
+        deps.fetchImpl
+      );
+      if (discovery.status === "success") {
+        businessPortfolioId = discovery.portfolioId;
+        businessPortfolioName = discovery.portfolioName;
+        businessDiscoveryStatus = "success";
+      } else if (discovery.status === "unresolved") {
+        businessDiscoveryStatus = "unresolved";
+      } else {
+        businessDiscoveryStatus = "failed";
+      }
+    }
+
     // ── Step 6: Persist (scoped to companyId) ──
     await repo.upsert({
       companyId: input.companyId,
@@ -771,6 +897,9 @@ export async function processEmbeddedSignupOnboarding(
       lastWebhookAt: null,
       lastError: null,
       stateOverride: null,
+      businessPortfolioId,
+      businessPortfolioName,
+      businessDiscoveryStatus,
     });
 
     return getWhatsAppConnectionStatus(input.companyId);
