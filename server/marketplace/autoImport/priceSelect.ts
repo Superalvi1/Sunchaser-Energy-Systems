@@ -138,6 +138,50 @@ export function selectLowestValidPrice(offers: PricedOffer[]): PriceSelection {
 }
 
 /**
+ * Daily customer-price rule approved by the business:
+ * 1. use an exact, in-stock Kamal observation when available;
+ * 2. otherwise use an exact, in-stock Alladin observation;
+ * 3. fail closed when neither supplier has a valid in-stock price.
+ *
+ * Multiple observations from the same supplier are resolved deterministically
+ * by price and source key. No markup or purchasing discount is applied.
+ */
+export function selectKamalFirstInStockPrice(
+  offers: PricedOffer[],
+): PriceSelection {
+  const validInStock = offers.filter(
+    (offer) =>
+      offer.availability === "in_stock" &&
+      isValidListedPrice(offer.currentListedPricePkr, offer.parseStatus),
+  ) as Array<PricedOffer & { currentListedPricePkr: number }>;
+
+  const kamal = validInStock.filter((offer) => offer.supplier === "kamal");
+  const alladin = validInStock.filter((offer) => offer.supplier === "alladin");
+  const pool = kamal.length > 0 ? kamal : alladin;
+  if (!pool.length) {
+    return { ok: false, reason: "no_valid_in_stock_preferred_supplier_price" };
+  }
+
+  const best = pickDeterministicWinner(pool);
+  return {
+    ok: true,
+    pricePkr: best.currentListedPricePkr,
+    supplier: best.supplier,
+    sourceKey: best.sourceKey,
+    canonicalUrl: best.canonicalUrl,
+    availability: best.availability,
+    reason:
+      best.supplier === "kamal"
+        ? "kamal_first_in_stock"
+        : "alladin_fallback_in_stock",
+    considered: validInStock.map((offer) => ({
+      supplier: offer.supplier,
+      pricePkr: offer.currentListedPricePkr,
+    })),
+  };
+}
+
+/**
  * If incoming selection is invalid, keep last valid commercial snapshot (rollback).
  * Price, supplier, availability and default sourceKey stay internally consistent.
  */

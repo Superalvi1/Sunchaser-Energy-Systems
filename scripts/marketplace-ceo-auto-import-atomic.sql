@@ -153,6 +153,7 @@ declare
   v_offers jsonb;
   v_fetched timestamptz;
   v_source_key text;
+  v_price_only boolean;
   v_brand_id text;
   v_category_id text;
   v_product_id text;
@@ -195,6 +196,7 @@ begin
     v_price := nullif(v_item->>'websitePricePkr', '')::numeric;
     v_avail := coalesce(nullif(trim(coalesce(v_item->>'availability', '')), ''), 'unknown');
     v_supplier := nullif(trim(coalesce(v_item->>'selectedSupplier', '')), '');
+    v_price_only := coalesce((v_item->>'priceOnly')::boolean, false);
     if v_identity is null then
       raise exception 'VALIDATION_ERROR: listings[%].identityKey required', v_idx
         using errcode = 'check_violation';
@@ -224,6 +226,13 @@ begin
       raise exception 'VALIDATION_ERROR: listings[%].defaultSourceKey required', v_idx
         using errcode = 'check_violation';
     end if;
+    if v_price_only and not exists (
+      select 1 from public.mp_auto_import_listings l
+      where l.identity_key = v_identity
+    ) then
+      raise exception 'PRICE_ONLY_REQUIRES_EXISTING_LISTING: %', v_identity
+        using errcode = 'check_violation';
+    end if;
   end loop;
 
   -- Phase 2: write all items (same transaction — any failure rolls everything back).
@@ -242,35 +251,42 @@ begin
     v_offers := coalesce(v_item->'offers', '[]'::jsonb);
     v_fetched := coalesce((v_item->>'fetchedAt')::timestamptz, timezone('utc', now()));
     v_source_key := nullif(trim(coalesce(v_item->>'defaultSourceKey', '')), '');
+    v_price_only := coalesce((v_item->>'priceOnly')::boolean, false);
 
     select * into v_existing
     from public.mp_auto_import_listings
     where identity_key = v_identity
     for update;
 
-    v_brand_slug := left(regexp_replace(lower(v_brand), '[^a-z0-9]+', '-', 'g'), 48);
-    if v_brand_slug is null or length(v_brand_slug) = 0 then
-      v_brand_slug := 'supplier';
-    end if;
-    select id into v_brand_id from public.mp_brands where slug = v_brand_slug;
-    if v_brand_id is null then
-      v_brand_id := public.mp_new_id('mpbrand');
-      insert into public.mp_brands (id, name, slug, active)
-      values (v_brand_id, v_brand, v_brand_slug, true);
-    end if;
+    if not v_price_only then
+      v_brand_slug := left(regexp_replace(lower(v_brand), '[^a-z0-9]+', '-', 'g'), 48);
+      if v_brand_slug is null or length(v_brand_slug) = 0 then
+        v_brand_slug := 'supplier';
+      end if;
+      select id into v_brand_id from public.mp_brands where slug = v_brand_slug;
+      if v_brand_id is null then
+        v_brand_id := public.mp_new_id('mpbrand');
+        insert into public.mp_brands (id, name, slug, active)
+        values (v_brand_id, v_brand, v_brand_slug, true);
+      end if;
 
-    v_cat_slug := left(regexp_replace(lower(v_category), '[^a-z0-9]+', '-', 'g'), 48);
-    if v_cat_slug is null or length(v_cat_slug) = 0 then
-      v_cat_slug := 'solar';
-    end if;
-    select id into v_category_id from public.mp_categories where slug = v_cat_slug;
-    if v_category_id is null then
-      v_category_id := public.mp_new_id('mpcat');
-      insert into public.mp_categories (id, name, slug, active, sort_order)
-      values (v_category_id, v_category, v_cat_slug, true, 100);
+      v_cat_slug := left(regexp_replace(lower(v_category), '[^a-z0-9]+', '-', 'g'), 48);
+      if v_cat_slug is null or length(v_cat_slug) = 0 then
+        v_cat_slug := 'solar';
+      end if;
+      select id into v_category_id from public.mp_categories where slug = v_cat_slug;
+      if v_category_id is null then
+        v_category_id := public.mp_new_id('mpcat');
+        insert into public.mp_categories (id, name, slug, active, sort_order)
+        values (v_category_id, v_category, v_cat_slug, true, 100);
+      end if;
     end if;
 
     v_is_created := v_existing.identity_key is null;
+    if v_price_only and v_is_created then
+      raise exception 'PRICE_ONLY_REQUIRES_EXISTING_LISTING: %', v_identity
+        using errcode = 'check_violation';
+    end if;
     if v_is_created then
       v_created := v_created + 1;
       v_product_id := public.mp_new_id('mpprod');
@@ -320,29 +336,31 @@ begin
       v_updated := v_updated + 1;
       v_product_id := v_existing.product_id;
       v_variant_id := v_existing.variant_id;
-      -- Field overrides (Catalogue Manager): skip protected columns when helper exists.
-      update public.mp_products p
-      set title = case
-            when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
-              and public.mp_has_active_field_override(p.id, 'title')
-            then p.title
-            else v_title
-          end,
-          brand_id = case
-            when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
-              and public.mp_has_active_field_override(p.id, 'brand_id')
-            then p.brand_id
-            else v_brand_id
-          end,
-          category_id = case
-            when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
-              and public.mp_has_active_field_override(p.id, 'category_id')
-            then p.category_id
-            else v_category_id
-          end,
-          active = true,
-          updated_at = timezone('utc', now())
-      where p.id = v_product_id;
+      if not v_price_only then
+        -- Field overrides (Catalogue Manager): skip protected columns when helper exists.
+        update public.mp_products p
+        set title = case
+              when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
+                and public.mp_has_active_field_override(p.id, 'title')
+              then p.title
+              else v_title
+            end,
+            brand_id = case
+              when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
+                and public.mp_has_active_field_override(p.id, 'brand_id')
+              then p.brand_id
+              else v_brand_id
+            end,
+            category_id = case
+              when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
+                and public.mp_has_active_field_override(p.id, 'category_id')
+              then p.category_id
+              else v_category_id
+            end,
+            active = true,
+            updated_at = timezone('utc', now())
+        where p.id = v_product_id;
+      end if;
 
       -- Optional Catalogue Manager column (present after core migration).
       if exists (
@@ -361,7 +379,7 @@ begin
           category_name = v_category,
           selected_supplier = v_supplier,
           website_price = v_price,
-          availability = v_avail,
+          availability = case when v_price_only then availability else v_avail end,
           source_urls = coalesce(v_urls, source_urls),
           match_reason = v_match,
           price_reason = v_price_reason,
@@ -385,9 +403,10 @@ begin
           end,
           last_valid_availability = case
             when v_price_reason like 'rollback_%' then last_valid_availability
+            when v_price_only then last_valid_availability
             else v_avail
           end,
-          active = v_avail <> 'sold_out',
+          active = case when v_price_only then active else v_avail <> 'sold_out' end,
           updated_at = timezone('utc', now())
       where identity_key = v_identity;
 
@@ -409,7 +428,7 @@ begin
     set website_price = v_price,
         website_price_state = 'priced_auto',
         website_price_source = v_supplier,
-        stock_status = v_avail,
+        stock_status = case when v_price_only then stock_status else v_avail end,
         is_default = true,
         active = true,
         updated_at = timezone('utc', now())
@@ -418,7 +437,8 @@ begin
 
     -- Supplier product pictures (mp_media). Requires marketplace-ceo-auto-import-product-media.sql.
     -- Missing function must not soft-skip: apply media SQL with this atomic script.
-    if to_regprocedure('public.mp_ceo_auto_import_sync_product_media(text, text, text, jsonb)') is not null then
+    if not v_price_only
+       and to_regprocedure('public.mp_ceo_auto_import_sync_product_media(text, text, text, jsonb)') is not null then
       perform public.mp_ceo_auto_import_sync_product_media(
         v_product_id,
         v_variant_id,
@@ -440,6 +460,7 @@ begin
         'selectedSupplier', v_supplier,
         'matchReason', v_match,
         'priceReason', v_price_reason,
+        'priceOnly', v_price_only,
         'sourceUrls', v_urls,
         'ceoDiscountApplied', false,
         'runId', trim(p_run_id)

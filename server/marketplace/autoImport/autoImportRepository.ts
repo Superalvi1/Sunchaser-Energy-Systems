@@ -34,6 +34,8 @@ export type UpsertListingInput = {
   fetchedAt: string;
   offers: AutoImportListingRecord["offers"];
   previous: AutoImportListingRecord | null;
+  /** Existing-listing daily sync: update price provenance only; never create. */
+  priceOnly?: boolean;
   /** Deterministic default-offer identity (sourceKey) chosen after price planning. */
   defaultSourceKey?: string;
   /** Sanitized supplier images for the selected commercial offer only. */
@@ -116,6 +118,9 @@ export function createMemoryAutoImportRepository(
     created: boolean;
   } {
     const prev = input.previous ?? byKey.get(input.identityKey) ?? null;
+    if (input.priceOnly && !prev) {
+      throw new Error("PRICE_ONLY_REQUIRES_EXISTING_LISTING");
+    }
     const created = !prev;
     const productId = prev?.productId ?? `mpprod_auto_${randomUUID().slice(0, 8)}`;
     const variantId = prev?.variantId ?? `mpvar_auto_${randomUUID().slice(0, 8)}`;
@@ -127,11 +132,13 @@ export function createMemoryAutoImportRepository(
       productId,
       variantId,
       slug,
-      title: input.title,
-      brandName: input.brandName,
-      categoryName: input.categoryName,
+      title: input.priceOnly && prev ? prev.title : input.title,
+      brandName: input.priceOnly && prev ? prev.brandName : input.brandName,
+      categoryName:
+        input.priceOnly && prev ? prev.categoryName : input.categoryName,
       websitePricePkr: input.websitePricePkr,
-      availability: input.availability,
+      availability:
+        input.priceOnly && prev ? prev.availability : input.availability,
       selectedSupplier: input.selectedSupplier,
       sourceUrls: [...new Set(input.sourceUrls)],
       matchReason: input.matchReason,
@@ -142,8 +149,12 @@ export function createMemoryAutoImportRepository(
       lastValidObservationAt: input.fetchedAt,
       lastValidSourceKey:
         input.defaultSourceKey?.trim() || prev?.lastValidSourceKey || null,
-      lastValidAvailability: input.availability,
-      active: input.availability !== "sold_out",
+      lastValidAvailability:
+        input.priceOnly && prev
+          ? prev.lastValidAvailability
+          : input.availability,
+      active:
+        input.priceOnly && prev ? prev.active : input.availability !== "sold_out",
       offers: input.offers,
     };
     if (isRollback && prev) {
@@ -192,6 +203,13 @@ export function createMemoryAutoImportRepository(
           seen.add(input.identityKey);
           if (!(input.websitePricePkr > 0)) {
             throw new Error("VALIDATION_ERROR: websitePricePkr must be positive");
+          }
+          if (
+            input.priceOnly &&
+            !byKey.has(input.identityKey) &&
+            !input.previous
+          ) {
+            throw new Error("PRICE_ONLY_REQUIRES_EXISTING_LISTING");
           }
           // When planner attached defaultVariant, enforce the same invariant as PG.
           if (input.defaultVariant) {
