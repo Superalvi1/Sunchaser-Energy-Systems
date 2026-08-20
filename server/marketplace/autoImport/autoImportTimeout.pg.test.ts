@@ -34,6 +34,23 @@ function check(name: string, ok: boolean): void {
   console.log(`ok - ${name}`);
 }
 
+type PgErrorLike = Error & { code?: string };
+
+function isStatementTimeoutError(err: unknown): boolean {
+  const pgError = err as PgErrorLike;
+  return (
+    pgError?.code === "57014" ||
+    /statement timeout/i.test(String(pgError?.message ?? err))
+  );
+}
+
+function describePgError(err: unknown): string {
+  const pgError = err as PgErrorLike;
+  return `code=${pgError?.code ?? "unknown"} message=${String(
+    pgError?.message ?? err,
+  )}`;
+}
+
 function dockerAvailable(): boolean {
   return spawnSync("docker", ["info"], { encoding: "utf8" }).status === 0;
 }
@@ -173,7 +190,10 @@ async function main(): Promise<void> {
       await admin.query("select pg_sleep(5)");
       await admin.query("commit");
     } catch (err) {
-      cancelled = /statement timeout/i.test(String((err as Error).message));
+      cancelled = isStatementTimeoutError(err);
+      if (!cancelled) {
+        console.error(`unexpected SET LOCAL error: ${describePgError(err)}`);
+      }
       await admin.query("rollback");
     }
     check(
@@ -247,6 +267,7 @@ async function main(): Promise<void> {
 
     const newKey = "exact:knox:hybrid:6kw:single";
     let timedOut = false;
+    let batchError: unknown;
     const tBatch = Date.now();
     try {
       await commitBatchWithStatementTimeout({
@@ -278,9 +299,16 @@ async function main(): Promise<void> {
         statementTimeoutMs: 400,
       });
     } catch (err) {
-      timedOut = /statement timeout/i.test(String((err as Error).message));
+      batchError = err;
+      timedOut = isStatementTimeoutError(err);
+      if (!timedOut) {
+        console.error(`unexpected commit_batch error: ${describePgError(err)}`);
+      }
     }
     const elapsed = Date.now() - tBatch;
+    if (!timedOut && batchError === undefined) {
+      console.error(`commit_batch returned without timeout after ${elapsed}ms`);
+    }
     check("slow commit_batch cancelled by SET LOCAL statement_timeout", timedOut);
     check("cancellation returned in under 3s", elapsed < 3000);
 
