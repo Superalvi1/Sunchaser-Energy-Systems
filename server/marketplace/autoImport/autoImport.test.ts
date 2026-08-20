@@ -679,6 +679,18 @@ async function runWith(fixtures: CatalogueProductObservation[]) {
   );
   assert.ok(atomic.includes("duplicate identityKey"));
   assert.ok(/pg_catalog\.pg_proc/i.test(atomic));
+  assert.ok(
+    /if\s+to_regprocedure\(\s*'public\.mp_has_active_field_override\(text, text\)'\s*\)\s+is not null\s+then/i.test(
+      atomic,
+    ),
+    "optional field-override helper must be isolated behind a PL/pgSQL branch",
+  );
+  assert.ok(
+    !/when\s+to_regprocedure\([^)]*mp_has_active_field_override[\s\S]{0,160}public\.mp_has_active_field_override/i.test(
+      atomic,
+    ),
+    "optional helper must not be referenced in the same SQL expression as its existence check",
+  );
   // Must NOT claim in-function set_config cancels the outer statement.
   assert.ok(
     !/perform\s+set_config\(\s*'statement_timeout'/i.test(atomic),

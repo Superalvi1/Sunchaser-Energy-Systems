@@ -43,6 +43,7 @@ import { isSupabaseActive } from "../../../dbManager.ts";
 import {
   lastValidCommercialFromListing,
   resolvePriceWithRollback,
+  selectKamalFirstInStockPrice,
   selectLowestValidPrice,
   type PriceSelection,
   type PricedOffer,
@@ -65,6 +66,8 @@ type PlanningLookup = {
   byKey: Map<string, AutoImportListingRecord>;
   byUrl: Map<string, AutoImportListingRecord>;
 };
+
+export type AutoImportMode = "full" | "price_only";
 
 /** Process-wide lock so alias + admin mounts cannot run two imports at once. */
 let activeImportRunId: string | null = null;
@@ -337,6 +340,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     actorScope: string;
     runId: string;
     startedAt: number;
+    mode: AutoImportMode;
   }): Promise<
     | { kind: "complete"; result: AutoImportSyncResult }
     | {
@@ -549,6 +553,10 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       selection: PriceSelection,
     ): void => {
       const previous = lookup.byKey.get(identityKey) ?? null;
+      if (input.mode === "price_only" && !previous) {
+        rejectedVariants += offers.length;
+        return;
+      }
       const resolved = resolvePriceWithRollback(
         selection,
         previous ? lastValidCommercialFromListing(previous) : null,
@@ -598,28 +606,54 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         selection: commercialSample,
         input: {
           identityKey,
-          title: primary.title,
-          brandName: primary.brand || primary.identity.manufacturer || "Unknown",
+          title:
+            input.mode === "price_only" && previous
+              ? previous.title
+              : primary.title,
+          brandName:
+            input.mode === "price_only" && previous
+              ? previous.brandName
+              : primary.brand || primary.identity.manufacturer || "Unknown",
           categoryName:
-            primary.category || primary.identity.categoryFamily || "solar",
+            input.mode === "price_only" && previous
+              ? previous.categoryName
+              : primary.category || primary.identity.categoryFamily || "solar",
           websitePricePkr: resolved.pricePkr,
-          availability,
+          availability:
+            input.mode === "price_only" && previous
+              ? previous.availability
+              : availability,
           selectedSupplier: resolved.supplier,
-          sourceUrls: offers.map((o) => o.canonicalUrl),
-          matchReason: primary.matchReason,
+          sourceUrls:
+            input.mode === "price_only" && previous
+              ? [
+                  ...new Set([
+                    ...previous.sourceUrls,
+                    ...offers.map((o) => o.canonicalUrl),
+                  ]),
+                ]
+              : offers.map((o) => o.canonicalUrl),
+          matchReason:
+            input.mode === "price_only" && previous
+              ? previous.matchReason
+              : primary.matchReason,
           priceReason: resolved.reason,
           fetchedAt: now().toISOString(),
           previous,
+          priceOnly: input.mode === "price_only",
           defaultSourceKey: resolved.sourceKey,
-          images: collectSelectedOfferImages({
-            selectedSourceKey: resolved.sourceKey,
-            selectedSupplier: resolved.supplier,
-            offers,
-          }),
+          images:
+            input.mode === "price_only"
+              ? []
+              : collectSelectedOfferImages({
+                  selectedSourceKey: resolved.sourceKey,
+                  selectedSupplier: resolved.supplier,
+                  offers,
+                }),
           offers:
             resolved.rolledBack && previous
               ? previous.offers
-              :               offers.map((o) => ({
+              : offers.map((o) => ({
                   supplier: o.supplier,
                   pricePkr: o.currentListedPricePkr,
                   url: o.canonicalUrl,
@@ -642,7 +676,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         availability: o.availability,
         fetchedAt: o.fetchedAt,
       }));
-      planFromOffers(identityKey, offers, selectLowestValidPrice(priced));
+      planFromOffers(
+        identityKey,
+        offers,
+        input.mode === "price_only"
+          ? selectKamalFirstInStockPrice(priced)
+          : selectLowestValidPrice(priced),
+      );
     }
 
     // Last-valid commercial rollback when current observations are unparseable.
@@ -993,6 +1033,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
 
   async function runAutomaticImport(input: {
     actorScope: string;
+    mode?: AutoImportMode;
   }): Promise<AutoImportSyncResult> {
     const runId = `mpair_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const startedAt = Date.now();
@@ -1039,7 +1080,12 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     try {
       // Phase 1: fetch/normalize/plan under HTTP-safe deadline (no catalogue writes).
       const plan = await withDeadline(
-        planAutomaticImport({ ...input, runId, startedAt }),
+        planAutomaticImport({
+          ...input,
+          mode: input.mode ?? "full",
+          runId,
+          startedAt,
+        }),
         timeouts.jobTimeoutMs,
         "auto-import-plan",
       );

@@ -54,6 +54,7 @@ function listingPayload(input: UpsertListingInput) {
     fetchedAt: input.fetchedAt,
     defaultSourceKey: input.defaultSourceKey ?? null,
     images: Array.isArray(input.images) ? input.images : [],
+    priceOnly: input.priceOnly === true,
   };
 }
 
