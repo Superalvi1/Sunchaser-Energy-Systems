@@ -3,12 +3,13 @@ import {
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
-  Printer, Save, Headphones, Package, LayoutGrid, DraftingCompass
+  Printer, Save, Headphones, Package, LayoutGrid, DraftingCompass, ChevronDown, MoreHorizontal
 } from "lucide-react";
 import { Lead, Quote, InventoryItem, BoqRow, User } from "../types";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import InventoryStaff from "./InventoryStaff";
 import AppModal from "./ui/AppModal";
+import { DisclosureSection, MobileActionSheet, useIsMobile } from "./ui/MobileDisclosure";
 import { useToast } from "../lib/toast";
 import {
   generateProposalDocument,
@@ -135,6 +136,19 @@ interface SalesTeamAppProps {
 }
 
 const PROPOSAL_STUDIO_ENABLED = isProposalStudioEnabled();
+/** Display names for the Sales Advisor tool tabs (used by the mobile "Sales Tools" summary). */
+const SALES_MODULE_LABELS: Record<string, string> = {
+  sizer: "Auto Sizer",
+  proposal_studio: "Proposal Studio",
+  roof_studio: "Roof Studio",
+  boq_builder: "Manual BOQ Builder",
+  templates: "Quote Templates",
+  quotes: "Generated Quotes",
+  products: "Product Library",
+  inventory: "Inventory",
+  after_sales: "After Sales Admin",
+};
+
 /** Roof Studio / Design Project tab — Project Design Workspace (HelioScope layout). */
 const DESIGN_PROJECT_ENABLED = isDesignProjectEnabled();
 
@@ -205,6 +219,13 @@ export default function SalesTeamApp({
   const [activeModule, setActiveModule] = useState<
     "sizer" | "proposal_studio" | "roof_studio" | "boq_builder" | "templates" | "quotes" | "products" | "inventory" | "after_sales"
   >("boq_builder");
+
+  const isMobile = useIsMobile();
+  // Phone-only disclosure state. Desktop renders these sections expanded as before.
+  const [targetClientsOpen, setTargetClientsOpen] = useState(false);
+  const [salesToolsOpen, setSalesToolsOpen] = useState(false);
+  const [boqMoreActionsOpen, setBoqMoreActionsOpen] = useState(false);
+  const activeModuleLabel = SALES_MODULE_LABELS[activeModule] ?? "Choose a tool";
   const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
   const [sizerEditingQuoteId, setSizerEditingQuoteId] = useState<string | null>(null);
 
@@ -2852,6 +2873,140 @@ export default function SalesTeamApp({
     return matchesCat && matchesSearch;
   });
 
+  /**
+   * Secondary Manual BOQ controls. Rendered inline on desktop/tablet and inside the
+   * mobile action panel — one definition, so the two layouts cannot drift apart.
+   */
+  const renderBoqSecondaryActions = () => (
+    <>
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('heading')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-blue-400" /> Add Heading
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('subtotal')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-emerald-400" /> Add Subtotal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingQuoteId(null);
+                          clearLoadedPackage();
+                          setBoqRows([]);
+                          setManualBoqItems([]);
+                          if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        New Quote
+                      </button>
+                      <select
+                        title="Reusable company package"
+                        onChange={(e) => {
+                          const packageId = e.target.value;
+                          if (packageId) {
+                            const pkg = loadablePackages.find((p) => p.id === packageId);
+                            const label = pkg ? `${pkg.systemSizeKw}kW ${getPackageShortLabel(pkg)}` : "selected package";
+                            if (window.confirm(`Load "${label}" and replace current BOQ rows?`)) {
+                              applyBoqPackage(packageId);
+                            }
+                            e.target.value = "";
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans min-w-[180px]"
+                      >
+                        <option value="">🎁 Load Package...</option>
+                        {PACKAGE_SYSTEM_SIZES_KW.map((kw) => {
+                          const group = packagesBySize.get(kw) || [];
+                          if (!group.length) return null;
+                          return (
+                            <optgroup key={kw} label={`${kw}kW`}>
+                              {group.map((pkg) => (
+                                <option key={pkg.id} value={pkg.id}>
+                                  {getPackageShortLabel(pkg)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          );
+                        })}
+                      </select>
+
+                      {loadedPackageId && (
+                        <button
+                          type="button"
+                          disabled={savingPackage || !boqRows.length}
+                          onClick={handleUpdateLoadedPackage}
+                          className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans font-bold disabled:opacity-40"
+                          title="Save BOQ edits back to the loaded package library record"
+                        >
+                          {savingPackage ? "Updating…" : "Update Loaded Package"}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={savingPackage || !boqRows.filter((r) => r.type === "item").length}
+                        onClick={openSaveNewPackageModal}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                        title="Save current BOQ as a new reusable package"
+                      >
+                        Save as New Package
+                      </button>
+
+                      {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                      <button
+                        type="button"
+                        onClick={handleCopyAutoSizerToManualBoq}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1 font-sans"
+                        title="Copy latest auto sizer quote rows to this manual builder"
+                      >
+                        📋 Copy Auto Sizer
+                      </button>
+                      )}
+
+                      <select
+                        title="Saved quote for this selected customer"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const q = activeLead?.quotes?.find((quote: any) => quote.id === e.target.value);
+                            if (q) {
+                              if (window.confirm(`Load saved quote ${q.id} into Manual BOQ builder? This will overwrite current rows.`)) {
+                                handleLoadQuoteForEditing(q);
+                              }
+                            }
+                            e.target.value = "";
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        <option value="">📂 Load Saved Quote (customer)...</option>
+                        {getLeadManualQuotes(activeLead).map((q: any) => (
+                          <option key={q.id} value={q.id}>
+                            Quote {q.id} (Manual BOQ - {q.systemSizekW}kW)
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Overwrite BOQ rows with calculated sizer default layout?")) {
+                            applyPackage(systemSizekW || 10);
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        Reset to Defaults
+                      </button>
+    </>
+  );
+
   return (
     <>
     <div id="sales-team-workspace" className="space-y-6 text-xs text-slate-200">
@@ -2874,7 +3029,30 @@ export default function SalesTeamApp({
       <div className={`grid gap-8 items-start ${activeModule === "templates" ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-12"}`}>
         {/* SIDE BAR: CRM TARGET CLIENT SELECTION — hidden in template workspace */}
         {activeModule !== "templates" && (
-        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-md text-left">
+        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-3 md:p-5 space-y-4 shadow-md text-left">
+          {isMobile ? (
+            <button
+              type="button"
+              data-testid="target-clients-toggle"
+              onClick={() => setTargetClientsOpen((open) => !open)}
+              aria-expanded={targetClientsOpen}
+              className="flex min-h-[48px] w-full items-center gap-3 border-b border-slate-800 pb-2 text-left"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold text-slate-100 font-sans">Target Clients</span>
+                <span className="block text-[10px] text-slate-500 font-sans">Active sales assignments</span>
+              </span>
+              <span className="shrink-0 rounded bg-slate-850 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-400">
+                {leads.length}
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                  targetClientsOpen ? "rotate-180" : ""
+                }`}
+                aria-hidden="true"
+              />
+            </button>
+          ) : (
           <div className="border-b border-slate-800 pb-2 flex justify-between items-center">
             <div>
               <h3 className="text-sm font-bold text-slate-100 font-sans">Target Clients</h3>
@@ -2884,8 +3062,10 @@ export default function SalesTeamApp({
               {leads.length}
             </span>
           </div>
+          )}
 
-          <div className="space-y-2.5 max-h-[620px] overflow-y-auto pr-1">
+          {(!isMobile || targetClientsOpen) && (
+          <div className="space-y-2.5 max-h-[420px] md:max-h-[620px] overflow-y-auto pr-1" data-testid="target-clients-list">
             {leads.length > 0 ? (
               leads.map((lead) => {
                 const isSelected = selectedLeadId === lead.id;
@@ -2953,6 +3133,7 @@ export default function SalesTeamApp({
               <div className="text-center py-12 text-slate-500 font-mono">No target clients available.</div>
             )}
           </div>
+          )}
         </div>
         )}
 
@@ -3058,7 +3239,37 @@ export default function SalesTeamApp({
               )}
 
               {/* MODULE SELECTOR ROUTING TAB BAR */}
-              <div className="flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5">
+              {isMobile && (
+                <button
+                  type="button"
+                  data-testid="sales-tools-toggle"
+                  onClick={() => setSalesToolsOpen((open) => !open)}
+                  aria-expanded={salesToolsOpen}
+                  aria-controls="sales-tools-panel"
+                  className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl border border-slate-850 bg-slate-950 px-4 py-3 text-left"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold text-slate-100 font-sans">Sales Tools</span>
+                    <span className="block truncate text-[10px] text-slate-500 font-mono">{activeModuleLabel}</span>
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                      salesToolsOpen ? "rotate-180" : ""
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+              )}
+              <div
+                className={
+                  isMobile
+                    ? `flex flex-col bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5 ${
+                        salesToolsOpen ? "" : "hidden"
+                      }`
+                    : "flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5"
+                }
+                id="sales-tools-panel"
+              >
                 {[
                   { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
                   ...(PROPOSAL_STUDIO_ENABLED
@@ -3085,7 +3296,10 @@ export default function SalesTeamApp({
                       key={mod.id}
                       type="button"
                       onClick={() => setActiveModule(mod.id as any)}
-                      className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl font-sans font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      onClickCapture={() => {
+                        if (isMobile) setSalesToolsOpen(false);
+                      }}
+                      className={`min-h-[48px] py-2 px-3 rounded-xl font-sans font-bold text-xs transition flex items-center gap-1.5 cursor-pointer md:flex-1 md:min-w-[120px] md:justify-center ${
                         isCurrent
                           ? 'bg-amber-500 text-slate-950 shadow'
                           : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
@@ -3548,7 +3762,7 @@ export default function SalesTeamApp({
                   
                   {/* Action Bar */}
                   <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-800 pb-4">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => addBoqRow('item')}
@@ -3558,141 +3772,41 @@ export default function SalesTeamApp({
                       </button>
                       <button
                         type="button"
-                        onClick={() => addBoqRow('heading')}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
-                      >
-                        <Plus className="h-3.5 w-3.5 text-blue-400" /> Add Heading
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => addBoqRow('subtotal')}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
-                      >
-                        <Plus className="h-3.5 w-3.5 text-emerald-400" /> Add Subtotal
-                      </button>
-                    </div>
-                    
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
                         onClick={() => setAiQuoteBuilderOpen(true)}
                         className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans inline-flex items-center gap-1.5"
                       >
                         <Sparkles className="h-3.5 w-3.5" /> AI Quote Builder
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingQuoteId(null);
-                          clearLoadedPackage();
-                          setBoqRows([]);
-                          setManualBoqItems([]);
-                          if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
-                        }}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
-                      >
-                        New Quote
-                      </button>
-                      <select
-                        title="Reusable company package"
-                        onChange={(e) => {
-                          const packageId = e.target.value;
-                          if (packageId) {
-                            const pkg = loadablePackages.find((p) => p.id === packageId);
-                            const label = pkg ? `${pkg.systemSizeKw}kW ${getPackageShortLabel(pkg)}` : "selected package";
-                            if (window.confirm(`Load "${label}" and replace current BOQ rows?`)) {
-                              applyBoqPackage(packageId);
-                            }
-                            e.target.value = "";
-                          }
-                        }}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans min-w-[180px]"
-                      >
-                        <option value="">🎁 Load Package...</option>
-                        {PACKAGE_SYSTEM_SIZES_KW.map((kw) => {
-                          const group = packagesBySize.get(kw) || [];
-                          if (!group.length) return null;
-                          return (
-                            <optgroup key={kw} label={`${kw}kW`}>
-                              {group.map((pkg) => (
-                                <option key={pkg.id} value={pkg.id}>
-                                  {getPackageShortLabel(pkg)}
-                                </option>
-                              ))}
-                            </optgroup>
-                          );
-                        })}
-                      </select>
-
-                      {loadedPackageId && (
+                      {isMobile && (
                         <button
                           type="button"
-                          disabled={savingPackage || !boqRows.length}
-                          onClick={handleUpdateLoadedPackage}
-                          className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans font-bold disabled:opacity-40"
-                          title="Save BOQ edits back to the loaded package library record"
+                          data-testid="boq-more-actions"
+                          onClick={() => setBoqMoreActionsOpen(true)}
+                          aria-haspopup="dialog"
+                          aria-expanded={boqMoreActionsOpen}
+                          className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 min-h-[44px] rounded-xl cursor-pointer flex items-center gap-1 font-sans"
                         >
-                          {savingPackage ? "Updating…" : "Update Loaded Package"}
+                          <MoreHorizontal className="h-3.5 w-3.5 text-slate-400" /> More Actions
                         </button>
                       )}
-
-                      <button
-                        type="button"
-                        disabled={savingPackage || !boqRows.filter((r) => r.type === "item").length}
-                        onClick={openSaveNewPackageModal}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
-                        title="Save current BOQ as a new reusable package"
-                      >
-                        Save as New Package
-                      </button>
-
-                      {REQUIRE_EXPLICIT_QUOTE_SAVE && (
-                      <button
-                        type="button"
-                        onClick={handleCopyAutoSizerToManualBoq}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1 font-sans"
-                        title="Copy latest auto sizer quote rows to this manual builder"
-                      >
-                        📋 Copy Auto Sizer
-                      </button>
-                      )}
-
-                      <select
-                        title="Saved quote for this selected customer"
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            const q = activeLead?.quotes?.find((quote: any) => quote.id === e.target.value);
-                            if (q) {
-                              if (window.confirm(`Load saved quote ${q.id} into Manual BOQ builder? This will overwrite current rows.`)) {
-                                handleLoadQuoteForEditing(q);
-                              }
-                            }
-                            e.target.value = "";
-                          }
-                        }}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
-                      >
-                        <option value="">📂 Load Saved Quote (customer)...</option>
-                        {getLeadManualQuotes(activeLead).map((q: any) => (
-                          <option key={q.id} value={q.id}>
-                            Quote {q.id} (Manual BOQ - {q.systemSizekW}kW)
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (window.confirm("Overwrite BOQ rows with calculated sizer default layout?")) {
-                            applyPackage(systemSizekW || 10);
-                          }
-                        }}
-                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
-                      >
-                        Reset to Defaults
-                      </button>
                     </div>
+
+                    {/* Desktop/tablet keep every secondary control inline. */}
+                    {!isMobile && (
+                      <div className="flex flex-wrap items-center gap-2">{renderBoqSecondaryActions()}</div>
+                    )}
                   </div>
+
+                  {/* Phones: same controls, moved into an action panel. */}
+                  <MobileActionSheet
+                    open={isMobile && boqMoreActionsOpen}
+                    onClose={() => setBoqMoreActionsOpen(false)}
+                    title="More actions"
+                  >
+                    <div className="flex flex-col items-stretch gap-2 [&_button]:w-full [&_select]:w-full [&_button]:justify-center">
+                      {renderBoqSecondaryActions()}
+                    </div>
+                  </MobileActionSheet>
 
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-1">
                     <label className="text-[10px] font-mono text-slate-500 uppercase font-bold shrink-0">

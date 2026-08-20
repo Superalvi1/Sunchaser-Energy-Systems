@@ -922,8 +922,8 @@ export default function App() {
                 onRefreshState={loadDatabaseState}
                 onDeleteLead={handleDeleteLead}
                 onQuickAction={(action) => {
-                  if (action === "lead" || action === "customer") setActiveTab("CRM Database");
-                  else if (action === "quotation") setActiveTab("Sales Advisor");
+                  if (action === "lead" || action === "customer" || action === "crm") setActiveTab("CRM Database");
+                  else if (action === "quotation" || action === "sales-advisor") setActiveTab("Sales Advisor");
                 }}
                 activityLogs={appState.activityLogs || []}
               />
