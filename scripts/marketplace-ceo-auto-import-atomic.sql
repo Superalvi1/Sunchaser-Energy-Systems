@@ -337,29 +337,40 @@ begin
       v_product_id := v_existing.product_id;
       v_variant_id := v_existing.variant_id;
       if not v_price_only then
-        -- Field overrides (Catalogue Manager): skip protected columns when helper exists.
-        update public.mp_products p
-        set title = case
-              when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
-                and public.mp_has_active_field_override(p.id, 'title')
-              then p.title
-              else v_title
-            end,
-            brand_id = case
-              when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
-                and public.mp_has_active_field_override(p.id, 'brand_id')
-              then p.brand_id
-              else v_brand_id
-            end,
-            category_id = case
-              when to_regprocedure('public.mp_has_active_field_override(text, text)') is not null
-                and public.mp_has_active_field_override(p.id, 'category_id')
-              then p.category_id
-              else v_category_id
-            end,
-            active = true,
-            updated_at = timezone('utc', now())
-        where p.id = v_product_id;
+        -- Field overrides are optional. Keep the helper reference in a guarded
+        -- PL/pgSQL branch so PostgreSQL never resolves it when the Catalogue
+        -- Manager migration is absent.
+        if to_regprocedure(
+          'public.mp_has_active_field_override(text, text)'
+        ) is not null then
+          update public.mp_products p
+          set title = case
+                when public.mp_has_active_field_override(p.id, 'title'::text)
+                then p.title
+                else v_title
+              end,
+              brand_id = case
+                when public.mp_has_active_field_override(p.id, 'brand_id'::text)
+                then p.brand_id
+                else v_brand_id
+              end,
+              category_id = case
+                when public.mp_has_active_field_override(p.id, 'category_id'::text)
+                then p.category_id
+                else v_category_id
+              end,
+              active = true,
+              updated_at = timezone('utc', now())
+          where p.id = v_product_id;
+        else
+          update public.mp_products
+          set title = v_title,
+              brand_id = v_brand_id,
+              category_id = v_category_id,
+              active = true,
+              updated_at = timezone('utc', now())
+          where id = v_product_id;
+        end if;
       end if;
 
       -- Optional Catalogue Manager column (present after core migration).
