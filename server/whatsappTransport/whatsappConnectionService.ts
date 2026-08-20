@@ -11,6 +11,9 @@
  *     stored; the nonce is burned on first use.
  *   - WABA ownership verification: after token exchange, GET /{wabaId} confirms the
  *     token can access the claimed WhatsApp Business Account (not Business Portfolio IDs).
+ *   - Best-effort business discovery: GET /{wabaId}?fields=id,name,owner_business_info
+ *     plus GET /{business-id}?fields=id,name (business_management). Failure never
+ *     fails onboarding.
  *   - Phone Number ID ownership: /WABA_ID/phone_numbers is queried to confirm the
  *     phone_number_id belongs to the WABA.
  *   - subscribed_apps registration: POST /{wabaId}/subscribed_apps registers
@@ -35,6 +38,13 @@ import {
 } from "./whatsappConstants.ts";
 import { InboxServiceError } from "./whatsappInboxServiceErrors.ts";
 import { sanitizeProviderError } from "./whatsappGraphClient.ts";
+import type {
+  BusinessAssociationStatus,
+  BusinessDiscoveryStatus,
+  WhatsAppConnectionRecord,
+  WhatsAppConnectionRepository,
+} from "./whatsappConnectionRepository.ts";
+import { InMemoryWhatsAppConnectionRepository } from "./whatsappConnectionRepository.ts";
 import type { OAuthStateStore } from "./whatsappOAuthStateStore.ts";
 import { memoryOAuthStateStore } from "./whatsappOAuthStateStore.ts";
 
@@ -48,13 +58,6 @@ export function setWhatsAppOAuthStateStore(store: OAuthStateStore): void {
 export function getWhatsAppOAuthStateStore(): OAuthStateStore {
   return oauthStateStore;
 }
-import type {
-  WhatsAppConnectionRecord,
-  WhatsAppConnectionRepository,
-} from "./whatsappConnectionRepository.ts";
-import {
-  InMemoryWhatsAppConnectionRepository,
-} from "./whatsappConnectionRepository.ts";
 
 // ─── Connection state types ────────────────────────────────────────────────
 
@@ -151,6 +154,12 @@ export async function resetConnectionStoreForTests(
       lastWebhookAt: initial.lastWebhookAt ?? null,
       lastError: initial.lastError ?? null,
       stateOverride: initial.stateOverride ?? null,
+      businessPortfolioId: initial.businessPortfolioId ?? null,
+      businessPortfolioName: initial.businessPortfolioName ?? null,
+      businessDiscoveryStatus: initial.businessDiscoveryStatus ?? null,
+      businessDiscoveryReason: initial.businessDiscoveryReason ?? null,
+      businessAssociationStatus: initial.businessAssociationStatus ?? null,
+      wabaName: initial.wabaName ?? null,
     });
   }
 }
@@ -183,6 +192,12 @@ async function getOrCreateRecord(
     lastWebhookAt: null,
     lastError: null,
     stateOverride: null,
+    businessPortfolioId: null,
+    businessPortfolioName: null,
+    businessDiscoveryStatus: null,
+    businessDiscoveryReason: null,
+    businessAssociationStatus: null,
+    wabaName: null,
   };
 }
 
@@ -439,6 +454,335 @@ async function graphDelete(
   }
 }
 
+// ─── Meta Business Portfolio discovery (business_management) ─────────────────
+
+type MetaNamedNode = { id: string; name: string };
+
+function readNamedNode(value: unknown): MetaNamedNode | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Record<string, unknown>;
+  const id = typeof entry.id === "string" ? entry.id.trim() : "";
+  if (!id) return null;
+  const name = typeof entry.name === "string" ? entry.name.trim() : "";
+  return { id, name: name || id };
+}
+
+function classifyGraphFailureKind(
+  err: unknown
+): "expired" | "permission" | "network" | "other" {
+  const raw =
+    err instanceof InboxServiceError
+      ? err.message
+      : err instanceof Error
+        ? err.message
+        : "";
+  const sanitized = sanitizeProviderError(raw);
+  const lower = sanitized.toLowerCase();
+  if (
+    lower.includes("(#190)") ||
+    lower.includes("session has expired") ||
+    lower.includes("error validating access token")
+  ) {
+    return "expired";
+  }
+  if (
+    lower.includes("(#10)") ||
+    lower.includes("(#200)") ||
+    lower.includes("permission") ||
+    lower.includes("oauthexception")
+  ) {
+    return "permission";
+  }
+  if (lower.includes("network error") || lower.includes("network or host")) {
+    return "network";
+  }
+  return "other";
+}
+
+function sanitizeDiscoveryReason(
+  err: unknown,
+  stage: "waba_owner" | "business_lookup" | "business_list"
+): string {
+  const kind = classifyGraphFailureKind(err);
+  if (kind === "expired") return "Meta access token is missing or expired";
+  if (kind === "permission") {
+    return "Meta token is missing the business_management permission";
+  }
+  if (kind === "network") {
+    return "Graph API network or provider error during business discovery";
+  }
+  if (stage === "waba_owner") {
+    return "WABA owner_business_info lookup failed";
+  }
+  if (stage === "business_lookup") {
+    return "Business portfolio lookup failed";
+  }
+  return "Business portfolio list lookup failed";
+}
+
+export type BusinessDiscoveryResult =
+  | {
+      status: "success";
+      portfolioId: string;
+      portfolioName: string;
+      wabaName: string | null;
+      associationStatus: "confirmed" | "unresolved" | "mismatch";
+      sanitizedReason: string | null;
+    }
+  | {
+      status: "unresolved";
+      wabaName: string | null;
+      sanitizedReason: string;
+    }
+  | { status: "failed"; sanitizedReason: string };
+
+async function listOwnedWabaIds(
+  accessToken: string,
+  businessId: string,
+  version: string,
+  fetchImpl: typeof fetch
+): Promise<string[] | null> {
+  const url =
+    `https://graph.facebook.com/${version}/` +
+    `${encodeURIComponent(businessId)}/owned_whatsapp_business_accounts?fields=id`;
+  try {
+    const data = await graphGet(url, accessToken, fetchImpl);
+    const rawList = Array.isArray(data.data)
+      ? (data.data as Record<string, unknown>[])
+      : [];
+    return rawList
+      .map((row) => (typeof row.id === "string" ? row.id.trim() : ""))
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Identify the Business Portfolio authorized for this WABA.
+ *
+ * Primary (documented Embedded Signup path):
+ *   GET /{wabaId}?fields=id,name,owner_business_info
+ *
+ * business_management:
+ *   GET /{business-id}?fields=id,name
+ *   GET /me/businesses?fields=id,name
+ *
+ * Association is Confirmed only when Graph proves the WABA belongs to that
+ * portfolio (owner_business_info.id match, or owned_whatsapp_business_accounts).
+ */
+export async function discoverBusinessPortfolio(
+  input: {
+    accessToken: string;
+    wabaId: string;
+    version: string;
+    claimedBusinessId?: string | null;
+  },
+  fetchImpl: typeof fetch = fetch
+): Promise<BusinessDiscoveryResult> {
+  const token = String(input.accessToken || "").trim();
+  const wabaId = String(input.wabaId || "").trim();
+  if (!token) {
+    return { status: "failed", sanitizedReason: "Meta access token is missing or expired" };
+  }
+  if (!wabaId) {
+    return { status: "failed", sanitizedReason: "WABA ID is required for business discovery" };
+  }
+
+  const claimed = String(input.claimedBusinessId || "").trim() || null;
+  const version = input.version;
+  let wabaName: string | null = null;
+  let owner: MetaNamedNode | null = null;
+
+  try {
+    const wabaUrl =
+      `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}` +
+      `?fields=id,name,owner_business_info`;
+    const wabaData = await graphGet(wabaUrl, token, fetchImpl);
+    if (typeof wabaData.name === "string" && wabaData.name.trim()) {
+      wabaName = wabaData.name.trim();
+    }
+    owner = readNamedNode(wabaData.owner_business_info);
+  } catch (err) {
+    return {
+      status: "failed",
+      sanitizedReason: sanitizeDiscoveryReason(err, "waba_owner"),
+    };
+  }
+
+  if (owner) {
+    let portfolioName = owner.name;
+    try {
+      const bizUrl =
+        `https://graph.facebook.com/${version}/${encodeURIComponent(owner.id)}` +
+        `?fields=id,name`;
+      const bizData = await graphGet(bizUrl, token, fetchImpl);
+      const verified = readNamedNode(bizData);
+      if (verified && verified.id === owner.id) {
+        portfolioName = verified.name || portfolioName;
+      }
+    } catch {
+      // owner_business_info already identified the portfolio; business node GET is corroboration.
+    }
+
+    let associationStatus: "confirmed" | "unresolved" | "mismatch" = "confirmed";
+    let sanitizedReason: string | null = null;
+    if (claimed && claimed !== owner.id) {
+      associationStatus = "mismatch";
+      sanitizedReason =
+        "WABA/business mismatch: Embedded Signup business ID does not match the WABA owner returned by Graph";
+    }
+
+    return {
+      status: "success",
+      portfolioId: owner.id,
+      portfolioName,
+      wabaName,
+      associationStatus,
+      sanitizedReason,
+    };
+  }
+
+  let businesses: MetaNamedNode[] = [];
+  try {
+    const listUrl = `https://graph.facebook.com/${version}/me/businesses?fields=id,name`;
+    const listData = await graphGet(listUrl, token, fetchImpl);
+    const rawList = Array.isArray(listData.data)
+      ? (listData.data as Record<string, unknown>[])
+      : [];
+    for (const entry of rawList) {
+      const node = readNamedNode(entry);
+      if (node) businesses.push(node);
+    }
+  } catch (err) {
+    const listReason = sanitizeDiscoveryReason(err, "business_list");
+    return {
+      status: "failed",
+      sanitizedReason: `WABA owner_business_info was not returned by Graph. ${listReason}`,
+    };
+  }
+
+  if (businesses.length === 0) {
+    return {
+      status: "failed",
+      sanitizedReason: "WABA owner_business_info was not returned by Graph",
+    };
+  }
+
+  const matches: MetaNamedNode[] = [];
+  for (const biz of businesses.slice(0, 10)) {
+    const owned = await listOwnedWabaIds(token, biz.id, version, fetchImpl);
+    if (owned && owned.includes(wabaId)) matches.push(biz);
+  }
+
+  if (matches.length === 1) {
+    const selected = matches[0];
+    let associationStatus: "confirmed" | "unresolved" | "mismatch" = "confirmed";
+    let sanitizedReason: string | null = null;
+    if (claimed && claimed !== selected.id) {
+      associationStatus = "mismatch";
+      sanitizedReason =
+        "WABA/business mismatch: Embedded Signup business ID does not match the business that owns this WABA";
+    }
+    return {
+      status: "success",
+      portfolioId: selected.id,
+      portfolioName: selected.name,
+      wabaName,
+      associationStatus,
+      sanitizedReason,
+    };
+  }
+
+  if (matches.length > 1) {
+    return {
+      status: "unresolved",
+      wabaName,
+      sanitizedReason: "Ambiguous fallback: multiple business portfolios own this WABA",
+    };
+  }
+
+  if (businesses.length === 1) {
+    return {
+      status: "unresolved",
+      wabaName,
+      sanitizedReason:
+        "Ambiguous fallback: a business portfolio was listed but Graph did not prove it owns this WABA",
+    };
+  }
+
+  return {
+    status: "unresolved",
+    wabaName,
+    sanitizedReason:
+      "Ambiguous fallback: multiple business portfolios were returned and none were proven to own this WABA",
+  };
+}
+
+function businessFieldsFromDiscovery(discovery: BusinessDiscoveryResult): {
+  businessPortfolioId: string | null;
+  businessPortfolioName: string | null;
+  businessDiscoveryStatus: BusinessDiscoveryStatus;
+  businessDiscoveryReason: string | null;
+  businessAssociationStatus: BusinessAssociationStatus;
+  wabaName: string | null;
+} {
+  if (discovery.status === "success") {
+    return {
+      businessPortfolioId: discovery.portfolioId,
+      businessPortfolioName: discovery.portfolioName,
+      businessDiscoveryStatus: "success",
+      businessDiscoveryReason: discovery.sanitizedReason,
+      businessAssociationStatus: discovery.associationStatus,
+      wabaName: discovery.wabaName,
+    };
+  }
+  if (discovery.status === "unresolved") {
+    return {
+      businessPortfolioId: null,
+      businessPortfolioName: null,
+      businessDiscoveryStatus: "unresolved",
+      businessDiscoveryReason: discovery.sanitizedReason,
+      businessAssociationStatus: "unresolved",
+      wabaName: discovery.wabaName,
+    };
+  }
+  return {
+    businessPortfolioId: null,
+    businessPortfolioName: null,
+    businessDiscoveryStatus: "failed",
+    businessDiscoveryReason: discovery.sanitizedReason,
+    businessAssociationStatus: "not_available",
+    wabaName: null,
+  };
+}
+
+export async function refreshBusinessDiscoveryIfStale(
+  companyId?: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  const cid = resolveCompanyId(companyId);
+  const record = await connectionRepository.get(cid);
+  if (!record?.accessToken || !record.wabaId) return;
+  if (record.businessDiscoveryStatus === "success") {
+    return;
+  }
+  const discovery = await discoverBusinessPortfolio(
+    {
+      accessToken: record.accessToken,
+      wabaId: record.wabaId,
+      version: resolveGraphVersion(),
+      claimedBusinessId: null,
+    },
+    fetchImpl
+  );
+  const fields = businessFieldsFromDiscovery(discovery);
+  await connectionRepository.upsert({
+    ...record,
+    ...fields,
+  });
+}
+
 // ─── WABA & Phone Number ID ownership verification ─────────────────────────
 
 /**
@@ -637,6 +981,8 @@ export type EmbeddedSignupOnboardingDeps = {
   fetchImpl?: typeof fetch;
   /** Skip Graph API ownership verification (tests only). */
   skipOwnershipVerification?: boolean;
+  /** Skip business discovery (tests that focus on non-business-discovery behavior). */
+  skipBusinessDiscovery?: boolean;
 };
 
 /**
@@ -657,6 +1003,8 @@ export async function processEmbeddedSignupOnboarding(
     state: string;
     companyId: string;
     actor: RequestActor;
+    /** Optional FINISH business_id — verified against Graph, never trusted alone. */
+    claimedBusinessId?: string | null;
   },
   deps: EmbeddedSignupOnboardingDeps = {}
 ): Promise<WhatsAppConnectionStatusPayload> {
@@ -760,6 +1108,39 @@ export async function processEmbeddedSignupOnboarding(
       );
     }
 
+    // ── Step 5b: Best-effort business portfolio discovery (business_management) ──
+    // This call exercises business_management permission: GET /me/businesses?fields=id,name
+    // It is non-blocking — a failure here NEVER fails the entire onboarding.
+    let businessPortfolioId: string | null = null;
+    let businessPortfolioName: string | null = null;
+    let businessDiscoveryStatus: BusinessDiscoveryStatus = null;
+    let businessDiscoveryReason: string | null = null;
+    let businessAssociationStatus: BusinessAssociationStatus = null;
+    let wabaName: string | null = null;
+
+    // Default: skip discovery when Graph ownership checks are skipped (existing tests).
+    const skipDiscovery =
+      deps.skipBusinessDiscovery ?? deps.skipOwnershipVerification ?? false;
+
+    if (!skipDiscovery) {
+      const discovery = await discoverBusinessPortfolio(
+        {
+          accessToken: result.accessToken,
+          wabaId: result.wabaId,
+          version,
+          claimedBusinessId: input.claimedBusinessId,
+        },
+        deps.fetchImpl
+      );
+      const fields = businessFieldsFromDiscovery(discovery);
+      businessPortfolioId = fields.businessPortfolioId;
+      businessPortfolioName = fields.businessPortfolioName;
+      businessDiscoveryStatus = fields.businessDiscoveryStatus;
+      businessDiscoveryReason = fields.businessDiscoveryReason;
+      businessAssociationStatus = fields.businessAssociationStatus;
+      wabaName = fields.wabaName;
+    }
+
     // ── Step 6: Persist (scoped to companyId) ──
     await repo.upsert({
       companyId: input.companyId,
@@ -771,6 +1152,12 @@ export async function processEmbeddedSignupOnboarding(
       lastWebhookAt: null,
       lastError: null,
       stateOverride: null,
+      businessPortfolioId,
+      businessPortfolioName,
+      businessDiscoveryStatus,
+      businessDiscoveryReason,
+      businessAssociationStatus,
+      wabaName,
     });
 
     return getWhatsAppConnectionStatus(input.companyId);

@@ -341,6 +341,7 @@ export async function submitEmbeddedSignup(input: {
   wabaId: string;
   phoneNumberId: string;
   state: string;
+  businessId?: string;
 }): Promise<WhatsAppConnectionStatusPayload> {
   const { data } = await inboxRequest<WhatsAppConnectionStatusPayload>(
     "/api/inbox/admin/whatsapp/embedded-signup",

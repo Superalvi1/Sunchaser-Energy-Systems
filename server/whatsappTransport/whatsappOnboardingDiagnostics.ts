@@ -9,12 +9,15 @@ import {
   readWhatsAppConfig,
 } from "./whatsappConfig.ts";
 import {
+  getWhatsAppConnectionRepository,
   getWhatsAppConnectionStatus,
+  maskId,
+  refreshBusinessDiscoveryIfStale,
   testWhatsAppConnection,
   type WhatsAppConnectionStatusPayload,
   type WhatsAppConnectionTestResult,
 } from "./whatsappConnectionService.ts";
-import { WHATSAPP_WEBHOOK_PATH } from "./whatsappConstants.ts";
+import { DEFAULT_COMPANY_ID, WHATSAPP_WEBHOOK_PATH } from "./whatsappConstants.ts";
 import { resolveWhatsAppTokenEncryptionKey, WhatsAppTokenCryptoError } from "./whatsappTokenCrypto.ts";
 
 export type ChecklistItemId =
@@ -36,6 +39,33 @@ export type ChecklistItem = {
   detail: string | null;
 };
 
+/**
+ * Read-only business portfolio diagnostics section.
+ * Never includes access tokens, raw Graph responses, or unmasked sensitive IDs.
+ * All IDs are masked in the same format as wabaIdMasked (first 2 + **** + last 4).
+ */
+export type MetaBusinessDiagnostics = {
+  /**
+   * Whether business discovery succeeded from real Graph results.
+   * "success" only when Graph identified the authorized portfolio.
+   */
+  businessDiscovery: "success" | "unresolved" | "failed" | "not_attempted";
+  /** Masked Business Portfolio ID (first 2 + **** + last 4). */
+  businessPortfolioIdMasked: string | null;
+  /** Display name of the authorized business portfolio (safe to surface). */
+  businessPortfolioName: string | null;
+  /** WABA display name from Graph, when retrieved. */
+  wabaName: string | null;
+  /** Masked WABA ID (same masking as connection.wabaIdMasked). */
+  wabaIdMasked: string | null;
+  /** Masked Phone Number ID. */
+  phoneNumberIdMasked: string | null;
+  /** Human-readable status of the business-to-WABA association. */
+  associationStatus: "confirmed" | "unresolved" | "mismatch" | "not_available";
+  /** Sanitized discovery detail. Never contains tokens or raw Graph JSON. */
+  discoveryDetail: string | null;
+};
+
 export type WhatsAppOnboardingDiagnostics = {
   checklist: ChecklistItem[];
   connection: WhatsAppConnectionStatusPayload;
@@ -55,6 +85,8 @@ export type WhatsAppOnboardingDiagnostics = {
     encryptionKeyConfigured: boolean;
     conversationsEnabled: boolean;
   };
+  /** Read-only Meta Business Portfolio diagnostics. Admin-only. */
+  businessDiagnostics: MetaBusinessDiagnostics;
 };
 
 function envPresent(...keys: string[]): boolean {
@@ -137,9 +169,9 @@ async function probeGraphConnectivity(
       `https://graph.facebook.com/${version}/`,
       { method: "GET", signal: AbortSignal.timeout(5_000) }
     );
-    // Graph root often returns 400 without token — still proves connectivity.
+    // Graph root without a token commonly returns 400 — that still proves reachability.
     if (res.status >= 200 && res.status < 500) {
-      return { ok: true, version, detail: `Graph API reachable (HTTP ${res.status})` };
+      return { ok: true, version, detail: null };
     }
     return {
       ok: false,
@@ -171,6 +203,11 @@ export async function getWhatsAppOnboardingDiagnostics(
   deps: DiagnosticsDeps = {}
 ): Promise<WhatsAppOnboardingDiagnostics> {
   const fetchImpl = deps.fetchImpl ?? fetch;
+  try {
+    await refreshBusinessDiscoveryIfStale(deps.companyId, fetchImpl);
+  } catch {
+    // Best-effort refresh must never fail the diagnostics page.
+  }
   const config = readWhatsAppConfig();
   const connection = await getWhatsAppConnectionStatus(deps.companyId);
   const { url: webhookCallbackUrl, publicBaseUrlConfigured } =
@@ -285,6 +322,46 @@ export async function getWhatsAppOnboardingDiagnostics(
     },
   ];
 
+  // ── Business diagnostics (read from stored record — never re-calls Graph) ──
+  const companyId = deps.companyId ?? DEFAULT_COMPANY_ID;
+  const connectionRecord = await getWhatsAppConnectionRepository().get(companyId).catch(() => null);
+
+  const rawDiscovery = connectionRecord?.businessDiscoveryStatus ?? null;
+  const businessDiscovery: MetaBusinessDiagnostics["businessDiscovery"] =
+    rawDiscovery === "success"
+      ? "success"
+      : rawDiscovery === "unresolved"
+        ? "unresolved"
+        : rawDiscovery === "failed"
+          ? "failed"
+          : "not_attempted";
+
+  const businessPortfolioIdMasked = maskId(connectionRecord?.businessPortfolioId ?? null);
+  const businessPortfolioName = connectionRecord?.businessPortfolioName ?? null;
+  const wabaIdMasked = connection.wabaIdMasked;
+  const phoneNumberIdMasked = connection.phoneNumberIdMasked;
+
+  const associationStatus: MetaBusinessDiagnostics["associationStatus"] =
+    connectionRecord?.businessAssociationStatus === "confirmed"
+      ? "confirmed"
+      : connectionRecord?.businessAssociationStatus === "mismatch"
+        ? "mismatch"
+        : connectionRecord?.businessAssociationStatus === "unresolved" ||
+            rawDiscovery === "unresolved"
+          ? "unresolved"
+          : "not_available";
+
+  const businessDiagnostics: MetaBusinessDiagnostics = {
+    businessDiscovery,
+    businessPortfolioIdMasked,
+    businessPortfolioName,
+    wabaName: connectionRecord?.wabaName ?? null,
+    wabaIdMasked,
+    phoneNumberIdMasked,
+    associationStatus,
+    discoveryDetail: connectionRecord?.businessDiscoveryReason ?? null,
+  };
+
   return {
     checklist,
     connection,
@@ -303,6 +380,7 @@ export async function getWhatsAppOnboardingDiagnostics(
       encryptionKeyConfigured: encOk,
       conversationsEnabled: config.enabled,
     },
+    businessDiagnostics,
   };
 }
 

@@ -656,6 +656,11 @@ export function createInboxControllers(
         const state = String(body.state || "");
         const wabaId = body.wabaId ? String(body.wabaId) : "";
         const phoneNumberId = body.phoneNumberId ? String(body.phoneNumberId) : "";
+        const claimedBusinessId = body.businessId
+          ? String(body.businessId)
+          : body.claimedBusinessId
+            ? String(body.claimedBusinessId)
+            : "";
         const companyId = DEFAULT_COMPANY_ID;
         const payload = await processEmbeddedSignupOnboarding({
           code,
@@ -664,6 +669,7 @@ export function createInboxControllers(
           phoneNumberId,
           companyId,
           actor: actorOf(req),
+          claimedBusinessId: claimedBusinessId || null,
         });
         return inboxOk(res, payload);
       } catch (err) {

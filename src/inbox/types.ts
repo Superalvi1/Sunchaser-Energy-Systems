@@ -167,6 +167,18 @@ export type WhatsAppSetupChecklistItem = {
   detail: string | null;
 };
 
+/** Read-only Meta Business Portfolio diagnostics served by the admin diagnostics endpoint. */
+export type MetaBusinessDiagnostics = {
+  businessDiscovery: "success" | "unresolved" | "failed" | "not_attempted";
+  businessPortfolioIdMasked: string | null;
+  businessPortfolioName: string | null;
+  wabaName: string | null;
+  wabaIdMasked: string | null;
+  phoneNumberIdMasked: string | null;
+  associationStatus: "confirmed" | "unresolved" | "mismatch" | "not_available";
+  discoveryDetail: string | null;
+};
+
 export type WhatsAppOnboardingDiagnostics = {
   checklist: WhatsAppSetupChecklistItem[];
   connection: WhatsAppConnectionStatusPayload;
@@ -186,6 +198,8 @@ export type WhatsAppOnboardingDiagnostics = {
     encryptionKeyConfigured: boolean;
     conversationsEnabled: boolean;
   };
+  /** Read-only Meta Business Portfolio diagnostics. Admin-only. */
+  businessDiagnostics: MetaBusinessDiagnostics;
 };
 
 export type WhatsAppConnectionTestResult = {
