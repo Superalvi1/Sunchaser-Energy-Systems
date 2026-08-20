@@ -165,9 +165,18 @@ console.log("ok - daily price-only sync is Kamal-first and existing-listing-only
     sql,
     /stock_status\s*=\s*case when v_price_only then stock_status else v_avail end/i,
   );
+  const existingUpdateStart = sql.indexOf(
+    "if not v_price_only then",
+    sql.indexOf("v_variant_id := v_existing.variant_id"),
+  );
+  const existingUpdateEnd = sql.indexOf(
+    "-- Optional Catalogue Manager column",
+    existingUpdateStart,
+  );
+  assert.ok(existingUpdateStart >= 0 && existingUpdateEnd > existingUpdateStart);
   assert.match(
-    sql,
-    /if not v_price_only then[\s\S]{0,250}update public\.mp_products/i,
+    sql.slice(existingUpdateStart, existingUpdateEnd),
+    /update public\.mp_products/i,
   );
   assert.match(
     sql,
