@@ -1,17 +1,25 @@
 import React from "react";
 import {
   BookOpen,
+  ExternalLink,
   LogOut,
   Mail,
   MapPin,
   Phone,
   RefreshCw,
+  ShieldCheck,
   User as UserIcon,
+  UserMinus,
 } from "lucide-react";
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import { displayOrNoData } from "../lib/clientPortalDisplay";
 import { portal } from "../lib/clientPortalUi";
+import {
+  ACCOUNT_DELETION_URL,
+  EXTERNAL_LINK_PROPS,
+  PRIVACY_POLICY_URL,
+} from "../lib/complianceLinks";
 import type { AccountScreen } from "./ClientPortalAccount.types";
 import ClientPortalPremiumServices from "./ClientPortalPremiumServices";
 import type { PortalServiceId } from "./ClientPortalPremiumServices";
@@ -87,6 +95,40 @@ export default function ClientPortalAccount({
       </section>
 
       <ClientPortalPremiumServices onOpen={openService} />
+
+      {/*
+        Account & Privacy — Google Play requires a readily discoverable in-app path
+        to the privacy policy and to account deletion. Both open the public hosted
+        pages in the system browser; neither performs a destructive action here.
+      */}
+      <section className="space-y-2">
+        <p className={portal.label}>Account &amp; Privacy</p>
+        <div className={`${portal.card} overflow-hidden`}>
+          <a
+            href={PRIVACY_POLICY_URL}
+            {...EXTERNAL_LINK_PROPS}
+            className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-white/[0.03] border-b border-white/[0.06]"
+          >
+            <ShieldCheck className="h-5 w-5 text-slate-500 shrink-0" />
+            <span className="flex-1 text-sm font-medium text-slate-200">Privacy Policy</span>
+            <ExternalLink className="h-4 w-4 text-slate-600 shrink-0" aria-hidden="true" />
+          </a>
+          <a
+            href={ACCOUNT_DELETION_URL}
+            {...EXTERNAL_LINK_PROPS}
+            className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-white/[0.03]"
+          >
+            <UserMinus className="h-5 w-5 text-slate-500 shrink-0" />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-medium text-slate-200">Request Account Deletion</span>
+              <span className="block text-xs text-slate-500 mt-0.5">
+                Opens instructions — nothing is deleted by tapping this
+              </span>
+            </span>
+            <ExternalLink className="h-4 w-4 text-slate-600 shrink-0" aria-hidden="true" />
+          </a>
+        </div>
+      </section>
 
       <div className={`${portal.card} overflow-hidden`}>
         {onShowWelcomeGuide && (

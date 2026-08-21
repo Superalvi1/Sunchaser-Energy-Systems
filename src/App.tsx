@@ -36,6 +36,11 @@ import {
 } from "./services/api";
 import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
 import { isNativeApp } from "./lib/appPlatform";
+import {
+  ACCOUNT_DELETION_URL,
+  EXTERNAL_LINK_PROPS,
+  PRIVACY_POLICY_URL,
+} from "./lib/complianceLinks";
 import { restoreAuthSession, clearAuthSession } from "./lib/authSession";
 
 declare const __GIT_COMMIT_HASH__: string;
@@ -1015,6 +1020,24 @@ export default function App() {
           <div className="flex flex-col items-center md:items-start text-[11px] text-slate-500">
             <span>&copy; {new Date().getFullYear()} Sunchaser Energy Systems Inc. All Rights Reserved.</span>
             <span className="text-[10px] text-slate-600">STATE CONTROL COMPLIANCE • CONTAINER ISOLATED LAYER</span>
+            {/* Public compliance pages — required to be reachable from inside the app. */}
+            <span className="mt-1 flex items-center gap-2 text-[10px]">
+              <a
+                href={PRIVACY_POLICY_URL}
+                {...EXTERNAL_LINK_PROPS}
+                className="text-slate-400 hover:text-amber-400 underline underline-offset-2"
+              >
+                Privacy Policy
+              </a>
+              <span className="text-slate-700">·</span>
+              <a
+                href={ACCOUNT_DELETION_URL}
+                {...EXTERNAL_LINK_PROPS}
+                className="text-slate-400 hover:text-amber-400 underline underline-offset-2"
+              >
+                Account Deletion
+              </a>
+            </span>
           </div>
           <div className="flex flex-col items-center md:items-end text-[10px] text-slate-500 border border-slate-800/80 rounded-2xl px-3 py-1.5 bg-slate-950/40">
             <span className="font-bold text-amber-500">Build {__GIT_COMMIT_HASH__} ({__BUILD_ENV__})</span>
