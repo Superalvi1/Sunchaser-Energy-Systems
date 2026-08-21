@@ -8,6 +8,7 @@ import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../serv
 import { pickQuoteForInvoice } from "../lib/invoiceFromLead";
 import WhatsAppModule from "./WhatsAppModule";
 import AppModal from "./ui/AppModal";
+import { useIsMobile } from "./ui/MobileDisclosure";
 import {
   formatLeadAdvisor,
   formatLeadLocation,
@@ -39,6 +40,9 @@ export default function CRMApp({
   const [sortBy, setSortBy] = useState<'ai_score' | 'rating' | 'creation'>('ai_score');
 
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
+  const isMobile = useIsMobile();
+  // Mobile shows a summary row per client; one expands at a time. Desktop is unchanged.
+  const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
 
   // Edit details model temporal states
   const [editName, setEditName] = useState("");
@@ -326,6 +330,10 @@ export default function CRMApp({
             const isEditing = editLeadId === lead.id;
             const aScore = lead.conversionScore || 50;
             const probPercent = lead.conversionProbability || 45;
+            const isExpanded = expandedLeadId === lead.id;
+            // Details/actions are always rendered on desktop; on mobile only when expanded
+            // (or while editing, so the edit form is never hidden behind a collapsed row).
+            const showDetails = !isMobile || isExpanded || isEditing;
 
             // Rating color thresholds
             let scoreColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
@@ -335,11 +343,49 @@ export default function CRMApp({
             return (
               <div 
                 key={lead.id} 
-                className={`bg-slate-900 border rounded-3xl p-6 shadow-sm space-y-4 hover:border-slate-700/60 transition ${
+                className={`bg-slate-900 border rounded-3xl p-4 md:p-6 shadow-sm space-y-4 hover:border-slate-700/60 transition ${
                   aScore >= 80 ? 'ring-1 ring-emerald-500/10' : ''
                 }`}
               >
                 {/* Upper client tags and AI Lead Conversion metrics box */}
+                {isMobile ? (
+                  /* Mobile: compact summary row — tap to reveal the full card. */
+                  <button
+                    type="button"
+                    data-testid={`crm-lead-summary-${lead.id}`}
+                    onClick={() => setExpandedLeadId((current) => (current === lead.id ? null : lead.id))}
+                    aria-expanded={isExpanded}
+                    className="flex min-h-[48px] w-full items-center gap-3 border-b border-slate-800/65 pb-3 text-left"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold text-slate-100 font-sans">{lead.name}</span>
+                      <span className="mt-0.5 block truncate text-[10px] text-slate-400 font-mono">
+                        <MapPin className="h-3 w-3 inline mr-1 text-slate-500" />
+                        {formatLeadLocation(lead)}
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[10px] font-mono">
+                        <span className="font-bold text-slate-300">{lead.status}</span>
+                        <span className="text-slate-600">·</span>
+                        <span className="font-bold text-amber-400">Prob {probPercent}%</span>
+                        {lead.monthlyBill ? (
+                          <>
+                            <span className="text-slate-600">·</span>
+                            <span className="text-slate-400">
+                              {currencySymbol}
+                              {lead.monthlyBill}/mo
+                            </span>
+                          </>
+                        ) : null}
+                      </span>
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                        isExpanded ? "rotate-180" : ""
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                ) : (
                 <div className="flex justify-between items-start border-b border-slate-800/65 pb-3">
                   <div>
                     <span className="text-[10px] uppercase font-mono font-bold tracking-tight text-slate-500">ID: {lead.id}</span>
@@ -358,6 +404,7 @@ export default function CRMApp({
                     </div>
                   </div>
                 </div>
+                )}
 
                 {isEditing ? (
                   /* --- EDITING CARD MODE WORKSPACE VIEW --- */
@@ -446,9 +493,9 @@ export default function CRMApp({
                       </button>
                     </div>
                   </div>
-                ) : (
+                ) : showDetails ? (
                   /* --- STANDARD DISPLAY READ CARD VIEWS --- */
-                  <div className="space-y-3 pt-1 text-slate-300">
+                  <div className="space-y-3 pt-1 text-slate-300" data-testid={`crm-lead-details-${lead.id}`}>
                     
                     {/* Contacts info line row */}
                     <div className="grid grid-cols-2 gap-4 text-xs">
@@ -612,7 +659,7 @@ export default function CRMApp({
 
                     </div>
                   </div>
-                )}
+                ) : null}
 
               </div>
             );

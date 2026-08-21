@@ -30,6 +30,7 @@ import {
   Store,
 } from "lucide-react";
 import { isKnowledgeMockUiEnabled } from "../lib/knowledgeFeatureFlag";
+import { DisclosureSection, useIsMobile, useSingleOpen } from "./ui/MobileDisclosure";
 
 export type AdminSegmentId =
   | "overview"
@@ -62,7 +63,13 @@ export type AdminSegmentId =
   | "energy-monitoring"
   | "knowledge";
 
-export type AdminQuickAction = "lead" | "quotation" | "invoice" | "customer";
+export type AdminQuickAction =
+  | "lead"
+  | "quotation"
+  | "invoice"
+  | "customer"
+  | "crm"
+  | "sales-advisor";
 
 type ModuleDef = {
   id: AdminSegmentId;
@@ -447,6 +454,20 @@ export function buildAdminNavGroups(opts: {
   ];
 }
 
+/**
+ * Mobile-only presentation for the nav groups. Desktop keeps the shorter
+ * sidebar labels, so this map re-titles the same groups for the phone
+ * accordion without touching `buildAdminNavGroups` (shared with desktop).
+ */
+const MOBILE_GROUP_META: Record<string, { label: string; icon: LucideIcon }> = {
+  business: { label: "Reports & Analytics", icon: BarChart4 },
+  "sales-finance": { label: "Business & Finance", icon: DollarSign },
+  operations: { label: "Projects & Delivery", icon: Truck },
+  inventory: { label: "Inventory & Suppliers", icon: Package },
+  customer: { label: "Service & Support", icon: Headphones },
+  admin: { label: "System Administration", icon: Lock },
+};
+
 function isModuleActive(
   mod: ModuleDef,
   activeSegment: AdminSegmentId,
@@ -477,6 +498,9 @@ export default function AdminModuleNav({
 }: AdminModuleNavProps) {
   const [query, setQuery] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isMobile = useIsMobile();
+  // Only one group open at a time on phones — keeps the page short.
+  const { openId: openGroupId, toggle: toggleGroup } = useSingleOpen<string>(null);
 
   const groups = useMemo(
     () =>
@@ -515,6 +539,34 @@ export default function AdminModuleNav({
     else if (action === "invoice" && showInvoices) onSelect("invoices");
     else onQuickAction?.(action);
   };
+
+  // Phone "Quick access" row: the four destinations reached most often.
+  // CRM / Sales Advisor are top-level tabs, so they route via onQuickAction.
+  const financeSegment: AdminSegmentId | null = showFinanceDashboard
+    ? "finance-dashboard"
+    : showInvoices
+      ? "invoices"
+      : showFinanceAdmin
+        ? "project-finance"
+        : null;
+
+  const quickAccess: { id: string; label: string; icon: LucideIcon; onClick: () => void }[] = [
+    ...(onQuickAction
+      ? [
+          { id: "crm", label: "CRM", icon: Users, onClick: () => onQuickAction("crm") },
+          {
+            id: "sales-advisor",
+            label: "Sales Advisor",
+            icon: FileText,
+            onClick: () => onQuickAction("sales-advisor"),
+          },
+        ]
+      : []),
+    { id: "quotations", label: "Quotations", icon: ClipboardList, onClick: () => onSelect("pdf-templates") },
+    ...(financeSegment
+      ? [{ id: "finance", label: "Finance", icon: DollarSign, onClick: () => onSelect(financeSegment) }]
+      : []),
+  ];
 
   const navBody = (
     <div className="space-y-4">
@@ -625,20 +677,79 @@ export default function AdminModuleNav({
           </div>
         )}
         {!q && (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-            {groups.flatMap((g) =>
-              g.modules.map((mod) => (
-                <ModuleCard
-                  key={`${g.id}-${mod.id}-${mod.title}`}
-                  mod={mod}
-                  active={isModuleActive(mod, activeSegment, pdfSubTab)}
-                  onClick={() =>
-                    onSelect(mod.id, mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined)
-                  }
-                />
-              ))
-            )}
-          </div>
+          <>
+            {/* Phones: summary-first accordion so the page is not one long grid. */}
+            <div className="space-y-2 md:hidden">
+              <div>
+                <div className="mb-1.5 px-1 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                  Quick access
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {quickAccess.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={item.onClick}
+                        className="flex min-h-[48px] items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-left text-xs font-bold text-neutral-200 transition hover:border-amber-500/30 hover:bg-neutral-800"
+                      >
+                        <Icon className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {groups.map((group) => {
+                const meta = MOBILE_GROUP_META[group.id];
+                return (
+                  <DisclosureSection
+                    key={group.id}
+                    title={meta?.label ?? group.label}
+                    icon={meta?.icon}
+                    count={group.modules.length}
+                    open={openGroupId === group.id}
+                    onToggle={() => toggleGroup(group.id)}
+                    className="border-neutral-800 bg-neutral-950/80"
+                  >
+                    <div className="grid grid-cols-2 gap-2">
+                      {group.modules.map((mod) => (
+                        <ModuleCard
+                          key={`${group.id}-${mod.id}-${mod.title}`}
+                          mod={mod}
+                          active={isModuleActive(mod, activeSegment, pdfSubTab)}
+                          onClick={() =>
+                            onSelect(
+                              mod.id,
+                              mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
+                  </DisclosureSection>
+                );
+              })}
+            </div>
+
+            {/* Tablet (768-1023px): unchanged flat grid. */}
+            <div className="hidden gap-2 md:grid md:grid-cols-4">
+              {groups.flatMap((g) =>
+                g.modules.map((mod) => (
+                  <ModuleCard
+                    key={`${g.id}-${mod.id}-${mod.title}`}
+                    mod={mod}
+                    active={isModuleActive(mod, activeSegment, pdfSubTab)}
+                    onClick={() =>
+                      onSelect(mod.id, mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined)
+                    }
+                  />
+                ))
+              )}
+            </div>
+          </>
         )}
         {q && (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
