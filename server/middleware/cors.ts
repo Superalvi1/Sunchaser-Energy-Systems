@@ -8,8 +8,17 @@ import type { NextFunction, Request, Response } from "express";
 
 export const PRODUCTION_CRM_ORIGIN = "https://crm.sunchaserenergy.co";
 
+/**
+ * Capacitor iOS serves the bundled app from `capacitor://localhost`. Unlike Android
+ * (which uses `https`), this scheme cannot be changed: `server.iosScheme` explicitly
+ * cannot be set to http/https because WKWebView reserves those, so the origin must be
+ * allowlisted here or every API call from the iOS app fails CORS.
+ */
+export const CAPACITOR_IOS_ORIGIN = "capacitor://localhost";
+
 const STATIC_ALLOWED_ORIGINS = new Set<string>([
   PRODUCTION_CRM_ORIGIN,
+  CAPACITOR_IOS_ORIGIN,
   "http://localhost:5173",
   "http://localhost:3000",
   "http://127.0.0.1:5173",

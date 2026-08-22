@@ -270,6 +270,18 @@ await test("production order: localhost malformed JSON keeps CORS", async () => 
   }
 });
 
+await test("Capacitor iOS origin is allowed, but not arbitrary capacitor:// hosts", () => {
+  // iOS serves the bundled app from capacitor://localhost and the scheme cannot be
+  // changed (WKWebView reserves http/https), so this origin must stay allowlisted.
+  assert.equal(isAllowedCorsOrigin("capacitor://localhost"), true);
+  // Android's origin, unchanged.
+  assert.equal(isAllowedCorsOrigin("https://localhost"), true);
+  // The allowlist is exact-match, not a scheme wildcard.
+  assert.equal(isAllowedCorsOrigin("capacitor://evil"), false);
+  assert.equal(isAllowedCorsOrigin("capacitor://localhost.evil.com"), false);
+  assert.equal(isAllowedCorsOrigin("https://evil.example.com"), false);
+});
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);
