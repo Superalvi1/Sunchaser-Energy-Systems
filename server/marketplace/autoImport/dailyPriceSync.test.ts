@@ -7,6 +7,7 @@ import {
   __resetAutoImportRunLockForTests,
   createAutoImportService,
 } from "./autoImportService.ts";
+import type { AutoImportRejectLedgerSink } from "./autoImportService.ts";
 import { selectKamalFirstInStockPrice } from "./priceSelect.ts";
 
 const ENV = {
@@ -20,6 +21,7 @@ function observation(input: {
   price: number;
   availability?: CatalogueProductObservation["availability"];
   title?: string;
+  modelSku?: string;
 }): CatalogueProductObservation {
   const title = input.title ?? "Inverex Nitrox 10kW Hybrid Solar Inverter";
   return {
@@ -28,7 +30,7 @@ function observation(input: {
     supplierProductId: input.id,
     title,
     brand: "Inverex",
-    modelSku: "NITROX-10KW",
+    modelSku: input.modelSku ?? "NITROX-10KW",
     category: "inverter",
     currentListedPricePkr: input.price,
     compareAtPricePkr: null,
@@ -117,13 +119,22 @@ function observation(input: {
   const seeded = await seed.runAutomaticImport({ actorScope: "admin:super:test" });
   assert.equal(seeded.health.productsCreated, 1);
   const before = (await repository.listListings())[0]!;
+  const rejectEntries: Parameters<AutoImportRejectLedgerSink["record"]>[0][] = [];
 
   const daily = createAutoImportService({
     repository,
     env: ENV,
+    rejectLedger: {
+      async record(entry) {
+        rejectEntries.push(entry);
+      },
+    },
+    rejectLedgerRequired: true,
     fixtureObservations: [
       observation({ supplier: "kamal", id: "seed", price: 240_000 }),
       observation({ supplier: "alladin", id: "same", price: 190_000 }),
+      observation({ supplier: "alladin", id: "same", price: 190_000 }),
+      observation({ supplier: "alladin", id: "invalid", price: 0 }),
       observation({
         supplier: "kamal",
         id: "untracked",
@@ -147,9 +158,75 @@ function observation(input: {
   assert.equal(listings[0]!.categoryName, before.categoryName);
   assert.equal(listings[0]!.availability, before.availability);
   assert.equal(listings[0]!.active, before.active);
+  assert.equal(synced.health.rejectedVariants, 3);
+  assert.equal(rejectEntries.length, synced.health.rejectedVariants);
+  assert.equal(
+    rejectEntries.every((entry) => Boolean(entry.identityKey)),
+    true,
+    "every durable reject row must carry its resolved identity key",
+  );
+  assert.deepEqual(
+    rejectEntries.map((entry) => entry.reason).sort(),
+    [
+      "duplicate_canonical_url",
+      "missing_or_invalid_price",
+      "price_only_untracked_listing",
+    ],
+  );
+  const untracked = rejectEntries.find(
+    (entry) => entry.reason === "price_only_untracked_listing",
+  );
+  assert.equal(untracked?.identityKey?.startsWith("separate:"), true);
 }
 
 console.log("ok - daily price-only sync is Kamal-first and existing-listing-only");
+
+{
+  __resetAutoImportRunLockForTests();
+  const repository = createMemoryAutoImportRepository();
+  const seed = createAutoImportService({
+    repository,
+    env: ENV,
+    fixtureObservations: [
+      observation({ supplier: "kamal", id: "protected", price: 240_000 }),
+    ],
+  });
+  await seed.runAutomaticImport({ actorScope: "admin:super:test" });
+  const before = (await repository.listListings())[0]!;
+
+  const daily = createAutoImportService({
+    repository,
+    env: ENV,
+    rejectLedger: {
+      async record() {
+        throw new Error("reject ledger unavailable");
+      },
+    },
+    rejectLedgerRequired: true,
+    fixtureObservations: [
+      observation({ supplier: "kamal", id: "protected", price: 200_000 }),
+      observation({
+        supplier: "alladin",
+        id: "untracked",
+        price: 100_000,
+        title: "Growatt MOD 15KTL3-X Inverter",
+        modelSku: "MOD-15KTL3-X",
+      }),
+    ],
+  });
+
+  const result = await daily.runAutomaticImport({
+    actorScope: "system:marketplace-daily-price-sync",
+    mode: "price_only",
+  });
+  const after = (await repository.listListings())[0]!;
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.health.productsUpdated, 0);
+  assert.equal(after.websitePricePkr, before.websitePricePkr);
+}
+
+console.log("ok - required reject ledger failure blocks catalogue price commit");
 
 {
   const sql = readFileSync(
@@ -185,3 +262,19 @@ console.log("ok - daily price-only sync is Kamal-first and existing-listing-only
 }
 
 console.log("ok - SQL price-only mode preserves product metadata and inventory");
+
+{
+  const script = readFileSync(
+    join(process.cwd(), "scripts/marketplace-daily-price-sync.ts"),
+    "utf8",
+  );
+  assert.match(script, /createCatalogueManagerRepositoryFromEnv/);
+  assert.match(script, /await rejectRepository\.reconciliation\(\)/);
+  assert.match(script, /rejectLedger:\s*rejectLedger\.sink/);
+  assert.match(script, /rejectLedgerRequired:\s*true/);
+  assert.match(script, /rejectLedgerComplete/);
+  assert.match(script, /REJECT_LEDGER_UNAVAILABLE/);
+  assert.match(script, /No supplier fetch or catalogue price write was attempted/);
+}
+
+console.log("ok - daily command requires complete durable reject observability");

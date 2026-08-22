@@ -6,6 +6,8 @@
  */
 import "dotenv/config";
 import { createAutoImportService } from "../server/marketplace/autoImport/autoImportService.ts";
+import { createDailyPriceSyncRejectLedger } from "../server/marketplace/autoImport/dailyPriceSyncRejectLedger.ts";
+import { createCatalogueManagerRepositoryFromEnv } from "../server/marketplace/catalogueManager/catalogueManagerRepository.ts";
 
 function enabled(name: string): boolean {
   return String(process.env[name] || "").toLowerCase() === "true";
@@ -37,32 +39,75 @@ if (missing.length) {
   );
   process.exitCode = 2;
 } else {
-  const service = createAutoImportService({ env: process.env });
-  const result = await service.runAutomaticImport({
-    actorScope: "system:marketplace-daily-price-sync",
-    mode: "price_only",
-  });
-
-  console.log(
-    JSON.stringify({
-      ok: result.status === "succeeded",
-      mode: "price_only",
-      status: result.status,
-      runId: result.runId,
-      suppliers: {
-        kamalDiscovered: result.health.kamalDiscovered,
-        alladinDiscovered: result.health.alladinDiscovered,
-      },
-      existingListingsUpdated: result.health.productsUpdated,
-      productsCreated: result.health.productsCreated,
-      rejectedOrUntrackedVariants: result.health.rejectedVariants,
-      rolledBackPrices: result.health.rolledBackPrices,
-      errors: result.health.errors,
-      publicWebsiteVisible: result.stages.publicWebsiteVisible,
-    }),
-  );
-
-  if (result.status !== "succeeded" || result.health.productsCreated !== 0) {
+  let rejectRepository: ReturnType<
+    typeof createCatalogueManagerRepositoryFromEnv
+  > | null = null;
+  try {
+    rejectRepository = createCatalogueManagerRepositoryFromEnv(process.env);
+    // Read-only preflight: proves the catalogue-manager schema is reachable
+    // before supplier discovery or any catalogue price write. Each reject RPC
+    // is then counted and required before the atomic price commit.
+    await rejectRepository.reconciliation();
+  } catch {
+    console.error(
+      JSON.stringify({
+        ok: false,
+        mode: "price_only",
+        code: "REJECT_LEDGER_UNAVAILABLE",
+        note: "No supplier fetch or catalogue price write was attempted.",
+      }),
+    );
     process.exitCode = 1;
+  }
+
+  if (!rejectRepository) {
+    // The structured error above is the only output required for this hold.
+  } else {
+    const rejectLedger = createDailyPriceSyncRejectLedger(rejectRepository);
+    const service = createAutoImportService({
+      env: process.env,
+      rejectLedger: rejectLedger.sink,
+      rejectLedgerRequired: true,
+    });
+    const result = await service.runAutomaticImport({
+      actorScope: "system:marketplace-daily-price-sync",
+      mode: "price_only",
+    });
+    const rejectLedgerComplete = rejectLedger.isComplete(
+      result.health.rejectedVariants,
+    );
+
+    console.log(
+      JSON.stringify({
+        ok: result.status === "succeeded" && rejectLedgerComplete,
+        mode: "price_only",
+        status: result.status,
+        runId: result.runId,
+        suppliers: {
+          kamalDiscovered: result.health.kamalDiscovered,
+          alladinDiscovered: result.health.alladinDiscovered,
+        },
+        existingListingsUpdated: result.health.productsUpdated,
+        productsCreated: result.health.productsCreated,
+        rejectedOrUntrackedVariants: result.health.rejectedVariants,
+        rejectLedger: {
+          attempted: rejectLedger.stats.attempted,
+          recorded: rejectLedger.stats.recorded,
+          failed: rejectLedger.stats.failed,
+          complete: rejectLedgerComplete,
+        },
+        rolledBackPrices: result.health.rolledBackPrices,
+        errors: result.health.errors,
+        publicWebsiteVisible: result.stages.publicWebsiteVisible,
+      }),
+    );
+
+    if (
+      result.status !== "succeeded" ||
+      result.health.productsCreated !== 0 ||
+      !rejectLedgerComplete
+    ) {
+      process.exitCode = 1;
+    }
   }
 }
