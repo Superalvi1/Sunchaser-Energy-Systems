@@ -153,7 +153,7 @@ export default function AICommandCenter({ layout = "staff" }: AICommandCenterPro
   const fabClass =
     layout === "customer"
       ? "fixed right-5 z-[60] bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))]"
-      : "fixed bottom-6 right-6 z-[60]";
+      : "fixed right-6 z-[60] bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))]";
 
   const drawer =
     open && typeof document !== "undefined"
