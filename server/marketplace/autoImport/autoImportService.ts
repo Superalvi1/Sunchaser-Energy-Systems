@@ -96,8 +96,10 @@ export type AutoImportServiceDeps = {
   fixtureObservations?: CatalogueProductObservation[];
   /** Inject logger (tests). */
   log?: typeof logAutoImport;
-  /** Durable reject accountability (optional; best-effort). */
+  /** Durable reject accountability (optional; best-effort unless required). */
   rejectLedger?: AutoImportRejectLedgerSink;
+  /** Abort before catalogue commit when any reject cannot be durably recorded. */
+  rejectLedgerRequired?: boolean;
 };
 
 function isAutoImportEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -433,10 +435,18 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     const normalized: CatalogueProductObservation[] = [];
     const staleObservations: CatalogueProductObservation[] = [];
     const recordReject = async (
-      obs: CatalogueProductObservation,
+      obs: Pick<
+        CatalogueProductObservation,
+        | "supplier"
+        | "sourceKey"
+        | "supplierProductId"
+        | "canonicalUrl"
+        | "title"
+      >,
       reason: string,
       stage: "normalize" | "import" = "import",
       detail: Record<string, unknown> = {},
+      identityKey: string | null = null,
     ) => {
       if (!deps.rejectLedger) return;
       try {
@@ -448,12 +458,14 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
           supplierProductId: obs.supplierProductId,
           canonicalUrl: obs.canonicalUrl,
           title: obs.title,
-          identityKey: null,
+          identityKey,
           stage,
           detail,
         });
-      } catch {
-        // Best-effort — never fail the sync on ledger write.
+      } catch (error) {
+        if (deps.rejectLedgerRequired) throw error;
+        // Best-effort for interactive/full imports unless the caller opts in
+        // to the stricter daily-sync observability contract.
       }
     };
 
@@ -461,7 +473,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       const why = rejectReason(obs);
       if (why) {
         rejectedVariants += 1;
-        await recordReject(obs, why, "import");
+        await recordReject(obs, why, "import", {}, toOffer(obs).groupKey);
         if (why === "missing_or_invalid_price") {
           staleObservations.push(obs);
         }
@@ -470,7 +482,13 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       const url = obs.canonicalUrl.trim().toLowerCase();
       if (seenUrls.has(url)) {
         rejectedVariants += 1;
-        await recordReject(obs, "duplicate_canonical_url", "import");
+        await recordReject(
+          obs,
+          "duplicate_canonical_url",
+          "import",
+          {},
+          toOffer(obs).groupKey,
+        );
         continue;
       }
       seenUrls.add(url);
@@ -500,10 +518,16 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
       const existingByUrl = lookup.byUrl.get(obs.canonicalUrl) ?? null;
       if (existingByUrl && existingByUrl.identityKey !== offer.groupKey) {
         rejectedVariants += 1;
-        await recordReject(obs, "url_identity_collision", "import", {
-          existingIdentityKey: existingByUrl.identityKey,
-          offeredGroupKey: offer.groupKey,
-        });
+        await recordReject(
+          obs,
+          "url_identity_collision",
+          "import",
+          {
+            existingIdentityKey: existingByUrl.identityKey,
+            offeredGroupKey: offer.groupKey,
+          },
+          offer.groupKey,
+        );
         continue;
       }
       acceptedOffers.push(offer);
@@ -547,14 +571,23 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     let rolledBackPrices = 0;
     const plannedKeys = new Set<string>();
 
-    const planFromOffers = (
+    const planFromOffers = async (
       identityKey: string,
       offers: AutoImportOffer[],
       selection: PriceSelection,
-    ): void => {
+    ): Promise<void> => {
       const previous = lookup.byKey.get(identityKey) ?? null;
       if (input.mode === "price_only" && !previous) {
         rejectedVariants += offers.length;
+        for (const offer of offers) {
+          await recordReject(
+            offer,
+            "price_only_untracked_listing",
+            "import",
+            {},
+            identityKey,
+          );
+        }
         return;
       }
       const resolved = resolvePriceWithRollback(
@@ -569,6 +602,15 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         !resolved.availability
       ) {
         rejectedVariants += offers.length;
+        for (const offer of offers) {
+          await recordReject(
+            offer,
+            "no_safe_commercial_price",
+            "import",
+            { selectionReason: selection.reason },
+            identityKey,
+          );
+        }
         return;
       }
 
@@ -676,7 +718,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
         availability: o.availability,
         fetchedAt: o.fetchedAt,
       }));
-      planFromOffers(
+      await planFromOffers(
         identityKey,
         offers,
         input.mode === "price_only"
@@ -700,7 +742,7 @@ export function createAutoImportService(deps: AutoImportServiceDeps = {}) {
     for (const [identityKey, offers] of staleGroups) {
       if (plannedKeys.has(identityKey)) continue;
       if (!lookup.byKey.has(identityKey)) continue;
-      planFromOffers(identityKey, offers, {
+      await planFromOffers(identityKey, offers, {
         ok: false,
         reason: "no_valid_listed_price",
       });

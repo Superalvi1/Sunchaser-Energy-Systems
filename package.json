@@ -71,7 +71,7 @@
     "test:marketplace-ceo-auto-import": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImport.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/supplierImages.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportTimeout.pg.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportPrivileges.pg.test.ts",
     "test:marketplace-catalogue-manager": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogueManager/catalogueManager.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogueManager/catalogueManagerWiring.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogueManager/catalogueManager.integration.test.ts",
     "test:marketplace-catalogue-manager-pg": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/catalogueManager/catalogueManager.pg.test.ts",
-    "test:marketplace-daily-price-sync": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/dailyPriceSync.test.ts",
+    "test:marketplace-daily-price-sync": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/dailyPriceSyncRejectLedger.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/dailyPriceSync.test.ts",
     "marketplace:price-sync:daily": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/marketplace-daily-price-sync.ts",
     "test:marketplace-ceo-auto-import-pg": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportTimeout.pg.test.ts",
     "test:marketplace-ceo-auto-import-privileges": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportPrivileges.pg.test.ts",
