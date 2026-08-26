@@ -153,12 +153,14 @@ export default function AICommandCenter({ layout = "staff" }: AICommandCenterPro
   const fabClass =
     layout === "customer"
       ? "fixed right-5 z-[60] bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))]"
-      : "fixed right-6 z-[60] bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))]";
+      : // Staff shell: on mobile the bottom nav (4rem) sits below, so lift the FAB
+        // above it; from md up the nav is gone and the original offset applies.
+        "fixed right-4 md:right-6 z-[60] bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))]";
 
   const drawer =
     open && typeof document !== "undefined"
       ? createPortal(
-          <div className="fixed inset-0 z-[9998] flex justify-end" role="presentation">
+          <div className="fixed inset-0 z-[9998] flex justify-stretch md:justify-end" role="presentation">
             <button
               type="button"
               aria-label="Close AI assistant"
@@ -166,12 +168,12 @@ export default function AICommandCenter({ layout = "staff" }: AICommandCenterPro
               onClick={() => setOpen(false)}
             />
             <aside
-              className="relative flex h-full w-full max-w-md flex-col border-l border-slate-800 bg-slate-950 shadow-2xl shadow-black/50"
+              className="relative flex h-full w-full flex-col border-slate-800 bg-slate-950 shadow-2xl shadow-black/50 md:max-w-md md:border-l"
               role="dialog"
               aria-modal="true"
               aria-label="AI Command Center"
             >
-              <header className="shrink-0 border-b border-slate-800/80 bg-gradient-to-r from-slate-900 to-slate-950 px-4 py-4 sm:px-5">
+              <header className="safe-area-top shrink-0 border-b border-slate-800/80 bg-gradient-to-r from-slate-900 to-slate-950 px-4 py-4 sm:px-5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 border border-amber-500/30">

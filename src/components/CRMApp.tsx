@@ -8,7 +8,9 @@ import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../serv
 import { pickQuoteForInvoice } from "../lib/invoiceFromLead";
 import WhatsAppModule from "./WhatsAppModule";
 import AppModal from "./ui/AppModal";
-import { useIsMobile } from "./ui/MobileDisclosure";
+import { MobileActionSheet, useIsMobile } from "./ui/MobileDisclosure";
+import { mobileUi } from "../lib/mobileUi";
+import { SlidersHorizontal, ArrowUpDown } from "lucide-react";
 import {
   formatLeadAdvisor,
   formatLeadLocation,
@@ -43,6 +45,8 @@ export default function CRMApp({
   const isMobile = useIsMobile();
   // Mobile shows a summary row per client; one expands at a time. Desktop is unchanged.
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
+  // Mobile: filters/sorting move into a bottom sheet instead of a desktop panel.
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // Edit details model temporal states
   const [editName, setEditName] = useState("");
@@ -243,15 +247,15 @@ export default function CRMApp({
       )}
       
       {/* Information Header Banner card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:align-middle md:items-center gap-4 shadow-sm">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl md:rounded-3xl p-3 md:p-6 relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:align-middle md:items-center gap-2 md:gap-4 shadow-sm">
         <div>
-          <span className="text-[10px] text-amber-400 font-bold tracking-wider font-mono bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+          <span className="hidden md:inline-block text-[10px] text-amber-400 font-bold tracking-wider font-mono bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
             INTELLIGENT PIPELINE MANAGER
           </span>
-          <h2 className="text-xl md:text-2xl font-bold tracking-tight text-white font-sans mt-2">
+          <h2 className="text-base md:text-2xl font-bold tracking-tight text-white font-sans mt-0 md:mt-2">
             CRM Campaign Lead Pool
           </h2>
-          <p className="text-slate-400 mt-1 text-xs">
+          <p className="hidden md:block text-slate-400 mt-1 text-xs">
             Review applicant utility rates, schedule surveys, delegate sales advisors, and priority filter highest AI conversion scores.
           </p>
         </div>
@@ -268,7 +272,7 @@ export default function CRMApp({
       </div>
 
       {/* SEARCH AND FILTERS TOOLBAR */}
-      <div className="bg-slate-900 rounded-3xl border border-slate-800 p-6 shadow space-y-4">
+      <div className="bg-slate-900 rounded-3xl border border-slate-800 p-3 md:p-6 shadow space-y-3 md:space-y-4">
         
         <div className="flex flex-col md:flex-row justify-between gap-4">
           {/* Searching string bar */}
@@ -283,8 +287,35 @@ export default function CRMApp({
             />
           </div>
 
-          {/* Sort prioritization keys */}
-          <div className="flex gap-2 items-center bg-slate-950 border border-slate-800 rounded-xl p-1 font-sans">
+          {/* Mobile: compact Filter / Sort actions opening a bottom sheet */}
+          {isMobile && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFilterSheetOpen(true)}
+                className={`${mobileUi.btnSecondary} flex-1`}
+              >
+                <SlidersHorizontal className={mobileUi.iconSm} aria-hidden="true" />
+                Filter
+                {selectedStatus !== "All" && (
+                  <span className="ml-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                    {selectedStatus}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterSheetOpen(true)}
+                className={`${mobileUi.btnSecondary} flex-1`}
+              >
+                <ArrowUpDown className={mobileUi.iconSm} aria-hidden="true" />
+                Sort
+              </button>
+            </div>
+          )}
+
+          {/* Sort prioritization keys — desktop only; mobile uses the Filter/Sort sheet */}
+          <div className="hidden md:flex flex-wrap md:flex-nowrap gap-2 items-center bg-slate-950 border border-slate-800 rounded-xl p-1 font-sans">
             <span className="text-slate-500 text-[10px] px-2 uppercase font-mono font-bold">Sort Priority:</span>
             {[
               { id: 'ai_score', label: 'AI Score Potential' },
@@ -306,7 +337,7 @@ export default function CRMApp({
         </div>
 
         {/* Categories togglers filter bar */}
-        <div className="flex gap-1.5 flex-wrap font-sans">
+        <div className={isMobile ? `${mobileUi.chipScroller} font-sans` : "flex gap-1.5 flex-wrap font-sans"}>
           {(['All', 'New', 'Contacted', 'Survey Scheduled', 'Quoted', 'Contracted', 'Installed', 'Negotiation', 'Won', 'Lost'] as const).map((status) => (
             <button
               key={status}
@@ -672,6 +703,66 @@ export default function CRMApp({
           </div>
         )}
       </div>
+
+      {/* Mobile filter + sort bottom sheet (desktop keeps its inline panel) */}
+      <MobileActionSheet
+        open={isMobile && filterSheetOpen}
+        onClose={() => setFilterSheetOpen(false)}
+        title="Filter & sort"
+      >
+        <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Sort by</p>
+            <div className="grid grid-cols-1 gap-2">
+              {[
+                { id: "ai_score", label: "AI Score Potential" },
+                { id: "rating", label: "Manual rating" },
+                { id: "creation", label: "Recent Registration" },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setSortBy(opt.id as any)}
+                  aria-pressed={sortBy === opt.id}
+                  className={`${mobileUi.listRow} border ${
+                    sortBy === opt.id
+                      ? "border-amber-500/50 bg-amber-500/10 text-amber-200"
+                      : "border-slate-800 bg-slate-950 text-slate-300"
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{opt.label}</span>
+                  {sortBy === opt.id && <CheckCircle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["All", "New", "Contacted", "Survey Scheduled", "Quoted", "Contracted", "Installed", "Negotiation", "Won", "Lost"] as const).map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setSelectedStatus(status)}
+                  aria-pressed={selectedStatus === status}
+                  className={`min-h-[44px] rounded-xl border px-3 text-xs font-bold transition ${
+                    selectedStatus === status
+                      ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                      : "border-slate-800 bg-slate-950 text-slate-400"
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button type="button" onClick={() => setFilterSheetOpen(false)} className={mobileUi.btnPrimary}>
+            Show results
+          </button>
+        </div>
+      </MobileActionSheet>
 
       {/* ---------------- NEW LEAD CREATION BACKEND MODAL ---------------- */}
       <AppModal open={showAddModal} onClose={() => setShowAddModal(false)} panelClassName="max-w-xl">

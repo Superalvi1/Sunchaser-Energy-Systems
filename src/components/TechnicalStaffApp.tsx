@@ -185,7 +185,7 @@ export default function TechnicalStaffApp({
   if (selectedJobId && selectedJob) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-        <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+        <header className="safe-area-top sticky top-0 z-50 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
           <button
             type="button"
             onClick={() => setSelectedJobId(null)}
@@ -356,7 +356,7 @@ export default function TechnicalStaffApp({
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800">
+      <header className="safe-area-top sticky top-0 z-50 bg-slate-900 border-b border-slate-800">
         <div className="max-w-lg mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-gradient-to-tr from-amber-400 to-orange-500 p-2 rounded-xl">

@@ -47,6 +47,42 @@ body {
   min-height: 520px;
 }
 
+/*
+ * Safe-area top inset for the app shell headers.
+ *
+ * With viewport-fit=cover the web view spans the full screen, so a sticky
+ * `top-0` header would sit under the iOS Dynamic Island / status bar. Padding the
+ * header itself (rather than <body>) keeps `position: sticky; top: 0` correct and
+ * lets the header's own background paint behind the status bar.
+ *
+ * env() resolves to 0 wherever there is no inset — Android without a cutout, and
+ * every desktop browser — so this is a no-op outside notched devices. No device
+ * detection and no hardcoded pixel values.
+ */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/*
+ * Contain horizontal scrolling inside its own scroller.
+ *
+ * Measured root cause of "the whole page moves sideways" on iOS: the layout does
+ * NOT overflow (documentElement.scrollWidth === clientWidth at 360px and 390px,
+ * with zero elements extending past the viewport outside a scroller). The module
+ * tab strip is a legitimate 713px-wide scroller in a 390px viewport, but its
+ * default `overscroll-behavior-x: auto` lets a horizontal swipe chain to the
+ * document once the strip hits its end, panning the entire page and clipping
+ * cards at both edges.
+ *
+ * `contain` stops the chaining without hiding anything — deliberately not
+ * `overflow-x: hidden` on body, which would mask real overflow instead of fixing
+ * it and would break legitimate inner scrollers.
+ */
+.overflow-x-auto,
+.overflow-x-scroll {
+  overscroll-behavior-x: contain;
+}
+
 /* ── Design Studio UI primitives ───────────────────────────────────── */
 
 .studio-page-header {
