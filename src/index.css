@@ -83,6 +83,36 @@ body {
   overscroll-behavior-x: contain;
 }
 
+/*
+ * Suppress the iOS text-selection callout on app chrome only.
+ *
+ * A long-press on a native tab bar or title does nothing; in a web view it
+ * selects the label and raises "Copy / Look Up / Translate", which is the single
+ * loudest tell that the screen is a web page. `-webkit-touch-callout: none`
+ * removes the callout and `user-select: none` removes the selection handles.
+ *
+ * Deliberately opt-IN via `.app-chrome`, not a blanket rule on <body>: customer
+ * names, notes, emails, phone numbers, addresses and IDs must stay selectable —
+ * staff copy those out of the CRM constantly, and taking that away would be a
+ * worse regression than the callout. Only navigation furniture carries the class.
+ *
+ * `[data-selectable]` re-enables selection for any value that ends up nested
+ * inside chrome, so a future chrome element can still expose copyable data.
+ */
+.app-chrome,
+.app-chrome * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-chrome [data-selectable],
+.app-chrome [data-selectable] * {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* ── Design Studio UI primitives ───────────────────────────────────── */
 
 .studio-page-header {

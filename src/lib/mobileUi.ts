@@ -11,7 +11,7 @@
 export const mobileUi = {
   /** Fixed top app bar: one toolbar row + status-bar inset. */
   topBar:
-    "safe-area-top fixed top-0 inset-x-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-slate-800",
+    "app-chrome safe-area-top fixed top-0 inset-x-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-slate-800",
   topBarInner: "flex h-14 items-center gap-2 px-3",
   topBarTitle: "min-w-0 flex-1 truncate text-base font-bold text-slate-100",
   topBarBtn:
@@ -19,7 +19,7 @@ export const mobileUi = {
 
   /** Fixed bottom navigation: one row + home-indicator inset. */
   bottomNav:
-    "fixed bottom-0 inset-x-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 pb-[env(safe-area-inset-bottom,0px)]",
+    "app-chrome fixed bottom-0 inset-x-0 z-50 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 pb-[env(safe-area-inset-bottom,0px)]",
   bottomNavInner: "mx-auto flex h-16 max-w-lg items-stretch justify-around px-1",
   bottomNavBtn:
     "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1 transition active:scale-95",

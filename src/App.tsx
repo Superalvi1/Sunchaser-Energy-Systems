@@ -91,7 +91,19 @@ function isAdminWhatsAppConnectionPath(): boolean {
 
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">("landing");
+  /*
+   * Native cold start opens on Login; web keeps the marketing landing.
+   *
+   * The landing page is the right entry for a browser visitor who arrived from
+   * search or an ad, but a native install is a deliberate act — the person
+   * tapped an app they installed to do CRM work. Making them find a way off the
+   * marketing page first is friction, and on mobile there was no working way off
+   * it at all (see MobileTopBar's onProfile below). Guest/wizard stays one tap
+   * away from Login, so nothing is removed.
+   */
+  const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">(
+    () => (isNativeApp() ? "login" : "landing")
+  );
   const [loading, setLoading] = useState(false);
   const toast = useToast();
   const [sessionSyncError, setSessionSyncError] = useState<string | null>(null);
@@ -610,7 +622,16 @@ export default function App() {
         <MobileTopBar
           title={mobileScreenTitle}
           userName={currentUser?.name}
-          onProfile={() => setMoreOpen(true)}
+          /*
+           * The More sheet only renders for an authenticated user, so for a guest
+           * this button used to set state that nothing read — a dead control, and
+           * the only one in the mobile header. Send guests to Login instead.
+           * Login no longer depends on this button being found (native now starts
+           * there), but a visible control must still do something.
+           */
+          onProfile={() =>
+            currentUser ? setMoreOpen(true) : setGuestView("login")
+          }
         />
       )}
       {/* Top Floating App Header */}
@@ -727,13 +748,37 @@ export default function App() {
         ) : !currentUser ? (
           guestView === "login" ? (
             <div className="max-w-md mx-auto space-y-4">
-              <button
-                onClick={() => setGuestView("landing")}
-                className="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-semibold cursor-pointer border border-slate-800 bg-slate-900/65 py-2 px-3.5 rounded-xl self-start transition"
-              >
-                <ChevronLeft className="h-4 w-4" /> Back to Homepage
-              </button>
+              {/*
+               * On native, Login IS the root screen — a "back" affordance there
+               * would point at nothing. On web the landing page is still where
+               * the visitor came from, so the control stays exactly as it was.
+               */}
+              {!isNativeApp() && (
+                <button
+                  onClick={() => setGuestView("landing")}
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-semibold cursor-pointer border border-slate-800 bg-slate-900/65 py-2 px-3.5 rounded-xl self-start transition"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Back to Homepage
+                </button>
+              )}
               <AuthHub onLoginSuccess={handleAuthLoginSuccess} initialUsername={cachedUsername} />
+              {/*
+               * Guest path off the Login screen. Native starts here, so the solar
+               * wizard would otherwise be unreachable on a fresh install.
+               */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/65 p-3 space-y-2.5">
+                <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                  Not a client or staff member yet?
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setGuestView("wizard")}
+                  className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-bold text-amber-300 hover:bg-amber-500/15 transition cursor-pointer active:scale-[0.99]"
+                >
+                  <Sun className="h-4 w-4" />
+                  Continue as Guest — Solar Consultant Wizard
+                </button>
+              </div>
             </div>
           ) : guestView === "wizard" ? (
             <div className="max-w-xl mx-auto py-4">

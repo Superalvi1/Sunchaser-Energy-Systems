@@ -133,7 +133,7 @@ export function MobileMoreSheet({
   return (
     <AppModal open={open} onClose={onClose} panelClassName="max-w-lg">
       <div className="safe-area-top max-h-[88vh] overflow-y-auto rounded-3xl border border-slate-800 bg-slate-950 p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <div className="mb-3 flex items-center gap-2">
+        <div className="app-chrome mb-3 flex items-center gap-2">
           <h2 className="min-w-0 flex-1 truncate text-base font-bold text-slate-100">More</h2>
           <button type="button" onClick={onClose} aria-label="Close" className={mobileUi.topBarBtn}>
             <X className={mobileUi.iconSm} aria-hidden="true" />
@@ -165,7 +165,7 @@ export function MobileMoreSheet({
         )}
 
         {overflowTabs.length > 0 && (
-          <div className="mb-3 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+          <div className="app-chrome mb-3 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
             {overflowTabs.map((tab, i) => {
               const Icon = tab.icon;
               return (
