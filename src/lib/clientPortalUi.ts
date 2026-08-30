@@ -6,7 +6,7 @@ export const CUSTOMER_PORTAL_VERSION = "Customer Portal v2.2 Premium Merged";
 /** Premium dark mobile portal (banking / Tesla / SolarEdge style). */
 export const portal = {
   shell: "min-h-screen flex flex-col bg-[#0a0e17] text-slate-100",
-  header: "sticky top-0 z-40 bg-[#0a0e17]/90 backdrop-blur-xl border-b border-white/[0.06]",
+  header: "safe-area-top sticky top-0 z-40 bg-[#0a0e17]/90 backdrop-blur-xl border-b border-white/[0.06]",
   main: "flex-1 w-full max-w-lg md:max-w-2xl mx-auto px-5 md:px-8 pt-5",
   mainWithNav: "pb-[calc(3.75rem+env(safe-area-inset-bottom,0px)+1rem)]",
   card: "rounded-3xl bg-[#121a2b] border border-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.35)]",

@@ -42,6 +42,14 @@ import {
   PRIVACY_POLICY_URL,
 } from "./lib/complianceLinks";
 import { restoreAuthSession, clearAuthSession } from "./lib/authSession";
+import { useIsMobile } from "./components/ui/MobileDisclosure";
+import { mobileUi } from "./lib/mobileUi";
+import {
+  MobileBottomNav,
+  MobileMoreSheet,
+  MobileTopBar,
+  type ShellTab,
+} from "./components/mobile/MobileShell";
 
 declare const __GIT_COMMIT_HASH__: string;
 declare const __BUILD_TIME__: string;
@@ -83,7 +91,19 @@ function isAdminWhatsAppConnectionPath(): boolean {
 
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">("landing");
+  /*
+   * Native cold start opens on Login; web keeps the marketing landing.
+   *
+   * The landing page is the right entry for a browser visitor who arrived from
+   * search or an ad, but a native install is a deliberate act — the person
+   * tapped an app they installed to do CRM work. Making them find a way off the
+   * marketing page first is friction, and on mobile there was no working way off
+   * it at all (see MobileTopBar's onProfile below). Guest/wizard stays one tap
+   * away from Login, so nothing is removed.
+   */
+  const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">(
+    () => (isNativeApp() ? "login" : "landing")
+  );
   const [loading, setLoading] = useState(false);
   const toast = useToast();
   const [sessionSyncError, setSessionSyncError] = useState<string | null>(null);
@@ -99,6 +119,10 @@ export default function App() {
   const [portalError, setPortalError] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [forceWelcomeGuide, setForceWelcomeGuide] = useState(false);
+
+  // Mobile app shell (staff/admin surface only; desktop keeps its own chrome).
+  const isMobile = useIsMobile();
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const loadCustomerPortal = async (user: User) => {
     setPortalLoading(true);
@@ -501,6 +525,15 @@ export default function App() {
     }
   };
 
+  /**
+   * Mobile shell navigation, derived from the role's own allowed tabs so the
+   * bottom bar can never offer a screen the role cannot open. Slots 1-3 are
+   * primary; anything beyond goes into More alongside the module groups.
+   */
+  const shellTabs: ShellTab[] = currentUser ? (getAllowedTabs() as ShellTab[]) : [];
+  const mobileScreenTitle =
+    shellTabs.find((t) => t.id === activeTab)?.label ?? "Sunchaser CRM";
+
   if (currentUser && showOnboarding) {
     const variant =
       currentUser.role === "Customer"
@@ -584,20 +617,37 @@ export default function App() {
   return (
     <>
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      {/* Mobile app shell: compact top bar. Desktop keeps its masthead below. */}
+      {isMobile && (
+        <MobileTopBar
+          title={mobileScreenTitle}
+          userName={currentUser?.name}
+          /*
+           * The More sheet only renders for an authenticated user, so for a guest
+           * this button used to set state that nothing read — a dead control, and
+           * the only one in the mobile header. Send guests to Login instead.
+           * Login no longer depends on this button being found (native now starts
+           * there), but a visible control must still do something.
+           */
+          onProfile={() =>
+            currentUser ? setMoreOpen(true) : setGuestView("login")
+          }
+        />
+      )}
       {/* Top Floating App Header */}
-      <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <AppLogo className="h-11 w-auto" />
+      <header className="safe-area-top sticky top-0 z-50 hidden md:block bg-slate-900 border-b border-slate-800 shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 md:py-4 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-4">
+          <div className="flex w-full md:w-auto items-center gap-2 md:gap-3">
+            <AppLogo className="h-8 md:h-11 w-auto shrink-0" />
             <div>
-              <h1 className="text-lg font-extrabold tracking-tight font-sans">
+              <h1 className="text-sm md:text-lg font-extrabold tracking-tight font-sans truncate">
                 SUNCHASER <span className="text-amber-400 font-medium">Energy Systems</span>
               </h1>
-              <p className="text-[10px] font-mono tracking-widest text-slate-400">ENTERPRISE CLOUD GRID • SECURE DB HARNESS</p>
+              <p className="hidden md:block text-[10px] font-mono tracking-widest text-slate-400">ENTERPRISE CLOUD GRID • SECURE DB HARNESS</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex w-full md:w-auto items-center justify-end gap-1.5 md:gap-3 flex-wrap">
             {/* Sync trigger */}
             {currentUser && needsCrmAppState(currentUser.role) ? (
               <button
@@ -613,17 +663,19 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowOnboarding(true)}
-                className="text-[10px] font-bold text-amber-400 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl hover:bg-slate-800"
+                className="text-[10px] font-bold text-amber-400 bg-slate-900 border border-slate-800 px-2.5 md:px-3 py-2 rounded-xl hover:bg-slate-800 shrink-0"
+                title="View Welcome Guide Again"
               >
-                View Welcome Guide Again
+                <span className="md:hidden">Guide</span>
+                <span className="hidden md:inline">View Welcome Guide Again</span>
               </button>
             ) : null}
             {currentUser ? (
               /* User authenticated menu panel */
-              <div className="flex items-center gap-3 bg-slate-950/80 border border-slate-800 rounded-2xl p-1.5 pl-3">
-                <div className="text-left font-mono">
-                  <span className="text-[9px] uppercase font-bold text-amber-500 block">Logged In ({currentUser.role})</span>
-                  <span className="text-xs text-slate-205 font-bold font-sans block">{currentUser.name}</span>
+              <div className="flex min-w-0 items-center gap-2 md:gap-3 bg-slate-950/80 border border-slate-800 rounded-2xl p-1.5 pl-2.5 md:pl-3">
+                <div className="min-w-0 text-left font-mono">
+                  <span className="text-[9px] uppercase font-bold text-amber-500 block truncate">Logged In ({currentUser.role})</span>
+                  <span className="text-xs text-slate-205 font-bold font-sans block truncate">{currentUser.name}</span>
                 </div>
                 <button
                   onClick={handleLogout}
@@ -686,7 +738,7 @@ export default function App() {
       </header>
 
       {/* Main Container body scope */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 h-full">
+      <main className={`flex-1 max-w-7xl w-full mx-auto px-3 md:px-6 lg:px-8 py-4 md:py-8 h-full ${isMobile ? mobileUi.shellMain : ""}`}>
         
         {loading && currentUser && needsCrmAppState(currentUser.role) && !appState ? (
           <div className="py-24 text-center">
@@ -696,13 +748,37 @@ export default function App() {
         ) : !currentUser ? (
           guestView === "login" ? (
             <div className="max-w-md mx-auto space-y-4">
-              <button
-                onClick={() => setGuestView("landing")}
-                className="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-semibold cursor-pointer border border-slate-800 bg-slate-900/65 py-2 px-3.5 rounded-xl self-start transition"
-              >
-                <ChevronLeft className="h-4 w-4" /> Back to Homepage
-              </button>
+              {/*
+               * On native, Login IS the root screen — a "back" affordance there
+               * would point at nothing. On web the landing page is still where
+               * the visitor came from, so the control stays exactly as it was.
+               */}
+              {!isNativeApp() && (
+                <button
+                  onClick={() => setGuestView("landing")}
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-semibold cursor-pointer border border-slate-800 bg-slate-900/65 py-2 px-3.5 rounded-xl self-start transition"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Back to Homepage
+                </button>
+              )}
               <AuthHub onLoginSuccess={handleAuthLoginSuccess} initialUsername={cachedUsername} />
+              {/*
+               * Guest path off the Login screen. Native starts here, so the solar
+               * wizard would otherwise be unreachable on a fresh install.
+               */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/65 p-3 space-y-2.5">
+                <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                  Not a client or staff member yet?
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setGuestView("wizard")}
+                  className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-bold text-amber-300 hover:bg-amber-500/15 transition cursor-pointer active:scale-[0.99]"
+                >
+                  <Sun className="h-4 w-4" />
+                  Continue as Guest — Solar Consultant Wizard
+                </button>
+              </div>
             </div>
           ) : guestView === "wizard" ? (
             <div className="max-w-xl mx-auto py-4">
@@ -775,32 +851,32 @@ export default function App() {
             
             {/* Super admin spreadsheet controls line */}
             {(currentUser.role === "Super Admin" || currentUser.role === "Technical CEO" || currentUser.role === "Sales Manager") && (
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-wrap justify-between items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="h-5 w-5 text-amber-500" />
-                  <span className="text-xs font-mono font-bold text-slate-300">
-                    Sunchaser Central Accounting: <span className="text-[10px] bg-slate-950 border border-slate-800 text-emerald-400 py-1 px-2.5 rounded-xl ml-1 font-mono">Excel Integration Enabled</span>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl md:rounded-3xl p-2.5 md:p-4 flex flex-wrap justify-between items-center gap-3">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <FileSpreadsheet className="h-5 w-5 text-amber-500 shrink-0" />
+                  <span className="min-w-0 text-xs font-mono font-bold text-slate-300">
+                    Sunchaser Central Accounting: <span className="inline-block text-[10px] bg-slate-950 border border-slate-800 text-emerald-400 py-1 px-2.5 rounded-xl ml-1 font-mono">Excel Integration Enabled</span>
                   </span>
                 </div>
                 
-                <div className="flex gap-2">
+                <div className="flex w-full md:w-auto flex-wrap gap-2">
                   <button
                     onClick={() => triggerExcelExport('leads')}
-                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 px-3.5 py-1.5 rounded-xl text-neutral-200 text-xs font-sans font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 px-3 md:px-3.5 py-1.5 rounded-xl text-neutral-200 text-xs font-sans font-bold flex min-w-0 flex-1 md:flex-none items-center justify-center gap-1.5 transition cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Leads Export (.CSV)</span>
                   </button>
                   <button
                     onClick={() => triggerExcelExport('payments')}
-                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 px-3.5 py-1.5 rounded-xl text-neutral-200 text-xs font-sans font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 px-3 md:px-3.5 py-1.5 rounded-xl text-neutral-200 text-xs font-sans font-bold flex min-w-0 flex-1 md:flex-none items-center justify-center gap-1.5 transition cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Payments (.CSV)</span>
                   </button>
                   <button
                     onClick={() => triggerExcelExport('projects')}
-                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 px-3.5 py-1.5 rounded-xl text-neutral-200 text-xs font-sans font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 px-3 md:px-3.5 py-1.5 rounded-xl text-neutral-200 text-xs font-sans font-bold flex min-w-0 flex-1 md:flex-none items-center justify-center gap-1.5 transition cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Projects (.CSV)</span>
@@ -1015,7 +1091,7 @@ export default function App() {
       </main>
 
       {/* Humble Footer */}
-      <footer className="bg-slate-900 border-t border-slate-800 py-6 text-center text-slate-500 text-xs font-mono mt-auto">
+      <footer className="hidden md:block bg-slate-900 border-t border-slate-800 py-6 text-center text-slate-500 text-xs font-mono mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex flex-col items-center md:items-start text-[11px] text-slate-500">
             <span>&copy; {new Date().getFullYear()} Sunchaser Energy Systems Inc. All Rights Reserved.</span>
@@ -1046,6 +1122,47 @@ export default function App() {
         </div>
       </footer>
     </div>
+    {/* Mobile primary navigation + More sheet (staff/admin shell only) */}
+    {isMobile && currentUser && shellTabs.length > 0 && (
+      <>
+        <MobileBottomNav
+          tabs={shellTabs}
+          activeTab={activeTab}
+          onSelect={(id) => {
+            setMoreOpen(false);
+            setActiveTab(id);
+          }}
+          onMore={() => setMoreOpen(true)}
+          moreActive={moreOpen}
+        />
+        <MobileMoreSheet
+          open={moreOpen}
+          onClose={() => setMoreOpen(false)}
+          overflowTabs={shellTabs.slice(3)}
+          onSelectTab={(id) => setActiveTab(id)}
+          userName={currentUser.name}
+          userRole={currentUser.role}
+          onLogout={handleLogout}
+        >
+          <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+            <a
+              href={PRIVACY_POLICY_URL}
+              {...EXTERNAL_LINK_PROPS}
+              className="flex min-h-[48px] w-full items-center gap-3 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-800/50"
+            >
+              Privacy Policy
+            </a>
+            <a
+              href={ACCOUNT_DELETION_URL}
+              {...EXTERNAL_LINK_PROPS}
+              className="flex min-h-[48px] w-full items-center gap-3 border-t border-slate-800 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-800/50"
+            >
+              Account Deletion
+            </a>
+          </div>
+        </MobileMoreSheet>
+      </>
+    )}
     {currentUser ? <AICommandCenter /> : null}
     {currentUser && isGlobalSearchAllowedForUser(currentUser) ? (
       <GlobalSearch

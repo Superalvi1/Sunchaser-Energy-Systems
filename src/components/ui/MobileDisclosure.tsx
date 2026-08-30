@@ -24,10 +24,20 @@ export function useIsMobile(query: string = MOBILE_MEDIA_QUERY): boolean {
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const mql = window.matchMedia(query);
-    const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
-    setIsMobile(mql.matches);
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
+    // Re-read the query rather than trusting the event, so both listeners agree.
+    const sync = () => setIsMobile(mql.matches);
+    sync();
+    mql.addEventListener("change", sync);
+    // Fallback: some WebViews (and emulated viewport resizes) do not deliver the
+    // matchMedia change event, which would strand the app in the wrong shell after
+    // a rotation. `resize` always fires, and sync() is idempotent.
+    window.addEventListener("resize", sync);
+    window.addEventListener("orientationchange", sync);
+    return () => {
+      mql.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("orientationchange", sync);
+    };
   }, [query]);
 
   return isMobile;

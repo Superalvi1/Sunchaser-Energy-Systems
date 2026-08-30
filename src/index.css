@@ -47,6 +47,72 @@ body {
   min-height: 520px;
 }
 
+/*
+ * Safe-area top inset for the app shell headers.
+ *
+ * With viewport-fit=cover the web view spans the full screen, so a sticky
+ * `top-0` header would sit under the iOS Dynamic Island / status bar. Padding the
+ * header itself (rather than <body>) keeps `position: sticky; top: 0` correct and
+ * lets the header's own background paint behind the status bar.
+ *
+ * env() resolves to 0 wherever there is no inset — Android without a cutout, and
+ * every desktop browser — so this is a no-op outside notched devices. No device
+ * detection and no hardcoded pixel values.
+ */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/*
+ * Contain horizontal scrolling inside its own scroller.
+ *
+ * Measured root cause of "the whole page moves sideways" on iOS: the layout does
+ * NOT overflow (documentElement.scrollWidth === clientWidth at 360px and 390px,
+ * with zero elements extending past the viewport outside a scroller). The module
+ * tab strip is a legitimate 713px-wide scroller in a 390px viewport, but its
+ * default `overscroll-behavior-x: auto` lets a horizontal swipe chain to the
+ * document once the strip hits its end, panning the entire page and clipping
+ * cards at both edges.
+ *
+ * `contain` stops the chaining without hiding anything — deliberately not
+ * `overflow-x: hidden` on body, which would mask real overflow instead of fixing
+ * it and would break legitimate inner scrollers.
+ */
+.overflow-x-auto,
+.overflow-x-scroll {
+  overscroll-behavior-x: contain;
+}
+
+/*
+ * Suppress the iOS text-selection callout on app chrome only.
+ *
+ * A long-press on a native tab bar or title does nothing; in a web view it
+ * selects the label and raises "Copy / Look Up / Translate", which is the single
+ * loudest tell that the screen is a web page. `-webkit-touch-callout: none`
+ * removes the callout and `user-select: none` removes the selection handles.
+ *
+ * Deliberately opt-IN via `.app-chrome`, not a blanket rule on <body>: customer
+ * names, notes, emails, phone numbers, addresses and IDs must stay selectable —
+ * staff copy those out of the CRM constantly, and taking that away would be a
+ * worse regression than the callout. Only navigation furniture carries the class.
+ *
+ * `[data-selectable]` re-enables selection for any value that ends up nested
+ * inside chrome, so a future chrome element can still expose copyable data.
+ */
+.app-chrome,
+.app-chrome * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-chrome [data-selectable],
+.app-chrome [data-selectable] * {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* ── Design Studio UI primitives ───────────────────────────────────── */
 
 .studio-page-header {
