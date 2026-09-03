@@ -1,5 +1,6 @@
 import type { Request, Response, Router } from "express";
 import express from "express";
+import { getSupabase } from "../../../dbManager.ts";
 import type { Database } from "../../../dbManager.ts";
 import {
   isMarketplaceCartEnabled,
@@ -33,6 +34,14 @@ export type CartRouterDeps = {
   env?: NodeJS.ProcessEnv;
   repository?: CartRepository;
   resolveLocalDb?: () => Database | undefined;
+};
+
+type DeliveryReadiness = {
+  backendDatabaseCredentialReady: boolean;
+  schemaReady: boolean;
+  lhrZoneReady: boolean;
+  lhrCodEligible: boolean;
+  lhrDeliveryRateReady: boolean;
 };
 
 function setApiVersion(res: Response): void {
@@ -112,6 +121,72 @@ function rejectSmuggledTokens(req: Request, res: Response): boolean {
   return false;
 }
 
+async function probeLhrDeliveryReadiness(
+  env: NodeJS.ProcessEnv,
+): Promise<DeliveryReadiness> {
+  const backendDatabaseCredentialReady = Boolean(
+    String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim(),
+  );
+  const empty: DeliveryReadiness = {
+    backendDatabaseCredentialReady,
+    schemaReady: false,
+    lhrZoneReady: false,
+    lhrCodEligible: false,
+    lhrDeliveryRateReady: false,
+  };
+
+  // WS5 RPCs intentionally are not browser-role RPCs. Require the backend
+  // service-role credential before declaring checkout production-ready.
+  if (!backendDatabaseCredentialReady) return empty;
+
+  const supabase = getSupabase();
+  if (!supabase) return empty;
+
+  try {
+    const { data: zones, error: zoneError } = await supabase
+      .from("mp_delivery_zones")
+      .select("id,code,cod_eligible,active")
+      .eq("code", "LHR")
+      .limit(1);
+
+    if (zoneError) return empty;
+
+    const zone = Array.isArray(zones) ? zones[0] : null;
+    if (!zone) {
+      return { ...empty, schemaReady: true };
+    }
+
+    const lhrZoneReady = zone.active === true && zone.code === "LHR";
+    const lhrCodEligible = lhrZoneReady && zone.cod_eligible === true;
+
+    const { data: rates, error: rateError } = await supabase
+      .from("mp_delivery_rates")
+      .select("id,active")
+      .eq("zone_id", String(zone.id))
+      .eq("active", true)
+      .limit(1);
+
+    if (rateError) {
+      return {
+        ...empty,
+        schemaReady: false,
+        lhrZoneReady,
+        lhrCodEligible,
+      };
+    }
+
+    return {
+      backendDatabaseCredentialReady,
+      schemaReady: true,
+      lhrZoneReady,
+      lhrCodEligible,
+      lhrDeliveryRateReady: Array.isArray(rates) && rates.length > 0,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 /** Paths owned by WS5 cart/checkout (relative to /api/marketplace). */
 function isCartOwnedPath(path: string): boolean {
   if (path === "/cart" || path.startsWith("/cart/")) return true;
@@ -139,6 +214,35 @@ export function createCartRouter(deps: CartRouterDeps = {}): Router {
   const identityDeps: CartIdentityDeps = {
     resolveLocalDb: deps.resolveLocalDb,
   };
+
+  // Read-only operational readiness. It creates no cart/order, publishes no
+  // secrets, is never cached, and is explicitly excluded from search indexing.
+  router.get("/checkout/readiness", async (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+
+    const config = readMarketplaceConfig(env);
+    const delivery = await probeLhrDeliveryReadiness(env);
+    const ready =
+      config.enabled === true &&
+      config.cartEnabled === true &&
+      config.codEnabled === true &&
+      delivery.backendDatabaseCredentialReady &&
+      delivery.schemaReady &&
+      delivery.lhrZoneReady &&
+      delivery.lhrCodEligible &&
+      delivery.lhrDeliveryRateReady;
+
+    return sendOk(res, {
+      ready,
+      marketplaceEnabled: config.enabled,
+      cartEnabled: config.cartEnabled,
+      codEnabled: config.codEnabled,
+      catalogueSource: config.catalogueSource,
+      expectedDeliveryZone: "LHR",
+      ...delivery,
+    });
+  });
 
   router.use((req, res, next) => {
     // Only gate cart/checkout/order-read paths; pass other /api/marketplace/*
