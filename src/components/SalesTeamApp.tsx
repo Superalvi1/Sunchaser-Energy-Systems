@@ -1635,6 +1635,10 @@ export default function SalesTeamApp({
       const panelsCount = Number(panelRow?.qty) || Math.ceil((sizerKw * 1000) / panelWattage);
       const grand = itemRows.reduce((s, r) => s + (r.total || 0), 0);
       const idempotencyKey = `ik-sizer-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const companySnapshot = (companyTerms || [])
+        .map((t: any) => String(t?.termText || t?.term_text || "").trim())
+        .filter(Boolean)
+        .join("\n");
       const quoteData = {
         idempotencyKey,
         systemSizekW: sizerKw,
@@ -1665,7 +1669,7 @@ export default function SalesTeamApp({
         netTotal: grand,
         manualOverrides,
         validityDays,
-        termsAndConditions,
+        termsAndConditions: companySnapshot || termsAndConditions,
       };
 
       if (sizerEditingQuoteId) {

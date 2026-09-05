@@ -1520,9 +1520,7 @@ export default function AdminApp({
                 settings={settings}
                 products={products}
                 syncing={syncing}
-                onSave={async (nextSettings) => {
-                  await saveDbChange("edit", "settings", nextSettings, "global");
-                }}
+                onSaved={onRefreshState}
               />
             )}
 

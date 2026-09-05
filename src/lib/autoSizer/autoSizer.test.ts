@@ -7,6 +7,8 @@ import {
   AUTOSIZER_PRESETS,
   applyNamedRowFields,
   applyStructureKitOverride,
+  authorizeAutoSizerPresetsAccess,
+  batteryPresetSelectValue,
   generateRecommendedBoq,
   isLegacyPerPanelStructureSku,
   isOverridden,
@@ -14,9 +16,11 @@ import {
   L3_STRUCTURE_CUSTOMER_NAME,
   L2_STRUCTURE_CUSTOMER_NAME,
   LEGACY_PER_PANEL_STRUCTURE_PRODUCT_ID,
+  liveCatalogProductId,
   markOverride,
   nearestAutoSizerPresetSize,
   parseCompanyAutoSizerPresets,
+  patchLatestSettingsWithAutoSizerPresets,
   recommendStructures,
   recommendedBatteryOption,
   resolveAutoSizerPreset,
@@ -24,10 +28,13 @@ import {
   snapshotHasItems,
   QUOTE_STRUCTURE_KIT_LINE_KIND,
 } from "./index.ts";
+import { canManageAutoSizerPresets } from "../roles.ts";
 import {
   compileThreePageQuotationHtml,
   quoteBoqOverflow,
   quoteTermsOverflow,
+  resolveDisplayedSystemType,
+  resolveQuoteTermsClauses,
   THREE_PAGE_BOQ_OVERFLOW_MESSAGE,
   THREE_PAGE_QUOTATION_PAGE_COUNT,
   threePageRendererId,
@@ -411,6 +418,186 @@ check("terms overflow does not truncate clauses and still stays 3 pages", () => 
   assert.equal(rendered.pageCount, 3);
   assert.match(rendered.html, /Legal clause 0/);
   assert.match(rendered.html, /Legal clause 19/);
+});
+
+check("saved quote terms beat newer company terms", () => {
+  const rendered = compileThreePageQuotationHtml(
+    {
+      id: "q-old-terms",
+      clientName: "Snapshot Client",
+      termsAndConditions: "OLD TERM",
+      boqItems: [{ id: "p", type: "item", name: "Panel", qty: 1, rate: 1, total: 1 }],
+    },
+    { id: "lead-snap", name: "Snapshot Client" },
+    { companyTerms: [{ termText: "NEW TERM" }] }
+  );
+  assert.match(rendered.html, /OLD TERM/);
+  assert.doesNotMatch(rendered.html, /NEW TERM/);
+  const clauses = resolveQuoteTermsClauses(
+    { termsAndConditions: "OLD TERM" },
+    { companyTerms: [{ termText: "NEW TERM" }] }
+  );
+  assert.deepEqual(clauses, ["OLD TERM"]);
+});
+
+check("unauthorized staff cannot change AutoSizer presets", () => {
+  const denied = [
+    "Sales Executive",
+    "Sales Advisor",
+    "Sales Manager",
+    "Accounts Manager",
+    "Technician",
+    "Survey Engineer",
+    "Installation Team",
+    "Customer",
+    "Service Technician",
+  ];
+  for (const role of denied) {
+    assert.equal(canManageAutoSizerPresets("staff", role), false, role);
+    const auth = authorizeAutoSizerPresetsAccess({ username: "staff", role });
+    assert.equal(auth.ok, false, role);
+    if (!auth.ok) assert.equal(auth.status, 403, role);
+  }
+  const missing = authorizeAutoSizerPresetsAccess(null);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.ok === false && missing.status, 401);
+});
+
+check("authorized admin can change AutoSizer presets", () => {
+  for (const role of ["Super Admin", "Admin", "Director", "Technical CEO"]) {
+    assert.equal(canManageAutoSizerPresets("owner", role), true, role);
+    assert.equal(authorizeAutoSizerPresetsAccess({ username: "owner", role }).ok, true, role);
+  }
+});
+
+check("AutoSizer preset save preserves unrelated latest server settings", () => {
+  const latest = {
+    companyName: "Sunchaser",
+    someOtherSetting: "NEW VALUE",
+    officeAddress: "DHA Phase 6",
+  };
+  const staleClient = {
+    companyName: "Sunchaser",
+    someOtherSetting: "OLD VALUE",
+    autoSizerPresets: {
+      "8": { panelProductId: "panel-live-1", batteryOption: "Lithium Battery Pack 10.24kWh" },
+    },
+  };
+  const next = patchLatestSettingsWithAutoSizerPresets(latest, staleClient);
+  assert.equal(next.companyName, "Sunchaser");
+  assert.equal(next.someOtherSetting, "NEW VALUE");
+  assert.equal(next.officeAddress, "DHA Phase 6");
+  assert.equal(next.autoSizerPresets[8].panelProductId, "panel-live-1");
+  assert.match(String(next.autoSizerPresets[8].batteryOption), /10\.24/);
+});
+
+const CATALOG = [
+  { id: "panel-live-1", brand: "Longi", name: "Hi-MO 575W", category: "Solar Panels", wattageCapacity: "575W", price: 99 },
+  { id: "inv-live-1", brand: "Goodwe", name: "GW8K", category: "Inverters", wattageCapacity: "8kW", price: 12 },
+  { id: "batt-live-1", brand: "Soluna", name: "EOS 5.12", category: "Batteries", wattageCapacity: "5.12kWh", price: 7 },
+  { id: "dc-live-1", brand: "Kehua", name: "DC 6mm", category: "Cables", model: "6mm DC", price: 3 },
+  { id: "ac-live-1", brand: "Kehua", name: "AC 4-Core", category: "Cables", model: "4-Core AC", price: 4 },
+];
+
+check("selected panel/inverter/battery/DC/AC catalog IDs survive into generated rows", () => {
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 8,
+    systemType: "Hybrid",
+    products: CATALOG,
+    settings: {
+      autoSizerPresets: {
+        "8": {
+          panelProductId: "panel-live-1",
+          inverterProductId: "inv-live-1",
+          batteryProductId: "batt-live-1",
+          dcCableProductId: "dc-live-1",
+          acCableProductId: "ac-live-1",
+        },
+      },
+    },
+  });
+  assert.equal(rec.rows.find((r) => r.id === "panel_row")?.catalogProductId, "panel-live-1");
+  assert.equal(rec.rows.find((r) => r.id === "inverter_row")?.catalogProductId, "inv-live-1");
+  assert.equal(rec.rows.find((r) => r.id === "battery_row")?.catalogProductId, "batt-live-1");
+  assert.equal(rec.rows.find((r) => r.id === "dc_cable_row")?.catalogProductId, "dc-live-1");
+  assert.equal(rec.rows.find((r) => r.id === "ac_cable_row")?.catalogProductId, "ac-live-1");
+});
+
+check("catalog price does not override AutoSizer commercial rates", () => {
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 8,
+    systemType: "Hybrid",
+    products: CATALOG,
+    settings: {
+      autoSizerPresets: {
+        "8": { panelProductId: "panel-live-1", inverterProductId: "inv-live-1", batteryProductId: "batt-live-1" },
+      },
+    },
+  });
+  const panel = rec.rows.find((r) => r.id === "panel_row");
+  const inverter = rec.rows.find((r) => r.id === "inverter_row");
+  const battery = rec.rows.find((r) => r.id === "battery_row");
+  assert.equal(panel?.catalogProductId, "panel-live-1");
+  assert.equal(panel?.rate, 25215);
+  assert.notEqual(panel?.rate, 99);
+  assert.equal(inverter?.rate, 400000);
+  assert.notEqual(inverter?.rate, 12);
+  assert.equal(battery?.rate, 235000);
+  assert.notEqual(battery?.rate, 7);
+});
+
+check("missing catalog product ID is not fabricated", () => {
+  assert.equal(liveCatalogProductId(CATALOG, "ghost-panel"), "");
+  assert.equal(liveCatalogProductId(undefined, "panel-live-1"), "");
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 8,
+    systemType: "Hybrid",
+    products: CATALOG,
+    settings: {
+      autoSizerPresets: {
+        "8": { panelProductId: "ghost-panel", inverterProductId: "ghost-inv" },
+      },
+    },
+  });
+  assert.equal(rec.rows.find((r) => r.id === "panel_row")?.catalogProductId, "");
+  assert.equal(rec.rows.find((r) => r.id === "inverter_row")?.catalogProductId, "");
+});
+
+check("catalog battery preset reload prefers live product id over derived option text", () => {
+  const products = [{ id: "batt-live-1", brand: "Soluna", name: "EOS 5.12", category: "Batteries" }];
+  assert.equal(
+    batteryPresetSelectValue(
+      { batteryProductId: "batt-live-1", batteryOption: "Lithium Battery Pack 5.12kWh" },
+      products
+    ),
+    "product:batt-live-1"
+  );
+  assert.equal(
+    batteryPresetSelectValue({ batteryOption: "Lithium Battery Pack 5.12kWh" }, products),
+    "Lithium Battery Pack 5.12kWh"
+  );
+  assert.equal(
+    batteryPresetSelectValue({ batteryProductId: "ghost", batteryOption: "None" }, products),
+    "None"
+  );
+});
+
+check("missing systemType does not render as Hybrid", () => {
+  assert.equal(resolveDisplayedSystemType({ id: "q-old" }, { systemType: "Not specified" }), "");
+  const rendered = compileThreePageQuotationHtml(
+    {
+      id: "q-unknown-type",
+      clientName: "Historical Client",
+      systemSizekW: 10,
+      boqItems: [{ id: "p", type: "item", name: "Panel", qty: 1, rate: 1, total: 1 }],
+    },
+    { id: "lead-hist", name: "Historical Client" },
+    { companyTerms: [{ termText: "Quotation validity: 3 days from date of issuance." }] }
+  );
+  assert.doesNotMatch(rendered.html, /Hybrid/);
+  assert.doesNotMatch(rendered.html, /Not specified Solar Power System/);
+  assert.match(rendered.html, /Solar Power System/);
+  assert.equal(rendered.pageCount, 3);
 });
 
 console.log(`\nAutoSizer / 3-page quotation tests: ${pass} passed`);

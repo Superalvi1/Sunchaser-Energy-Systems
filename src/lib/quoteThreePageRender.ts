@@ -72,6 +72,83 @@ function snapshotRows(quoteObj: any): BoqPdfRow[] {
   return normalizeRows(raw) as BoqPdfRow[];
 }
 
+const EXISTING_FALLBACK_QUOTE_TERMS = [
+  "Quotation validity: 3 days from date of issuance.",
+  "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
+  "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
+  "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
+  "Work will commence within 3 days after receipt of the advance payment.",
+  "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
+  "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
+  "Warranty per manufacturer terms for imported equipment.",
+];
+
+function clausesFromUnknown(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((t) => {
+        if (typeof t === "string") return t.trim();
+        if (t && typeof t === "object") {
+          return String((t as any).termText || (t as any).term_text || (t as any).text || "").trim();
+        }
+        return "";
+      })
+      .filter(Boolean);
+  }
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  return text.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Saved quotation legal text is authoritative. Current company_terms only fill a missing snapshot. */
+export function resolveQuoteTermsClauses(quoteObj: any, activeState?: any): string[] {
+  const fromQuote = clausesFromUnknown(
+    quoteObj?.termsAndConditions ?? quoteObj?.terms_and_conditions
+  );
+  if (fromQuote.length) return fromQuote;
+
+  const dbTerms = Array.isArray(activeState?.companyTerms) ? activeState.companyTerms : [];
+  const fromDb = dbTerms
+    .map((t: any) => String(t?.termText || t?.term_text || "").trim())
+    .filter(Boolean);
+  if (fromDb.length) return fromDb;
+
+  return EXISTING_FALLBACK_QUOTE_TERMS.slice();
+}
+
+function companyTermsList(activeState: any, quoteObj: any): string[] {
+  return resolveQuoteTermsClauses(quoteObj, activeState);
+}
+
+/** Historical quotes without systemType must not be labeled Hybrid. */
+export function resolveDisplayedSystemType(quoteObj: any, proposal?: any): string {
+  const candidates = [
+    quoteObj?.systemType,
+    quoteObj?.system_type,
+    proposal?.systemType,
+    proposal?.system_type,
+  ];
+  for (const raw of candidates) {
+    const s = String(raw ?? "").trim();
+    if (s && s !== "Not specified") return s;
+  }
+  return "";
+}
+
+export function quotationSystemHeadline(systemKw: unknown, systemType: string): {
+  kicker: string;
+  subtitle: string;
+} {
+  const kwNum = Number(systemKw);
+  const kwLabel = Number.isFinite(kwNum) && kwNum > 0 ? `${systemKw}kW` : "";
+  const typeLabel = String(systemType || "").trim();
+  const kicker = [kwLabel, typeLabel].filter(Boolean).join(" ");
+  return {
+    kicker: kicker || "Solar",
+    subtitle: "Solar Power System",
+  };
+}
+
 export function quoteBoqOverflow(rows: BoqPdfRow[]): { overflow: boolean; weight: number; itemCount: number } {
   const normalized = ensureBoqSectionSubtotals(rows);
   const weight = normalized.reduce((sum, row) => sum + boqRowWeight(row), 0);
@@ -119,28 +196,6 @@ function resolveCompany(activeState: any): {
   };
 }
 
-function companyTermsList(activeState: any, quoteObj: any): string[] {
-  const dbTerms = Array.isArray(activeState?.companyTerms) ? activeState.companyTerms : [];
-  const fromDb = dbTerms
-    .map((t: any) => String(t?.termText || t?.term_text || "").trim())
-    .filter(Boolean);
-  if (fromDb.length) return fromDb;
-
-  const quoteTerms = String(quoteObj?.termsAndConditions || "").trim();
-  if (quoteTerms) return quoteTerms.split(/\n+/).map((s) => s.trim()).filter(Boolean);
-
-  return [
-    "Quotation validity: 3 days from date of issuance.",
-    "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
-    "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
-    "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
-    "Work will commence within 3 days after receipt of the advance payment.",
-    "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
-    "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
-    "Warranty per manufacturer terms for imported equipment.",
-  ];
-}
-
 function pageFooter(settings: ReturnType<typeof resolveCompany>, docId: string, pageNum: number): string {
   return `
     <div class="page-footer">
@@ -178,7 +233,9 @@ export function compileThreePageQuotationHtml(
   const expiryDateString = formatLongDate(addDays(proposal.quoteDate, validity.days));
   const docId = `SC-${String(leadObj?.id || "DRAFT").substring(0, 8).toUpperCase()}-${String(proposal.id || quoteObj?.id || "DRAFT").toUpperCase()}`;
   const systemKw = proposal.systemSizekW ?? quoteObj?.systemSizekW ?? "";
-  const systemType = proposal.systemType && proposal.systemType !== "Not specified" ? proposal.systemType : quoteObj?.systemType || "Hybrid";
+  const systemType = resolveDisplayedSystemType(quoteObj, proposal);
+  const systemHeadline = quotationSystemHeadline(systemKw, systemType);
+  const systemTypeLabel = systemType || "Solar";
   const panelCount = Number(quoteObj?.panelCount) || 0;
   const rows = snapshotRows(quoteObj);
   const overflow = quoteBoqOverflow(rows);
@@ -221,7 +278,7 @@ export function compileThreePageQuotationHtml(
     : "";
 
   const summaryBits = [
-    systemKw ? `${systemKw} kW ${systemType}` : systemType,
+    systemKw && systemType ? `${systemKw} kW ${systemType}` : systemKw ? `${systemKw} kW` : systemType,
     panelCount ? `${panelCount} panels` : "",
     quoteObj?.panelBrand ? `${quoteObj.panelBrand} ${quoteObj.panelWattage || ""}W`.trim() : "",
     quoteObj?.inverterBrand ? `${quoteObj.inverterBrand} ${quoteObj.inverterCapacity || ""}`.trim() : "",
@@ -239,7 +296,7 @@ export function compileThreePageQuotationHtml(
         <div style="text-align:center;margin-top:18px;">
           <div style="font-size:11px;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;color:#d97706;">Quotation</div>
           <div style="font-size:30px;font-weight:850;line-height:1.15;color:#0f172a;margin-top:8px;">
-            ${escapeHtml(String(systemKw || "—"))}kW ${escapeHtml(String(systemType))}<br/>Solar Power System
+            ${escapeHtml(systemHeadline.kicker)}<br/>${escapeHtml(systemHeadline.subtitle)}
           </div>
           <div style="margin-top:10px;font-size:12px;color:#475569;font-weight:600;">${escapeHtml(summaryBits.join(" · "))}</div>
         </div>
@@ -269,7 +326,7 @@ export function compileThreePageQuotationHtml(
             </div>
             <div>
               <div style="color:#64748b;font-weight:800;font-size:8px;text-transform:uppercase;letter-spacing:0.05em;">System Type</div>
-              <div style="font-weight:600;color:#0f172a;margin-top:4px;">${escapeHtml(String(systemType))}</div>
+              <div style="font-weight:600;color:#0f172a;margin-top:4px;">${escapeHtml(systemTypeLabel)}</div>
             </div>
           </div>
         </div>

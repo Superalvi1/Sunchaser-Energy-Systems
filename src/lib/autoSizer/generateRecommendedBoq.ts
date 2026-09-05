@@ -4,6 +4,12 @@
  * Production CRM rates and section layout come from the existing Auto Sizer /
  * package BOQ (SalesTeamApp.generateDefaultBoqRows). Standard structures now
  * emit L2/L3 kit lines derived from panel count instead of 1-row-per-panel.
+ *
+ * Pricing rule (AutoSizer): company commercial quotation rates
+ * (panelRateForBrand / inverterRateForKw / batteryRateForOption / cable presets).
+ * Manual BOQ catalog picker uses product.price as the initial line rate.
+ * Selecting a catalog product in AutoSizer presets attaches catalogProductId
+ * but does NOT replace commercial rates. Sales can still edit rates on the snapshot.
  */
 
 import type { BoqRow } from "../../types";
@@ -16,6 +22,7 @@ import {
 } from "./presets";
 import {
   hydrateCompanySizePreset,
+  liveCatalogProductId,
   parseCompanyAutoSizerPresets,
   type CatalogProductLike,
   type CompanyAutoSizerPresets,
@@ -167,6 +174,12 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
     ? normalizeStructureBreakdown(panelCount, input.structureOverride)
     : recommendStructures(panelCount);
 
+  const panelCatalogId = liveCatalogProductId(input.products, companyPreset?.panelProductId);
+  const inverterCatalogId = liveCatalogProductId(input.products, companyPreset?.inverterProductId);
+  const batteryCatalogId = liveCatalogProductId(input.products, companyPreset?.batteryProductId);
+  const dcCatalogId = liveCatalogProductId(input.products, companyPreset?.dcCableProductId);
+  const acCatalogId = liveCatalogProductId(input.products, companyPreset?.acCableProductId);
+
   const rows: BoqRow[] = [];
 
   rows.push(heading("h-1", "Imported Equipment"));
@@ -183,6 +196,7 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
     qty: panelCount,
     rate: panelRate,
     total: panelCount * panelRate,
+    catalogProductId: panelCatalogId,
   });
 
   const inverterRate = inverterRateForKw(sizekW);
@@ -197,6 +211,7 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
     qty: iQty,
     rate: inverterRate,
     total: iQty * inverterRate,
+    catalogProductId: inverterCatalogId,
   });
 
   if (sType !== "On-grid" && batt && batt !== "None") {
@@ -212,6 +227,7 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
       qty: 1,
       rate: batteryRate,
       total: batteryRate,
+      catalogProductId: batteryCatalogId,
     });
   }
 
@@ -233,6 +249,7 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
     qty: dc.quantity,
     rate: dc.rate,
     total: dc.quantity * dc.rate,
+    catalogProductId: dcCatalogId,
   });
   rows.push({
     id: "ac_cable_row",
@@ -245,6 +262,7 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
     qty: ac.quantity,
     rate: ac.rate,
     total: ac.quantity * ac.rate,
+    catalogProductId: acCatalogId,
   });
   rows.push({
     id: "earth_wire_row",

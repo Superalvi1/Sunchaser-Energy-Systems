@@ -78,6 +78,12 @@ import {
   buildBoqTotalsHtml,
 } from "./src/lib/quoteBoqPdf.ts";
 import { compileThreePageQuotationHtml } from "./src/lib/quoteThreePageRender.ts";
+import {
+  parseCompanyAutoSizerPresets,
+  patchLatestSettingsWithAutoSizerPresets,
+  authorizeAutoSizerPresetsAccess,
+  readSettingsObject,
+} from "./src/lib/autoSizer/index.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { formatQuotationPdfError } from "./src/lib/quotePdfErrors.ts";
 import {
@@ -6999,6 +7005,66 @@ app.delete("/api/admin/products/:id", async (req, res) => {
     return res.json({ success: true, id, deleted: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Product delete failed." });
+  }
+});
+
+/**
+ * AutoSizer company presets — dedicated admin endpoint.
+ * Patches ONLY settings.autoSizerPresets onto the latest server settings document.
+ * Super Admin, Admin, Director, and Technical CEO (Director-equivalent) only.
+ * Sales / accounts / technical / customer roles are denied even if they can POST /api/db/update.
+ */
+app.get("/api/admin/autosizer-presets", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeAutoSizerPresetsAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latest: unknown = db.settings;
+    if (isSupabaseActive()) {
+      const state = await fetchAppStateFromSupabase();
+      latest = state?.settings ?? latest;
+    }
+    const autoSizerPresets = parseCompanyAutoSizerPresets(latest);
+    return res.json({ success: true, autoSizerPresets, settings: readSettingsObject(latest) });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Could not load AutoSizer presets." });
+  }
+});
+
+app.put("/api/admin/autosizer-presets", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeAutoSizerPresetsAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latest: unknown = db.settings;
+    if (isSupabaseActive()) {
+      const state = await fetchAppStateFromSupabase();
+      latest = state?.settings ?? latest;
+    }
+    const next = patchLatestSettingsWithAutoSizerPresets(latest, req.body);
+    db.settings = next;
+    saveDb();
+    if (isSupabaseActive()) {
+      await upsertAppSettingsToSupabase(next);
+    }
+    await appendActivityLog(
+      staff.id,
+      staff.username,
+      staff.role,
+      "AutoSizer Presets Updated",
+      `${staff.username} updated company AutoSizer presets`
+    );
+    return res.json({
+      success: true,
+      autoSizerPresets: parseCompanyAutoSizerPresets(next),
+      settings: next,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Could not save AutoSizer presets." });
   }
 });
 

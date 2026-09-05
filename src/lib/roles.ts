@@ -41,6 +41,19 @@ export function canManageCustomers(username: string, role: string): boolean {
   return isSuperAdmin(username, role) || role === "Admin" || role === "Director";
 }
 
+/**
+ * Company AutoSizer presets are quotation-administration settings.
+ * Super Admin, Admin, and Director already hold `settings` and administer
+ * quotation PDF templates. Technical CEO is the Director-equivalent executive role.
+ * Sales, accounts, technical/installation, and customer roles are denied.
+ */
+export function canManageAutoSizerPresets(username: string, role: string): boolean {
+  if (isSuperAdmin(username, role)) return true;
+  if (role === "Admin" || role === "Director" || role === "Technical CEO") return true;
+  return false;
+}
+
+
 /** All module permissions (stored in role_permissions.permission_key) */
 export const ALL_PERMISSION_KEYS = [
   "crm_leads",

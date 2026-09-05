@@ -64,13 +64,22 @@ export {
   hydrateCompanySizePreset,
   readSettingsObject,
   withAutoSizerPresets,
+  mergeAutoSizerPresetsIntoLatestSettings,
   findCatalogProduct,
+  liveCatalogProductId,
   wattageFromCatalogProduct,
   capacityFromCatalogProduct,
+  batteryPresetSelectValue,
   type CompanyAutoSizerPresets,
   type CompanyAutoSizerSizePreset,
   type CatalogProductLike,
 } from "./companyPresets";
+
+export {
+  authorizeAutoSizerPresetsAccess,
+  parseIncomingAutoSizerPresets,
+  patchLatestSettingsWithAutoSizerPresets,
+} from "./adminPresets";
 
 export const STANDARD_QUOTATION_PAGES = ["cover", "boq", "terms"] as const;
 export type StandardQuotationPage = (typeof STANDARD_QUOTATION_PAGES)[number];

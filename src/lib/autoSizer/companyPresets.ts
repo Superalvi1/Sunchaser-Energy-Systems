@@ -40,6 +40,8 @@ export interface CatalogProductLike {
   category?: string;
   wattageCapacity?: string;
   specifications?: Record<string, unknown>;
+  /** Catalog sale price. AutoSizer does not use this for quotation rates. */
+  price?: number;
 }
 
 function asSizeKey(raw: unknown): AutoSizerPresetSizeKw | null {
@@ -188,3 +190,48 @@ export function withAutoSizerPresets(
   const blob = readSettingsObject(settings);
   return { ...blob, [AUTOSIZER_SETTINGS_KEY]: presets };
 }
+
+/**
+ * Patch AutoSizer presets onto the LATEST server settings object.
+ * Unrelated keys from `latestSettings` are preserved. Client snapshots are not trusted.
+ */
+export function mergeAutoSizerPresetsIntoLatestSettings(
+  latestSettings: unknown,
+  incomingPresets: unknown
+): Record<string, any> {
+  const latest = { ...readSettingsObject(latestSettings) };
+  const wrapped =
+    incomingPresets &&
+    typeof incomingPresets === "object" &&
+    !Array.isArray(incomingPresets) &&
+    AUTOSIZER_SETTINGS_KEY in (incomingPresets as Record<string, unknown>)
+      ? incomingPresets
+      : { [AUTOSIZER_SETTINGS_KEY]: incomingPresets };
+  latest[AUTOSIZER_SETTINGS_KEY] = parseCompanyAutoSizerPresets(wrapped);
+  return latest;
+}
+
+/** Live catalog id only. Empty when missing/invalid — never fabricate. */
+export function liveCatalogProductId(
+  products: CatalogProductLike[] | null | undefined,
+  id?: string
+): string {
+  const clean = String(id || "").trim();
+  if (!clean) return "";
+  return findCatalogProduct(products, clean) ? clean : "";
+}
+
+/**
+ * Admin battery <select> value. Catalog product id wins over derived batteryOption text.
+ */
+export function batteryPresetSelectValue(
+  draft: { batteryProductId?: string; batteryOption?: string } | null | undefined,
+  products?: CatalogProductLike[] | null
+): string {
+  const productId = String(draft?.batteryProductId || "").trim();
+  if (productId && findCatalogProduct(products, productId)) {
+    return `product:${productId}`;
+  }
+  return String(draft?.batteryOption || "").trim();
+}
+

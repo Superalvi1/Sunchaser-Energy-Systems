@@ -5,17 +5,19 @@ import {
   AUTOSIZER_PRESETS,
   L3_STRUCTURE_CUSTOMER_NAME,
   L2_STRUCTURE_CUSTOMER_NAME,
+  batteryPresetSelectValue,
   findCatalogProduct,
   hydrateCompanySizePreset,
   parseCompanyAutoSizerPresets,
   wattageFromCatalogProduct,
   capacityFromCatalogProduct,
-  withAutoSizerPresets,
   type AutoSizerPresetSizeKw,
   type CompanyAutoSizerPresets,
   type CompanyAutoSizerSizePreset,
   type CatalogProductLike,
 } from "../lib/autoSizer";
+import { API_BASE_URL, authorizedFetch } from "../services/api";
+import { useToast } from "../lib/toast";
 
 type SizeDraft = {
   panelProductId: string;
@@ -91,14 +93,16 @@ function typedFallbackLabel(kw: AutoSizerPresetSizeKw): string {
 export default function AutoSizerPresetsAdmin({
   settings,
   products,
-  onSave,
+  onSaved,
   syncing,
 }: {
   settings: unknown;
   products: unknown[] | null | undefined;
-  onSave: (nextSettings: Record<string, any>) => Promise<void> | void;
+  onSaved?: () => void | Promise<void>;
   syncing?: boolean;
 }) {
+  const toast = useToast();
+  const [saving, setSaving] = useState(false);
   const live = useMemo(() => getLiveCatalogProducts(products || []), [products]);
   const panels = useMemo(() => live.filter(isPanel), [live]);
   const inverters = useMemo(() => live.filter(isInverter), [live]);
@@ -163,7 +167,24 @@ export default function AutoSizerPresetsAdmin({
       }
       cleaned[kw] = size;
     }
-    await onSave(withAutoSizerPresets(settings, cleaned));
+    setSaving(true);
+    try {
+      const res = await authorizedFetch(`${API_BASE_URL}/api/admin/autosizer-presets`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoSizerPresets: cleaned }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || "Could not save AutoSizer presets.");
+      }
+      toast.success("AutoSizer presets saved.");
+      await onSaved?.();
+    } catch (err: any) {
+      toast.error(err?.message || "Could not save AutoSizer presets.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -172,6 +193,7 @@ export default function AutoSizerPresetsAdmin({
         <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 font-mono">AutoSizer Presets</h4>
         <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">
           Owner defaults for everyday 6 / 8 / 10 kW Auto Size. Missing or invalid values fall back to typed package-library presets.
+          Catalog product picks are stored as identity (catalogProductId) only — AutoSizer still uses company commercial quotation rates, not catalog price. Manual BOQ catalog picker continues to seed the line rate from product.price.
           On-grid Auto Size never auto-adds a hybrid battery. Structure kits stay quotation-only: {L3_STRUCTURE_CUSTOMER_NAME} and {L2_STRUCTURE_CUSTOMER_NAME}.
         </p>
       </div>
@@ -228,7 +250,7 @@ export default function AutoSizerPresetsAdmin({
               <label className="block space-y-1">
                 <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-mono">Default battery (Hybrid / Off-grid)</span>
                 <select
-                  value={row.batteryOption || (row.batteryProductId ? `product:${row.batteryProductId}` : "")}
+                  value={batteryPresetSelectValue(row, live as CatalogProductLike[])}
                   onChange={(e) => {
                     const value = e.target.value;
                     if (!value) {
@@ -304,11 +326,11 @@ export default function AutoSizerPresetsAdmin({
 
       <button
         type="button"
-        disabled={!!syncing}
+        disabled={!!syncing || saving}
         onClick={() => void handleSave()}
         className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-neutral-950 font-bold text-xs py-2.5 px-4 rounded-xl"
       >
-        {syncing ? "Saving…" : "Save AutoSizer presets"}
+        {syncing || saving ? "Saving…" : "Save AutoSizer presets"}
       </button>
     </div>
   );
