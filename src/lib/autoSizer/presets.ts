@@ -2,8 +2,8 @@
  * Central AutoSizer presets for everyday Sunchaser quotations.
  *
  * Reuses production package-library equipment specs (6 / 8 / 10 kW already
- * exist there) plus the live CRM cable formula. Do not scatter
- * `if (kw === 6)` across React components — resolve through this module.
+ * exist there) plus the live CRM cable formula. Company settings may overlay
+ * typed defaults. Do not scatter `if (kw === 6)` across React components.
  */
 
 import {
@@ -11,6 +11,7 @@ import {
   type BoqPackageEquipmentSpec,
   type BoqPackageStructureType,
 } from "../boqPackageLibrary";
+import type { CompanyAutoSizerSizePreset } from "./companyPresets";
 
 export type AutoSizerSystemType = "On-grid" | "Hybrid" | "Off-grid";
 
@@ -61,6 +62,22 @@ export const DEFAULT_EARTH_WIRE_RATE = 380;
 /** Same formula as SalesTeamApp Auto Sizer and SolarDesignRules.dcCableDistanceMeters. */
 export function dcCableQuantityMeters(systemKw: number): number {
   return Math.round(Number(systemKw) * 15 + 40);
+}
+
+/**
+ * On-grid never auto-adds a hybrid battery. Hybrid / Off-grid use the preset.
+ * An explicit user/admin override always wins.
+ */
+export function recommendedBatteryOption(
+  systemType: AutoSizerSystemType | string | undefined,
+  presetBattery: string | undefined,
+  override?: string | null
+): string {
+  if (override !== undefined && override !== null && String(override).trim() !== "") {
+    return String(override);
+  }
+  if (String(systemType || "").toLowerCase() === "on-grid") return "None";
+  return presetBattery && String(presetBattery).trim() ? String(presetBattery) : "None";
 }
 
 function cablesForKw(systemKw: number): AutoSizerCablePreset[] {
@@ -140,6 +157,39 @@ export function isAutoSizerPresetSize(kw: number): kw is AutoSizerPresetSizeKw {
   return (AUTOSIZER_PRESET_SIZES_KW as readonly number[]).includes(kw);
 }
 
+function applyCompanyPreset(base: AutoSizerPreset, company?: CompanyAutoSizerSizePreset | null): AutoSizerPreset {
+  if (!company) return base;
+  const next = mergePreset(base, {
+    panel: {
+      brand: company.panelBrand || base.panel.brand,
+      wattage: company.panelWattage || base.panel.wattage,
+    },
+    inverter: {
+      brand: company.inverterBrand || base.inverter.brand,
+      capacity: company.inverterCapacity || base.inverter.capacity,
+      quantity: base.inverter.quantity,
+    },
+    battery: {
+      option: company.batteryOption || base.battery.option,
+    },
+  });
+  if (company.dcCableSize) {
+    next.cables = next.cables.map((c) =>
+      c.kind === "dc"
+        ? { ...c, size: company.dcCableSize as string, name: `DC Solar Cable ${company.dcCableSize}` }
+        : c
+    );
+  }
+  if (company.acCableSize) {
+    next.cables = next.cables.map((c) =>
+      c.kind === "ac"
+        ? { ...c, size: company.acCableSize as string, name: `AC Connecting Cable ${company.acCableSize}` }
+        : c
+    );
+  }
+  return next;
+}
+
 /** Exact match first; otherwise build from the package-library spec for that kW. */
 export function resolveAutoSizerPreset(
   systemKw: number,
@@ -147,6 +197,8 @@ export function resolveAutoSizerPreset(
     structureType?: BoqPackageStructureType;
     equipmentTier?: "budgeted" | "premium";
     overrides?: Partial<AutoSizerPreset>;
+    companyPreset?: CompanyAutoSizerSizePreset | null;
+    systemType?: AutoSizerSystemType;
   }
 ): AutoSizerPreset {
   const kw = Number(systemKw);
@@ -165,7 +217,17 @@ export function resolveAutoSizerPreset(
     base = AUTOSIZER_PRESETS[10];
   }
 
-  if (!options?.overrides) return { ...base, cables: base.cables.map((c) => ({ ...c })) };
+  base = { ...base, cables: base.cables.map((c) => ({ ...c })) };
+  base = applyCompanyPreset(base, options?.companyPreset);
+
+  if (options?.systemType) {
+    base.systemType = options.systemType;
+    base.battery = {
+      option: recommendedBatteryOption(options.systemType, base.battery.option),
+    };
+  }
+
+  if (!options?.overrides) return base;
   return mergePreset(base, options.overrides);
 }
 

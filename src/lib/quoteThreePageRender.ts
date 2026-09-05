@@ -1,14 +1,3 @@
-/**
- * Shared customer-facing three-page quotation renderer.
- *
- * Page 1 — Cover
- * Page 2 — Equipment / BOQ / commercial totals
- * Page 3 — Terms & Conditions (from company_terms)
- *
- * Auto-generated and manual quotations both feed this renderer from the
- * saved quote snapshot. AutoSizer is never re-run here.
- */
-
 import { STANDARD_QUOTATION_PAGES } from "./autoSizer";
 import {
   boqPdfSectionCss,
@@ -31,10 +20,16 @@ import {
   resolveQuotePdfLogoUrl,
 } from "./quotePdfLayout";
 import { normalizeRows } from "./normalizeRows";
+import { resolveQuoteValidityDays } from "./quoteValidity";
 
 
 export const THREE_PAGE_QUOTATION_PAGE_COUNT = 3;
 export const THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT = 36;
+export const THREE_PAGE_TERMS_MAX_CHARS = 2800;
+export const THREE_PAGE_BOQ_OVERFLOW_MESSAGE =
+  "Quotation contains too many line items for the standard 3-page format. Please consolidate or group items before generating the final PDF.";
+export const THREE_PAGE_TERMS_OVERFLOW_MESSAGE =
+  "Terms & Conditions exceed one page. Shorten or split clauses in company terms before generating the final PDF.";
 
 export type ThreePageQuoteMode = "auto" | "manual";
 
@@ -43,7 +38,11 @@ export interface ThreePageRenderResult {
   pageCount: number;
   boqOverflow: boolean;
   boqOverflowMessage: string | null;
+  termsOverflow: boolean;
+  exportBlocked: boolean;
+  exportBlockReason: string | null;
   itemCount: number;
+  validityDays: number;
   pages: typeof STANDARD_QUOTATION_PAGES;
 }
 
@@ -82,6 +81,11 @@ export function quoteBoqOverflow(rows: BoqPdfRow[]): { overflow: boolean; weight
     weight,
     itemCount,
   };
+}
+
+export function quoteTermsOverflow(terms: string[]): { overflow: boolean; charCount: number } {
+  const charCount = terms.reduce((sum, t) => sum + String(t || "").length, 0);
+  return { overflow: charCount > THREE_PAGE_TERMS_MAX_CHARS || terms.length > 16, charCount };
 }
 
 function resolveLogoSrc(activeState: any, appBase: string): string {
@@ -170,7 +174,8 @@ export function compileThreePageQuotationHtml(
   const logoSrc = resolveLogoSrc(activeState, appBase);
   const siteLocationLabel = formatSiteLocation(proposal);
   const quoteDateString = formatLongDate(proposal.quoteDate);
-  const expiryDateString = formatLongDate(addDays(proposal.quoteDate, 3));
+  const validity = resolveQuoteValidityDays(quoteObj, activeState);
+  const expiryDateString = formatLongDate(addDays(proposal.quoteDate, validity.days));
   const docId = `SC-${String(leadObj?.id || "DRAFT").substring(0, 8).toUpperCase()}-${String(proposal.id || quoteObj?.id || "DRAFT").toUpperCase()}`;
   const systemKw = proposal.systemSizekW ?? quoteObj?.systemSizekW ?? "";
   const systemType = proposal.systemType && proposal.systemType !== "Not specified" ? proposal.systemType : quoteObj?.systemType || "Hybrid";
@@ -210,8 +215,8 @@ export function compileThreePageQuotationHtml(
   });
 
   const overflowBanner = overflow.overflow
-    ? `<div style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;font-size:8.5px;font-weight:700;padding:5px 8px;border-radius:6px;margin:6px 0 8px;">
-        This quotation has ${overflow.itemCount} priced items. Compact layout is in use so no priced line is dropped. Review Page 2 before sending.
+    ? `<div data-sunchaser-overflow="boq" style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;font-size:8.5px;font-weight:700;padding:5px 8px;border-radius:6px;margin:6px 0 8px;">
+        ${escapeHtml(THREE_PAGE_BOQ_OVERFLOW_MESSAGE)} All ${overflow.itemCount} priced lines are listed below for review — final PDF is blocked until this is resolved.
       </div>`
     : "";
 
@@ -256,7 +261,7 @@ export function compileThreePageQuotationHtml(
             </div>
             <div>
               <div style="color:#64748b;font-weight:800;font-size:8px;text-transform:uppercase;letter-spacing:0.05em;">Validity</div>
-              <div style="font-weight:700;color:#d97706;margin-top:4px;">3 days (exp. ${escapeHtml(expiryDateString)})</div>
+              <div style="font-weight:700;color:#d97706;margin-top:4px;">${validity.days} days (exp. ${escapeHtml(expiryDateString)})</div>
             </div>
             <div>
               <div style="color:#64748b;font-weight:800;font-size:8px;text-transform:uppercase;letter-spacing:0.05em;">Site / Location</div>
@@ -287,12 +292,12 @@ export function compileThreePageQuotationHtml(
   `;
 
   const page2 = `
-    <div class="page boq-page three-page-boq${compact ? " compact-boq" : ""}">
+    <div class="page boq-page three-page-boq${compact ? " compact-boq" : ""}${overflow.overflow ? " preview-overflow" : ""}">
       <div class="quote-page-shell">
         ${pageHeader(logoSrc, settings, "Equipment / BOQ")}
         <div class="page-title">Commercial Quotation</div>
         ${overflowBanner}
-        <div style="border:1.5px solid #cbd5e1;border-radius:6px;margin-top:8px;flex:1;min-height:0;overflow:hidden;">
+        <div style="border:1.5px solid #cbd5e1;border-radius:6px;margin-top:8px;flex:1;min-height:0;overflow:${overflow.overflow ? "auto" : "hidden"};">
           <table class="boq-table">
             ${renderBoqTableHeadHtml()}
             <tbody>
@@ -307,10 +312,12 @@ export function compileThreePageQuotationHtml(
   `;
 
   const terms = companyTermsList(activeState, quoteObj);
+  const termsFit = quoteTermsOverflow(terms);
+  const termsCompact = terms.length > 10 || termsFit.charCount > 1800;
   const termsHtml = terms
     .map(
       (clause, index) => `
-        <div style="display:flex;margin-bottom:7px;font-size:10px;line-height:1.45;align-items:flex-start;">
+        <div style="display:flex;margin-bottom:${termsCompact ? "4px" : "7px"};font-size:${termsCompact ? "8.5px" : "10px"};line-height:1.4;align-items:flex-start;">
           <span style="font-weight:800;color:#d97706;margin-right:6px;min-width:18px;">${index + 1}.</span>
           <span style="color:#334155;font-weight:500;">${escapeHtml(clause)}</span>
         </div>`
@@ -319,16 +326,22 @@ export function compileThreePageQuotationHtml(
 
   const payment = String(quoteObj?.paymentSchedule || quoteObj?.paymentTerms || "").trim();
   const warranty = String(quoteObj?.warrantyTerms || "").trim();
+  const termsBanner = termsFit.overflow
+    ? `<div data-sunchaser-overflow="terms" style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;font-size:8.5px;font-weight:700;padding:5px 8px;border-radius:6px;margin:6px 0 8px;">
+        ${escapeHtml(THREE_PAGE_TERMS_OVERFLOW_MESSAGE)} All ${terms.length} clauses are listed below. Final PDF is blocked until this is resolved.
+      </div>`
+    : "";
 
   const page3 = `
-    <div class="page three-page-terms">
+    <div class="page three-page-terms${termsFit.overflow ? " preview-overflow" : ""}">
       <div class="quote-page-shell">
         ${pageHeader(logoSrc, settings, "Terms & Conditions")}
         <div class="page-title">Terms & Conditions</div>
+        ${termsBanner}
         <div style="font-size:10.5px;line-height:1.45;color:#475569;margin:8px 0 10px;">
           All supply, installation and LESCO utility work under this quotation is governed by the Sunchaser covenants below.
         </div>
-        <div>${termsHtml}</div>
+        <div style="${termsFit.overflow ? "overflow:auto;flex:1;min-height:0;" : ""}">${termsHtml}</div>
         ${
           payment
             ? `<div class="card" style="margin-top:10px;font-size:10px;"><strong>Payment:</strong> ${escapeHtml(payment)}</div>`
@@ -355,6 +368,13 @@ export function compileThreePageQuotationHtml(
       </div>
     </div>
   `;
+
+  const exportBlocked = overflow.overflow || termsFit.overflow;
+  const exportBlockReason = overflow.overflow
+    ? THREE_PAGE_BOQ_OVERFLOW_MESSAGE
+    : termsFit.overflow
+      ? THREE_PAGE_TERMS_OVERFLOW_MESSAGE
+      : null;
 
   const html = `<!DOCTYPE html>
 <html>
@@ -405,7 +425,12 @@ export function compileThreePageQuotationHtml(
       cursor: pointer;
       font-family: Inter, sans-serif;
     }
+    .btn-print[disabled], .btn-download[disabled] {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
     ${quotePdfShellCss()}
+    .preview-overflow { max-height: none !important; height: auto !important; overflow: visible !important; }
     .page-header-logo {
       display: flex;
       justify-content: space-between;
@@ -475,12 +500,12 @@ export function compileThreePageQuotationHtml(
       : `<div class="action-bar">
         <div><strong>Sunchaser Quotation</strong> — ${escapeHtml(proposal.clientName)} · 3 pages</div>
         <div class="action-bar-actions">
-          <button type="button" class="btn-print" onclick="sunchaserPrintDeck()">Print</button>
-          <button type="button" class="btn-download" onclick="sunchaserDownloadPdf()">Download PDF</button>
+          <button type="button" class="btn-print" ${exportBlocked ? "disabled" : ""} onclick="sunchaserPrintDeck()">Print</button>
+          <button type="button" class="btn-download" ${exportBlocked ? "disabled" : ""} onclick="sunchaserDownloadPdf()">Download PDF</button>
         </div>
       </div>`
   }
-  <div class="pages-container" data-sunchaser-page-count="${THREE_PAGE_QUOTATION_PAGE_COUNT}">
+  <div class="pages-container" data-sunchaser-page-count="${THREE_PAGE_QUOTATION_PAGE_COUNT}" data-sunchaser-export-blocked="${exportBlocked ? "true" : "false"}">
     ${page1}
     ${page2}
     ${page3}
@@ -490,6 +515,10 @@ export function compileThreePageQuotationHtml(
       ? ""
       : `<script>
         function sunchaserPrintDeck() {
+          if (${exportBlocked ? "true" : "false"}) {
+            alert(${JSON.stringify(exportBlockReason || THREE_PAGE_BOQ_OVERFLOW_MESSAGE)});
+            return;
+          }
           var run = function () {
             requestAnimationFrame(function () {
               setTimeout(function () { window.print(); }, 150);
@@ -499,6 +528,10 @@ export function compileThreePageQuotationHtml(
           fontReady.then(run).catch(run);
         }
         async function sunchaserDownloadPdf() {
+          if (${exportBlocked ? "true" : "false"}) {
+            alert(${JSON.stringify(exportBlockReason || THREE_PAGE_BOQ_OVERFLOW_MESSAGE)});
+            return;
+          }
           var btn = document.querySelector('.btn-download');
           if (btn) btn.disabled = true;
           try {
@@ -536,10 +569,12 @@ export function compileThreePageQuotationHtml(
     html,
     pageCount: THREE_PAGE_QUOTATION_PAGE_COUNT,
     boqOverflow: overflow.overflow,
-    boqOverflowMessage: overflow.overflow
-      ? `Quotation has ${overflow.itemCount} priced items and exceeds the compact one-page BOQ layout. No priced item was dropped.`
-      : null,
+    boqOverflowMessage: overflow.overflow ? THREE_PAGE_BOQ_OVERFLOW_MESSAGE : null,
+    termsOverflow: termsFit.overflow,
+    exportBlocked,
+    exportBlockReason,
     itemCount: overflow.itemCount,
+    validityDays: validity.days,
     pages: STANDARD_QUOTATION_PAGES,
   };
 }

@@ -8,9 +8,8 @@
 import type { BoqRow } from "../../types";
 import { calculateBoqRowTotals } from "../boqPackageLibrary";
 import {
-  L2_STRUCTURE_KIT_RATE,
-  L3_STRUCTURE_KIT_RATE,
   normalizeStructureBreakdown,
+  structureKitRowFields,
   type StructureBreakdown,
 } from "./structureRecommendation";
 import {
@@ -89,31 +88,13 @@ export function applyStructureKitOverride(
   next = removeRow(next, STRUCTURE_JOB_ROW_ID);
 
   if (structure.l3 > 0) {
-    next = upsertStructureKitRow(next, STRUCTURE_L3_ROW_ID, {
-      srNo: "10a",
-      name: "L3 Mounting Structure (3-panel kit)",
-      description: "Galvanized L3 14 Gauge iron mounting structure — 3 panel positions per kit, Rawal bolts",
-      brand: "Mughal",
-      unit: "Pcs",
-      qty: structure.l3,
-      rate: L3_STRUCTURE_KIT_RATE,
-      total: structure.l3 * L3_STRUCTURE_KIT_RATE,
-    });
+    next = upsertStructureKitRow(next, STRUCTURE_L3_ROW_ID, structureKitRowFields("L3", structure.l3));
   } else {
     next = removeRow(next, STRUCTURE_L3_ROW_ID);
   }
 
   if (structure.l2 > 0) {
-    next = upsertStructureKitRow(next, STRUCTURE_L2_ROW_ID, {
-      srNo: "10b",
-      name: "L2 Mounting Structure (2-panel kit)",
-      description: "Galvanized L2 14 Gauge iron mounting structure — 2 panel positions per kit, Rawal bolts",
-      brand: "Mughal",
-      unit: "Pcs",
-      qty: structure.l2,
-      rate: L2_STRUCTURE_KIT_RATE,
-      total: structure.l2 * L2_STRUCTURE_KIT_RATE,
-    });
+    next = upsertStructureKitRow(next, STRUCTURE_L2_ROW_ID, structureKitRowFields("L2", structure.l2));
   } else {
     next = removeRow(next, STRUCTURE_L2_ROW_ID);
   }

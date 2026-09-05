@@ -10,20 +10,28 @@ import type { BoqRow } from "../../types";
 import { calculateBoqRowTotals } from "../boqPackageLibrary";
 import {
   resolveAutoSizerPreset,
+  recommendedBatteryOption,
   type AutoSizerPreset,
   type AutoSizerSystemType,
 } from "./presets";
 import {
-  L2_STRUCTURE_KIT_RATE,
-  L3_STRUCTURE_KIT_RATE,
+  hydrateCompanySizePreset,
+  parseCompanyAutoSizerPresets,
+  type CatalogProductLike,
+  type CompanyAutoSizerPresets,
+} from "./companyPresets";
+import {
+  LEGACY_PER_PANEL_STRUCTURE_ROW_ID,
+  STRUCTURE_L2_ROW_ID,
+  STRUCTURE_L3_ROW_ID,
   normalizeStructureBreakdown,
   recommendStructures,
+  structureKitRowFields,
   type StructureBreakdown,
 } from "./structureRecommendation";
 
-export const STRUCTURE_L3_ROW_ID = "structure_l3_row";
-export const STRUCTURE_L2_ROW_ID = "structure_l2_row";
-export const STRUCTURE_JOB_ROW_ID = "structure_row";
+export { STRUCTURE_L3_ROW_ID, STRUCTURE_L2_ROW_ID };
+export const STRUCTURE_JOB_ROW_ID = LEGACY_PER_PANEL_STRUCTURE_ROW_ID;
 
 export const AUTO_SIZER_BOQ_IDS = [
   "h-1",
@@ -74,6 +82,9 @@ export interface GenerateRecommendedBoqInput {
   netMeteringRequired?: "Yes" | "No";
   /** Manual L2/L3 quantities. When set, they replace the recommended kit split. */
   structureOverride?: { l3?: number; l2?: number } | null;
+  companyPresets?: CompanyAutoSizerPresets | null;
+  settings?: unknown;
+  products?: CatalogProductLike[] | null;
 }
 
 export interface RecommendedBoqResult {
@@ -82,6 +93,11 @@ export interface RecommendedBoqResult {
   structure: StructureBreakdown;
   preset: AutoSizerPreset;
   subtotal: number;
+}
+
+function estimatePanelCount(systemSizeKw: number, panelWattage: number): number {
+  if (systemSizeKw <= 0 || panelWattage <= 0) return 0;
+  return Math.ceil((systemSizeKw * 1000) / panelWattage);
 }
 
 function normalizeStructureKind(raw?: string): "standard" | "elevated" | "girder" | "custom" {
@@ -113,11 +129,6 @@ function batteryRateForOption(batt: string): number {
   return 235000;
 }
 
-function estimatePanelCount(systemSizeKw: number, panelWattage: number): number {
-  if (systemSizeKw <= 0 || panelWattage <= 0) return 0;
-  return Math.ceil((systemSizeKw * 1000) / panelWattage);
-}
-
 function heading(id: string, name: string): BoqRow {
   return { id, type: "heading", name, description: "", brand: "", unit: "", qty: 0, rate: 0, total: 0 };
 }
@@ -129,8 +140,16 @@ function subtotal(id: string, name: string): BoqRow {
 export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): RecommendedBoqResult {
   const sizekW = Number(input.systemSizeKw) || 0;
   const structKind = normalizeStructureKind(input.structureType);
+  const companyPresets = input.companyPresets || parseCompanyAutoSizerPresets(input.settings);
+  const sizeKey = sizekW === 6 || sizekW === 8 || sizekW === 10 ? sizekW : null;
+  const companyPreset = sizeKey
+    ? hydrateCompanySizePreset(companyPresets[sizeKey] || companyPresets[String(sizeKey) as "6"], input.products)
+    : undefined;
+
   const preset = resolveAutoSizerPreset(sizekW, {
     structureType: structKind === "elevated" ? "elevated" : "standard",
+    systemType: input.systemType,
+    companyPreset,
   });
 
   const pBrand = input.panelBrand || preset.panel.brand;
@@ -139,7 +158,7 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
   const iCapacity = input.inverterCapacity || preset.inverter.capacity || `${Math.ceil(sizekW)}kW`;
   const iQty = Math.max(1, Math.floor(Number(input.inverterQuantity || preset.inverter.quantity || 1)));
   const sType = input.systemType || preset.systemType;
-  const batt = input.batteryOption !== undefined ? input.batteryOption : preset.battery.option;
+  const batt = recommendedBatteryOption(sType, preset.battery.option, input.batteryOption);
   const netMeter = input.netMeteringRequired || preset.netMeteringRequired;
   const struct = normalizeStructureKind(input.structureType || preset.structureType);
 
@@ -333,28 +352,14 @@ export function generateRecommendedBoq(input: GenerateRecommendedBoqInput): Reco
       rows.push({
         id: STRUCTURE_L3_ROW_ID,
         type: "item",
-        srNo: "10a",
-        name: "L3 Mounting Structure (3-panel kit)",
-        description: "Galvanized L3 14 Gauge iron mounting structure — 3 panel positions per kit, Rawal bolts",
-        brand: "Mughal",
-        unit: "Pcs",
-        qty: structure.l3,
-        rate: L3_STRUCTURE_KIT_RATE,
-        total: structure.l3 * L3_STRUCTURE_KIT_RATE,
+        ...structureKitRowFields("L3", structure.l3),
       });
     }
     if (structure.l2 > 0) {
       rows.push({
         id: STRUCTURE_L2_ROW_ID,
         type: "item",
-        srNo: "10b",
-        name: "L2 Mounting Structure (2-panel kit)",
-        description: "Galvanized L2 14 Gauge iron mounting structure — 2 panel positions per kit, Rawal bolts",
-        brand: "Mughal",
-        unit: "Pcs",
-        qty: structure.l2,
-        rate: L2_STRUCTURE_KIT_RATE,
-        total: structure.l2 * L2_STRUCTURE_KIT_RATE,
+        ...structureKitRowFields("L2", structure.l2),
       });
     }
   }

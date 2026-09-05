@@ -117,13 +117,18 @@ import {
   applyNamedRowFields,
   applyStructureKitOverride,
   generateRecommendedBoq,
+  hydrateCompanySizePreset,
   markOverride,
+  parseCompanyAutoSizerPresets,
   readStructureBreakdownFromRows,
+  recommendedBatteryOption,
   resolveAutoSizerPreset,
   snapshotHasItems,
   STANDARD_QUOTATION_PAGES,
   type QuoteManualOverrides,
 } from "../lib/autoSizer";
+import { EXISTING_COMPANY_VALIDITY_DAYS, resolveQuoteValidityDays } from "../lib/quoteValidity";
+import { quoteBoqOverflow, THREE_PAGE_BOQ_OVERFLOW_MESSAGE } from "../lib/quoteThreePageRender";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -268,6 +273,7 @@ export default function SalesTeamApp({
   const [paymentTerms, setPaymentTerms] = useState("50% Advance, 40% Delivery, 10% Commissioning");
   const [warrantyTerms, setWarrantyTerms] = useState("25 year power degradation, 10 year inverter warranty");
   const [termsAndConditions, setTermsAndConditions] = useState("Quoted prices are valid for 3 days.");
+  const [validityDays, setValidityDays] = useState<number>(EXISTING_COMPANY_VALIDITY_DAYS);
 
   // Lahore/Pakistan custom quotation states
   const [clientName, setClientName] = useState("");
@@ -1028,6 +1034,8 @@ export default function SalesTeamApp({
       inverterCapacity: iCapacity,
       batteryOption: batt,
       netMeteringRequired: netMeter,
+      settings,
+      products,
     }).rows;
   };
 
@@ -1059,15 +1067,26 @@ export default function SalesTeamApp({
     }
   ) => {
     const structRaw = options?.structureType || selectedStructure || "standard";
+    const companyPresets = parseCompanyAutoSizerPresets(settings);
+    const sizeKey = sizeKw === 6 || sizeKw === 8 || sizeKw === 10 ? sizeKw : null;
+    const companyPreset = sizeKey
+      ? hydrateCompanySizePreset(companyPresets[sizeKey] || companyPresets[String(sizeKey) as "6"], products)
+      : undefined;
+    const systemTypeVal = options?.systemType || systemType;
     const preset = resolveAutoSizerPreset(sizeKw, {
       structureType: String(structRaw).toLowerCase() === "elevated" ? "elevated" : "standard",
+      systemType: systemTypeVal,
+      companyPreset,
     });
-    const systemTypeVal = options?.systemType || preset.systemType;
     const panelBrandVal = options?.panelBrand || preset.panel.brand;
     const panelWattageVal = Number(options?.panelWattage || preset.panel.wattage || 580);
     const inverterBrandVal = options?.inverterBrand || preset.inverter.brand;
     const inverterCapacityVal = options?.inverterCapacity || preset.inverter.capacity;
-    const batteryVal = options?.batteryOption !== undefined ? options.batteryOption : preset.battery.option;
+    const batteryVal = recommendedBatteryOption(
+      systemTypeVal,
+      preset.battery.option,
+      options?.batteryOption
+    );
     const netVal = options?.netMeteringRequired || preset.netMeteringRequired;
     const structVal = String(structRaw).toLowerCase();
 
@@ -1095,6 +1114,8 @@ export default function SalesTeamApp({
       inverterCapacity: inverterCapacityVal,
       batteryOption: batteryVal,
       netMeteringRequired: netVal,
+      settings,
+      products,
     });
     setBoqRows(rec.rows);
     setManualBoqItems(rec.rows);
@@ -1414,6 +1435,7 @@ export default function SalesTeamApp({
       setAccessories("Dual DC cables, PVC ducting & safety switches");
       setWarrantyTerms("25 year power degradation, 10 year inverter warranty");
       setTermsAndConditions("Quoted prices are valid for 3 days.");
+      setValidityDays(resolveQuoteValidityDays({}, { companyTerms, settings }).days);
 
       // Reset sizer-specific form controls to prevent leftovers
       setFormRoofWidth(30);
@@ -1596,6 +1618,8 @@ export default function SalesTeamApp({
             inverterCapacity,
             batteryOption,
             netMeteringRequired: netMeteringRequired as any,
+            settings,
+            products,
           });
       const sizerRows = generated ? generated.rows : boqRows;
       if (generated) {
@@ -1640,6 +1664,8 @@ export default function SalesTeamApp({
         grandTotal: grand,
         netTotal: grand,
         manualOverrides,
+        validityDays,
+        termsAndConditions,
       };
 
       if (sizerEditingQuoteId) {
@@ -1807,6 +1833,7 @@ export default function SalesTeamApp({
         quote_type: "manual_boq",
         source: "manual",
         manualOverrides,
+        validityDays,
       };
 
       let savedQuoteId = editingQuoteId;
@@ -2036,6 +2063,12 @@ export default function SalesTeamApp({
     setManualOverrides(quote.manualOverrides || {});
     setIncludedPages(standardCustomerPages());
     setIncludeSizerItems(true);
+    setValidityDays(
+      Number(quote.validityDays) > 0
+        ? Math.floor(Number(quote.validityDays))
+        : resolveQuoteValidityDays(quote, { companyTerms, settings }).days
+    );
+    if (quote.termsAndConditions) setTermsAndConditions(quote.termsAndConditions);
     setActiveModule(quote.quote_type === "auto_sizer" ? "sizer" : "boq_builder");
   };
 
@@ -2659,6 +2692,7 @@ export default function SalesTeamApp({
   const sizerDcRow = boqRows.find((r) => r.id === "dc_cable_row");
   const sizerAcRow = boqRows.find((r) => r.id === "ac_cable_row");
   const sizerStructure = readStructureBreakdownFromRows(boqRows);
+  const sizerBoqFit = quoteBoqOverflow(boqRows as any);
   const calculatedTaxAmount = taxEnabled ? Math.round(grandTotal * (taxRate / 100)) : 0;
   const resolvedManualDiscount = useMemo(
     () => resolveQuoteDiscountAmount(grandTotal, { discountType, discountValue }),
@@ -3568,7 +3602,7 @@ export default function SalesTeamApp({
                             </select>
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L3 kits (3-panel)</label>
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L3 Structure – 3 Panel Section</label>
                             <input
                               type="number"
                               min={0}
@@ -3579,7 +3613,7 @@ export default function SalesTeamApp({
                             />
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L2 kits (2-panel)</label>
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L2 Structure – 2 Panel Section</label>
                             <input
                               type="number"
                               min={0}
@@ -3587,6 +3621,17 @@ export default function SalesTeamApp({
                               onChange={(e) => patchStructureKits(sizerStructure?.l3 ?? 0, Math.max(0, Number(e.target.value) || 0))}
                               disabled={!snapshotHasItems(boqRows) || selectedStructure !== "standard"}
                               className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Validity (days)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={365}
+                              value={validityDays}
+                              onChange={(e) => setValidityDays(Math.max(1, Math.min(365, Number(e.target.value) || EXISTING_COMPANY_VALIDITY_DAYS)))}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
                             />
                           </div>
                           <div className="space-y-1">
@@ -3638,6 +3683,12 @@ export default function SalesTeamApp({
                           Start Manual
                         </button>
                       </div>
+
+                      {sizerBoqFit.overflow && snapshotHasItems(boqRows) && (
+                        <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-2xl text-[11px] font-sans leading-relaxed">
+                          {THREE_PAGE_BOQ_OVERFLOW_MESSAGE} Preview can still list all {sizerBoqFit.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                        </div>
+                      )}
 
                       <button
                         type="button"
@@ -4321,6 +4372,12 @@ export default function SalesTeamApp({
                         <p className="text-[10px] text-slate-500 font-sans leading-relaxed">
                           Customer quote saves only for this client. Use Update Loaded Package to change future package defaults.
                         </p>
+
+                        {sizerBoqFit.overflow && snapshotHasItems(boqRows) && (
+                          <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-xl text-[11px] font-sans leading-relaxed">
+                            {THREE_PAGE_BOQ_OVERFLOW_MESSAGE} Preview still lists all {sizerBoqFit.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                          </div>
+                        )}
 
                         <button
                           type="button"

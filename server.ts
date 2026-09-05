@@ -9262,9 +9262,57 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
 
     const quoteForExport = { ...quote, boqRows: snapshotRows, boqItems: snapshotRows };
     const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, { mode: "auto" });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(rendered.html);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF structure: " + err.message);
+  }
+});
+
+app.get("/api/export/pdf/auto-sizer/:leadId/download", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "quotation_pdf", req.params.leadId))) return;
+  try {
+    if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
+      return res.status(403).send("Auto Sizer PDF export is temporarily disabled. Use Manual BOQ PDF with quoteId.");
+    }
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer");
+    } else {
+      quote = getLatestSavedQuote(lead, "auto_sizer");
+    }
+    if (!quote) {
+      return res.status(404).send("Save a quote first.");
+    }
+
+    const snapshotRows = normalizeQuoteBoqRows(quote);
+    const quoteForExport = { ...quote, boqRows: snapshotRows, boqItems: snapshotRows };
+    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, {
+      mode: "auto",
+      hideActionBar: true,
+    });
+    if (rendered.exportBlocked) {
+      return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
+    }
+    const filename = buildQuotationPdfFilename(lead, quote);
+    await sendQuotationPdfResponse(res, rendered.html, filename);
+  } catch (err: any) {
+    console.error("[PDF DOWNLOAD]", err);
+    res.status(500).send(formatQuotationPdfError(err));
   }
 });
 
@@ -9561,11 +9609,10 @@ function compileManualQuoteExportHtml(
   lead: any,
   options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean; debugBox?: boolean; hideActionBar?: boolean } = {}
 ) {
-  const rendered = compileThreePageQuotationHtml(quote, lead, activeState, {
+  return compileThreePageQuotationHtml(quote, lead, activeState, {
     mode: quote?.quote_type === "auto_sizer" ? "auto" : "manual",
     hideActionBar: options.hideActionBar === true,
   });
-  return rendered.html;
 }
 
 app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
@@ -9630,9 +9677,9 @@ app.get("/api/export/pdf/manual-quote/:leadId/debug-html", async (req, res) => {
     }
     const { activeState, lead, quote, options } = resolved;
     const debugBox = req.query.debugBox === "1" || req.query.debugBox === "true";
-    const html = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, debugBox });
+    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, debugBox });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    res.send(rendered.html);
   } catch (err: any) {
     console.error("[PDF DEBUG HTML]", err);
     res.status(500).send("Error compiling debug HTML: " + formatQuotationPdfError(err));
@@ -9650,9 +9697,12 @@ app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
       return res.status(resolved.error.status).send(resolved.error.message);
     }
     const { activeState, lead, quote, options } = resolved;
-    const pdfHtml = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, hideActionBar: true });
+    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, hideActionBar: true });
+    if (rendered.exportBlocked) {
+      return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
+    }
     const filename = buildQuotationPdfFilename(lead, quote);
-    await sendQuotationPdfResponse(res, pdfHtml, filename);
+    await sendQuotationPdfResponse(res, rendered.html, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
     res.status(500).send(formatQuotationPdfError(err));

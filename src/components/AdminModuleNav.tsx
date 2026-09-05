@@ -88,7 +88,7 @@ type NavGroup = {
 
 type AdminModuleNavProps = {
   activeSegment: AdminSegmentId;
-  pdfSubTab?: "pages" | "banks" | "terms" | "ceo" | "structures" | "settings";
+  pdfSubTab?: "pages" | "banks" | "terms" | "ceo" | "structures" | "settings" | "autosizer";
   onSelect: (id: AdminSegmentId, options?: { settingsSubTab?: "settings" }) => void;
   showFinanceAdmin: boolean;
   showFinanceDashboard: boolean;

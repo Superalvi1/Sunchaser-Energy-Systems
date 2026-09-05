@@ -8,15 +8,35 @@ import {
   applyNamedRowFields,
   applyStructureKitOverride,
   generateRecommendedBoq,
+  isLegacyPerPanelStructureSku,
   isOverridden,
+  isQuoteStructureKitRow,
+  L3_STRUCTURE_CUSTOMER_NAME,
+  L2_STRUCTURE_CUSTOMER_NAME,
+  LEGACY_PER_PANEL_STRUCTURE_PRODUCT_ID,
   markOverride,
   nearestAutoSizerPresetSize,
+  parseCompanyAutoSizerPresets,
   recommendStructures,
+  recommendedBatteryOption,
   resolveAutoSizerPreset,
   shouldRegenerateField,
   snapshotHasItems,
+  QUOTE_STRUCTURE_KIT_LINE_KIND,
 } from "./index.ts";
-import { compileThreePageQuotationHtml, THREE_PAGE_QUOTATION_PAGE_COUNT, threePageRendererId } from "../quoteThreePageRender.ts";
+import {
+  compileThreePageQuotationHtml,
+  quoteBoqOverflow,
+  quoteTermsOverflow,
+  THREE_PAGE_BOQ_OVERFLOW_MESSAGE,
+  THREE_PAGE_QUOTATION_PAGE_COUNT,
+  threePageRendererId,
+} from "../quoteThreePageRender.ts";
+import {
+  EXISTING_COMPANY_VALIDITY_DAYS,
+  parseValidityDaysFromText,
+  resolveQuoteValidityDays,
+} from "../quoteValidity.ts";
 
 
 let pass = 0;
@@ -236,6 +256,161 @@ check("auto and manual quotes use the same three-page renderer", () => {
   assert.match(manualHtml.html, /Commercial Quotation/);
   assert.match(autoHtml.html, /Terms & Conditions/);
   assert.match(autoHtml.html, /Clause one/);
+});
+
+check("validity is parsed from existing company terms, not invented", () => {
+  assert.equal(parseValidityDaysFromText("This quotation is valid for three (3) calendar days from the date of issue."), 3);
+  assert.equal(parseValidityDaysFromText("Quotation validity: 3 days from date of issuance."), 3);
+  assert.equal(parseValidityDaysFromText("Quoted prices are valid for 3 days."), 3);
+  assert.equal(EXISTING_COMPANY_VALIDITY_DAYS, 3);
+  const fromQuote = resolveQuoteValidityDays({ validityDays: 7 });
+  assert.equal(fromQuote.days, 7);
+  assert.equal(fromQuote.source, "quote.validityDays");
+  const fromCompany = resolveQuoteValidityDays(
+    {},
+    { companyTerms: [{ termText: "Quotation validity: 3 days from date of issuance." }] }
+  );
+  assert.equal(fromCompany.days, 3);
+  assert.equal(fromCompany.source, "company_terms");
+  const fallback = resolveQuoteValidityDays({});
+  assert.equal(fallback.days, 3);
+  assert.equal(fallback.source, "existing_company_default");
+});
+
+check("PDF cover uses saved quote validityDays", () => {
+  const rendered = compileThreePageQuotationHtml(
+    {
+      id: "q-valid",
+      clientName: "Validity Client",
+      validityDays: 7,
+      boqItems: [{ id: "p", type: "item", name: "Panel", qty: 1, rate: 1, total: 1 }],
+    },
+    { id: "lead-v", name: "Validity Client" },
+    { companyTerms: [{ termText: "Quotation validity: 3 days from date of issuance." }] }
+  );
+  assert.equal(rendered.validityDays, 7);
+  assert.match(rendered.html, /7 days/);
+});
+
+check("new L3/L2 kit rows are not the old per-panel structure_std SKU", () => {
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 5.8,
+    panelWattage: 580,
+    panelBrand: "Jinko",
+    systemType: "Hybrid",
+  });
+  const l3 = rec.rows.find((r) => r.id === "structure_l3_row");
+  const l2 = rec.rows.find((r) => r.id === "structure_l2_row");
+  assert.ok(l3);
+  assert.ok(l2);
+  assert.equal(l3?.name, L3_STRUCTURE_CUSTOMER_NAME);
+  assert.equal(l2?.name, L2_STRUCTURE_CUSTOMER_NAME);
+  assert.equal(l3?.quoteLineKind, QUOTE_STRUCTURE_KIT_LINE_KIND);
+  assert.equal(l3?.catalogProductId, "");
+  assert.equal(l3?.unit, "Section");
+  assert.equal(isQuoteStructureKitRow(l3), true);
+  assert.equal(isLegacyPerPanelStructureSku(l3 as any), false);
+  assert.equal(
+    isLegacyPerPanelStructureSku({
+      id: LEGACY_PER_PANEL_STRUCTURE_PRODUCT_ID,
+      catalogProductId: LEGACY_PER_PANEL_STRUCTURE_PRODUCT_ID,
+      name: "Standard GI Structure L3",
+      rate: 4800,
+    }),
+    true
+  );
+});
+
+check("On-grid AutoSizer does not auto-add a hybrid battery", () => {
+  const rec = generateRecommendedBoq({ systemSizeKw: 8, systemType: "On-grid" });
+  assert.equal(recommendedBatteryOption("On-grid", "Lithium Battery Pack 5.12kWh"), "None");
+  assert.equal(rec.preset.battery.option, "None");
+  assert.equal(rec.rows.find((r) => r.id === "battery_row"), undefined);
+});
+
+check("8 kW Hybrid typed default remains 5.12 kWh from package library", () => {
+  const rec = generateRecommendedBoq({ systemSizeKw: 8, systemType: "Hybrid" });
+  assert.match(rec.preset.battery.option, /5\.12/);
+  assert.match(String(AUTOSIZER_PRESETS[8].battery.option), /5\.12/);
+});
+
+check("saved admin preset overlays typed 8 kW battery with 10.24", () => {
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 8,
+    systemType: "Hybrid",
+    settings: { autoSizerPresets: { "8": { batteryOption: "Lithium Battery Pack 10.24kWh" } } },
+  });
+  assert.match(rec.preset.battery.option, /10\.24/);
+});
+
+check("malformed admin AutoSizer settings fall back to typed preset", () => {
+  assert.deepEqual(parseCompanyAutoSizerPresets({ autoSizerPresets: "nope" }), {});
+  assert.deepEqual(parseCompanyAutoSizerPresets(null), {});
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 8,
+    systemType: "Hybrid",
+    settings: { autoSizerPresets: ["bad"] },
+  });
+  assert.match(rec.preset.battery.option, /5\.12/);
+});
+
+check("manual battery and cable overrides stay on the snapshot", () => {
+  const rec = generateRecommendedBoq({ systemSizeKw: 8, systemType: "Hybrid" });
+  let overrides = markOverride({}, "battery");
+  overrides = markOverride(overrides, "cables");
+  const withBatt = applyNamedRowFields(rec.rows, "battery_row", { name: "Lithium Battery Pack 10.24kWh" });
+  const withCable = applyNamedRowFields(withBatt, "dc_cable_row", { qty: 999 });
+  assert.equal(isOverridden(overrides, "battery"), true);
+  assert.equal(shouldRegenerateField(overrides, "battery", false), false);
+  assert.equal(withCable.find((r) => r.id === "battery_row")?.name, "Lithium Battery Pack 10.24kWh");
+  assert.equal(withCable.find((r) => r.id === "dc_cable_row")?.qty, 999);
+});
+
+check("BOQ overflow blocks final export but still lists every priced row in 3 pages", () => {
+  const items = Array.from({ length: 40 }, (_, i) => ({
+    id: `overflow-${i}`,
+    type: "item",
+    name: `Overflow line ${i}`,
+    description: "A deliberately long description so the compact weight budget is exceeded on purpose.",
+    brand: "Test",
+    unit: "Pcs",
+    qty: 1,
+    rate: 100,
+    total: 100,
+  }));
+  const fit = quoteBoqOverflow(items as any);
+  assert.equal(fit.overflow, true);
+  assert.equal(fit.itemCount, 40);
+  const rendered = compileThreePageQuotationHtml(
+    { id: "q-overflow", clientName: "Overflow Client", boqRows: items, grandTotal: 4000 },
+    { id: "lead-ov", name: "Overflow Client" },
+    { companyTerms: [{ termText: "Quotation validity: 3 days from date of issuance." }] }
+  );
+  assert.equal(rendered.exportBlocked, true);
+  assert.equal(rendered.boqOverflow, true);
+  assert.equal(rendered.pageCount, 3);
+  assert.equal((rendered.html.match(/class="page /g) || []).length, 3);
+  assert.match(rendered.html, new RegExp(THREE_PAGE_BOQ_OVERFLOW_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(rendered.html, /Overflow line 0/);
+  assert.match(rendered.html, /Overflow line 39/);
+  assert.match(rendered.html, /data-sunchaser-export-blocked="true"/);
+  assert.doesNotMatch(rendered.html, /class="page page-4"/);
+});
+
+check("terms overflow does not truncate clauses and still stays 3 pages", () => {
+  const terms = Array.from({ length: 20 }, (_, i) => `Legal clause ${i} ${"wording ".repeat(30)}`);
+  const fit = quoteTermsOverflow(terms);
+  assert.equal(fit.overflow, true);
+  const rendered = compileThreePageQuotationHtml(
+    { id: "q-terms", clientName: "Terms Client", boqRows: [{ id: "p", type: "item", name: "Panel", qty: 1, rate: 1, total: 1 }] },
+    { id: "lead-t", name: "Terms Client" },
+    { companyTerms: terms.map((termText, i) => ({ id: `t-${i}`, termText })) }
+  );
+  assert.equal(rendered.termsOverflow, true);
+  assert.equal(rendered.exportBlocked, true);
+  assert.equal(rendered.pageCount, 3);
+  assert.match(rendered.html, /Legal clause 0/);
+  assert.match(rendered.html, /Legal clause 19/);
 });
 
 console.log(`\nAutoSizer / 3-page quotation tests: ${pass} passed`);
