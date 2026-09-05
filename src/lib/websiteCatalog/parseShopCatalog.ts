@@ -36,8 +36,16 @@ export interface WebsiteCatalogDiscovery {
   source: "next_rsc_shop";
   products: WebsiteRawProduct[];
   sitemapProductSlugs: string[];
+  /** RSC returned at least one valid product. */
+  discoveryUsable: boolean;
+  /** Sitemap identity is present and can be compared. */
+  sitemapAvailable: boolean;
+  /** Safe to inactivate website products missing from this run. */
+  deactivationSafe: boolean;
+  /** @deprecated use discoveryUsable */
   discoveryComplete: boolean;
   parseErrors: string[];
+  failedSourceSlugs: string[];
 }
 
 function parseJsonValueAt(source: string, start: number): { value: unknown; end: number } | null {
@@ -134,36 +142,44 @@ function asProduct(raw: unknown): WebsiteRawProduct | null {
   };
 }
 
-function walkForProducts(node: unknown, found: WebsiteRawProduct[], errors: string[]): void {
+function walkForProducts(node: unknown, found: WebsiteRawProduct[], errors: string[], failedSlugs: string[]): void {
   if (!node) return;
   if (Array.isArray(node)) {
     if (node.length && node.every((item) => item && typeof item === "object" && "slug" in (item as object))) {
       for (const item of node) {
+        const slug = String((item as { slug?: unknown })?.slug || "").trim();
         try {
           const product = asProduct(item);
-          if (product) found.push(product);
+          if (product) {
+            found.push(product);
+            continue;
+          }
+          if (slug) failedSlugs.push(slug);
+          errors.push(slug ? `${slug}: incomplete product payload` : "incomplete product payload");
         } catch (err: any) {
-          errors.push(String(err?.message || err || "product parse failed"));
+          if (slug) failedSlugs.push(slug);
+          errors.push(slug ? `${slug}: ${String(err?.message || err || "product parse failed")}` : String(err?.message || err || "product parse failed"));
         }
       }
       return;
     }
-    for (const item of node) walkForProducts(item, found, errors);
+    for (const item of node) walkForProducts(item, found, errors, failedSlugs);
     return;
   }
   if (typeof node === "object") {
     const rec = node as Record<string, unknown>;
     if (Array.isArray(rec.products)) {
-      walkForProducts(rec.products, found, errors);
+      walkForProducts(rec.products, found, errors, failedSlugs);
       return;
     }
-    for (const value of Object.values(rec)) walkForProducts(value, found, errors);
+    for (const value of Object.values(rec)) walkForProducts(value, found, errors, failedSlugs);
   }
 }
 
-export function extractRscProducts(html: string): { products: WebsiteRawProduct[]; errors: string[] } {
+export function extractRscProducts(html: string): { products: WebsiteRawProduct[]; errors: string[]; failedSourceSlugs: string[] } {
   const errors: string[] = [];
   const products: WebsiteRawProduct[] = [];
+  const failedSourceSlugs: string[] = [];
   const seen = new Set<string>();
   for (const flight of extractNextFlightStrings(html)) {
     const colon = flight.indexOf(":");
@@ -175,14 +191,14 @@ export function extractRscProducts(html: string): { products: WebsiteRawProduct[
       continue;
     }
     const bucket: WebsiteRawProduct[] = [];
-    walkForProducts(parsed, bucket, errors);
+    walkForProducts(parsed, bucket, errors, failedSourceSlugs);
     for (const product of bucket) {
       if (seen.has(product.slug)) continue;
       seen.add(product.slug);
       products.push(product);
     }
   }
-  return { products, errors };
+  return { products, errors, failedSourceSlugs: [...new Set(failedSourceSlugs)] };
 }
 
 export function extractSitemapProductSlugs(xml: string): string[] {
@@ -225,15 +241,48 @@ export function parseProductJsonLd(html: string): Record<string, unknown> | null
   return null;
 }
 
+export function normalizeCatalogSlug(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/^shop\//i, "")
+    .toLowerCase();
+}
+
+export function evaluateCatalogDiscovery(
+  rscProducts: Array<{ slug?: string }>,
+  sitemapProductSlugs: string[]
+): { discoveryUsable: boolean; sitemapAvailable: boolean; deactivationSafe: boolean } {
+  const rscSlugs = rscProducts.map((p) => normalizeCatalogSlug(p.slug)).filter(Boolean);
+  const sitemapSlugs = sitemapProductSlugs.map(normalizeCatalogSlug).filter(Boolean);
+  const discoveryUsable = rscSlugs.length > 0;
+  const sitemapAvailable = sitemapSlugs.length > 0;
+  if (!discoveryUsable) {
+    return { discoveryUsable: false, sitemapAvailable, deactivationSafe: false };
+  }
+  if (!sitemapAvailable) {
+    return { discoveryUsable: true, sitemapAvailable: false, deactivationSafe: false };
+  }
+  const rscSet = new Set(rscSlugs);
+  const sitemapSet = new Set(sitemapSlugs);
+  const deactivationSafe = rscSet.size === sitemapSet.size && sitemapSlugs.every((slug) => rscSet.has(slug));
+  return { discoveryUsable: true, sitemapAvailable: true, deactivationSafe };
+}
+
 export function parseShopCatalog(shopHtml: string, sitemapXml?: string): WebsiteCatalogDiscovery {
   const parsed = extractRscProducts(shopHtml);
   const sitemapProductSlugs = sitemapXml ? extractSitemapProductSlugs(sitemapXml) : [];
-  const discoveryComplete = parsed.products.length > 0;
+  const flags = evaluateCatalogDiscovery(parsed.products, sitemapProductSlugs);
+  const deactivationSafe = flags.deactivationSafe && parsed.errors.length === 0;
   return {
     source: "next_rsc_shop",
     products: parsed.products,
     sitemapProductSlugs,
-    discoveryComplete,
+    discoveryUsable: flags.discoveryUsable,
+    sitemapAvailable: flags.sitemapAvailable,
+    deactivationSafe,
+    discoveryComplete: flags.discoveryUsable,
     parseErrors: parsed.errors,
+    failedSourceSlugs: parsed.failedSourceSlugs,
   };
 }

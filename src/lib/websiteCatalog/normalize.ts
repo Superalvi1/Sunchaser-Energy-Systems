@@ -208,7 +208,7 @@ export function normalizeWebsiteProduct(raw: WebsiteRawProduct, syncedAt: string
     listPrice,
     currency: "PKR",
     discount: 0,
-    stock: availability === "in_stock" ? 1 : 0,
+    stock: 0,
     images,
     warrantyPeriod: normalizeText(raw.warranty),
     specifications,
@@ -230,8 +230,84 @@ export function normalizeWebsiteProduct(raw: WebsiteRawProduct, syncedAt: string
   };
 }
 
+export type WebsiteSourceMetadata = {
+  source?: string;
+  sourceUrl?: string;
+  sourceSlug?: string;
+  sourceProductId?: string;
+  lastSyncedAt?: string;
+  sourceActive?: boolean;
+  websiteCategory?: string;
+  currency?: string;
+  listPrice?: number;
+  availability?: string;
+  productType?: Product["productType"];
+};
+
+export function readWebsiteSourceBlob(product: Partial<Product> | null | undefined): WebsiteSourceMetadata {
+  const specs = product?.specifications && typeof product.specifications === "object" ? product.specifications : {};
+  const raw = (specs as Record<string, unknown>)[WEBSITE_SOURCE_SPEC_KEY];
+  if (!raw) return {};
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? (parsed as WebsiteSourceMetadata) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function withWebsiteSourceMetadata(product: Product, patch: WebsiteSourceMetadata = {}): Product {
+  const current = {
+    source: product.source,
+    sourceUrl: product.sourceUrl,
+    sourceSlug: product.sourceSlug,
+    sourceProductId: product.sourceProductId,
+    lastSyncedAt: product.lastSyncedAt,
+    sourceActive: product.sourceActive,
+    websiteCategory: product.websiteCategory,
+    currency: product.currency,
+    listPrice: product.listPrice,
+    availability: product.availability,
+    productType: product.productType,
+    ...readWebsiteSourceBlob(product),
+    ...patch,
+  };
+  const next: Product = {
+    ...product,
+    source: current.source,
+    sourceUrl: current.sourceUrl,
+    sourceSlug: current.sourceSlug,
+    sourceProductId: current.sourceProductId,
+    lastSyncedAt: current.lastSyncedAt,
+    sourceActive: current.sourceActive,
+    websiteCategory: current.websiteCategory,
+    currency: current.currency,
+    listPrice: current.listPrice,
+    availability: current.availability,
+    productType: current.productType,
+    specifications: {
+      ...(typeof product.specifications === "object" && product.specifications ? product.specifications : {}),
+      [WEBSITE_SOURCE_SPEC_KEY]: JSON.stringify({
+        source: current.source || WEBSITE_CATALOG_SOURCE,
+        sourceUrl: current.sourceUrl || "",
+        sourceSlug: current.sourceSlug || "",
+        sourceProductId: current.sourceProductId || "",
+        lastSyncedAt: current.lastSyncedAt || "",
+        sourceActive: current.sourceActive !== false,
+        websiteCategory: current.websiteCategory || "",
+        currency: current.currency || "PKR",
+        listPrice: current.listPrice ?? 0,
+        availability: current.availability || "",
+        productType: current.productType,
+      }),
+    },
+  };
+  return next;
+}
+
 export function toCrmProduct(normalized: NormalizedWebsiteProduct, existing?: Partial<Product>): Product {
-  return {
+  const existingStock = Number(existing?.stock);
+  const product: Product = {
     id: existing?.id || normalized.id,
     name: normalized.name,
     category: normalized.category,
@@ -240,7 +316,7 @@ export function toCrmProduct(normalized: NormalizedWebsiteProduct, existing?: Pa
     sku: normalized.sku,
     price: normalized.price,
     discount: existing?.discount ?? normalized.discount,
-    stock: normalized.stock,
+    stock: Number.isFinite(existingStock) ? existingStock : 0,
     images: normalized.images,
     warrantyPeriod: normalized.warrantyPeriod || existing?.warrantyPeriod || "",
     specifications: {
@@ -261,30 +337,36 @@ export function toCrmProduct(normalized: NormalizedWebsiteProduct, existing?: Pa
     availability: normalized.availability,
     productType: normalized.productType,
   };
+  return withWebsiteSourceMetadata(product, {
+    source: normalized.source,
+    sourceUrl: normalized.sourceUrl,
+    sourceSlug: normalized.sourceSlug,
+    sourceProductId: normalized.sourceProductId,
+    lastSyncedAt: normalized.lastSyncedAt,
+    sourceActive: true,
+    websiteCategory: normalized.websiteCategory,
+    currency: normalized.currency,
+    listPrice: normalized.listPrice,
+    availability: normalized.availability,
+    productType: normalized.productType,
+  });
 }
 
 export function liftWebsiteSourceFields(product: Product): Product {
-  const specs = product.specifications && typeof product.specifications === "object" ? product.specifications : {};
-  const raw = (specs as Record<string, unknown>)[WEBSITE_SOURCE_SPEC_KEY];
-  if (!raw || product.source) return product;
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!parsed || typeof parsed !== "object") return product;
-    return {
-      ...product,
-      source: parsed.source || product.source,
-      sourceUrl: parsed.sourceUrl || product.sourceUrl,
-      sourceSlug: parsed.sourceSlug || product.sourceSlug,
-      sourceProductId: parsed.sourceProductId || product.sourceProductId,
-      lastSyncedAt: parsed.lastSyncedAt || product.lastSyncedAt,
-      sourceActive: parsed.sourceActive ?? product.sourceActive,
-      websiteCategory: parsed.websiteCategory || product.websiteCategory,
-      currency: parsed.currency || product.currency,
-      listPrice: parsed.listPrice ?? product.listPrice,
-      availability: parsed.availability || product.availability,
-      productType: parsed.productType || product.productType,
-    };
-  } catch {
-    return product;
-  }
+  const blob = readWebsiteSourceBlob(product);
+  if (!blob || Object.keys(blob).length === 0) return product;
+  return {
+    ...product,
+    source: product.source || blob.source,
+    sourceUrl: product.sourceUrl || blob.sourceUrl,
+    sourceSlug: product.sourceSlug || blob.sourceSlug,
+    sourceProductId: product.sourceProductId || blob.sourceProductId,
+    lastSyncedAt: product.lastSyncedAt || blob.lastSyncedAt,
+    sourceActive: blob.sourceActive ?? product.sourceActive,
+    websiteCategory: product.websiteCategory || blob.websiteCategory,
+    currency: product.currency || blob.currency,
+    listPrice: product.listPrice ?? blob.listPrice,
+    availability: product.availability || blob.availability,
+    productType: product.productType || blob.productType,
+  };
 }

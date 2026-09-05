@@ -90,6 +90,9 @@ import {
   liftWebsiteSourceFields,
   runWebsiteCatalogSync,
   emptyWebsiteCatalogReport,
+  resolveWebsiteCatalogSyncBaseline,
+  patchLatestSettingsWithWebsiteCatalogSync,
+  applyWebsiteCatalogPersistenceFailure,
 } from "./src/lib/websiteCatalog/index.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { formatQuotationPdfError } from "./src/lib/quotePdfErrors.ts";
@@ -7105,24 +7108,44 @@ app.post("/api/admin/website-catalog-sync", async (req, res) => {
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
   try {
     loadDb();
-    const existing = Array.isArray(db.products) ? db.products : [];
-    const result = await runWebsiteCatalogSync(existing);
+    let latestState: { products?: any[]; settings?: unknown } | null = null;
+    if (isSupabaseActive()) {
+      latestState = await fetchAppStateFromSupabase();
+    }
+    const baseline = resolveWebsiteCatalogSyncBaseline(db.products, db.settings, isSupabaseActive(), latestState);
+    const result = await runWebsiteCatalogSync(baseline.products);
     db.products = result.products;
-    const latestSettings = readSettingsObject(db.settings);
-    db.settings = { ...latestSettings, websiteCatalogSync: result.report };
+    const nextSettings = patchLatestSettingsWithWebsiteCatalogSync(baseline.settings, result.report);
+    db.settings = nextSettings;
     saveDb();
     if (isSupabaseActive()) {
       const supabase = getSupabase()!;
+      const toPersist = result.productsToPersist || [];
       const chunkSize = 80;
-      for (let i = 0; i < result.products.length; i += chunkSize) {
-        const chunk = result.products.slice(i, i + chunkSize).map((product: any) => mapProductRowForSupabase(product, product.id));
+      let persistedCount = 0;
+      for (let i = 0; i < toPersist.length; i += chunkSize) {
+        const chunk = toPersist.slice(i, i + chunkSize).map((product: any) => mapProductRowForSupabase(product, product.id));
         const { error } = await supabase.from("products").upsert(chunk, { onConflict: "id" });
         if (error) {
-          result.report.errors.push(`Supabase product upsert failed: ${error.message}`);
-          break;
+          result.report = applyWebsiteCatalogPersistenceFailure(
+            result.report,
+            `Supabase product upsert failed: ${error.message}`,
+            { persistedCount, attemptedCount: toPersist.length }
+          );
+          db.settings = patchLatestSettingsWithWebsiteCatalogSync(baseline.settings, result.report);
+          saveDb();
+          await upsertAppSettingsToSupabase(db.settings);
+          return res.status(500).json({ success: false, report: result.report, error: result.report.errors.at(-1) });
         }
+        persistedCount += chunk.length;
       }
+      result.report.persistedCount = persistedCount;
+      db.settings = patchLatestSettingsWithWebsiteCatalogSync(baseline.settings, result.report);
+      saveDb();
       await upsertAppSettingsToSupabase(db.settings);
+    }
+    if (result.report.lastStatus === "failed") {
+      return res.status(500).json({ success: false, report: result.report, error: result.report.errors[0] || "Website catalog sync failed." });
     }
     await appendActivityLog(
       staff.id,
@@ -7133,7 +7156,7 @@ app.post("/api/admin/website-catalog-sync", async (req, res) => {
     );
     return res.json({ success: true, report: result.report });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || "Website catalog sync failed." });
+    return res.status(500).json({ success: false, error: err.message || "Website catalog sync failed." });
   }
 });
 

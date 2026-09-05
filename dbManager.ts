@@ -20,6 +20,7 @@ import {
   readAssignedUserId,
 } from "./server/ownership/TechnicianOwnershipResolver.ts";
 import type { RequestActor } from "./server/middleware/actor.ts";
+import { liftWebsiteSourceFields } from "./src/lib/websiteCatalog/normalize.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -1589,7 +1590,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
 
   // Additional ERP metrics mapping
   const productsCatalogData = productsCatalogResult.data || [];
-  const productsCatalogMapped = (productsCatalogData || []).map((p: any) => ({
+  const productsCatalogMapped = (productsCatalogData || []).map((p: any) => liftWebsiteSourceFields({
     id: p.id,
     name: p.name,
     category: p.category,
@@ -1601,7 +1602,9 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     stock: Number(p.stock || 0),
     images: p.images || [],
     warrantyPeriod: p.warranty_period,
-    specifications: typeof p.specifications === "string" ? JSON.parse(p.specifications) : (p.specifications || {})
+    specifications: typeof p.specifications === "string" ? JSON.parse(p.specifications) : (p.specifications || {}),
+    installationRequired: false,
+    serviceRequired: false,
   }));
 
   const ordersMapped = (ordersData || []).map((o: any) => ({

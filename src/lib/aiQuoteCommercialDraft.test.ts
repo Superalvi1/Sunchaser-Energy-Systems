@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 import {
   buildCommercialDraftApply,
   buildCommercialQuoteBoq,
+  catalogIdAfterBrandChange,
+  catalogProductMatchesIdentity,
+  validateCommercialQuoteConfig,
   type CommercialQuoteConfig,
 } from "./aiQuoteCommercialDraft.ts";
 import {
@@ -142,6 +145,74 @@ check("installation row uses 4/W over actual array watts", () => {
   const row = buildCommercialQuoteBoq(base).find((r) => r.id === "install_service_row")!;
   assert.equal(row.total, 645 * 16 * 4);
   assert.match(String(row.description), /Rs\. 4\/W/);
+});
+
+check("negative commercial inputs are rejected", () => {
+  const errors = validateCommercialQuoteConfig({ ...base, panelWattage: -645, panelRatePerWatt: -1, inverterQuantity: 0 });
+  assert.equal(errors.length > 0, true);
+  assert.equal(errors.some((e) => /wattage/i.test(e)), true);
+});
+
+check("zero installation rate is preserved instead of defaulting to 4", () => {
+  const apply = buildCommercialDraftApply({ ...base, installationRatePerWatt: 0, elevatedStructureRatePerWatt: 0 });
+  assert.equal(apply.installationRatePerWatt, 0);
+  assert.equal(apply.elevatedStructureRatePerWatt, 0);
+  assert.equal(apply.boqRows.find((r) => r.id === "install_service_row")?.total, 0);
+});
+
+check("Apply/config validation rejects invalid quote", () => {
+  const errors = validateCommercialQuoteConfig({ ...base, systemSizeKw: 0, panelQuantity: 0 });
+  assert.equal(errors.some((e) => /System size/.test(e)), true);
+  assert.equal(errors.some((e) => /Panel quantity/.test(e)), true);
+  const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
+  assert.match(modal, /validateCommercialQuoteConfig/);
+  assert.match(modal, /disabled=\{validationErrors\.length > 0\}/);
+  assert.match(modal, /catalogProductMatchesIdentity/);
+  assert.match(modal, /catalogIdAfterBrandChange/);
+  assert.match(modal, /Use website package system size/);
+});
+
+check("brand change clears mismatching panel product ID", () => {
+  assert.equal(catalogIdAfterBrandChange("web_jinko", "JinkoSolar", "LONGi"), "");
+  assert.equal(catalogIdAfterBrandChange("web_jinko", "JinkoSolar", "JinkoSolar"), "web_jinko");
+});
+
+check("brand change clears mismatching inverter product ID", () => {
+  assert.equal(catalogIdAfterBrandChange("web_goodwe", "GoodWe", "Knox"), "");
+});
+
+check("brand change clears mismatching battery product ID", () => {
+  assert.equal(catalogIdAfterBrandChange("web_soluna", "Soluna", "Pylontech"), "");
+});
+
+check("matching model keeps catalog product identity", () => {
+  assert.equal(
+    catalogProductMatchesIdentity({ brand: "JinkoSolar", model: "Tiger Neo 580" }, "JinkoSolar", "Tiger Neo 580"),
+    true
+  );
+  assert.equal(
+    catalogProductMatchesIdentity({ brand: "JinkoSolar", model: "Tiger Neo 580" }, "LONGi", "Tiger Neo 580"),
+    false
+  );
+});
+
+check("custom models work without catalog product", () => {
+  const apply = buildCommercialDraftApply({
+    ...base,
+    panelBrand: "House Brand",
+    panelModel: "Custom 645",
+    panelCatalogProductId: "",
+    inverterBrand: "House Inverter",
+    inverterModel: "HX-10",
+    inverterCatalogProductId: "",
+    batteryBrand: "House Battery",
+    batteryModel: "HB-5",
+    batteryCatalogProductId: "",
+  });
+  assert.equal(apply.panelCatalogProductId, "");
+  assert.equal(apply.inverterCatalogProductId, "");
+  assert.match(apply.boqRows.find((r) => r.id === "panel_row")!.name, /Custom 645/);
+  assert.match(apply.boqRows.find((r) => r.id === "inverter_row")!.name, /HX-10/);
 });
 
 console.log(`\nAI quote commercial draft tests: ${pass} passed`);

@@ -19,12 +19,15 @@ import {
 } from "../../lib/quoteCommercialMath";
 import {
   buildCommercialDraftApply,
+  catalogIdAfterBrandChange,
+  catalogProductMatchesIdentity,
   defaultBatteryEnabled,
+  validateCommercialQuoteConfig,
   type CommercialQuoteDraftApply,
   type QuoteStructureKind,
   type QuoteSystemType,
 } from "../../lib/aiQuoteCommercialDraft";
-import { productsForType } from "../../lib/websiteCatalog/sync";
+import { productsForBrand, productsForType } from "../../lib/websiteCatalog/sync";
 import { liftWebsiteSourceFields } from "../../lib/websiteCatalog/normalize";
 import { recommendStructures } from "../../lib/autoSizer/structureRecommendation";
 
@@ -155,42 +158,53 @@ export default function AIQuoteBuilderModal({
   const resolvedPanelBrand = panelBrand === OTHER_CUSTOM_BRAND ? customPanelBrand : panelBrand;
   const resolvedInverterBrand = inverterBrand === OTHER_CUSTOM_BRAND ? customInverterBrand : inverterBrand;
   const resolvedBatteryBrand = batteryBrand === OTHER_CUSTOM_BRAND ? customBatteryBrand : batteryBrand;
+  const panelChoices = useMemo(
+    () => (resolvedPanelBrand ? productsForBrand(panelProducts, resolvedPanelBrand) : panelProducts),
+    [panelProducts, resolvedPanelBrand]
+  );
+  const inverterChoices = useMemo(
+    () => (resolvedInverterBrand ? productsForBrand(inverterProducts, resolvedInverterBrand) : inverterProducts),
+    [inverterProducts, resolvedInverterBrand]
+  );
+  const batteryChoices = useMemo(
+    () => (resolvedBatteryBrand ? productsForBrand(batteryProducts, resolvedBatteryBrand) : batteryProducts),
+    [batteryProducts, resolvedBatteryBrand]
+  );
 
-  const applyPayload = useMemo(
-    () =>
-      buildCommercialDraftApply({
-        systemSizeKw,
-        systemType,
-        panelBrand: resolvedPanelBrand,
-        panelModel,
-        panelWattage,
-        panelQuantity,
-        panelRatePerWatt,
-        panelCatalogProductId: panelProductId,
-        panelWebsitePrice,
-        inverterBrand: resolvedInverterBrand,
-        inverterModel,
-        inverterCapacity,
-        inverterQuantity,
-        inverterUnitPrice,
-        inverterCatalogProductId: inverterProductId,
-        inverterWebsitePrice,
-        batteryEnabled,
-        batteryBrand: resolvedBatteryBrand,
-        batteryModel,
-        batteryCapacityKwh,
-        batteryQuantity,
-        batteryUnitPrice,
-        batteryCatalogProductId: batteryProductId,
-        batteryWebsitePrice,
-        structureType,
-        installationRatePerWatt,
-        elevatedStructureRatePerWatt: elevatedRatePerWatt,
-        girderAmount,
-        customStructureName,
-        customStructureDescription,
-        customStructureAmount,
-      }),
+  const commercialConfig = useMemo(
+    () => ({
+      systemSizeKw,
+      systemType,
+      panelBrand: resolvedPanelBrand,
+      panelModel,
+      panelWattage,
+      panelQuantity,
+      panelRatePerWatt,
+      panelCatalogProductId: panelProductId,
+      panelWebsitePrice,
+      inverterBrand: resolvedInverterBrand,
+      inverterModel,
+      inverterCapacity,
+      inverterQuantity,
+      inverterUnitPrice,
+      inverterCatalogProductId: inverterProductId,
+      inverterWebsitePrice,
+      batteryEnabled,
+      batteryBrand: resolvedBatteryBrand,
+      batteryModel,
+      batteryCapacityKwh,
+      batteryQuantity,
+      batteryUnitPrice,
+      batteryCatalogProductId: batteryProductId,
+      batteryWebsitePrice,
+      structureType,
+      installationRatePerWatt,
+      elevatedStructureRatePerWatt: elevatedRatePerWatt,
+      girderAmount,
+      customStructureName,
+      customStructureDescription,
+      customStructureAmount,
+    }),
     [
       systemSizeKw,
       systemType,
@@ -225,6 +239,8 @@ export default function AIQuoteBuilderModal({
       customStructureAmount,
     ]
   );
+  const validationErrors = useMemo(() => validateCommercialQuoteConfig(commercialConfig), [commercialConfig]);
+  const applyPayload = useMemo(() => buildCommercialDraftApply(commercialConfig), [commercialConfig]);
 
   const arrayWatts = calculateArrayWatts(panelWattage, panelQuantity);
   const structure = recommendStructures(panelQuantity);
@@ -294,6 +310,7 @@ export default function AIQuoteBuilderModal({
   };
 
   const handleApply = () => {
+    if (validationErrors.length) return;
     onApplyDraft(applyPayload);
     onClose();
   };
@@ -323,7 +340,7 @@ export default function AIQuoteBuilderModal({
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">System</h3>
               {packageProducts.length > 0 && (
                 <div>
-                  <FieldLabel>Start from website package (optional, editable)</FieldLabel>
+                  <FieldLabel>Use website package system size</FieldLabel>
                   <select
                     value={packageId}
                     onChange={(e) => {
@@ -339,7 +356,7 @@ export default function AIQuoteBuilderModal({
                     }}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   >
-                    <option value="">Equipment remains editable</option>
+                    <option value="">Does not load equipment — size only</option>
                     {packageProducts.slice(0, 40).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}
@@ -409,7 +426,12 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Panel brand</FieldLabel>
                   <select
                     value={panelBrand}
-                    onChange={(e) => setPanelBrand(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === OTHER_CUSTOM_BRAND) setPanelProductId("");
+                      else setPanelProductId(catalogIdAfterBrandChange(panelProductId, resolvedPanelBrand, next));
+                      setPanelBrand(next);
+                    }}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   >
                     {panelBrands.map((b) => (
@@ -419,20 +441,39 @@ export default function AIQuoteBuilderModal({
                   {panelBrand === OTHER_CUSTOM_BRAND && (
                     <input
                       value={customPanelBrand}
-                      onChange={(e) => setCustomPanelBrand(e.target.value)}
+                      onChange={(e) => {
+                        setPanelProductId(catalogIdAfterBrandChange(panelProductId, resolvedPanelBrand, e.target.value));
+                        setCustomPanelBrand(e.target.value);
+                      }}
                       placeholder="Custom brand"
                       className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                     />
                   )}
                 </div>
                 <div>
-                  <FieldLabel>Panel product / model</FieldLabel>
-                  <CatalogProductPicker products={panelProducts} valueId={panelProductId} onSelect={selectPanel} />
+                  <FieldLabel>Panel product</FieldLabel>
+                  <CatalogProductPicker products={panelChoices} valueId={panelProductId} onSelect={selectPanel} />
+                </div>
+                <div>
+                  <FieldLabel>Panel model</FieldLabel>
+                  <input
+                    value={panelModel}
+                    onChange={(e) => {
+                      setPanelModel(e.target.value);
+                      const selected = panelChoices.find((p) => p.id === panelProductId);
+                      if (panelProductId && !catalogProductMatchesIdentity(selected, resolvedPanelBrand, e.target.value)) {
+                        setPanelProductId("");
+                      }
+                    }}
+                    placeholder="Custom model is allowed"
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  />
                 </div>
                 <div>
                   <FieldLabel>Wattage</FieldLabel>
                   <input
                     type="number"
+                    min={1}
                     value={panelWattage}
                     onChange={(e) => setPanelWattage(Number(e.target.value))}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
@@ -443,6 +484,7 @@ export default function AIQuoteBuilderModal({
                   <div className="mt-1 flex gap-2">
                     <input
                       type="number"
+                      min={1}
                       value={panelQuantity}
                       onChange={(e) => {
                         setQtyDirty(true);
@@ -484,6 +526,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Quote PKR/W</FieldLabel>
                   <input
                     type="number"
+                    min={0}
                     step="0.01"
                     value={panelRatePerWatt}
                     onChange={(e) => {
@@ -503,7 +546,12 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Brand</FieldLabel>
                   <select
                     value={inverterBrand}
-                    onChange={(e) => setInverterBrand(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === OTHER_CUSTOM_BRAND) setInverterProductId("");
+                      else setInverterProductId(catalogIdAfterBrandChange(inverterProductId, resolvedInverterBrand, next));
+                      setInverterBrand(next);
+                    }}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   >
                     {inverterBrands.map((b) => (
@@ -513,14 +561,32 @@ export default function AIQuoteBuilderModal({
                   {inverterBrand === OTHER_CUSTOM_BRAND && (
                     <input
                       value={customInverterBrand}
-                      onChange={(e) => setCustomInverterBrand(e.target.value)}
+                      onChange={(e) => {
+                        setInverterProductId(catalogIdAfterBrandChange(inverterProductId, resolvedInverterBrand, e.target.value));
+                        setCustomInverterBrand(e.target.value);
+                      }}
                       className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                     />
                   )}
                 </div>
                 <div>
-                  <FieldLabel>Product / model</FieldLabel>
-                  <CatalogProductPicker products={inverterProducts} valueId={inverterProductId} onSelect={selectInverter} />
+                  <FieldLabel>Product</FieldLabel>
+                  <CatalogProductPicker products={inverterChoices} valueId={inverterProductId} onSelect={selectInverter} />
+                </div>
+                <div>
+                  <FieldLabel>Model</FieldLabel>
+                  <input
+                    value={inverterModel}
+                    onChange={(e) => {
+                      setInverterModel(e.target.value);
+                      const selected = inverterChoices.find((p) => p.id === inverterProductId);
+                      if (inverterProductId && !catalogProductMatchesIdentity(selected, resolvedInverterBrand, e.target.value)) {
+                        setInverterProductId("");
+                      }
+                    }}
+                    placeholder="Custom model is allowed"
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  />
                 </div>
                 <div>
                   <FieldLabel>Capacity</FieldLabel>
@@ -534,6 +600,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Quantity</FieldLabel>
                   <input
                     type="number"
+                    min={1}
                     value={inverterQuantity}
                     onChange={(e) => setInverterQuantity(Number(e.target.value))}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
@@ -557,6 +624,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Quote unit price</FieldLabel>
                   <input
                     type="number"
+                    min={0}
                     value={inverterUnitPrice}
                     onChange={(e) => {
                       setInverterPriceDirty(true);
@@ -585,7 +653,12 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Brand</FieldLabel>
                     <select
                       value={batteryBrand}
-                      onChange={(e) => setBatteryBrand(e.target.value)}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (next === OTHER_CUSTOM_BRAND) setBatteryProductId("");
+                        else setBatteryProductId(catalogIdAfterBrandChange(batteryProductId, resolvedBatteryBrand, next));
+                        setBatteryBrand(next);
+                      }}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                     >
                       {batteryBrands.map((b) => (
@@ -595,14 +668,32 @@ export default function AIQuoteBuilderModal({
                     {batteryBrand === OTHER_CUSTOM_BRAND && (
                       <input
                         value={customBatteryBrand}
-                        onChange={(e) => setCustomBatteryBrand(e.target.value)}
+                        onChange={(e) => {
+                          setBatteryProductId(catalogIdAfterBrandChange(batteryProductId, resolvedBatteryBrand, e.target.value));
+                          setCustomBatteryBrand(e.target.value);
+                        }}
                         className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                       />
                     )}
                   </div>
                   <div>
-                    <FieldLabel>Product / model</FieldLabel>
-                    <CatalogProductPicker products={batteryProducts} valueId={batteryProductId} onSelect={selectBattery} />
+                    <FieldLabel>Product</FieldLabel>
+                    <CatalogProductPicker products={batteryChoices} valueId={batteryProductId} onSelect={selectBattery} />
+                  </div>
+                  <div>
+                    <FieldLabel>Model</FieldLabel>
+                    <input
+                      value={batteryModel}
+                      onChange={(e) => {
+                        setBatteryModel(e.target.value);
+                        const selected = batteryChoices.find((p) => p.id === batteryProductId);
+                        if (batteryProductId && !catalogProductMatchesIdentity(selected, resolvedBatteryBrand, e.target.value)) {
+                          setBatteryProductId("");
+                        }
+                      }}
+                      placeholder="Custom model is allowed"
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                    />
                   </div>
                   <div>
                     <FieldLabel>Capacity kWh</FieldLabel>
@@ -616,6 +707,7 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Quantity</FieldLabel>
                     <input
                       type="number"
+                      min={1}
                       value={batteryQuantity}
                       onChange={(e) => setBatteryQuantity(Number(e.target.value))}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
@@ -639,6 +731,7 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Quote unit price</FieldLabel>
                     <input
                       type="number"
+                      min={0}
                       value={batteryUnitPrice}
                       onChange={(e) => {
                         setBatteryPriceDirty(true);
@@ -677,6 +770,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Elevated PKR/W (default 16)</FieldLabel>
                   <input
                     type="number"
+                    min={0}
                     value={elevatedRatePerWatt}
                     onChange={(e) => setElevatedRatePerWatt(Number(e.target.value))}
                     className="mt-1 w-40 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
@@ -688,6 +782,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Girder amount (existing commercial job rate)</FieldLabel>
                   <input
                     type="number"
+                    min={0}
                     value={girderAmount}
                     onChange={(e) => setGirderAmount(Number(e.target.value))}
                     className="mt-1 w-40 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
@@ -704,6 +799,7 @@ export default function AIQuoteBuilderModal({
                   />
                   <input
                     type="number"
+                    min={0}
                     value={customStructureAmount}
                     onChange={(e) => setCustomStructureAmount(Number(e.target.value))}
                     placeholder="Amount"
@@ -726,6 +822,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Installation PKR/W (default 4)</FieldLabel>
                   <input
                     type="number"
+                    min={0}
                     value={installationRatePerWatt}
                     onChange={(e) => setInstallationRatePerWatt(Number(e.target.value))}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
@@ -757,6 +854,16 @@ export default function AIQuoteBuilderModal({
                 On-grid draft will not add a battery row.
               </div>
             )}
+            {validationErrors.length > 0 && (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-rose-300 mb-1">Fix before apply</p>
+                <ul className="text-[11px] text-rose-100/90 space-y-1 list-disc pl-4">
+                  {validationErrors.map((err) => (
+                    <li key={err}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </aside>
         </div>
 
@@ -775,7 +882,8 @@ export default function AIQuoteBuilderModal({
             <button
               type="button"
               onClick={handleApply}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500"
+              disabled={validationErrors.length > 0}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40"
             >
               Apply draft to BOQ
               <ArrowRight className="h-3.5 w-3.5" />

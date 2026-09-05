@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
 import type { Product } from "../../types.ts";
 import {
+  applyWebsiteCatalogPersistenceFailure,
   applyWebsiteCatalogSync,
   assertWebsiteCatalogUrl,
   authorizeWebsiteCatalogSyncAccess,
   canSyncWebsiteCatalog,
+  catalogFingerprint,
+  evaluateCatalogDiscovery,
   extractSitemapProductSlugs,
+  findExistingCatalogIndex,
+  liftWebsiteSourceFields,
   normalizeWebsiteProduct,
   parseProductJsonLd,
   parseShopCatalog,
+  patchLatestSettingsWithWebsiteCatalogSync,
+  resolveWebsiteCatalogSyncBaseline,
   resolveWebsiteProductType,
   runWebsiteCatalogSync,
+  toCrmProduct,
+  withWebsiteSourceMetadata,
   WEBSITE_CATALOG_SOURCE,
+  WEBSITE_SOURCE_SPEC_KEY,
 } from "./index.ts";
 
 let pass = 0;
@@ -93,6 +103,8 @@ const sitemap = `<?xml version="1.0"?><urlset>
 check("RSC shop payload is the catalog source", () => {
   const discovery = parseShopCatalog(html, sitemap);
   assert.equal(discovery.source, "next_rsc_shop");
+  assert.equal(discovery.discoveryUsable, true);
+  assert.equal(discovery.deactivationSafe, true);
   assert.equal(discovery.discoveryComplete, true);
   assert.equal(discovery.products.length, 2);
   assert.equal(extractSitemapProductSlugs(sitemap).length, 2);
@@ -110,20 +122,21 @@ check("product JSON-LD is parsed when present", () => {
 
 const syncedAt = "2026-09-05T00:00:00.000Z";
 const discovered = [panelRaw, inverterRaw].map((raw) => normalizeWebsiteProduct(raw as any, syncedAt));
+const fullSync = { discoveryUsable: true, deactivationSafe: true, sitemapAvailable: true, syncedAt };
 
 check("sync twice does not duplicate", () => {
-  const first = applyWebsiteCatalogSync([], discovered, { discoveryComplete: true, syncedAt });
-  const second = applyWebsiteCatalogSync(first.products, discovered, { discoveryComplete: true, syncedAt });
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const second = applyWebsiteCatalogSync(first.products, discovered, fullSync);
   assert.equal(first.report.added, 2);
   assert.equal(second.report.added, 0);
   assert.equal(second.products.filter((p) => p.source === WEBSITE_CATALOG_SOURCE).length, 2);
 });
 
 check("price update updates current catalog", () => {
-  const first = applyWebsiteCatalogSync([], discovered, { discoveryComplete: true, syncedAt });
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
   const updatedPanel = normalizeWebsiteProduct({ ...panelRaw, price: 31000 } as any, "2026-09-06T00:00:00.000Z");
   const second = applyWebsiteCatalogSync(first.products, [updatedPanel, discovered[1]], {
-    discoveryComplete: true,
+    ...fullSync,
     syncedAt: "2026-09-06T00:00:00.000Z",
   });
   const panel = second.products.find((p) => p.sourceSlug === panelRaw.slug)!;
@@ -132,8 +145,8 @@ check("price update updates current catalog", () => {
 });
 
 check("missing product becomes inactive and is not deleted", () => {
-  const first = applyWebsiteCatalogSync([], discovered, { discoveryComplete: true, syncedAt });
-  const second = applyWebsiteCatalogSync(first.products, [discovered[1]], { discoveryComplete: true, syncedAt });
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const second = applyWebsiteCatalogSync(first.products, [discovered[1]], fullSync);
   const missing = second.products.find((p) => p.sourceSlug === panelRaw.slug)!;
   assert.equal(Boolean(missing), true);
   assert.equal(missing.sourceActive, false);
@@ -141,9 +154,10 @@ check("missing product becomes inactive and is not deleted", () => {
 });
 
 check("failed website sync leaves catalogue intact", () => {
-  const first = applyWebsiteCatalogSync([], discovered, { discoveryComplete: true, syncedAt });
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
   const failed = applyWebsiteCatalogSync(first.products, [], {
-    discoveryComplete: false,
+    discoveryUsable: false,
+    deactivationSafe: false,
     syncedAt: "2026-09-06T00:00:00.000Z",
   });
   assert.equal(failed.products.length, first.products.length);
@@ -198,9 +212,227 @@ await checkAsync("runWebsiteCatalogSync uses injected fetch and does not wipe on
     if (url.endsWith("/shop")) return { status: 200, body: html };
     return { status: 200, body: sitemap };
   });
-  assert.equal(ok.report.discoveryComplete, true);
+  assert.equal(ok.report.discoveryUsable, true);
   assert.equal(ok.report.added, 2);
   assert.equal(ok.products.some((p) => p.id === "keep-me"), true);
+  assert.equal(ok.changedProductIds.includes("keep-me"), false);
+});
+
+function sitemapForSlugs(slugs: string[]): string {
+  return `<?xml version="1.0"?><urlset>${slugs.map((slug) => `<loc>https://www.sunchaserenergy.co/shop/${slug}</loc>`).join("")}</urlset>`;
+}
+
+check("full sitemap match allows true removal to become inactive", () => {
+  const slugs = Array.from({ length: 736 }, (_, i) => `product-${i}`);
+  const flags = evaluateCatalogDiscovery(slugs.map((slug) => ({ slug })), slugs);
+  assert.equal(flags.discoveryUsable, true);
+  assert.equal(flags.deactivationSafe, true);
+  const xml = sitemapForSlugs(slugs);
+  assert.equal(extractSitemapProductSlugs(xml).length, 736);
+});
+
+check("partial RSC vs full sitemap does not inactivate", () => {
+  const sitemapSlugs = Array.from({ length: 736 }, (_, i) => `product-${i}`);
+  const rsc = sitemapSlugs.slice(0, 100).map((slug) => ({ slug }));
+  const flags = evaluateCatalogDiscovery(rsc, sitemapSlugs);
+  assert.equal(flags.discoveryUsable, true);
+  assert.equal(flags.deactivationSafe, false);
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const partial = applyWebsiteCatalogSync(first.products, [discovered[0]], {
+    discoveryUsable: true,
+    deactivationSafe: false,
+    sitemapAvailable: true,
+    syncedAt,
+  });
+  const missing = partial.products.find((p) => p.sourceSlug === inverterRaw.slug)!;
+  assert.equal(missing.sourceActive, true);
+  assert.equal(partial.report.inactive, 0);
+});
+
+check("sitemap failure allows add/update but no mass deactivation", () => {
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const next = applyWebsiteCatalogSync(first.products, [discovered[0]], {
+    discoveryUsable: true,
+    deactivationSafe: false,
+    sitemapAvailable: false,
+    syncedAt: "2026-09-06T00:00:00.000Z",
+  });
+  assert.equal(next.products.find((p) => p.sourceSlug === inverterRaw.slug)?.sourceActive, true);
+  assert.equal(next.report.inactive, 0);
+});
+
+check("normalization failure protects existing slug from deactivation", () => {
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const next = applyWebsiteCatalogSync(first.products, [discovered[1]], {
+    ...fullSync,
+    protectedSlugs: [panelRaw.slug],
+  });
+  assert.equal(next.products.find((p) => p.sourceSlug === panelRaw.slug)?.sourceActive, true);
+  assert.equal(next.report.inactive, 0);
+});
+
+check("parse errors disable deactivation even when counts would match", () => {
+  const incompleteHtml = shopHtmlFor([panelRaw, { slug: "broken-payload" }]);
+  const matchingSitemap = `<?xml version="1.0"?><urlset>
+<loc>https://www.sunchaserenergy.co/shop/${panelRaw.slug}</loc>
+</urlset>`;
+  const discovery = parseShopCatalog(incompleteHtml, matchingSitemap);
+  assert.equal(discovery.products.length, 1);
+  assert.equal(discovery.failedSourceSlugs.includes("broken-payload"), true);
+  assert.equal(discovery.deactivationSafe, false);
+});
+
+check("sourceActive=false survives specification persistence round trip", () => {
+  const product = toCrmProduct(discovered[0]);
+  assert.equal(product.sourceActive, true);
+  const inactive = withWebsiteSourceMetadata(product, { sourceActive: false });
+  assert.equal(inactive.sourceActive, false);
+  const blob = JSON.parse(String(inactive.specifications[WEBSITE_SOURCE_SPEC_KEY]));
+  assert.equal(blob.sourceActive, false);
+  const supabaseRow = {
+    id: inactive.id,
+    name: inactive.name,
+    category: inactive.category,
+    brand: inactive.brand,
+    model: inactive.model,
+    sku: inactive.sku,
+    price: inactive.price,
+    discount: inactive.discount,
+    stock: inactive.stock,
+    images: inactive.images,
+    warrantyPeriod: inactive.warrantyPeriod,
+    specifications: inactive.specifications,
+    installationRequired: false,
+    serviceRequired: false,
+  };
+  const lifted = liftWebsiteSourceFields(supabaseRow as Product);
+  assert.equal(lifted.sourceActive, false);
+});
+
+check("CRM stock is preserved while website availability updates", () => {
+  const existing: Product = {
+    ...toCrmProduct(discovered[0]),
+    stock: 80,
+  };
+  const next = applyWebsiteCatalogSync([existing], discovered, fullSync);
+  const panel = next.products.find((p) => p.sourceSlug === panelRaw.slug)!;
+  assert.equal(panel.stock, 80);
+  assert.equal(panel.availability, "in_stock");
+});
+
+check("identical content with a later timestamp reports unchanged", () => {
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const later = discovered.map((p) => normalizeWebsiteProduct(
+    p.sourceSlug === panelRaw.slug ? panelRaw : inverterRaw as any,
+    "2026-09-06T00:00:00.000Z"
+  ));
+  const second = applyWebsiteCatalogSync(first.products, later, { ...fullSync, syncedAt: "2026-09-06T00:00:00.000Z" });
+  assert.equal(second.report.updated, 0);
+  assert.equal(second.report.added, 0);
+  assert.equal(second.report.unchanged >= 2, true);
+  assert.equal(second.productsToPersist.length, 0);
+  assert.equal(
+    catalogFingerprint(first.products[0]),
+    catalogFingerprint(toCrmProduct(later.find((p) => p.sourceSlug === first.products[0].sourceSlug) || later[0], first.products[0]))
+  );
+});
+
+check("stale local products do not overwrite newer Supabase baseline", () => {
+  const stale: Product[] = [{ ...toCrmProduct(discovered[0]), name: "STALE" }];
+  const latest: Product[] = [{ ...toCrmProduct(discovered[0]), name: "LATEST FROM SUPABASE", stock: 12 }];
+  const baseline = resolveWebsiteCatalogSyncBaseline(stale, { keep: true }, true, { products: latest, settings: { keep: true, other: 1 } });
+  assert.equal(baseline.products[0].name, "LATEST FROM SUPABASE");
+  const patched = patchLatestSettingsWithWebsiteCatalogSync(baseline.settings, emptyWebsiteCatalogReportFromTest());
+  assert.equal((patched as any).keep, true);
+  assert.equal((patched as any).other, 1);
+});
+
+function emptyWebsiteCatalogReportFromTest() {
+  return {
+    discovered: 0,
+    added: 0,
+    updated: 0,
+    unchanged: 0,
+    inactive: 0,
+    errors: [],
+    lastSyncedAt: null,
+    lastStatus: "idle" as const,
+    source: "next_rsc_shop" as const,
+    discoveryComplete: false,
+    discoveryUsable: false,
+    deactivationSafe: false,
+  };
+}
+
+check("unrelated CRM product is not rewritten", () => {
+  const manual: Product = {
+    id: "manual-crm-1",
+    name: "Manual LONGi",
+    category: "Solar Panels",
+    brand: "LONGi",
+    model: "Hi-MO 7",
+    sku: "MANUAL-1",
+    price: 99,
+    discount: 0,
+    stock: 7,
+    images: [],
+    warrantyPeriod: "",
+    specifications: { note: "owner entered" },
+    installationRequired: false,
+    serviceRequired: false,
+  };
+  const result = applyWebsiteCatalogSync([manual], discovered, fullSync);
+  const kept = result.products.find((p) => p.id === "manual-crm-1")!;
+  assert.equal(kept.stock, 7);
+  assert.equal(kept.specifications.note, "owner entered");
+  assert.equal(result.changedProductIds.includes("manual-crm-1"), false);
+  assert.equal(result.productsToPersist.some((p) => p.id === "manual-crm-1"), false);
+});
+
+check("unsafe SKU-only collision does not merge", () => {
+  const manual: Product = {
+    id: "manual-sku-collision",
+    name: "Unrelated box",
+    category: "Accessories",
+    brand: "OtherBrand",
+    model: "Box",
+    sku: panelRaw.sku,
+    price: 10,
+    discount: 0,
+    stock: 3,
+    images: [],
+    warrantyPeriod: "",
+    specifications: {},
+    installationRequired: false,
+    serviceRequired: false,
+  };
+  assert.equal(findExistingCatalogIndex([manual], discovered[0]), -1);
+  const result = applyWebsiteCatalogSync([manual], [discovered[0]], fullSync);
+  assert.equal(result.products.find((p) => p.id === "manual-sku-collision")?.brand, "OtherBrand");
+  assert.equal(result.products.some((p) => p.sourceSlug === panelRaw.slug && p.id !== "manual-sku-collision"), true);
+});
+
+check("persistence error produces failed sync result", () => {
+  const failed = applyWebsiteCatalogPersistenceFailure(
+    { ...emptyWebsiteCatalogReportFromTest(), lastStatus: "success" },
+    "Supabase product upsert failed: boom",
+    { persistedCount: 80, attemptedCount: 200 }
+  );
+  assert.equal(failed.lastStatus, "failed");
+  assert.equal(failed.errors.some((e) => /boom/.test(e)), true);
+  assert.equal(failed.errors.some((e) => /80\/200/.test(e)), true);
+});
+
+await checkAsync("sitemap HTTP failure updates without mass deactivation", async () => {
+  const first = applyWebsiteCatalogSync([], discovered, fullSync);
+  const next = await runWebsiteCatalogSync(first.products, async (url) => {
+    if (url.endsWith("/shop")) return { status: 200, body: shopHtmlFor([panelRaw]) };
+    return { status: 500, body: "" };
+  });
+  assert.equal(next.report.discoveryUsable, true);
+  assert.equal(next.report.deactivationSafe, false);
+  assert.equal(next.report.inactive, 0);
+  assert.equal(next.products.find((p) => p.sourceSlug === inverterRaw.slug)?.sourceActive, true);
 });
 
 console.log(`\nwebsite catalog tests: ${pass} passed`);
