@@ -4,7 +4,7 @@
  */
 import type { RequestActor } from "../middleware/actor.ts";
 import {
-  hasOutboundSendConfig,
+  isValidGraphApiVersion,
   isWhatsAppEnabled,
   readWhatsAppConfig,
   type WhatsAppConfig,
@@ -35,15 +35,20 @@ function isOutboundSuccess(
 }
 
 /**
- * Returns a send port when Meta outbound is configured; otherwise null
- * (caller must disable the send endpoint).
+ * Returns a send port when Meta outbound is available; otherwise null (caller
+ * must disable the send endpoint).
+ *
+ * Credentials are NOT required here. They come from the Meta Embedded Signup
+ * connection and are resolved per send, so an account connected after boot can
+ * send without a restart. Sends without usable credentials fail closed with 503.
  */
 export function createInboxOutboundSendPort(
   deps: InboxSendTransportDeps = {}
 ): InboxSendPort | null {
   const env = deps.env ?? process.env;
   const config = deps.config ?? readWhatsAppConfig(env);
-  const metaReady = isWhatsAppEnabled(config) && hasOutboundSendConfig(config);
+  const metaReady =
+    isWhatsAppEnabled(config) && isValidGraphApiVersion(config.graphApiVersion);
   if (!metaReady) {
     return null;
   }
@@ -63,6 +68,7 @@ export function createInboxOutboundSendPort(
       actor: input.actor,
       fetchImpl,
       messagingRepository,
+      env,
     });
 
     if (isOutboundSuccess(result)) {
