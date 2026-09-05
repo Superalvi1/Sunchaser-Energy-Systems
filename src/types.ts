@@ -9,6 +9,9 @@ export interface BoqRow {
   qty: number;
   rate: number;
   total: number;
+  /** Quotation-only marker. Kit structure rows must not impersonate inventory SKUs. */
+  quoteLineKind?: string;
+  catalogProductId?: string;
 }
 
 export interface Quote {
@@ -76,6 +79,17 @@ export interface Quote {
   customNotes?: string;
   grandTotal?: number;
   netTotal?: number;
+  quote_type?: "auto_sizer" | "manual_boq" | string;
+  source?: string;
+  includedPages?: string[];
+  includeSizerItems?: boolean;
+  templateId?: string;
+  warrantyTerms?: string;
+  termsAndConditions?: string;
+  paymentTerms?: string;
+  /** Calendar days the quotation remains valid. Derived from company terms when omitted. */
+  validityDays?: number;
+  manualOverrides?: Partial<Record<"panel" | "inverter" | "battery" | "structure" | "cables" | "accessories" | "prices", boolean>>;
 }
 
 export interface Survey {

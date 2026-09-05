@@ -77,6 +77,13 @@ import {
   paginateBoqRowsForPdf,
   buildBoqTotalsHtml,
 } from "./src/lib/quoteBoqPdf.ts";
+import { compileThreePageQuotationHtml } from "./src/lib/quoteThreePageRender.ts";
+import {
+  parseCompanyAutoSizerPresets,
+  patchLatestSettingsWithAutoSizerPresets,
+  authorizeAutoSizerPresetsAccess,
+  readSettingsObject,
+} from "./src/lib/autoSizer/index.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { formatQuotationPdfError } from "./src/lib/quotePdfErrors.ts";
 import {
@@ -7001,6 +7008,66 @@ app.delete("/api/admin/products/:id", async (req, res) => {
   }
 });
 
+/**
+ * AutoSizer company presets — dedicated admin endpoint.
+ * Patches ONLY settings.autoSizerPresets onto the latest server settings document.
+ * Super Admin, Admin, Director, and Technical CEO (Director-equivalent) only.
+ * Sales / accounts / technical / customer roles are denied even if they can POST /api/db/update.
+ */
+app.get("/api/admin/autosizer-presets", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeAutoSizerPresetsAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latest: unknown = db.settings;
+    if (isSupabaseActive()) {
+      const state = await fetchAppStateFromSupabase();
+      latest = state?.settings ?? latest;
+    }
+    const autoSizerPresets = parseCompanyAutoSizerPresets(latest);
+    return res.json({ success: true, autoSizerPresets, settings: readSettingsObject(latest) });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Could not load AutoSizer presets." });
+  }
+});
+
+app.put("/api/admin/autosizer-presets", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeAutoSizerPresetsAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latest: unknown = db.settings;
+    if (isSupabaseActive()) {
+      const state = await fetchAppStateFromSupabase();
+      latest = state?.settings ?? latest;
+    }
+    const next = patchLatestSettingsWithAutoSizerPresets(latest, req.body);
+    db.settings = next;
+    saveDb();
+    if (isSupabaseActive()) {
+      await upsertAppSettingsToSupabase(next);
+    }
+    await appendActivityLog(
+      staff.id,
+      staff.username,
+      staff.role,
+      "AutoSizer Presets Updated",
+      `${staff.username} updated company AutoSizer presets`
+    );
+    return res.json({
+      success: true,
+      autoSizerPresets: parseCompanyAutoSizerPresets(next),
+      settings: next,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Could not save AutoSizer presets." });
+  }
+});
+
 // Generic Manual Admin CRUD Database manager endpoint
 app.post("/api/db/update", async (req, res) => {
   const { action, table, data, id } = req.body;
@@ -9247,22 +9314,71 @@ app.get("/api/export/pdf/auto-sizer/:leadId", async (req, res) => {
       'h-3', 'db_box_row', 's-3',
       'h-4', 'supplies_row', 's-4',
       'h-5', 'earthing_bore_row', 's-5',
-      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-6', 'structure_row', 'structure_l3_row', 'structure_l2_row', 'civil_work_row', 'install_service_row', 's-6',
       'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
     ];
+    const snapshotRows = normalizeQuoteBoqRows(quote);
     console.log(`[PDF BACKEND LOG] GET /api/export/pdf/auto-sizer/:leadId
       - quoteId: ${quote.id}
       - quote_type: ${quote.quote_type || "auto_sizer"}
-      - includeSizerItems: true
-      - manual rows count: 0
-      - auto rows count: ${defaultAutoSizerIds.length}
-      - final rows count: ${defaultAutoSizerIds.length}
+      - renderer: sunchaser-three-page-quotation
+      - snapshot item count: ${snapshotRows.filter((r: any) => r && r.type === "item").length}
+      - auto rows count: ${snapshotRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length}
     `);
 
-    const pdfHtml = compileSunchaserPDFHtml('sizer', quote, lead, activeState);
-    res.send(pdfHtml);
+    const quoteForExport = { ...quote, boqRows: snapshotRows, boqItems: snapshotRows };
+    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, { mode: "auto" });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(rendered.html);
   } catch (err: any) {
     res.status(500).send("Error compiling PDF structure: " + err.message);
+  }
+});
+
+app.get("/api/export/pdf/auto-sizer/:leadId/download", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  if (!(await guardSalesOwnedResourceText(req, res, "quotation_pdf", req.params.leadId))) return;
+  try {
+    if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
+      return res.status(403).send("Auto Sizer PDF export is temporarily disabled. Use Manual BOQ PDF with quoteId.");
+    }
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) {
+      activeState = await fetchAppStateFromSupabase();
+    }
+
+    const lead = activeState.leads.find((l: any) => l.id === req.params.leadId);
+    if (!lead) {
+      return res.status(404).send("Lead not found.");
+    }
+
+    const quoteId = req.query.quoteId ? String(req.query.quoteId) : "";
+    let quote = null;
+    if (quoteId) {
+      quote = lead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer");
+    } else {
+      quote = getLatestSavedQuote(lead, "auto_sizer");
+    }
+    if (!quote) {
+      return res.status(404).send("Save a quote first.");
+    }
+
+    const snapshotRows = normalizeQuoteBoqRows(quote);
+    const quoteForExport = { ...quote, boqRows: snapshotRows, boqItems: snapshotRows };
+    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, {
+      mode: "auto",
+      hideActionBar: true,
+    });
+    if (rendered.exportBlocked) {
+      return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
+    }
+    const filename = buildQuotationPdfFilename(lead, quote);
+    await sendQuotationPdfResponse(res, rendered.html, filename);
+  } catch (err: any) {
+    console.error("[PDF DOWNLOAD]", err);
+    res.status(500).send(formatQuotationPdfError(err));
   }
 });
 
@@ -9321,37 +9437,16 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       payload = exactManualQuote;
     }
 
-    const options = {
-      includedPages: payload.includedPages || ['cover', 'profile', 'qr', 'ceo', 'structure', 'boq', 'terms1', 'terms2', 'signoff', 'bank', 'final'],
-      templateId: payload.templateId || "tmpl-1",
-      includeSizerItems: payload.includeSizerItems === true
-    };
-
-    const defaultAutoSizerIds = [
-      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
-      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
-      'h-3', 'db_box_row', 's-3',
-      'h-4', 'supplies_row', 's-4',
-      'h-5', 'earthing_bore_row', 's-5',
-      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
-      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
-    ];
     const allRows = normalizeQuoteBoqRows(payload);
-    const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
-    const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
-    const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
+    const itemCount = allRows.filter((r: any) => r && r.type === "item").length;
     console.log(`[PDF BACKEND LOG] POST /api/export/pdf/manual-quote
       - quoteId: ${payload.id || 'N/A'}
       - quote_type: ${payload.quote_type || 'manual_boq'}
-      - includeSizerItems: ${options.includeSizerItems}
-      - manual rows count: ${manualBoqCount}
-      - auto rows count: ${autoSizerCount}
-      - final rows count: ${finalCount}
+      - renderer: sunchaser-three-page-quotation
+      - snapshot item count: ${itemCount}
     `);
 
-    const hasCompiledQuote = lead && lead.quotes && lead.quotes.some((q: any) => q.quote_type === 'manual_boq');
-
-    if (manualBoqCount === 0 || !hasCompiledQuote) {
+    if (itemCount === 0) {
       res.send(`
         <div style="padding: 40px; color: #d97706; font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; max-width: 500px; margin: 50px auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
           <h2 style="margin-top: 0; color: #92400e; font-size: 20px; font-weight: 700;">No BOQ items added yet.</h2>
@@ -9361,8 +9456,9 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       return;
     }
 
-    const pdfHtml = compileSunchaserPDFHtml('manual', payload, lead, activeState, options);
-    res.send(pdfHtml);
+    const quoteForExport = { ...payload, boqRows: allRows, boqItems: allRows };
+    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, { mode: "manual" });
+    res.send(rendered.html);
   } catch (err: any) {
     res.status(500).send("Error compiling Manual PDF structure: " + err.message);
   }
@@ -9528,16 +9624,6 @@ app.post("/api/export/pdf/design-studio-proposal/download", async (req, res) => 
   }
 });
 
-const DEFAULT_AUTO_SIZER_BOQ_ROW_IDS = [
-  'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
-  'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
-  'h-3', 'db_box_row', 's-3',
-  'h-4', 'supplies_row', 's-4',
-  'h-5', 'earthing_bore_row', 's-5',
-  'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
-  'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
-];
-
 async function resolveSavedManualQuoteForExport(leadId: string, quoteId?: string) {
   const activeState = await resolveQuoteExportState();
   const lead = activeState.leads.find((l: any) => l.id === leadId);
@@ -9574,11 +9660,9 @@ async function resolveSavedManualQuoteForExport(leadId: string, quoteId?: string
     boqItems: normalizedRows,
   };
 
-  const manualBoqCount = normalizedRows.filter(
-    (r: any) => r && r.type === "item" && !DEFAULT_AUTO_SIZER_BOQ_ROW_IDS.includes(r.id)
-  ).length;
+  const itemCount = normalizedRows.filter((r: any) => r && r.type === "item").length;
 
-  if (manualBoqCount === 0) {
+  if (itemCount === 0) {
     return { error: { status: 400, message: "No BOQ items added yet. Please add BOQ rows and compile quote first." } as const };
   }
 
@@ -9589,9 +9673,12 @@ function compileManualQuoteExportHtml(
   activeState: Database,
   quote: any,
   lead: any,
-  options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean; debugBox?: boolean }
+  options: { includedPages?: string[]; templateId?: string; includeSizerItems?: boolean; debugBox?: boolean; hideActionBar?: boolean } = {}
 ) {
-  return compileSunchaserPDFHtml("manual", quote, lead, activeState, options);
+  return compileThreePageQuotationHtml(quote, lead, activeState, {
+    mode: quote?.quote_type === "auto_sizer" ? "auto" : "manual",
+    hideActionBar: options.hideActionBar === true,
+  });
 }
 
 app.get("/api/export/pdf/template-preview/:templateId", async (req, res) => {
@@ -9656,9 +9743,9 @@ app.get("/api/export/pdf/manual-quote/:leadId/debug-html", async (req, res) => {
     }
     const { activeState, lead, quote, options } = resolved;
     const debugBox = req.query.debugBox === "1" || req.query.debugBox === "true";
-    const html = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, debugBox });
+    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, debugBox });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    res.send(rendered.html);
   } catch (err: any) {
     console.error("[PDF DEBUG HTML]", err);
     res.status(500).send("Error compiling debug HTML: " + formatQuotationPdfError(err));
@@ -9676,9 +9763,12 @@ app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
       return res.status(resolved.error.status).send(resolved.error.message);
     }
     const { activeState, lead, quote, options } = resolved;
-    const pdfHtml = compileManualQuoteExportHtml(activeState, quote, lead, options);
+    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, hideActionBar: true });
+    if (rendered.exportBlocked) {
+      return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
+    }
     const filename = buildQuotationPdfFilename(lead, quote);
-    await sendQuotationPdfResponse(res, pdfHtml, filename);
+    await sendQuotationPdfResponse(res, rendered.html, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
     res.status(500).send(formatQuotationPdfError(err));
@@ -9713,35 +9803,16 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
       return res.status(404).send("Save a quote first.");
     }
 
-    const options = {
-      includedPages: normalizeManualQuoteIncludedPages(quote.includedPages),
-      templateId: quote.templateId || quote.template_id || "tmpl-1",
-      includeSizerItems: quote.includeSizerItems === true
-    };
-
-    const defaultAutoSizerIds = [
-      'h-1', 'panel_row', 'inverter_row', 'battery_row', 's-1',
-      'h-2', 'dc_cable_row', 'ac_cable_row', 'earth_wire_row', 's-2',
-      'h-3', 'db_box_row', 's-3',
-      'h-4', 'supplies_row', 's-4',
-      'h-5', 'earthing_bore_row', 's-5',
-      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
-      'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
-    ];
     const allRows = normalizeQuoteBoqRows(quote);
-    const autoSizerCount = allRows.filter((r: any) => defaultAutoSizerIds.includes(r.id)).length;
-    const manualBoqCount = allRows.filter((r: any) => r && r.type === "item" && !defaultAutoSizerIds.includes(r.id)).length;
-    const finalCount = options.includeSizerItems ? allRows.length : manualBoqCount;
+    const itemCount = allRows.filter((r: any) => r && r.type === "item").length;
     console.log(`[PDF BACKEND LOG] GET /api/export/pdf/manual-quote/:leadId
       - quoteId: ${quote.id}
       - quote_type: ${quote.quote_type || 'manual_boq'}
-      - includeSizerItems: ${options.includeSizerItems}
-      - manual rows count: ${manualBoqCount}
-      - auto rows count: ${autoSizerCount}
-      - final rows count: ${finalCount}
+      - renderer: sunchaser-three-page-quotation
+      - snapshot item count: ${itemCount}
     `);
 
-    if (manualBoqCount === 0) {
+    if (itemCount === 0) {
       res.send(`
         <div style="padding: 40px; color: #d97706; font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; max-width: 500px; margin: 50px auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
           <h2 style="margin-top: 0; color: #92400e; font-size: 20px; font-weight: 700;">No BOQ items added yet.</h2>
@@ -9751,7 +9822,8 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
       return;
     }
 
-    const pdfHtml = compileSunchaserPDFHtml('manual', quote, lead, activeState, options);
+    const quoteForExport = { ...quote, boqRows: allRows, boqItems: allRows };
+    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, { mode: "manual" });
     await syncQuotationVaultForLead(
       lead,
       req.params.leadId,
@@ -9759,7 +9831,7 @@ app.get("/api/export/pdf/manual-quote/:leadId", async (req, res) => {
       lead.customerId || lead.customer_id || null,
       db
     );
-    res.send(pdfHtml);
+    res.send(rendered.html);
   } catch (err: any) {
     res.status(500).send("Error compiling manual quotation PDF: " + err.message);
   }

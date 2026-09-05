@@ -59,6 +59,7 @@ import {
   fetchDeliveryDashboardSummary,
 } from "../services/api";
 import { parseQuotePageExtendedSettings, serializeQuotePageBody } from "../lib/quotePdfLayout";
+import AutoSizerPresetsAdmin from "./AutoSizerPresetsAdmin";
 
 interface AdminAppProps {
   leads: Lead[];
@@ -197,7 +198,7 @@ export default function AdminApp({
   }, [showUserManagement, activeSegment, staffUser.id, staffUser.username]);
 
   // Template Manager Tab states
-  const [selectedSubTab, setSelectedSubTab] = useState<'pages' | 'banks' | 'terms' | 'ceo' | 'structures' | 'settings'>('pages');
+  const [selectedSubTab, setSelectedSubTab] = useState<'pages' | 'banks' | 'terms' | 'ceo' | 'structures' | 'settings' | 'autosizer'>('pages');
   
   // Database CRUD status states
   const [syncing, setSyncing] = useState<boolean>(false);
@@ -577,7 +578,7 @@ export default function AdminApp({
 
             {/* Inner Sub-Tab Selector Navigation */}
             <div className="flex gap-1.5 bg-neutral-950 p-1.5 rounded-2xl border border-neutral-850 flex-wrap">
-              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings'] as const).map((sub) => (
+              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings', 'autosizer'] as const).map((sub) => (
                 <button
                   key={sub}
                   onClick={() => {
@@ -602,6 +603,7 @@ export default function AdminApp({
                   {sub === 'ceo' && 'Executive CEO Messages'}
                   {sub === 'structures' && 'Structure Drawings'}
                   {sub === 'settings' && 'Global PDF settings'}
+                  {sub === 'autosizer' && 'AutoSizer Presets'}
                 </button>
               ))}
             </div>
@@ -1511,6 +1513,15 @@ export default function AdminApp({
                   )}
                 </div>
               </div>
+            )}
+
+            {selectedSubTab === 'autosizer' && (
+              <AutoSizerPresetsAdmin
+                settings={settings}
+                products={products}
+                syncing={syncing}
+                onSaved={onRefreshState}
+              />
             )}
 
             {/* SUBTAB 6: GLOBAL PDF SETTINGS */}

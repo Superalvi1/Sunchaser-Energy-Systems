@@ -23,6 +23,8 @@ export const DEFAULT_AUTO_SIZER_BOQ_IDS = [
   "s-5",
   "h-6",
   "structure_row",
+  "structure_l3_row",
+  "structure_l2_row",
   "civil_work_row",
   "install_service_row",
   "s-6",

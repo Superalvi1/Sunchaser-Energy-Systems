@@ -990,6 +990,8 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     source: quote.source || quote.quote_type || "manual",
     updatedAt: quote.updatedAt || quote.updated_at || quote.createdAt || quote.created_at,
     termsAndConditions: quote.termsAndConditions,
+    validityDays: Number(quote.validityDays) > 0 ? Math.floor(Number(quote.validityDays)) : undefined,
+    manualOverrides: quote.manualOverrides || {},
   };
 }
 

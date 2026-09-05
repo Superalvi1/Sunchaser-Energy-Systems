@@ -36,6 +36,7 @@ import { OFFICIAL_SUNCHASER_LOGO, resolveOfficialLogoUrl } from "../lib/branding
 import {
   getLatestSavedQuote,
   getLeadManualQuotesSorted,
+  getQuoteSortTime,
 } from "../lib/quoteSelection";
 import {
   getBoqQuickFillProducts,
@@ -111,6 +112,23 @@ import {
   type BoqPackageRecord,
   type BoqPackageStructureType,
 } from "../lib/boqPackageLibrary";
+import {
+  AUTOSIZER_PRESET_SIZES_KW,
+  applyNamedRowFields,
+  applyStructureKitOverride,
+  generateRecommendedBoq,
+  hydrateCompanySizePreset,
+  markOverride,
+  parseCompanyAutoSizerPresets,
+  readStructureBreakdownFromRows,
+  recommendedBatteryOption,
+  resolveAutoSizerPreset,
+  snapshotHasItems,
+  STANDARD_QUOTATION_PAGES,
+  type QuoteManualOverrides,
+} from "../lib/autoSizer";
+import { EXISTING_COMPANY_VALIDITY_DAYS, resolveQuoteValidityDays } from "../lib/quoteValidity";
+import { quoteBoqOverflow, THREE_PAGE_BOQ_OVERFLOW_MESSAGE } from "../lib/quoteThreePageRender";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -194,6 +212,8 @@ export default function SalesTeamApp({
   }, [staffUser?.id, activeLead?.id, activeLead?.email, activeLead?.phone]);
 
   const getLeadManualQuotes = (lead: Lead | null | undefined) => getLeadManualQuotesSorted(lead);
+  const getLeadCustomerQuotes = (lead: Lead | null | undefined) =>
+    (lead?.quotes || []).filter((q: any) => q?.id).sort((a: any, b: any) => getQuoteSortTime(b) - getQuoteSortTime(a));
 
   const latestManualSavedQuote = activeLead ? getLatestSavedQuote(activeLead, "manual_boq") : null;
 
@@ -253,6 +273,7 @@ export default function SalesTeamApp({
   const [paymentTerms, setPaymentTerms] = useState("50% Advance, 40% Delivery, 10% Commissioning");
   const [warrantyTerms, setWarrantyTerms] = useState("25 year power degradation, 10 year inverter warranty");
   const [termsAndConditions, setTermsAndConditions] = useState("Quoted prices are valid for 3 days.");
+  const [validityDays, setValidityDays] = useState<number>(EXISTING_COMPANY_VALIDITY_DAYS);
 
   // Lahore/Pakistan custom quotation states
   const [clientName, setClientName] = useState("");
@@ -276,16 +297,17 @@ export default function SalesTeamApp({
   const [selectedTemplate, setSelectedTemplate] = useState("custom");
   const [includedPages, setIncludedPages] = useState<Record<string, boolean>>({
     cover: true,
-    profile: true,
-    qr: true,
-    ceo: true,
-    structure: true,
+    profile: false,
+    qr: false,
+    ceo: false,
+    structure: false,
     boq: true,
     terms: true,
-    signoff: true,
-    bank: true,
-    final: true
+    signoff: false,
+    bank: false,
+    final: false
   });
+  const [manualOverrides, setManualOverrides] = useState<QuoteManualOverrides>({});
   const [boqItems, setBoqItems] = useState<any[]>([]);
 
   // LESCO net metering parameters
@@ -561,7 +583,7 @@ export default function SalesTeamApp({
       'h-3', 'db_box_row', 's-3',
       'h-4', 'supplies_row', 's-4',
       'h-5', 'earthing_bore_row', 's-5',
-      'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+      'h-6', 'structure_row', 'structure_l3_row', 'structure_l2_row', 'civil_work_row', 'install_service_row', 's-6',
       'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
     ];
     return defaultIds.includes(row.id);
@@ -1002,299 +1024,124 @@ export default function SalesTeamApp({
     batt: string,
     netMeter: 'Yes' | 'No'
   ): BoqRow[] => {
-    const panelCount = Math.ceil((sizekW * 1000) / pWattage);
-    const rows: BoqRow[] = [];
-    
-    // Section 1: Imported Equipment
-    rows.push({ id: 'h-1', type: 'heading', name: 'Imported Equipment', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    let panelRate = 21000;
-    if (pBrand === 'Longi') panelRate = 25215;
-    else if (pBrand === 'Canadian Solar') panelRate = 23000;
-    else if (pBrand === 'JA Solar') panelRate = 19500;
-    
-    rows.push({
-      id: 'panel_row',
-      type: 'item',
-      srNo: '1',
-      name: `${pBrand} ${pWattage}W Mono-PERC Solar Panels`,
-      description: `Tier-1 high efficiency solar modules`,
-      brand: pBrand,
-      unit: 'Pcs',
-      qty: panelCount,
-      rate: panelRate,
-      total: panelCount * panelRate
-    });
-    
-    let inverterRate = 400000;
-    if (sizekW > 15) inverterRate = 420000;
-    if (sizekW > 25) inverterRate = 580000;
-    if (sizekW >= 50) inverterRate = 800000;
-    if (sizekW >= 100) inverterRate = 1400000;
-    
-    rows.push({
-      id: 'inverter_row',
-      type: 'item',
-      srNo: '2',
-      name: `${iBrand} ${iCapacity} Smart Sync Inverter`,
-      description: `Intelligent energy management inverter`,
-      brand: iBrand,
-      unit: 'Pcs',
-      qty: 1,
-      rate: inverterRate,
-      total: inverterRate
-    });
-    
-    if (sType !== 'On-grid' && batt !== 'None') {
-      let batteryRate = 235000;
-      if (batt.includes('10.24')) batteryRate = 480000;
-      if (batt.includes('15.0')) batteryRate = 690000;
-      
-      rows.push({
-        id: 'battery_row',
-        type: 'item',
-        srNo: '3',
-        name: batt,
-        description: `Lithium iron phosphate (LiFePO4) storage batteries`,
-        brand: 'Soluna',
-        unit: 'Pcs',
-        qty: 1,
-        rate: batteryRate,
-        total: batteryRate
-      });
-    }
-    
-    rows.push({ id: 's-1', type: 'subtotal', name: 'Imported Equipment Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    // Section 2: Cables & Conductors
-    rows.push({ id: 'h-2', type: 'heading', name: 'Cables & Conductors', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    const dcQty = Math.round(sizekW * 15 + 40);
-    rows.push({
-      id: 'dc_cable_row',
-      type: 'item',
-      srNo: '4',
-      name: 'DC Solar Cable 6mm',
-      description: 'Double Insulated Tin Coated DC Solar Cable',
-      brand: 'GM/FAST',
-      unit: 'Meter',
-      qty: dcQty,
-      rate: 280,
-      total: dcQty * 280
-    });
-    
-    rows.push({
-      id: 'ac_cable_row',
-      type: 'item',
-      srNo: '5',
-      name: 'AC Connecting Cable 4-Core',
-      description: 'AC copper flexible connection cable job',
-      brand: 'GM/FAST',
-      unit: 'Meter',
-      qty: 40,
-      rate: 250,
-      total: 40 * 250
-    });
-    
-    rows.push({
-      id: 'earth_wire_row',
-      type: 'item',
-      srNo: '6',
-      name: 'Earthing Bare Copper Wire',
-      description: 'Bare copper conductor for system grounding',
-      brand: 'GM/FAST',
-      unit: 'Meter',
-      qty: 50,
-      rate: 380,
-      total: 50 * 380
-    });
-    
-    rows.push({ id: 's-2', type: 'subtotal', name: 'Cables & Conductors Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    // Section 3: DB Boxes & Breakers
-    rows.push({ id: 'h-3', type: 'heading', name: 'DB Boxes & Breakers', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    rows.push({
-      id: 'db_box_row',
-      type: 'item',
-      srNo: '7',
-      name: 'AC/DC Distribution DB Box Equipped',
-      description: 'Miniature Circuit Breakers, SPDs, GADA/Chint switches',
-      brand: 'GADA/Chint',
-      unit: 'Job',
-      qty: 1,
-      rate: 32000,
-      total: 32000
-    });
-    
-    rows.push({ id: 's-3', type: 'subtotal', name: 'DB Boxes & Breakers Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    // Section 4: Electrical & Mechanical Supplies
-    rows.push({ id: 'h-4', type: 'heading', name: 'Electrical & Mechanical Supplies', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    rows.push({
-      id: 'supplies_row',
-      type: 'item',
-      srNo: '8',
-      name: 'PVC Pipes, Ducts & Conduits Job',
-      description: 'Pipes, elbows, joints, PVC trunks/ducts for clean wiring routing',
-      brand: 'Beta/Eq',
-      unit: 'Job',
-      qty: 1,
-      rate: 18000,
-      total: 18000
-    });
-    
-    rows.push({ id: 's-4', type: 'subtotal', name: 'Supplies Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    // Section 5: System Earthing Works
-    rows.push({ id: 'h-5', type: 'heading', name: 'System Earthing Works', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    const boreQty = sizekW > 15 ? 3 : 2;
-    rows.push({
-      id: 'earthing_bore_row',
-      type: 'item',
-      srNo: '9',
-      name: 'Chemical Earthing Bores',
-      description: 'Copper rods with chemical enhancement compound filling',
-      brand: 'Local',
-      unit: 'Bores',
-      qty: boreQty,
-      rate: 48000,
-      total: boreQty * 48000
-    });
-    
-    rows.push({ id: 's-5', type: 'subtotal', name: 'System Earthing Works Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    // Section 6: System Installation & Fabrication
-    rows.push({ id: 'h-6', type: 'heading', name: 'System Installation & Fabrication', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    if (struct === 'Elevated') {
-      rows.push({
-        id: 'structure_row',
-        type: 'item',
-        srNo: '10',
-        name: 'Elevated Mechanical Mounting Structure',
-        description: 'Hot-Dip Galvanized C-Channel / H-Beam steel fabrication (10ft clearance)',
-        brand: 'Mughal',
-        unit: 'Job',
-        qty: 1,
-        rate: 147600,
-        total: 147600
-      });
-    } else if (struct === 'Girder') {
-      rows.push({
-        id: 'structure_row',
-        type: 'item',
-        srNo: '10',
-        name: 'Premium Mughal Girder Framing Structure',
-        description: 'Heavy duty steel columns & girder frames for long span loads',
-        brand: 'Mughal',
-        unit: 'Job',
-        qty: 1,
-        rate: 180000,
-        total: 180000
-      });
-    } else {
-      // Standard A-Frame
-      rows.push({
-        id: 'structure_row',
-        type: 'item',
-        srNo: '10',
-        name: 'Standard Galvanized L3 14 Gauge Structure',
-        description: 'Galvanized iron mounting structure with Rawal bolts',
-        brand: 'Mughal',
-        unit: 'Pcs',
-        qty: panelCount,
-        rate: 4800,
-        total: panelCount * 4800
-      });
-    }
-    
-    rows.push({
-      id: 'civil_work_row',
-      type: 'item',
-      srNo: '11',
-      name: 'Structure Pillars Foundations civil work',
-      description: 'Concrete pillar foundation blocks for load stability',
-      brand: 'Local',
-      unit: 'Job',
-      qty: 1,
-      rate: 16000,
-      total: 16000
-    });
-    
-    let installRate = 80000;
-    if (sizekW > 15) installRate = 120000;
-    if (sizekW >= 50) installRate = 200000;
-    if (sizekW >= 100) installRate = 350000;
+    return generateRecommendedBoq({
+      systemSizeKw: sizekW,
+      systemType: sType,
+      structureType: struct,
+      panelBrand: pBrand,
+      panelWattage: pWattage,
+      inverterBrand: iBrand,
+      inverterCapacity: iCapacity,
+      batteryOption: batt,
+      netMeteringRequired: netMeter,
+      settings,
+      products,
+    }).rows;
+  };
 
-    rows.push({
-      id: 'install_service_row',
-      type: 'item',
-      srNo: '12',
-      name: 'Complete Installation & Commissioning Service',
-      description: 'Electrical wiring terminations, panel alignment, system tuning & start',
-      brand: 'Sunchaser',
-      unit: 'Job',
-      qty: 1,
-      rate: installRate,
-      total: installRate
-    });
-    
-    rows.push({ id: 's-6', type: 'subtotal', name: 'System Installation & Fabrication Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    // Section 7: Transportation & Services
-    rows.push({ id: 'h-7', type: 'heading', name: 'Transportation & Services', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    rows.push({
-      id: 'freight_row',
-      type: 'item',
-      srNo: '13',
-      name: 'Transportation, Logistics Freight & Manual Lifting',
-      description: 'Equipment loading, delivery to site and manual roof shifting logistics',
-      brand: 'Local',
-      unit: 'Job',
-      qty: 1,
-      rate: 10000,
-      total: 10000
-    });
-    
-    if (netMeter === 'Yes') {
-      let nmRate = 90000;
-      if (sizekW >= 30) nmRate = 100000;
-      if (sizekW >= 50) nmRate = 120000;
-      if (sizekW >= 100) nmRate = 150000;
-      rows.push({
-        id: 'net_metering_row',
-        type: 'item',
-        srNo: '14',
-        name: 'LESCO Net Metering Licensing Process',
-        description: 'Document processing, demand notice payments & green meter commission',
-        brand: 'LESCO',
-        unit: 'Job',
-        qty: 1,
-        rate: nmRate,
-        total: nmRate
-      });
+  const standardCustomerPages = (): Record<string, boolean> => ({
+    cover: true,
+    profile: false,
+    qr: false,
+    ceo: false,
+    structure: false,
+    boq: true,
+    terms: true,
+    signoff: false,
+    bank: false,
+    final: false,
+  });
+
+  const runAutoSizer = (
+    sizeKw: number,
+    options?: {
+      resetOverrides?: boolean;
+      structureType?: string;
+      systemType?: 'On-grid' | 'Hybrid' | 'Off-grid';
+      panelBrand?: string;
+      panelWattage?: number;
+      inverterBrand?: string;
+      inverterCapacity?: string;
+      batteryOption?: string;
+      netMeteringRequired?: 'Yes' | 'No';
     }
-    
-    rows.push({
-      id: 'survey_design_row',
-      type: 'item',
-      srNo: '15',
-      name: 'Survey, Designing, Testing & Project Management Suite',
-      description: 'Engineering site audit, CAD layouts, electrical simulations',
-      brand: 'Helios',
-      unit: 'Job',
-      qty: 1,
-      rate: 5000,
-      total: 5000
+  ) => {
+    const structRaw = options?.structureType || selectedStructure || "standard";
+    const companyPresets = parseCompanyAutoSizerPresets(settings);
+    const sizeKey = sizeKw === 6 || sizeKw === 8 || sizeKw === 10 ? sizeKw : null;
+    const companyPreset = sizeKey
+      ? hydrateCompanySizePreset(companyPresets[sizeKey] || companyPresets[String(sizeKey) as "6"], products)
+      : undefined;
+    const systemTypeVal = options?.systemType || systemType;
+    const preset = resolveAutoSizerPreset(sizeKw, {
+      structureType: String(structRaw).toLowerCase() === "elevated" ? "elevated" : "standard",
+      systemType: systemTypeVal,
+      companyPreset,
     });
-    
-    rows.push({ id: 's-7', type: 'subtotal', name: 'Transportation & Services Subtotal', description: '', brand: '', unit: '', qty: 0, rate: 0, total: 0 });
-    
-    return calculateRowTotalsAndSubtotals(rows);
+    const panelBrandVal = options?.panelBrand || preset.panel.brand;
+    const panelWattageVal = Number(options?.panelWattage || preset.panel.wattage || 580);
+    const inverterBrandVal = options?.inverterBrand || preset.inverter.brand;
+    const inverterCapacityVal = options?.inverterCapacity || preset.inverter.capacity;
+    const batteryVal = recommendedBatteryOption(
+      systemTypeVal,
+      preset.battery.option,
+      options?.batteryOption
+    );
+    const netVal = options?.netMeteringRequired || preset.netMeteringRequired;
+    const structVal = String(structRaw).toLowerCase();
+
+    setSystemSizekW(sizeKw);
+    setSystemType(systemTypeVal);
+    setPanelBrand(panelBrandVal);
+    setPanelWattage(panelWattageVal);
+    setInverterBrand(inverterBrandVal);
+    setInverterCapacity(inverterCapacityVal);
+    setBatteryOption(batteryVal);
+    setNetMeteringRequired(netVal);
+    if (structVal === "elevated" || structVal === "standard" || structVal === "girder" || structVal === "custom") {
+      setSelectedStructure(structVal);
+    }
+    setStructureType(structVal.charAt(0).toUpperCase() + structVal.slice(1));
+    setIncludedPages(standardCustomerPages());
+
+    const rec = generateRecommendedBoq({
+      systemSizeKw: sizeKw,
+      systemType: systemTypeVal,
+      structureType: structVal,
+      panelBrand: panelBrandVal,
+      panelWattage: panelWattageVal,
+      inverterBrand: inverterBrandVal,
+      inverterCapacity: inverterCapacityVal,
+      batteryOption: batteryVal,
+      netMeteringRequired: netVal,
+      settings,
+      products,
+    });
+    setBoqRows(rec.rows);
+    setManualBoqItems(rec.rows);
+    if (options?.resetOverrides !== false) setManualOverrides({});
+  };
+
+  const patchNamedEquipmentRow = (
+    rowId: string,
+    patch: Partial<Pick<BoqRow, "name" | "description" | "brand" | "qty" | "rate" | "unit">>,
+    field: "panel" | "inverter" | "battery" | "cables" | "prices"
+  ) => {
+    const next = applyNamedRowFields(getCurrentBoqRows(), rowId, patch);
+    setBoqRows(next);
+    setManualBoqItems(next);
+    setManualOverrides((prev) => markOverride(prev, field));
+  };
+
+  const patchStructureKits = (l3: number, l2: number) => {
+    const current = getCurrentBoqRows();
+    const panelCount =
+      Number(current.find((r) => r.id === "panel_row")?.qty) ||
+      Math.ceil((systemSizekW * 1000) / (panelWattage || 580));
+    const applied = applyStructureKitOverride(current, panelCount, { l3, l2 });
+    setBoqRows(applied.rows);
+    setManualBoqItems(applied.rows);
+    setManualOverrides((prev) => markOverride(prev, "structure"));
   };
 
   const applyBoqPackage = (packageId: string) => {
@@ -1323,10 +1170,8 @@ export default function SalesTeamApp({
     setNetMeteringCharges(pkg.netMeteringCharges);
 
     const packageRows = cloneBoqRowsForLoad(pkg.boqRows);
-    if (activeModule === "boq_builder") {
-      setBoqRows(packageRows);
-      setManualBoqItems(packageRows);
-    }
+    setBoqRows(packageRows);
+    setManualBoqItems(packageRows);
 
     if (pkg.discountType) {
       setDiscountType(pkg.discountType === "percentage" ? "percentage" : "fixed");
@@ -1499,19 +1344,10 @@ export default function SalesTeamApp({
     setNetMeteringCharges(netCharges);
 
     const defaultBoq = generateDefaultBoqRows(kwSize, type, struct, brand, wattage, invBrand, invCap, batt, net);
-    // Rewrite all IDs to prevent them from being identified as default auto-sizer rows
-    const packageRows = defaultBoq.map(row => ({
-      ...row,
-      id: row.id.startsWith('h-') 
-        ? `row-heading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-        : row.id.startsWith('s-')
-          ? `row-subtotal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          : `row-item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    }));
-    if (activeModule === "boq_builder") {
-      setBoqRows(packageRows);
-      setManualBoqItems(packageRows);
-    }
+    setBoqRows(defaultBoq);
+    setManualBoqItems(defaultBoq);
+    setIncludedPages(standardCustomerPages());
+    setManualOverrides({});
   };
 
   const handleCopyAutoSizerToManualBoq = () => {
@@ -1524,15 +1360,16 @@ export default function SalesTeamApp({
     // Find latest auto sizer quote, or generate defaults if none
     const latestAutoSizerQuote = activeLead.quotes?.find((q: any) => q.quote_type === 'auto_sizer');
     let rowsToCopy: any[] = [];
-    
-    if (latestAutoSizerQuote) {
+
+    if (snapshotHasItems(boqRows)) {
+      rowsToCopy = boqRows;
+    } else if (latestAutoSizerQuote) {
       rowsToCopy = latestAutoSizerQuote.boqRows || latestAutoSizerQuote.boqItems || [];
     } else {
-      // Generate default auto sizer rows as fallback
       rowsToCopy = generateDefaultBoqRows(
         systemSizekW,
         systemType,
-        'Standard',
+        selectedStructure || 'standard',
         panelBrand,
         panelWattage,
         inverterBrand,
@@ -1541,20 +1378,12 @@ export default function SalesTeamApp({
         netMeteringRequired
       );
     }
-    
-    // Rewrite row IDs to ensure they act as manual rows and don't match default IDs
-    const copiedRows = rowsToCopy.map((row: any) => ({
-      ...row,
-      id: row.id.startsWith('h-') 
-        ? `row-heading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-        : row.id.startsWith('s-')
-          ? `row-subtotal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          : `row-item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    }));
-    
-    setBoqRows(copiedRows);
-    setManualBoqItems(copiedRows);
-    console.log(`[Manual BOQ Builder] Copied ${copiedRows.length} rows from Auto Sizer, rewritten IDs to manual.`);
+
+    setBoqRows(rowsToCopy.map((row: any) => ({ ...row })));
+    setManualBoqItems(rowsToCopy.map((row: any) => ({ ...row })));
+    setIncludedPages(standardCustomerPages());
+    setActiveModule("boq_builder");
+    console.log(`[Manual BOQ Builder] Copied ${rowsToCopy.length} rows from Auto Sizer snapshot.`);
   };
 
   // Sync client details and BOQ rows when activeLead changes
@@ -1593,9 +1422,8 @@ export default function SalesTeamApp({
       setCustomNotes("");
       setIncludeSizerItems(false);
       setSelectedTemplateId("tmpl-1");
-      setIncludedPages({
-        cover: true, profile: true, qr: true, ceo: true, structure: true, boq: true, terms: true, signoff: true, bank: true, final: true
-      });
+      setIncludedPages(standardCustomerPages());
+      setManualOverrides({});
       setCustomStructName("");
       setCustomStructDescEn("");
       setCustomStructDescUr("");
@@ -1607,6 +1435,7 @@ export default function SalesTeamApp({
       setAccessories("Dual DC cables, PVC ducting & safety switches");
       setWarrantyTerms("25 year power degradation, 10 year inverter warranty");
       setTermsAndConditions("Quoted prices are valid for 3 days.");
+      setValidityDays(resolveQuoteValidityDays({}, { companyTerms, settings }).days);
 
       // Reset sizer-specific form controls to prevent leftovers
       setFormRoofWidth(30);
@@ -1642,7 +1471,7 @@ export default function SalesTeamApp({
         'h-3', 'db_box_row', 's-3',
         'h-4', 'supplies_row', 's-4',
         'h-5', 'earthing_bore_row', 's-5',
-        'h-6', 'structure_row', 'civil_work_row', 'install_service_row', 's-6',
+        'h-6', 'structure_row', 'structure_l3_row', 'structure_l2_row', 'civil_work_row', 'install_service_row', 's-6',
         'h-7', 'freight_row', 'net_metering_row', 'survey_design_row', 's-7'
       ];
       
@@ -1777,25 +1606,39 @@ export default function SalesTeamApp({
     setSavingQuote(true);
     try {
       const sizerKw = systemSizekW;
-      const sizerRows = generateDefaultBoqRows(
-        sizerKw,
-        systemType as any,
-        selectedStructure,
-        panelBrand,
-        panelWattage,
-        inverterBrand,
-        inverterCapacity,
-        batteryOption,
-        netMeteringRequired as any
-      );
+      const generated = snapshotHasItems(boqRows)
+        ? null
+        : generateRecommendedBoq({
+            systemSizeKw: sizerKw,
+            systemType: systemType as any,
+            structureType: selectedStructure,
+            panelBrand,
+            panelWattage,
+            inverterBrand,
+            inverterCapacity,
+            batteryOption,
+            netMeteringRequired: netMeteringRequired as any,
+            settings,
+            products,
+          });
+      const sizerRows = generated ? generated.rows : boqRows;
+      if (generated) {
+        setBoqRows(generated.rows);
+        setManualBoqItems(generated.rows);
+      }
       const itemRows = sizerRows.filter((r) => r && r.type === "item");
       if (itemRows.length === 0) {
-        setSubmitError("No BOQ items to save.");
+        setSubmitError("No BOQ items to save. Click Auto Size first.");
         return;
       }
-      const panelsCount = Math.ceil((sizerKw * 1000) / panelWattage);
+      const panelRow = sizerRows.find((r) => r.id === "panel_row");
+      const panelsCount = Number(panelRow?.qty) || Math.ceil((sizerKw * 1000) / panelWattage);
       const grand = itemRows.reduce((s, r) => s + (r.total || 0), 0);
       const idempotencyKey = `ik-sizer-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const companySnapshot = (companyTerms || [])
+        .map((t: any) => String(t?.termText || t?.term_text || "").trim())
+        .filter(Boolean)
+        .join("\n");
       const quoteData = {
         idempotencyKey,
         systemSizekW: sizerKw,
@@ -1821,6 +1664,12 @@ export default function SalesTeamApp({
         clientEmail: activeLead.email,
         clientAddress: activeLead.address,
         cityArea: activeLead.location || "Lahore",
+        includedPages: [...STANDARD_QUOTATION_PAGES],
+        grandTotal: grand,
+        netTotal: grand,
+        manualOverrides,
+        validityDays,
+        termsAndConditions: companySnapshot || termsAndConditions,
       };
 
       if (sizerEditingQuoteId) {
@@ -1899,11 +1748,8 @@ export default function SalesTeamApp({
       }
 
       const finalBoqRows = boqRows;
-      const finalIncludeSizerItems = false;
-      const manualOnlyRows = finalBoqRows.filter(
-        (r) => r && (r.type !== "item" || !isDefaultAutoSizerRow(r))
-      );
-      if (manualOnlyRows.filter((r) => r.type === "item").length === 0) {
+      const snapshotRows = finalBoqRows.filter((r) => r && (r.type === "heading" || r.type === "subtotal" || r.type === "item"));
+      if (snapshotRows.filter((r) => r.type === "item").length === 0) {
         setSubmitError("No BOQ items added yet.");
         setSavingQuote(false);
         return null;
@@ -1966,7 +1812,7 @@ export default function SalesTeamApp({
         discountType: resolvedDiscount.discountType,
         discountValue: resolvedDiscount.discountValue,
         paymentSchedule,
-        boqItems: manualOnlyRows,
+        boqItems: snapshotRows,
 
         // Redesigned Manual Builder fields
         lescoSettings: {
@@ -1981,15 +1827,17 @@ export default function SalesTeamApp({
         taxAmount: calculatedTaxAmount,
         selectedStructure,
         customStructure: customStructurePayload,
-        boqRows: manualOnlyRows,
+        boqRows: snapshotRows,
         customNotes,
         grandTotal: calculatedGrandTotal,
         netTotal: calculatedNetTotal,
         templateId: selectedTemplateId,
-        includeSizerItems: finalIncludeSizerItems,
-        includedPages: Object.keys(includedPages).filter(k => includedPages[k]),
+        includeSizerItems: true,
+        includedPages: [...STANDARD_QUOTATION_PAGES],
         quote_type: "manual_boq",
         source: "manual",
+        manualOverrides,
+        validityDays,
       };
 
       let savedQuoteId = editingQuoteId;
@@ -2055,7 +1903,7 @@ export default function SalesTeamApp({
 
       if (!quoteId && activeModule === "boq_builder") {
         const manualItemCount = boqRows.filter(
-          (r) => r && r.type === "item" && !isDefaultAutoSizerRow(r)
+          (r) => r && r.type === "item"
         ).length;
         if (manualItemCount > 0 || !resolveTargetManualQuote()) {
           setQuotePdfStatus("Saving…");
@@ -2104,7 +1952,7 @@ export default function SalesTeamApp({
   const handlePreviewProposalDeck = async () => {
     if (!activeLead) return;
 
-    const getManualItemsCount = () => boqRows.filter(r => r && r.type === 'item' && !isDefaultAutoSizerRow(r)).length;
+    const getManualItemsCount = () => boqRows.filter(r => r && r.type === 'item').length;
     const isQuoteCompiled = () => activeLead.quotes && activeLead.quotes.some((q: any) => q.quote_type === 'manual_boq');
 
     if (getManualItemsCount() === 0 || !isQuoteCompiled()) {
@@ -2156,9 +2004,15 @@ export default function SalesTeamApp({
   };
 
   const handleLoadQuoteForEditing = (quote: any) => {
-    if (quote.quote_type !== "manual_boq") return;
+    if (quote.quote_type !== "manual_boq" && quote.quote_type !== "auto_sizer") return;
     clearLoadedPackage();
-    setEditingQuoteId(quote.id);
+    if (quote.quote_type === "auto_sizer") {
+      setSizerEditingQuoteId(quote.id);
+      setEditingQuoteId(null);
+    } else {
+      setEditingQuoteId(quote.id);
+      setSizerEditingQuoteId(null);
+    }
     setClientName(quote.clientName || activeLead?.name || "");
     setClientPhone(quote.clientPhone || activeLead?.phone || "");
     setClientEmail(quote.clientEmail || activeLead?.email || "");
@@ -2210,20 +2064,16 @@ export default function SalesTeamApp({
     }
     
     setSelectedTemplateId(quote.templateId || "tmpl-1");
-
-    if (quote.includedPages && Array.isArray(quote.includedPages)) {
-      const pageMapping: Record<string, boolean> = {
-        cover: false, profile: false, qr: false, ceo: false, structure: false, boq: false, terms: false, signoff: false, bank: false, final: false
-      };
-      quote.includedPages.forEach((p: string) => {
-        pageMapping[p] = true;
-      });
-      setIncludedPages(pageMapping);
-    }
-    setIncludeSizerItems(quote.includeSizerItems === true);
-    
-    // Switch to manual BOQ tab
-    setActiveModule('boq_builder');
+    setManualOverrides(quote.manualOverrides || {});
+    setIncludedPages(standardCustomerPages());
+    setIncludeSizerItems(true);
+    setValidityDays(
+      Number(quote.validityDays) > 0
+        ? Math.floor(Number(quote.validityDays))
+        : resolveQuoteValidityDays(quote, { companyTerms, settings }).days
+    );
+    if (quote.termsAndConditions) setTermsAndConditions(quote.termsAndConditions);
+    setActiveModule(quote.quote_type === "auto_sizer" ? "sizer" : "boq_builder");
   };
 
   const resolvePageLayoutMode = (page: any) =>
@@ -2841,6 +2691,12 @@ export default function SalesTeamApp({
   const grandTotal = boqRows
     .filter(r => r && r.type === 'item')
     .reduce((sum, r) => sum + (r.total || 0), 0);
+  const sizerPanelRow = boqRows.find((r) => r.id === "panel_row");
+  const sizerInverterRow = boqRows.find((r) => r.id === "inverter_row");
+  const sizerDcRow = boqRows.find((r) => r.id === "dc_cable_row");
+  const sizerAcRow = boqRows.find((r) => r.id === "ac_cable_row");
+  const sizerStructure = readStructureBreakdownFromRows(boqRows);
+  const sizerBoqFit = quoteBoqOverflow(boqRows as any);
   const calculatedTaxAmount = taxEnabled ? Math.round(grandTotal * (taxRate / 100)) : 0;
   const resolvedManualDiscount = useMemo(
     () => resolveQuoteDiscountAmount(grandTotal, { discountType, discountValue }),
@@ -2991,6 +2847,13 @@ export default function SalesTeamApp({
                             Quote {q.id} (Manual BOQ - {q.systemSizekW}kW)
                           </option>
                         ))}
+                        {(activeLead?.quotes || [])
+                          .filter((q: any) => q?.quote_type === "auto_sizer")
+                          .map((q: any) => (
+                            <option key={q.id} value={q.id}>
+                              Quote {q.id} (Auto Sizer - {q.systemSizekW}kW)
+                            </option>
+                          ))}
                       </select>
 
                       <button
@@ -3535,6 +3398,31 @@ export default function SalesTeamApp({
                           </button>
                         ))}
                       </div>
+                      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <h5 className="text-[10px] font-bold text-amber-300 uppercase tracking-wider font-mono">Everyday Auto Size</h5>
+                          <span className="text-[9px] text-slate-400 font-mono">6 / 8 / 10 kW company presets</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {AUTOSIZER_PRESET_SIZES_KW.map((kw) => (
+                            <button
+                              key={`auto-${kw}`}
+                              type="button"
+                              onClick={() => runAutoSizer(kw)}
+                              className={`font-mono py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                                Number(systemSizekW) === kw && snapshotHasItems(boqRows)
+                                  ? "bg-amber-500 text-slate-950"
+                                  : "bg-slate-950 hover:bg-slate-800 text-white border border-amber-500/40"
+                              }`}
+                            >
+                              Auto Size {kw}kW
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans leading-relaxed">
+                          Auto Size fills panels, inverter, cables and L2/L3 structure. Edit anything below. Re-run AutoSizer is the only action that replaces those edits.
+                        </p>
+                      </div>
                     </div>
 
                     {/* SIZER ACTIONS AND VALIDATIONS */}
@@ -3589,6 +3477,223 @@ export default function SalesTeamApp({
                         />
                       </div>
 
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">System Equipment</h5>
+                          {snapshotHasItems(boqRows) ? (
+                            <span className="text-[9px] text-emerald-400 font-mono">snapshot ready · {boqRows.filter((r) => r.type === "item").length} items</span>
+                          ) : (
+                            <span className="text-[9px] text-slate-500 font-mono">Click Auto Size to fill</span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">System type</label>
+                            <select
+                              value={systemType}
+                              onChange={(e) => setSystemType(e.target.value as any)}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              <option value="On-grid">On-grid</option>
+                              <option value="Hybrid">Hybrid</option>
+                              <option value="Off-grid">Off-grid</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Panel brand</label>
+                            <select
+                              value={panelBrand}
+                              onChange={(e) => {
+                                const brand = e.target.value;
+                                setPanelBrand(brand);
+                                if (sizerPanelRow) {
+                                  patchNamedEquipmentRow("panel_row", {
+                                    brand,
+                                    name: `${brand} ${panelWattage}W Mono-PERC Solar Panels`,
+                                  }, "panel");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              {["Jinko", "Longi", "Canadian Solar", "JA Solar"].map((b) => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Panel wattage</label>
+                            <input
+                              type="number"
+                              value={panelWattage}
+                              onChange={(e) => {
+                                const wattage = Number(e.target.value) || 0;
+                                setPanelWattage(wattage);
+                                if (sizerPanelRow) {
+                                  patchNamedEquipmentRow("panel_row", {
+                                    name: `${panelBrand} ${wattage}W Mono-PERC Solar Panels`,
+                                  }, "panel");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Panel qty</label>
+                            <input
+                              type="number"
+                              value={sizerPanelRow?.qty ?? actualPanelCount}
+                              onChange={(e) => {
+                                const qty = Math.max(0, Number(e.target.value) || 0);
+                                if (sizerPanelRow) patchNamedEquipmentRow("panel_row", { qty }, "panel");
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Inverter brand</label>
+                            <select
+                              value={inverterBrand}
+                              onChange={(e) => {
+                                const brand = e.target.value;
+                                setInverterBrand(brand);
+                                if (sizerInverterRow) {
+                                  patchNamedEquipmentRow("inverter_row", {
+                                    brand,
+                                    name: `${brand} ${inverterCapacity} Smart Sync Inverter`,
+                                  }, "inverter");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              {["Knox", "Goodwe", "Solis", "Growatt"].map((b) => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Inverter capacity</label>
+                            <input
+                              value={inverterCapacity}
+                              onChange={(e) => {
+                                const capacity = e.target.value;
+                                setInverterCapacity(capacity);
+                                if (sizerInverterRow) {
+                                  patchNamedEquipmentRow("inverter_row", {
+                                    name: `${inverterBrand} ${capacity} Smart Sync Inverter`,
+                                  }, "inverter");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-2">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Battery</label>
+                            <select
+                              value={batteryOption}
+                              onChange={(e) => {
+                                const batt = e.target.value;
+                                setBatteryOption(batt);
+                                if (boqRows.some((r) => r.id === "battery_row")) {
+                                  patchNamedEquipmentRow("battery_row", { name: batt }, "battery");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              <option value="None">None</option>
+                              <option value="Lithium Battery Pack 5.12kWh">Lithium Battery Pack 5.12kWh</option>
+                              <option value="Lithium Battery Pack 10.24kWh">Lithium Battery Pack 10.24kWh</option>
+                              <option value="Lithium Battery Pack 15.0kWh">Lithium Battery Pack 15.0kWh</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L3 Structure – 3 Panel Section</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerStructure?.l3 ?? 0}
+                              onChange={(e) => patchStructureKits(Math.max(0, Number(e.target.value) || 0), sizerStructure?.l2 ?? 0)}
+                              disabled={!snapshotHasItems(boqRows) || selectedStructure !== "standard"}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L2 Structure – 2 Panel Section</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerStructure?.l2 ?? 0}
+                              onChange={(e) => patchStructureKits(sizerStructure?.l3 ?? 0, Math.max(0, Number(e.target.value) || 0))}
+                              disabled={!snapshotHasItems(boqRows) || selectedStructure !== "standard"}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Validity (days)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={365}
+                              value={validityDays}
+                              onChange={(e) => setValidityDays(Math.max(1, Math.min(365, Number(e.target.value) || EXISTING_COMPANY_VALIDITY_DAYS)))}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">DC cable meters</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerDcRow?.qty ?? 0}
+                              onChange={(e) => patchNamedEquipmentRow("dc_cable_row", { qty: Math.max(0, Number(e.target.value) || 0) }, "cables")}
+                              disabled={!sizerDcRow}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">AC cable meters</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerAcRow?.qty ?? 0}
+                              onChange={(e) => patchNamedEquipmentRow("ac_cable_row", { qty: Math.max(0, Number(e.target.value) || 0) }, "cables")}
+                              disabled={!sizerAcRow}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                        </div>
+                        {selectedStructure === "standard" && sizerStructure && (
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            Structure positions: {sizerStructure.positions} / {sizerStructure.panelCount} panels
+                            {sizerStructure.remainder ? ` · remainder ${sizerStructure.remainder}` : ""}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => runAutoSizer(systemSizekW || 10)}
+                          className="font-sans font-bold text-xs py-2.5 px-3 rounded-xl border border-amber-500/40 bg-slate-950 text-amber-300 hover:bg-slate-800"
+                        >
+                          Re-run AutoSizer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleCopyAutoSizerToManualBoq();
+                          }}
+                          className="font-sans font-bold text-xs py-2.5 px-3 rounded-xl border border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-800"
+                        >
+                          Start Manual
+                        </button>
+                      </div>
+
+                      {sizerBoqFit.overflow && snapshotHasItems(boqRows) && (
+                        <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-2xl text-[11px] font-sans leading-relaxed">
+                          {THREE_PAGE_BOQ_OVERFLOW_MESSAGE} Preview can still list all {sizerBoqFit.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                        </div>
+                      )}
+
                       <button
                         type="button"
                         disabled={savingQuote || !REQUIRE_EXPLICIT_QUOTE_SAVE}
@@ -3608,7 +3713,7 @@ export default function SalesTeamApp({
                         )}
                       </button>
                       <p className="text-[10px] text-slate-500 font-mono text-center">
-                        Auto Sizer uses local fields only until you click Save Quote.
+                        Save stores the current snapshot. AutoSizer will not overwrite edits unless you Re-run AutoSizer.
                       </p>
                     </div>
 
@@ -4233,49 +4338,24 @@ export default function SalesTeamApp({
                         </select>
 
                         {/* Include Auto Sizer Items Checkbox */}
-                        <div className="flex items-center gap-2 pt-1">
-                          <input
-                            type="checkbox"
-                            id="includeSizerItemsCheckbox"
-                            checked={includeSizerItems}
-                            onChange={(e) => setIncludeSizerItems(e.target.checked)}
-                            className="rounded border-slate-800 bg-slate-900 text-amber-550 text-amber-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
-                          />
-                          <label htmlFor="includeSizerItemsCheckbox" className="text-xs text-slate-400 select-none cursor-pointer font-sans">
-                            Include Auto Sizer Items in Manual BOQ
-                          </label>
-                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans leading-relaxed pt-1">
+                          Manual and Auto Size quotations both save the current BOQ snapshot and print the same 3-page customer quotation.
+                        </p>
                       </div>
 
                       {/* PDF page selector checklist */}
                       <div className="bg-slate-950 border border-slate-850 p-4 rounded-2xl space-y-3">
                         <span className="text-[10px] font-bold text-amber-550 text-amber-500 uppercase tracking-wider block border-b border-slate-900 pb-1.5">
-                          PDF Page Inclusion checklist
+                          Customer quotation pages
                         </span>
-                        <div className="grid grid-cols-2 gap-2 text-left text-xs font-sans text-slate-400">
-                          {Object.entries({
-                            cover: "Cover Page",
-                            profile: "Group Profile",
-                            qr: "Benefits QR Page",
-                            ceo: "CEO Assurances",
-                            structure: "Structure Config",
-                            boq: "BOQ Price Sheet",
-                            terms: "Terms & Conditions",
-                            signoff: "Verification Sign",
-                            bank: "Official Banks",
-                            final: "Final Closing"
-                          }).map(([key, label]) => (
-                            <label key={key} className="flex items-center gap-1.5 cursor-pointer hover:text-white select-none">
-                              <input
-                                type="checkbox"
-                                checked={includedPages[key]}
-                                onChange={(e) => setIncludedPages(prev => ({ ...prev, [key]: e.target.checked }))}
-                                className="rounded border-slate-800 text-amber-500 focus:ring-amber-500 bg-slate-950 h-3.5 w-3.5"
-                              />
-                              <span>{label}</span>
-                            </label>
-                          ))}
+                        <div className="grid grid-cols-1 gap-2 text-left text-xs font-sans text-slate-300">
+                          <div className="flex items-center gap-2"><span className="text-amber-400 font-mono font-bold">1</span> Cover</div>
+                          <div className="flex items-center gap-2"><span className="text-amber-400 font-mono font-bold">2</span> Equipment / BOQ / price</div>
+                          <div className="flex items-center gap-2"><span className="text-amber-400 font-mono font-bold">3</span> Terms & Conditions</div>
                         </div>
+                        <p className="text-[10px] text-slate-500 font-sans">
+                          Standard CRM quotations are always these three pages. Advanced Proposal Studio remains available separately.
+                        </p>
                       </div>
 
                       {/* Save BOQ trigger */}
@@ -4296,6 +4376,12 @@ export default function SalesTeamApp({
                         <p className="text-[10px] text-slate-500 font-sans leading-relaxed">
                           Customer quote saves only for this client. Use Update Loaded Package to change future package defaults.
                         </p>
+
+                        {sizerBoqFit.overflow && snapshotHasItems(boqRows) && (
+                          <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-xl text-[11px] font-sans leading-relaxed">
+                            {THREE_PAGE_BOQ_OVERFLOW_MESSAGE} Preview still lists all {sizerBoqFit.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                          </div>
+                        )}
 
                         <button
                           type="button"
@@ -4459,7 +4545,7 @@ export default function SalesTeamApp({
                     <span className="text-[10px] text-slate-500 font-sans">Open details, duplicate, download specific PDF versions, and trigger simulated reminders.</span>
                   </div>
 
-                  {getLeadManualQuotes(activeLead).length > 0 ? (
+                  {getLeadCustomerQuotes(activeLead).length > 0 ? (
                     <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950/60">
                       <table className="w-full text-left border-collapse text-xs font-sans">
                         <thead>
@@ -4474,7 +4560,7 @@ export default function SalesTeamApp({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 text-slate-350 font-mono">
-                          {getLeadManualQuotes(activeLead).map((q: any) => {
+                          {getLeadCustomerQuotes(activeLead).map((q: any) => {
                             const dateString = q.createdAt ? new Date(q.createdAt).toLocaleString() : new Date().toLocaleDateString();
                             const quoteNetVal = q.netTotal || q.netCost || q.totalCost || 0;
                             const isSizer = q.quote_type === 'auto_sizer';
