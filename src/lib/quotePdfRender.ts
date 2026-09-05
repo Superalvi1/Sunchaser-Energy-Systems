@@ -283,7 +283,37 @@ export function quotePdfDeckPreviewScripts(): string {
           fontReady.then(run).catch(run);
         }
         async function sunchaserDownloadPdf() {
-          alert('Download PDF from Sunchaser CRM. This preview cannot request the protected PDF route.');
+          var btn = document.querySelector('.btn-download');
+          if (btn) btn.disabled = true;
+          try {
+            var path = window.location.pathname.replace(/\\/$/, '');
+            var url = path + '/download' + window.location.search;
+            var token = null;
+            try { token = localStorage.getItem('sunchaser_auth_token'); } catch (_err) {}
+            var headers = token ? { Authorization: 'Bearer ' + token } : {};
+            var res = await fetch(url, { headers: headers });
+            if (!res.ok) {
+              var errText = await res.text();
+              throw new Error(errText || ('Download failed (' + res.status + ')'));
+            }
+            var blob = await res.blob();
+            var name = 'Sunchaser-Quotation.pdf';
+            var cd = res.headers.get('Content-Disposition') || '';
+            var match = cd.match(/filename="?([^";]+)"?/i);
+            if (match) name = match[1];
+            var a = document.createElement('a');
+            var objectUrl = URL.createObjectURL(blob);
+            a.href = objectUrl;
+            a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(objectUrl);
+          } catch (err) {
+            alert((err && err.message) || 'PDF download failed');
+          } finally {
+            if (btn) btn.disabled = false;
+          }
         }
       </script>
   `;

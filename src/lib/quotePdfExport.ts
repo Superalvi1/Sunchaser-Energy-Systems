@@ -55,24 +55,44 @@ async function triggerBlobDownload(res: Response): Promise<void> {
   URL.revokeObjectURL(objectUrl);
 }
 
-async function writeHtmlPreviewWindow(html: string): Promise<void> {
-  const win = window.open("", "_blank", "noopener,noreferrer");
+/**
+ * Open a blank window during the user gesture, then fetch authenticated HTML.
+ * window.open must run before the first await so the popup is not blocked.
+ */
+async function fetchAndWriteQuotePreview(url: string): Promise<void> {
+  const win = window.open("", "_blank");
   if (!win) {
     throw new Error("Allow pop-ups to print the quotation preview.");
   }
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  const triggerPrint = () => {
-    const fontReady = win.document.fonts?.ready ?? Promise.resolve();
-    void fontReady.then(() => {
-      setTimeout(() => win.print(), 200);
-    });
-  };
-  if (win.document.readyState === "complete") {
-    triggerPrint();
-  } else {
-    win.addEventListener("load", triggerPrint);
+  try {
+    win.opener = null;
+    const res = await authorizedFetch(url);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(friendlyPdfError(res.status, text) || `Print preview failed (${res.status})`);
+    }
+    const html = await res.text();
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    const triggerPrint = () => {
+      const fontReady = win.document.fonts?.ready ?? Promise.resolve();
+      void fontReady.then(() => {
+        setTimeout(() => win.print(), 200);
+      });
+    };
+    if (win.document.readyState === "complete") {
+      triggerPrint();
+    } else {
+      win.addEventListener("load", triggerPrint);
+    }
+  } catch (err) {
+    try {
+      win.close();
+    } catch {
+      /* ignore close failures on a blocked or already-closed window */
+    }
+    throw err;
   }
 }
 
@@ -131,23 +151,12 @@ export async function downloadTemplateTestPdf(
 
 /** Open printable HTML preview in a new window and trigger print after fonts load. */
 export async function openManualQuotePrintPreview(leadId: string, quoteId?: string): Promise<void> {
-  const res = await authorizedFetch(manualQuotePdfPreviewUrl(leadId, quoteId));
-  if (!res.ok) {
-    throw new Error(`Print preview failed (${res.status})`);
-  }
-  const html = await res.text();
-  await writeHtmlPreviewWindow(html);
+  await fetchAndWriteQuotePreview(manualQuotePdfPreviewUrl(leadId, quoteId));
 }
 
 /** Open printable AutoSizer HTML preview fetched with the CRM auth header. */
 export async function openAutoSizerQuotePrintPreview(leadId: string, quoteId?: string): Promise<void> {
-  const res = await authorizedFetch(autoSizerQuotePdfPreviewUrl(leadId, quoteId));
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(friendlyPdfError(res.status, text) || `Print preview failed (${res.status})`);
-  }
-  const html = await res.text();
-  await writeHtmlPreviewWindow(html);
+  await fetchAndWriteQuotePreview(autoSizerQuotePdfPreviewUrl(leadId, quoteId));
 }
 
 export async function downloadQuotePdfByType(
