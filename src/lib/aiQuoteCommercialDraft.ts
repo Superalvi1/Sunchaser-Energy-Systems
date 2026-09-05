@@ -20,6 +20,10 @@ import {
 } from "./quoteCommercialMath";
 import { normalizeIdentityKey } from "./websiteCatalog/normalize";
 import {
+  L2_PANEL_POSITIONS,
+  L2_STRUCTURE_KIT_RATE,
+  L3_PANEL_POSITIONS,
+  L3_STRUCTURE_KIT_RATE,
   STRUCTURE_L2_ROW_ID,
   STRUCTURE_L3_ROW_ID,
   recommendStructures,
@@ -29,7 +33,12 @@ import { liveCatalogProductId } from "./autoSizer/companyPresets";
 import { liftWebsiteSourceFields } from "./websiteCatalog/normalize";
 
 export type QuoteStructureKind = "standard" | "elevated" | "girder" | "custom";
+export type QuoteStructureMode = "auto" | "manual";
 export type QuoteSystemType = "On-grid" | "Hybrid" | "Off-grid";
+
+export const QUICK_PANEL_WATTAGES = [580, 585, 610, 615, 625, 635, 645] as const;
+
+export const STRUCTURE_CAPACITY_WARNING = "Selected L2/L3 structure does not support all selected panels.";
 
 export interface CommercialQuoteConfig {
   systemSizeKw: number;
@@ -57,6 +66,11 @@ export interface CommercialQuoteConfig {
   batteryCatalogProductId: string;
   batteryWebsitePrice?: number;
   structureType: QuoteStructureKind;
+  structureMode?: QuoteStructureMode;
+  manualL3Quantity?: number;
+  manualL2Quantity?: number;
+  l3RatePerSection?: number;
+  l2RatePerSection?: number;
   installationRatePerWatt: number;
   elevatedStructureRatePerWatt: number;
   girderAmount: number;
@@ -91,6 +105,15 @@ export interface CommercialQuoteDraftApply {
   draftOnly: true;
 }
 
+export interface StandardStructureSelection {
+  mode: QuoteStructureMode;
+  l3: number;
+  l2: number;
+  capacity: number;
+  panelQuantity: number;
+  underCapacity: boolean;
+}
+
 function item(partial: Omit<BoqRow, "type" | "description" | "brand" | "unit"> & Partial<BoqRow>): BoqRow {
   return {
     type: "item",
@@ -103,6 +126,232 @@ function item(partial: Omit<BoqRow, "type" | "description" | "brand" | "unit"> &
 
 export function defaultBatteryEnabled(systemType: QuoteSystemType): boolean {
   return systemType !== "On-grid";
+}
+
+export function isQuickPanelWattage(value: number): boolean {
+  return (QUICK_PANEL_WATTAGES as readonly number[]).includes(value);
+}
+
+export function parsePositiveNumber(value: string | number | null | undefined): number | null {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+  const match = String(value || "").match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function numbersMatch(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.001;
+}
+
+function specNumber(product: { specifications?: Record<string, unknown> } | null | undefined, keys: string[]): number | null {
+  if (!product) return null;
+  const specs = (product.specifications || {}) as Record<string, unknown>;
+  for (const key of keys) {
+    const n = Number(specs[key]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+export function catalogProductWattage(
+  product: { specifications?: Record<string, unknown>; name?: string; model?: string; wattageCapacity?: string } | null | undefined
+): number | null {
+  const fromSpec = specNumber(product, ["panelWattage", "wattage"]);
+  if (fromSpec) return fromSpec;
+  const match = `${product?.name || ""} ${product?.model || ""} ${product?.wattageCapacity || ""}`.match(
+    /(\d+(?:\.\d+)?)\s*w\b/i
+  );
+  return match ? Number(match[1]) : null;
+}
+
+export function catalogProductInverterKw(
+  product: { specifications?: Record<string, unknown>; name?: string; model?: string; wattageCapacity?: string } | null | undefined
+): number | null {
+  const fromSpec = specNumber(product, ["inverterKw", "capacityKw", "ratedKw"]);
+  if (fromSpec) return fromSpec;
+  const match = `${product?.name || ""} ${product?.model || ""} ${product?.wattageCapacity || ""}`.match(
+    /(\d+(?:\.\d+)?)\s*kw\b/i
+  );
+  return match ? Number(match[1]) : null;
+}
+
+export function catalogProductBatteryKwh(
+  product: { specifications?: Record<string, unknown>; name?: string; model?: string; wattageCapacity?: string } | null | undefined
+): number | null {
+  const fromSpec = specNumber(product, ["batteryKwh", "capacityKwh", "kwh"]);
+  if (fromSpec) return fromSpec;
+  const match = `${product?.name || ""} ${product?.model || ""} ${product?.wattageCapacity || ""}`.match(
+    /(\d+(?:\.\d+)?)\s*kwh\b/i
+  );
+  return match ? Number(match[1]) : null;
+}
+
+export function wattageLabelFromProduct(product: Parameters<typeof catalogProductWattage>[0]): number {
+  return catalogProductWattage(product) || 0;
+}
+
+export function inverterKwLabelFromProduct(product: Parameters<typeof catalogProductInverterKw>[0]): string {
+  const kw = catalogProductInverterKw(product);
+  return kw ? `${kw}kW` : "";
+}
+
+export function batteryKwhLabelFromProduct(product: Parameters<typeof catalogProductBatteryKwh>[0]): string {
+  const kwh = catalogProductBatteryKwh(product);
+  return kwh ? `${kwh}kWh` : "";
+}
+
+export function catalogProductMatchesWattage(
+  product: Parameters<typeof catalogProductWattage>[0],
+  wattage: number
+): boolean {
+  const productW = catalogProductWattage(product);
+  if (productW == null) return true;
+  const next = parsePositiveNumber(wattage);
+  if (next == null) return true;
+  return numbersMatch(productW, next);
+}
+
+export function catalogProductMatchesInverterCapacity(
+  product: Parameters<typeof catalogProductInverterKw>[0],
+  capacity: string | number
+): boolean {
+  const productKw = catalogProductInverterKw(product);
+  if (productKw == null) return true;
+  const next = parsePositiveNumber(capacity);
+  if (next == null) return true;
+  return numbersMatch(productKw, next);
+}
+
+export function catalogProductMatchesBatteryCapacity(
+  product: Parameters<typeof catalogProductBatteryKwh>[0],
+  capacityKwh: string | number
+): boolean {
+  const productKwh = catalogProductBatteryKwh(product);
+  if (productKwh == null) return true;
+  const next = parsePositiveNumber(capacityKwh);
+  if (next == null) return true;
+  return numbersMatch(productKwh, next);
+}
+
+export function catalogIdAfterBrandChange(currentId: string, previousBrand: string, nextBrand: string): string {
+  if (!currentId) return "";
+  if (normalizeIdentityKey(previousBrand) !== normalizeIdentityKey(nextBrand)) return "";
+  return currentId;
+}
+
+export function catalogProductMatchesIdentity(
+  product: { brand?: string; model?: string; name?: string } | null | undefined,
+  brand: string,
+  model?: string
+): boolean {
+  if (!product) return false;
+  if (normalizeIdentityKey(product.brand) !== normalizeIdentityKey(brand)) return false;
+  if (!model) return true;
+  const productModel = normalizeIdentityKey(product.model || product.name);
+  return !productModel || productModel === normalizeIdentityKey(model);
+}
+
+export function catalogProductMatchesPanelIdentity(
+  product: Parameters<typeof catalogProductWattage>[0] & { brand?: string; model?: string; name?: string } | null | undefined,
+  brand: string,
+  model: string,
+  wattage: number
+): boolean {
+  return catalogProductMatchesIdentity(product, brand, model) && catalogProductMatchesWattage(product, wattage);
+}
+
+export function catalogProductMatchesInverterIdentity(
+  product: Parameters<typeof catalogProductInverterKw>[0] & { brand?: string; model?: string; name?: string } | null | undefined,
+  brand: string,
+  model: string,
+  capacity: string
+): boolean {
+  return catalogProductMatchesIdentity(product, brand, model) && catalogProductMatchesInverterCapacity(product, capacity);
+}
+
+export function catalogProductMatchesBatteryIdentity(
+  product: Parameters<typeof catalogProductBatteryKwh>[0] & { brand?: string; model?: string; name?: string } | null | undefined,
+  brand: string,
+  model: string,
+  capacityKwh: string
+): boolean {
+  return catalogProductMatchesIdentity(product, brand, model) && catalogProductMatchesBatteryCapacity(product, capacityKwh);
+}
+
+export function catalogIdAfterWattageChange(
+  currentId: string,
+  product: Parameters<typeof catalogProductWattage>[0] | null | undefined,
+  nextWattage: number
+): string {
+  if (!currentId) return "";
+  return catalogProductMatchesWattage(product, nextWattage) ? currentId : "";
+}
+
+export function catalogIdAfterInverterCapacityChange(
+  currentId: string,
+  product: Parameters<typeof catalogProductInverterKw>[0] | null | undefined,
+  nextCapacity: string
+): string {
+  if (!currentId) return "";
+  return catalogProductMatchesInverterCapacity(product, nextCapacity) ? currentId : "";
+}
+
+export function catalogIdAfterBatteryCapacityChange(
+  currentId: string,
+  product: Parameters<typeof catalogProductBatteryKwh>[0] | null | undefined,
+  nextCapacityKwh: string
+): string {
+  if (!currentId) return "";
+  return catalogProductMatchesBatteryCapacity(product, nextCapacityKwh) ? currentId : "";
+}
+
+export function standCapacityPanels(l3Quantity: number, l2Quantity: number): number {
+  const l3 = Math.max(0, Math.floor(finiteNumber(l3Quantity, 0)));
+  const l2 = Math.max(0, Math.floor(finiteNumber(l2Quantity, 0)));
+  return l3 * L3_PANEL_POSITIONS + l2 * L2_PANEL_POSITIONS;
+}
+
+export function kitSectionRate(value: number | undefined, fallback: number): number {
+  const parsed = nonNegativeFinite(value);
+  return parsed == null ? fallback : parsed;
+}
+
+export function resolveStandardStructureSelection(
+  config: Pick<CommercialQuoteConfig, "structureMode" | "manualL3Quantity" | "manualL2Quantity" | "panelQuantity">
+): StandardStructureSelection {
+  const panelQuantity = Math.max(0, Math.floor(finiteNumber(config.panelQuantity, 0)));
+  const mode: QuoteStructureMode = config.structureMode === "manual" ? "manual" : "auto";
+  if (mode === "manual") {
+    const l3 = Math.max(0, Math.floor(finiteNumber(config.manualL3Quantity, 0)));
+    const l2 = Math.max(0, Math.floor(finiteNumber(config.manualL2Quantity, 0)));
+    const capacity = standCapacityPanels(l3, l2);
+    return {
+      mode,
+      l3,
+      l2,
+      capacity,
+      panelQuantity,
+      underCapacity: capacity < panelQuantity,
+    };
+  }
+  const recommended = recommendStructures(panelQuantity);
+  return {
+    mode,
+    l3: recommended.l3,
+    l2: recommended.l2,
+    capacity: recommended.positions,
+    panelQuantity,
+    underCapacity: recommended.positions < panelQuantity,
+  };
+}
+
+export function standardStructureSummaryLabel(selection: StandardStructureSelection): string {
+  const kits = `${selection.l3} L3 + ${selection.l2} L2`;
+  if (selection.mode === "manual") {
+    return `Manual — ${kits} · capacity ${selection.capacity} panels`;
+  }
+  return `Auto — ${kits}`;
 }
 
 export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): string[] {
@@ -125,25 +374,11 @@ export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): st
   if (config.structureType === "custom" && nonNegativeFinite(config.customStructureAmount) == null) {
     errors.push("Custom structure amount cannot be negative.");
   }
+  if (config.structureType === "standard" && config.structureMode === "manual") {
+    const selection = resolveStandardStructureSelection(config);
+    if (selection.underCapacity) errors.push(STRUCTURE_CAPACITY_WARNING);
+  }
   return errors;
-}
-
-export function catalogIdAfterBrandChange(currentId: string, previousBrand: string, nextBrand: string): string {
-  if (!currentId) return "";
-  if (normalizeIdentityKey(previousBrand) !== normalizeIdentityKey(nextBrand)) return "";
-  return currentId;
-}
-
-export function catalogProductMatchesIdentity(
-  product: { brand?: string; model?: string; name?: string } | null | undefined,
-  brand: string,
-  model?: string
-): boolean {
-  if (!product) return false;
-  if (normalizeIdentityKey(product.brand) !== normalizeIdentityKey(brand)) return false;
-  if (!model) return true;
-  const productModel = normalizeIdentityKey(product.model || product.name);
-  return !productModel || productModel === normalizeIdentityKey(model);
 }
 
 export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[] {
@@ -260,20 +495,26 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
     })
   );
 
-  const structure = recommendStructures(qty);
   if (config.structureType === "standard") {
-    if (structure.l3 > 0) {
+    const selection = resolveStandardStructureSelection({ ...config, panelQuantity: qty });
+    const l3Rate = kitSectionRate(config.l3RatePerSection, L3_STRUCTURE_KIT_RATE);
+    const l2Rate = kitSectionRate(config.l2RatePerSection, L2_STRUCTURE_KIT_RATE);
+    if (selection.l3 > 0) {
       rows.push({
         id: STRUCTURE_L3_ROW_ID,
         type: "item",
-        ...structureKitRowFields("L3", structure.l3),
+        ...structureKitRowFields("L3", selection.l3),
+        rate: l3Rate,
+        total: selection.l3 * l3Rate,
       });
     }
-    if (structure.l2 > 0) {
+    if (selection.l2 > 0) {
       rows.push({
         id: STRUCTURE_L2_ROW_ID,
         type: "item",
-        ...structureKitRowFields("L2", structure.l2),
+        ...structureKitRowFields("L2", selection.l2),
+        rate: l2Rate,
+        total: selection.l2 * l2Rate,
       });
     }
   } else if (config.structureType === "elevated") {
@@ -381,4 +622,11 @@ export function attachLiveCatalogId(products: Product[] | null | undefined, id?:
   return liveCatalogProductId(live, id);
 }
 
-export { recommendedPanelQuantity, DEFAULT_INSTALLATION_RATE_PER_WATT, DEFAULT_ELEVATED_STRUCTURE_RATE_PER_WATT, DEFAULT_GIRDER_STRUCTURE_AMOUNT };
+export {
+  recommendedPanelQuantity,
+  DEFAULT_INSTALLATION_RATE_PER_WATT,
+  DEFAULT_ELEVATED_STRUCTURE_RATE_PER_WATT,
+  DEFAULT_GIRDER_STRUCTURE_AMOUNT,
+  L3_STRUCTURE_KIT_RATE,
+  L2_STRUCTURE_KIT_RATE,
+};

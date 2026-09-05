@@ -2,6 +2,7 @@
  * Central solar equipment brand registry.
  * Website / CRM brands always win. Global lists are fallback only.
  * Always include Other / Custom.
+ * Do not live-search the internet from the quote modal.
  */
 
 export const OTHER_CUSTOM_BRAND = "Other / Custom";
@@ -43,6 +44,13 @@ export const GLOBAL_INVERTER_BRANDS = [
   "Sofar",
   "Kehua",
   "KSTAR",
+  "Delta",
+  "Sineng",
+  "FIMER / ABB",
+  "INVT",
+  "Hoymiles",
+  "APsystems",
+  "Solplanet",
   "Inverex",
   "Knox",
   "Nitrox",
@@ -64,8 +72,12 @@ export const GLOBAL_BATTERY_BRANDS = [
   "Soluna",
   "Sunwoda",
   "HinaESS",
+  "LG Energy Solution",
+  "Tesla",
+  "Enphase",
   "CATL",
   "EVE",
+  "Felicity Solar",
   "Knox",
   "Inverex",
 ] as const;

@@ -18,13 +18,29 @@ import {
   recommendedPanelQuantity,
 } from "../../lib/quoteCommercialMath";
 import {
+  batteryKwhLabelFromProduct,
   buildCommercialDraftApply,
+  catalogIdAfterBatteryCapacityChange,
   catalogIdAfterBrandChange,
-  catalogProductMatchesIdentity,
+  catalogIdAfterInverterCapacityChange,
+  catalogIdAfterWattageChange,
+  catalogProductMatchesBatteryIdentity,
+  catalogProductMatchesInverterIdentity,
+  catalogProductMatchesPanelIdentity,
   defaultBatteryEnabled,
+  inverterKwLabelFromProduct,
+  isQuickPanelWattage,
+  L2_STRUCTURE_KIT_RATE,
+  L3_STRUCTURE_KIT_RATE,
+  QUICK_PANEL_WATTAGES,
+  resolveStandardStructureSelection,
+  standardStructureSummaryLabel,
+  STRUCTURE_CAPACITY_WARNING,
   validateCommercialQuoteConfig,
+  wattageLabelFromProduct,
   type CommercialQuoteDraftApply,
   type QuoteStructureKind,
+  type QuoteStructureMode,
   type QuoteSystemType,
 } from "../../lib/aiQuoteCommercialDraft";
 import { productsForBrand, productsForType } from "../../lib/websiteCatalog/sync";
@@ -41,40 +57,21 @@ export interface AIQuoteBuilderModalProps {
 
 const SYSTEM_SIZES = [6, 8, 10, 12, 15, 20];
 const SYSTEM_TYPE_OPTIONS: QuoteSystemType[] = ["On-grid", "Hybrid", "Off-grid"];
-
-function specNumber(product: Product | null, keys: string[]): number {
-  if (!product) return 0;
-  const specs = product.specifications || {};
-  for (const key of keys) {
-    const n = Number((specs as Record<string, string>)[key]);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return 0;
-}
-
-function wattageFromProduct(product: Product | null): number {
-  const fromSpec = specNumber(product, ["panelWattage", "wattage"]);
-  if (fromSpec) return fromSpec;
-  const match = `${product?.name || ""} ${product?.model || ""}`.match(/(\d+(?:\.\d+)?)\s*w\b/i);
-  return match ? Number(match[1]) : 0;
-}
-
-function inverterKwFromProduct(product: Product | null): string {
-  const fromSpec = specNumber(product, ["inverterKw"]);
-  if (fromSpec) return `${fromSpec}kW`;
-  const match = `${product?.name || ""} ${product?.model || ""}`.match(/(\d+(?:\.\d+)?)\s*kw\b/i);
-  return match ? `${match[1]}kW` : "";
-}
-
-function batteryKwhFromProduct(product: Product | null): string {
-  const fromSpec = specNumber(product, ["batteryKwh"]);
-  if (fromSpec) return `${fromSpec}kWh`;
-  const match = `${product?.name || ""} ${product?.model || ""}`.match(/(\d+(?:\.\d+)?)\s*kwh\b/i);
-  return match ? `${match[1]}kWh` : "";
-}
+const STRUCTURE_OPTIONS: { id: QuoteStructureKind; label: string }[] = [
+  { id: "standard", label: "Standard L2/L3" },
+  { id: "elevated", label: "Elevated" },
+  { id: "girder", label: "Girder" },
+  { id: "custom", label: "Custom" },
+];
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{children}</label>;
+}
+
+function chipClass(active: boolean, tone: "amber" | "emerald" = "amber"): string {
+  if (active && tone === "emerald") return "bg-emerald-600 text-white";
+  if (active) return "bg-amber-500 text-slate-950";
+  return "border border-slate-800 text-slate-300 hover:border-amber-500/40";
 }
 
 export default function AIQuoteBuilderModal({
@@ -112,6 +109,7 @@ export default function AIQuoteBuilderModal({
   const [panelProductId, setPanelProductId] = useState("");
   const [panelModel, setPanelModel] = useState("");
   const [panelWattage, setPanelWattage] = useState(580);
+  const [customWattage, setCustomWattage] = useState(false);
   const [panelQuantity, setPanelQuantity] = useState(recommendedPanelQuantity(10, 580));
   const [qtyDirty, setQtyDirty] = useState(false);
   const [panelRatePerWatt, setPanelRatePerWatt] = useState(0);
@@ -140,6 +138,11 @@ export default function AIQuoteBuilderModal({
   const [batteryWebsitePrice, setBatteryWebsitePrice] = useState(0);
 
   const [structureType, setStructureType] = useState<QuoteStructureKind>("standard");
+  const [structureMode, setStructureMode] = useState<QuoteStructureMode>("auto");
+  const [manualL3Quantity, setManualL3Quantity] = useState(0);
+  const [manualL2Quantity, setManualL2Quantity] = useState(0);
+  const [l3RatePerSection, setL3RatePerSection] = useState(L3_STRUCTURE_KIT_RATE);
+  const [l2RatePerSection, setL2RatePerSection] = useState(L2_STRUCTURE_KIT_RATE);
   const [installationRatePerWatt, setInstallationRatePerWatt] = useState(DEFAULT_INSTALLATION_RATE_PER_WATT);
   const [elevatedRatePerWatt, setElevatedRatePerWatt] = useState(DEFAULT_ELEVATED_STRUCTURE_RATE_PER_WATT);
   const [girderAmount, setGirderAmount] = useState(DEFAULT_GIRDER_STRUCTURE_AMOUNT);
@@ -198,6 +201,11 @@ export default function AIQuoteBuilderModal({
       batteryCatalogProductId: batteryProductId,
       batteryWebsitePrice,
       structureType,
+      structureMode,
+      manualL3Quantity,
+      manualL2Quantity,
+      l3RatePerSection,
+      l2RatePerSection,
       installationRatePerWatt,
       elevatedStructureRatePerWatt: elevatedRatePerWatt,
       girderAmount,
@@ -231,6 +239,11 @@ export default function AIQuoteBuilderModal({
       batteryProductId,
       batteryWebsitePrice,
       structureType,
+      structureMode,
+      manualL3Quantity,
+      manualL2Quantity,
+      l3RatePerSection,
+      l2RatePerSection,
       installationRatePerWatt,
       elevatedRatePerWatt,
       girderAmount,
@@ -243,12 +256,12 @@ export default function AIQuoteBuilderModal({
   const applyPayload = useMemo(() => buildCommercialDraftApply(commercialConfig), [commercialConfig]);
 
   const arrayWatts = calculateArrayWatts(panelWattage, panelQuantity);
-  const structure = recommendStructures(panelQuantity);
   const impliedPkrW = calculateImpliedPkrPerWatt(panelWebsitePrice, panelWattage);
   const panelUnit = calculatePanelUnitPrice(panelWattage, panelRatePerWatt);
   const panelTotal = calculatePanelTotal(panelWattage, panelQuantity, panelRatePerWatt);
   const installTotal = calculateInstallationTotal(panelWattage, panelQuantity, installationRatePerWatt);
   const elevatedTotal = calculateElevatedStructureTotal(panelWattage, panelQuantity, elevatedRatePerWatt);
+  const standardSelection = resolveStandardStructureSelection(commercialConfig);
   const structureTotal =
     structureType === "elevated"
       ? elevatedTotal
@@ -262,6 +275,14 @@ export default function AIQuoteBuilderModal({
   const inverterTotal = inverterQuantity * inverterUnitPrice;
   const batteryTotal = batteryEnabled && systemType !== "On-grid" ? batteryQuantity * batteryUnitPrice : 0;
   const subtotal = panelTotal + inverterTotal + batteryTotal + installTotal + structureTotal;
+  const structureUnderCapacity = structureType === "standard" && structureMode === "manual" && standardSelection.underCapacity;
+
+  const applyPanelWattage = (next: number, asCustom = false) => {
+    setCustomWattage(asCustom || !isQuickPanelWattage(next));
+    setPanelWattage(next);
+    const selected = panelChoices.find((p) => p.id === panelProductId);
+    setPanelProductId(catalogIdAfterWattageChange(panelProductId, selected, next));
+  };
 
   const selectPanel = (product: Product | null) => {
     if (!product) {
@@ -272,8 +293,11 @@ export default function AIQuoteBuilderModal({
     if (product.brand) setPanelBrand(panelBrands.includes(product.brand) ? product.brand : OTHER_CUSTOM_BRAND);
     if (product.brand && !panelBrands.includes(product.brand)) setCustomPanelBrand(product.brand);
     setPanelModel(product.model || product.name);
-    const watts = wattageFromProduct(product);
-    if (watts) setPanelWattage(watts);
+    const watts = wattageLabelFromProduct(product);
+    if (watts) {
+      setPanelWattage(watts);
+      setCustomWattage(!isQuickPanelWattage(watts));
+    }
     setPanelWebsitePrice(Number(product.price) || 0);
     if (!panelRateDirty && watts) setPanelRatePerWatt(Number(calculateImpliedPkrPerWatt(Number(product.price) || 0, watts).toFixed(4)));
   };
@@ -287,7 +311,7 @@ export default function AIQuoteBuilderModal({
     if (product.brand) setInverterBrand(inverterBrands.includes(product.brand) ? product.brand : OTHER_CUSTOM_BRAND);
     if (product.brand && !inverterBrands.includes(product.brand)) setCustomInverterBrand(product.brand);
     setInverterModel(product.model || product.name);
-    const cap = inverterKwFromProduct(product);
+    const cap = inverterKwLabelFromProduct(product);
     if (cap) setInverterCapacity(cap);
     setInverterWebsitePrice(Number(product.price) || 0);
     if (!inverterPriceDirty) setInverterUnitPrice(Number(product.price) || 0);
@@ -303,10 +327,17 @@ export default function AIQuoteBuilderModal({
     if (product.brand) setBatteryBrand(batteryBrands.includes(product.brand) ? product.brand : OTHER_CUSTOM_BRAND);
     if (product.brand && !batteryBrands.includes(product.brand)) setCustomBatteryBrand(product.brand);
     setBatteryModel(product.model || product.name);
-    const kwh = batteryKwhFromProduct(product);
+    const kwh = batteryKwhLabelFromProduct(product);
     if (kwh) setBatteryCapacityKwh(kwh);
     setBatteryWebsitePrice(Number(product.price) || 0);
     if (!batteryPriceDirty) setBatteryUnitPrice(Number(product.price) || 0);
+  };
+
+  const enterManualStructure = () => {
+    const recommended = recommendStructures(panelQuantity);
+    setManualL3Quantity(recommended.l3);
+    setManualL2Quantity(recommended.l2);
+    setStructureMode("manual");
   };
 
   const handleApply = () => {
@@ -314,6 +345,15 @@ export default function AIQuoteBuilderModal({
     onApplyDraft(applyPayload);
     onClose();
   };
+
+  const structureSummary =
+    structureType === "standard"
+      ? standardStructureSummaryLabel(standardSelection)
+      : structureType === "elevated"
+        ? `Rs ${elevatedRatePerWatt}/W · ${elevatedTotal.toLocaleString()}`
+        : structureType === "girder"
+          ? `Girder · ${girderAmount.toLocaleString()}`
+          : `${customStructureName || "Custom"} · ${customStructureAmount.toLocaleString()}`;
 
   return (
     <AppModal open={open} onClose={onClose} panelClassName="max-w-6xl">
@@ -374,11 +414,7 @@ export default function AIQuoteBuilderModal({
                       setCustomSize(false);
                       setSystemSizeKw(kw);
                     }}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold ${
-                      !customSize && systemSizeKw === kw
-                        ? "bg-amber-500 text-slate-950"
-                        : "border border-slate-800 text-slate-300 hover:border-amber-500/40"
-                    }`}
+                    className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(!customSize && systemSizeKw === kw)}`}
                   >
                     {kw} kW
                   </button>
@@ -386,9 +422,7 @@ export default function AIQuoteBuilderModal({
                 <button
                   type="button"
                   onClick={() => setCustomSize(true)}
-                  className={`rounded-xl px-3 py-2 text-xs font-bold ${
-                    customSize ? "bg-amber-500 text-slate-950" : "border border-slate-800 text-slate-300"
-                  }`}
+                  className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(customSize)}`}
                 >
                   Custom
                 </button>
@@ -409,9 +443,7 @@ export default function AIQuoteBuilderModal({
                     key={type}
                     type="button"
                     onClick={() => setSystemType(type)}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold ${
-                      systemType === type ? "bg-emerald-600 text-white" : "border border-slate-800 text-slate-300"
-                    }`}
+                    className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(systemType === type, "emerald")}`}
                   >
                     {type}
                   </button>
@@ -423,7 +455,7 @@ export default function AIQuoteBuilderModal({
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Panels</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <FieldLabel>Panel brand</FieldLabel>
+                  <FieldLabel>Brand</FieldLabel>
                   <select
                     value={panelBrand}
                     onChange={(e) => {
@@ -451,17 +483,21 @@ export default function AIQuoteBuilderModal({
                   )}
                 </div>
                 <div>
-                  <FieldLabel>Panel product</FieldLabel>
+                  <FieldLabel>Product / Model</FieldLabel>
                   <CatalogProductPicker products={panelChoices} valueId={panelProductId} onSelect={selectPanel} />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <FieldLabel>Panel model</FieldLabel>
                   <input
                     value={panelModel}
                     onChange={(e) => {
-                      setPanelModel(e.target.value);
+                      const next = e.target.value;
+                      setPanelModel(next);
                       const selected = panelChoices.find((p) => p.id === panelProductId);
-                      if (panelProductId && !catalogProductMatchesIdentity(selected, resolvedPanelBrand, e.target.value)) {
+                      if (
+                        panelProductId &&
+                        !catalogProductMatchesPanelIdentity(selected, resolvedPanelBrand, next, panelWattage)
+                      ) {
                         setPanelProductId("");
                       }
                     }}
@@ -469,15 +505,35 @@ export default function AIQuoteBuilderModal({
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <FieldLabel>Wattage</FieldLabel>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {QUICK_PANEL_WATTAGES.map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        onClick={() => applyPanelWattage(w)}
+                        className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(!customWattage && panelWattage === w)}`}
+                      >
+                        {w}W
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setCustomWattage(true)}
+                      className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(customWattage || !isQuickPanelWattage(panelWattage))}`}
+                    >
+                      Custom
+                    </button>
+                  </div>
                   <input
                     type="number"
                     min={1}
                     value={panelWattage}
-                    onChange={(e) => setPanelWattage(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                    onChange={(e) => applyPanelWattage(Number(e.target.value), true)}
+                    className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   />
+                  <p className="mt-1 text-[10px] text-slate-500">Any positive wattage is allowed. Chips are shortcuts only.</p>
                 </div>
                 <div>
                   <FieldLabel>Quantity</FieldLabel>
@@ -570,7 +626,7 @@ export default function AIQuoteBuilderModal({
                   )}
                 </div>
                 <div>
-                  <FieldLabel>Product</FieldLabel>
+                  <FieldLabel>Product / Model</FieldLabel>
                   <CatalogProductPicker products={inverterChoices} valueId={inverterProductId} onSelect={selectInverter} />
                 </div>
                 <div>
@@ -578,9 +634,13 @@ export default function AIQuoteBuilderModal({
                   <input
                     value={inverterModel}
                     onChange={(e) => {
-                      setInverterModel(e.target.value);
+                      const next = e.target.value;
+                      setInverterModel(next);
                       const selected = inverterChoices.find((p) => p.id === inverterProductId);
-                      if (inverterProductId && !catalogProductMatchesIdentity(selected, resolvedInverterBrand, e.target.value)) {
+                      if (
+                        inverterProductId &&
+                        !catalogProductMatchesInverterIdentity(selected, resolvedInverterBrand, next, inverterCapacity)
+                      ) {
                         setInverterProductId("");
                       }
                     }}
@@ -592,7 +652,12 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Capacity</FieldLabel>
                   <input
                     value={inverterCapacity}
-                    onChange={(e) => setInverterCapacity(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setInverterCapacity(next);
+                      const selected = inverterChoices.find((p) => p.id === inverterProductId);
+                      setInverterProductId(catalogIdAfterInverterCapacityChange(inverterProductId, selected, next));
+                    }}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   />
                 </div>
@@ -637,7 +702,7 @@ export default function AIQuoteBuilderModal({
             </section>
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Battery</h3>
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Lithium battery</h3>
               <label className="flex items-center gap-2 text-xs text-slate-300">
                 <input
                   type="checkbox"
@@ -677,7 +742,7 @@ export default function AIQuoteBuilderModal({
                     )}
                   </div>
                   <div>
-                    <FieldLabel>Product</FieldLabel>
+                    <FieldLabel>Product / Model</FieldLabel>
                     <CatalogProductPicker products={batteryChoices} valueId={batteryProductId} onSelect={selectBattery} />
                   </div>
                   <div>
@@ -685,9 +750,13 @@ export default function AIQuoteBuilderModal({
                     <input
                       value={batteryModel}
                       onChange={(e) => {
-                        setBatteryModel(e.target.value);
+                        const next = e.target.value;
+                        setBatteryModel(next);
                         const selected = batteryChoices.find((p) => p.id === batteryProductId);
-                        if (batteryProductId && !catalogProductMatchesIdentity(selected, resolvedBatteryBrand, e.target.value)) {
+                        if (
+                          batteryProductId &&
+                          !catalogProductMatchesBatteryIdentity(selected, resolvedBatteryBrand, next, batteryCapacityKwh)
+                        ) {
                           setBatteryProductId("");
                         }
                       }}
@@ -699,7 +768,12 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Capacity kWh</FieldLabel>
                     <input
                       value={batteryCapacityKwh}
-                      onChange={(e) => setBatteryCapacityKwh(e.target.value)}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setBatteryCapacityKwh(next);
+                        const selected = batteryChoices.find((p) => p.id === batteryProductId);
+                        setBatteryProductId(catalogIdAfterBatteryCapacityChange(batteryProductId, selected, next));
+                      }}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                     />
                   </div>
@@ -747,23 +821,99 @@ export default function AIQuoteBuilderModal({
             <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Structure</h3>
               <div className="flex flex-wrap gap-2">
-                {(["standard", "elevated", "girder", "custom"] as QuoteStructureKind[]).map((kind) => (
+                {STRUCTURE_OPTIONS.map((option) => (
                   <button
-                    key={kind}
+                    key={option.id}
                     type="button"
-                    onClick={() => setStructureType(kind)}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold capitalize ${
-                      structureType === kind ? "bg-amber-500 text-slate-950" : "border border-slate-800 text-slate-300"
-                    }`}
+                    onClick={() => setStructureType(option.id)}
+                    className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(structureType === option.id)}`}
                   >
-                    {kind}
+                    {option.label}
                   </button>
                 ))}
               </div>
               {structureType === "standard" && (
-                <p className="text-xs text-slate-400">
-                  Standard uses L2/L3 kits. {panelQuantity} panels → {structure.l3} × L3 + {structure.l2} × L2.
-                </p>
+                <div className="space-y-3">
+                  <div>
+                    <FieldLabel>Mode</FieldLabel>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setStructureMode("auto")}
+                        className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(structureMode === "auto")}`}
+                      >
+                        Auto Calculate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={enterManualStructure}
+                        className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(structureMode === "manual")}`}
+                      >
+                        Manual
+                      </button>
+                    </div>
+                  </div>
+                  {structureMode === "auto" ? (
+                    <p className="text-xs text-slate-400">
+                      {panelQuantity} panels → {standardSelection.l3} × L3 + {standardSelection.l2} × L2
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <FieldLabel>L3 Quantity</FieldLabel>
+                        <input
+                          type="number"
+                          min={0}
+                          value={manualL3Quantity}
+                          onChange={(e) => setManualL3Quantity(Number(e.target.value))}
+                          className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>L2 Quantity</FieldLabel>
+                        <input
+                          type="number"
+                          min={0}
+                          value={manualL2Quantity}
+                          onChange={(e) => setManualL2Quantity(Number(e.target.value))}
+                          className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <FieldLabel>L3 rate / section</FieldLabel>
+                      <input
+                        type="number"
+                        min={0}
+                        value={l3RatePerSection}
+                        onChange={(e) => setL3RatePerSection(Number(e.target.value))}
+                        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>L2 rate / section</FieldLabel>
+                      <input
+                        type="number"
+                        min={0}
+                        value={l2RatePerSection}
+                        onChange={(e) => setL2RatePerSection(Number(e.target.value))}
+                        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Panel quantity: {panelQuantity} · Structure capacity: {standardSelection.capacity} panels
+                  </p>
+                  <p className="text-xs text-slate-400">Structure subtotal: Rs. {structureTotal.toLocaleString()}</p>
+                  {structureUnderCapacity && (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      {STRUCTURE_CAPACITY_WARNING}
+                    </div>
+                  )}
+                </div>
               )}
               {structureType === "elevated" && (
                 <div>
@@ -838,20 +988,66 @@ export default function AIQuoteBuilderModal({
           <aside className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-4 space-y-3 h-fit xl:sticky xl:top-0">
             <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Live summary</h3>
             <dl className="space-y-2 text-xs text-slate-300">
-              <div className="flex justify-between"><dt>System</dt><dd className="text-white font-semibold">{systemSizeKw} kW {systemType}</dd></div>
-              <div className="flex justify-between"><dt>Structure</dt><dd className="text-white font-semibold capitalize">{structureType}</dd></div>
-              <div className="flex justify-between gap-3"><dt>Array</dt><dd className="text-right text-white">{panelQuantity} × {panelWattage}W = {arrayKilowattsPeak(panelWattage, panelQuantity).toFixed(3)} kWp</dd></div>
-              <div className="flex justify-between gap-3"><dt>Panel</dt><dd className="text-right">Rs. {panelRatePerWatt}/W · {panelUnit.toLocaleString()} /pc · {panelTotal.toLocaleString()}</dd></div>
-              <div className="flex justify-between gap-3"><dt>Inverter</dt><dd className="text-right">{inverterModel || inverterCapacity} × {inverterQuantity} · {inverterTotal.toLocaleString()}</dd></div>
-              <div className="flex justify-between gap-3"><dt>Battery</dt><dd className="text-right">{batteryEnabled && systemType !== "On-grid" ? `${batteryModel || "Battery"} × ${batteryQuantity} · ${batteryTotal.toLocaleString()}` : "None"}</dd></div>
-              <div className="flex justify-between"><dt>Installation</dt><dd>Rs. {installationRatePerWatt}/W · {installTotal.toLocaleString()}</dd></div>
-              <div className="flex justify-between"><dt>Structure total</dt><dd>{structureTotal.toLocaleString()}</dd></div>
-              <div className="flex justify-between border-t border-slate-800 pt-2 text-sm text-white font-bold"><dt>Estimated subtotal</dt><dd>Rs. {subtotal.toLocaleString()}</dd></div>
+              <div className="flex justify-between gap-3">
+                <dt>System</dt>
+                <dd className="text-right text-white font-semibold">{systemSizeKw}kW {systemType}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Array</dt>
+                <dd className="text-right text-white">
+                  {panelQuantity} × {panelWattage}W
+                  <div className="text-[10px] font-normal text-slate-400">{arrayKilowattsPeak(panelWattage, panelQuantity).toFixed(3)} kWp actual array</div>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Panel</dt>
+                <dd className="text-right">
+                  {panelWattage}W · Rs. {panelRatePerWatt}/W
+                  <div className="text-white">{panelTotal.toLocaleString()}</div>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Inverter</dt>
+                <dd className="text-right">
+                  {[resolvedInverterBrand, inverterModel, inverterCapacity].filter(Boolean).join(" ")} × {inverterQuantity}
+                  <div className="text-white">{inverterTotal.toLocaleString()}</div>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Battery</dt>
+                <dd className="text-right">
+                  {batteryEnabled && systemType !== "On-grid"
+                    ? `${[resolvedBatteryBrand, batteryModel, batteryCapacityKwh].filter(Boolean).join(" ")} × ${batteryQuantity}`
+                    : "None"}
+                  <div className="text-white">{batteryEnabled && systemType !== "On-grid" ? batteryTotal.toLocaleString() : "—"}</div>
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Structure</dt>
+                <dd className="text-right text-white">{structureSummary}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Installation</dt>
+                <dd className="text-right">
+                  Rs. {installationRatePerWatt}/W
+                  <div className="text-white">{installTotal.toLocaleString()}</div>
+                </dd>
+              </div>
+              <div className="flex justify-between border-t border-slate-800 pt-2 text-sm text-white font-bold">
+                <dt>Estimated subtotal</dt>
+                <dd>Rs. {subtotal.toLocaleString()}</dd>
+              </div>
             </dl>
             {systemType === "On-grid" && batteryEnabled && (
               <div className="flex items-center gap-2 text-[11px] text-amber-200">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 On-grid draft will not add a battery row.
+              </div>
+            )}
+            {structureUnderCapacity && (
+              <div className="flex items-start gap-2 text-[11px] text-amber-200">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                {STRUCTURE_CAPACITY_WARNING}
               </div>
             )}
             {validationErrors.length > 0 && (
