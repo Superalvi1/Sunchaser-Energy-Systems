@@ -72,8 +72,7 @@ import ProjectDesignWorkspace from "./roofStudio/ProjectDesignWorkspace";
 import RoofStudioErrorBoundary from "./roofStudio/RoofStudioErrorBoundary";
 import { StudioEmptyState } from "./ui/studio";
 import { isDesignProjectEnabled, isProposalStudioEnabled } from "../lib/studioFeatureFlags";
-import { buildDraftApplyPayload } from "../lib/solarQuotePlannerClient";
-import type { SolarQuoteDraft } from "../lib/solarQuotePlannerClient";
+import { type CommercialQuoteDraftApply } from "../lib/aiQuoteCommercialDraft";
 import {
   mergeContentLibrary,
   type ContentLibraryBlock,
@@ -360,20 +359,20 @@ export default function SalesTeamApp({
     setLoadedPackageSnapshot(null);
   };
 
-  const handleApplyAiQuoteDraft = (draft: SolarQuoteDraft) => {
-    const payload = buildDraftApplyPayload(draft);
-    if (!payload) return;
+  const handleApplyAiQuoteDraft = (draft: CommercialQuoteDraftApply) => {
+    if (!draft?.draftOnly || !draft.boqRows?.length) return;
     clearLoadedPackage();
     setEditingQuoteId(null);
-    setSystemSizekW(payload.systemSizekW);
-    setSystemType(payload.systemType);
-    setPanelBrand(payload.panelBrand);
-    setPanelWattage(payload.panelWattage);
-    setInverterBrand(payload.inverterBrand);
-    setInverterCapacity(payload.inverterCapacity);
-    setBatteryOption(payload.batteryOption);
-    setBoqRows(payload.boqRows);
-    setManualBoqItems(payload.boqRows);
+    setSystemSizekW(draft.systemSizekW);
+    setSystemType(draft.systemType);
+    setPanelBrand(draft.panelBrand);
+    setPanelWattage(draft.panelWattage);
+    setInverterBrand(draft.inverterBrand);
+    setInverterCapacity(draft.inverterCapacity);
+    setBatteryOption(draft.batteryOption);
+    setSelectedStructure(draft.structureType);
+    setBoqRows(draft.boqRows);
+    setManualBoqItems(draft.boqRows);
     setActiveModule("boq_builder");
     toast.success("AI draft applied to BOQ builder — review and save manually.");
   };
@@ -5431,6 +5430,7 @@ export default function SalesTeamApp({
       open={aiQuoteBuilderOpen}
       onClose={() => setAiQuoteBuilderOpen(false)}
       onApplyDraft={handleApplyAiQuoteDraft}
+      products={products}
     />
     </>
   );

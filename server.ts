@@ -84,6 +84,13 @@ import {
   authorizeAutoSizerPresetsAccess,
   readSettingsObject,
 } from "./src/lib/autoSizer/index.ts";
+import {
+  authorizeWebsiteCatalogReadAccess,
+  authorizeWebsiteCatalogSyncAccess,
+  liftWebsiteSourceFields,
+  runWebsiteCatalogSync,
+  emptyWebsiteCatalogReport,
+} from "./src/lib/websiteCatalog/index.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { formatQuotationPdfError } from "./src/lib/quotePdfErrors.ts";
 import {
@@ -6889,7 +6896,7 @@ function mapProductRowForSupabase(data: any, fallbackId?: string) {
 }
 
 function mapSupabaseProductRowToApp(row: any) {
-  return {
+  const mapped = {
     id: row.id,
     name: row.name,
     category: row.category,
@@ -6905,7 +6912,10 @@ function mapSupabaseProductRowToApp(row: any) {
       typeof row.specifications === "string"
         ? JSON.parse(row.specifications)
         : row.specifications || {},
+    installationRequired: false,
+    serviceRequired: false,
   };
+  return liftWebsiteSourceFields(mapped);
 }
 
 async function resolveCatalogProduct(
@@ -7065,6 +7075,65 @@ app.put("/api/admin/autosizer-presets", async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Could not save AutoSizer presets." });
+  }
+});
+
+app.get("/api/admin/website-catalog-sync", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeWebsiteCatalogReadAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latest: unknown = db.settings;
+    if (isSupabaseActive()) {
+      const state = await fetchAppStateFromSupabase();
+      latest = state?.settings ?? latest;
+    }
+    const settings = readSettingsObject(latest);
+    const report = settings.websiteCatalogSync || emptyWebsiteCatalogReport();
+    return res.json({ success: true, report });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Could not load website catalog sync status." });
+  }
+});
+
+app.post("/api/admin/website-catalog-sync", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeWebsiteCatalogSyncAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    const existing = Array.isArray(db.products) ? db.products : [];
+    const result = await runWebsiteCatalogSync(existing);
+    db.products = result.products;
+    const latestSettings = readSettingsObject(db.settings);
+    db.settings = { ...latestSettings, websiteCatalogSync: result.report };
+    saveDb();
+    if (isSupabaseActive()) {
+      const supabase = getSupabase()!;
+      const chunkSize = 80;
+      for (let i = 0; i < result.products.length; i += chunkSize) {
+        const chunk = result.products.slice(i, i + chunkSize).map((product: any) => mapProductRowForSupabase(product, product.id));
+        const { error } = await supabase.from("products").upsert(chunk, { onConflict: "id" });
+        if (error) {
+          result.report.errors.push(`Supabase product upsert failed: ${error.message}`);
+          break;
+        }
+      }
+      await upsertAppSettingsToSupabase(db.settings);
+    }
+    await appendActivityLog(
+      staff.id,
+      staff.username,
+      staff.role,
+      "Website Catalog Synced",
+      `${staff.username} synced Sunchaser website catalog (${result.report.discovered} discovered)`
+    );
+    return res.json({ success: true, report: result.report });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Website catalog sync failed." });
   }
 });
 

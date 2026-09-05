@@ -209,6 +209,18 @@ export interface Product {
   specifications: Record<string, string>;
   installationRequired: boolean;
   serviceRequired: boolean;
+  /** First-party website catalog source. Optional — never required for legacy rows. */
+  source?: string;
+  sourceUrl?: string;
+  sourceSlug?: string;
+  sourceProductId?: string;
+  lastSyncedAt?: string;
+  sourceActive?: boolean;
+  websiteCategory?: string;
+  currency?: string;
+  listPrice?: number;
+  availability?: string;
+  productType?: "panel" | "inverter" | "battery" | "cable" | "accessory" | "protection" | "structure" | "package";
 }
 
 export interface OrderItem {
