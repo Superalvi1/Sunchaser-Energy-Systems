@@ -76,6 +76,15 @@ export interface Quote {
   customNotes?: string;
   grandTotal?: number;
   netTotal?: number;
+  quote_type?: "auto_sizer" | "manual_boq" | string;
+  source?: string;
+  includedPages?: string[];
+  includeSizerItems?: boolean;
+  templateId?: string;
+  warrantyTerms?: string;
+  termsAndConditions?: string;
+  paymentTerms?: string;
+  manualOverrides?: Partial<Record<"panel" | "inverter" | "battery" | "structure" | "cables" | "accessories" | "prices", boolean>>;
 }
 
 export interface Survey {
