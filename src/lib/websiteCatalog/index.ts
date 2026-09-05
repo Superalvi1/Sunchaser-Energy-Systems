@@ -42,3 +42,18 @@ export {
 export { fetchWebsiteShopAndSitemap, defaultWebsiteCatalogFetch } from "./fetchCatalog";
 export type { CatalogFetchFn } from "./fetchCatalog";
 export { runWebsiteCatalogSync } from "./runSync";
+export {
+  CRM_OWNED_INVENTORY_FIELDS,
+  mergeCurrentCrmOwnedInventory,
+  applyCurrentCrmOwnedInventory,
+  mapWebsiteCatalogProductForSupabase,
+  readSettingsAtPersistTime,
+  finalizeWebsiteCatalogSync,
+} from "./persist";
+export type {
+  WebsiteCatalogSupabaseRow,
+  WebsiteCatalogPersistAdapters,
+  WebsiteCatalogFinalizeInput,
+  WebsiteCatalogFinalizeOutput,
+} from "./persist";
+
