@@ -84,6 +84,15 @@ import {
   authorizeAutoSizerPresetsAccess,
   readSettingsObject,
 } from "./src/lib/autoSizer/index.ts";
+import {
+  authorizeWebsiteCatalogReadAccess,
+  authorizeWebsiteCatalogSyncAccess,
+  liftWebsiteSourceFields,
+  runWebsiteCatalogSync,
+  emptyWebsiteCatalogReport,
+  resolveWebsiteCatalogSyncBaseline,
+  finalizeWebsiteCatalogSync,
+} from "./src/lib/websiteCatalog/index.ts";
 import { resolveQuoteDiscountAmount, computeNetProposalValue } from "./src/lib/quoteDiscount.ts";
 import { formatQuotationPdfError } from "./src/lib/quotePdfErrors.ts";
 import {
@@ -6889,7 +6898,7 @@ function mapProductRowForSupabase(data: any, fallbackId?: string) {
 }
 
 function mapSupabaseProductRowToApp(row: any) {
-  return {
+  const mapped = {
     id: row.id,
     name: row.name,
     category: row.category,
@@ -6905,7 +6914,38 @@ function mapSupabaseProductRowToApp(row: any) {
       typeof row.specifications === "string"
         ? JSON.parse(row.specifications)
         : row.specifications || {},
+    installationRequired: false,
+    serviceRequired: false,
   };
+  return liftWebsiteSourceFields(mapped);
+}
+
+async function fetchLatestWebsiteCatalogSettings(): Promise<unknown> {
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { data, error } = await supabase.from("settings").select("value").eq("key", "global").maybeSingle();
+    if (error) throw error;
+    if (data?.value != null) return data.value;
+  }
+  loadDb();
+  return db.settings;
+}
+
+async function fetchCurrentCatalogProductsByIds(ids: string[]): Promise<Map<string, any>> {
+  const found = new Map<string, any>();
+  if (!ids.length || !isSupabaseActive()) return found;
+  const supabase = getSupabase()!;
+  const chunkSize = 80;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const { data, error } = await supabase.from("products").select("*").in("id", chunk);
+    if (error) throw error;
+    for (const row of data || []) {
+      const mapped = mapSupabaseProductRowToApp(row);
+      if (mapped?.id) found.set(mapped.id, mapped);
+    }
+  }
+  return found;
 }
 
 async function resolveCatalogProduct(
@@ -7065,6 +7105,89 @@ app.put("/api/admin/autosizer-presets", async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Could not save AutoSizer presets." });
+  }
+});
+
+app.get("/api/admin/website-catalog-sync", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeWebsiteCatalogReadAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latest: unknown = db.settings;
+    if (isSupabaseActive()) {
+      const state = await fetchAppStateFromSupabase();
+      latest = state?.settings ?? latest;
+    }
+    const settings = readSettingsObject(latest);
+    const report = settings.websiteCatalogSync || emptyWebsiteCatalogReport();
+    return res.json({ success: true, report });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Could not load website catalog sync status." });
+  }
+});
+
+app.post("/api/admin/website-catalog-sync", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const auth = authorizeWebsiteCatalogSyncAccess(staff);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+  try {
+    loadDb();
+    let latestState: { products?: any[]; settings?: unknown } | null = null;
+    if (isSupabaseActive()) {
+      latestState = await fetchAppStateFromSupabase();
+    }
+    const baseline = resolveWebsiteCatalogSyncBaseline(db.products, db.settings, isSupabaseActive(), latestState);
+    const result = await runWebsiteCatalogSync(baseline.products);
+    const supabase = isSupabaseActive() ? getSupabase() : null;
+    const outcome = await finalizeWebsiteCatalogSync({
+      supabaseActive: Boolean(supabase),
+      baselineProducts: baseline.products,
+      localSettingsFallback: db.settings,
+      result,
+      adapters: {
+        fetchLatestSettings: fetchLatestWebsiteCatalogSettings,
+        fetchCurrentProductsByIds: fetchCurrentCatalogProductsByIds,
+        upsertProductChunk: async (rows) => {
+          const { error } = await supabase!.from("products").upsert(rows, { onConflict: "id" });
+          return { error: error?.message || null };
+        },
+        upsertSettings: async (settings) => {
+          if (supabase) {
+            const { error } = await supabase.from("settings").upsert({ key: "global", value: settings }, { onConflict: "key" });
+            if (error) throw new Error(error.message);
+            return;
+          }
+          await upsertAppSettingsToSupabase(settings);
+        },
+      },
+    });
+    if (outcome.commitLocalProducts) db.products = outcome.products;
+    else db.products = baseline.products;
+    if (outcome.commitLocalSettings) db.settings = outcome.settings;
+    saveDb();
+    if (!outcome.success) {
+      return res.status(outcome.httpStatus).json({
+        success: false,
+        report: outcome.report,
+        error: outcome.error,
+        productsPersisted: outcome.productsPersisted,
+        settingsPersisted: outcome.settingsPersisted,
+        settingsMetadataFailed: outcome.settingsMetadataFailed,
+      });
+    }
+    await appendActivityLog(
+      staff.id,
+      staff.username,
+      staff.role,
+      "Website Catalog Synced",
+      `${staff.username} synced Sunchaser website catalog (${outcome.report.discovered} discovered)`
+    );
+    return res.json({ success: true, report: outcome.report });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || "Website catalog sync failed." });
   }
 });
 
