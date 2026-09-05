@@ -6,10 +6,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RequestActor } from "../middleware/actor.ts";
-import {
-  getSharedWhatsAppLidPhoneMap,
-  __resetSharedWhatsAppLidPhoneMap,
-} from "../whatsappWeb/index.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "./whatsappInboxRepository.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import type { InboxMessageRef } from "./whatsappInboxRepoSupport.ts";
@@ -104,10 +100,6 @@ function actor(overrides: Partial<RequestActor> = {}): RequestActor {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const inboundSrc = readFileSync(
-  join(here, "../whatsappWeb/whatsappWebInbound.ts"),
-  "utf8"
-);
 const webhookSrc = readFileSync(join(here, "whatsappWebhookRoutes.ts"), "utf8");
 const cacheSrc = readFileSync(
   join(here, "whatsappInboxUnreadIndexCache.ts"),
@@ -357,73 +349,6 @@ await test(
   }
 );
 
-await test(
-  "actual inbound dirty path is warm-K (not company-wide cold wipe)",
-  async () => {
-    assert.ok(inboundSrc.includes("dirtyUnreadIndexForConversation"));
-    assert.ok(webhookSrc.includes("dirtyUnreadIndexForConversation"));
-    assert.equal(inboundSrc.includes("invalidateUnreadIndexCacheForCompany"), false);
-    assert.equal(webhookSrc.includes("invalidateUnreadIndexCacheForCompany"), false);
-    assert.ok(cacheSrc.includes("warm K-touched"));
-    assert.ok(cacheSrc.includes("NOT a full cold rebuild"));
-
-    const repos = createInMemoryWhatsAppInboxRepositories();
-    const a = actor();
-    for (let i = 0; i < 8; i++) {
-      const ts = new Date(
-        Date.parse("2026-07-29T17:00:00.000Z") + i * 60_000
-      ).toISOString();
-      seedConversation(repos.store, {
-        id: `c_${i}`,
-        lastMessageAt: ts,
-        updatedAt: ts,
-      });
-      seedMessage(repos.store, {
-        id: `m_${i}`,
-        conversationId: `c_${i}`,
-        direction: "inbound",
-        createdAt: ts,
-      });
-    }
-    const services = createWhatsAppInboxServices(repos);
-    await services.conversations.listByActivity(a, { quickFilter: "all" });
-
-    let batchIds: string[][] = [];
-    const original = repos.readWatermarks.batchUnreadState.bind(
-      repos.readWatermarks
-    );
-    repos.readWatermarks.batchUnreadState = async (ids, userId, companyId) => {
-      batchIds.push([...ids]);
-      return original(ids, userId, companyId);
-    };
-
-    // Simulate Meta/Web inbound dirty for one conversation.
-    const later = "2026-07-29T18:00:00.000Z";
-    seedMessage(repos.store, {
-      id: "m_3b",
-      conversationId: "c_3",
-      direction: "inbound",
-      createdAt: later,
-    });
-    seedConversation(repos.store, {
-      id: "c_3",
-      lastMessageAt: later,
-      updatedAt: later,
-    });
-    dirtyUnreadIndexForConversation("sunchaser", "c_3");
-
-    batchIds = [];
-    await services.conversations.listByActivity(a, { quickFilter: "all" });
-    const touched = new Set(batchIds.flat());
-    assert.ok(touched.has("c_3"));
-    // Must not reload all 8 conversations for a single inbound dirty.
-    assert.ok(
-      touched.size <= 3,
-      `expected warm-K touch, got ${[...touched].join(",")}`
-    );
-  }
-);
-
 await test("partial cache misses still write back correctly", async () => {
   const repos = createInMemoryWhatsAppInboxRepositories();
   const a = actor();
@@ -488,24 +413,6 @@ await test("writeBack helper still updates totals", () => {
     new Map([["c1", { isUnread: false, unreadCount: 0 }]])
   );
   assert.equal(getUnreadIndexCache("sunchaser", "u1")?.totalUnreadCount, 0);
-});
-
-await test("no WhatsApp send / Gemini / auto AI in inbound path", () => {
-  assert.equal(inboundSrc.includes("sendWhatsAppWebPlainText"), false);
-  assert.equal(inboundSrc.includes("generateContent"), false);
-  assert.equal(inboundSrc.includes("@google/generative-ai"), false);
-});
-
-await test("@lid protection remains intact", () => {
-  __resetSharedWhatsAppLidPhoneMap();
-  const map = getSharedWhatsAppLidPhoneMap();
-  assert.equal(map.resolvePhoneJid("123456789012345@lid"), null);
-  map.remember("123456789012345@lid", "923001112233@s.whatsapp.net");
-  assert.equal(
-    map.resolvePhoneJid("123456789012345@lid"),
-    "923001112233@s.whatsapp.net"
-  );
-  void __peekUnreadIndexPublishSeqForTests;
 });
 
 if (failed > 0) {

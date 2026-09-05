@@ -56,12 +56,14 @@ export const TRANSPORT_CHANNEL_DESCRIPTORS: Readonly<
   },
   whatsapp_web_qr: {
     transport: "whatsapp_web_qr",
-    label: "Experimental WhatsApp Web QR",
+    label: "WhatsApp Web QR (removed — reserved value)",
     visibility: "experimental",
     audience: "internal_only",
     independentlyDisableable: true,
     classificationNotes:
-      "Experimental internal-only QR transport. Independently disableable. Connector lives under server/whatsappWeb/ behind WHATSAPP_WEB_QR_ENABLED.",
+      "REMOVED. The unofficial WhatsApp Web (Baileys) connector was deleted; no implementation exists and none may be added. " +
+      "This value is retained only because applied migrations reference it in CHECK constraints " +
+      "(scripts/unified-messaging-normalized-schema.sql). Sunchaser uses the official Meta Cloud API exclusively.",
   },
   website_chat: {
     transport: "website_chat",
