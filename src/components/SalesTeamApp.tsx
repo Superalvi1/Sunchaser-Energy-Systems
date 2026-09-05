@@ -130,7 +130,7 @@ import {
   type QuoteManualOverrides,
 } from "../lib/autoSizer";
 import { EXISTING_COMPANY_VALIDITY_DAYS, resolveQuoteValidityDays } from "../lib/quoteValidity";
-import { quoteBoqOverflow, THREE_PAGE_BOQ_OVERFLOW_MESSAGE } from "../lib/quoteThreePageRender";
+import { resolveCustomerFacingBoq } from "../lib/quoteCustomerBoq";
 
 interface SalesTeamAppProps {
   staffUser?: User;
@@ -2753,7 +2753,7 @@ export default function SalesTeamApp({
   const sizerDcRow = boqRows.find((r) => r.id === "dc_cable_row");
   const sizerAcRow = boqRows.find((r) => r.id === "ac_cable_row");
   const sizerStructure = readStructureBreakdownFromRows(boqRows);
-  const sizerBoqFit = quoteBoqOverflow(boqRows as any);
+  const sizerCustomerBoq = resolveCustomerFacingBoq(boqRows as any);
   const calculatedTaxAmount = taxEnabled ? Math.round(grandTotal * (taxRate / 100)) : 0;
   const resolvedManualDiscount = useMemo(
     () => resolveQuoteDiscountAmount(grandTotal, { discountType, discountValue }),
@@ -3742,9 +3742,9 @@ export default function SalesTeamApp({
                         </button>
                       </div>
 
-                      {sizerBoqFit.overflow && snapshotHasItems(boqRows) && (
+                      {sizerCustomerBoq.blocked && snapshotHasItems(boqRows) && (
                         <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-2xl text-[11px] font-sans leading-relaxed">
-                          {THREE_PAGE_BOQ_OVERFLOW_MESSAGE} Preview can still list all {sizerBoqFit.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                          {sizerCustomerBoq.message} Preview can still list all {sizerCustomerBoq.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
                         </div>
                       )}
 
@@ -4431,9 +4431,9 @@ export default function SalesTeamApp({
                           Customer quote saves only for this client. Use Update Loaded Package to change future package defaults.
                         </p>
 
-                        {sizerBoqFit.overflow && snapshotHasItems(boqRows) && (
+                        {sizerCustomerBoq.blocked && snapshotHasItems(boqRows) && (
                           <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-xl text-[11px] font-sans leading-relaxed">
-                            {THREE_PAGE_BOQ_OVERFLOW_MESSAGE} Preview still lists all {sizerBoqFit.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                            {sizerCustomerBoq.message} Preview still lists all {sizerCustomerBoq.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
                           </div>
                         )}
 

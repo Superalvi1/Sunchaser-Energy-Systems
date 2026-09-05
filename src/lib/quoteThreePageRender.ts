@@ -1,13 +1,16 @@
 import { STANDARD_QUOTATION_PAGES } from "./autoSizer";
 import {
   boqPdfSectionCss,
-  boqRowWeight,
   buildBoqTotalsHtml,
-  ensureBoqSectionSubtotals,
   renderBoqTableBodyHtml,
   renderBoqTableHeadHtml,
   type BoqPdfRow,
 } from "./quoteBoqPdf";
+import {
+  resolveCustomerFacingBoq,
+  THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE,
+  THREE_PAGE_BOQ_TOTAL_MISMATCH_MESSAGE,
+} from "./quoteCustomerBoq";
 import { computeNetProposalValue, resolveQuoteDiscountAmount } from "./quoteDiscount";
 import {
   escapeHtml,
@@ -23,8 +26,13 @@ import { normalizeRows } from "./normalizeRows";
 import { resolveQuoteValidityDays } from "./quoteValidity";
 
 
+export { quoteBoqOverflow, THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT } from "./quoteBoqPdf";
+export {
+  THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE,
+  THREE_PAGE_BOQ_TOTAL_MISMATCH_MESSAGE,
+};
+
 export const THREE_PAGE_QUOTATION_PAGE_COUNT = 3;
-export const THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT = 36;
 export const THREE_PAGE_TERMS_MAX_CHARS = 2800;
 export const THREE_PAGE_BOQ_OVERFLOW_MESSAGE =
   "Quotation contains too many line items for the standard 3-page format. Please consolidate or group items before generating the final PDF.";
@@ -44,6 +52,8 @@ export interface ThreePageRenderResult {
   itemCount: number;
   validityDays: number;
   pages: typeof STANDARD_QUOTATION_PAGES;
+  customerBoqConsolidated: boolean;
+  originalBoqOverflow: boolean;
 }
 
 function formatPKR(val: number): string {
@@ -149,17 +159,6 @@ export function quotationSystemHeadline(systemKw: unknown, systemType: string): 
   };
 }
 
-export function quoteBoqOverflow(rows: BoqPdfRow[]): { overflow: boolean; weight: number; itemCount: number } {
-  const normalized = ensureBoqSectionSubtotals(rows);
-  const weight = normalized.reduce((sum, row) => sum + boqRowWeight(row), 0);
-  const itemCount = normalized.filter((r) => r.type === "item").length;
-  return {
-    overflow: weight > THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT,
-    weight,
-    itemCount,
-  };
-}
-
 export function quoteTermsOverflow(terms: string[]): { overflow: boolean; charCount: number } {
   const charCount = terms.reduce((sum, t) => sum + String(t || "").length, 0);
   return { overflow: charCount > THREE_PAGE_TERMS_MAX_CHARS || terms.length > 16, charCount };
@@ -237,12 +236,13 @@ export function compileThreePageQuotationHtml(
   const systemHeadline = quotationSystemHeadline(systemKw, systemType);
   const systemTypeLabel = systemType || "Solar";
   const panelCount = Number(quoteObj?.panelCount) || 0;
-  const rows = snapshotRows(quoteObj);
-  const overflow = quoteBoqOverflow(rows);
-  const compact = overflow.overflow;
+  const sourceRows = snapshotRows(quoteObj);
+  const customerBoq = resolveCustomerFacingBoq(sourceRows);
+  const overflowBlocked = customerBoq.blocked;
+  const compact = customerBoq.consolidated || overflowBlocked;
 
-  const { html: boqBody, calculatedGross } = renderBoqTableBodyHtml(rows, formatPKR);
-  const grossTotal = calculatedGross || Number(quoteObj?.grandTotal) || 0;
+  const { html: boqBody, calculatedGross } = renderBoqTableBodyHtml(customerBoq.rows, formatPKR);
+  const grossTotal = customerBoq.originalTotal || calculatedGross || Number(quoteObj?.grandTotal) || 0;
   const resolvedDiscount = resolveQuoteDiscountAmount(grossTotal, {
     discountType: quoteObj?.discountType,
     discountValue: quoteObj?.discountValue,
@@ -271,9 +271,9 @@ export function compileThreePageQuotationHtml(
     customNotes: quoteObj?.customNotes,
   });
 
-  const overflowBanner = overflow.overflow
+  const overflowBanner = overflowBlocked
     ? `<div data-sunchaser-overflow="boq" style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;font-size:8.5px;font-weight:700;padding:5px 8px;border-radius:6px;margin:6px 0 8px;">
-        ${escapeHtml(THREE_PAGE_BOQ_OVERFLOW_MESSAGE)} All ${overflow.itemCount} priced lines are listed below for review — final PDF is blocked until this is resolved.
+        ${escapeHtml(customerBoq.message || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE)} All ${customerBoq.itemCount} priced lines are listed below for review — final PDF is blocked until this is resolved.
       </div>`
     : "";
 
@@ -349,12 +349,12 @@ export function compileThreePageQuotationHtml(
   `;
 
   const page2 = `
-    <div class="page boq-page three-page-boq${compact ? " compact-boq" : ""}${overflow.overflow ? " preview-overflow" : ""}">
+    <div class="page boq-page three-page-boq${compact ? " compact-boq" : ""}${overflowBlocked ? " preview-overflow" : ""}">
       <div class="quote-page-shell">
         ${pageHeader(logoSrc, settings, "Equipment / BOQ")}
         <div class="page-title">Commercial Quotation</div>
         ${overflowBanner}
-        <div style="border:1.5px solid #cbd5e1;border-radius:6px;margin-top:8px;flex:1;min-height:0;overflow:${overflow.overflow ? "auto" : "hidden"};">
+        <div style="border:1.5px solid #cbd5e1;border-radius:6px;margin-top:8px;flex:1;min-height:0;overflow:${overflowBlocked ? "auto" : "hidden"};">
           <table class="boq-table">
             ${renderBoqTableHeadHtml()}
             <tbody>
@@ -426,9 +426,9 @@ export function compileThreePageQuotationHtml(
     </div>
   `;
 
-  const exportBlocked = overflow.overflow || termsFit.overflow;
-  const exportBlockReason = overflow.overflow
-    ? THREE_PAGE_BOQ_OVERFLOW_MESSAGE
+  const exportBlocked = overflowBlocked || termsFit.overflow;
+  const exportBlockReason = overflowBlocked
+    ? (customerBoq.message || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE)
     : termsFit.overflow
       ? THREE_PAGE_TERMS_OVERFLOW_MESSAGE
       : null;
@@ -561,7 +561,7 @@ export function compileThreePageQuotationHtml(
         </div>
       </div>`
   }
-  <div class="pages-container" data-sunchaser-page-count="${THREE_PAGE_QUOTATION_PAGE_COUNT}" data-sunchaser-export-blocked="${exportBlocked ? "true" : "false"}">
+  <div class="pages-container" data-sunchaser-page-count="${THREE_PAGE_QUOTATION_PAGE_COUNT}" data-sunchaser-export-blocked="${exportBlocked ? "true" : "false"}" data-sunchaser-boq-consolidated="${customerBoq.consolidated ? "true" : "false"}">
     ${page1}
     ${page2}
     ${page3}
@@ -572,7 +572,7 @@ export function compileThreePageQuotationHtml(
       : `<script>
         function sunchaserPrintDeck() {
           if (${exportBlocked ? "true" : "false"}) {
-            alert(${JSON.stringify(exportBlockReason || THREE_PAGE_BOQ_OVERFLOW_MESSAGE)});
+            ${exportBlocked ? `alert(${JSON.stringify(exportBlockReason || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE)});` : ""}
             return;
           }
           var run = function () {
@@ -591,14 +591,16 @@ export function compileThreePageQuotationHtml(
   return {
     html,
     pageCount: THREE_PAGE_QUOTATION_PAGE_COUNT,
-    boqOverflow: overflow.overflow,
-    boqOverflowMessage: overflow.overflow ? THREE_PAGE_BOQ_OVERFLOW_MESSAGE : null,
+    boqOverflow: overflowBlocked,
+    boqOverflowMessage: overflowBlocked ? (customerBoq.message || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE) : null,
     termsOverflow: termsFit.overflow,
     exportBlocked,
     exportBlockReason,
-    itemCount: overflow.itemCount,
+    itemCount: customerBoq.itemCount,
     validityDays: validity.days,
     pages: STANDARD_QUOTATION_PAGES,
+    customerBoqConsolidated: customerBoq.consolidated,
+    originalBoqOverflow: customerBoq.originalOverflow,
   };
 }
 

@@ -36,6 +36,7 @@ import {
   resolveDisplayedSystemType,
   resolveQuoteTermsClauses,
   THREE_PAGE_BOQ_OVERFLOW_MESSAGE,
+  THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE,
   THREE_PAGE_QUOTATION_PAGE_COUNT,
   threePageRendererId,
 } from "../quoteThreePageRender.ts";
@@ -399,7 +400,8 @@ check("BOQ overflow blocks final export but still lists every priced row in 3 pa
   assert.equal(rendered.boqOverflow, true);
   assert.equal(rendered.pageCount, 3);
   assert.equal((rendered.html.match(/class="page /g) || []).length, 3);
-  assert.match(rendered.html, new RegExp(THREE_PAGE_BOQ_OVERFLOW_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(rendered.html, new RegExp(THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(rendered.html, new RegExp(THREE_PAGE_BOQ_OVERFLOW_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(rendered.html, /Overflow line 0/);
   assert.match(rendered.html, /Overflow line 39/);
   assert.match(rendered.html, /data-sunchaser-export-blocked="true"/);
@@ -600,6 +602,49 @@ check("missing systemType does not render as Hybrid", () => {
   assert.doesNotMatch(rendered.html, /Not specified Solar Power System/);
   assert.match(rendered.html, /Solar Power System/);
   assert.equal(rendered.pageCount, 3);
+});
+
+check("catalog-length AutoSizer BOQ consolidates to 3 pages without blocking export", () => {
+  const rec = generateRecommendedBoq({
+    systemSizeKw: 5.8,
+    panelWattage: 580,
+    panelBrand: "Jinko",
+    systemType: "Hybrid",
+  });
+  assert.equal(rec.structure.l3, 2);
+  assert.equal(rec.structure.l2, 2);
+  const longSpec =
+    "Approved live website catalog specification with wattage, model family, conductor size and enclosure rating.";
+  const padded = rec.rows.map((row) =>
+    row.type === "item" ? { ...row, description: `${row.description || "Item"} — ${longSpec}` } : row
+  );
+  const originalFit = quoteBoqOverflow(padded as any);
+  assert.equal(originalFit.overflow, true);
+  const snapshot = JSON.parse(JSON.stringify(padded));
+  const rendered = compileThreePageQuotationHtml(
+    {
+      id: "q-consolidate",
+      quote_type: "auto_sizer",
+      clientName: "Consolidate Client",
+      systemSizekW: 5.8,
+      systemType: "Hybrid",
+      panelCount: 10,
+      boqRows: padded,
+      grandTotal: rec.subtotal,
+    },
+    { id: "lead-con", name: "Consolidate Client" },
+    { companyTerms: [{ termText: "Quotation validity: 3 days from date of issuance." }] }
+  );
+  assert.equal(rendered.pageCount, THREE_PAGE_QUOTATION_PAGE_COUNT);
+  assert.equal(rendered.exportBlocked, false);
+  assert.equal(rendered.boqOverflow, false);
+  assert.equal(rendered.customerBoqConsolidated, true);
+  assert.match(rendered.html, /Standard Mounting Structure/);
+  assert.match(rendered.html, /2 × L3/);
+  assert.match(rendered.html, /2 × L2/);
+  assert.doesNotMatch(rendered.html, /sunchaserDownloadPdf/);
+  assert.deepEqual(padded, snapshot);
+  assert.equal(padded.filter((r) => r.id === "structure_l3_row" || r.id === "structure_l2_row").length, 2);
 });
 
 console.log(`\nAutoSizer / 3-page quotation tests: ${pass} passed`);
