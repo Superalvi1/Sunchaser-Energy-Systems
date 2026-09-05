@@ -205,7 +205,7 @@ export default function WhatsAppConnectionPanel({
           }}
           className="flex w-full items-center justify-between text-left text-[11px] text-[var(--inbox-muted)] hover:text-[var(--inbox-fg)]"
         >
-          <span>Advanced: Meta Cloud API (secondary / restore path)</span>
+          <span>Connect WhatsApp Business</span>
           <span>{showMetaAdvanced ? "Hide" : "Show"}</span>
         </button>
 
@@ -265,7 +265,9 @@ export default function WhatsAppConnectionPanel({
               </button>
             ) : null}
             <p className="text-center text-[10px] text-[var(--inbox-muted)]">
-              Meta Embedded Signup is kept for restore only. Prefer WhatsApp QR above.
+              Connect your WhatsApp Business account securely using Meta Embedded
+              Signup. Your existing WhatsApp Business app remains available when using
+              supported coexistence.
             </p>
           </div>
         ) : null}
