@@ -1,6 +1,6 @@
 /**
  * Production outbound transport adapter for POST /api/inbox/messages/send.
- * Routes WhatsApp Web QR channel conversations to Baileys; otherwise Meta Cloud API.
+ * Meta WhatsApp Cloud API only — no unofficial WhatsApp Web transport.
  */
 import type { RequestActor } from "../middleware/actor.ts";
 import {
@@ -19,15 +19,6 @@ import {
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
-import { readWhatsAppWebConfig } from "../whatsappWeb/whatsappWebConfig.ts";
-import {
-  getSharedWhatsAppWebSession,
-  type WhatsAppWebSession,
-} from "../whatsappWeb/whatsappWebSession.ts";
-import {
-  isWhatsAppWebQrChannel,
-  sendWhatsAppWebPlainText,
-} from "../whatsappWeb/whatsappWebOutbound.ts";
 
 export type InboxSendTransportDeps = {
   repo?: WhatsAppRepository;
@@ -35,8 +26,6 @@ export type InboxSendTransportDeps = {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   messagingRepository?: MessagingRepository | null;
-  /** Test seam for WhatsApp Web session. */
-  whatsappWebSession?: WhatsAppWebSession;
 };
 
 function isOutboundSuccess(
@@ -46,56 +35,35 @@ function isOutboundSuccess(
 }
 
 /**
- * Returns a send port when Meta outbound is configured and/or WhatsApp Web QR
- * is enabled; otherwise null (caller must disable the send endpoint).
+ * Returns a send port when Meta outbound is configured; otherwise null
+ * (caller must disable the send endpoint).
  */
 export function createInboxOutboundSendPort(
   deps: InboxSendTransportDeps = {}
 ): InboxSendPort | null {
   const env = deps.env ?? process.env;
   const config = deps.config ?? readWhatsAppConfig(env);
-  const webConfig = readWhatsAppWebConfig(env);
   const metaReady = isWhatsAppEnabled(config) && hasOutboundSendConfig(config);
-  const webReady = webConfig.enabled === true;
-  if (!metaReady && !webReady) {
+  if (!metaReady) {
     return null;
   }
 
   const repo = deps.repo ?? createDefaultWhatsAppRepository();
   const fetchImpl = deps.fetchImpl;
   const messagingRepository = deps.messagingRepository;
-  const session = deps.whatsappWebSession ?? getSharedWhatsAppWebSession({ env });
 
   return async (input: {
     conversationId: string;
     text: string;
     actor: RequestActor;
   }) => {
-    const bundle = await repo.getConversationBundle(input.conversationId);
-    const useWeb =
-      webReady &&
-      bundle != null &&
-      isWhatsAppWebQrChannel(bundle.channel.phoneNumberId);
-
-    const result = useWeb
-      ? await sendWhatsAppWebPlainText(input.conversationId, input.text, {
-          repo,
-          session,
-          actor: input.actor,
-          messagingRepository,
-        })
-      : metaReady
-        ? await sendOutboundPlainText(input.conversationId, input.text, {
-            repo,
-            config,
-            actor: input.actor,
-            fetchImpl,
-            messagingRepository,
-          })
-        : ({
-            httpStatus: 503 as const,
-            error: "No WhatsApp outbound transport is available",
-          } satisfies OutboundSendResult);
+    const result = await sendOutboundPlainText(input.conversationId, input.text, {
+      repo,
+      config,
+      actor: input.actor,
+      fetchImpl,
+      messagingRepository,
+    });
 
     if (isOutboundSuccess(result)) {
       return { ok: true, messageId: result.messageId };

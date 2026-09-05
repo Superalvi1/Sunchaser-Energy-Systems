@@ -369,14 +369,6 @@ import {
 } from "./server/whatsappTransport/index.ts";
 import { createMessagingProductionWiring } from "./server/whatsappTransport/messagingProductionFactory.ts";
 import {
-  createWhatsAppWebRouter,
-  getSharedWhatsAppLidPhoneMap,
-  getSharedWhatsAppWebSession,
-  persistWhatsAppWebInbound,
-  readWhatsAppWebConfig,
-} from "./server/whatsappWeb/index.ts";
-import { AiShadowEngine } from "./server/whatsappTransport/aiEngine/aiShadowEngine.ts";
-import {
   OwnershipError,
   OwnershipResolver,
   portalIdentityFromActor,
@@ -753,39 +745,6 @@ app.use(
   createWhatsAppOutboundRouter({ messagingRepository })
 );
 
-// WhatsApp Web QR (Baileys) — Admin-only; disabled unless WHATSAPP_WEB_QR_ENABLED=true.
-// Shared session is created before Inbox mount so list availability can see QR CONNECTED.
-const whatsappWebSession = getSharedWhatsAppWebSession();
-const whatsappWebShadowEngine = new AiShadowEngine();
-whatsappWebSession.setInboundHandler(async (message) => {
-  await persistWhatsAppWebInbound(message, {
-    messagingRepository,
-    // Same process-local map populated by Baileys contact/chat/history ingest.
-    lidMap: getSharedWhatsAppLidPhoneMap(),
-    autoLinkLead: async (conversationId) => {
-      const result = await productionAutoLinkLead(conversationId);
-      return result.leadId;
-    },
-    evaluateShadow: async (input) => {
-      // Shadow only — never auto-sends in QR-1.
-      return whatsappWebShadowEngine.evaluateShadow({
-        conversationId: input.conversationId,
-        messageText: input.messageText,
-        contactPhone: input.contactPhone,
-      });
-    },
-  });
-});
-if (readWhatsAppWebConfig().enabled) {
-  console.info(
-    JSON.stringify({
-      scope: "whatsapp_web_qr",
-      event: "feature_enabled_at_startup",
-      note: "Auth directory required before connect",
-    })
-  );
-}
-
 app.use(
   "/api/inbox",
   createWhatsAppInboxRouter({
@@ -794,12 +753,10 @@ app.use(
       resolveLocalDb: resolveAuthLocalDb,
       persistLead: persistPublicMarketingLead,
     }),
-    resolveListAvailability: createWhatsAppInboxListAvailabilityResolver({
-      getQrConnectionStatus: () => whatsappWebSession.getSafeStatus(),
-    }),
+    // Meta-only wiring: no QR getter — resolver treats it as DISCONNECTED.
+    resolveListAvailability: createWhatsAppInboxListAvailabilityResolver({}),
   })
 );
-app.use("/api/whatsapp-web", createWhatsAppWebRouter({ session: whatsappWebSession }));
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 
@@ -10156,27 +10113,12 @@ async function startServer() {
     console.log("[Sunchaser] Serving React SPA from dist/ at /");
   }
 
-  // WhatsApp Web QR: validate auth dir + resume saved session before listen.
-  // When flag is false this is a no-op. When enabled with a bad auth dir, fail closed.
-  try {
-    await whatsappWebSession.initializeAtStartup();
-  } catch (err) {
-    console.error(
-      "\x1b[31m%s\x1b[0m",
-      `🚨 [CRITICAL] WhatsApp Web QR startup failed: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-    process.exit(1);
-  }
-
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
   });
 
   const shutdownMessaging = () => {
     void messagingProductionWiring.shutdown().catch(() => undefined);
-    void whatsappWebSession.shutdown().catch(() => undefined);
   };
   process.once("SIGTERM", shutdownMessaging);
   process.once("SIGINT", shutdownMessaging);

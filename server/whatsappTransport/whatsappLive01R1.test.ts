@@ -7,10 +7,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RequestActor } from "../middleware/actor.ts";
-import {
-  getSharedWhatsAppLidPhoneMap,
-  __resetSharedWhatsAppLidPhoneMap,
-} from "../whatsappWeb/index.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "./whatsappInboxRepository.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import type { InboxMessageRef } from "./whatsappInboxRepoSupport.ts";
@@ -119,10 +115,6 @@ function mockReq(query: Record<string, unknown> = {}): Request {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const inboundSrc = readFileSync(
-  join(here, "../whatsappWeb/whatsappWebInbound.ts"),
-  "utf8"
-);
 const controllersSrc = readFileSync(
   join(here, "whatsappInboxControllers.ts"),
   "utf8"
@@ -599,25 +591,6 @@ await test("assignee and hasFailedMessage filters still work with quickFilter", 
     failed.rows.map((r) => r.id),
     ["c_fail"]
   );
-});
-
-await test("no outbound WhatsApp send / no Gemini / no auto AI in inbound path", () => {
-  assert.equal(inboundSrc.includes("sendWhatsAppWebPlainText"), false);
-  assert.equal(inboundSrc.includes("insertOutboundMessage"), false);
-  assert.equal(inboundSrc.includes("generateContent"), false);
-  assert.equal(inboundSrc.includes("@google/generative-ai"), false);
-  assert.equal(inboundSrc.includes("GOOGLE_API_KEY"), false);
-});
-
-await test("@lid protection remains intact", async () => {
-  __resetSharedWhatsAppLidPhoneMap();
-  const map = getSharedWhatsAppLidPhoneMap();
-  const lid = "123456789012345@lid";
-  assert.equal(map.resolvePhoneJid(lid), null);
-  map.remember(lid, "923009998877@s.whatsapp.net");
-  assert.equal(map.resolvePhoneJid(lid), "923009998877@s.whatsapp.net");
-  // Unmapped @lid must not resolve to a phone JID.
-  assert.equal(map.resolvePhoneJid("15551234567@lid"), null);
 });
 
 await test("encodeInboxCursor still opaque for pagination", () => {
