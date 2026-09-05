@@ -558,7 +558,6 @@ export function compileThreePageQuotationHtml(
         <div><strong>Sunchaser Quotation</strong> — ${escapeHtml(proposal.clientName)} · 3 pages</div>
         <div class="action-bar-actions">
           <button type="button" class="btn-print" ${exportBlocked ? "disabled" : ""} onclick="sunchaserPrintDeck()">Print</button>
-          <button type="button" class="btn-download" ${exportBlocked ? "disabled" : ""} onclick="sunchaserDownloadPdf()">Download PDF</button>
         </div>
       </div>`
   }
@@ -583,39 +582,6 @@ export function compileThreePageQuotationHtml(
           };
           var fontReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
           fontReady.then(run).catch(run);
-        }
-        async function sunchaserDownloadPdf() {
-          if (${exportBlocked ? "true" : "false"}) {
-            alert(${JSON.stringify(exportBlockReason || THREE_PAGE_BOQ_OVERFLOW_MESSAGE)});
-            return;
-          }
-          var btn = document.querySelector('.btn-download');
-          if (btn) btn.disabled = true;
-          try {
-            var path = window.location.pathname.replace(/\\/$/, '');
-            var url = path + '/download' + window.location.search;
-            var token = null;
-            try { token = localStorage.getItem('sunchaser_auth_token'); } catch (_err) {}
-            var headers = token ? { Authorization: 'Bearer ' + token } : {};
-            var res = await fetch(url, { headers: headers });
-            if (!res.ok) {
-              var errText = await res.text();
-              throw new Error(errText || ('Download failed (' + res.status + ')'));
-            }
-            var blob = await res.blob();
-            var objectUrl = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = objectUrl;
-            a.download = 'Sunchaser-Quotation.pdf';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(objectUrl);
-          } catch (err) {
-            alert(String(err && err.message ? err.message : err));
-          } finally {
-            if (btn) btn.disabled = false;
-          }
         }
       </script>`
   }
