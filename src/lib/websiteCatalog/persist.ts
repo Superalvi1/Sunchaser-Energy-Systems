@@ -6,15 +6,18 @@
  * re-read at persist time and omitted from UPDATE payloads.
  *
  * Settings: `websiteCatalogSync` is patched onto the latest settings object
- * immediately before write — never onto the pre-network baseline.
+ * immediately before write — never onto the pre-network baseline. If latest
+ * settings cannot be re-read, the report is NOT written over a stale object.
  *
  * Supabase commit order:
- * 1. persist changed website rows
+ * 1. persist changed website rows (without CRM-owned inventory columns on UPDATE)
  * 2. if product persistence fails: do not commit the proposed catalog locally
- * 3. if products succeed: persist the sync report, then commit local state
+ * 3. if products succeed: re-read settings, persist the sync report, then commit local state
  *
- * If products persist but the settings report write fails, the API must say
- * products were saved (not "nothing happened").
+ * If products persist but the settings report write fails:
+ * - products WERE saved
+ * - API returns success:false with settingsMetadataFailed
+ * - error text states that products were saved
  */
 
 import type { Product } from "../../types";
@@ -49,31 +52,38 @@ function finiteNumber(value: unknown): number | null {
 
 export function mergeCurrentCrmOwnedInventory(
   proposed: Product,
-  currentRemote: Partial<Product> | null | undefined
+  currentRemote: Partial<Product> | null | undefined,
+  options?: { existsRemotely?: boolean }
 ): Product {
-  if (!currentRemote) {
+  if (currentRemote) {
     return {
       ...proposed,
-      stock: 0,
-      discount: finiteNumber(proposed.discount) ?? 0,
+      stock: finiteNumber(currentRemote.stock) ?? finiteNumber(proposed.stock) ?? 0,
+      discount: finiteNumber(currentRemote.discount) ?? finiteNumber(proposed.discount) ?? 0,
     };
+  }
+  if (options?.existsRemotely) {
+    return proposed;
   }
   return {
     ...proposed,
-    stock: finiteNumber(currentRemote.stock) ?? 0,
-    discount: finiteNumber(currentRemote.discount) ?? 0,
+    stock: 0,
+    discount: finiteNumber(proposed.discount) ?? 0,
   };
 }
 
 export function applyCurrentCrmOwnedInventory(
   products: Product[],
   currentById: Map<string, Partial<Product>>,
-  persistIds: Iterable<string>
+  persistIds: Iterable<string>,
+  existingIds?: Iterable<string>
 ): Product[] {
   const ids = new Set(persistIds);
+  const existed = new Set(existingIds || []);
   return products.map((product) => {
     if (!ids.has(product.id)) return product;
-    return mergeCurrentCrmOwnedInventory(product, currentById.get(product.id));
+    const existsRemotely = currentById.has(product.id) || existed.has(product.id);
+    return mergeCurrentCrmOwnedInventory(product, currentById.get(product.id), { existsRemotely });
   });
 }
 
@@ -103,12 +113,12 @@ export function mapWebsiteCatalogProductForSupabase(
 export async function readSettingsAtPersistTime(
   fetchLatestSettings: () => Promise<unknown>,
   fallback: unknown
-): Promise<unknown> {
+): Promise<{ ok: boolean; settings: unknown; error?: string }> {
   try {
     const latest = await fetchLatestSettings();
-    return latest ?? fallback;
-  } catch {
-    return fallback;
+    return { ok: true, settings: latest ?? fallback };
+  } catch (err: any) {
+    return { ok: false, settings: fallback, error: String(err?.message || err) };
   }
 }
 
@@ -146,11 +156,22 @@ async function persistFailedReportSettings(
   input: WebsiteCatalogFinalizeInput,
   report: WebsiteCatalogSyncReport
 ): Promise<{ settings: Record<string, any>; settingsPersisted: boolean; report: WebsiteCatalogSyncReport }> {
-  const latest = await readSettingsAtPersistTime(
+  const latestRead = await readSettingsAtPersistTime(
     input.adapters.fetchLatestSettings,
     input.localSettingsFallback
   );
-  const settings = patchLatestSettingsWithWebsiteCatalogSync(latest, report);
+  if (!latestRead.ok) {
+    const nextReport = applyWebsiteCatalogPersistenceFailure(
+      report,
+      `Latest settings could not be re-read before writing the failed sync report: ${latestRead.error || "unknown error"}`
+    );
+    return {
+      settings: patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, nextReport),
+      settingsPersisted: false,
+      report: nextReport,
+    };
+  }
+  const settings = patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, report);
   try {
     await input.adapters.upsertSettings(settings);
     return { settings, settingsPersisted: true, report };
@@ -160,7 +181,7 @@ async function persistFailedReportSettings(
       `Sync report settings write failed: ${err?.message || err}`
     );
     return {
-      settings: patchLatestSettingsWithWebsiteCatalogSync(latest, nextReport),
+      settings: patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, nextReport),
       settingsPersisted: false,
       report: nextReport,
     };
@@ -173,26 +194,31 @@ export async function finalizeWebsiteCatalogSync(
   const chunkSize = input.chunkSize || 80;
   let report = input.result.report;
   let products = input.result.products;
+  const existingIds = new Set(input.baselineProducts.map((p) => p.id));
 
   if (!input.supabaseActive) {
-    const latest = await readSettingsAtPersistTime(
+    const latestRead = await readSettingsAtPersistTime(
       input.adapters.fetchLatestSettings,
       input.localSettingsFallback
     );
-    const settings = patchLatestSettingsWithWebsiteCatalogSync(latest, report);
+    const settings = patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, report);
     const failed = report.lastStatus === "failed";
     return {
-      success: !failed,
-      httpStatus: failed ? 500 : 200,
+      success: !failed && latestRead.ok,
+      httpStatus: !failed && latestRead.ok ? 200 : 500,
       products,
       settings,
       commitLocalProducts: true,
       commitLocalSettings: true,
       productsPersisted: true,
-      settingsPersisted: true,
-      settingsMetadataFailed: false,
+      settingsPersisted: latestRead.ok,
+      settingsMetadataFailed: !latestRead.ok,
       report,
-      error: failed ? report.errors[0] || "Website catalog sync failed." : undefined,
+      error: failed
+        ? report.errors[0] || "Website catalog sync failed."
+        : latestRead.ok
+          ? undefined
+          : `Website catalog was saved locally, but latest settings could not be re-read: ${latestRead.error || "unknown error"}`,
     };
   }
 
@@ -200,11 +226,17 @@ export async function finalizeWebsiteCatalogSync(
   const persistIds = input.result.changedProductIds || toPersist.map((p) => p.id);
 
   if (toPersist.length > 0) {
-    const currentById = await input.adapters.fetchCurrentProductsByIds(persistIds);
-    products = applyCurrentCrmOwnedInventory(products, currentById, persistIds);
+    let currentById = new Map<string, Product>();
+    try {
+      currentById = await input.adapters.fetchCurrentProductsByIds(persistIds);
+    } catch {
+      currentById = new Map();
+    }
+    products = applyCurrentCrmOwnedInventory(products, currentById, persistIds, existingIds);
     const rows = toPersist.map((product) => {
-      const merged = mergeCurrentCrmOwnedInventory(product, currentById.get(product.id));
-      return mapWebsiteCatalogProductForSupabase(merged, { existsRemotely: currentById.has(product.id) });
+      const existsRemotely = currentById.has(product.id) || existingIds.has(product.id);
+      const merged = mergeCurrentCrmOwnedInventory(product, currentById.get(product.id), { existsRemotely });
+      return mapWebsiteCatalogProductForSupabase(merged, { existsRemotely });
     });
 
     let persistedCount = 0;
@@ -239,11 +271,28 @@ export async function finalizeWebsiteCatalogSync(
     report = { ...report, persistedCount: 0 };
   }
 
-  const latest = await readSettingsAtPersistTime(
+  const latestRead = await readSettingsAtPersistTime(
     input.adapters.fetchLatestSettings,
     input.localSettingsFallback
   );
-  const settings = patchLatestSettingsWithWebsiteCatalogSync(latest, report);
+  if (!latestRead.ok) {
+    const message = `Website catalog products were saved, but latest settings could not be re-read before writing the sync report: ${latestRead.error || "unknown error"}`;
+    report = applyWebsiteCatalogPersistenceFailure(report, message);
+    return {
+      success: false,
+      httpStatus: 500,
+      products,
+      settings: patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, report),
+      commitLocalProducts: true,
+      commitLocalSettings: true,
+      productsPersisted: true,
+      settingsPersisted: false,
+      settingsMetadataFailed: true,
+      report,
+      error: message,
+    };
+  }
+  const settings = patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, report);
   try {
     await input.adapters.upsertSettings(settings);
   } catch (err: any) {
@@ -253,7 +302,7 @@ export async function finalizeWebsiteCatalogSync(
       success: false,
       httpStatus: 500,
       products,
-      settings: patchLatestSettingsWithWebsiteCatalogSync(latest, report),
+      settings: patchLatestSettingsWithWebsiteCatalogSync(latestRead.settings, report),
       commitLocalProducts: true,
       commitLocalSettings: true,
       productsPersisted: true,

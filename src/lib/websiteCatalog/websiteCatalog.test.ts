@@ -451,7 +451,6 @@ check("new website product mapper initializes stock 0 and omits CRM fields on up
 await checkAsync("settings changed during sync remain preserved", async () => {
   const proposed = applyWebsiteCatalogSync([], discovered, fullSync);
   let remoteSettings: Record<string, unknown> = { someOtherSetting: "A", keep: true };
-  remoteSettings = { someOtherSetting: "B", keep: true };
   const outcome = await finalizeWebsiteCatalogSync({
     supabaseActive: true,
     baselineProducts: [],
@@ -460,7 +459,10 @@ await checkAsync("settings changed during sync remain preserved", async () => {
     adapters: {
       fetchLatestSettings: async () => remoteSettings,
       fetchCurrentProductsByIds: async () => new Map(),
-      upsertProductChunk: async () => ({ error: null }),
+      upsertProductChunk: async () => {
+        remoteSettings = { someOtherSetting: "B", keep: true };
+        return { error: null };
+      },
       upsertSettings: async () => {},
     },
   });
@@ -615,6 +617,62 @@ await checkAsync("product success with settings failure is a metadata failure no
   assert.equal(outcome.commitLocalProducts, true);
   assert.match(String(outcome.error), /products were saved/i);
   assert.equal(outcome.products.some((p) => p.sourceSlug === panelRaw.slug), true);
+});
+
+await checkAsync("existing product omitted from inventory re-read still omits CRM stock on update", async () => {
+  const existing: Product = { ...toCrmProduct(discovered[0]), stock: 80, discount: 5 };
+  const first = applyWebsiteCatalogSync([existing], discovered, fullSync);
+  const updatedPanel = normalizeWebsiteProduct({ ...panelRaw, price: 31000 } as any, "2026-09-06T00:00:00.000Z");
+  const proposed = applyWebsiteCatalogSync(first.products, [updatedPanel, discovered[1]], {
+    ...fullSync,
+    syncedAt: "2026-09-06T00:00:00.000Z",
+  });
+  const written: Array<Record<string, unknown>> = [];
+  const outcome = await finalizeWebsiteCatalogSync({
+    supabaseActive: true,
+    baselineProducts: first.products,
+    localSettingsFallback: {},
+    result: proposed,
+    adapters: {
+      fetchLatestSettings: async () => ({}),
+      fetchCurrentProductsByIds: async () => new Map(),
+      upsertProductChunk: async (rows) => {
+        written.push(...rows);
+        return { error: null };
+      },
+      upsertSettings: async () => {},
+    },
+  });
+  const row = written.find((r) => r.id === existing.id)!;
+  assert.equal(row.price, 31000);
+  assert.equal("stock" in row, false);
+  assert.equal("discount" in row, false);
+  assert.equal(outcome.products.find((p) => p.id === existing.id)?.stock, 80);
+});
+
+await checkAsync("local mode re-reads settings at persist time and commits catalog", async () => {
+  const proposed = applyWebsiteCatalogSync([], discovered, fullSync);
+  let localSettings: Record<string, unknown> = { someOtherSetting: "A" };
+  const outcome = await finalizeWebsiteCatalogSync({
+    supabaseActive: false,
+    baselineProducts: [],
+    localSettingsFallback: { someOtherSetting: "A" },
+    result: proposed,
+    adapters: {
+      fetchLatestSettings: async () => {
+        localSettings = { someOtherSetting: "B", office: "DHA" };
+        return localSettings;
+      },
+      fetchCurrentProductsByIds: async () => new Map(),
+      upsertProductChunk: async () => ({ error: null }),
+      upsertSettings: async () => {},
+    },
+  });
+  assert.equal(outcome.success, true);
+  assert.equal(outcome.commitLocalProducts, true);
+  assert.equal((outcome.settings as any).someOtherSetting, "B");
+  assert.equal((outcome.settings as any).office, "DHA");
+  assert.equal(outcome.products.length >= 2, true);
 });
 
 console.log(`\nwebsite catalog tests: ${pass} passed`);
