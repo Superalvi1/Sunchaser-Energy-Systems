@@ -257,6 +257,8 @@ check("auto and manual quotes use the same three-page renderer", () => {
   assert.equal(autoHtml.pageCount, 3);
   assert.equal(manualHtml.pageCount, 3);
   assert.equal(threePageRendererId(), "sunchaser-three-page-quotation");
+  assert.doesNotMatch(autoHtml.html, /sunchaserDownloadPdf/);
+  assert.doesNotMatch(manualHtml.html, /pathname\.replace/);
   assert.match(autoHtml.html, /data-sunchaser-page-count="3"/);
   assert.match(manualHtml.html, /data-sunchaser-page-count="3"/);
   assert.match(autoHtml.html, /Commercial Quotation/);

@@ -18,6 +18,20 @@ export function manualQuotePdfDownloadUrl(leadId: string, quoteId?: string): str
   return `${API_BASE_URL}/api/export/pdf/manual-quote/${encodeURIComponent(leadId)}/download${q}`;
 }
 
+export function autoSizerQuotePdfPreviewUrl(leadId: string, quoteId?: string): string {
+  const q = quoteId ? `?quoteId=${encodeURIComponent(quoteId)}` : "";
+  return `${API_BASE_URL}/api/export/pdf/auto-sizer/${encodeURIComponent(leadId)}${q}`;
+}
+
+export function autoSizerQuotePdfDownloadUrl(leadId: string, quoteId?: string): string {
+  const q = quoteId ? `?quoteId=${encodeURIComponent(quoteId)}` : "";
+  return `${API_BASE_URL}/api/export/pdf/auto-sizer/${encodeURIComponent(leadId)}/download${q}`;
+}
+
+export function isAutoSizerQuoteType(quoteType?: string | null): boolean {
+  return quoteType === "auto_sizer";
+}
+
 function parseContentDispositionFilename(header: string | null): string | null {
   if (!header) return null;
   const star = header.match(/filename\*=UTF-8''([^;]+)/i);
@@ -26,9 +40,55 @@ function parseContentDispositionFilename(header: string | null): string | null {
   return plain ? plain[1].trim() : null;
 }
 
+async function triggerBlobDownload(res: Response): Promise<void> {
+  const blob = await res.blob();
+  const filename =
+    parseContentDispositionFilename(res.headers.get("Content-Disposition")) ||
+    "Sunchaser-Quotation.pdf";
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function writeHtmlPreviewWindow(html: string): Promise<void> {
+  const win = window.open("", "_blank", "noopener,noreferrer");
+  if (!win) {
+    throw new Error("Allow pop-ups to print the quotation preview.");
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  const triggerPrint = () => {
+    const fontReady = win.document.fonts?.ready ?? Promise.resolve();
+    void fontReady.then(() => {
+      setTimeout(() => win.print(), 200);
+    });
+  };
+  if (win.document.readyState === "complete") {
+    triggerPrint();
+  } else {
+    win.addEventListener("load", triggerPrint);
+  }
+}
+
 /** Direct PDF file download — no new tab, no print dialog. */
 export async function downloadManualQuotePdf(leadId: string, quoteId?: string): Promise<void> {
   const res = await authorizedFetch(manualQuotePdfDownloadUrl(leadId, quoteId));
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(friendlyPdfError(res.status, text));
+  }
+  await triggerBlobDownload(res);
+}
+
+/** Direct AutoSizer PDF file download — authenticated fetch, never window.location. */
+export async function downloadAutoSizerQuotePdf(leadId: string, quoteId?: string): Promise<void> {
+  const res = await authorizedFetch(autoSizerQuotePdfDownloadUrl(leadId, quoteId));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(friendlyPdfError(res.status, text));
@@ -69,21 +129,6 @@ export async function downloadTemplateTestPdf(
   await triggerBlobDownload(res);
 }
 
-async function triggerBlobDownload(res: Response): Promise<void> {
-  const blob = await res.blob();
-  const filename =
-    parseContentDispositionFilename(res.headers.get("Content-Disposition")) ||
-    "Sunchaser-Quotation.pdf";
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(objectUrl);
-}
-
 /** Open printable HTML preview in a new window and trigger print after fonts load. */
 export async function openManualQuotePrintPreview(leadId: string, quoteId?: string): Promise<void> {
   const res = await authorizedFetch(manualQuotePdfPreviewUrl(leadId, quoteId));
@@ -91,24 +136,40 @@ export async function openManualQuotePrintPreview(leadId: string, quoteId?: stri
     throw new Error(`Print preview failed (${res.status})`);
   }
   const html = await res.text();
-  const win = window.open("", "_blank", "noopener,noreferrer");
-  if (!win) {
-    throw new Error("Allow pop-ups to print the quotation preview.");
+  await writeHtmlPreviewWindow(html);
+}
+
+/** Open printable AutoSizer HTML preview fetched with the CRM auth header. */
+export async function openAutoSizerQuotePrintPreview(leadId: string, quoteId?: string): Promise<void> {
+  const res = await authorizedFetch(autoSizerQuotePdfPreviewUrl(leadId, quoteId));
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(friendlyPdfError(res.status, text) || `Print preview failed (${res.status})`);
   }
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  const triggerPrint = () => {
-    const fontReady = win.document.fonts?.ready ?? Promise.resolve();
-    void fontReady.then(() => {
-      setTimeout(() => win.print(), 200);
-    });
-  };
-  if (win.document.readyState === "complete") {
-    triggerPrint();
-  } else {
-    win.addEventListener("load", triggerPrint);
+  const html = await res.text();
+  await writeHtmlPreviewWindow(html);
+}
+
+export async function downloadQuotePdfByType(
+  quoteType: string | null | undefined,
+  leadId: string,
+  quoteId?: string
+): Promise<void> {
+  if (isAutoSizerQuoteType(quoteType)) {
+    return downloadAutoSizerQuotePdf(leadId, quoteId);
   }
+  return downloadManualQuotePdf(leadId, quoteId);
+}
+
+export async function openQuotePrintPreviewByType(
+  quoteType: string | null | undefined,
+  leadId: string,
+  quoteId?: string
+): Promise<void> {
+  if (isAutoSizerQuoteType(quoteType)) {
+    return openAutoSizerQuotePrintPreview(leadId, quoteId);
+  }
+  return openManualQuotePrintPreview(leadId, quoteId);
 }
 
 /** Print from an iframe after content is loaded (Safari-safe delay). */
