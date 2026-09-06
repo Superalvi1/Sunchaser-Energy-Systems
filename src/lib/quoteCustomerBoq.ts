@@ -121,6 +121,15 @@ function cloneRow(row: CustomerBoqRow): CustomerBoqRow {
   return { ...row };
 }
 
+function withSequentialCustomerSr(rows: CustomerBoqRow[]): CustomerBoqRow[] {
+  let sr = 0;
+  return rows.map((row) => {
+    if (String(row.type || "") !== "item") return row;
+    sr += 1;
+    return { ...row, srNo: String(sr) };
+  });
+}
+
 function groupKeyFor(row: CustomerBoqRow): CustomerGroupKey | null {
   const id = String(row.id || "");
   return KNOWN_ITEM_GROUPS[id] || null;
@@ -197,7 +206,7 @@ export function buildCustomerFacingBoqRows(rows: CustomerBoqRow[] | null | undef
     out.push(collapseGroup(key, members));
   }
 
-  return out;
+  return withSequentialCustomerSr(out);
 }
 
 export interface ResolvedCustomerBoq {

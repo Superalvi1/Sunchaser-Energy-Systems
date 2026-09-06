@@ -307,6 +307,32 @@ check("40 unknown custom rows still overflow after grouping with the new message
   assert.doesNotMatch(rendered.html, /class="page page-4"/);
 });
 
+check("consolidated AutoSizer customer BOQ displays sequential serial numbers with no gaps", () => {
+  const rec = tenPanelHybrid();
+  const snapshot = JSON.parse(JSON.stringify(rec.rows));
+  const padded = padCatalogDescriptions(rec.rows);
+  const resolved = resolveCustomerFacingBoq(padded as any);
+  assert.equal(resolved.consolidated, true);
+  assert.equal(resolved.blocked, false);
+  const customerItems = resolved.rows.filter((r) => String(r.type) === "item");
+  assert.ok(customerItems.length > 1);
+  customerItems.forEach((row, index) => {
+    assert.equal(String(row.srNo), String(index + 1));
+  });
+  const serials = customerItems.map((row) => Number(row.srNo));
+  assert.deepEqual(serials, customerItems.map((_, i) => i + 1));
+  assert.equal(new Set(serials).size, serials.length);
+
+  const rendered = compileThreePageQuotationHtml(quoteFromRows("q-sr", "Serial Client", padded), lead, state);
+  assert.equal(rendered.customerBoqConsolidated, true);
+  const htmlSerials = [...rendered.html.matchAll(/<tr class="boq-item-row">[\s\S]*?<td[^>]*>([^<]*)<\/td>/g)].map(
+    (match) => String(match[1]).trim()
+  );
+  assert.equal(htmlSerials.length, customerItems.length);
+  assert.deepEqual(htmlSerials, customerItems.map((_, i) => String(i + 1)));
+  assert.deepEqual(rec.rows, snapshot);
+});
+
 check("assertCustomerBoqTotalsPreserved throws on drift", () => {
   const original = [{ id: "a", type: "item", total: 1000 }];
   const drifted = [{ id: "a", type: "item", total: 900 }];
