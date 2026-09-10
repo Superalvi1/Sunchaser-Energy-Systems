@@ -18,7 +18,7 @@ import {
   positiveFinite,
   recommendedPanelQuantity,
 } from "./quoteCommercialMath";
-import { normalizeIdentityKey } from "./websiteCatalog/normalize";
+import { liftWebsiteSourceFields, normalizeIdentityKey } from "./websiteCatalog/normalize";
 import {
   L2_PANEL_POSITIONS,
   L2_STRUCTURE_KIT_RATE,
@@ -30,7 +30,16 @@ import {
   structureKitRowFields,
 } from "./autoSizer/structureRecommendation";
 import { liveCatalogProductId } from "./autoSizer/companyPresets";
-import { liftWebsiteSourceFields } from "./websiteCatalog/normalize";
+import {
+  DEFAULT_AC_CABLE_METERS,
+  DEFAULT_AC_CABLE_RATE,
+  DEFAULT_AC_CABLE_SIZE,
+  DEFAULT_DC_CABLE_RATE,
+  DEFAULT_DC_CABLE_SIZE,
+  DEFAULT_EARTH_WIRE_METERS,
+  DEFAULT_EARTH_WIRE_RATE,
+  dcCableQuantityMeters,
+} from "./autoSizer/presets";
 
 export type QuoteStructureKind = "standard" | "elevated" | "girder" | "custom";
 export type QuoteStructureMode = "auto" | "manual";
@@ -77,6 +86,165 @@ export interface CommercialQuoteConfig {
   customStructureName: string;
   customStructureDescription: string;
   customStructureAmount: number;
+  otherCharges?: Partial<CommercialOtherCharges>;
+}
+
+export interface QuoteOptionalCharge {
+  enabled: boolean;
+  qty: number;
+  rate: number;
+  name?: string;
+  description?: string;
+}
+
+export interface CommercialOtherCharges {
+  dcCable: QuoteOptionalCharge;
+  acCable: QuoteOptionalCharge;
+  earthWire: QuoteOptionalCharge;
+  dbBox: QuoteOptionalCharge;
+  earthingBore: QuoteOptionalCharge;
+  civilWork: QuoteOptionalCharge;
+  freight: QuoteOptionalCharge;
+  netMetering: QuoteOptionalCharge;
+  surveyDesign: QuoteOptionalCharge;
+}
+
+export const DEFAULT_DB_BOX_RATE = 32000;
+export const DEFAULT_EARTHING_BORE_RATE = 48000;
+export const DEFAULT_CIVIL_WORK_RATE = 16000;
+export const DEFAULT_FREIGHT_RATE = 10000;
+export const DEFAULT_SURVEY_DESIGN_RATE = 5000;
+
+export function defaultNetMeteringRate(systemSizeKw: number): number {
+  const size = finiteNumber(systemSizeKw, 0);
+  if (size >= 100) return 150000;
+  if (size >= 50) return 120000;
+  if (size >= 30) return 100000;
+  return 90000;
+}
+
+export function defaultEarthingBoreQuantity(systemSizeKw: number): number {
+  return finiteNumber(systemSizeKw, 0) > 15 ? 3 : 2;
+}
+
+function charge(partial: QuoteOptionalCharge): QuoteOptionalCharge {
+  return {
+    enabled: partial.enabled !== false,
+    qty: finiteNumber(partial.qty, 0),
+    rate: finiteNumber(partial.rate, 0),
+    name: partial.name,
+    description: partial.description,
+  };
+}
+
+export function defaultOtherCharges(systemSizeKw: number): CommercialOtherCharges {
+  const size = finiteNumber(systemSizeKw, 10);
+  return {
+    dcCable: charge({
+      enabled: true,
+      qty: dcCableQuantityMeters(size),
+      rate: DEFAULT_DC_CABLE_RATE,
+      name: `DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
+      description: `Double Insulated Tin Coated DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
+    }),
+    acCable: charge({
+      enabled: true,
+      qty: DEFAULT_AC_CABLE_METERS,
+      rate: DEFAULT_AC_CABLE_RATE,
+      name: `AC Connecting Cable ${DEFAULT_AC_CABLE_SIZE}`,
+      description: "AC copper flexible connection cable job",
+    }),
+    earthWire: charge({
+      enabled: true,
+      qty: DEFAULT_EARTH_WIRE_METERS,
+      rate: DEFAULT_EARTH_WIRE_RATE,
+      name: "Earthing Bare Copper Wire",
+      description: "Bare copper conductor for system grounding",
+    }),
+    dbBox: charge({
+      enabled: true,
+      qty: 1,
+      rate: DEFAULT_DB_BOX_RATE,
+      name: "AC/DC Distribution DB Box Equipped",
+      description: "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
+    }),
+    earthingBore: charge({
+      enabled: true,
+      qty: defaultEarthingBoreQuantity(size),
+      rate: DEFAULT_EARTHING_BORE_RATE,
+      name: "Chemical Earthing Bores",
+      description: "Copper rods with chemical enhancement compound filling",
+    }),
+    civilWork: charge({
+      enabled: true,
+      qty: 1,
+      rate: DEFAULT_CIVIL_WORK_RATE,
+      name: "Structure Pillars Foundations civil work",
+      description: "Concrete pillar foundation blocks for load stability",
+    }),
+    freight: charge({
+      enabled: true,
+      qty: 1,
+      rate: DEFAULT_FREIGHT_RATE,
+      name: "Transportation, Logistics Freight & Manual Lifting",
+      description: "Equipment loading, delivery to site and manual roof shifting logistics",
+    }),
+    netMetering: charge({
+      enabled: true,
+      qty: 1,
+      rate: defaultNetMeteringRate(size),
+      name: "LESCO Net Metering Licensing Process",
+      description: "Document processing, demand notice payments & green meter commission",
+    }),
+    surveyDesign: charge({
+      enabled: true,
+      qty: 1,
+      rate: DEFAULT_SURVEY_DESIGN_RATE,
+      name: "Survey, Designing, Testing & Project Management Suite",
+      description: "Engineering site audit, CAD layouts, electrical simulations",
+    }),
+  };
+}
+
+export function mergeOtherCharges(
+  systemSizeKw: number,
+  overrides?: Partial<CommercialOtherCharges> | null
+): CommercialOtherCharges {
+  const defaults = defaultOtherCharges(systemSizeKw);
+  if (!overrides) return defaults;
+  const keys = Object.keys(defaults) as Array<keyof CommercialOtherCharges>;
+  const next = { ...defaults };
+  for (const key of keys) {
+    const patch = overrides[key];
+    if (!patch) continue;
+    next[key] = {
+      ...defaults[key],
+      ...patch,
+      enabled: patch.enabled !== false,
+      qty: finiteNumber(patch.qty, defaults[key].qty),
+      rate: finiteNumber(patch.rate, defaults[key].rate),
+    };
+  }
+  return next;
+}
+
+export function optionalChargeTotal(line: QuoteOptionalCharge | undefined): number {
+  if (!line?.enabled) return 0;
+  return finiteNumber(line.qty, 0) * finiteNumber(line.rate, 0);
+}
+
+export function otherChargesSubtotal(charges: CommercialOtherCharges): number {
+  return (
+    optionalChargeTotal(charges.dcCable) +
+    optionalChargeTotal(charges.acCable) +
+    optionalChargeTotal(charges.earthWire) +
+    optionalChargeTotal(charges.dbBox) +
+    optionalChargeTotal(charges.earthingBore) +
+    optionalChargeTotal(charges.civilWork) +
+    optionalChargeTotal(charges.freight) +
+    optionalChargeTotal(charges.netMetering) +
+    optionalChargeTotal(charges.surveyDesign)
+  );
 }
 
 export interface CommercialQuoteDraftApply {
@@ -122,6 +290,40 @@ function item(partial: Omit<BoqRow, "type" | "description" | "brand" | "unit"> &
     unit: "Pcs",
     ...partial,
   };
+}
+
+function heading(id: string, name: string): BoqRow {
+  return { id, type: "heading", name, description: "AI Quote Builder draft section", brand: "", unit: "", qty: 0, rate: 0, total: 0 };
+}
+
+function subtotalRow(id: string, name: string, total: number): BoqRow {
+  return { id, type: "subtotal", name, description: "", brand: "", unit: "", qty: 0, rate: 0, total };
+}
+
+function optionalChargeRow(
+  id: string,
+  srNo: string,
+  line: QuoteOptionalCharge,
+  fallback: { name: string; description: string; brand: string; unit: string }
+): BoqRow | null {
+  if (!line.enabled) return null;
+  const qty = finiteNumber(line.qty, 0);
+  const rate = finiteNumber(line.rate, 0);
+  return item({
+    id,
+    srNo,
+    name: line.name || fallback.name,
+    description: line.description || fallback.description,
+    brand: fallback.brand,
+    unit: fallback.unit,
+    qty,
+    rate,
+    total: qty * rate,
+  });
+}
+
+function pushIf(rows: BoqRow[], row: BoqRow | null): void {
+  if (row) rows.push(row);
 }
 
 export function defaultBatteryEnabled(systemType: QuoteSystemType): boolean {
@@ -378,6 +580,32 @@ export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): st
     const selection = resolveStandardStructureSelection(config);
     if (selection.underCapacity) errors.push(STRUCTURE_CAPACITY_WARNING);
   }
+  if (config.structureType === "standard") {
+    if (nonNegativeFinite(kitSectionRate(config.l3RatePerSection, L3_STRUCTURE_KIT_RATE)) == null) {
+      errors.push("L3 structure rate cannot be negative.");
+    }
+    if (nonNegativeFinite(kitSectionRate(config.l2RatePerSection, L2_STRUCTURE_KIT_RATE)) == null) {
+      errors.push("L2 structure rate cannot be negative.");
+    }
+  }
+  const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges);
+  const chargeLabels: Array<[keyof CommercialOtherCharges, string]> = [
+    ["dcCable", "DC Cable"],
+    ["acCable", "AC Cable"],
+    ["earthWire", "Earthing Wire"],
+    ["dbBox", "DB / Protection"],
+    ["earthingBore", "Earthing Bore"],
+    ["civilWork", "Civil Work"],
+    ["freight", "Transportation / Freight"],
+    ["netMetering", "Net Metering"],
+    ["surveyDesign", "Survey / Design"],
+  ];
+  for (const [key, label] of chargeLabels) {
+    const line = charges[key];
+    if (!line.enabled) continue;
+    if (positiveFinite(line.qty) == null) errors.push(`${label} quantity must be greater than 0.`);
+    if (nonNegativeFinite(line.rate) == null) errors.push(`${label} rate cannot be negative.`);
+  }
   return errors;
 }
 
@@ -457,43 +685,69 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
   }
 
   const equipmentTotal = rows.filter((r) => r.type === "item").reduce((s, r) => s + (Number(r.total) || 0), 0);
-  rows.push({
-    id: "ai-s-equipment",
-    type: "subtotal",
-    name: "Imported Equipment Subtotal",
-    description: "",
-    brand: "",
-    unit: "",
-    qty: 0,
-    rate: 0,
-    total: equipmentTotal,
-  });
+  rows.push(subtotalRow("ai-s-equipment", "Imported Equipment Subtotal", equipmentTotal));
 
-  rows.push({
-    id: "ai-h-install",
-    type: "heading",
-    name: "Installation & Structure",
-    description: "AI Quote Builder draft section",
-    brand: "",
-    unit: "",
-    qty: 0,
-    rate: 0,
-    total: 0,
-  });
+  const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges);
 
-  rows.push(
-    item({
-      id: "install_service_row",
-      srNo: "4",
-      name: "Complete Installation & Commissioning",
-      description: `Installation & commissioning calculated at Rs. ${installRateW}/W over actual DC array (${arrayWatts} W).`,
-      brand: "Sunchaser",
-      unit: "Job",
-      qty: 1,
-      rate: installTotal,
-      total: installTotal,
+  const cableRows: BoqRow[] = [];
+  pushIf(
+    cableRows,
+    optionalChargeRow("dc_cable_row", "4", charges.dcCable, {
+      name: `DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
+      description: `Double Insulated Tin Coated DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
+      brand: "GM/FAST",
+      unit: "Meter",
     })
   );
+  pushIf(
+    cableRows,
+    optionalChargeRow("ac_cable_row", "5", charges.acCable, {
+      name: `AC Connecting Cable ${DEFAULT_AC_CABLE_SIZE}`,
+      description: "AC copper flexible connection cable job",
+      brand: "GM/FAST",
+      unit: "Meter",
+    })
+  );
+  pushIf(
+    cableRows,
+    optionalChargeRow("earth_wire_row", "6", charges.earthWire, {
+      name: "Earthing Bare Copper Wire",
+      description: "Bare copper conductor for system grounding",
+      brand: "GM/FAST",
+      unit: "Meter",
+    })
+  );
+  if (cableRows.length) {
+    rows.push(heading("ai-h-cables", "Cables & Conductors"));
+    rows.push(...cableRows);
+    rows.push(subtotalRow("ai-s-cables", "Cables & Conductors Subtotal", cableRows.reduce((s, r) => s + (Number(r.total) || 0), 0)));
+  }
+
+  const dbRow = optionalChargeRow("db_box_row", "7", charges.dbBox, {
+    name: "AC/DC Distribution DB Box Equipped",
+    description: "Miniature Circuit Breakers, SPDs, GADA/Chint switches",
+    brand: "GADA/Chint",
+    unit: "Job",
+  });
+  if (dbRow) {
+    rows.push(heading("ai-h-db", "DB Boxes & Breakers"));
+    rows.push(dbRow);
+    rows.push(subtotalRow("ai-s-db", "DB Boxes & Breakers Subtotal", Number(dbRow.total) || 0));
+  }
+
+  const boreRow = optionalChargeRow("earthing_bore_row", "9", charges.earthingBore, {
+    name: "Chemical Earthing Bores",
+    description: "Copper rods with chemical enhancement compound filling",
+    brand: "Local",
+    unit: "Bores",
+  });
+  if (boreRow) {
+    rows.push(heading("ai-h-earth", "System Earthing Works"));
+    rows.push(boreRow);
+    rows.push(subtotalRow("ai-s-earth", "System Earthing Works Subtotal", Number(boreRow.total) || 0));
+  }
+
+  rows.push(heading("ai-h-install", "Installation & Structure"));
 
   if (config.structureType === "standard") {
     const selection = resolveStandardStructureSelection({ ...config, panelQuantity: qty });
@@ -568,20 +822,82 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
     );
   }
 
+  pushIf(
+    rows,
+    optionalChargeRow("civil_work_row", "11", charges.civilWork, {
+      name: "Structure Pillars Foundations civil work",
+      description: "Concrete pillar foundation blocks for load stability",
+      brand: "Local",
+      unit: "Job",
+    })
+  );
+
+  rows.push(
+    item({
+      id: "install_service_row",
+      srNo: "4",
+      name: "Complete Installation & Commissioning",
+      description: `Installation & commissioning calculated at Rs. ${installRateW}/W over actual DC array (${arrayWatts} W).`,
+      brand: "Sunchaser",
+      unit: "Job",
+      qty: 1,
+      rate: installTotal,
+      total: installTotal,
+    })
+  );
+
   const installSectionTotal = rows
-    .filter((r) => r.type === "item" && (r.id === "install_service_row" || r.id === "structure_row" || r.id === STRUCTURE_L3_ROW_ID || r.id === STRUCTURE_L2_ROW_ID))
+    .filter(
+      (r) =>
+        r.type === "item" &&
+        (r.id === "install_service_row" ||
+          r.id === "structure_row" ||
+          r.id === STRUCTURE_L3_ROW_ID ||
+          r.id === STRUCTURE_L2_ROW_ID ||
+          r.id === "civil_work_row")
+    )
     .reduce((s, r) => s + (Number(r.total) || 0), 0);
-  rows.push({
-    id: "ai-s-install",
-    type: "subtotal",
-    name: "Installation & Structure Subtotal",
-    description: "",
-    brand: "",
-    unit: "",
-    qty: 0,
-    rate: 0,
-    total: installSectionTotal,
-  });
+  rows.push(subtotalRow("ai-s-install", "Installation & Structure Subtotal", installSectionTotal));
+
+  const serviceRows: BoqRow[] = [];
+  pushIf(
+    serviceRows,
+    optionalChargeRow("freight_row", "13", charges.freight, {
+      name: "Transportation, Logistics Freight & Manual Lifting",
+      description: "Equipment loading, delivery to site and manual roof shifting logistics",
+      brand: "Local",
+      unit: "Job",
+    })
+  );
+  pushIf(
+    serviceRows,
+    optionalChargeRow("net_metering_row", "14", charges.netMetering, {
+      name: "LESCO Net Metering Licensing Process",
+      description: "Document processing, demand notice payments & green meter commission",
+      brand: "LESCO",
+      unit: "Job",
+    })
+  );
+  pushIf(
+    serviceRows,
+    optionalChargeRow("survey_design_row", "15", charges.surveyDesign, {
+      name: "Survey, Designing, Testing & Project Management Suite",
+      description: "Engineering site audit, CAD layouts, electrical simulations",
+      brand: "Helios",
+      unit: "Job",
+    })
+  );
+  if (serviceRows.length) {
+    rows.push(heading("ai-h-services", "Transportation & Services"));
+    rows.push(...serviceRows);
+    rows.push(
+      subtotalRow(
+        "ai-s-services",
+        "Transportation & Services Subtotal",
+        serviceRows.reduce((s, r) => s + (Number(r.total) || 0), 0)
+      )
+    );
+  }
 
   return rows;
 }

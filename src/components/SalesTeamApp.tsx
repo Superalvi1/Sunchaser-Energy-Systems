@@ -373,6 +373,7 @@ export default function SalesTeamApp({
     setInverterCapacity(draft.inverterCapacity);
     setBatteryOption(draft.batteryOption);
     setSelectedStructure(draft.structureType);
+    setNetMeteringRequired(draft.boqRows.some((r) => r.id === "net_metering_row") ? "Yes" : "No");
     setBoqRows(draft.boqRows);
     setManualBoqItems(draft.boqRows);
     setActiveModule("boq_builder");
@@ -5485,6 +5486,20 @@ export default function SalesTeamApp({
       onClose={() => setAiQuoteBuilderOpen(false)}
       onApplyDraft={handleApplyAiQuoteDraft}
       products={products}
+      parentCharges={{
+        discountType,
+        discountValue,
+        taxEnabled,
+        taxRate,
+        societyCharges,
+      }}
+      onParentChargesChange={(patch) => {
+        if (patch.discountType) setDiscountType(patch.discountType);
+        if (patch.discountValue != null) setDiscountValue(patch.discountValue);
+        if (patch.taxEnabled != null) setTaxEnabled(patch.taxEnabled);
+        if (patch.taxRate != null) setTaxRate(patch.taxRate);
+        if (patch.societyCharges != null) setSocietyCharges(patch.societyCharges);
+      }}
     />
     </>
   );

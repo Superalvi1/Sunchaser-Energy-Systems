@@ -14,6 +14,14 @@ import {
   catalogProductMatchesInverterIdentity,
   catalogProductMatchesPanelIdentity,
   catalogProductWattage,
+  DEFAULT_CIVIL_WORK_RATE,
+  DEFAULT_DB_BOX_RATE,
+  DEFAULT_EARTHING_BORE_RATE,
+  DEFAULT_FREIGHT_RATE,
+  DEFAULT_SURVEY_DESIGN_RATE,
+  defaultEarthingBoreQuantity,
+  defaultNetMeteringRate,
+  defaultOtherCharges,
   isQuickPanelWattage,
   L2_STRUCTURE_KIT_RATE,
   L3_STRUCTURE_KIT_RATE,
@@ -28,9 +36,18 @@ import {
   calculateElevatedStructureTotal,
   calculateInstallationTotal,
   calculatePanelTotal,
+  calculatePanelUnitPrice,
   DEFAULT_ELEVATED_STRUCTURE_RATE_PER_WATT,
   DEFAULT_INSTALLATION_RATE_PER_WATT,
 } from "./quoteCommercialMath.ts";
+import {
+  DEFAULT_AC_CABLE_METERS,
+  DEFAULT_AC_CABLE_RATE,
+  DEFAULT_DC_CABLE_RATE,
+  DEFAULT_EARTH_WIRE_METERS,
+  DEFAULT_EARTH_WIRE_RATE,
+  dcCableQuantityMeters,
+} from "./autoSizer/presets.ts";
 import {
   L2_STRUCTURE_CUSTOMER_NAME,
   L3_STRUCTURE_CUSTOMER_NAME,
@@ -583,6 +600,89 @@ check("AI Quote Builder modal exposes wattage chips and standard structure modes
   assert.match(modal, /structureMode === "manual"/);
   assert.match(modal, /Live summary/);
   assert.match(modal, /kWp actual array/);
+  assert.match(modal, /Other quotation charges/);
+  assert.match(modal, /Panel Unit Price/);
+  assert.match(modal, /L3 Rate \/ Section/);
+  assert.match(modal, /Final estimated quotation/);
+  assert.match(modal, /Apply draft to BOQ/);
+});
+
+check("645W × 16 × 42.5 PKR/W uses actual array watts", () => {
+  assert.equal(645 * 16, 10320);
+  assert.equal(calculatePanelUnitPrice(645, 42.5), 27412.5);
+  assert.equal(calculatePanelTotal(645, 16, 42.5), 438600);
+  const panel = buildCommercialQuoteBoq({ ...base, panelWattage: 645, panelQuantity: 16, panelRatePerWatt: 42.5 }).find(
+    (r) => r.id === "panel_row"
+  )!;
+  assert.equal(panel.rate, 27412.5);
+  assert.equal(panel.total, 438600);
+});
+
+check("other commercial charges reuse AutoSizer defaults", () => {
+  const rows = buildCommercialQuoteBoq({ ...base, systemSizeKw: 10 });
+  const dc = rows.find((r) => r.id === "dc_cable_row")!;
+  const ac = rows.find((r) => r.id === "ac_cable_row")!;
+  const earth = rows.find((r) => r.id === "earth_wire_row")!;
+  const db = rows.find((r) => r.id === "db_box_row")!;
+  const bore = rows.find((r) => r.id === "earthing_bore_row")!;
+  const civil = rows.find((r) => r.id === "civil_work_row")!;
+  const freight = rows.find((r) => r.id === "freight_row")!;
+  const nm = rows.find((r) => r.id === "net_metering_row")!;
+  const survey = rows.find((r) => r.id === "survey_design_row")!;
+  assert.equal(dc.qty, dcCableQuantityMeters(10));
+  assert.equal(dc.qty, 190);
+  assert.equal(dc.rate, DEFAULT_DC_CABLE_RATE);
+  assert.equal(ac.qty, DEFAULT_AC_CABLE_METERS);
+  assert.equal(ac.rate, DEFAULT_AC_CABLE_RATE);
+  assert.equal(earth.qty, DEFAULT_EARTH_WIRE_METERS);
+  assert.equal(earth.rate, DEFAULT_EARTH_WIRE_RATE);
+  assert.equal(db.rate, DEFAULT_DB_BOX_RATE);
+  assert.equal(bore.qty, defaultEarthingBoreQuantity(10));
+  assert.equal(bore.rate, DEFAULT_EARTHING_BORE_RATE);
+  assert.equal(civil.rate, DEFAULT_CIVIL_WORK_RATE);
+  assert.equal(freight.rate, DEFAULT_FREIGHT_RATE);
+  assert.equal(nm.rate, defaultNetMeteringRate(10));
+  assert.equal(survey.rate, DEFAULT_SURVEY_DESIGN_RATE);
+});
+
+check("disabled other charges are omitted from BOQ", () => {
+  const defaults = defaultOtherCharges(10);
+  const rows = buildCommercialQuoteBoq({
+    ...base,
+    otherCharges: {
+      ...defaults,
+      dcCable: { ...defaults.dcCable, enabled: false },
+      netMetering: { ...defaults.netMetering, enabled: false },
+    },
+  });
+  assert.equal(rows.some((r) => r.id === "dc_cable_row"), false);
+  assert.equal(rows.some((r) => r.id === "net_metering_row"), false);
+  assert.equal(rows.some((r) => r.id === "ac_cable_row"), true);
+});
+
+check("searchable catalog picker shows identity fields", () => {
+  const picker = readFileSync(join(__dirname, "../components/quoteAuthoring/CatalogProductPicker.tsx"), "utf8");
+  assert.match(picker, /Search website \/ CRM products/);
+  assert.match(picker, /wattageCapacity/);
+  assert.match(picker, /availability/);
+  assert.doesNotMatch(picker, /<select/);
+});
+
+check("Apply draft leaves BOQ rows editable and does not save", () => {
+  const sales = readFileSync(join(__dirname, "../components/SalesTeamApp.tsx"), "utf8");
+  const handlerChunk = sales.slice(sales.indexOf("handleApplyAiQuoteDraft"), sales.indexOf("handleApplyAiQuoteDraft") + 1200);
+  assert.match(handlerChunk, /setBoqRows\(draft\.boqRows\)/);
+  assert.match(handlerChunk, /setManualBoqItems\(draft\.boqRows\)/);
+  assert.doesNotMatch(handlerChunk, /readOnly|locked|disabled=\{true\}|create-quote|handleSaveQuote/);
+  const apply = buildCommercialDraftApply(base);
+  assert.equal(apply.draftOnly, true);
+  assert.equal(apply.boqRows.find((r) => r.id === "panel_row")?.type, "item");
+});
+
+check("website catalog is not scraped from the modal", () => {
+  const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
+  assert.doesNotMatch(modal, /www\.sunchaserenergy\.co/);
+  assert.doesNotMatch(modal, /sitemap|scrape|fetch\(/i);
 });
 
 console.log(`\nAI quote commercial draft tests: ${pass} passed`);

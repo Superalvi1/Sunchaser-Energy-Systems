@@ -28,24 +28,41 @@ import {
   catalogProductMatchesInverterIdentity,
   catalogProductMatchesPanelIdentity,
   defaultBatteryEnabled,
+  defaultEarthingBoreQuantity,
+  defaultNetMeteringRate,
+  defaultOtherCharges,
   inverterKwLabelFromProduct,
   isQuickPanelWattage,
   L2_STRUCTURE_KIT_RATE,
   L3_STRUCTURE_KIT_RATE,
+  optionalChargeTotal,
+  otherChargesSubtotal,
   QUICK_PANEL_WATTAGES,
   resolveStandardStructureSelection,
   standardStructureSummaryLabel,
   STRUCTURE_CAPACITY_WARNING,
   validateCommercialQuoteConfig,
   wattageLabelFromProduct,
+  type CommercialOtherCharges,
   type CommercialQuoteDraftApply,
+  type QuoteOptionalCharge,
   type QuoteStructureKind,
   type QuoteStructureMode,
   type QuoteSystemType,
 } from "../../lib/aiQuoteCommercialDraft";
+import { dcCableQuantityMeters } from "../../lib/autoSizer/presets";
+import { computeNetProposalValue, resolveQuoteDiscountAmount, type QuoteDiscountType } from "../../lib/quoteDiscount";
 import { productsForBrand, productsForType } from "../../lib/websiteCatalog/sync";
 import { liftWebsiteSourceFields } from "../../lib/websiteCatalog/normalize";
 import { recommendStructures } from "../../lib/autoSizer/structureRecommendation";
+
+export interface AIQuoteParentCharges {
+  discountType: QuoteDiscountType;
+  discountValue: number;
+  taxEnabled: boolean;
+  taxRate: number;
+  societyCharges: number;
+}
 
 export interface AIQuoteBuilderModalProps {
   open: boolean;
@@ -53,6 +70,9 @@ export interface AIQuoteBuilderModalProps {
   /** Applies draft into BOQ builder state only — does not save to CRM. */
   onApplyDraft: (draft: CommercialQuoteDraftApply) => void;
   products?: Product[];
+  /** Same Manual BOQ discount / tax / society fields — not a second source of truth. */
+  parentCharges?: AIQuoteParentCharges;
+  onParentChargesChange?: (patch: Partial<AIQuoteParentCharges>) => void;
 }
 
 const SYSTEM_SIZES = [6, 8, 10, 12, 15, 20];
@@ -68,6 +88,82 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{children}</label>;
 }
 
+function money(value: number, digits = 0): string {
+  return Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function ChargeLineEditor({
+  label,
+  unit,
+  line,
+  onChange,
+  qtyLabel = "Quantity",
+  rateLabel = "Rate",
+}: {
+  label: string;
+  unit: string;
+  line: QuoteOptionalCharge;
+  onChange: (patch: Partial<QuoteOptionalCharge>) => void;
+  qtyLabel?: string;
+  rateLabel?: string;
+}) {
+  const total = optionalChargeTotal(line);
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-2">
+      <label className="flex items-center justify-between gap-2 text-xs text-slate-200">
+        <span className="font-semibold">{label}</span>
+        <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+          {line.enabled ? "Enabled" : "Disabled"}
+          <input
+            type="checkbox"
+            checked={line.enabled}
+            onChange={(e) => onChange({ enabled: e.target.checked })}
+          />
+        </span>
+      </label>
+      {line.enabled && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div>
+            <FieldLabel>{qtyLabel} ({unit})</FieldLabel>
+            <input
+              type="number"
+              min={0}
+              value={line.qty}
+              onChange={(e) => onChange({ qty: Number(e.target.value) })}
+              className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+            />
+          </div>
+          <div>
+            <FieldLabel>{rateLabel}</FieldLabel>
+            <input
+              type="number"
+              min={0}
+              value={line.rate}
+              onChange={(e) => onChange({ rate: Number(e.target.value) })}
+              className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <FieldLabel>Total</FieldLabel>
+            <p className="mt-1 text-sm text-white font-semibold">Rs. {money(total)}</p>
+          </div>
+          <div className="col-span-2 md:col-span-4">
+            <FieldLabel>Description</FieldLabel>
+            <input
+              value={line.description || line.name || ""}
+              onChange={(e) => onChange({ description: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function chipClass(active: boolean, tone: "amber" | "emerald" = "amber"): string {
   if (active && tone === "emerald") return "bg-emerald-600 text-white";
   if (active) return "bg-amber-500 text-slate-950";
@@ -79,6 +175,8 @@ export default function AIQuoteBuilderModal({
   onClose,
   onApplyDraft,
   products = [],
+  parentCharges,
+  onParentChargesChange,
 }: AIQuoteBuilderModalProps) {
   const catalog = useMemo(() => products.map((p) => liftWebsiteSourceFields(p)), [products]);
   const panelProducts = useMemo(() => productsForType(catalog, "panel"), [catalog]);
@@ -149,6 +247,14 @@ export default function AIQuoteBuilderModal({
   const [customStructureName, setCustomStructureName] = useState("Custom Mounting Structure");
   const [customStructureDescription, setCustomStructureDescription] = useState("");
   const [customStructureAmount, setCustomStructureAmount] = useState(0);
+  const [otherCharges, setOtherCharges] = useState<CommercialOtherCharges>(() => defaultOtherCharges(10));
+  const [dcQtyDirty, setDcQtyDirty] = useState(false);
+  const [boreQtyDirty, setBoreQtyDirty] = useState(false);
+  const [nmRateDirty, setNmRateDirty] = useState(false);
+
+  const patchCharge = (key: keyof CommercialOtherCharges, patch: Partial<QuoteOptionalCharge>) => {
+    setOtherCharges((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  };
 
   useEffect(() => {
     if (!qtyDirty) setPanelQuantity(recommendedPanelQuantity(systemSizeKw, panelWattage));
@@ -157,6 +263,19 @@ export default function AIQuoteBuilderModal({
   useEffect(() => {
     setBatteryEnabled(defaultBatteryEnabled(systemType));
   }, [systemType]);
+
+  useEffect(() => {
+    setOtherCharges((prev) => ({
+      ...prev,
+      dcCable: dcQtyDirty ? prev.dcCable : { ...prev.dcCable, qty: dcCableQuantityMeters(systemSizeKw) },
+      earthingBore: boreQtyDirty
+        ? prev.earthingBore
+        : { ...prev.earthingBore, qty: defaultEarthingBoreQuantity(systemSizeKw) },
+      netMetering: nmRateDirty
+        ? prev.netMetering
+        : { ...prev.netMetering, rate: defaultNetMeteringRate(systemSizeKw) },
+    }));
+  }, [systemSizeKw, dcQtyDirty, boreQtyDirty, nmRateDirty]);
 
   const resolvedPanelBrand = panelBrand === OTHER_CUSTOM_BRAND ? customPanelBrand : panelBrand;
   const resolvedInverterBrand = inverterBrand === OTHER_CUSTOM_BRAND ? customInverterBrand : inverterBrand;
@@ -212,6 +331,7 @@ export default function AIQuoteBuilderModal({
       customStructureName,
       customStructureDescription,
       customStructureAmount,
+      otherCharges,
     }),
     [
       systemSizeKw,
@@ -250,6 +370,7 @@ export default function AIQuoteBuilderModal({
       customStructureName,
       customStructureDescription,
       customStructureAmount,
+      otherCharges,
     ]
   );
   const validationErrors = useMemo(() => validateCommercialQuoteConfig(commercialConfig), [commercialConfig]);
@@ -274,7 +395,23 @@ export default function AIQuoteBuilderModal({
               .reduce((s, r) => s + (Number(r.total) || 0), 0);
   const inverterTotal = inverterQuantity * inverterUnitPrice;
   const batteryTotal = batteryEnabled && systemType !== "On-grid" ? batteryQuantity * batteryUnitPrice : 0;
-  const subtotal = panelTotal + inverterTotal + batteryTotal + installTotal + structureTotal;
+  const otherTotal = otherChargesSubtotal(otherCharges);
+  const subtotal = panelTotal + inverterTotal + batteryTotal + installTotal + structureTotal + otherTotal;
+  const parentDiscount = resolveQuoteDiscountAmount(subtotal, {
+    discountType: parentCharges?.discountType,
+    discountValue: parentCharges?.discountValue,
+  });
+  const parentTaxAmount =
+    parentCharges?.taxEnabled ? Math.round(subtotal * ((Number(parentCharges.taxRate) || 0) / 100)) : 0;
+  const parentSociety = Number(parentCharges?.societyCharges) || 0;
+  const finalEstimate = computeNetProposalValue(subtotal, parentDiscount.discountAmount, {
+    taxAmount: parentTaxAmount,
+    societyCharges: parentSociety,
+  });
+  const l3Qty = structureMode === "manual" ? manualL3Quantity : standardSelection.l3;
+  const l2Qty = structureMode === "manual" ? manualL2Quantity : standardSelection.l2;
+  const l3Total = l3Qty * l3RatePerSection;
+  const l2Total = l2Qty * l2RatePerSection;
   const structureUnderCapacity = structureType === "standard" && structureMode === "manual" && standardSelection.underCapacity;
 
   const applyPanelWattage = (next: number, asCustom = false) => {
@@ -356,8 +493,8 @@ export default function AIQuoteBuilderModal({
           : `${customStructureName || "Custom"} · ${customStructureAmount.toLocaleString()}`;
 
   return (
-    <AppModal open={open} onClose={onClose} panelClassName="max-w-6xl">
-      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 text-left max-h-[92vh] overflow-y-auto">
+    <AppModal open={open} onClose={onClose} panelClassName="max-w-7xl">
+      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 text-left max-h-[94vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
@@ -592,6 +729,18 @@ export default function AIQuoteBuilderModal({
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   />
                 </div>
+                <div>
+                  <FieldLabel>Panel Unit Price</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">Rs. {money(panelUnit, 2)}</p>
+                  <p className="text-[10px] text-slate-500">wattage × quote PKR/W</p>
+                </div>
+                <div>
+                  <FieldLabel>Panel Total</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">Rs. {money(panelTotal)}</p>
+                  <p className="text-[10px] text-slate-500">
+                    {money(arrayWatts)} W × Rs. {panelRatePerWatt}/W
+                  </p>
+                </div>
               </div>
             </section>
 
@@ -697,6 +846,10 @@ export default function AIQuoteBuilderModal({
                     }}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   />
+                </div>
+                <div>
+                  <FieldLabel>Total</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">Rs. {money(inverterTotal)}</p>
                 </div>
               </div>
             </section>
@@ -814,6 +967,10 @@ export default function AIQuoteBuilderModal({
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                     />
                   </div>
+                  <div>
+                    <FieldLabel>Total</FieldLabel>
+                    <p className="mt-1 text-sm text-white font-semibold">Rs. {money(batteryTotal)}</p>
+                  </div>
                 </div>
               )}
             </section>
@@ -881,9 +1038,13 @@ export default function AIQuoteBuilderModal({
                       </div>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <div>
-                      <FieldLabel>L3 rate / section</FieldLabel>
+                      <FieldLabel>L3 Qty</FieldLabel>
+                      <p className="mt-1 text-sm text-white">{l3Qty}</p>
+                    </div>
+                    <div>
+                      <FieldLabel>L3 Rate / Section</FieldLabel>
                       <input
                         type="number"
                         min={0}
@@ -893,7 +1054,15 @@ export default function AIQuoteBuilderModal({
                       />
                     </div>
                     <div>
-                      <FieldLabel>L2 rate / section</FieldLabel>
+                      <FieldLabel>L3 Total</FieldLabel>
+                      <p className="mt-1 text-sm text-white font-semibold">Rs. {money(l3Total)}</p>
+                    </div>
+                    <div>
+                      <FieldLabel>L2 Qty</FieldLabel>
+                      <p className="mt-1 text-sm text-white">{l2Qty}</p>
+                    </div>
+                    <div>
+                      <FieldLabel>L2 Rate / Section</FieldLabel>
                       <input
                         type="number"
                         min={0}
@@ -902,11 +1071,16 @@ export default function AIQuoteBuilderModal({
                         className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                       />
                     </div>
+                    <div>
+                      <FieldLabel>L2 Total</FieldLabel>
+                      <p className="mt-1 text-sm text-white font-semibold">Rs. {money(l2Total)}</p>
+                    </div>
                   </div>
                   <p className="text-xs text-slate-300">
                     Panel quantity: {panelQuantity} · Structure capacity: {standardSelection.capacity} panels
+                    {" "}({l3Qty} × 3 + {l2Qty} × 2)
                   </p>
-                  <p className="text-xs text-slate-400">Structure subtotal: Rs. {structureTotal.toLocaleString()}</p>
+                  <p className="text-xs text-slate-400">Structure subtotal: Rs. {money(structureTotal)}</p>
                   {structureUnderCapacity && (
                     <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
                       <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -967,7 +1141,14 @@ export default function AIQuoteBuilderModal({
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Commercial rates</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <FieldLabel>Actual array watts</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">{money(arrayWatts)} W</p>
+                  <p className="text-[10px] text-slate-500">
+                    {panelQuantity} × {panelWattage}W = {arrayKilowattsPeak(panelWattage, panelQuantity).toFixed(3)} kWp
+                  </p>
+                </div>
                 <div>
                   <FieldLabel>Installation PKR/W (default 4)</FieldLabel>
                   <input
@@ -978,11 +1159,158 @@ export default function AIQuoteBuilderModal({
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                   />
                 </div>
-                <div className="text-xs text-slate-400 pt-5">
-                  Per-watt charges use actual array watts ({arrayWatts.toLocaleString()} W), not nominal kW.
+                <div>
+                  <FieldLabel>Installation total</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">Rs. {money(installTotal)}</p>
+                  <p className="text-[10px] text-slate-500">array watts × rate/W</p>
                 </div>
               </div>
             </section>
+
+            <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Other quotation charges</h3>
+              <p className="text-[11px] text-slate-500">
+                AutoSizer / company defaults. Disable any line the salesperson does not need. Quote rates stay editable.
+              </p>
+              <ChargeLineEditor
+                label="DC Cable"
+                unit="m"
+                line={otherCharges.dcCable}
+                onChange={(patch) => {
+                  if (patch.qty != null) setDcQtyDirty(true);
+                  patchCharge("dcCable", patch);
+                }}
+              />
+              <ChargeLineEditor
+                label="AC Cable"
+                unit="m"
+                line={otherCharges.acCable}
+                onChange={(patch) => patchCharge("acCable", patch)}
+              />
+              <ChargeLineEditor
+                label="Earthing Wire"
+                unit="m"
+                line={otherCharges.earthWire}
+                onChange={(patch) => patchCharge("earthWire", patch)}
+              />
+              <ChargeLineEditor
+                label="DB / Protection"
+                unit="Job"
+                line={otherCharges.dbBox}
+                onChange={(patch) => patchCharge("dbBox", patch)}
+              />
+              <ChargeLineEditor
+                label="Earthing Bore"
+                unit="Bores"
+                line={otherCharges.earthingBore}
+                onChange={(patch) => {
+                  if (patch.qty != null) setBoreQtyDirty(true);
+                  patchCharge("earthingBore", patch);
+                }}
+              />
+              <ChargeLineEditor
+                label="Civil Work"
+                unit="Job"
+                line={otherCharges.civilWork}
+                onChange={(patch) => patchCharge("civilWork", patch)}
+              />
+              <ChargeLineEditor
+                label="Transportation / Freight"
+                unit="Job"
+                line={otherCharges.freight}
+                onChange={(patch) => patchCharge("freight", patch)}
+              />
+              <ChargeLineEditor
+                label="Net Metering"
+                unit="Job"
+                line={otherCharges.netMetering}
+                onChange={(patch) => {
+                  if (patch.rate != null) setNmRateDirty(true);
+                  patchCharge("netMetering", patch);
+                }}
+              />
+              <ChargeLineEditor
+                label="Survey / Design / Engineering"
+                unit="Job"
+                line={otherCharges.surveyDesign}
+                onChange={(patch) => patchCharge("surveyDesign", patch)}
+              />
+            </section>
+
+            {parentCharges && (
+              <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+                <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                  Discount / Tax / Society
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Same fields as Manual BOQ — not a second totals system.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <FieldLabel>Discount</FieldLabel>
+                    <select
+                      value={parentCharges.discountValue > 0 ? parentCharges.discountType : "none"}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (next === "none") onParentChargesChange?.({ discountType: "fixed", discountValue: 0 });
+                        else onParentChargesChange?.({ discountType: next as QuoteDiscountType });
+                      }}
+                      disabled={!onParentChargesChange}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                    >
+                      <option value="none">None</option>
+                      <option value="fixed">Fixed Amount</option>
+                      <option value="percentage">Percentage</option>
+                    </select>
+                    {parentCharges.discountValue > 0 || parentCharges.discountType === "percentage" ? (
+                      <input
+                        type="number"
+                        min={0}
+                        max={parentCharges.discountType === "percentage" ? 100 : undefined}
+                        value={parentCharges.discountValue}
+                        disabled={!onParentChargesChange}
+                        onChange={(e) => onParentChargesChange?.({ discountValue: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      />
+                    ) : null}
+                  </div>
+                  <div>
+                    <FieldLabel>Tax</FieldLabel>
+                    <label className="mt-1 flex items-center gap-2 text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={parentCharges.taxEnabled}
+                        disabled={!onParentChargesChange}
+                        onChange={(e) => onParentChargesChange?.({ taxEnabled: e.target.checked })}
+                      />
+                      Enabled
+                    </label>
+                    {parentCharges.taxEnabled && (
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={parentCharges.taxRate}
+                        disabled={!onParentChargesChange}
+                        onChange={(e) => onParentChargesChange?.({ taxRate: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <FieldLabel>Society Charges</FieldLabel>
+                    <input
+                      type="number"
+                      min={0}
+                      value={parentCharges.societyCharges}
+                      disabled={!onParentChargesChange}
+                      onChange={(e) => onParentChargesChange?.({ societyCharges: Number(e.target.value) })}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                </div>
+              </section>
+            )}
           </div>
 
           <aside className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-4 space-y-3 h-fit xl:sticky xl:top-0">
@@ -990,27 +1318,29 @@ export default function AIQuoteBuilderModal({
             <dl className="space-y-2 text-xs text-slate-300">
               <div className="flex justify-between gap-3">
                 <dt>System</dt>
-                <dd className="text-right text-white font-semibold">{systemSizeKw}kW {systemType}</dd>
+                <dd className="text-right text-white font-semibold">{systemSizeKw} kW</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt>Array</dt>
-                <dd className="text-right text-white">
-                  {panelQuantity} × {panelWattage}W
-                  <div className="text-[10px] font-normal text-slate-400">{arrayKilowattsPeak(panelWattage, panelQuantity).toFixed(3)} kWp actual array</div>
-                </dd>
+                <dt>System type</dt>
+                <dd className="text-right text-white">{systemType}</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt>Panel</dt>
+                <dt>Panels</dt>
                 <dd className="text-right">
-                  {panelWattage}W · Rs. {panelRatePerWatt}/W
-                  <div className="text-white">{panelTotal.toLocaleString()}</div>
+                  {[resolvedPanelBrand, panelModel].filter(Boolean).join(" ") || "—"}
+                  <div className="text-white">
+                    {panelQuantity} × {panelWattage}W · {arrayKilowattsPeak(panelWattage, panelQuantity).toFixed(3)} kWp actual array
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    Rs. {panelRatePerWatt}/W · {money(panelTotal)}
+                  </div>
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt>Inverter</dt>
                 <dd className="text-right">
-                  {[resolvedInverterBrand, inverterModel, inverterCapacity].filter(Boolean).join(" ")} × {inverterQuantity}
-                  <div className="text-white">{inverterTotal.toLocaleString()}</div>
+                  {[resolvedInverterBrand, inverterModel, inverterCapacity].filter(Boolean).join(" ")}
+                  <div className="text-white">qty {inverterQuantity} · {money(inverterTotal)}</div>
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
@@ -1019,23 +1349,66 @@ export default function AIQuoteBuilderModal({
                   {batteryEnabled && systemType !== "On-grid"
                     ? `${[resolvedBatteryBrand, batteryModel, batteryCapacityKwh].filter(Boolean).join(" ")} × ${batteryQuantity}`
                     : "None"}
-                  <div className="text-white">{batteryEnabled && systemType !== "On-grid" ? batteryTotal.toLocaleString() : "—"}</div>
+                  <div className="text-white">{batteryEnabled && systemType !== "On-grid" ? money(batteryTotal) : "—"}</div>
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt>Structure</dt>
-                <dd className="text-right text-white">{structureSummary}</dd>
+                <dd className="text-right">
+                  {STRUCTURE_OPTIONS.find((o) => o.id === structureType)?.label}
+                  {structureType === "standard" ? ` · ${structureMode === "manual" ? "Manual" : "Auto"}` : ""}
+                  {structureType === "standard" && (
+                    <div className="text-[10px] text-slate-400">
+                      L3 {l3Qty} · L2 {l2Qty} · capacity {standardSelection.capacity}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-slate-400">{structureSummary}</div>
+                  <div className="text-white">{money(structureTotal)}</div>
+                </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt>Installation</dt>
                 <dd className="text-right">
                   Rs. {installationRatePerWatt}/W
-                  <div className="text-white">{installTotal.toLocaleString()}</div>
+                  <div className="text-white">{money(installTotal)}</div>
                 </dd>
               </div>
+              <div className="border-t border-slate-800 pt-2 space-y-1">
+                <div className="flex justify-between gap-3"><dt>DC Cable</dt><dd>{otherCharges.dcCable.enabled ? money(optionalChargeTotal(otherCharges.dcCable)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>AC Cable</dt><dd>{otherCharges.acCable.enabled ? money(optionalChargeTotal(otherCharges.acCable)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Earthing Wire</dt><dd>{otherCharges.earthWire.enabled ? money(optionalChargeTotal(otherCharges.earthWire)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>DB / Protection</dt><dd>{otherCharges.dbBox.enabled ? money(optionalChargeTotal(otherCharges.dbBox)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Earthing Bore</dt><dd>{otherCharges.earthingBore.enabled ? money(optionalChargeTotal(otherCharges.earthingBore)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Civil Work</dt><dd>{otherCharges.civilWork.enabled ? money(optionalChargeTotal(otherCharges.civilWork)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Freight</dt><dd>{otherCharges.freight.enabled ? money(optionalChargeTotal(otherCharges.freight)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Net Metering</dt><dd>{otherCharges.netMetering.enabled ? money(optionalChargeTotal(otherCharges.netMetering)) : "Off"}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Survey / Design</dt><dd>{otherCharges.surveyDesign.enabled ? money(optionalChargeTotal(otherCharges.surveyDesign)) : "Off"}</dd></div>
+              </div>
               <div className="flex justify-between border-t border-slate-800 pt-2 text-sm text-white font-bold">
-                <dt>Estimated subtotal</dt>
-                <dd>Rs. {subtotal.toLocaleString()}</dd>
+                <dt>Subtotal</dt>
+                <dd>Rs. {money(subtotal)}</dd>
+              </div>
+              {parentDiscount.discountAmount > 0 && (
+                <div className="flex justify-between gap-3 text-emerald-300">
+                  <dt>{parentDiscount.discountLabel}</dt>
+                  <dd>- {money(parentDiscount.discountAmount)}</dd>
+                </div>
+              )}
+              {parentCharges?.taxEnabled && (
+                <div className="flex justify-between gap-3">
+                  <dt>Tax ({parentCharges.taxRate}%)</dt>
+                  <dd>{money(parentTaxAmount)}</dd>
+                </div>
+              )}
+              {parentSociety > 0 && (
+                <div className="flex justify-between gap-3">
+                  <dt>Society charges</dt>
+                  <dd>{money(parentSociety)}</dd>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-amber-500/30 pt-2 text-sm text-amber-300 font-bold">
+                <dt>Final estimated quotation</dt>
+                <dd>Rs. {money(finalEstimate)}</dd>
               </div>
             </dl>
             {systemType === "On-grid" && batteryEnabled && (

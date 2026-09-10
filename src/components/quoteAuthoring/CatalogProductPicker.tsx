@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import type { Product } from "../../types";
+import { WEBSITE_CATALOG_SOURCE } from "../../lib/websiteCatalog/allowlist";
 
 interface CatalogProductPickerProps {
   products: Product[];
@@ -7,6 +8,20 @@ interface CatalogProductPickerProps {
   onSelect: (product: Product | null) => void;
   placeholder?: string;
   disabled?: boolean;
+}
+
+function identityBits(product: Product): string {
+  const source = product.source === WEBSITE_CATALOG_SOURCE ? "website" : "CRM";
+  return [
+    product.brand || "—",
+    product.model || "",
+    product.wattageCapacity || "",
+    product.price ? `Rs. ${Number(product.price).toLocaleString()}` : "",
+    source,
+    product.availability || "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export default function CatalogProductPicker({
@@ -24,7 +39,9 @@ export default function CatalogProductPicker({
     const q = query.trim().toLowerCase();
     const list = q
       ? products.filter((p) =>
-          `${p.brand} ${p.name} ${p.model} ${p.sku}`.toLowerCase().includes(q)
+          `${p.brand} ${p.name} ${p.model} ${p.sku} ${p.wattageCapacity || ""} ${p.availability || ""}`
+            .toLowerCase()
+            .includes(q)
         )
       : products;
     return list.slice(0, 40);
@@ -74,11 +91,7 @@ export default function CatalogProductPicker({
                 }}
               >
                 <div className="text-xs font-semibold text-white truncate">{product.name}</div>
-                <div className="text-[10px] text-slate-500">
-                  {product.brand || "—"}
-                  {product.source === "sunchaser_website" ? " · website" : " · CRM"}
-                  {product.price ? ` · Rs. ${Number(product.price).toLocaleString()}` : ""}
-                </div>
+                <div className="text-[10px] text-slate-500">{identityBits(product)}</div>
               </button>
             ))
           )}
