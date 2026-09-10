@@ -6,10 +6,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RequestActor } from "../middleware/actor.ts";
-import {
-  getSharedWhatsAppLidPhoneMap,
-  __resetSharedWhatsAppLidPhoneMap,
-} from "../whatsappWeb/index.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "./whatsappInboxRepository.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import type { WhatsAppReadWatermark } from "./whatsappInboxDatabaseTypes.ts";
@@ -105,10 +101,6 @@ function actor(overrides: Partial<RequestActor> = {}): RequestActor {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const inboundSrc = readFileSync(
-  join(here, "../whatsappWeb/whatsappWebInbound.ts"),
-  "utf8"
-);
 const webhookSrc = readFileSync(join(here, "whatsappWebhookRoutes.ts"), "utf8");
 const watermarkRepoSrc = readFileSync(
   join(here, "whatsappInboxReadWatermarkRepository.ts"),
@@ -411,51 +403,6 @@ await test(
   }
 );
 
-await test("inbound invalidation refreshes the affected unread result", async () => {
-  const repos = createInMemoryWhatsAppInboxRepositories();
-  const a = actor();
-  const ts = "2026-07-28T18:00:00.000Z";
-  seedConversation(repos.store, { id: "c1", lastMessageAt: ts, updatedAt: ts });
-  seedMessage(repos.store, {
-    id: "m1",
-    conversationId: "c1",
-    direction: "inbound",
-    createdAt: ts,
-  });
-  const services = createWhatsAppInboxServices(repos);
-  await services.readState.resolveAndAdvance("c1", {
-    actor: a,
-    lastSeenMessageId: "m1",
-    lastSeenMessageCreatedAt: ts,
-  });
-  // Rebuild index as read.
-  let page = await services.conversations.listByActivity(a, {
-    quickFilter: "unread",
-  });
-  assert.equal(page.rows.some((r) => r.id === "c1"), false);
-
-  const later = "2026-07-28T18:05:00.000Z";
-  seedMessage(repos.store, {
-    id: "m2",
-    conversationId: "c1",
-    direction: "inbound",
-    createdAt: later,
-  });
-  seedConversation(repos.store, {
-    id: "c1",
-    lastMessageAt: later,
-    updatedAt: later,
-  });
-  // Targeted inbound dirty (Meta/Web paths call this).
-  dirtyUnreadIndexForConversation("sunchaser", "c1");
-  page = await services.conversations.listByActivity(a, {
-    quickFilter: "unread",
-  });
-  assert.ok(page.rows.some((r) => r.id === "c1"));
-  assert.ok(inboundSrc.includes("dirtyUnreadIndexForConversation"));
-  assert.ok(webhookSrc.includes("dirtyUnreadIndexForConversation"));
-});
-
 await test("mark-read invalidation refreshes only the actor’s index", async () => {
   const a1 = actor({ id: "user_a" });
   const a2 = actor({ id: "user_b" });
@@ -577,23 +524,6 @@ await test("writeBackUnreadIndexEntries helper updates totals", () => {
   const hit = getUnreadIndexCache("sunchaser", "u1");
   assert.equal(hit?.totalUnreadCount, 0);
   assert.equal(hit?.byId.get("c1")?.isUnread, false);
-});
-
-await test("no WhatsApp send / Gemini / auto AI in inbound path", () => {
-  assert.equal(inboundSrc.includes("sendWhatsAppWebPlainText"), false);
-  assert.equal(inboundSrc.includes("generateContent"), false);
-  assert.equal(inboundSrc.includes("@google/generative-ai"), false);
-});
-
-await test("@lid protection remains intact", () => {
-  __resetSharedWhatsAppLidPhoneMap();
-  const map = getSharedWhatsAppLidPhoneMap();
-  assert.equal(map.resolvePhoneJid("123456789012345@lid"), null);
-  map.remember("123456789012345@lid", "923001112233@s.whatsapp.net");
-  assert.equal(
-    map.resolvePhoneJid("123456789012345@lid"),
-    "923001112233@s.whatsapp.net"
-  );
 });
 
 if (failed > 0) {

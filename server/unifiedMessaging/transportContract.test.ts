@@ -387,7 +387,7 @@ await test(
       "whatsappTransport",
       "aiEngine",
       "ai/providers",
-      "@whiskeysockets/baileys",
+      "whiskeysockets",
       "whatsapp-web.js",
       "puppeteer",
       "qrcode",
@@ -418,8 +418,8 @@ await test(
       }
     }
 
-    // Contract module itself must stay free of QR SDKs. The experimental
-    // connector may live under server/whatsappWeb/ with its own deps.
+    // Unofficial WhatsApp Web libraries are prohibited repo-wide.
+    // Enforced comprehensively by whatsappOfficialOnlyPolicy.test.ts.
     const pkg = JSON.parse(
       fs.readFileSync(
         path.join(MODULE_ROOT, "../../package.json"),
@@ -436,16 +436,6 @@ await test(
         false,
         `package.json must not depend on ${banned} for WhatsApp connection`
       );
-    }
-    // If Baileys is present, it must not be imported by unifiedMessaging/.
-    if (Object.prototype.hasOwnProperty.call(allDeps, "@whiskeysockets/baileys")) {
-      for (const { file, source } of files) {
-        assert.equal(
-          source.includes("@whiskeysockets/baileys"),
-          false,
-          `${file} must not import Baileys`
-        );
-      }
     }
   }
 );

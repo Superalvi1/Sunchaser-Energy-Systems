@@ -89,7 +89,9 @@ import {
 } from "../lib/watermarkStyles";
 import {
   downloadManualQuotePdf,
+  downloadQuotePdfByType,
   openManualQuotePrintPreview,
+  openQuotePrintPreviewByType,
   printProposalPreviewIframe,
 } from "../lib/quotePdfExport";
 import {
@@ -1948,6 +1950,61 @@ export default function SalesTeamApp({
     }
   };
 
+  const handleDownloadAutoSizerQuotePDF = async (quoteId?: string) => {
+    if (!activeLead) return;
+    const target =
+      (quoteId && activeLead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer")) ||
+      getLatestSavedQuote(activeLead, "auto_sizer");
+    if (!target) {
+      alert("Save a quote first.");
+      return;
+    }
+    try {
+      setDownloadingQuotePdf(true);
+      setQuotePdfStatus("Generating PDF…");
+      await downloadQuotePdfByType("auto_sizer", activeLead.id, target.id);
+    } catch (err: any) {
+      alert(err?.message || "PDF download failed.");
+    } finally {
+      setDownloadingQuotePdf(false);
+      setQuotePdfStatus(null);
+    }
+  };
+
+  const handlePrintAutoSizerQuotePDF = async (quoteId?: string) => {
+    if (!activeLead) return;
+    const target =
+      (quoteId && activeLead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "auto_sizer")) ||
+      getLatestSavedQuote(activeLead, "auto_sizer");
+    if (!target) {
+      alert("Save a quote first.");
+      return;
+    }
+    try {
+      await openQuotePrintPreviewByType("auto_sizer", activeLead.id, target.id);
+    } catch (err: any) {
+      alert(err?.message || "Print preview failed.");
+    }
+  };
+
+  const handleDownloadQuoteVersionPDF = async (quote: any) => {
+    if (!quote) return;
+    if (quote.quote_type === "auto_sizer") {
+      await handleDownloadAutoSizerQuotePDF(quote.id);
+      return;
+    }
+    await handleDownloadManualQuotePDF(quote.id);
+  };
+
+  const handlePrintQuoteVersionPDF = async (quote: any) => {
+    if (!quote) return;
+    if (quote.quote_type === "auto_sizer") {
+      await handlePrintAutoSizerQuotePDF(quote.id);
+      return;
+    }
+    await handlePrintManualQuotePDF(quote.id);
+  };
+
   const handlePreviewProposalDeck = async () => {
     if (!activeLead) return;
 
@@ -3065,10 +3122,7 @@ export default function SalesTeamApp({
                     title={!latestAutoSizerSavedQuote ? "Save a quote first" : "Download latest Auto Sizer PDF"}
                     onClick={() => {
                       if (!latestAutoSizerSavedQuote) return;
-                      window.open(
-                        `${API_BASE_URL}/api/export/pdf/auto-sizer/${activeLead.id}?quoteId=${latestAutoSizerSavedQuote.id}`,
-                        "_blank"
-                      );
+                      void handleDownloadAutoSizerQuotePDF(latestAutoSizerSavedQuote.id);
                     }}
                     className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
@@ -4607,7 +4661,7 @@ export default function SalesTeamApp({
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => handlePrintManualQuotePDF(q.id)}
+                                      onClick={() => handlePrintQuoteVersionPDF(q)}
                                       className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 p-1.5 rounded-lg cursor-pointer transition"
                                       title="Print Version"
                                     >
@@ -4615,7 +4669,7 @@ export default function SalesTeamApp({
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => handleDownloadManualQuotePDF(q.id)}
+                                      onClick={() => handleDownloadQuoteVersionPDF(q)}
                                       className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-500 p-1.5 rounded-lg cursor-pointer transition"
                                       title="Download Version PDF"
                                     >

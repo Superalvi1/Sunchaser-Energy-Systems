@@ -6,10 +6,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RequestActor } from "../middleware/actor.ts";
-import {
-  getSharedWhatsAppLidPhoneMap,
-  __resetSharedWhatsAppLidPhoneMap,
-} from "../whatsappWeb/index.ts";
 import { createInMemoryWhatsAppInboxRepositories } from "./whatsappInboxRepository.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import type { InboxMessageRef } from "./whatsappInboxRepoSupport.ts";
@@ -107,10 +103,6 @@ function actor(overrides: Partial<RequestActor> = {}): RequestActor {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const inboundSrc = readFileSync(
-  join(here, "../whatsappWeb/whatsappWebInbound.ts"),
-  "utf8"
-);
 const webhookSrc = readFileSync(join(here, "whatsappWebhookRoutes.ts"), "utf8");
 const cacheSrc = readFileSync(
   join(here, "whatsappInboxUnreadIndexCache.ts"),
@@ -609,50 +601,6 @@ await test("partial-miss write-back remains correct", async () => {
   assert.equal(
     getUnreadIndexCache("sunchaser", a.id)?.byId.get("c1")?.isUnread,
     false
-  );
-});
-
-await test("mark-read still actor-only; inbound still targeted dirty", () => {
-  setUnreadIndexCache("sunchaser", "u1", {
-    byId: new Map([["c1", { isUnread: true, unreadCount: 1 }]]),
-    totalUnreadCount: 1,
-    highWaterUpdatedAt: "2026-07-30T20:00:00.000Z",
-    highWaterId: "c1",
-  });
-  setUnreadIndexCache("sunchaser", "u2", {
-    byId: new Map([["c1", { isUnread: true, unreadCount: 1 }]]),
-    totalUnreadCount: 1,
-    highWaterUpdatedAt: "2026-07-30T20:00:00.000Z",
-    highWaterId: "c1",
-  });
-  invalidateUnreadIndexCache("sunchaser", "u1");
-  assert.equal(getUnreadIndexCache("sunchaser", "u1"), null);
-  assert.ok(getUnreadIndexCache("sunchaser", "u2"));
-
-  assert.ok(inboundSrc.includes("dirtyUnreadIndexForConversation"));
-  assert.ok(webhookSrc.includes("dirtyUnreadIndexForConversation"));
-  assert.equal(inboundSrc.includes("invalidateUnreadIndexCacheForCompany"), false);
-});
-
-await test("no WhatsApp send / Gemini / auto AI in inbound path", () => {
-  assert.equal(inboundSrc.includes("sendWhatsAppWebPlainText"), false);
-  assert.equal(inboundSrc.includes("generateContent"), false);
-  assert.equal(inboundSrc.includes("@google/generative-ai"), false);
-});
-
-await test("@lid protection remains intact", () => {
-  __resetSharedWhatsAppLidPhoneMap();
-  const map = getSharedWhatsAppLidPhoneMap();
-  assert.equal(map.resolvePhoneJid("123456789012345@lid"), null);
-  map.remember("123456789012345@lid", "923001112233@s.whatsapp.net");
-  assert.equal(
-    map.resolvePhoneJid("123456789012345@lid"),
-    "923001112233@s.whatsapp.net"
-  );
-  assert.ok(
-    inboundSrc.includes("getSharedWhatsAppLidPhoneMap") ||
-      inboundSrc.includes("resolvePhoneJid") ||
-      inboundSrc.includes("lid")
   );
 });
 

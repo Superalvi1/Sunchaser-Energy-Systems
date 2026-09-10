@@ -6,7 +6,16 @@ import {
   WHATSAPP_OUTBOUND_DB_RETRY_ATTEMPTS,
   WHATSAPP_OUTBOUND_DB_RETRY_DELAY_MS,
 } from "./whatsappConstants.ts";
-import { hasOutboundSendConfig, type WhatsAppConfig } from "./whatsappConfig.ts";
+import {
+  isValidGraphApiVersion,
+  type WhatsAppConfig,
+} from "./whatsappConfig.ts";
+import {
+  resolveOutboundCredentials,
+  type OutboundConnectionLookup,
+} from "./whatsappOutboundCredentials.ts";
+import { getWhatsAppConnectionRepository } from "./whatsappConnectionService.ts";
+import { resolveCompanyId } from "./whatsappConstants.ts";
 import { sendWhatsAppTextMessage } from "./whatsappGraphClient.ts";
 import {
   authorizeOutboundWhatsAppActor,
@@ -37,6 +46,16 @@ export type OutboundSendDeps = {
   messagingRepository?: MessagingRepository | null;
   /** Stable client idempotency key; generated when missing and messaging is enabled. */
   clientIdempotencyKey?: string | null;
+  /**
+   * Meta Embedded Signup connection lookup. Defaults to the process connection
+   * repository; injected in tests. Credentials are resolved per send so a newly
+   * connected WhatsApp account can send without a restart.
+   */
+  connectionLookup?: OutboundConnectionLookup;
+  /** Tenant whose stored connection is used. Defaults to DEFAULT_COMPANY_ID. */
+  companyId?: string;
+  /** Environment for the deprecated env-credential fallback policy. */
+  env?: NodeJS.ProcessEnv;
 };
 
 export type OutboundSendResult =
@@ -154,7 +173,7 @@ export async function sendOutboundPlainText(
   if (!deps.repo.isActive()) {
     return { httpStatus: 503, error: "WhatsApp persistence unavailable" };
   }
-  if (!hasOutboundSendConfig(deps.config)) {
+  if (!isValidGraphApiVersion(deps.config.graphApiVersion)) {
     return { httpStatus: 503, error: "WhatsApp send configuration incomplete" };
   }
 
@@ -171,7 +190,34 @@ export async function sendOutboundPlainText(
   }
   const conversationBundle = bundle!;
 
-  if (conversationBundle.channel.phoneNumberId !== deps.config.phoneNumberId) {
+  // Resolve the sender identity for THIS conversation's channel. Connection-first
+  // (Meta Embedded Signup), deprecated env credentials only when no connection
+  // record exists. Selection is phone-scoped so it fails closed rather than
+  // sending from a different WhatsApp number.
+  const credentials = await resolveOutboundCredentials({
+    config: deps.config,
+    connectionLookup: deps.connectionLookup ?? getWhatsAppConnectionRepository(),
+    companyId: resolveCompanyId(deps.companyId),
+    expectedPhoneNumberId: conversationBundle.channel.phoneNumberId,
+    env: deps.env,
+  });
+
+  if (credentials.ok === false) {
+    await safeAudit(deps.repo, {
+      eventType: AUDIT_EVENTS.OUTBOUND_FAILED,
+      entityType: "conversation",
+      entityId: conversationId,
+      // Sanitized reason code only — never credential material.
+      metadata: { reason: credentials.reason },
+    });
+    return {
+      httpStatus: 503,
+      error: "WhatsApp sender credentials unavailable for this conversation",
+    };
+  }
+
+  // Defence in depth: the resolver already scopes by channel identity.
+  if (conversationBundle.channel.phoneNumberId !== credentials.phoneNumberId) {
     await safeAudit(deps.repo, {
       eventType: AUDIT_EVENTS.OUTBOUND_FAILED,
       entityType: "conversation",
@@ -187,7 +233,7 @@ export async function sendOutboundPlainText(
   const messagingBridge = deps.messagingRepository
     ? createWhatsAppMessagingBridge({
         repository: deps.messagingRepository,
-        config: deps.config,
+        config: { phoneNumberId: credentials.phoneNumberId },
       })
     : null;
 
@@ -362,8 +408,8 @@ export async function sendOutboundPlainText(
   const graphResult = await sendWhatsAppTextMessage({
     toWaId: conversationBundle.contact.phoneE164,
     text,
-    phoneNumberId: deps.config.phoneNumberId,
-    accessToken: deps.config.accessToken,
+    phoneNumberId: credentials.phoneNumberId,
+    accessToken: credentials.accessToken,
     graphApiVersion: deps.config.graphApiVersion,
     fetchImpl: deps.fetchImpl,
   });

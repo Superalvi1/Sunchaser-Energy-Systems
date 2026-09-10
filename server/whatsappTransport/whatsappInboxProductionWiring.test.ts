@@ -983,22 +983,17 @@ await test("composition: server mounts hardened inbox router once", () => {
   assert.match(src, /createPublicLeadRouter/);
 });
 
-await test("composition: inbox list availability uses shared WhatsApp Web session", () => {
+await test("composition: inbox list availability is wired Meta-only (no QR session)", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const serverPath = path.resolve(here, "../../server.ts");
   const src = fs.readFileSync(serverPath, "utf8");
   assert.match(src, /createWhatsAppInboxListAvailabilityResolver/);
   assert.match(src, /resolveListAvailability:\s*createWhatsAppInboxListAvailabilityResolver/);
-  assert.match(
-    src,
-    /getQrConnectionStatus:\s*\(\)\s*=>\s*whatsappWebSession\.getSafeStatus\(\)/
-  );
-  // Shared session must be created before the inbox router mount that references it.
-  const sessionIdx = src.indexOf("const whatsappWebSession = getSharedWhatsAppWebSession()");
-  const inboxIdx = src.indexOf("createWhatsAppInboxRouter({");
-  assert.ok(sessionIdx >= 0);
-  assert.ok(inboxIdx >= 0);
-  assert.ok(sessionIdx < inboxIdx);
+  // The unofficial WhatsApp Web (Baileys) session must not be wired into the inbox.
+  assert.equal(src.includes("getQrConnectionStatus"), false);
+  assert.equal(src.includes("whatsappWebSession"), false);
+  assert.equal(src.includes("getSharedWhatsAppWebSession"), false);
+  assert.ok(src.indexOf("createWhatsAppInboxRouter({") >= 0);
 });
 
 await test("production wiring: signed inbound customer message auto-links lead and duplicate does not repeat lead creation", async () => {
