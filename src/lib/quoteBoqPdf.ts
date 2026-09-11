@@ -126,6 +126,7 @@ export function ensureBoqSectionSubtotals(rows: BoqPdfRow[]): BoqPdfRow[] {
 
 export const BOQ_FIRST_PAGE_MAX_WEIGHT = 20;
 export const BOQ_PAGE_MAX_WEIGHT = 22;
+export const THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT = 36;
 
 export function boqRowWeight(row: BoqPdfRow): number {
   if (!row?.type) return 0.5;
@@ -136,6 +137,17 @@ export function boqRowWeight(row: BoqPdfRow): number {
     return desc.length > 80 ? 2 : 1;
   }
   return 0.5;
+}
+
+export function quoteBoqOverflow(rows: BoqPdfRow[]): { overflow: boolean; weight: number; itemCount: number } {
+  const normalized = ensureBoqSectionSubtotals(rows);
+  const weight = normalized.reduce((sum, row) => sum + boqRowWeight(row), 0);
+  const itemCount = normalized.filter((r) => r.type === "item").length;
+  return {
+    overflow: weight > THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT,
+    weight,
+    itemCount,
+  };
 }
 
 export type BoqPdfPageChunk = {
