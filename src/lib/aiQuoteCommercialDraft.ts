@@ -15,9 +15,12 @@ import {
   DEFAULT_INSTALLATION_RATE_PER_WATT,
   finiteNumber,
   nonNegativeFinite,
+  nonNegativeInteger,
   positiveFinite,
+  positiveInteger,
   recommendedPanelQuantity,
 } from "./quoteCommercialMath";
+import type { QuoteDiscountType } from "./quoteDiscount";
 import { liftWebsiteSourceFields, normalizeIdentityKey } from "./websiteCatalog/normalize";
 import {
   L2_PANEL_POSITIONS,
@@ -127,6 +130,10 @@ export function defaultEarthingBoreQuantity(systemSizeKw: number): number {
   return finiteNumber(systemSizeKw, 0) > 15 ? 3 : 2;
 }
 
+export function defaultNetMeteringEnabled(systemType?: QuoteSystemType | string): boolean {
+  return String(systemType || "").trim() !== "Off-grid";
+}
+
 function charge(partial: QuoteOptionalCharge): QuoteOptionalCharge {
   return {
     enabled: partial.enabled !== false,
@@ -137,7 +144,10 @@ function charge(partial: QuoteOptionalCharge): QuoteOptionalCharge {
   };
 }
 
-export function defaultOtherCharges(systemSizeKw: number): CommercialOtherCharges {
+export function defaultOtherCharges(
+  systemSizeKw: number,
+  systemType?: QuoteSystemType | string
+): CommercialOtherCharges {
   const size = finiteNumber(systemSizeKw, 10);
   return {
     dcCable: charge({
@@ -190,7 +200,7 @@ export function defaultOtherCharges(systemSizeKw: number): CommercialOtherCharge
       description: "Equipment loading, delivery to site and manual roof shifting logistics",
     }),
     netMetering: charge({
-      enabled: true,
+      enabled: defaultNetMeteringEnabled(systemType),
       qty: 1,
       rate: defaultNetMeteringRate(size),
       name: "LESCO Net Metering Licensing Process",
@@ -208,9 +218,10 @@ export function defaultOtherCharges(systemSizeKw: number): CommercialOtherCharge
 
 export function mergeOtherCharges(
   systemSizeKw: number,
-  overrides?: Partial<CommercialOtherCharges> | null
+  overrides?: Partial<CommercialOtherCharges> | null,
+  systemType?: QuoteSystemType | string
 ): CommercialOtherCharges {
-  const defaults = defaultOtherCharges(systemSizeKw);
+  const defaults = defaultOtherCharges(systemSizeKw, systemType);
   if (!overrides) return defaults;
   const keys = Object.keys(defaults) as Array<keyof CommercialOtherCharges>;
   const next = { ...defaults };
@@ -220,7 +231,7 @@ export function mergeOtherCharges(
     next[key] = {
       ...defaults[key],
       ...patch,
-      enabled: patch.enabled !== false,
+      enabled: typeof patch.enabled === "boolean" ? patch.enabled : defaults[key].enabled,
       qty: finiteNumber(patch.qty, defaults[key].qty),
       rate: finiteNumber(patch.rate, defaults[key].rate),
     };
@@ -245,6 +256,73 @@ export function otherChargesSubtotal(charges: CommercialOtherCharges): number {
     optionalChargeTotal(charges.netMetering) +
     optionalChargeTotal(charges.surveyDesign)
   );
+}
+
+export type AiQuoteDiscountMode = "none" | "fixed" | "percentage";
+
+export interface AiQuoteFinancialDraft {
+  discountMode: AiQuoteDiscountMode;
+  discountValue: number;
+  taxEnabled: boolean;
+  taxRate: number;
+  societyCharges: number;
+}
+
+export function copyParentFinancialDraft(parent?: {
+  discountType?: string;
+  discountValue?: number;
+  taxEnabled?: boolean;
+  taxRate?: number;
+  societyCharges?: number;
+} | null): AiQuoteFinancialDraft {
+  const type = String(parent?.discountType || "").toLowerCase();
+  const value = Math.max(0, finiteNumber(parent?.discountValue, 0));
+  let discountMode: AiQuoteDiscountMode = "none";
+  if (type === "percentage") discountMode = "percentage";
+  else if (type === "fixed" && value > 0) discountMode = "fixed";
+  return {
+    discountMode,
+    discountValue: discountMode === "none" ? 0 : value,
+    taxEnabled: Boolean(parent?.taxEnabled),
+    taxRate: finiteNumber(parent?.taxRate, 17),
+    societyCharges: Math.max(0, finiteNumber(parent?.societyCharges, 0)),
+  };
+}
+
+export function commitFinancialDraft(draft: AiQuoteFinancialDraft): {
+  discountType: QuoteDiscountType;
+  discountValue: number;
+  taxEnabled: boolean;
+  taxRate: number;
+  societyCharges: number;
+} {
+  if (draft.discountMode === "none") {
+    return {
+      discountType: "fixed",
+      discountValue: 0,
+      taxEnabled: Boolean(draft.taxEnabled),
+      taxRate: finiteNumber(draft.taxRate, 17),
+      societyCharges: Math.max(0, finiteNumber(draft.societyCharges, 0)),
+    };
+  }
+  const raw = finiteNumber(draft.discountValue, 0);
+  const discountValue =
+    draft.discountMode === "percentage" ? Math.min(100, Math.max(0, raw)) : Math.max(0, raw);
+  return {
+    discountType: draft.discountMode,
+    discountValue,
+    taxEnabled: Boolean(draft.taxEnabled),
+    taxRate: finiteNumber(draft.taxRate, 17),
+    societyCharges: Math.max(0, finiteNumber(draft.societyCharges, 0)),
+  };
+}
+
+export function financialDraftDiscountInput(draft: AiQuoteFinancialDraft): {
+  discountType: QuoteDiscountType;
+  discountValue: number;
+} {
+  const committed = commitFinancialDraft(draft);
+  return { discountType: committed.discountType, discountValue: committed.discountValue };
 }
 
 export interface CommercialQuoteDraftApply {
@@ -560,14 +638,14 @@ export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): st
   const errors: string[] = [];
   if (positiveFinite(config.systemSizeKw) == null) errors.push("System size must be greater than 0 kW.");
   if (positiveFinite(config.panelWattage) == null) errors.push("Panel wattage must be greater than 0.");
-  if (positiveFinite(config.panelQuantity) == null) errors.push("Panel quantity must be greater than 0.");
+  if (positiveInteger(config.panelQuantity) == null) errors.push("Panel quantity must be a whole number greater than 0.");
   if (nonNegativeFinite(config.panelRatePerWatt) == null) errors.push("Panel PKR/W cannot be negative.");
   if (nonNegativeFinite(config.installationRatePerWatt) == null) errors.push("Installation PKR/W cannot be negative.");
   if (nonNegativeFinite(config.elevatedStructureRatePerWatt) == null) errors.push("Elevated structure PKR/W cannot be negative.");
-  if (positiveFinite(config.inverterQuantity) == null) errors.push("Inverter quantity must be greater than 0.");
+  if (positiveInteger(config.inverterQuantity) == null) errors.push("Inverter quantity must be a whole number greater than 0.");
   if (nonNegativeFinite(config.inverterUnitPrice) == null) errors.push("Inverter unit price cannot be negative.");
   if (config.batteryEnabled && config.systemType !== "On-grid") {
-    if (positiveFinite(config.batteryQuantity) == null) errors.push("Battery quantity must be greater than 0.");
+    if (positiveInteger(config.batteryQuantity) == null) errors.push("Battery quantity must be a whole number greater than 0.");
     if (nonNegativeFinite(config.batteryUnitPrice) == null) errors.push("Battery unit price cannot be negative.");
   }
   if (config.structureType === "girder" && nonNegativeFinite(config.girderAmount) == null) {
@@ -577,6 +655,8 @@ export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): st
     errors.push("Custom structure amount cannot be negative.");
   }
   if (config.structureType === "standard" && config.structureMode === "manual") {
+    if (nonNegativeInteger(config.manualL3Quantity) == null) errors.push("L3 quantity must be a whole number of 0 or more.");
+    if (nonNegativeInteger(config.manualL2Quantity) == null) errors.push("L2 quantity must be a whole number of 0 or more.");
     const selection = resolveStandardStructureSelection(config);
     if (selection.underCapacity) errors.push(STRUCTURE_CAPACITY_WARNING);
   }
@@ -588,7 +668,7 @@ export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): st
       errors.push("L2 structure rate cannot be negative.");
     }
   }
-  const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges);
+  const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges, config.systemType);
   const chargeLabels: Array<[keyof CommercialOtherCharges, string]> = [
     ["dcCable", "DC Cable"],
     ["acCable", "AC Cable"],
@@ -687,7 +767,7 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
   const equipmentTotal = rows.filter((r) => r.type === "item").reduce((s, r) => s + (Number(r.total) || 0), 0);
   rows.push(subtotalRow("ai-s-equipment", "Imported Equipment Subtotal", equipmentTotal));
 
-  const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges);
+  const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges, config.systemType);
 
   const cableRows: BoqRow[] = [];
   pushIf(

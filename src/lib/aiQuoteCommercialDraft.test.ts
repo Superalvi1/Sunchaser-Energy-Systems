@@ -14,12 +14,15 @@ import {
   catalogProductMatchesInverterIdentity,
   catalogProductMatchesPanelIdentity,
   catalogProductWattage,
+  commitFinancialDraft,
+  copyParentFinancialDraft,
   DEFAULT_CIVIL_WORK_RATE,
   DEFAULT_DB_BOX_RATE,
   DEFAULT_EARTHING_BORE_RATE,
   DEFAULT_FREIGHT_RATE,
   DEFAULT_SURVEY_DESIGN_RATE,
   defaultEarthingBoreQuantity,
+  defaultNetMeteringEnabled,
   defaultNetMeteringRate,
   defaultOtherCharges,
   isQuickPanelWattage,
@@ -683,6 +686,140 @@ check("website catalog is not scraped from the modal", () => {
   const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
   assert.doesNotMatch(modal, /www\.sunchaserenergy\.co/);
   assert.doesNotMatch(modal, /sitemap|scrape|fetch\(/i);
+});
+
+check("Off-grid default has no net metering row", () => {
+  assert.equal(defaultNetMeteringEnabled("Off-grid"), false);
+  const rows = buildCommercialQuoteBoq({ ...base, systemType: "Off-grid" });
+  assert.equal(rows.some((r) => r.id === "net_metering_row"), false);
+});
+
+check("On-grid default includes net metering row", () => {
+  assert.equal(defaultNetMeteringEnabled("On-grid"), true);
+  const rows = buildCommercialQuoteBoq({ ...base, systemType: "On-grid" });
+  assert.equal(rows.some((r) => r.id === "net_metering_row"), true);
+});
+
+check("Hybrid default includes net metering row", () => {
+  assert.equal(defaultNetMeteringEnabled("Hybrid"), true);
+  const rows = buildCommercialQuoteBoq({ ...base, systemType: "Hybrid" });
+  assert.equal(rows.some((r) => r.id === "net_metering_row"), true);
+});
+
+check("Off-grid can explicitly enable net metering", () => {
+  const defaults = defaultOtherCharges(10, "Off-grid");
+  assert.equal(defaults.netMetering.enabled, false);
+  const rows = buildCommercialQuoteBoq({
+    ...base,
+    systemType: "Off-grid",
+    otherCharges: {
+      ...defaults,
+      netMetering: { ...defaults.netMetering, enabled: true },
+    },
+  });
+  assert.equal(rows.some((r) => r.id === "net_metering_row"), true);
+});
+
+check("manual net metering disable is not overwritten by Hybrid default", () => {
+  const defaults = defaultOtherCharges(10, "Hybrid");
+  const rows = buildCommercialQuoteBoq({
+    ...base,
+    systemType: "Hybrid",
+    otherCharges: {
+      ...defaults,
+      netMetering: { ...defaults.netMetering, enabled: false },
+    },
+  });
+  assert.equal(rows.some((r) => r.id === "net_metering_row"), false);
+  const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
+  assert.match(modal, /nmEnabledDirty/);
+  assert.match(modal, /defaultNetMeteringEnabled/);
+});
+
+check("discount mode is independent of amount > 0", () => {
+  const fromZero = copyParentFinancialDraft({ discountType: "fixed", discountValue: 0 });
+  assert.equal(fromZero.discountMode, "none");
+  const fixedZero = commitFinancialDraft({ ...fromZero, discountMode: "fixed", discountValue: 0 });
+  assert.equal(fixedZero.discountType, "fixed");
+  assert.equal(fixedZero.discountValue, 0);
+  const percentZero = commitFinancialDraft({ ...fromZero, discountMode: "percentage", discountValue: 0 });
+  assert.equal(percentZero.discountType, "percentage");
+  assert.equal(percentZero.discountValue, 0);
+  const none = commitFinancialDraft({ ...fromZero, discountMode: "none", discountValue: 50000 });
+  assert.equal(none.discountType, "fixed");
+  assert.equal(none.discountValue, 0);
+  const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
+  assert.match(modal, /value=\{discountMode\}/);
+  assert.match(modal, /discountMode !== "none"/);
+  assert.doesNotMatch(modal, /discountValue > 0 \? parentCharges/);
+});
+
+check("financial edits stay local until Apply", () => {
+  const parent = { discountType: "fixed" as const, discountValue: 0, taxEnabled: false, taxRate: 17, societyCharges: 0 };
+  const opened = copyParentFinancialDraft(parent);
+  const edited = {
+    ...opened,
+    discountMode: "fixed" as const,
+    discountValue: 50000,
+    taxEnabled: true,
+    taxRate: 17,
+    societyCharges: 12000,
+  };
+  assert.equal(parent.discountValue, 0);
+  assert.equal(parent.taxEnabled, false);
+  assert.equal(parent.societyCharges, 0);
+  const committed = commitFinancialDraft(edited);
+  assert.equal(committed.discountType, "fixed");
+  assert.equal(committed.discountValue, 50000);
+  assert.equal(committed.taxEnabled, true);
+  assert.equal(committed.societyCharges, 12000);
+  const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
+  assert.match(modal, /copyParentFinancialDraft/);
+  const applyChunk = modal.slice(modal.indexOf("const handleApply"), modal.indexOf("const handleApply") + 500);
+  assert.match(applyChunk, /commitFinancialDraft/);
+  assert.match(applyChunk, /onParentChargesChange/);
+  assert.doesNotMatch(
+    modal.replace(applyChunk, ""),
+    /onParentChargesChange\?\.|onParentChargesChange\(/
+  );
+});
+
+check("fractional equipment quantities are invalid", () => {
+  assert.equal(validateCommercialQuoteConfig({ ...base, panelQuantity: 0.5 }).some((e) => /Panel quantity/.test(e)), true);
+  assert.equal(validateCommercialQuoteConfig({ ...base, inverterQuantity: 0.5 }).some((e) => /Inverter quantity/.test(e)), true);
+  assert.equal(validateCommercialQuoteConfig({ ...base, batteryQuantity: 0.5 }).some((e) => /Battery quantity/.test(e)), true);
+  assert.equal(
+    validateCommercialQuoteConfig({
+      ...base,
+      structureType: "standard",
+      structureMode: "manual",
+      manualL3Quantity: 1.5,
+      manualL2Quantity: 2,
+    }).some((e) => /L3 quantity/.test(e)),
+    true
+  );
+  assert.equal(
+    validateCommercialQuoteConfig({
+      ...base,
+      structureType: "standard",
+      structureMode: "manual",
+      manualL3Quantity: 2,
+      manualL2Quantity: 1.5,
+    }).some((e) => /L2 quantity/.test(e)),
+    true
+  );
+  assert.equal(validateCommercialQuoteConfig({ ...base, panelQuantity: 16, inverterQuantity: 1, batteryQuantity: 1 }).length === 0, true);
+  assert.equal(
+    validateCommercialQuoteConfig({
+      ...base,
+      panelQuantity: 10,
+      structureType: "standard",
+      structureMode: "manual",
+      manualL3Quantity: 2,
+      manualL2Quantity: 2,
+    }).includes(STRUCTURE_CAPACITY_WARNING),
+    false
+  );
 });
 
 console.log(`\nAI quote commercial draft tests: ${pass} passed`);

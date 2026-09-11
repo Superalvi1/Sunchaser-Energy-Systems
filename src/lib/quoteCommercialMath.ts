@@ -26,6 +26,18 @@ export function positiveFinite(value: unknown): number | null {
   return n;
 }
 
+export function positiveInteger(value: unknown): number | null {
+  const n = positiveFinite(value);
+  if (n == null || !Number.isInteger(n)) return null;
+  return n;
+}
+
+export function nonNegativeInteger(value: unknown): number | null {
+  const n = nonNegativeFinite(value);
+  if (n == null || !Number.isInteger(n)) return null;
+  return n;
+}
+
 function factor(value: unknown): number {
   const n = nonNegativeFinite(value);
   return n == null ? 0 : n;

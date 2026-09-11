@@ -7,7 +7,9 @@ import {
   calculatePanelTotal,
   calculatePanelUnitPrice,
   nonNegativeFinite,
+  nonNegativeInteger,
   positiveFinite,
+  positiveInteger,
   recommendedPanelQuantity,
 } from "./quoteCommercialMath.ts";
 
@@ -53,4 +55,14 @@ check("negative commercial inputs are not valid numbers", () => {
   assert.equal(calculatePanelTotal(-645, 16, 42.5), 0);
 });
 
+check("integer quantity helpers reject fractions", () => {
+  assert.equal(positiveInteger(1), 1);
+  assert.equal(positiveInteger(0.5), null);
+  assert.equal(positiveInteger(0), null);
+  assert.equal(nonNegativeInteger(0), 0);
+  assert.equal(nonNegativeInteger(1.5), null);
+  assert.equal(nonNegativeInteger(2), 2);
+});
+
 console.log(`\nquoteCommercialMath tests: ${pass} passed`);
+

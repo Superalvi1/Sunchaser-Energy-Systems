@@ -29,8 +29,12 @@ import {
   catalogProductMatchesPanelIdentity,
   defaultBatteryEnabled,
   defaultEarthingBoreQuantity,
+  defaultNetMeteringEnabled,
   defaultNetMeteringRate,
   defaultOtherCharges,
+  copyParentFinancialDraft,
+  commitFinancialDraft,
+  financialDraftDiscountInput,
   inverterKwLabelFromProduct,
   isQuickPanelWattage,
   L2_STRUCTURE_KIT_RATE,
@@ -43,6 +47,7 @@ import {
   STRUCTURE_CAPACITY_WARNING,
   validateCommercialQuoteConfig,
   wattageLabelFromProduct,
+  type AiQuoteDiscountMode,
   type CommercialOtherCharges,
   type CommercialQuoteDraftApply,
   type QuoteOptionalCharge,
@@ -247,14 +252,31 @@ export default function AIQuoteBuilderModal({
   const [customStructureName, setCustomStructureName] = useState("Custom Mounting Structure");
   const [customStructureDescription, setCustomStructureDescription] = useState("");
   const [customStructureAmount, setCustomStructureAmount] = useState(0);
-  const [otherCharges, setOtherCharges] = useState<CommercialOtherCharges>(() => defaultOtherCharges(10));
+  const [otherCharges, setOtherCharges] = useState<CommercialOtherCharges>(() => defaultOtherCharges(10, "On-grid"));
   const [dcQtyDirty, setDcQtyDirty] = useState(false);
   const [boreQtyDirty, setBoreQtyDirty] = useState(false);
   const [nmRateDirty, setNmRateDirty] = useState(false);
+  const [nmEnabledDirty, setNmEnabledDirty] = useState(false);
+  const [discountMode, setDiscountMode] = useState<AiQuoteDiscountMode>("none");
+  const [localDiscountValue, setLocalDiscountValue] = useState(0);
+  const [localTaxEnabled, setLocalTaxEnabled] = useState(false);
+  const [localTaxRate, setLocalTaxRate] = useState(17);
+  const [localSocietyCharges, setLocalSocietyCharges] = useState(0);
 
   const patchCharge = (key: keyof CommercialOtherCharges, patch: Partial<QuoteOptionalCharge>) => {
     setOtherCharges((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const copied = copyParentFinancialDraft(parentCharges);
+    setDiscountMode(copied.discountMode);
+    setLocalDiscountValue(copied.discountValue);
+    setLocalTaxEnabled(copied.taxEnabled);
+    setLocalTaxRate(copied.taxRate);
+    setLocalSocietyCharges(copied.societyCharges);
+    setNmEnabledDirty(false);
+  }, [open]);
 
   useEffect(() => {
     if (!qtyDirty) setPanelQuantity(recommendedPanelQuantity(systemSizeKw, panelWattage));
@@ -263,6 +285,14 @@ export default function AIQuoteBuilderModal({
   useEffect(() => {
     setBatteryEnabled(defaultBatteryEnabled(systemType));
   }, [systemType]);
+
+  useEffect(() => {
+    if (nmEnabledDirty) return;
+    setOtherCharges((prev) => ({
+      ...prev,
+      netMetering: { ...prev.netMetering, enabled: defaultNetMeteringEnabled(systemType) },
+    }));
+  }, [systemType, nmEnabledDirty]);
 
   useEffect(() => {
     setOtherCharges((prev) => ({
@@ -397,13 +427,16 @@ export default function AIQuoteBuilderModal({
   const batteryTotal = batteryEnabled && systemType !== "On-grid" ? batteryQuantity * batteryUnitPrice : 0;
   const otherTotal = otherChargesSubtotal(otherCharges);
   const subtotal = panelTotal + inverterTotal + batteryTotal + installTotal + structureTotal + otherTotal;
-  const parentDiscount = resolveQuoteDiscountAmount(subtotal, {
-    discountType: parentCharges?.discountType,
-    discountValue: parentCharges?.discountValue,
-  });
-  const parentTaxAmount =
-    parentCharges?.taxEnabled ? Math.round(subtotal * ((Number(parentCharges.taxRate) || 0) / 100)) : 0;
-  const parentSociety = Number(parentCharges?.societyCharges) || 0;
+  const localFinancial = {
+    discountMode,
+    discountValue: localDiscountValue,
+    taxEnabled: localTaxEnabled,
+    taxRate: localTaxRate,
+    societyCharges: localSocietyCharges,
+  };
+  const parentDiscount = resolveQuoteDiscountAmount(subtotal, financialDraftDiscountInput(localFinancial));
+  const parentTaxAmount = localTaxEnabled ? Math.round(subtotal * ((Number(localTaxRate) || 0) / 100)) : 0;
+  const parentSociety = Number(localSocietyCharges) || 0;
   const finalEstimate = computeNetProposalValue(subtotal, parentDiscount.discountAmount, {
     taxAmount: parentTaxAmount,
     societyCharges: parentSociety,
@@ -480,6 +513,7 @@ export default function AIQuoteBuilderModal({
   const handleApply = () => {
     if (validationErrors.length) return;
     onApplyDraft(applyPayload);
+    onParentChargesChange?.(commitFinancialDraft(localFinancial));
     onClose();
   };
 
@@ -1225,6 +1259,7 @@ export default function AIQuoteBuilderModal({
                 unit="Job"
                 line={otherCharges.netMetering}
                 onChange={(patch) => {
+                  if (patch.enabled != null) setNmEnabledDirty(true);
                   if (patch.rate != null) setNmRateDirty(true);
                   patchCharge("netMetering", patch);
                 }}
@@ -1237,80 +1272,73 @@ export default function AIQuoteBuilderModal({
               />
             </section>
 
-            {parentCharges && (
-              <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-                <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                  Discount / Tax / Society
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Same fields as Manual BOQ — not a second totals system.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <FieldLabel>Discount</FieldLabel>
-                    <select
-                      value={parentCharges.discountValue > 0 ? parentCharges.discountType : "none"}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        if (next === "none") onParentChargesChange?.({ discountType: "fixed", discountValue: 0 });
-                        else onParentChargesChange?.({ discountType: next as QuoteDiscountType });
-                      }}
-                      disabled={!onParentChargesChange}
-                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                    >
-                      <option value="none">None</option>
-                      <option value="fixed">Fixed Amount</option>
-                      <option value="percentage">Percentage</option>
-                    </select>
-                    {parentCharges.discountValue > 0 || parentCharges.discountType === "percentage" ? (
-                      <input
-                        type="number"
-                        min={0}
-                        max={parentCharges.discountType === "percentage" ? 100 : undefined}
-                        value={parentCharges.discountValue}
-                        disabled={!onParentChargesChange}
-                        onChange={(e) => onParentChargesChange?.({ discountValue: Number(e.target.value) })}
-                        className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                      />
-                    ) : null}
-                  </div>
-                  <div>
-                    <FieldLabel>Tax</FieldLabel>
-                    <label className="mt-1 flex items-center gap-2 text-xs text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={parentCharges.taxEnabled}
-                        disabled={!onParentChargesChange}
-                        onChange={(e) => onParentChargesChange?.({ taxEnabled: e.target.checked })}
-                      />
-                      Enabled
-                    </label>
-                    {parentCharges.taxEnabled && (
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={parentCharges.taxRate}
-                        disabled={!onParentChargesChange}
-                        onChange={(e) => onParentChargesChange?.({ taxRate: Number(e.target.value) })}
-                        className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                      />
-                    )}
-                  </div>
-                  <div>
-                    <FieldLabel>Society Charges</FieldLabel>
+            <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                Discount / Tax / Society
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Local draft of the same Manual BOQ fields — committed only on Apply.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <FieldLabel>Discount</FieldLabel>
+                  <select
+                    value={discountMode}
+                    onChange={(e) => {
+                      const next = e.target.value as AiQuoteDiscountMode;
+                      setDiscountMode(next);
+                      if (next === "none") setLocalDiscountValue(0);
+                    }}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  >
+                    <option value="none">None</option>
+                    <option value="fixed">Fixed Amount</option>
+                    <option value="percentage">Percentage</option>
+                  </select>
+                  {discountMode !== "none" && (
                     <input
                       type="number"
                       min={0}
-                      value={parentCharges.societyCharges}
-                      disabled={!onParentChargesChange}
-                      onChange={(e) => onParentChargesChange?.({ societyCharges: Number(e.target.value) })}
-                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      max={discountMode === "percentage" ? 100 : undefined}
+                      value={localDiscountValue}
+                      onChange={(e) => setLocalDiscountValue(Number(e.target.value))}
+                      className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
                     />
-                  </div>
+                  )}
                 </div>
-              </section>
-            )}
+                <div>
+                  <FieldLabel>Tax</FieldLabel>
+                  <label className="flex items-center gap-2 text-xs text-slate-300 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={localTaxEnabled}
+                      onChange={(e) => setLocalTaxEnabled(e.target.checked)}
+                    />
+                    Enabled
+                  </label>
+                  {localTaxEnabled && (
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={localTaxRate}
+                      onChange={(e) => setLocalTaxRate(Number(e.target.value))}
+                      className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                    />
+                  )}
+                </div>
+                <div>
+                  <FieldLabel>Society Charges</FieldLabel>
+                  <input
+                    type="number"
+                    min={0}
+                    value={localSocietyCharges}
+                    onChange={(e) => setLocalSocietyCharges(Number(e.target.value))}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  />
+                </div>
+              </div>
+            </section>
           </div>
 
           <aside className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-4 space-y-3 h-fit xl:sticky xl:top-0">
@@ -1394,9 +1422,9 @@ export default function AIQuoteBuilderModal({
                   <dd>- {money(parentDiscount.discountAmount)}</dd>
                 </div>
               )}
-              {parentCharges?.taxEnabled && (
+              {localTaxEnabled && (
                 <div className="flex justify-between gap-3">
-                  <dt>Tax ({parentCharges.taxRate}%)</dt>
+                  <dt>Tax ({localTaxRate}%)</dt>
                   <dd>{money(parentTaxAmount)}</dd>
                 </div>
               )}
