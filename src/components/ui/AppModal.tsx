@@ -9,6 +9,12 @@ interface AppModalProps {
   panelClassName?: string;
   /** Click backdrop to close. Default true. */
   closeOnBackdrop?: boolean;
+  /**
+   * Opt in to an edge-to-edge full-screen sheet below `md`, while keeping the
+   * centred panel from `md` up. Off by default so every existing modal is
+   * untouched. Used by large configurators that cannot fit a phone as a dialog.
+   */
+  mobileFullScreen?: boolean;
 }
 
 export default function AppModal({
@@ -17,6 +23,7 @@ export default function AppModal({
   children,
   panelClassName = "",
   closeOnBackdrop = true,
+  mobileFullScreen = false,
 }: AppModalProps) {
   useEffect(() => {
     if (!open) return;
@@ -40,7 +47,7 @@ export default function AppModal({
   return createPortal(
     <div
       data-app-modal-overlay
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 overflow-hidden"
+      className={`fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden ${mobileFullScreen ? "p-0 md:p-4" : "p-4"}`}
       style={{
         position: "fixed",
         top: 0,
@@ -60,7 +67,7 @@ export default function AppModal({
         onClick={closeOnBackdrop ? onClose : undefined}
       />
       <div
-        className={`relative z-[1] w-full max-h-[90vh] overflow-y-auto ${panelClassName}`}
+        className={`relative z-[1] w-full overflow-y-auto ${mobileFullScreen ? "h-full max-h-none md:h-auto md:max-h-[90vh]" : "max-h-[90vh]"} ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >

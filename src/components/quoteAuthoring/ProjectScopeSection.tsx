@@ -72,7 +72,7 @@ export default function ProjectScopeSection({
               key={item.id}
               type="button"
               onClick={() => selectClass(item.id)}
-              className={`rounded-xl px-3 py-2 text-xs font-bold ${scopeChipClass(scope.projectClass === item.id)}`}
+              className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${scopeChipClass(scope.projectClass === item.id)}`}
             >
               {item.label}
             </button>
@@ -85,14 +85,14 @@ export default function ProjectScopeSection({
           <button
             type="button"
             onClick={() => selectMode("standard")}
-            className={`rounded-xl px-3 py-2 text-xs font-bold ${scopeChipClass(scope.scopeMode === "standard")}`}
+            className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${scopeChipClass(scope.scopeMode === "standard")}`}
           >
             Standard
           </button>
           <button
             type="button"
             onClick={() => selectMode("advanced")}
-            className={`rounded-xl px-3 py-2 text-xs font-bold ${scopeChipClass(scope.scopeMode === "advanced", "sky")}`}
+            className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${scopeChipClass(scope.scopeMode === "advanced", "sky")}`}
           >
             Advanced Project Scope
           </button>
