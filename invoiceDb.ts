@@ -60,6 +60,16 @@ function isInvoiceTableMissing(err: any) {
   return err?.code === "42P01" || msg.includes("invoices") || msg.includes("invoice_items");
 }
 
+export function isMissingInvoiceOwnerColumn(err: unknown): boolean {
+  const candidate = err as { code?: unknown; message?: unknown } | null;
+  const message = String(candidate?.message || "").toLowerCase();
+  return (
+    candidate?.code === "PGRST204" &&
+    message.includes("created_by_user_id") &&
+    message.includes("invoices")
+  );
+}
+
 function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] = []): InvoiceRecord {
   return {
     id: row.id,
@@ -518,7 +528,14 @@ export async function createAdminInvoice(
   }));
 
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("invoices").insert(row);
+    let { error } = await getSupabase()!.from("invoices").insert(row);
+    if (error && actor.role === "Super Admin" && isMissingInvoiceOwnerColumn(error)) {
+      // Some production installations predate the durable finance-owner column.
+      // Preserve the legacy username owner for Super Admin operations so historical
+      // data can be imported; scoped staff creates still require the durable column.
+      const { created_by_user_id: _ownerUserId, ...legacyCompatibleRow } = row;
+      ({ error } = await getSupabase()!.from("invoices").insert(legacyCompatibleRow));
+    }
     if (error) throw error;
     if (itemRows.length) {
       const { error: iErr } = await getSupabase()!.from("invoice_items").insert(itemRows);
