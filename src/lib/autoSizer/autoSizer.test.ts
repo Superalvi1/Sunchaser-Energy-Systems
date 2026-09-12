@@ -408,7 +408,7 @@ check("BOQ overflow blocks final export but still lists every priced row in 3 pa
   assert.doesNotMatch(rendered.html, /class="page page-4"/);
 });
 
-check("terms overflow does not truncate clauses and still stays 3 pages", () => {
+check("terms overflow does not truncate clauses and continues onto extra pages", () => {
   const terms = Array.from({ length: 20 }, (_, i) => `Legal clause ${i} ${"wording ".repeat(30)}`);
   const fit = quoteTermsOverflow(terms);
   assert.equal(fit.overflow, true);
@@ -418,10 +418,11 @@ check("terms overflow does not truncate clauses and still stays 3 pages", () => 
     { companyTerms: terms.map((termText, i) => ({ id: `t-${i}`, termText })) }
   );
   assert.equal(rendered.termsOverflow, true);
-  assert.equal(rendered.exportBlocked, true);
-  assert.equal(rendered.pageCount, 3);
+  assert.equal(rendered.exportBlocked, false);
+  assert.ok(rendered.pageCount > 3);
   assert.match(rendered.html, /Legal clause 0/);
   assert.match(rendered.html, /Legal clause 19/);
+  assert.equal((rendered.html.match(/data-sunchaser-terms-signature="final"/g) || []).length, 1);
 });
 
 check("saved quote terms beat newer company terms", () => {

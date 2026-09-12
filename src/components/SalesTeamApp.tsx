@@ -78,6 +78,8 @@ import {
   readProjectScopeSnapshot,
   type ProjectScopeState,
 } from "../lib/quoteProjectScope";
+import { installationChargesFromBoqRow } from "../lib/quoteCommercialMath";
+import { buildSavedQuoteTermsSnapshot, termsSnapshotPlainText } from "../lib/quoteTermsSnapshot";
 import {
   mergeContentLibrary,
   type ContentLibraryBlock,
@@ -1645,10 +1647,15 @@ export default function SalesTeamApp({
       const panelsCount = Number(panelRow?.qty) || Math.ceil((sizerKw * 1000) / panelWattage);
       const grand = itemRows.reduce((s, r) => s + (r.total || 0), 0);
       const idempotencyKey = `ik-sizer-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const companySnapshot = (companyTerms || [])
-        .map((t: any) => String(t?.termText || t?.term_text || "").trim())
-        .filter(Boolean)
-        .join("\n");
+      const existingSizerQuote = sizerEditingQuoteId
+        ? (activeLead?.quotes || []).find((q: any) => q.id === sizerEditingQuoteId)
+        : null;
+      const termsSnapshot = buildSavedQuoteTermsSnapshot({
+        existingSnapshot: existingSizerQuote?.termsSnapshot,
+        selectedTemplateId,
+        quoteDraft: { termsAndConditions, templateId: selectedTemplateId },
+        activeState: { quoteTemplates, quoteTemplatePages, companyTerms },
+      });
       const quoteData = {
         idempotencyKey,
         systemSizekW: sizerKw,
@@ -1679,7 +1686,9 @@ export default function SalesTeamApp({
         netTotal: grand,
         manualOverrides,
         validityDays,
-        termsAndConditions: companySnapshot || termsAndConditions,
+        templateId: selectedTemplateId,
+        termsSnapshot,
+        termsAndConditions: termsSnapshotPlainText(termsSnapshot) || termsAndConditions,
       };
 
       if (sizerEditingQuoteId) {
@@ -1786,6 +1795,21 @@ export default function SalesTeamApp({
       // Generate client-side idempotencyKey
       const idempotencyKey = `ik-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
+      const existingManualQuote = editingQuoteId
+        ? (activeLead?.quotes || []).find((q: any) => q.id === editingQuoteId)
+        : null;
+      const termsSnapshot = buildSavedQuoteTermsSnapshot({
+        existingSnapshot: existingManualQuote?.termsSnapshot,
+        selectedTemplateId,
+        quoteDraft: {
+          termsAndConditions,
+          paymentSchedule,
+          warrantyTerms,
+          templateId: selectedTemplateId,
+        },
+        activeState: { quoteTemplates, quoteTemplatePages, companyTerms },
+      });
+
       const quoteData = {
         idempotencyKey,
         systemSizekW,
@@ -1796,11 +1820,11 @@ export default function SalesTeamApp({
         totalCost: calculatedGrandTotal,
         structureType: selectedStructure === 'custom' ? 'Custom' : (selectedStructure.charAt(0).toUpperCase() + selectedStructure.slice(1)),
         accessories,
-        installationCharges: Number(finalBoqRows.find(i => i && i.id === 'install_service_row')?.rate) || installationCharges,
+        installationCharges: installationChargesFromBoqRow(finalBoqRows.find(i => i && i.id === 'install_service_row')) || installationCharges,
         netMeteringCharges: netMeteringRequired === "Yes" ? (Number(finalBoqRows.find(i => i && i.id === 'net_metering_row')?.rate) || netMeteringCharges) : 0,
         paymentTerms: paymentSchedule,
         warrantyTerms,
-        termsAndConditions,
+        termsAndConditions: termsSnapshotPlainText(termsSnapshot) || termsAndConditions,
 
         // Custom Lahore/Pakistan fields
         clientName,
@@ -1842,6 +1866,7 @@ export default function SalesTeamApp({
         grandTotal: calculatedGrandTotal,
         netTotal: calculatedNetTotal,
         templateId: selectedTemplateId,
+        termsSnapshot,
         includeSizerItems: true,
         includedPages: [...STANDARD_QUOTATION_PAGES],
         quote_type: "manual_boq",

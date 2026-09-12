@@ -950,12 +950,12 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
     item({
       id: "install_service_row",
       srNo: "4",
-      name: "Complete Installation & Commissioning",
-      description: `Installation & commissioning calculated at Rs. ${installRateW}/W over actual DC array (${arrayWatts} W).`,
+      name: "Installation & Commissioning",
+      description: `Installation & commissioning at Rs. ${installRateW}/W × ${arrayWatts} W actual DC array (${qty} × ${wattage}W).`,
       brand: "Sunchaser",
-      unit: "Job",
-      qty: 1,
-      rate: installTotal,
+      unit: "W",
+      qty: arrayWatts,
+      rate: installRateW,
       total: installTotal,
     })
   );
