@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, Bot, Sparkles } from "lucide-react";
 import AppModal from "../ui/AppModal";
 import CatalogProductPicker from "./CatalogProductPicker";
+import CatalogSpecGrid from "./CatalogSpecGrid";
+import ProjectScopeSection from "./ProjectScopeSection";
 import type { Product } from "../../types";
 import { mergeEquipmentBrands, OTHER_CUSTOM_BRAND } from "../../lib/solarEquipmentBrands";
 import {
@@ -40,7 +42,6 @@ import {
   L2_STRUCTURE_KIT_RATE,
   L3_STRUCTURE_KIT_RATE,
   optionalChargeTotal,
-  otherChargesSubtotal,
   QUICK_PANEL_WATTAGES,
   resolveStandardStructureSelection,
   standardStructureSummaryLabel,
@@ -60,6 +61,17 @@ import { computeNetProposalValue, resolveQuoteDiscountAmount, type QuoteDiscount
 import { productsForBrand, productsForType } from "../../lib/websiteCatalog/sync";
 import { liftWebsiteSourceFields } from "../../lib/websiteCatalog/normalize";
 import { recommendStructures } from "../../lib/autoSizer/structureRecommendation";
+import {
+  applyScopeDependencies,
+  batteryCatalogFields,
+  buildPresetScope,
+  buildQuoteCostSummary,
+  buildScopeMatrix,
+  inverterCatalogFields,
+  panelCatalogFields,
+  suppressedGenericChargeIds,
+  type ProjectScopeState,
+} from "../../lib/quoteProjectScope";
 
 export interface AIQuoteParentCharges {
   discountType: QuoteDiscountType;
@@ -257,6 +269,7 @@ export default function AIQuoteBuilderModal({
   const [boreQtyDirty, setBoreQtyDirty] = useState(false);
   const [nmRateDirty, setNmRateDirty] = useState(false);
   const [nmEnabledDirty, setNmEnabledDirty] = useState(false);
+  const [projectScope, setProjectScope] = useState<ProjectScopeState>(() => buildPresetScope("residential_standard"));
   const [discountMode, setDiscountMode] = useState<AiQuoteDiscountMode>("none");
   const [localDiscountValue, setLocalDiscountValue] = useState(0);
   const [localTaxEnabled, setLocalTaxEnabled] = useState(false);
@@ -306,6 +319,17 @@ export default function AIQuoteBuilderModal({
         : { ...prev.netMetering, rate: defaultNetMeteringRate(systemSizeKw) },
     }));
   }, [systemSizeKw, dcQtyDirty, boreQtyDirty, nmRateDirty]);
+
+  useEffect(() => {
+    setProjectScope((prev) =>
+      applyScopeDependencies(prev, {
+        systemType,
+        structureType,
+        batteryEnabled: batteryEnabled && systemType !== "On-grid",
+        panelQuantity,
+      })
+    );
+  }, [systemType, structureType, batteryEnabled, panelQuantity]);
 
   const resolvedPanelBrand = panelBrand === OTHER_CUSTOM_BRAND ? customPanelBrand : panelBrand;
   const resolvedInverterBrand = inverterBrand === OTHER_CUSTOM_BRAND ? customInverterBrand : inverterBrand;
@@ -362,6 +386,7 @@ export default function AIQuoteBuilderModal({
       customStructureDescription,
       customStructureAmount,
       otherCharges,
+      projectScope,
     }),
     [
       systemSizeKw,
@@ -401,6 +426,7 @@ export default function AIQuoteBuilderModal({
       customStructureDescription,
       customStructureAmount,
       otherCharges,
+      projectScope,
     ]
   );
   const validationErrors = useMemo(() => validateCommercialQuoteConfig(commercialConfig), [commercialConfig]);
@@ -425,8 +451,51 @@ export default function AIQuoteBuilderModal({
               .reduce((s, r) => s + (Number(r.total) || 0), 0);
   const inverterTotal = inverterQuantity * inverterUnitPrice;
   const batteryTotal = batteryEnabled && systemType !== "On-grid" ? batteryQuantity * batteryUnitPrice : 0;
-  const otherTotal = otherChargesSubtotal(otherCharges);
-  const subtotal = panelTotal + inverterTotal + batteryTotal + installTotal + structureTotal + otherTotal;
+  const scopeCtx = useMemo(
+    () => ({
+      systemType,
+      structureType,
+      batteryEnabled: batteryEnabled && systemType !== "On-grid",
+      panelQuantity,
+    }),
+    [systemType, structureType, batteryEnabled, panelQuantity]
+  );
+  const resolvedScope = useMemo(() => applyScopeDependencies(projectScope, scopeCtx), [projectScope, scopeCtx]);
+  const skipGeneric = useMemo(() => suppressedGenericChargeIds(resolvedScope), [resolvedScope]);
+  const costSummary = useMemo(
+    () =>
+      buildQuoteCostSummary({
+        panelTotal,
+        inverterTotal,
+        batteryTotal,
+        structureTotal,
+        installationTotal: installTotal,
+        charges: {
+          dcCable: optionalChargeTotal(otherCharges.dcCable),
+          acCable: optionalChargeTotal(otherCharges.acCable),
+          earthWire: optionalChargeTotal(otherCharges.earthWire),
+          dbBox: optionalChargeTotal(otherCharges.dbBox),
+          earthingBore: optionalChargeTotal(otherCharges.earthingBore),
+          civilWork: optionalChargeTotal(otherCharges.civilWork),
+          freight: optionalChargeTotal(otherCharges.freight),
+          netMetering: optionalChargeTotal(otherCharges.netMetering),
+          surveyDesign: optionalChargeTotal(otherCharges.surveyDesign),
+        },
+        suppressedGenericIds: skipGeneric,
+        scope: resolvedScope,
+      }),
+    [panelTotal, inverterTotal, batteryTotal, structureTotal, installTotal, otherCharges, skipGeneric, resolvedScope]
+  );
+  const scopeMatrix = useMemo(() => buildScopeMatrix(resolvedScope, scopeCtx), [resolvedScope, scopeCtx]);
+  const subtotal = costSummary.subtotal;
+  const groupAmount = (group: (typeof costSummary.groups)[number]["group"]) =>
+    costSummary.groups.find((g) => g.group === group)?.amount || 0;
+  const selectedPanel = panelChoices.find((p) => p.id === panelProductId) || null;
+  const selectedInverter = inverterChoices.find((p) => p.id === inverterProductId) || null;
+  const selectedBattery = batteryChoices.find((p) => p.id === batteryProductId) || null;
+  const panelSpecs = panelCatalogFields(selectedPanel);
+  const inverterSpecs = inverterCatalogFields(selectedInverter);
+  const batterySpecs = batteryCatalogFields(selectedBattery);
   const localFinancial = {
     discountMode,
     discountValue: localDiscountValue,
@@ -622,6 +691,14 @@ export default function AIQuoteBuilderModal({
               </div>
             </section>
 
+            <ProjectScopeSection
+              scope={resolvedScope}
+              ctx={scopeCtx}
+              products={catalog}
+              onChange={setProjectScope}
+              matrix={scopeMatrix}
+            />
+
             <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Panels</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -775,6 +852,15 @@ export default function AIQuoteBuilderModal({
                     {money(arrayWatts)} W × Rs. {panelRatePerWatt}/W
                   </p>
                 </div>
+                <CatalogSpecGrid
+                  title="Catalog specifications — never invented"
+                  fields={[
+                    { label: "Technology", value: panelSpecs.technology },
+                    { label: "Efficiency", value: panelSpecs.efficiency },
+                    { label: "Product warranty", value: panelSpecs.productWarranty },
+                    { label: "Performance warranty", value: panelSpecs.performanceWarranty },
+                  ]}
+                />
               </div>
             </section>
 
@@ -885,6 +971,28 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Total</FieldLabel>
                   <p className="mt-1 text-sm text-white font-semibold">Rs. {money(inverterTotal)}</p>
                 </div>
+                <CatalogSpecGrid
+                  title="Inverter catalog specifications"
+                  fields={[
+                    { label: "Topology", value: inverterSpecs.topology },
+                    { label: "Phase", value: inverterSpecs.phase },
+                    { label: "Max efficiency", value: inverterSpecs.maxEfficiency },
+                    { label: "European efficiency", value: inverterSpecs.europeanEfficiency },
+                    { label: "MPPT count", value: inverterSpecs.mpptCount },
+                    { label: "Max PV input V", value: inverterSpecs.maxPvInputVoltage },
+                    { label: "MPPT voltage range", value: inverterSpecs.mpptVoltageRange },
+                    { label: "Max input current", value: inverterSpecs.maxInputCurrent },
+                    { label: "Isc / MPPT", value: inverterSpecs.shortCircuitCurrent },
+                    { label: "Rated AC current", value: inverterSpecs.ratedAcCurrent },
+                    { label: "Max AC current", value: inverterSpecs.maxAcCurrent },
+                    { label: "IP rating", value: inverterSpecs.ipRating },
+                    { label: "Cooling", value: inverterSpecs.cooling },
+                    { label: "Operating temp", value: inverterSpecs.operatingTemperature },
+                    { label: "Communication", value: inverterSpecs.communication },
+                    { label: "Warranty", value: inverterSpecs.warranty },
+                    { label: "Protection", value: inverterSpecs.protection },
+                  ]}
+                />
               </div>
             </section>
 
@@ -1005,6 +1113,29 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Total</FieldLabel>
                     <p className="mt-1 text-sm text-white font-semibold">Rs. {money(batteryTotal)}</p>
                   </div>
+                  <CatalogSpecGrid
+                    title="Battery catalog specifications"
+                    fields={[
+                      { label: "Chemistry", value: batterySpecs.chemistry },
+                      { label: "Nominal kWh", value: batterySpecs.nominalKwh },
+                      { label: "Usable kWh", value: batterySpecs.usableKwh },
+                      { label: "Nominal voltage", value: batterySpecs.nominalVoltage },
+                      { label: "Operating V range", value: batterySpecs.operatingVoltageRange },
+                      { label: "Ah capacity", value: batterySpecs.ahCapacity },
+                      { label: "DoD", value: batterySpecs.dod },
+                      { label: "Cycle life", value: batterySpecs.cycleLife },
+                      { label: "Charge current", value: batterySpecs.chargeCurrent },
+                      { label: "Discharge current", value: batterySpecs.dischargeCurrent },
+                      { label: "Peak discharge", value: batterySpecs.peakDischarge },
+                      { label: "BMS", value: batterySpecs.bms },
+                      { label: "Communication", value: batterySpecs.communication },
+                      { label: "Parallel units", value: batterySpecs.parallelUnits },
+                      { label: "IP rating", value: batterySpecs.ipRating },
+                      { label: "Mount", value: batterySpecs.mount },
+                      { label: "Warranty years", value: batterySpecs.warrantyYears },
+                      { label: "Warranty cycles", value: batterySpecs.warrantyCycles },
+                    ]}
+                  />
                 </div>
               )}
             </section>
@@ -1205,28 +1336,37 @@ export default function AIQuoteBuilderModal({
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Other quotation charges</h3>
               <p className="text-[11px] text-slate-500">
                 AutoSizer / company defaults. Disable any line the salesperson does not need. Quote rates stay editable.
+                {skipGeneric.size > 0
+                  ? " Detailed Advanced Scope cabling/earthing has replaced the generic cable jobs."
+                  : ""}
               </p>
-              <ChargeLineEditor
-                label="DC Cable"
-                unit="m"
-                line={otherCharges.dcCable}
-                onChange={(patch) => {
-                  if (patch.qty != null) setDcQtyDirty(true);
-                  patchCharge("dcCable", patch);
-                }}
-              />
-              <ChargeLineEditor
-                label="AC Cable"
-                unit="m"
-                line={otherCharges.acCable}
-                onChange={(patch) => patchCharge("acCable", patch)}
-              />
-              <ChargeLineEditor
-                label="Earthing Wire"
-                unit="m"
-                line={otherCharges.earthWire}
-                onChange={(patch) => patchCharge("earthWire", patch)}
-              />
+              {!skipGeneric.has("dc_cable_row") && (
+                <ChargeLineEditor
+                  label="DC Cable"
+                  unit="m"
+                  line={otherCharges.dcCable}
+                  onChange={(patch) => {
+                    if (patch.qty != null) setDcQtyDirty(true);
+                    patchCharge("dcCable", patch);
+                  }}
+                />
+              )}
+              {!skipGeneric.has("ac_cable_row") && (
+                <ChargeLineEditor
+                  label="AC Cable"
+                  unit="m"
+                  line={otherCharges.acCable}
+                  onChange={(patch) => patchCharge("acCable", patch)}
+                />
+              )}
+              {!skipGeneric.has("earth_wire_row") && (
+                <ChargeLineEditor
+                  label="Earthing Wire"
+                  unit="m"
+                  line={otherCharges.earthWire}
+                  onChange={(patch) => patchCharge("earthWire", patch)}
+                />
+              )}
               <ChargeLineEditor
                 label="DB / Protection"
                 unit="Job"
@@ -1377,7 +1517,7 @@ export default function AIQuoteBuilderModal({
                   {batteryEnabled && systemType !== "On-grid"
                     ? `${[resolvedBatteryBrand, batteryModel, batteryCapacityKwh].filter(Boolean).join(" ")} × ${batteryQuantity}`
                     : "None"}
-                  <div className="text-white">{batteryEnabled && systemType !== "On-grid" ? money(batteryTotal) : "—"}</div>
+                  <div className="text-white">{batteryEnabled && systemType !== "On-grid" ? money(groupAmount("battery")) : "—"}</div>
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
@@ -1391,26 +1531,29 @@ export default function AIQuoteBuilderModal({
                     </div>
                   )}
                   <div className="text-[10px] text-slate-400">{structureSummary}</div>
-                  <div className="text-white">{money(structureTotal)}</div>
+                  <div className="text-white">{money(groupAmount("mounting_structure"))}</div>
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt>Installation</dt>
                 <dd className="text-right">
                   Rs. {installationRatePerWatt}/W
-                  <div className="text-white">{money(installTotal)}</div>
+                  <div className="text-white">{money(groupAmount("installation"))}</div>
                 </dd>
               </div>
               <div className="border-t border-slate-800 pt-2 space-y-1">
-                <div className="flex justify-between gap-3"><dt>DC Cable</dt><dd>{otherCharges.dcCable.enabled ? money(optionalChargeTotal(otherCharges.dcCable)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>AC Cable</dt><dd>{otherCharges.acCable.enabled ? money(optionalChargeTotal(otherCharges.acCable)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Earthing Wire</dt><dd>{otherCharges.earthWire.enabled ? money(optionalChargeTotal(otherCharges.earthWire)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>DB / Protection</dt><dd>{otherCharges.dbBox.enabled ? money(optionalChargeTotal(otherCharges.dbBox)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Earthing Bore</dt><dd>{otherCharges.earthingBore.enabled ? money(optionalChargeTotal(otherCharges.earthingBore)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Civil Work</dt><dd>{otherCharges.civilWork.enabled ? money(optionalChargeTotal(otherCharges.civilWork)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Freight</dt><dd>{otherCharges.freight.enabled ? money(optionalChargeTotal(otherCharges.freight)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Net Metering</dt><dd>{otherCharges.netMetering.enabled ? money(optionalChargeTotal(otherCharges.netMetering)) : "Off"}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Survey / Design</dt><dd>{otherCharges.surveyDesign.enabled ? money(optionalChargeTotal(otherCharges.surveyDesign)) : "Off"}</dd></div>
+                {costSummary.groups
+                  .filter(
+                    (g) =>
+                      g.amount > 0 &&
+                      !["pv_modules", "inverter", "battery", "mounting_structure", "installation"].includes(g.group)
+                  )
+                  .map((g) => (
+                    <div key={g.group} className="flex justify-between gap-3">
+                      <dt>{g.label}</dt>
+                      <dd>{money(g.amount)}</dd>
+                    </div>
+                  ))}
               </div>
               <div className="flex justify-between border-t border-slate-800 pt-2 text-sm text-white font-bold">
                 <dt>Subtotal</dt>

@@ -3,6 +3,13 @@
  * Apply never writes CRM and never sends messages.
  */
 
+import {
+  applyScopeDependencies,
+  projectScopeToBoqRows,
+  suppressedGenericChargeIds,
+  validateProjectScope,
+  type ProjectScopeState,
+} from "./quoteProjectScope";
 import type { BoqRow, Product } from "../types";
 import {
   calculateArrayWatts,
@@ -90,6 +97,7 @@ export interface CommercialQuoteConfig {
   customStructureDescription: string;
   customStructureAmount: number;
   otherCharges?: Partial<CommercialOtherCharges>;
+  projectScope?: ProjectScopeState;
 }
 
 export interface QuoteOptionalCharge {
@@ -686,6 +694,16 @@ export function validateCommercialQuoteConfig(config: CommercialQuoteConfig): st
     if (positiveFinite(line.qty) == null) errors.push(`${label} quantity must be greater than 0.`);
     if (nonNegativeFinite(line.rate) == null) errors.push(`${label} rate cannot be negative.`);
   }
+  if (config.projectScope) {
+    const ctx = {
+      systemType: config.systemType,
+      structureType: config.structureType,
+      batteryEnabled: Boolean(config.batteryEnabled) && config.systemType !== "On-grid",
+      panelQuantity: Math.max(0, Math.floor(finiteNumber(config.panelQuantity, 0))),
+    };
+    const resolved = applyScopeDependencies(config.projectScope, ctx);
+    errors.push(...validateProjectScope(resolved, ctx));
+  }
   return errors;
 }
 
@@ -768,34 +786,48 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
   rows.push(subtotalRow("ai-s-equipment", "Imported Equipment Subtotal", equipmentTotal));
 
   const charges = mergeOtherCharges(config.systemSizeKw, config.otherCharges, config.systemType);
+  const scopeCtx = {
+    systemType: config.systemType,
+    structureType: config.structureType,
+    batteryEnabled: Boolean(config.batteryEnabled) && config.systemType !== "On-grid",
+    panelQuantity: qty,
+  };
+  const resolvedScope = config.projectScope ? applyScopeDependencies(config.projectScope, scopeCtx) : null;
+  const skipGeneric = suppressedGenericChargeIds(resolvedScope);
 
   const cableRows: BoqRow[] = [];
   pushIf(
     cableRows,
-    optionalChargeRow("dc_cable_row", "4", charges.dcCable, {
-      name: `DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
-      description: `Double Insulated Tin Coated DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
-      brand: "GM/FAST",
-      unit: "Meter",
-    })
+    skipGeneric.has("dc_cable_row")
+      ? null
+      : optionalChargeRow("dc_cable_row", "4", charges.dcCable, {
+          name: `DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
+          description: `Double Insulated Tin Coated DC Solar Cable ${DEFAULT_DC_CABLE_SIZE}`,
+          brand: "GM/FAST",
+          unit: "Meter",
+        })
   );
   pushIf(
     cableRows,
-    optionalChargeRow("ac_cable_row", "5", charges.acCable, {
-      name: `AC Connecting Cable ${DEFAULT_AC_CABLE_SIZE}`,
-      description: "AC copper flexible connection cable job",
-      brand: "GM/FAST",
-      unit: "Meter",
-    })
+    skipGeneric.has("ac_cable_row")
+      ? null
+      : optionalChargeRow("ac_cable_row", "5", charges.acCable, {
+          name: `AC Connecting Cable ${DEFAULT_AC_CABLE_SIZE}`,
+          description: "AC copper flexible connection cable job",
+          brand: "GM/FAST",
+          unit: "Meter",
+        })
   );
   pushIf(
     cableRows,
-    optionalChargeRow("earth_wire_row", "6", charges.earthWire, {
-      name: "Earthing Bare Copper Wire",
-      description: "Bare copper conductor for system grounding",
-      brand: "GM/FAST",
-      unit: "Meter",
-    })
+    skipGeneric.has("earth_wire_row")
+      ? null
+      : optionalChargeRow("earth_wire_row", "6", charges.earthWire, {
+          name: "Earthing Bare Copper Wire",
+          description: "Bare copper conductor for system grounding",
+          brand: "GM/FAST",
+          unit: "Meter",
+        })
   );
   if (cableRows.length) {
     rows.push(heading("ai-h-cables", "Cables & Conductors"));
@@ -975,6 +1007,19 @@ export function buildCommercialQuoteBoq(config: CommercialQuoteConfig): BoqRow[]
         "ai-s-services",
         "Transportation & Services Subtotal",
         serviceRows.reduce((s, r) => s + (Number(r.total) || 0), 0)
+      )
+    );
+  }
+
+  const scopeRows = projectScopeToBoqRows(resolvedScope);
+  if (scopeRows.length) {
+    rows.push(heading("ai-h-project-scope", "Advanced Project Scope"));
+    rows.push(...scopeRows);
+    rows.push(
+      subtotalRow(
+        "ai-s-project-scope",
+        "Advanced Project Scope Subtotal",
+        scopeRows.reduce((s, r) => s + (Number(r.total) || 0), 0)
       )
     );
   }
