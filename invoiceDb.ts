@@ -130,6 +130,93 @@ function mapItemRow(row: any): InvoiceLineItem {
   };
 }
 
+function mapPaymentRow(row: any) {
+  return {
+    id: row.id,
+    invoiceId: row.invoice_id || row.invoiceId,
+    amount: Number(row.amount),
+    paymentMethod: row.payment_method || row.paymentMethod,
+    paymentDate: row.payment_date || row.paymentDate,
+    referenceNumber: row.reference_number || row.referenceNumber || null,
+    receiptUrl: row.receipt_url || row.receiptUrl || null,
+    notes: row.notes || null,
+    recordedBy: row.recorded_by || row.recordedBy || null,
+    createdAt: row.created_at || row.createdAt,
+  };
+}
+
+export function hydrateInvoiceRowsFromRelatedRows(
+  invoiceRows: Record<string, unknown>[],
+  itemRows: Record<string, unknown>[],
+  paymentRows: Record<string, unknown>[]
+): InvoiceRecord[] {
+  const itemsByInvoice = new Map<string, InvoiceLineItem[]>();
+  for (const row of itemRows) {
+    const invoiceId = String((row as any).invoice_id || (row as any).invoiceId || "");
+    if (!invoiceId) continue;
+    const group = itemsByInvoice.get(invoiceId) || [];
+    group.push(mapItemRow(row));
+    itemsByInvoice.set(invoiceId, group);
+  }
+
+  const paymentsByInvoice = new Map<string, any[]>();
+  for (const row of paymentRows) {
+    const invoiceId = String((row as any).invoice_id || (row as any).invoiceId || "");
+    if (!invoiceId) continue;
+    const group = paymentsByInvoice.get(invoiceId) || [];
+    group.push(mapPaymentRow(row));
+    paymentsByInvoice.set(invoiceId, group);
+  }
+
+  return invoiceRows.map((row) => {
+    const invoiceId = String((row as any).id || "");
+    return mapInvoiceRow(
+      row,
+      itemsByInvoice.get(invoiceId) || [],
+      paymentsByInvoice.get(invoiceId) || []
+    );
+  });
+}
+
+export async function hydrateInvoiceRows(
+  invoiceRows: Record<string, unknown>[],
+  localDb?: Database
+): Promise<InvoiceRecord[]> {
+  const invoiceIds = invoiceRows.map((row) => String(row.id || "")).filter(Boolean);
+  if (invoiceIds.length === 0) return [];
+
+  if (isSupabaseActive()) {
+    const [itemsResult, paymentsResult] = await Promise.all([
+      getSupabase()!
+        .from("invoice_items")
+        .select("*")
+        .in("invoice_id", invoiceIds)
+        .order("sort_order"),
+      getSupabase()!
+        .from("invoice_payments")
+        .select("*")
+        .in("invoice_id", invoiceIds)
+        .order("created_at", { ascending: false }),
+    ]);
+    if (itemsResult.error) throw itemsResult.error;
+    if (paymentsResult.error) throw paymentsResult.error;
+    return hydrateInvoiceRowsFromRelatedRows(
+      invoiceRows,
+      (itemsResult.data || []) as Record<string, unknown>[],
+      (paymentsResult.data || []) as Record<string, unknown>[]
+    );
+  }
+
+  const idSet = new Set(invoiceIds);
+  const itemRows = (((localDb as any)?.invoiceItems || []) as Record<string, unknown>[]).filter(
+    (row: any) => idSet.has(String(row.invoice_id || row.invoiceId || ""))
+  );
+  const paymentRows = (((localDb as any)?.invoicePayments || []) as Record<string, unknown>[]).filter(
+    (row: any) => idSet.has(String(row.invoice_id || row.invoiceId || ""))
+  );
+  return hydrateInvoiceRowsFromRelatedRows(invoiceRows, itemRows, paymentRows);
+}
+
 async function assertInvoiceStaff(actor: RequestActor, localDb?: Database) {
   await verifyStaffPortalUser(actor.id, actor.username, localDb);
   FinanceOwnershipResolver.assertInvoiceStaffRouteAccess(actor);
@@ -189,32 +276,11 @@ async function loadPayments(invoiceId: string, localDb?: Database) {
       .eq("invoice_id", invoiceId)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      invoiceId: row.invoice_id,
-      amount: Number(row.amount),
-      paymentMethod: row.payment_method,
-      paymentDate: row.payment_date,
-      referenceNumber: row.reference_number || null,
-      receiptUrl: row.receipt_url || null,
-      notes: row.notes || null,
-      recordedBy: row.recorded_by || null,
-      createdAt: row.created_at,
-    }));
+    return (data || []).map(mapPaymentRow);
   }
   return ((localDb as any)?.invoicePayments || [])
     .filter((r: any) => (r.invoice_id || r.invoiceId) === invoiceId)
-    .map((row: any) => ({
-      id: row.id,
-      invoiceId: row.invoice_id || row.invoiceId,
-      amount: Number(row.amount),
-      paymentMethod: row.payment_method || row.paymentMethod,
-      paymentDate: row.payment_date || row.paymentDate,
-      referenceNumber: row.reference_number || row.referenceNumber || null,
-      receiptUrl: row.receipt_url || row.receiptUrl || null,
-      notes: row.notes || null,
-      recordedBy: row.recorded_by || row.recordedBy || null,
-    }));
+    .map(mapPaymentRow);
 }
 
 async function recalcPaidTotals(invoiceId: string, localDb?: Database) {
@@ -310,12 +376,7 @@ export async function listAdminInvoices(
       const { data, error } = await getSupabase()!.from("invoices").select("*").order("invoice_date", { ascending: false });
       if (error) throw error;
       const rows = FinanceOwnershipResolver.filterInvoiceRowsForActor(actor, (data || []) as Record<string, unknown>[]);
-      const out: InvoiceRecord[] = [];
-      for (const row of rows) {
-        const items = await loadItems(String(row.id), localDb);
-        const payments = await loadPayments(String(row.id), localDb);
-        out.push(mapInvoiceRow(row, items, payments));
-      }
+      const out = await hydrateInvoiceRows(rows, localDb);
       return out.filter(filterArchived);
     } catch (err: any) {
       if (isInvoiceTableMissing(err)) return [];
