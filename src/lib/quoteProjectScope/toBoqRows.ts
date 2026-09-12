@@ -1,21 +1,20 @@
 import type { BoqRow } from "../../types";
 import { finiteNumber } from "../quoteCommercialMath";
 import { finishAmount, isPricedIncludedLine, lineAmount } from "./costing";
+import { scopeLineBoqDescription } from "./descriptions";
 import type { ProjectScopeState, ScopeLine } from "./types";
 import { PENDING_SITE_SURVEY } from "./types";
 
 export const SCOPE_BOQ_ID_PREFIX = "scope_";
 
-function itemFromLine(line: ScopeLine): BoqRow {
+function itemFromLine(line: ScopeLine, scope: ProjectScopeState): BoqRow {
   const qty = finiteNumber(line.qty, 0);
   const rate = finiteNumber(line.rate, 0);
-  const spec = String(line.specification || "").trim();
-  const notes = String(line.notes || "").trim();
   return {
     id: `${SCOPE_BOQ_ID_PREFIX}${line.id}`,
     type: "item",
     name: line.name,
-    description: [spec, notes].filter(Boolean).join(" — "),
+    description: scopeLineBoqDescription(line, scope),
     brand: "",
     unit: line.unit || "Job",
     qty,
@@ -35,7 +34,7 @@ export function projectScopeToBoqRows(scope: ProjectScopeState | null | undefine
     if (line.inclusionState === "included" && !isPricedIncludedLine(line) && lineAmount(line) === 0) {
       continue;
     }
-    if (line.inclusionState === "included") rows.push(itemFromLine(line));
+    if (line.inclusionState === "included") rows.push(itemFromLine(line, scope));
   }
   const paint = finishAmount(scope.finish);
   if (paint > 0 && scope.finish.finish && scope.finish.finish !== "none") {

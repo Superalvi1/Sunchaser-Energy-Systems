@@ -87,6 +87,8 @@ export interface Quote {
   warrantyTerms?: string;
   termsAndConditions?: string;
   paymentTerms?: string;
+  /** Frozen Advanced Project Scope snapshot. Legacy quotes omit this. */
+  projectScopeSnapshot?: import("./lib/quoteProjectScope").ProjectScopeState;
   /** Calendar days the quotation remains valid. Derived from company terms when omitted. */
   validityDays?: number;
   manualOverrides?: Partial<Record<"panel" | "inverter" | "battery" | "structure" | "cables" | "accessories" | "prices", boolean>>;

@@ -5693,6 +5693,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     templateId,
     includedPages,
     includeSizerItems,
+    projectScopeSnapshot,
   } = req.body;
 
   console.log(`[API POST /api/leads/${id}/create-quote] Received request body:`, {
@@ -5825,6 +5826,7 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     includeSizerItems: includeSizerItems === true,
     quote_type: resolvedQuoteType,
     source: resolvedQuoteType === "auto_sizer" ? "autosizer" : "manual",
+    projectScopeSnapshot: projectScopeSnapshot || undefined,
     updatedAt: new Date().toISOString(),
   };
 

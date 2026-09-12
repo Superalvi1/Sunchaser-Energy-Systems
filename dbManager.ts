@@ -993,6 +993,7 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     termsAndConditions: quote.termsAndConditions,
     validityDays: Number(quote.validityDays) > 0 ? Math.floor(Number(quote.validityDays)) : undefined,
     manualOverrides: quote.manualOverrides || {},
+    projectScopeSnapshot: quote.projectScopeSnapshot || undefined,
   };
 }
 

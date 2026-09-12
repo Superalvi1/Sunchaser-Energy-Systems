@@ -2,6 +2,7 @@ import { finiteNumber } from "../quoteCommercialMath";
 import type {
   CostGroup,
   CostGroupTotal,
+  GenericChargeFlags,
   ProjectScopeState,
   ScopeContext,
   ScopeLine,
@@ -10,6 +11,7 @@ import type {
 } from "./types";
 import { COST_GROUP_LABELS, COST_GROUP_ORDER, PENDING_SITE_SURVEY, PENDING_STRUCTURAL_DESIGN } from "./types";
 import { applyScopeDependencies } from "./dependencies";
+import { canSuppressGenericAc, canSuppressGenericDc, canSuppressGenericEarth } from "./replacement";
 
 export function lineAmount(line: ScopeLine): number {
   if (line.inclusionState !== "included") return 0;
@@ -41,11 +43,9 @@ export function girderDesignLoadDisplay(girder: ProjectScopeState["girder"]): st
 export function suppressedGenericChargeIds(scope: ProjectScopeState | null | undefined): Set<string> {
   const ids = new Set<string>();
   if (!scope || scope.scopeMode !== "advanced") return ids;
-  for (const line of scope.lines) {
-    if (line.inclusionState === "included" && line.replacesGenericId && finiteNumber(line.qty, 0) > 0) {
-      ids.add(line.replacesGenericId);
-    }
-  }
+  if (canSuppressGenericDc(scope)) ids.add("dc_cable_row");
+  if (canSuppressGenericAc(scope)) ids.add("ac_cable_row");
+  if (canSuppressGenericEarth(scope)) ids.add("earth_wire_row");
   return ids;
 }
 
@@ -175,8 +175,38 @@ const MAJOR_LABELS: Record<string, string> = {
   documentation: "Documentation",
 };
 
-export function buildScopeMatrix(scope: ProjectScopeState, ctx: ScopeContext): ScopeMatrixGroup {
-  const resolved = applyScopeDependencies(scope, ctx);
+export interface ResolvedScopeMatrixInput {
+  scope: ProjectScopeState;
+  ctx: ScopeContext;
+  genericCharges?: Partial<GenericChargeFlags>;
+  suppressedGenericIds?: Iterable<string>;
+}
+
+function defaultGenericCharges(ctx: ScopeContext): GenericChargeFlags {
+  return {
+    dcCable: true,
+    acCable: true,
+    earthWire: true,
+    netMetering: ctx.systemType !== "Off-grid",
+  };
+}
+
+function familyState(opts: {
+  genericEnabled: boolean;
+  replaced: boolean;
+  pricedDetailed: boolean;
+  pendingDetailed: boolean;
+}): "included" | "excluded" | "pending" {
+  if (opts.replaced || opts.pricedDetailed || opts.genericEnabled) return "included";
+  if (opts.pendingDetailed) return "pending";
+  return "excluded";
+}
+
+export function buildResolvedScopeMatrix(input: ResolvedScopeMatrixInput): ScopeMatrixGroup {
+  const ctx = input.ctx;
+  const resolved = applyScopeDependencies(input.scope, ctx);
+  const generic = { ...defaultGenericCharges(ctx), ...input.genericCharges };
+  const suppressed = new Set(input.suppressedGenericIds || suppressedGenericChargeIds(resolved));
   const included: string[] = ["Panels", "Inverter"];
   const excluded: string[] = [];
   const pending: string[] = [];
@@ -206,53 +236,95 @@ export function buildScopeMatrix(scope: ProjectScopeState, ctx: ScopeContext): S
     resolved.lines.some((l) => pred(l) && l.inclusionState === "included");
   const hasPending = (pred: (line: ScopeLine) => boolean) =>
     resolved.lines.some((l) => pred(l) && l.inclusionState === "pending");
-
-  const sectionState = (section: ScopeLine["section"], fallbackLabel: string) => {
-    if (hasIncluded((l) => l.section === section)) push(fallbackLabel, "included");
-    else if (hasPending((l) => l.section === section)) push(fallbackLabel, "pending");
-    else push(fallbackLabel, "excluded");
-  };
-
-  if (resolved.scopeMode === "advanced" && hasIncluded((l) => Boolean(l.replacesGenericId === "dc_cable_row"))) {
-    push("DC Cable", "included");
-  } else {
-    sectionState("dc_cabling", "DC Cable");
-  }
-  sectionState("ac_cabling", "AC Cable");
-  sectionState("earthing", "Earthing");
-  push("Installation", "included");
-
-  if (ctx.systemType === "Off-grid") {
-    const nmIncluded = hasIncluded((l) => l.section === "net_metering");
-    push("Net Metering", nmIncluded ? "included" : "excluded");
-  } else {
-    const nmPending = hasPending((l) => l.section === "net_metering");
-    push("Net Metering", nmPending ? "pending" : "included");
-  }
+  const hasPriced = (pred: (line: ScopeLine) => boolean) =>
+    resolved.lines.some((l) => pred(l) && isPricedIncludedLine(l));
 
   push(
-    "Lightning Protection",
-    resolved.lightningEnabled ? "included" : hasPending((l) => l.section === "lightning") ? "pending" : "excluded"
+    "DC Cable",
+    familyState({
+      genericEnabled: generic.dcCable && !suppressed.has("dc_cable_row"),
+      replaced: suppressed.has("dc_cable_row"),
+      pricedDetailed: hasPriced((l) => l.section === "dc_cabling"),
+      pendingDetailed: hasPending((l) => l.section === "dc_cabling"),
+    })
   );
+  push(
+    "AC Cable",
+    familyState({
+      genericEnabled: generic.acCable && !suppressed.has("ac_cable_row"),
+      replaced: suppressed.has("ac_cable_row"),
+      pricedDetailed: hasPriced((l) => l.section === "ac_cabling"),
+      pendingDetailed: hasPending((l) => l.section === "ac_cabling"),
+    })
+  );
+  push(
+    "Earthing",
+    familyState({
+      genericEnabled: generic.earthWire && !suppressed.has("earth_wire_row"),
+      replaced: suppressed.has("earth_wire_row"),
+      pricedDetailed: hasPriced((l) => l.section === "earthing"),
+      pendingDetailed: hasPending((l) => l.section === "earthing"),
+    })
+  );
+  push("Installation", "included");
+
+  const nmDetailedIncluded = hasIncluded((l) => l.section === "net_metering");
+  const nmPending = hasPending((l) => l.section === "net_metering");
+  if (generic.netMetering || nmDetailedIncluded) push("Net Metering", "included");
+  else if (nmPending) push("Net Metering", "pending");
+  else push("Net Metering", "excluded");
+
+  if (resolved.lightningEnabled) push("Lightning Protection", "included");
+  else if (hasPending((l) => l.section === "lightning")) pending.push(`Lightning Protection — ${PENDING_SITE_SURVEY}`);
+  else push("Lightning Protection", "excluded");
+
   push("Crane", resolved.craneEnabled ? "included" : "excluded");
   push("SCADA", resolved.scadaEnabled ? (hasIncluded((l) => l.id === "mon_scada_gw") ? "included" : "pending") : "excluded");
   if (hasPending((l) => l.section === "civil") && !hasIncluded((l) => l.section === "civil")) {
     pending.push("Civil Foundation — Pending Site Survey");
+  } else if (hasIncluded((l) => l.section === "civil") || hasPriced((l) => l.section === "civil")) {
+    push("Civil Foundation", "included");
   } else {
-    sectionState("civil", "Civil Foundation");
+    push("Civil Foundation", "excluded");
   }
-  sectionState("documentation", "Documentation");
+  if (hasIncluded((l) => l.section === "documentation")) push("Documentation", "included");
+  else if (hasPending((l) => l.section === "documentation")) push("Documentation", "pending");
+  else push("Documentation", "excluded");
   if (resolved.girder.designLoadStatus !== "provided" && ctx.structureType === "girder") {
     pending.push(`Girder load — ${PENDING_STRUCTURAL_DESIGN}`);
-  }
-  if (hasPending((l) => l.section === "lightning")) {
-    const idx = pending.findIndex((p) => p === "Lightning Protection");
-    if (idx >= 0) pending[idx] = `Lightning Protection — ${PENDING_SITE_SURVEY}`;
-    else pending.push(`Lightning Protection — ${PENDING_SITE_SURVEY}`);
   }
 
   const uniq = (list: string[]) => [...new Set(list.filter(Boolean))];
   return { included: uniq(included), excluded: uniq(excluded), pending: uniq(pending) };
+}
+
+export function buildScopeMatrix(scope: ProjectScopeState, ctx: ScopeContext): ScopeMatrixGroup {
+  return buildResolvedScopeMatrix({ scope, ctx });
+}
+
+export function matrixAgreesWithBoq(args: {
+  matrix: ScopeMatrixGroup;
+  boqRows: Array<{ id?: string; type?: string; total?: number }>;
+  genericCharges: GenericChargeFlags;
+  suppressedGenericIds: Iterable<string>;
+}): boolean {
+  const rows = (args.boqRows || []).filter((r) => String(r.type || "") === "item");
+  const suppressed = new Set(args.suppressedGenericIds);
+  const has = (id: string) => rows.some((r) => String(r.id) === id);
+  const hasPrefix = (prefix: string) => rows.some((r) => String(r.id || "").startsWith(prefix));
+  const included = (label: string) => args.matrix.included.includes(label);
+  const excluded = (label: string) => args.matrix.excluded.includes(label);
+
+  const dcInBoq = (args.genericCharges.dcCable && !suppressed.has("dc_cable_row") && has("dc_cable_row")) || hasPrefix("scope_dc_");
+  const acInBoq = (args.genericCharges.acCable && !suppressed.has("ac_cable_row") && has("ac_cable_row")) || hasPrefix("scope_ac_inv") || hasPrefix("scope_ac_db") || hasPrefix("scope_ac_lt") || hasPrefix("scope_ac_backup");
+  const earthInBoq = (args.genericCharges.earthWire && !suppressed.has("earth_wire_row") && has("earth_wire_row")) || rows.some((r) => /^scope_earth_/.test(String(r.id || "")));
+  const nmInBoq = (args.genericCharges.netMetering && has("net_metering_row")) || hasPrefix("scope_nm_");
+
+  if (dcInBoq !== included("DC Cable") && !(dcInBoq === false && excluded("DC Cable"))) return false;
+  if (acInBoq !== included("AC Cable") && !(acInBoq === false && excluded("AC Cable"))) return false;
+  if (earthInBoq !== included("Earthing") && !(earthInBoq === false && excluded("Earthing"))) return false;
+  if (nmInBoq !== included("Net Metering") && !(nmInBoq === false && excluded("Net Metering"))) return false;
+  return true;
 }
 
 export { MAJOR_LABELS };

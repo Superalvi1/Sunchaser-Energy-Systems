@@ -1,6 +1,7 @@
 import { nonNegativeFinite } from "../quoteCommercialMath";
 import { isMsStructure } from "./dependencies";
 import { LIGHTNING_PATH_IDS } from "./lines";
+import { acScheduleComplete, dcScheduleComplete, earthScheduleComplete } from "./replacement";
 import type { ProjectScopeState, ScopeContext } from "./types";
 import { PENDING_STRUCTURAL_DESIGN } from "./types";
 
@@ -26,6 +27,11 @@ export function validateProjectScope(scope: ProjectScopeState | null | undefined
         break;
       }
     }
+    const lp = scope.lightningDetail;
+    if (!String(lp?.airTerminalType || "").trim()) errors.push("Lightning air terminal type is required.");
+    if (!String(lp?.downConductorType || "").trim()) errors.push("Lightning down conductor type is required.");
+    if (!(Number(lp?.testJointQty) > 0)) errors.push("Lightning test joint quantity is required.");
+    if (!(Number(lp?.earthPitQty) > 0)) errors.push("Lightning earth path / earth pit quantity is required.");
   }
 
   if (scope.scopeMode === "advanced" && ctx.structureType === "girder") {
@@ -57,6 +63,25 @@ export function validateProjectScope(scope: ProjectScopeState | null | undefined
   if (scope.finish.finish && scope.finish.finish !== "none") {
     if (nonNegativeFinite(scope.finish.rate) == null) errors.push("Structure finish rate cannot be negative.");
     if (nonNegativeFinite(scope.finish.amount) == null) errors.push("Structure finish amount cannot be negative.");
+  }
+
+  if (scope.replaceGenericDc) {
+    const dc = dcScheduleComplete(scope);
+    if (!dc.complete) {
+      errors.push(`Replace standard DC cable is on, but the detailed schedule is incomplete: ${dc.missing.join("; ")}.`);
+    }
+  }
+  if (scope.replaceGenericAc) {
+    const ac = acScheduleComplete(scope);
+    if (!ac.complete) {
+      errors.push(`Replace standard AC cable is on, but the detailed schedule is incomplete: ${ac.missing.join("; ")}.`);
+    }
+  }
+  if (scope.replaceGenericEarth) {
+    const earth = earthScheduleComplete(scope);
+    if (!earth.complete) {
+      errors.push(`Replace standard earthing is on, but the detailed schedule is incomplete: ${earth.missing.join("; ")}.`);
+    }
   }
 
   return errors;

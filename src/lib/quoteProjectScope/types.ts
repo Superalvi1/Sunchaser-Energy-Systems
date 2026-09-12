@@ -1,3 +1,14 @@
+import type {
+  AcCableRunDetail,
+  AcPanelDetail,
+  CableTrayDetail,
+  DcCableRunDetail,
+  DcCombinerDetail,
+  EarthingConductorDetail,
+  LightningDetail,
+} from "./electricalTypes";
+import type { CivilFoundationDetail } from "./civilTypes";
+
 export type ProjectClass = "residential" | "commercial" | "industrial" | "custom";
 export type ScopeMode = "standard" | "advanced";
 export type ScopePreset = "residential_standard" | "commercial_standard" | "industrial_standard" | "custom";
@@ -5,6 +16,7 @@ export type InclusionState = "included" | "excluded" | "pending";
 export type ScopeStatus = "mandatory" | "conditional" | "optional";
 export type IncludeChoice = "yes" | "no" | "conditional";
 export type RateSource = "catalog" | "website" | "company_preset" | "manual" | "none";
+export type StructureMaterial = "" | "ms" | "gi" | "other";
 
 export type CostGroup =
   | "pv_modules"
@@ -62,6 +74,7 @@ export interface ScopeLine {
   groupedResidential: boolean;
   rateSource: RateSource;
   replacesGenericId?: string;
+  detailId?: string;
 }
 
 export interface GirderDetails {
@@ -69,7 +82,7 @@ export interface GirderDetails {
   mainSection: "" | "4x2" | "6x3" | "8x4" | "custom";
   mainSectionCustom: string;
   wallThickness: string;
-  material: "" | "ms" | "gi" | "other";
+  material: StructureMaterial;
   steelGrade: string;
   span: string;
   columnCount: number;
@@ -94,10 +107,10 @@ export interface ElevatedDetails {
   mainGirder: string;
   secondaryMember: string;
   steelSection: string;
+  material: StructureMaterial;
   materialGrade: string;
   basePlate: string;
   anchorBolt: string;
-  finish: "" | "hot_dip" | "primer_paint" | "other";
   civilFoundation: "yes" | "no" | "auto";
 }
 
@@ -136,6 +149,17 @@ export interface ProjectScopeState {
   craneEnabled: boolean;
   rccFoundationRequired: boolean;
   scadaEnabled: boolean;
+  replaceGenericDc: boolean;
+  replaceGenericAc: boolean;
+  replaceGenericEarth: boolean;
+  dcCables: Record<string, DcCableRunDetail>;
+  acCables: Record<string, AcCableRunDetail>;
+  dcCombiner: DcCombinerDetail;
+  acPanels: Record<string, AcPanelDetail>;
+  lightningDetail: LightningDetail;
+  cableTray: CableTrayDetail;
+  earthConductors: Record<string, EarthingConductorDetail>;
+  civilFoundation: CivilFoundationDetail;
 }
 
 export interface ScopeContext {
@@ -149,6 +173,13 @@ export interface ScopeMatrixGroup {
   included: string[];
   excluded: string[];
   pending: string[];
+}
+
+export interface GenericChargeFlags {
+  dcCable: boolean;
+  acCable: boolean;
+  earthWire: boolean;
+  netMetering: boolean;
 }
 
 export interface CostGroupTotal {

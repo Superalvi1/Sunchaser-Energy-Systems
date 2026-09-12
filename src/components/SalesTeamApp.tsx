@@ -74,6 +74,11 @@ import { StudioEmptyState } from "./ui/studio";
 import { isDesignProjectEnabled, isProposalStudioEnabled } from "../lib/studioFeatureFlags";
 import { type CommercialQuoteDraftApply } from "../lib/aiQuoteCommercialDraft";
 import {
+  freezeProjectScopeSnapshot,
+  readProjectScopeSnapshot,
+  type ProjectScopeState,
+} from "../lib/quoteProjectScope";
+import {
   mergeContentLibrary,
   type ContentLibraryBlock,
   type PdfQualityMode,
@@ -337,6 +342,7 @@ export default function SalesTeamApp({
   // Excel-style BOQ grid rows
   const [boqRows, setBoqRows] = useState<BoqRow[]>([]);
   const [manualBoqItems, setManualBoqItems] = useState<any[]>([]);
+  const [projectScopeSnapshot, setProjectScopeSnapshot] = useState<ProjectScopeState | undefined>();
   const [loadedPackageId, setLoadedPackageId] = useState<string | null>(null);
   const [loadedPackageName, setLoadedPackageName] = useState<string | null>(null);
   const [loadedPackageSize, setLoadedPackageSize] = useState<number | null>(null);
@@ -376,6 +382,7 @@ export default function SalesTeamApp({
     setNetMeteringRequired(draft.boqRows.some((r) => r.id === "net_metering_row") ? "Yes" : "No");
     setBoqRows(draft.boqRows);
     setManualBoqItems(draft.boqRows);
+    setProjectScopeSnapshot(freezeProjectScopeSnapshot(draft.projectScopeSnapshot));
     setActiveModule("boq_builder");
     toast.success("AI draft applied to BOQ builder — review and save manually.");
   };
@@ -1457,6 +1464,7 @@ export default function SalesTeamApp({
       setSystemSizekW(recommended > 0 ? recommended : 10);
       setBoqRows([]);
       setManualBoqItems([]);
+      setProjectScopeSnapshot(undefined);
       setSizerEditingQuoteId(null);
       if (activeLead?.id) {
         localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
@@ -1840,6 +1848,7 @@ export default function SalesTeamApp({
         source: "manual",
         manualOverrides,
         validityDays,
+        projectScopeSnapshot: freezeProjectScopeSnapshot(projectScopeSnapshot),
       };
 
       let savedQuoteId = editingQuoteId;
@@ -2107,6 +2116,7 @@ export default function SalesTeamApp({
     const loadedRows = quote.boqRows || quote.boqItems || [];
     setBoqRows(loadedRows);
     setManualBoqItems(loadedRows);
+    setProjectScopeSnapshot(readProjectScopeSnapshot(quote));
     setSelectedStructure(quote.selectedStructure || 'standard');
     
     if (quote.customStructure) {
@@ -2813,6 +2823,7 @@ export default function SalesTeamApp({
                           clearLoadedPackage();
                           setBoqRows([]);
                           setManualBoqItems([]);
+                          setProjectScopeSnapshot(undefined);
                           if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
                         }}
                         className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
@@ -3243,6 +3254,7 @@ export default function SalesTeamApp({
                       if (activeModule === "boq_builder") {
                         setBoqRows([]);
                         setManualBoqItems([]);
+                        setProjectScopeSnapshot(undefined);
                         if (activeLead) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
                       }
                     }}

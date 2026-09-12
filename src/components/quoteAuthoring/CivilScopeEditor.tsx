@@ -1,6 +1,7 @@
 import React from "react";
 import type { ProjectScopeState, ScopeContext, ScopeLine } from "../../lib/quoteProjectScope";
 import { ScopeDetails, ScopeLineTable, ToggleRow } from "./ScopeLineTable";
+import { CivilFoundationEditor } from "./ScopeTechnicalEditors";
 
 export default function CivilScopeEditor({
   scope,
@@ -17,19 +18,20 @@ export default function CivilScopeEditor({
   const logistics = scope.lines.filter((l) => l.section === "logistics");
   const install = scope.lines.filter((l) => l.section === "installation");
   const showInstallExtras = scope.projectClass === "industrial" || scope.projectClass === "commercial";
+  const showFoundation = scope.rccFoundationRequired || ctx.structureType === "girder" || ctx.structureType === "elevated";
 
   return (
     <div className="space-y-3">
-      <ScopeDetails
-        title="Civil works"
-        defaultOpen={scope.rccFoundationRequired || ctx.structureType === "girder" || ctx.structureType === "elevated"}
-      >
+      <ScopeDetails title="Civil works" defaultOpen={showFoundation}>
         <ToggleRow
           label="RCC foundation required"
           checked={scope.rccFoundationRequired}
           onChange={(next) => onChange({ rccFoundationRequired: next })}
           hint="Girder / elevated with foundation required exposes excavation, PCC, RCC, rebar, formwork, pads, anchors and curing."
         />
+        {showFoundation && (
+          <CivilFoundationEditor detail={scope.civilFoundation} onChange={(next) => onChange({ civilFoundation: next })} />
+        )}
         <ScopeLineTable lines={civil} onChangeLine={onChangeLine} />
       </ScopeDetails>
 

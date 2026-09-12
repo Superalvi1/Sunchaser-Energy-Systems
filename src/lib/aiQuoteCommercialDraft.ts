@@ -5,6 +5,7 @@
 
 import {
   applyScopeDependencies,
+  freezeProjectScopeSnapshot,
   projectScopeToBoqRows,
   suppressedGenericChargeIds,
   validateProjectScope,
@@ -356,6 +357,7 @@ export interface CommercialQuoteDraftApply {
   installationRatePerWatt: number;
   elevatedStructureRatePerWatt: number;
   boqRows: BoqRow[];
+  projectScopeSnapshot?: ProjectScopeState;
   draftOnly: true;
 }
 
@@ -1054,6 +1056,16 @@ export function buildCommercialDraftApply(config: CommercialQuoteConfig): Commer
     installationRatePerWatt: finiteNumber(config.installationRatePerWatt, 0),
     elevatedStructureRatePerWatt: finiteNumber(config.elevatedStructureRatePerWatt, 0),
     boqRows: buildCommercialQuoteBoq(config),
+    projectScopeSnapshot: freezeProjectScopeSnapshot(
+      config.projectScope
+        ? applyScopeDependencies(config.projectScope, {
+            systemType: config.systemType,
+            structureType: config.structureType,
+            batteryEnabled: Boolean(config.batteryEnabled) && config.systemType !== "On-grid",
+            panelQuantity: Math.max(0, Math.floor(finiteNumber(config.panelQuantity, 0))),
+          })
+        : undefined
+    ),
     draftOnly: true,
   };
 }

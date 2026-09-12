@@ -143,22 +143,22 @@ export default function StructureScopeEditor({
             <TextField label="Main girder" value={e.mainGirder} onChange={(v) => onChange({ elevated: { ...e, mainGirder: v } })} />
             <TextField label="Secondary member" value={e.secondaryMember} onChange={(v) => onChange({ elevated: { ...e, secondaryMember: v } })} />
             <TextField label="Steel section" value={e.steelSection} onChange={(v) => onChange({ elevated: { ...e, steelSection: v } })} />
-            <TextField label="Material grade" value={e.materialGrade} onChange={(v) => onChange({ elevated: { ...e, materialGrade: v } })} />
-            <TextField label="Base plate" value={e.basePlate} onChange={(v) => onChange({ elevated: { ...e, basePlate: v } })} />
-            <TextField label="Anchor bolt" value={e.anchorBolt} onChange={(v) => onChange({ elevated: { ...e, anchorBolt: v } })} />
             <div>
-              <ScopeFieldLabel>Finish</ScopeFieldLabel>
+              <ScopeFieldLabel>Material</ScopeFieldLabel>
               <select
-                value={e.finish}
-                onChange={(ev) => onChange({ elevated: { ...e, finish: ev.target.value as typeof e.finish } })}
+                value={e.material}
+                onChange={(ev) => onChange({ elevated: { ...e, material: ev.target.value as typeof e.material } })}
                 className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
               >
                 <option value="">Select</option>
-                <option value="hot_dip">Hot-dip galvanized</option>
-                <option value="primer_paint">Primer + paint</option>
+                <option value="ms">MS</option>
+                <option value="gi">GI</option>
                 <option value="other">Other</option>
               </select>
             </div>
+            <TextField label="Material grade" value={e.materialGrade} onChange={(v) => onChange({ elevated: { ...e, materialGrade: v } })} />
+            <TextField label="Base plate" value={e.basePlate} onChange={(v) => onChange({ elevated: { ...e, basePlate: v } })} />
+            <TextField label="Anchor bolt" value={e.anchorBolt} onChange={(v) => onChange({ elevated: { ...e, anchorBolt: v } })} />
             <div>
               <ScopeFieldLabel>Civil foundation required</ScopeFieldLabel>
               <select
@@ -182,7 +182,7 @@ export default function StructureScopeEditor({
 
       <ScopeDetails title="Structure finish / corrosion protection">
         <p className="text-[11px] text-slate-500">
-          Hot-dip galvanized is not auto-charged as paint. MS fabricated girder/elevated must select a finish explicitly.
+          Single finish source for girder and elevated. Hot-dip is not auto-charged as paint. MS material requires an explicit finish. GI + none / existing galvanized is valid.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>

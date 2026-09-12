@@ -66,7 +66,7 @@ import {
   batteryCatalogFields,
   buildPresetScope,
   buildQuoteCostSummary,
-  buildScopeMatrix,
+  buildResolvedScopeMatrix,
   inverterCatalogFields,
   panelCatalogFields,
   suppressedGenericChargeIds,
@@ -462,6 +462,15 @@ export default function AIQuoteBuilderModal({
   );
   const resolvedScope = useMemo(() => applyScopeDependencies(projectScope, scopeCtx), [projectScope, scopeCtx]);
   const skipGeneric = useMemo(() => suppressedGenericChargeIds(resolvedScope), [resolvedScope]);
+  const genericChargeFlags = useMemo(
+    () => ({
+      dcCable: Boolean(otherCharges.dcCable?.enabled),
+      acCable: Boolean(otherCharges.acCable?.enabled),
+      earthWire: Boolean(otherCharges.earthWire?.enabled),
+      netMetering: Boolean(otherCharges.netMetering?.enabled),
+    }),
+    [otherCharges]
+  );
   const costSummary = useMemo(
     () =>
       buildQuoteCostSummary({
@@ -486,7 +495,16 @@ export default function AIQuoteBuilderModal({
       }),
     [panelTotal, inverterTotal, batteryTotal, structureTotal, installTotal, otherCharges, skipGeneric, resolvedScope]
   );
-  const scopeMatrix = useMemo(() => buildScopeMatrix(resolvedScope, scopeCtx), [resolvedScope, scopeCtx]);
+  const scopeMatrix = useMemo(
+    () =>
+      buildResolvedScopeMatrix({
+        scope: resolvedScope,
+        ctx: scopeCtx,
+        genericCharges: genericChargeFlags,
+        suppressedGenericIds: skipGeneric,
+      }),
+    [resolvedScope, scopeCtx, genericChargeFlags, skipGeneric]
+  );
   const subtotal = costSummary.subtotal;
   const groupAmount = (group: (typeof costSummary.groups)[number]["group"]) =>
     costSummary.groups.find((g) => g.group === group)?.amount || 0;

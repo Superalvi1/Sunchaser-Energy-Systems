@@ -35,11 +35,11 @@ export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeConte
         : line
     );
   } else {
-    lines = lines.map((line) =>
-      line.section === "lightning" || line.id === "earth_lp_down"
-        ? setLineState(line, "no", "excluded", 0)
-        : line
-    );
+    lines = lines.map((line) => {
+      if (line.section !== "lightning" && line.id !== "earth_lp_down") return line;
+      if (line.inclusionState === "pending") return line;
+      return setLineState(line, "no", "excluded", 0);
+    });
   }
 
   const foundationNeeded =
@@ -48,8 +48,6 @@ export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeConte
     (ctx.structureType === "girder" && scope.rccFoundationRequired);
   if (foundationNeeded) {
     lines = patch(lines, CIVIL_FOUNDATION_IDS, "yes", "included", 1);
-  } else if (!scope.rccFoundationRequired) {
-    // Leave preset pending civil lines as pending; do not auto-include.
   }
 
   if (scope.craneEnabled) {
@@ -95,7 +93,7 @@ export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeConte
 
 export function isMsStructure(scope: ProjectScopeState, ctx: ScopeContext): boolean {
   if (ctx.structureType === "girder" && scope.girder.material === "ms") return true;
-  if (ctx.structureType === "elevated" && scope.elevated.finish === "primer_paint") return true;
+  if (ctx.structureType === "elevated" && scope.elevated.material === "ms") return true;
   return false;
 }
 

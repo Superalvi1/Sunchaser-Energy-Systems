@@ -9,6 +9,17 @@ import type {
   ScopePreset,
 } from "./types";
 import { allDefaultLines, presetIdForClass, setLineState } from "./lines";
+import {
+  emptyAcCableRun,
+  emptyAcPanel,
+  emptyCableTray,
+  emptyDcCombiner,
+  emptyDcCableRun,
+  emptyEarthConductor,
+  emptyLightningDetail,
+  DC_POLARITY_FOR_LINE,
+} from "./electricalTypes";
+import { emptyCivilFoundation } from "./civilTypes";
 
 function emptyGirder(): ProjectScopeState["girder"] {
   return {
@@ -43,10 +54,10 @@ function emptyElevated(): ProjectScopeState["elevated"] {
     mainGirder: "",
     secondaryMember: "",
     steelSection: "",
+    material: "",
     materialGrade: "",
     basePlate: "",
     anchorBolt: "",
-    finish: "",
     civilFoundation: "auto",
   };
 }
@@ -153,6 +164,53 @@ export function modeForPreset(preset: ScopePreset): ScopeMode {
   return "advanced";
 }
 
+export function emptyStructuredDetails(): Pick<
+  ProjectScopeState,
+  | "dcCables"
+  | "acCables"
+  | "dcCombiner"
+  | "acPanels"
+  | "lightningDetail"
+  | "cableTray"
+  | "earthConductors"
+  | "civilFoundation"
+> {
+  return {
+    dcCables: {
+      dc_pos: emptyDcCableRun("dc_pos", DC_POLARITY_FOR_LINE.dc_pos),
+      dc_neg: emptyDcCableRun("dc_neg", DC_POLARITY_FOR_LINE.dc_neg),
+      dc_string_combiner: emptyDcCableRun("dc_string_combiner"),
+      dc_combiner_inverter: emptyDcCableRun("dc_combiner_inverter"),
+      dc_string_inverter: emptyDcCableRun("dc_string_inverter"),
+    },
+    acCables: {
+      ac_inv_db: emptyAcCableRun("ac_inv_db"),
+      ac_db_lt: emptyAcCableRun("ac_db_lt"),
+      ac_lt_grid: emptyAcCableRun("ac_lt_grid"),
+      ac_backup: emptyAcCableRun("ac_backup"),
+    },
+    dcCombiner: emptyDcCombiner(),
+    acPanels: {
+      ac_solar_db: emptyAcPanel("ac_solar_db"),
+      ac_gen_panel: emptyAcPanel("ac_gen_panel"),
+      ac_sub_panel: emptyAcPanel("ac_sub_panel"),
+      ac_lt_mod: emptyAcPanel("ac_lt_mod"),
+    },
+    lightningDetail: emptyLightningDetail(),
+    cableTray: emptyCableTray(),
+    earthConductors: {
+      earth_pv: emptyEarthConductor("earth_pv"),
+      earth_inv: emptyEarthConductor("earth_inv"),
+      earth_acdb: emptyEarthConductor("earth_acdb"),
+      earth_dcdb: emptyEarthConductor("earth_dcdb"),
+      earth_lt: emptyEarthConductor("earth_lt"),
+      earth_battery: emptyEarthConductor("earth_battery"),
+      earth_pit_conn: emptyEarthConductor("earth_pit_conn"),
+    },
+    civilFoundation: emptyCivilFoundation(),
+  };
+}
+
 export function buildPresetScope(preset: ScopePreset, _ctx?: Partial<ScopeContext>): ProjectScopeState {
   const lines = applyFlags(allDefaultLines(), flagsForPreset(preset));
   const projectClass = classForPreset(preset);
@@ -169,6 +227,10 @@ export function buildPresetScope(preset: ScopePreset, _ctx?: Partial<ScopeContex
     craneEnabled: preset === "industrial_standard",
     rccFoundationRequired: false,
     scadaEnabled: preset === "industrial_standard",
+    replaceGenericDc: false,
+    replaceGenericAc: false,
+    replaceGenericEarth: false,
+    ...emptyStructuredDetails(),
   };
 }
 
