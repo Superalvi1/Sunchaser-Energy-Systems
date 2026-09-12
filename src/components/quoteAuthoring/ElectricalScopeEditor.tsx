@@ -4,6 +4,12 @@ import type { ProjectScopeState, ScopeContext, ScopeLine } from "../../lib/quote
 import {
   DC_POLARITY_FOR_LINE,
   PENDING_EARTH_TEST,
+  applyAcCableDetail,
+  applyAcPanelDetail,
+  applyCableTrayDetail,
+  applyDcCableDetail,
+  applyDcCombinerDetail,
+  applyEarthConductorDetail,
   emptyAcCableRun,
   emptyAcPanel,
   emptyDcCableRun,
@@ -64,38 +70,16 @@ export default function ElectricalScopeEditor({
     );
   };
 
-  const patchDc = (id: string, next: typeof scope.dcCables[string]) => {
-    const line = scope.lines.find((l) => l.id === id);
+  const commit = (next: ProjectScopeState) => {
     onChange({
-      dcCables: { ...scope.dcCables, [id]: next },
-      lines: line
-        ? scope.lines.map((l) =>
-            l.id === id
-              ? patchLine(l, {
-                  qty: next.lengthM > 0 ? next.lengthM * Math.max(1, next.runCount || 1) : l.qty,
-                  rate: next.ratePerMeter > 0 ? next.ratePerMeter : l.rate,
-                  catalogProductId: next.catalogProductId || l.catalogProductId,
-                })
-              : l
-          )
-        : scope.lines,
-    });
-  };
-
-  const patchAc = (id: string, next: typeof scope.acCables[string]) => {
-    const line = scope.lines.find((l) => l.id === id);
-    onChange({
-      acCables: { ...scope.acCables, [id]: next },
-      lines: line
-        ? scope.lines.map((l) =>
-            l.id === id
-              ? patchLine(l, {
-                  qty: next.lengthM > 0 ? next.lengthM * Math.max(1, next.runs || 1) : l.qty,
-                  rate: next.ratePerMeter > 0 ? next.ratePerMeter : l.rate,
-                })
-              : l
-          )
-        : scope.lines,
+      dcCables: next.dcCables,
+      acCables: next.acCables,
+      earthConductors: next.earthConductors,
+      dcCombiner: next.dcCombiner,
+      acPanels: next.acPanels,
+      cableTray: next.cableTray,
+      lightningDetail: next.lightningDetail,
+      lines: next.lines,
     });
   };
 
@@ -106,7 +90,7 @@ export default function ElectricalScopeEditor({
           label="Replace standard DC cable allowance with detailed schedule"
           checked={scope.replaceGenericDc}
           onChange={(next) => onChange({ replaceGenericDc: next })}
-          hint="Off keeps the generic DC allowance. On requires complete positive and negative runs before Apply."
+          hint="Off keeps the generic DC allowance. On requires complete positive and negative runs, including cable specs, before Apply."
         />
         <ScopeLineTable lines={bySection("dc_cabling")} onChangeLine={onChangeLine} />
         {visibleDc.map((line) => (
@@ -114,7 +98,7 @@ export default function ElectricalScopeEditor({
             key={line.id}
             title={line.name}
             detail={scope.dcCables[line.id] || emptyDcCableRun(line.id, DC_POLARITY_FOR_LINE[line.id] || "")}
-            onChange={(next) => patchDc(line.id, next)}
+            onChange={(next) => commit(applyDcCableDetail(scope, line.id, next))}
           />
         ))}
         {cableProducts.length > 0 && (
@@ -137,7 +121,7 @@ export default function ElectricalScopeEditor({
           label="Replace standard AC cable allowance with detailed schedule"
           checked={scope.replaceGenericAc}
           onChange={(next) => onChange({ replaceGenericAc: next })}
-          hint="Off keeps the generic AC allowance. On requires the inverter → AC DB route and any other selected AC runs."
+          hint="Off keeps the generic AC allowance. On requires a complete inverter → AC DB specification and any other selected AC runs."
         />
         <ScopeLineTable lines={bySection("ac_cabling")} onChangeLine={onChangeLine} />
         {visibleAc.map((line) => (
@@ -145,7 +129,7 @@ export default function ElectricalScopeEditor({
             key={line.id}
             title={line.name}
             detail={scope.acCables[line.id] || emptyAcCableRun(line.id)}
-            onChange={(next) => patchAc(line.id, next)}
+            onChange={(next) => commit(applyAcCableDetail(scope, line.id, next))}
           />
         ))}
       </ScopeDetails>
@@ -155,7 +139,7 @@ export default function ElectricalScopeEditor({
           label="Replace standard earthing allowance with detailed schedule"
           checked={scope.replaceGenericEarth}
           onChange={(next) => onChange({ replaceGenericEarth: next })}
-          hint="Off keeps the generic earth-wire allowance. On requires PV structure + inverter earth runs."
+          hint="Off keeps the generic earth-wire allowance. On requires complete PV structure + inverter earth specifications."
         />
         <ScopeLineTable lines={bySection("earthing")} onChangeLine={onChangeLine} />
         {visibleEarth.map((line) => (
@@ -163,19 +147,7 @@ export default function ElectricalScopeEditor({
             key={line.id}
             title={line.name}
             detail={scope.earthConductors[line.id] || emptyEarthConductor(line.id)}
-            onChange={(next) =>
-              onChange({
-                earthConductors: { ...scope.earthConductors, [line.id]: next },
-                lines: scope.lines.map((l) =>
-                  l.id === line.id
-                    ? patchLine(l, {
-                        qty: next.lengthM > 0 ? next.lengthM : l.qty,
-                        rate: next.ratePerMeter > 0 ? next.ratePerMeter : l.rate,
-                      })
-                    : l
-                ),
-              })
-            }
+            onChange={(next) => commit(applyEarthConductorDetail(scope, line.id, next))}
           />
         ))}
       </ScopeDetails>
@@ -209,23 +181,7 @@ export default function ElectricalScopeEditor({
       <ScopeDetails title="DC distribution / combiner">
         <ScopeLineTable lines={bySection("dc_protection")} onChangeLine={onChangeLine} />
         {bySection("dc_protection").some((l) => l.inclusionState !== "excluded") && (
-          <DcCombinerEditor
-            detail={scope.dcCombiner}
-            onChange={(next) =>
-              onChange({
-                dcCombiner: next,
-                lines: scope.lines.map((l) =>
-                  l.id === "dc_combiner"
-                    ? patchLine(l, {
-                        qty: next.qty > 0 ? next.qty : l.qty,
-                        rate: next.unitPrice > 0 ? next.unitPrice : l.rate,
-                        catalogProductId: next.catalogProductId || l.catalogProductId,
-                      })
-                    : l
-                ),
-              })
-            }
-          />
+          <DcCombinerEditor detail={scope.dcCombiner} onChange={(next) => commit(applyDcCombinerDetail(scope, next))} />
         )}
         {protectionProducts.length > 0 && (
           <div>
@@ -249,19 +205,7 @@ export default function ElectricalScopeEditor({
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{line.name}</p>
             <AcPanelEditor
               detail={scope.acPanels[line.id] || emptyAcPanel(line.id)}
-              onChange={(next) =>
-                onChange({
-                  acPanels: { ...scope.acPanels, [line.id]: next },
-                  lines: scope.lines.map((l) =>
-                    l.id === line.id
-                      ? patchLine(l, {
-                          qty: next.qty > 0 ? next.qty : l.qty,
-                          rate: next.panelCost > 0 ? next.panelCost : l.rate,
-                        })
-                      : l
-                  ),
-                })
-              }
+              onChange={(next) => commit(applyAcPanelDetail(scope, line.id, next))}
             />
           </div>
         ))}
@@ -272,7 +216,7 @@ export default function ElectricalScopeEditor({
           label="Lightning protection system"
           checked={scope.lightningEnabled}
           onChange={(next) => onChange({ lightningEnabled: next })}
-          hint="Enabling requires air terminal, down conductor, test joint and earth path."
+          hint="Enabling requires air terminal, down conductor, test joint and earth path, including typed quantities."
         />
         {scope.lightningEnabled && (
           <>
@@ -292,22 +236,7 @@ export default function ElectricalScopeEditor({
           onChangeLine={onChangeLine}
         />
         {bySection("cable_management").some((l) => l.id === "cm_tray" && l.inclusionState !== "excluded") && (
-          <CableTrayEditor
-            detail={scope.cableTray}
-            onChange={(next) =>
-              onChange({
-                cableTray: next,
-                lines: scope.lines.map((l) =>
-                  l.id === "cm_tray"
-                    ? patchLine(l, {
-                        qty: next.lengthM > 0 ? next.lengthM : l.qty,
-                        rate: next.rate > 0 ? next.rate : l.rate,
-                      })
-                    : l
-                ),
-              })
-            }
-          />
+          <CableTrayEditor detail={scope.cableTray} onChange={(next) => commit(applyCableTrayDetail(scope, next))} />
         )}
       </ScopeDetails>
 

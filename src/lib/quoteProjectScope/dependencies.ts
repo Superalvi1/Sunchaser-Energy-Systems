@@ -1,9 +1,24 @@
 import { BATTERY_ACCESSORY_IDS, CIVIL_FOUNDATION_IDS, LIGHTNING_PATH_IDS, setLineState } from "./lines";
-import type { ProjectScopeState, ScopeContext, ScopeLine } from "./types";
+import { applyCivilQuantities, applyLightningQuantities } from "./syncDetails";
+import type { ProjectScopeState, ScopeContext, ScopeLine, StructureFinish, StructureMaterial } from "./types";
 
 function patch(lines: ScopeLine[], ids: readonly string[], include: ScopeLine["include"], state: ScopeLine["inclusionState"], qty?: number) {
   const set = new Set(ids);
   return lines.map((line) => (set.has(line.id) ? setLineState(line, include, state, qty) : line));
+}
+
+export const MS_ALLOWED_FINISHES: ReadonlyArray<StructureFinish["finish"]> = [
+  "hot_dip",
+  "zinc_primer",
+  "anti_rust",
+  "epoxy",
+  "powder",
+  "client",
+];
+
+export function isValidFinishForMaterial(material: StructureMaterial, finish: StructureFinish["finish"]): boolean {
+  if (material === "ms") return MS_ALLOWED_FINISHES.includes(finish);
+  return true;
 }
 
 export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeContext): ProjectScopeState {
@@ -26,7 +41,7 @@ export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeConte
   });
 
   if (scope.lightningEnabled) {
-    lines = patch(lines, LIGHTNING_PATH_IDS, "yes", "included", 1);
+    lines = patch(lines, LIGHTNING_PATH_IDS, "yes", "included");
     lines = lines.map((line) =>
       line.id === "lp_mast" || line.id === "lp_bonding" || line.id === "earth_lp_down"
         ? line.inclusionState === "excluded"
@@ -47,7 +62,7 @@ export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeConte
     (ctx.structureType === "elevated" && scope.elevated.civilFoundation === "yes") ||
     (ctx.structureType === "girder" && scope.rccFoundationRequired);
   if (foundationNeeded) {
-    lines = patch(lines, CIVIL_FOUNDATION_IDS, "yes", "included", 1);
+    lines = patch(lines, CIVIL_FOUNDATION_IDS, "yes", "included");
   }
 
   if (scope.craneEnabled) {
@@ -88,7 +103,8 @@ export function applyScopeDependencies(scope: ProjectScopeState, ctx: ScopeConte
     );
   }
 
-  return { ...scope, lines };
+  const withLines = { ...scope, lines };
+  return applyCivilQuantities(applyLightningQuantities(withLines));
 }
 
 export function isMsStructure(scope: ProjectScopeState, ctx: ScopeContext): boolean {

@@ -3,14 +3,14 @@ export interface CivilFoundationDetail {
   padLength: string;
   padWidth: string;
   padDepth: string;
-  excavationQty: string;
+  excavationQty: number;
   pccGrade: string;
-  pccQty: string;
+  pccQty: number;
   rccGrade: string;
-  rccQty: string;
+  rccQty: number;
   rebarGrade: string;
-  rebarKg: string;
-  formworkArea: string;
+  rebarKg: number;
+  formworkArea: number;
   anchorBoltQty: number;
   anchorBoltDiameter: string;
   anchorBoltGrade: string;
@@ -27,14 +27,14 @@ export function emptyCivilFoundation(): CivilFoundationDetail {
     padLength: "",
     padWidth: "",
     padDepth: "",
-    excavationQty: "",
+    excavationQty: 0,
     pccGrade: "",
-    pccQty: "",
+    pccQty: 0,
     rccGrade: "",
-    rccQty: "",
+    rccQty: 0,
     rebarGrade: "",
-    rebarKg: "",
-    formworkArea: "",
+    rebarKg: 0,
+    formworkArea: 0,
     anchorBoltQty: 0,
     anchorBoltDiameter: "",
     anchorBoltGrade: "",

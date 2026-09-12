@@ -1,5 +1,6 @@
 import React from "react";
 import type { ProjectScopeState, ScopeContext, ScopeLine } from "../../lib/quoteProjectScope";
+import { applyCivilFoundation } from "../../lib/quoteProjectScope";
 import { ScopeDetails, ScopeLineTable, ToggleRow } from "./ScopeLineTable";
 import { CivilFoundationEditor } from "./ScopeTechnicalEditors";
 
@@ -30,7 +31,13 @@ export default function CivilScopeEditor({
           hint="Girder / elevated with foundation required exposes excavation, PCC, RCC, rebar, formwork, pads, anchors and curing."
         />
         {showFoundation && (
-          <CivilFoundationEditor detail={scope.civilFoundation} onChange={(next) => onChange({ civilFoundation: next })} />
+          <CivilFoundationEditor
+            detail={scope.civilFoundation}
+            onChange={(next) => {
+              const synced = applyCivilFoundation(scope, next);
+              onChange({ civilFoundation: synced.civilFoundation, lines: synced.lines });
+            }}
+          />
         )}
         <ScopeLineTable lines={civil} onChangeLine={onChangeLine} />
       </ScopeDetails>

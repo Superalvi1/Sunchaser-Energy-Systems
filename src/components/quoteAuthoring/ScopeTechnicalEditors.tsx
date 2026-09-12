@@ -323,14 +323,14 @@ export function CivilFoundationEditor({ detail, onChange }: { detail: CivilFound
         <TextField label="Pad length" value={detail.padLength} onChange={(v) => onChange({ ...detail, padLength: v })} />
         <TextField label="Pad width" value={detail.padWidth} onChange={(v) => onChange({ ...detail, padWidth: v })} />
         <TextField label="Pad depth" value={detail.padDepth} onChange={(v) => onChange({ ...detail, padDepth: v })} />
-        <TextField label="Excavation qty" value={detail.excavationQty} onChange={(v) => onChange({ ...detail, excavationQty: v })} />
+        <NumberField label="Excavation qty" value={detail.excavationQty} onChange={(v) => onChange({ ...detail, excavationQty: v })} />
         <TextField label="PCC grade" value={detail.pccGrade} onChange={(v) => onChange({ ...detail, pccGrade: v })} />
-        <TextField label="PCC qty" value={detail.pccQty} onChange={(v) => onChange({ ...detail, pccQty: v })} />
+        <NumberField label="PCC qty" value={detail.pccQty} onChange={(v) => onChange({ ...detail, pccQty: v })} />
         <TextField label="RCC grade" value={detail.rccGrade} onChange={(v) => onChange({ ...detail, rccGrade: v })} />
-        <TextField label="RCC qty" value={detail.rccQty} onChange={(v) => onChange({ ...detail, rccQty: v })} />
+        <NumberField label="RCC qty" value={detail.rccQty} onChange={(v) => onChange({ ...detail, rccQty: v })} />
         <TextField label="Rebar grade" value={detail.rebarGrade} onChange={(v) => onChange({ ...detail, rebarGrade: v })} />
-        <TextField label="Rebar kg" value={detail.rebarKg} onChange={(v) => onChange({ ...detail, rebarKg: v })} />
-        <TextField label="Formwork area" value={detail.formworkArea} onChange={(v) => onChange({ ...detail, formworkArea: v })} />
+        <NumberField label="Rebar kg" value={detail.rebarKg} onChange={(v) => onChange({ ...detail, rebarKg: v })} />
+        <NumberField label="Formwork area" value={detail.formworkArea} onChange={(v) => onChange({ ...detail, formworkArea: v })} />
         <NumberField label="Anchor bolt qty" value={detail.anchorBoltQty} onChange={(v) => onChange({ ...detail, anchorBoltQty: v })} />
         <TextField label="Anchor bolt diameter" value={detail.anchorBoltDiameter} onChange={(v) => onChange({ ...detail, anchorBoltDiameter: v })} />
         <TextField label="Anchor bolt grade" value={detail.anchorBoltGrade} onChange={(v) => onChange({ ...detail, anchorBoltGrade: v })} />

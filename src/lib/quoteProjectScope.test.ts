@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  applyAcCableDetail,
+  applyAcPanelDetail,
+  applyCableTrayDetail,
+  applyCivilFoundation,
+  applyDcCableDetail,
+  applyDcCombinerDetail,
+  applyEarthConductorDetail,
+  applyLightningDetail,
   applyScopeDependencies,
   BATTERY_ACCESSORY_IDS,
   buildPresetScope,
@@ -17,14 +25,19 @@ import {
   describeDcCable,
   displaySpec,
   emptyAcCableRun,
+  emptyAcPanel,
+  emptyCableTray,
   emptyCivilFoundation,
   emptyDcCableRun,
+  emptyDcCombiner,
+  emptyEarthConductor,
   emptyLightningDetail,
   finishAmount,
   freezeProjectScopeSnapshot,
   girderDesignLoadDisplay,
   inverterCatalogFields,
   isMsStructure,
+  isValidFinishForMaterial,
   LIGHTNING_PATH_IDS,
   lineAmount,
   matrixAgreesWithBoq,
@@ -142,6 +155,72 @@ function genericFlags(systemType: CommercialQuoteConfig["systemType"] = "Hybrid"
     earthWire: charges.earthWire.enabled,
     netMetering: charges.netMetering.enabled,
     ...patch,
+  };
+}
+
+function specifyDc(scope: ProjectScopeState, id: string, patch: Partial<ReturnType<typeof emptyDcCableRun>> = {}): ProjectScopeState {
+  const polarity = id === "dc_pos" ? "positive" : id === "dc_neg" ? "negative" : "both";
+  const detail = {
+    ...emptyDcCableRun(id, polarity === "both" ? "" : polarity),
+    conductor: "tinned_copper" as const,
+    areaMm2: "6" as const,
+    voltageRating: "1500v" as const,
+    cableType: "PV1-F",
+    lengthM: 40,
+    runCount: 1,
+    ratePerMeter: 280,
+    polarity,
+    ...patch,
+  };
+  const next = applyDcCableDetail(scope, id, detail);
+  const qty = next.lines.find((l) => l.id === id)?.qty ?? 0;
+  return includePriced(next, id, qty, detail.ratePerMeter);
+}
+
+function specifyAc(scope: ProjectScopeState, id: string, patch: Partial<ReturnType<typeof emptyAcCableRun>> = {}): ProjectScopeState {
+  const detail = {
+    ...emptyAcCableRun(id),
+    phase: "three" as const,
+    conductor: "copper" as const,
+    cores: "4c" as const,
+    areaMm2: "25" as const,
+    construction: "xlpe" as const,
+    voltageRating: "0.6_1kv" as const,
+    lengthM: 32,
+    runs: 1,
+    ratePerMeter: 250,
+    ...patch,
+  };
+  const next = applyAcCableDetail(scope, id, detail);
+  const qty = next.lines.find((l) => l.id === id)?.qty ?? 0;
+  return includePriced(next, id, qty, detail.ratePerMeter);
+}
+
+function specifyEarth(scope: ProjectScopeState, id: string, patch: Partial<ReturnType<typeof emptyEarthConductor>> = {}): ProjectScopeState {
+  const detail = {
+    ...emptyEarthConductor(id),
+    conductorType: "bare_copper" as const,
+    areaMm2: "16",
+    lengthM: 12,
+    ratePerMeter: 380,
+    ...patch,
+  };
+  const next = applyEarthConductorDetail(scope, id, detail);
+  const qty = next.lines.find((l) => l.id === id)?.qty ?? 0;
+  return includePriced(next, id, qty, detail.ratePerMeter);
+}
+
+function completeLightning() {
+  return {
+    ...emptyLightningDetail(),
+    airTerminalType: "Franklin rod",
+    airTerminalQty: 2,
+    mastQty: 1,
+    downConductorType: "Bare copper",
+    downConductorArea: "50 mm²",
+    downConductorLength: 18,
+    testJointQty: 2,
+    earthPitQty: 1,
   };
 }
 
@@ -401,9 +480,8 @@ check("residential standard Apply does not add advanced BOQ rows", () => {
 });
 
 check("commercial advanced replaces generic DC only when replacement is enabled and schedule is complete", () => {
-  let scope = buildPresetScope("commercial_standard");
-  scope = includePriced(scope, "dc_pos", 40, 280);
-  scope = includePriced(scope, "dc_neg", 40, 280);
+  let scope = specifyDc(buildPresetScope("commercial_standard"), "dc_pos");
+  scope = specifyDc(scope, "dc_neg");
   scope = { ...scope, replaceGenericDc: true };
   const resolved = applyScopeDependencies(scope, ctx({ panelQuantity: 10 }));
   assert.equal(suppressedGenericChargeIds(resolved).has("dc_cable_row"), true);
@@ -553,8 +631,8 @@ check("only DC positive entered does not suppress generic DC", () => {
 });
 
 check("DC positive + negative complete with replacement enabled suppresses generic DC", () => {
-  let scope = includePriced(buildPresetScope("commercial_standard"), "dc_pos", 40, 280);
-  scope = includePriced(scope, "dc_neg", 40, 280);
+  let scope = specifyDc(buildPresetScope("commercial_standard"), "dc_pos");
+  scope = specifyDc(scope, "dc_neg");
   scope = { ...scope, replaceGenericDc: true };
   const resolved = applyScopeDependencies(scope, ctx());
   assert.equal(suppressedGenericChargeIds(resolved).has("dc_cable_row"), true);
@@ -564,8 +642,8 @@ check("DC positive + negative complete with replacement enabled suppresses gener
 });
 
 check("replacement flag off keeps generic even when detailed DC is complete", () => {
-  let scope = includePriced(buildPresetScope("commercial_standard"), "dc_pos", 40, 280);
-  scope = includePriced(scope, "dc_neg", 40, 280);
+  let scope = specifyDc(buildPresetScope("commercial_standard"), "dc_pos");
+  scope = specifyDc(scope, "dc_neg");
   assert.equal(scope.replaceGenericDc, false);
   const resolved = applyScopeDependencies(scope, ctx());
   assert.equal(suppressedGenericChargeIds(resolved).has("dc_cable_row"), false);
@@ -599,11 +677,11 @@ check("incomplete earth detailed schedule retains generic earth", () => {
 });
 
 check("complete explicit replacement does not double-count DC/AC/earth", () => {
-  let scope = includePriced(buildPresetScope("commercial_standard"), "dc_pos", 40, 280);
-  scope = includePriced(scope, "dc_neg", 40, 280);
-  scope = includePriced(scope, "ac_inv_db", 32, 250);
-  scope = includePriced(scope, "earth_pv", 12, 380);
-  scope = includePriced(scope, "earth_inv", 8, 380);
+  let scope = specifyDc(buildPresetScope("commercial_standard"), "dc_pos");
+  scope = specifyDc(scope, "dc_neg");
+  scope = specifyAc(scope, "ac_inv_db");
+  scope = specifyEarth(scope, "earth_pv");
+  scope = specifyEarth(scope, "earth_inv", { lengthM: 8 });
   scope = { ...scope, replaceGenericDc: true, replaceGenericAc: true, replaceGenericEarth: true };
   const resolved = applyScopeDependencies(scope, ctx());
   const skip = suppressedGenericChargeIds(resolved);
@@ -623,10 +701,17 @@ check("Elevated MS + no finish is blocked; Elevated MS + hot-dip is valid and no
   scope = { ...scope, elevated: { ...scope.elevated, material: "ms" }, finish: { ...scope.finish, finish: "" } };
   const elevatedCtx = ctx({ structureType: "elevated" });
   assert.equal(isMsStructure(scope, elevatedCtx), true);
+  assert.equal(isValidFinishForMaterial("ms", ""), false);
+  assert.equal(validateProjectScope(scope, elevatedCtx).some((e) => /coating \/ finish/.test(e)), true);
+  scope = { ...scope, finish: { ...scope.finish, finish: "none" } };
+  assert.equal(isValidFinishForMaterial("ms", "none"), false);
   assert.equal(validateProjectScope(scope, elevatedCtx).some((e) => /coating \/ finish/.test(e)), true);
   scope = { ...scope, finish: { ...scope.finish, finish: "hot_dip", amount: 0, rate: 0, surfaceArea: 0 } };
+  assert.equal(isValidFinishForMaterial("ms", "hot_dip"), true);
   assert.equal(validateProjectScope(scope, elevatedCtx).some((e) => /coating \/ finish/.test(e)), false);
   assert.equal(finishAmount(scope.finish), 0);
+  scope = { ...scope, finish: { ...scope.finish, finish: "anti_rust" } };
+  assert.equal(validateProjectScope(scope, elevatedCtx).some((e) => /coating \/ finish/.test(e)), false);
 });
 
 check("Girder MS + no finish is blocked; Girder GI + none/existing galvanized is valid", () => {
@@ -635,10 +720,18 @@ check("Girder MS + no finish is blocked; Girder GI + none/existing galvanized is
   const girderCtx = ctx({ structureType: "girder" });
   assert.equal(isMsStructure(ms, girderCtx), true);
   assert.equal(validateProjectScope(ms, girderCtx).some((e) => /coating \/ finish/.test(e)), true);
+  ms = { ...ms, finish: { ...ms.finish, finish: "none" } };
+  assert.equal(validateProjectScope(ms, girderCtx).some((e) => /coating \/ finish/.test(e)), true);
+  ms = { ...ms, finish: { ...ms.finish, finish: "hot_dip" } };
+  assert.equal(validateProjectScope(ms, girderCtx).some((e) => /coating \/ finish/.test(e)), false);
   let gi = completeGirder(buildPresetScope("commercial_standard"), "gi");
   gi = { ...gi, finish: { ...gi.finish, finish: "none" } };
   assert.equal(isMsStructure(gi, girderCtx), false);
+  assert.equal(isValidFinishForMaterial("gi", "none"), true);
   assert.equal(validateProjectScope(gi, girderCtx).some((e) => /coating \/ finish/.test(e)), false);
+  let elevatedGi = buildPresetScope("commercial_standard");
+  elevatedGi = { ...elevatedGi, elevated: { ...elevatedGi.elevated, material: "gi" }, finish: { ...elevatedGi.finish, finish: "none" } };
+  assert.equal(validateProjectScope(elevatedGi, ctx({ structureType: "elevated" })).some((e) => /coating \/ finish/.test(e)), false);
 });
 
 check("no duplicate elevated/shared finish states", () => {
@@ -696,8 +789,8 @@ check("scope matrix agrees with generated BOQ for generic, NM, off-grid, pending
   const boqOff = buildCommercialQuoteBoq({ ...base, systemType: "Off-grid", batteryEnabled: true, projectScope: offGridScope });
   assert.equal(boqOff.some((r) => r.id === "net_metering_row"), false);
 
-  let replaced = includePriced(buildPresetScope("commercial_standard"), "dc_pos", 40, 280);
-  replaced = includePriced(replaced, "dc_neg", 40, 280);
+  let replaced = specifyDc(buildPresetScope("commercial_standard"), "dc_pos");
+  replaced = specifyDc(replaced, "dc_neg");
   replaced = { ...replaced, replaceGenericDc: true };
   const resolvedReplaced = applyScopeDependencies(replaced, onGridCtx);
   const skip = suppressedGenericChargeIds(resolvedReplaced);
@@ -751,21 +844,16 @@ check("lightning enabled requires structured path fields; unknown civil stays pe
   scope = applyScopeDependencies(scope, ctx());
   const errors = validateProjectScope(scope, ctx());
   assert.equal(errors.some((e) => /air terminal type/i.test(e)), true);
+  assert.equal(errors.some((e) => /air terminal quantity/i.test(e)), true);
   assert.equal(errors.some((e) => /down conductor type/i.test(e)), true);
+  assert.equal(errors.some((e) => /down conductor area/i.test(e)), true);
+  assert.equal(errors.some((e) => /down conductor length/i.test(e)), true);
   assert.equal(errors.some((e) => /test joint/i.test(e)), true);
   assert.equal(errors.some((e) => /earth pit/i.test(e)), true);
-  scope = {
-    ...scope,
-    lightningDetail: {
-      ...emptyLightningDetail(),
-      airTerminalType: "Franklin rod",
-      downConductorType: "Bare copper",
-      testJointQty: 2,
-      earthPitQty: 1,
-    },
-  };
+  scope = applyLightningDetail(scope, completeLightning());
+  scope = applyScopeDependencies(scope, ctx());
   const ok = validateProjectScope(scope, ctx());
-  assert.equal(ok.some((e) => /air terminal type|down conductor type|test joint|earth pit/i.test(e)), false);
+  assert.equal(ok.some((e) => /air terminal|down conductor|test joint|earth pit/i.test(e)), false);
 });
 
 check("structured technical objects exist on presets without invented sizes", () => {
@@ -781,6 +869,191 @@ check("structured technical objects exist on presets without invented sizes", ()
   assert.equal(scope.replaceGenericDc, false);
   assert.equal(scope.replaceGenericAc, false);
   assert.equal(scope.replaceGenericEarth, false);
+});
+
+check("clearing structured DC length and rate zeros the linked ScopeLine", () => {
+  let scope = specifyDc(buildPresetScope("commercial_standard"), "dc_pos", { lengthM: 40, ratePerMeter: 280 });
+  assert.equal(scope.lines.find((l) => l.id === "dc_pos")?.qty, 40);
+  assert.equal(scope.lines.find((l) => l.id === "dc_pos")?.rate, 280);
+  scope = applyDcCableDetail(scope, "dc_pos", { ...scope.dcCables.dc_pos, lengthM: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "dc_pos")?.qty, 0);
+  scope = applyDcCableDetail(scope, "dc_pos", { ...scope.dcCables.dc_pos, ratePerMeter: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "dc_pos")?.rate, 0);
+});
+
+check("clearing structured AC / earth / combiner / panel / tray zeros linked quantities", () => {
+  let scope = specifyAc(buildPresetScope("commercial_standard"), "ac_inv_db", { lengthM: 32 });
+  assert.equal(scope.lines.find((l) => l.id === "ac_inv_db")?.qty, 32);
+  scope = applyAcCableDetail(scope, "ac_inv_db", { ...scope.acCables.ac_inv_db, lengthM: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "ac_inv_db")?.qty, 0);
+
+  scope = specifyEarth(scope, "earth_pv", { lengthM: 20 });
+  assert.equal(scope.lines.find((l) => l.id === "earth_pv")?.qty, 20);
+  scope = applyEarthConductorDetail(scope, "earth_pv", { ...scope.earthConductors.earth_pv, lengthM: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "earth_pv")?.qty, 0);
+
+  scope = applyDcCombinerDetail(scope, { ...emptyDcCombiner(), qty: 1, unitPrice: 18000 });
+  assert.equal(scope.lines.find((l) => l.id === "dc_combiner")?.qty, 1);
+  scope = applyDcCombinerDetail(scope, { ...scope.dcCombiner, qty: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "dc_combiner")?.qty, 0);
+
+  scope = applyAcPanelDetail(scope, "ac_solar_db", { ...emptyAcPanel("ac_solar_db"), qty: 1, panelCost: 50000 });
+  assert.equal(scope.lines.find((l) => l.id === "ac_solar_db")?.rate, 50000);
+  scope = applyAcPanelDetail(scope, "ac_solar_db", { ...scope.acPanels.ac_solar_db, panelCost: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "ac_solar_db")?.rate, 0);
+
+  scope = applyCableTrayDetail(scope, { ...emptyCableTray(), lengthM: 30, rate: 1200 });
+  assert.equal(scope.lines.find((l) => l.id === "cm_tray")?.qty, 30);
+  scope = applyCableTrayDetail(scope, { ...scope.cableTray, lengthM: 0 });
+  assert.equal(scope.lines.find((l) => l.id === "cm_tray")?.qty, 0);
+});
+
+check("DC lengths without mm² / voltage / cable type do not suppress generic DC", () => {
+  const cases: Array<[string, Partial<ReturnType<typeof emptyDcCableRun>>]> = [
+    ["mm²", { areaMm2: "" }],
+    ["voltage", { voltageRating: "" }],
+    ["cable type", { cableType: "" }],
+  ];
+  for (const [label, patch] of cases) {
+    let scope = specifyDc(buildPresetScope("commercial_standard"), "dc_pos", patch);
+    scope = specifyDc(scope, "dc_neg", patch);
+    scope = { ...scope, replaceGenericDc: true };
+    const resolved = applyScopeDependencies(scope, ctx());
+    assert.equal(suppressedGenericChargeIds(resolved).has("dc_cable_row"), false, label);
+    const apply = buildCommercialDraftApply({ ...base, projectScope: resolved });
+    assert.equal(apply.boqRows.some((r) => r.id === "dc_cable_row"), true, label);
+    const errors = validateProjectScope(resolved, ctx());
+    assert.equal(errors.some((e) => /Replace standard DC cable/.test(e)), true, label);
+  }
+  let full = specifyDc(buildPresetScope("commercial_standard"), "dc_pos");
+  full = specifyDc(full, "dc_neg");
+  full = { ...full, replaceGenericDc: true };
+  const resolvedFull = applyScopeDependencies(full, ctx());
+  assert.equal(suppressedGenericChargeIds(resolvedFull).has("dc_cable_row"), true);
+  assert.equal(validateProjectScope(resolvedFull, ctx()).some((e) => /Replace standard DC cable/.test(e)), false);
+});
+
+check("AC length without phase / cores / area / construction / voltage is incomplete", () => {
+  const cases: Array<[string, Partial<ReturnType<typeof emptyAcCableRun>>]> = [
+    ["phase", { phase: "" }],
+    ["cores", { cores: "" }],
+    ["area", { areaMm2: "" }],
+    ["construction", { construction: "" }],
+    ["voltage", { voltageRating: "" }],
+  ];
+  for (const [label, patch] of cases) {
+    let scope = specifyAc(buildPresetScope("commercial_standard"), "ac_inv_db", patch);
+    scope = { ...scope, replaceGenericAc: true };
+    const resolved = applyScopeDependencies(scope, ctx());
+    assert.equal(suppressedGenericChargeIds(resolved).has("ac_cable_row"), false, label);
+    assert.equal(validateProjectScope(resolved, ctx()).some((e) => /Replace standard AC cable/.test(e)), true, label);
+  }
+  let full = specifyAc(buildPresetScope("commercial_standard"), "ac_inv_db");
+  full = { ...full, replaceGenericAc: true };
+  const resolvedFull = applyScopeDependencies(full, ctx());
+  assert.equal(suppressedGenericChargeIds(resolvedFull).has("ac_cable_row"), true);
+  assert.equal(validateProjectScope(resolvedFull, ctx()).some((e) => /Replace standard AC cable/.test(e)), false);
+});
+
+check("earth length without conductor type or size is incomplete", () => {
+  let missingType = specifyEarth(buildPresetScope("commercial_standard"), "earth_pv", { conductorType: "" });
+  missingType = specifyEarth(missingType, "earth_inv", { conductorType: "" });
+  missingType = { ...missingType, replaceGenericEarth: true };
+  const resolvedType = applyScopeDependencies(missingType, ctx());
+  assert.equal(suppressedGenericChargeIds(resolvedType).has("earth_wire_row"), false);
+  assert.equal(validateProjectScope(resolvedType, ctx()).some((e) => /Replace standard earthing/.test(e)), true);
+
+  let missingSize = specifyEarth(buildPresetScope("commercial_standard"), "earth_pv", { areaMm2: "", stripSize: "" });
+  missingSize = specifyEarth(missingSize, "earth_inv", { areaMm2: "", stripSize: "" });
+  missingSize = { ...missingSize, replaceGenericEarth: true };
+  const resolvedSize = applyScopeDependencies(missingSize, ctx());
+  assert.equal(suppressedGenericChargeIds(resolvedSize).has("earth_wire_row"), false);
+  assert.equal(validateProjectScope(resolvedSize, ctx()).some((e) => /size/.test(e)), true);
+
+  let full = specifyEarth(buildPresetScope("commercial_standard"), "earth_pv");
+  full = specifyEarth(full, "earth_inv");
+  full = { ...full, replaceGenericEarth: true };
+  const resolvedFull = applyScopeDependencies(full, ctx());
+  assert.equal(suppressedGenericChargeIds(resolvedFull).has("earth_wire_row"), true);
+  assert.equal(validateProjectScope(resolvedFull, ctx()).some((e) => /Replace standard earthing/.test(e)), false);
+});
+
+check("lightning technical quantities sync to BOQ rows and zero length is blocked", () => {
+  let scope = { ...buildPresetScope("commercial_standard"), lightningEnabled: true };
+  scope = applyScopeDependencies(scope, ctx());
+  scope = applyLightningDetail(scope, completeLightning());
+  scope = applyScopeDependencies(scope, ctx());
+  assert.equal(scope.lines.find((l) => l.id === "lp_air")?.qty, 2);
+  assert.equal(scope.lines.find((l) => l.id === "lp_mast")?.qty, 1);
+  assert.equal(scope.lines.find((l) => l.id === "lp_down")?.qty, 18);
+  assert.equal(scope.lines.find((l) => l.id === "lp_test")?.qty, 2);
+  assert.equal(scope.lines.find((l) => l.id === "lp_earth")?.qty, 1);
+  scope = {
+    ...scope,
+    lines: scope.lines.map((l) =>
+      l.id === "lp_air" || l.id === "lp_down" || l.id === "lp_test" || l.id === "lp_earth"
+        ? { ...l, rate: 1000, rateSource: "manual" as const }
+        : l
+    ),
+  };
+  const rows = projectScopeToBoqRows(scope);
+  assert.equal(rows.find((r) => r.id === `${SCOPE_BOQ_ID_PREFIX}lp_air`)?.qty, 2);
+  assert.equal(rows.find((r) => r.id === `${SCOPE_BOQ_ID_PREFIX}lp_down`)?.qty, 18);
+
+  const zeroQty = applyLightningDetail(scope, { ...completeLightning(), airTerminalQty: 0 });
+  assert.equal(validateProjectScope(applyScopeDependencies(zeroQty, ctx()), ctx()).some((e) => /air terminal quantity/i.test(e)), true);
+  const zeroLength = applyLightningDetail(scope, { ...completeLightning(), downConductorLength: 0 });
+  assert.equal(validateProjectScope(applyScopeDependencies(zeroLength, ctx()), ctx()).some((e) => /down conductor length/i.test(e)), true);
+  assert.equal(validateProjectScope(applyScopeDependencies(applyLightningDetail(scope, completeLightning()), ctx()), ctx()).some((e) => /air terminal|down conductor|test joint|earth pit/i.test(e)), false);
+});
+
+check("civil structured quantities feed BOQ and pending design does not fabricate qty", () => {
+  let pending = { ...buildPresetScope("industrial_standard"), rccFoundationRequired: true };
+  pending = applyScopeDependencies(pending, ctx({ structureType: "girder" }));
+  assert.equal(pending.civilFoundation.designStatus, "pending_structural_design");
+  assert.equal(pending.lines.find((l) => l.id === "cv_pads")?.qty, 0);
+  assert.equal(pending.lines.find((l) => l.id === "cv_excavation")?.qty, 0);
+  assert.equal(validateProjectScope(pending, ctx({ structureType: "girder" })).some((e) => /Foundation pad quantity/.test(e)), false);
+
+  let provided = applyCivilFoundation(pending, {
+    ...emptyCivilFoundation(),
+    designStatus: "provided",
+    designNote: "Engineer pack 12-A",
+    foundationPadQty: 6,
+    padLength: "2",
+    padWidth: "2",
+    padDepth: "1.5",
+    excavationQty: 10,
+    pccQty: 4,
+    rccQty: 8,
+    rebarKg: 120,
+    formworkArea: 40,
+    anchorBoltQty: 24,
+  });
+  provided = applyScopeDependencies(provided, ctx({ structureType: "girder" }));
+  assert.equal(provided.lines.find((l) => l.id === "cv_pads")?.qty, 6);
+  assert.equal(provided.lines.find((l) => l.id === "cv_excavation")?.qty, 10);
+  assert.equal(provided.lines.find((l) => l.id === "cv_pcc")?.qty, 4);
+  assert.equal(provided.lines.find((l) => l.id === "cv_rcc")?.qty, 8);
+  assert.equal(provided.lines.find((l) => l.id === "cv_rebar")?.qty, 120);
+  assert.equal(provided.lines.find((l) => l.id === "cv_formwork")?.qty, 40);
+  assert.equal(provided.lines.find((l) => l.id === "cv_anchors")?.qty, 24);
+  provided = {
+    ...provided,
+    lines: provided.lines.map((l) =>
+      l.id === "cv_pads" ? { ...l, rate: 15000, rateSource: "manual" as const } : l
+    ),
+  };
+  assert.equal(projectScopeToBoqRows(provided).find((r) => r.id === `${SCOPE_BOQ_ID_PREFIX}cv_pads`)?.qty, 6);
+
+  let incomplete = applyCivilFoundation(pending, {
+    ...emptyCivilFoundation(),
+    designStatus: "provided",
+    designNote: "missing pads",
+    foundationPadQty: 0,
+  });
+  incomplete = applyScopeDependencies(incomplete, ctx({ structureType: "girder" }));
+  assert.equal(validateProjectScope(incomplete, ctx({ structureType: "girder" })).some((e) => /Foundation pad quantity/.test(e)), true);
 });
 
 console.log(`\nAI project scope tests: ${pass} passed`);

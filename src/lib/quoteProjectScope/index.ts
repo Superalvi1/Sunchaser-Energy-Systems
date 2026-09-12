@@ -11,3 +11,4 @@ export * from "./toBoqRows";
 export * from "./validation";
 export * from "./descriptions";
 export * from "./snapshot";
+export * from "./syncDetails";
