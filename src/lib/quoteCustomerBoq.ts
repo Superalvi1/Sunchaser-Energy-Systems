@@ -130,9 +130,49 @@ function withSequentialCustomerSr(rows: CustomerBoqRow[]): CustomerBoqRow[] {
   });
 }
 
+const SCOPE_SECTION_GROUPS: Record<string, CustomerGroupKey> = {
+  dc_cabling: "dc",
+  cable_management: "dc",
+  dc_protection: "dc",
+  ac_cabling: "ac",
+  ac_protection: "ac",
+  earthing: "earth",
+  earthing_system: "earth",
+  lightning: "earth",
+  hardware: "other_structure",
+  finish: "other_structure",
+  civil: "civil",
+  logistics: "freight",
+  installation: "install",
+  survey: "survey",
+  documentation: "survey",
+  net_metering: "net_metering",
+  battery_accessories: "battery",
+};
+
 function groupKeyFor(row: CustomerBoqRow): CustomerGroupKey | null {
   const id = String(row.id || "");
-  return KNOWN_ITEM_GROUPS[id] || null;
+  const known = KNOWN_ITEM_GROUPS[id];
+  if (known) return known;
+  const kind = String(row.quoteLineKind || "");
+  if (kind.startsWith("project_scope:")) {
+    const section = kind.slice("project_scope:".length);
+    return SCOPE_SECTION_GROUPS[section] || null;
+  }
+  if (id.startsWith("scope_")) {
+    const rest = id.slice("scope_".length);
+    if (rest.startsWith("dc_") || rest.startsWith("cm_")) return "dc";
+    if (rest.startsWith("ac_")) return "ac";
+    if (rest.startsWith("earth_") || rest.startsWith("lp_")) return "earth";
+    if (rest.startsWith("hw_") || rest === "structure_finish") return "other_structure";
+    if (rest.startsWith("cv_")) return "civil";
+    if (rest.startsWith("log_")) return "freight";
+    if (rest.startsWith("ins_")) return "install";
+    if (rest.startsWith("sv_") || rest.startsWith("doc_")) return "survey";
+    if (rest.startsWith("nm_")) return "net_metering";
+    if (rest.startsWith("batt_")) return "battery";
+  }
+  return null;
 }
 
 function includedComponentLine(row: CustomerBoqRow): string {

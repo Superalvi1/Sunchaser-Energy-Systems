@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { RefreshCcw, Store } from "lucide-react";
 import { isSuperAdmin } from "../lib/roles";
+import WebsiteCatalogSyncPanel from "./WebsiteCatalogSyncPanel";
 import {
   fetchMarketplaceAutoImportHealth,
   fetchMarketplaceAutoImportListings,
@@ -270,6 +271,7 @@ export default function MarketplaceAutoImportStaff({ staffUser }: Props) {
           </ul>
         </div>
       )}
+      <WebsiteCatalogSyncPanel staffUser={staffUser} />
     </div>
   );
 }

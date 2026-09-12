@@ -87,6 +87,8 @@ export interface Quote {
   warrantyTerms?: string;
   termsAndConditions?: string;
   paymentTerms?: string;
+  /** Frozen Advanced Project Scope snapshot. Legacy quotes omit this. */
+  projectScopeSnapshot?: import("./lib/quoteProjectScope").ProjectScopeState;
   /** Calendar days the quotation remains valid. Derived from company terms when omitted. */
   validityDays?: number;
   manualOverrides?: Partial<Record<"panel" | "inverter" | "battery" | "structure" | "cables" | "accessories" | "prices", boolean>>;
@@ -209,6 +211,18 @@ export interface Product {
   specifications: Record<string, string>;
   installationRequired: boolean;
   serviceRequired: boolean;
+  /** First-party website catalog source. Optional — never required for legacy rows. */
+  source?: string;
+  sourceUrl?: string;
+  sourceSlug?: string;
+  sourceProductId?: string;
+  lastSyncedAt?: string;
+  sourceActive?: boolean;
+  websiteCategory?: string;
+  currency?: string;
+  listPrice?: number;
+  availability?: string;
+  productType?: "panel" | "inverter" | "battery" | "cable" | "accessory" | "protection" | "structure" | "package";
 }
 
 export interface OrderItem {

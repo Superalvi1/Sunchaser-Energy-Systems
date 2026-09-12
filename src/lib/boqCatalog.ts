@@ -5,6 +5,7 @@ export function isActiveCatalogProduct(product: unknown): product is Record<stri
   const p = product as Record<string, unknown>;
   if (!p.id) return false;
   if (p.deletedAt || p.deleted_at || p.isDeleted || p.is_deleted) return false;
+  if (p.sourceActive === false) return false;
   return true;
 }
 

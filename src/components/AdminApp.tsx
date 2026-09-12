@@ -1722,7 +1722,7 @@ export default function AdminApp({
           />
         )}
         {activeSegment === "products" && (
-          <AdminProductsPanel products={products} onRefreshState={onRefreshState} />
+          <AdminProductsPanel products={products} onRefreshState={onRefreshState} staffUser={staffUser} />
         )}
         {activeSegment === "knowledge" && isKnowledgeMockUiEnabled() && (
           <KnowledgeStaff staffUser={staffUser} />

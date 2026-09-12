@@ -4,6 +4,7 @@ import type { Product } from "../types";
 import { deleteCatalogProduct, updateCatalogProduct } from "../services/api";
 import AppModal from "./ui/AppModal";
 import { useToast } from "../lib/toast";
+import WebsiteCatalogSyncPanel from "./WebsiteCatalogSyncPanel";
 
 const CATEGORY_OPTIONS = [
   "Solar Panels",
@@ -53,9 +54,10 @@ function draftFromProduct(product: Product): Product {
 interface AdminProductsPanelProps {
   products: Product[];
   onRefreshState: () => void | Promise<void>;
+  staffUser?: { username: string; role: string };
 }
 
-export default function AdminProductsPanel({ products, onRefreshState }: AdminProductsPanelProps) {
+export default function AdminProductsPanel({ products, onRefreshState, staffUser }: AdminProductsPanelProps) {
   const toast = useToast();
   const [editing, setEditing] = useState<Product | null>(null);
   const [draft, setDraft] = useState<Product | null>(null);
@@ -126,9 +128,11 @@ export default function AdminProductsPanel({ products, onRefreshState }: AdminPr
         <LayoutGrid className="h-5 w-5 text-amber-400" />
         <div>
           <h3 className="text-sm font-bold text-neutral-100">Product catalog</h3>
-          <p className="text-[11px] text-neutral-500">Sales and invoice items · edit pricing and SKUs here</p>
+          <p className="text-[11px] text-neutral-500">Sales and invoice items · website sync is first-party catalogue source</p>
         </div>
       </div>
+
+      {staffUser && <WebsiteCatalogSyncPanel staffUser={staffUser} onRefreshState={onRefreshState} />}
 
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
