@@ -270,7 +270,7 @@ export function TextField({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+        className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
       />
     </div>
   );
@@ -290,10 +290,11 @@ export function NumberField({
       <ScopeFieldLabel>{label}</ScopeFieldLabel>
       <input
         type="number"
+        inputMode="decimal"
         min={0}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+        className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
       />
     </div>
   );
@@ -316,7 +317,7 @@ export function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+        className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
       >
         {options.map((opt) => (
           <option key={opt.value || "blank"} value={opt.value}>

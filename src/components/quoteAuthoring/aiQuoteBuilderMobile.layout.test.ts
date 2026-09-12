@@ -59,10 +59,8 @@ await test("no mobile-only fork of the project scope engine", () => {
 });
 
 await test("the modal still applies the shared engine's payload verbatim", () => {
-  // Pricing, BOQ rows and the scope snapshot all come from the shared builder.
   assert.ok(modal.includes("buildCommercialDraftApply(commercialConfig)"));
   assert.ok(modal.includes("onApplyDraft(applyPayload)"));
-  // No mobile-specific pricing arithmetic was introduced.
   assert.equal(/mobileRate|phoneRate|mobilePrice|MOBILE_RATE/.test(modal), false);
 });
 
@@ -76,7 +74,6 @@ await test("Apply draft does not save, message, or sync the catalog", () => {
   const handler = modal.slice(modal.indexOf("const handleApply"), modal.indexOf("const structureSummary"));
   assert.ok(handler.includes("if (validationErrors.length) return;"));
   assert.ok(handler.includes("onApplyDraft(applyPayload)"));
-  // Draft only: no persistence, no customer contact, no catalog job.
   for (const forbidden of ["saveQuote", "fetch(", "whatsapp", "WhatsApp", "catalogSync", "syncNow"]) {
     assert.equal(handler.includes(forbidden), false, `handleApply must not reference ${forbidden}`);
   }
@@ -89,19 +86,26 @@ await test("the draft-only wording stays visible to the salesperson", () => {
 
 /* ── 3. mobile shell ──────────────────────────────────────────────── */
 
+await test("Android hardware Back closes the top AppModal without applying a draft", () => {
+  const hook = readFileSync(join(srcRoot, "lib/useHistoryBackClose.ts"), "utf8");
+  assert.ok(appModal.includes("useHistoryBackClose(open, onClose)"));
+  assert.ok(hook.includes("history.pushState"));
+  assert.ok(hook.includes('addEventListener("popstate"'));
+  assert.ok(hook.includes("onCloseRef.current()"));
+  assert.equal(/onApplyDraft|saveQuote|whatsapp/i.test(hook), false);
+  assert.equal(appModal.includes("@capacitor/app"), false);
+});
+
 await test("AppModal full-screen mode is opt-in so other modals are untouched", () => {
   assert.ok(appModal.includes("mobileFullScreen?: boolean"));
   assert.ok(appModal.includes("mobileFullScreen = false"));
-  // Full screen below md, centred dialog from md up.
   assert.ok(appModal.includes('mobileFullScreen ? "p-0 md:p-4" : "p-4"'));
   assert.ok(appModal.includes('h-full max-h-none md:h-auto md:max-h-[90vh]'));
 });
 
 await test("the AI Quote Builder opts into the full-screen mobile sheet", () => {
   assert.ok(modal.includes("<AppModal open={open} onClose={onClose} mobileFullScreen"));
-  // Desktop keeps its wide centred panel.
   assert.ok(modal.includes('panelClassName="max-w-7xl"'));
-  // Column shell on phones; the original block layout from md up.
   assert.ok(modal.includes("flex h-full flex-col"));
   assert.ok(modal.includes("md:h-auto md:block"));
 });
@@ -110,7 +114,6 @@ await test("mobile top bar has a Back affordance and a title", () => {
   assert.ok(modal.includes('aria-label="Back"'));
   assert.ok(modal.includes("md:hidden"));
   assert.ok(modal.includes("AI Quote Builder</h2>"));
-  // Respects the status bar / notch.
   assert.ok(modal.includes("safe-area-top"));
 });
 
@@ -123,23 +126,18 @@ await test("sticky action area shows total, error count and Apply above the keyb
   assert.ok(modal.includes("Estimated total"));
   assert.ok(modal.includes("{validationErrors.length} to fix"));
   assert.ok(modal.includes("Apply draft to BOQ"));
-  // Bottom inset keeps the button clear of the Android nav bar / home indicator.
   assert.ok(modal.includes("pb-[max(0.75rem,env(safe-area-inset-bottom))]"));
-  // Apply stays gated on validation.
   assert.ok(modal.includes("disabled={validationErrors.length > 0}"));
 });
 
 /* ── 4. no phone-hostile layout ───────────────────────────────────── */
 
 await test("no multi-column grid is left unprefixed in the builder", () => {
-  // An unprefixed `grid-cols-3` applies at 390px too. Every multi-column grid
-  // must either start at 1 column or be explicitly narrowed for phones.
   const classNames = modal.match(/className="[^"]*grid-cols-[^"]*"/g) || [];
   assert.ok(classNames.length > 0, "expected grid classes to exist");
   for (const cls of classNames) {
     const multiCol = /(?:^|["\s])grid-cols-([2-9])/.exec(cls);
     if (!multiCol) continue;
-    // A multi-column base is only acceptable at 2 columns (compact numeric pairs).
     assert.ok(
       multiCol[1] === "2",
       `phone layout starts at ${multiCol[1]} columns: ${cls}`
@@ -154,6 +152,37 @@ await test("number fields request a numeric keyboard", () => {
   assert.equal(numericKeyboards, numberFields);
 });
 
+await test("shared NumberField is the Advanced Scope numeric control", () => {
+  const fn = lineTable.slice(lineTable.indexOf("export function NumberField"));
+  assert.ok(fn.includes('type="number"'));
+  assert.ok(fn.includes('inputMode="decimal"'));
+  assert.ok(fn.includes("min={0}"));
+  assert.ok(fn.includes("min-h-[44px]"));
+  assert.ok(fn.includes("md:min-h-0"));
+  assert.equal(fn.includes("onChange(Number(e.target.value))"), true);
+});
+
+await test("shared TextField and SelectField keep 44px phone targets without bloating desktop", () => {
+  const text = lineTable.slice(lineTable.indexOf("export function TextField"));
+  const select = lineTable.slice(lineTable.indexOf("export function SelectField"));
+  assert.ok(text.includes("min-h-[44px]"));
+  assert.ok(text.includes("md:min-h-0"));
+  assert.ok(select.includes("min-h-[44px]"));
+  assert.ok(select.includes("md:min-h-0"));
+});
+
+await test("advanced technical editors reuse the shared NumberField instead of a mobile fork", () => {
+  const technical = readFileSync(join(here, "ScopeTechnicalEditors.tsx"), "utf8");
+  const structure = readFileSync(join(here, "StructureScopeEditor.tsx"), "utf8");
+  const civil = readFileSync(join(here, "CivilScopeEditor.tsx"), "utf8");
+  assert.ok(technical.includes('from "./ScopeLineTable"'));
+  assert.ok(technical.includes("NumberField"));
+  assert.ok(structure.includes("NumberField"));
+  assert.ok(civil.includes("ScopeLineTable") || civil.includes("NumberField") || civil.includes("TextField"));
+  assert.equal(/MobileNumberField|PhoneNumberField|NativeNumberField/.test(technical + structure + lineTable), false);
+  assert.equal(/quoteProjectScope\/mobile/.test(technical), false);
+});
+
 await test("chips and pickers meet the 44px touch target on phones", () => {
   assert.ok(modal.includes("min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0"));
   assert.ok(scopeSection.includes("min-h-[44px]"));
@@ -165,7 +194,6 @@ await test("chips and pickers meet the 44px touch target on phones", () => {
 await test("scope lines render as cards on phones and as the table from md up", () => {
   assert.ok(lineTable.includes('<ul className="space-y-2 md:hidden">'));
   assert.ok(lineTable.includes('<div className="hidden overflow-x-auto md:block">'));
-  // The desktop table is unchanged, including its minimum width.
   assert.ok(lineTable.includes('className="w-full min-w-[640px] text-left text-[11px]"'));
 });
 
@@ -174,11 +202,9 @@ await test("the mobile card keeps every field the table shows", () => {
   for (const field of ["Include", "Specification", "Qty", "Rate", "Total", "scopeStatus"]) {
     assert.ok(card.includes(field), `mobile card dropped ${field}`);
   }
-  // Same mutation path as the table row — no second source of truth.
   assert.ok(card.includes("patchLine(line, { include:"));
   assert.ok(card.includes('rateSource: "manual"'));
   assert.ok(card.includes("lineAmount(line)"));
-  // Pending / excluded lines still are not priced.
   assert.ok(card.includes('line.inclusionState === "included" ? money(total) : "—"'));
   assert.ok(card.includes("no invented price"));
 });
@@ -197,7 +223,6 @@ await test("the scope matrix stays a stacked Included / Excluded / Pending view"
 });
 
 await test("advanced fields were not removed to make the phone layout smaller", () => {
-  // Spot-check the engineering fields PR #43 introduced.
   const structure = readFileSync(join(here, "StructureScopeEditor.tsx"), "utf8");
   const electrical = readFileSync(join(here, "ElectricalScopeEditor.tsx"), "utf8");
   for (const field of ["Girder type", "Steel grade", "Base plate", "Wind-load design"]) {
@@ -215,18 +240,15 @@ await test("advanced fields were not removed to make the phone layout smaller", 
 /* ── 6. desktop is untouched ──────────────────────────────────────── */
 
 await test("no mobile style leaks above the md breakpoint", () => {
-  // Every mobile-only affordance is either md:hidden or reset at md.
   assert.ok(modal.includes("md:min-h-0"));
   assert.ok(modal.includes("md:px-0"));
   assert.ok(modal.includes("md:rounded-3xl"));
-  // The desktop two-column layout with the live summary sidebar survives.
   assert.ok(modal.includes("xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]"));
 });
 
 await test("the picker closes on an outside tap instead of floating over fields", () => {
   assert.ok(picker.includes('document.addEventListener("pointerdown", onPointerDown)'));
   assert.ok(picker.includes('document.removeEventListener("pointerdown", onPointerDown)'));
-  // Catalog identity is still what gets selected — no local product invention.
   assert.ok(picker.includes("onSelect(product)"));
 });
 
