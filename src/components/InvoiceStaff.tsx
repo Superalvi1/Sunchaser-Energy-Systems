@@ -30,6 +30,7 @@ import { decodeInvoiceMeta, stripInvoiceMeta, type InvoiceProjectInfo } from "..
 import WhatsAppActionButton from "./WhatsAppActionButton";
 import AppLogo from "./AppLogo";
 import DeliveryChallanPanel from "./DeliveryChallanPanel";
+import VyaparMatchedImporter from "./VyaparMatchedImporter";
 
 interface InvoiceStaffProps {
   staffUser: User;
@@ -634,13 +635,16 @@ export default function InvoiceStaff({
           <AppLogo className="h-10 w-auto max-w-[140px]" />
           <span className="text-xs font-bold text-slate-700 hidden sm:inline">Sunchaser Energy Systems</span>
         </div>
-        <button
-          type="button"
-          onClick={newInvoice}
-          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white"
-        >
-          + New
-        </button>
+        <div className="flex items-center gap-2">
+          {superAdmin && <VyaparMatchedImporter staffUser={staffUser} onImported={load} />}
+          <button
+            type="button"
+            onClick={newInvoice}
+            className="text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white"
+          >
+            + New
+          </button>
+        </div>
       </div>
 
       {showList && panelTab === "invoices" && (
