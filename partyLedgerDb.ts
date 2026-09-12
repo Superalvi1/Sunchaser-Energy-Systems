@@ -16,7 +16,7 @@ import {
   resolveInvoiceBalanceDue,
   resolveInvoiceReceivedAmount,
 } from "./src/lib/invoicePayments.ts";
-import { loadInvoiceRecordById } from "./invoiceDb.js";
+import { hydrateInvoiceRows } from "./invoiceDb.js";
 import type { RequestActor } from "./server/middleware/actor.ts";
 import {
   FinanceOwnershipError,
@@ -66,10 +66,7 @@ async function loadVisibleInvoicesForStaff(
   const actor = toRequestActor(userId, username, role);
   try {
     const visibleRows = await FinanceOwnershipResolver.getVisibleInvoiceRowsForActor(actor, localDb);
-    const invoices: InvoiceRecord[] = [];
-    for (const row of visibleRows) {
-      invoices.push(await loadInvoiceRecordById(String(row.id), localDb));
-    }
+    const invoices = await hydrateInvoiceRows(visibleRows, localDb);
     return { actor, invoices, visibleRows };
   } catch (err) {
     mapFinanceOwnershipError(err);
@@ -89,6 +86,7 @@ export type PartyLedgerArchiveRecord = {
 
 export type PartyLedgerListOptions = {
   visibility?: "active" | "archived" | "all";
+  preloadedInvoices?: InvoiceRecord[];
 };
 
 function mapArchiveRow(row: any): PartyLedgerArchiveRecord {
@@ -202,9 +200,12 @@ async function buildPartySummaries(
   userId: string,
   username: string,
   role: string,
-  localDb?: Database
+  localDb?: Database,
+  preloadedInvoices?: InvoiceRecord[]
 ): Promise<PartyLedgerSummary[]> {
-  const { invoices } = await loadVisibleInvoicesForStaff(userId, username, role, localDb);
+  const invoices = preloadedInvoices ?? (
+    await loadVisibleInvoicesForStaff(userId, username, role, localDb)
+  ).invoices;
   const map = new Map<string, PartyLedgerSummary>();
 
   for (const inv of invoices) {
@@ -273,10 +274,13 @@ export async function listPartyLedgers(
   const actor = await assertPartyLedgerStaffAccess(userId, username, role, localDb);
 
   const visibility = options?.visibility ?? "active";
+  const needsArchivedSnapshots = visibility === "archived" || visibility === "all";
   const [parties, archiveMap, allInvoiceRows] = await Promise.all([
-    buildPartySummaries(userId, username, role, localDb),
+    buildPartySummaries(userId, username, role, localDb, options?.preloadedInvoices),
     loadArchiveMap(localDb),
-    FinanceOwnershipResolver.loadAllInvoiceRows(localDb),
+    needsArchivedSnapshots
+      ? FinanceOwnershipResolver.loadAllInvoiceRows(localDb)
+      : Promise.resolve([] as Record<string, unknown>[]),
   ]);
 
   const enriched = applyArchiveMeta(parties, archiveMap);
