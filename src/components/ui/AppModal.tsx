@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useHistoryBackClose } from "../../lib/useHistoryBackClose";
 
 interface AppModalProps {
   open: boolean;
@@ -25,6 +26,8 @@ export default function AppModal({
   closeOnBackdrop = true,
   mobileFullScreen = false,
 }: AppModalProps) {
+  useHistoryBackClose(open, onClose);
+
   useEffect(() => {
     if (!open) return;
 
@@ -47,7 +50,8 @@ export default function AppModal({
   return createPortal(
     <div
       data-app-modal-overlay
-      className={`fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden ${mobileFullScreen ? "p-0 md:p-4" : "p-4"}`}
+      className={`fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden ${
+mobileFullScreen ? "p-0 md:p-4" : "p-4"}`}
       style={{
         position: "fixed",
         top: 0,
@@ -67,7 +71,8 @@ export default function AppModal({
         onClick={closeOnBackdrop ? onClose : undefined}
       />
       <div
-        className={`relative z-[1] w-full overflow-y-auto ${mobileFullScreen ? "h-full max-h-none md:h-auto md:max-h-[90vh]" : "max-h-[90vh]"} ${panelClassName}`}
+        className={`relative z-[1] w-full overflow-y-auto ${
+mobileFullScreen ? "h-full max-h-none md:h-auto md:max-h-[90vh]" : "max-h-[90vh]"} ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
