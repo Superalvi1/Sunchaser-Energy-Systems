@@ -3923,7 +3923,7 @@ app.get("/api/admin/invoices/contracted-ready", async (req, res) => {
   try {
     loadDb();
     const leads = await getLeadsForInvoiceOps();
-    const rows = await listContractedLeadsReadyForInvoice(staff.id, staff.username, staff.role, leads, db);
+    const rows = await listContractedLeadsReadyForInvoice(staff, leads, db);
     return res.json({ leads: rows });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
