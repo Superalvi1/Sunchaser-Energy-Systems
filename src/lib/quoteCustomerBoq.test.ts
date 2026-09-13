@@ -348,4 +348,33 @@ check("standard 3-page HTML still has Print only — no unauthenticated Download
   assert.match(rendered.html, /sunchaserPrintDeck/);
 });
 
+check("customer BOQ preserves installation amount from watts × rate", () => {
+  const installRow = {
+    id: "install_service_row",
+    type: "item",
+    name: "Installation & Commissioning",
+    unit: "W",
+    qty: 10320,
+    rate: 4,
+    total: 41280,
+  };
+  const rows = [
+    { id: "panel_row", type: "item", name: "Panel", unit: "Pcs", qty: 16, rate: 1, total: 16 },
+    installRow,
+  ];
+  const resolved = resolveCustomerFacingBoq(rows as any);
+  assert.equal(customerBoqTotalsPreserved(rows as any, resolved.rows), true);
+  const install = resolved.rows.find((r) => r.id === "install_service_row" || /Installation/.test(String(r.name)));
+  assert.ok(install);
+  assert.equal(Number(install?.total), 41280);
+  const rendered = compileThreePageQuotationHtml(
+    quoteFromRows("q-install", "Install Client", rows, { grandTotal: 41300 }),
+    lead,
+    state
+  );
+  assert.match(rendered.html, /Installation/);
+  assert.match(rendered.html, /Commissioning/);
+  assert.match(rendered.html, /41,280/);
+});
+
 console.log(`\ncustomer BOQ consolidation tests: ${pass} passed`);

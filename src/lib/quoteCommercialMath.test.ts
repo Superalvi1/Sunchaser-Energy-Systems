@@ -6,6 +6,7 @@ import {
   calculateInstallationTotal,
   calculatePanelTotal,
   calculatePanelUnitPrice,
+  installationChargesFromBoqRow,
   nonNegativeFinite,
   nonNegativeInteger,
   positiveFinite,
@@ -30,10 +31,31 @@ check("owner commercial formulas use actual array watts", () => {
   assert.equal(calculatePanelUnitPrice(panelWattage, panelRatePerWatt), 645 * 42.5);
   assert.equal(calculatePanelTotal(panelWattage, panelQuantity, panelRatePerWatt), 645 * 16 * 42.5);
   assert.equal(calculateInstallationTotal(panelWattage, panelQuantity, installationRatePerWatt), 645 * 16 * 4);
+  assert.equal(calculateInstallationTotal(645, 16, 4), 41280);
+  assert.equal(calculateInstallationTotal(585, 10, 4), 23400);
   assert.equal(
     calculateElevatedStructureTotal(panelWattage, panelQuantity, elevatedStructureRatePerWatt),
     645 * 16 * 16
   );
+});
+
+check("installation recalculates when qty, wattage, or PKR/W change", () => {
+  assert.equal(calculateInstallationTotal(645, 16, 4), 41280);
+  assert.equal(calculateInstallationTotal(645, 10, 4), 25800);
+  assert.equal(calculateInstallationTotal(585, 16, 4), 37440);
+  assert.equal(calculateInstallationTotal(645, 16, 5), 51600);
+});
+
+check("installationChargesFromBoqRow supports watts and legacy Job rows", () => {
+  assert.equal(
+    installationChargesFromBoqRow({ qty: 10320, unit: "W", rate: 4, total: 41280 }),
+    41280
+  );
+  assert.equal(
+    installationChargesFromBoqRow({ qty: 1, unit: "Job", rate: 41280, total: 41280 }),
+    41280
+  );
+  assert.equal(installationChargesFromBoqRow({ qty: 10320, unit: "W", rate: 4 }), 41280);
 });
 
 check("website implied PKR/W is catalogue price / wattage", () => {

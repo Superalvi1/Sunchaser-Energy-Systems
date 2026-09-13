@@ -19,6 +19,7 @@
     "test:autosizer": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/autoSizer/autoSizer.test.ts",
     "test:website-catalog": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/websiteCatalog/websiteCatalog.test.ts",
     "test:quote-commercial": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/quoteCommercialMath.test.ts",
+    "test:quote-terms": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/quoteTermsSnapshot.test.ts",
     "test:ai-quote-draft": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/aiQuoteCommercialDraft.test.ts",
     "test:ai-project-scope": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/quoteProjectScope.test.ts",
     "test:public-lead-gateway": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts",
