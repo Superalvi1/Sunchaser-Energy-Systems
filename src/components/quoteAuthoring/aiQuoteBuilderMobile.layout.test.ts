@@ -286,6 +286,40 @@ await test("mobile presentation adds no browser storage for quote data", () => {
   }
 });
 
+/* ── 7. installation section from main stays mobile-friendly ──────── */
+
+await test("Installation & Commissioning is a dedicated visible section", () => {
+  assert.ok(modal.includes('data-testid="installation-commissioning"'));
+  assert.ok(modal.includes("Installation & Commissioning"));
+  assert.equal(modal.includes("Commercial rates"), false);
+  assert.equal(modal.includes("Installation PKR/W (default 4)"), false);
+  for (const label of ["Installation Rate", "Panel Quantity", "Panel Wattage", "Actual Solar Array", "Installation Total"]) {
+    assert.ok(modal.includes(label), `missing installation label: ${label}`);
+  }
+});
+
+await test("installation rate uses a numeric keyboard on a 1-column phone grid", () => {
+  const section = modal.slice(modal.indexOf('data-testid="installation-commissioning"'));
+  const block = section.slice(0, section.indexOf("</section>"));
+  assert.ok(block.includes('grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5'));
+  assert.ok(block.includes('inputMode="decimal"'));
+  assert.ok(block.includes("min-h-[44px]"));
+  assert.ok(block.includes("setInstallationRatePerWatt"));
+  assert.ok(block.includes("money(installTotal)"));
+  assert.ok(block.includes("money(arrayWatts)"));
+});
+
+await test("mobile does not fork Terms or PDF — shared snapshot path only", () => {
+  assert.equal(/termsSnapshot|resolveQuoteTerms|compileThreePageQuotationHtml/.test(modal), false);
+  const sales = readFileSync(join(srcRoot, "components/SalesTeamApp.tsx"), "utf8");
+  const terms = readFileSync(join(srcRoot, "lib/quoteTermsSnapshot.ts"), "utf8");
+  const render = readFileSync(join(srcRoot, "lib/quoteThreePageRender.ts"), "utf8");
+  assert.ok(sales.includes("buildSavedQuoteTermsSnapshot"));
+  assert.ok(sales.includes("selectedTemplateId"));
+  assert.ok(terms.includes("explicitQuoteTemplateId"));
+  assert.ok(render.includes("resolveQuoteTerms("));
+});
+
 if (failed > 0) {
   console.error(`\n${failed} AI quote builder mobile test(s) failed.`);
   process.exit(1);
