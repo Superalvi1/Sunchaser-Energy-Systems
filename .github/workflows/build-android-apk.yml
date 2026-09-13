@@ -57,22 +57,46 @@ jobs:
           sed -i -E 's/versionName[[:space:]]+"[^"]+"/versionName "1.0.7"/' android/app/build.gradle
           grep -E 'applicationId|versionCode|versionName' android/app/build.gradle
 
-      - name: Build debug APK
+      - name: Show Gradle environment
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew --version
+
+      - name: Build debug APK
+        id: gradle_build
+        continue-on-error: true
+        working-directory: android
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle-build.log
+
+      - name: Upload Gradle diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-gradle-build-log
+          path: gradle-build.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Verify APK exists
+        if: steps.gradle_build.outcome == 'success'
         shell: bash
         run: |
           test -f android/app/build/outputs/apk/debug/app-debug.apk
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK artifact
+        if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Sunchaser-CRM-1.0.7-build10-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Fail job if Gradle failed
+        if: steps.gradle_build.outcome == 'failure'
+        run: exit 1
