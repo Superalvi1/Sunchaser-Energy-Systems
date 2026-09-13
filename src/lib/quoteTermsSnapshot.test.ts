@@ -10,6 +10,7 @@ import {
   paginateHtmlByBudget,
   resolveQuoteTerms,
   resolveQuoteTermsClauses,
+  resolveSelectedTemplateId,
   shouldRenderExtraCommercialCard,
   TERMS_PAGE_CHAR_BUDGET,
 } from "./quoteTermsSnapshot.ts";
@@ -185,6 +186,89 @@ check("selected template mapping uses that template's pages only", () => {
   const other = resolveQuoteTerms({ templateId: "tmpl-2" }, officialTemplateState());
   assert.match(other.html, /OTHER TEMPLATE ONLY/);
   assert.doesNotMatch(other.html, /seven \(7\) working days/);
+});
+
+check("explicit template wins over substantial leftover quote terms", () => {
+  const resolved = resolveQuoteTerms(
+    {
+      templateId: "tmpl-1",
+      termsAndConditions: "LEGACY SUBSTANTIAL QUOTE TERMS that must not override the selected template.",
+    },
+    officialTemplateState()
+  );
+  assert.equal(resolved.source, "template");
+  assert.match(resolved.html, /seven \(7\) working days/);
+  assert.doesNotMatch(resolved.html, /LEGACY SUBSTANTIAL QUOTE TERMS/);
+  const rendered = compileThreePageQuotationHtml(
+    {
+      id: "q-tmpl-vs-quote",
+      clientName: "Template Wins Client",
+      templateId: "tmpl-1",
+      termsAndConditions: "LEGACY SUBSTANTIAL QUOTE TERMS that must not override the selected template.",
+      boqItems: boq,
+    },
+    lead,
+    officialTemplateState()
+  );
+  assert.match(rendered.html, /seven \(7\) working days/);
+  assert.doesNotMatch(rendered.html, /LEGACY SUBSTANTIAL QUOTE TERMS/);
+  assert.match(rendered.html, /data-sunchaser-terms-source="template"/);
+});
+
+check("legacy quote without templateId does not inherit Official template", () => {
+  assert.equal(resolveSelectedTemplateId({}, officialTemplateState()), "");
+  assert.equal(extractTemplateTermsPages(officialTemplateState(), "").length, 0);
+  const own = resolveQuoteTerms(
+    { termsAndConditions: "THIS QUOTE'S OWN LEGACY TERMS" },
+    officialTemplateState()
+  );
+  assert.equal(own.source, "quote");
+  assert.match(own.html, /THIS QUOTE'S OWN LEGACY TERMS/);
+  assert.doesNotMatch(own.html, /seven \(7\) working days/);
+  const rendered = compileThreePageQuotationHtml(
+    {
+      id: "q-legacy-own",
+      clientName: "Legacy Own Client",
+      termsAndConditions: "THIS QUOTE'S OWN LEGACY TERMS",
+      boqItems: boq,
+    },
+    lead,
+    officialTemplateState()
+  );
+  assert.match(rendered.html, /THIS QUOTE'S OWN LEGACY TERMS/);
+  assert.doesNotMatch(rendered.html, /seven \(7\) working days/);
+  assert.match(rendered.html, /data-sunchaser-terms-source="quote"/);
+});
+
+check("legacy quote without templateId uses company terms, not Official template", () => {
+  const resolved = resolveQuoteTerms({}, officialTemplateState());
+  assert.equal(resolved.source, "company");
+  assert.match(resolved.html, /Quotation validity: 3 days from date of issuance/);
+  assert.doesNotMatch(resolved.html, /seven \(7\) working days/);
+  const rendered = compileThreePageQuotationHtml(
+    { id: "q-legacy-company", clientName: "Legacy Company Client", boqItems: boq },
+    lead,
+    officialTemplateState()
+  );
+  assert.match(rendered.html, /Quotation validity: 3 days from date of issuance/);
+  assert.doesNotMatch(rendered.html, /seven \(7\) working days/);
+  assert.match(rendered.html, /data-sunchaser-terms-source="company"/);
+});
+
+check("new current quote with explicit templateId uses template terms", () => {
+  const snapshot = buildSavedQuoteTermsSnapshot({
+    selectedTemplateId: "tmpl-1",
+    quoteDraft: {
+      templateId: "tmpl-1",
+      termsAndConditions: "Quoted prices are valid for 3 days.",
+    },
+    activeState: officialTemplateState(),
+  });
+  assert.equal(snapshot.source, "template");
+  assert.equal(snapshot.templateId, "tmpl-1");
+  assert.match(snapshot.html, /seven \(7\) working days/);
+  const resolved = resolveQuoteTerms({ templateId: "tmpl-1" }, officialTemplateState());
+  assert.equal(resolved.source, "template");
 });
 
 check("rich heading / numbering content survives rendering safely", () => {
@@ -374,6 +458,8 @@ check("Save Customer Quote and PDF renderer share the snapshot path", () => {
   assert.match(sales, /buildSavedQuoteTermsSnapshot/);
   assert.match(sales, /termsSnapshot/);
   assert.match(sales, /installationChargesFromBoqRow/);
+  assert.match(sales, /templateId: selectedTemplateId/);
+  assert.match(sales, /selectedTemplateId,/);
   assert.match(db, /termsSnapshot: quote\.termsSnapshot/);
   assert.match(render, /resolveQuoteTerms\(/);
   assert.match(render, /paginateResolvedTerms|paginateClauses/);

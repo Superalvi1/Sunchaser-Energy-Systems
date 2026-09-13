@@ -3,12 +3,16 @@
  *
  * Priority:
  *   1. Saved quotation terms snapshot (historical freeze)
- *   2. Selected quote template terms1/terms2 (and authoring "terms" pages)
- *   3. Company saved terms
- *   4. Legacy fallback — only if none of the above exist
+ *   2. Explicitly selected/stored template terms pages (templateId only)
+ *   3. Substantial legacy quote.termsAndConditions — only if no selected template terms
+ *   4. Company saved terms
+ *   5. Legacy fallback — only if none of the above exist
  *
  * Weak one-liner defaults such as "Quoted prices are valid for 3 days." are
  * NOT treated as a real snapshot; they caused Page 3 to skip template terms.
+ *
+ * Historical quotes without an explicit templateId MUST NOT inherit today's
+ * Official / active / first template.
  */
 
 import { sanitizeQuoteEditorHtml } from "./quoteAuthoring";
@@ -226,13 +230,13 @@ function isTermsPage(page: any): boolean {
   return /terms\s*((&|&|and)\s*)?conditions/i.test(title);
 }
 
-export function resolveSelectedTemplateId(quoteObj: any, activeState?: any): string {
-  const direct = String(quoteObj?.templateId || quoteObj?.template_id || "").trim();
-  if (direct) return direct;
-  const templates = Array.isArray(activeState?.quoteTemplates) ? activeState.quoteTemplates : [];
-  const official = templates.find((t: any) => /official/i.test(String(t?.name || "")));
-  const active = templates.find((t: any) => t && t.is_active !== false && t.isActive !== false);
-  return String(official?.id || active?.id || templates[0]?.id || "tmpl-1");
+export function explicitQuoteTemplateId(quoteObj: any): string {
+  return String(quoteObj?.templateId || quoteObj?.template_id || "").trim();
+}
+
+/** Only an explicit stored/selected template id. Never invent Official/active/tmpl-1. */
+export function resolveSelectedTemplateId(quoteObj: any, _activeState?: any): string {
+  return explicitQuoteTemplateId(quoteObj);
 }
 
 export function resolveTemplateName(templateId: string, activeState?: any): string {
@@ -262,12 +266,12 @@ function pageBody(page: any): { html: string; text: string } {
 }
 
 export function extractTemplateTermsPages(activeState: any, templateId?: string): QuoteTermsPageSnapshot[] {
-  const pages = Array.isArray(activeState?.quoteTemplatePages) ? activeState.quoteTemplatePages : [];
   const tid = String(templateId || "").trim();
+  if (!tid) return [];
+  const pages = Array.isArray(activeState?.quoteTemplatePages) ? activeState.quoteTemplatePages : [];
   return pages
     .filter((p: any) => {
       if (!isTermsPage(p)) return false;
-      if (!tid) return true;
       return String(p.template_id || p.templateId || "") === tid;
     })
     .sort(
@@ -325,12 +329,30 @@ function resolvedFromSnapshot(snapshot: QuoteTermsSnapshot, source: QuoteTermsSo
 }
 
 export function resolveQuoteTerms(quoteObj: any, activeState?: any): ResolvedQuoteTerms {
-  const templateId = resolveSelectedTemplateId(quoteObj, activeState);
-  const templateName = resolveTemplateName(templateId, activeState);
+  const templateId = explicitQuoteTemplateId(quoteObj);
+  const templateName = templateId ? resolveTemplateName(templateId, activeState) : "";
 
   const saved = readTermsSnapshot(quoteObj?.termsSnapshot || quoteObj?.customerTermsSnapshot);
   if (saved && hasSnapshotContent(saved)) {
     return resolvedFromSnapshot(saved, "snapshot");
+  }
+
+  const templatePages = templateId ? extractTemplateTermsPages(activeState, templateId) : [];
+  if (templatePages.length) {
+    const html = templatePages.map((p) => p.contentHtml).join("");
+    const clauses = templatePages.flatMap((p) =>
+      p.contentHtml && htmlToPlainText(p.contentHtml)
+        ? htmlToClauses(p.contentHtml)
+        : p.contentText
+          ? clausesFromUnknown(p.contentText)
+          : []
+    );
+    if (htmlToPlainText(html) || clauses.length) {
+      return resolvedFromSnapshot(
+        snapshotFromParts("template", templateId, templateName, templatePages, html, clauses),
+        "template"
+      );
+    }
   }
 
   const rawQuoteTerms = quoteObj?.termsAndConditions ?? quoteObj?.terms_and_conditions;
@@ -350,24 +372,6 @@ export function resolveQuoteTerms(quoteObj: any, activeState?: any): ResolvedQuo
       snapshotFromParts("quote", templateId, templateName, pages, html, fromQuote),
       "quote"
     );
-  }
-
-  const templatePages = extractTemplateTermsPages(activeState, templateId);
-  if (templatePages.length) {
-    const html = templatePages.map((p) => p.contentHtml).join("");
-    const clauses = templatePages.flatMap((p) =>
-      p.contentHtml && htmlToPlainText(p.contentHtml)
-        ? htmlToClauses(p.contentHtml)
-        : p.contentText
-          ? clausesFromUnknown(p.contentText)
-          : []
-    );
-    if (htmlToPlainText(html) || clauses.length) {
-      return resolvedFromSnapshot(
-        snapshotFromParts("template", templateId, templateName, templatePages, html, clauses),
-        "template"
-      );
-    }
   }
 
   const fromCompany = companyClauses(activeState);
@@ -428,7 +432,7 @@ export function buildSavedQuoteTermsSnapshot(args: {
       ...(args.quoteDraft || {}),
       termsSnapshot: undefined,
       customerTermsSnapshot: undefined,
-      templateId: templateId || resolveSelectedTemplateId(args.quoteDraft, args.activeState),
+      templateId,
     },
     args.activeState
   );
