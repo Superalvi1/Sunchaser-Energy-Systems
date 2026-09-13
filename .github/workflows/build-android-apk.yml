@@ -64,14 +64,14 @@ jobs:
           java -version
           ./gradlew --version
 
-      - name: Build debug APK
+      - name: Build debug and release APKs
         id: gradle_build
         continue-on-error: true
         working-directory: android
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle-build.log
+          ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace 2>&1 | tee ../gradle-build.log
 
       - name: Upload Gradle diagnostic log
         if: always()
@@ -82,19 +82,30 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Verify APK exists
+      - name: Verify APKs exist
         if: steps.gradle_build.outcome == 'success'
         shell: bash
         run: |
           test -f android/app/build/outputs/apk/debug/app-debug.apk
+          test -f android/app/build/outputs/apk/release/app-release.apk
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh android/app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload APK artifact
+      - name: Upload debug APK artifact
         if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Sunchaser-CRM-1.0.7-build10-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload release APK artifact
+        if: steps.gradle_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sunchaser-CRM-1.0.7-build10-release
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
