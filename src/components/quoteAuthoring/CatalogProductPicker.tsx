@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Product } from "../../types";
 import { WEBSITE_CATALOG_SOURCE } from "../../lib/websiteCatalog/allowlist";
+import { useOverlayBackClose } from "../../lib/useOverlayBackClose";
 
 interface CatalogProductPickerProps {
   products: Product[];
@@ -36,14 +37,20 @@ export default function CatalogProductPicker({
   const rootRef = useRef<HTMLDivElement>(null);
   const selected = products.find((p) => p.id === valueId) || null;
 
+  const closePicker = () => {
+    setOpen(false);
+    setQuery("");
+  };
+
+  useOverlayBackClose(open, closePicker);
+
   // Without this the results list stays open after a tap elsewhere, which on a
   // phone leaves a panel floating over the next field.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setQuery("");
+        closePicker();
       }
     };
     document.addEventListener("pointerdown", onPointerDown);
@@ -85,8 +92,7 @@ export default function CatalogProductPicker({
             className="flex min-h-[44px] w-full items-center px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-900 md:min-h-0 md:block"
             onClick={() => {
               onSelect(null);
-              setQuery("");
-              setOpen(false);
+              closePicker();
             }}
           >
             Clear / custom
@@ -101,8 +107,7 @@ export default function CatalogProductPicker({
                 className="block min-h-[48px] w-full border-t border-slate-900 px-3 py-2 text-left hover:bg-slate-900 md:min-h-0"
                 onClick={() => {
                   onSelect(product);
-                  setQuery("");
-                  setOpen(false);
+                  closePicker();
                 }}
               >
                 <div className="text-xs font-semibold text-white truncate">{product.name}</div>

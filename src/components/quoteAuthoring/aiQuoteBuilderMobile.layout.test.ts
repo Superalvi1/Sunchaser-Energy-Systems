@@ -86,14 +86,18 @@ await test("the draft-only wording stays visible to the salesperson", () => {
 
 /* ── 3. mobile shell ──────────────────────────────────────────────── */
 
-await test("Android hardware Back closes the top AppModal without applying a draft", () => {
-  const hook = readFileSync(join(srcRoot, "lib/useHistoryBackClose.ts"), "utf8");
-  assert.ok(appModal.includes("useHistoryBackClose(open, onClose)"));
-  assert.ok(hook.includes("history.pushState"));
-  assert.ok(hook.includes('addEventListener("popstate"'));
-  assert.ok(hook.includes("onCloseRef.current()"));
-  assert.equal(/onApplyDraft|saveQuote|whatsapp/i.test(hook), false);
-  assert.equal(appModal.includes("@capacitor/app"), false);
+await test("AI Quote Builder and catalog picker share the overlay back stack", () => {
+  const overlayHook = readFileSync(join(srcRoot, "lib/useOverlayBackClose.ts"), "utf8");
+  const nativeBack = readFileSync(join(srcRoot, "lib/nativeBackButton.ts"), "utf8");
+  assert.ok(appModal.includes("useOverlayBackClose(open, onClose)"));
+  assert.ok(picker.includes("useOverlayBackClose(open, closePicker)"));
+  assert.ok(overlayHook.includes("pushOverlay"));
+  assert.ok(overlayHook.includes("ensureNativeBackListener"));
+  assert.ok(nativeBack.includes('addListener("backButton"'));
+  assert.ok(nativeBack.includes("dismissTopOverlay()"));
+  assert.ok(nativeBack.includes("handleHardwareBackButton"));
+  assert.equal(/onApplyDraft\(|saveQuote\(|catalogSync\(/.test(overlayHook + nativeBack + appModal), false);
+  assert.equal(appModal.includes("useHistoryBackClose"), false);
 });
 
 await test("AppModal full-screen mode is opt-in so other modals are untouched", () => {
