@@ -1,18 +1,24 @@
 /**
  * Official Capacitor Android hardware-Back wiring.
  *
- * Stock Capacitor 8 BridgeActivity does NOT guarantee that hardware Back
- * becomes history.back(). The proven hook is @capacitor/app:
+ * Installing @capacitor/app is not enough by itself. AppPlugin.load()
+ * registers an OnBackPressedCallback that:
+ *   - with no JS "backButton" listeners: WebView.goBack() if the WebView
+ *     can go back, otherwise the press is swallowed (the Activity does
+ *     not finish)
+ *   - with a JS listener: notifyListeners("backButton", { canGoBack })
+ *
+ * That is why this module registers one App.addListener("backButton") at
+ * app boot (see main.tsx). Overlay components only push/pop overlayBackStack;
+ * they do not add their own native listeners.
  *
  *   Android hardware Back
- *     → BridgeActivity / OnBackPressedCallback
+ *     → OnBackPressedDispatcher
+ *     → AppPlugin OnBackPressedCallback
  *     → App.addListener("backButton")
  *     → handleHardwareBackButton()
  *     → dismissTopOverlay()  (if any overlay is open)
  *     → otherwise history.back() or App.exitApp()
- *
- * One listener for the whole app. Overlays register on overlayBackStack;
- * they do not each add a native listener.
  */
 
 import { App } from "@capacitor/app";

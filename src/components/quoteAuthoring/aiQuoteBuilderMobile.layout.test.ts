@@ -89,10 +89,12 @@ await test("the draft-only wording stays visible to the salesperson", () => {
 await test("AI Quote Builder and catalog picker share the overlay back stack", () => {
   const overlayHook = readFileSync(join(srcRoot, "lib/useOverlayBackClose.ts"), "utf8");
   const nativeBack = readFileSync(join(srcRoot, "lib/nativeBackButton.ts"), "utf8");
+  const mainEntry = readFileSync(join(srcRoot, "main.tsx"), "utf8");
   assert.ok(appModal.includes("useOverlayBackClose(open, onClose)"));
   assert.ok(picker.includes("useOverlayBackClose(open, closePicker)"));
   assert.ok(overlayHook.includes("pushOverlay"));
   assert.ok(overlayHook.includes("ensureNativeBackListener"));
+  assert.ok(mainEntry.includes("ensureNativeBackListener"));
   assert.ok(nativeBack.includes('addListener("backButton"'));
   assert.ok(nativeBack.includes("dismissTopOverlay()"));
   assert.ok(nativeBack.includes("handleHardwareBackButton"));

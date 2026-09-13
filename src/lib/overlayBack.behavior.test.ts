@@ -73,18 +73,21 @@ await test("hardware Back registers a single Capacitor App listener", async () =
   await stopNativeBackListenerForTests();
 });
 
-await test("reopening overlays does not add another native listener", async () => {
+await test("boot plus overlay remounts still register a single native listener", async () => {
   resetAll();
   const { app } = fakeApp();
   setNativeAppForTests(app);
   await ensureNativeBackListener();
-  const first = pushOverlay(() => undefined);
-  popOverlay(first);
-  const second = pushOverlay(() => undefined);
-  popOverlay(second);
+  await ensureNativeBackListener();
+  const builder = pushOverlay(() => undefined);
+  const picker = pushOverlay(() => undefined);
+  await ensureNativeBackListener();
+  popOverlay(picker);
+  popOverlay(builder);
   await ensureNativeBackListener();
   assert.equal(nativeBackListenerCountForTests(), 1);
   assert.equal(overlayCount(), 0);
+  await stopNativeBackListenerForTests();
 });
 
 await test("top overlay is dismissed and the one below stays", () => {

@@ -8,6 +8,7 @@ import { ToastProvider } from './lib/toast.tsx';
 import { inboxQueryClient } from './inbox/queryClient.ts';
 import { isNativeApp } from './lib/appPlatform.ts';
 import { applyIosViewportFit } from './lib/iosViewport.ts';
+import { ensureNativeBackListener } from './lib/nativeBackButton';
 
 const verifyMatch = window.location.pathname.match(/^\/delivery\/verify\/([^/]+)\/?$/);
 const verifyToken = verifyMatch?.[1] ? decodeURIComponent(verifyMatch[1]) : null;
@@ -21,6 +22,11 @@ createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </StrictMode>,
 );
+
+// One Capacitor App backButton listener for the Android shell. Overlay
+// components push/pop the shared stack; they do not add extra listeners.
+// Without this, AppPlugin swallows hardware Back when the WebView cannot go back.
+void ensureNativeBackListener();
 
 // The PWA service worker is for the browser only. Inside the Capacitor shell the
 // app is served from a custom local scheme, where registration is unreliable and a
