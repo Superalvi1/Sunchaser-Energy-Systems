@@ -6,7 +6,7 @@ import {
   StaffPortalAuthError,
 } from "./dbManager.js";
 import { listPartyLedgers } from "./partyLedgerDb.js";
-import { loadInvoiceRecordById } from "./invoiceDb.js";
+import { hydrateInvoiceRows } from "./invoiceDb.js";
 import {
   canViewFinanceDashboard,
   type AgingBucket,
@@ -58,11 +58,7 @@ async function loadVisibleInvoicesForStaff(
   const actor = toRequestActor(userId, username, role);
   try {
     const visibleRows = await FinanceOwnershipResolver.getVisibleInvoiceRowsForActor(actor, localDb);
-    const invoices: InvoiceRecord[] = [];
-    for (const row of visibleRows) {
-      invoices.push(await loadInvoiceRecordById(String(row.id), localDb));
-    }
-    return invoices;
+    return hydrateInvoiceRows(visibleRows, localDb);
   } catch (err) {
     mapFinanceOwnershipError(err);
   }
@@ -163,8 +159,10 @@ export async function fetchFinanceDashboard(
     throw new StaffPortalAuthError("You do not have permission to view the finance dashboard.", 403);
   }
 
-  const parties = await listPartyLedgers(userId, username, role, localDb);
   const invoices = await loadVisibleInvoicesForStaff(userId, username, role, localDb);
+  const parties = await listPartyLedgers(userId, username, role, localDb, {
+    preloadedInvoices: invoices,
+  });
   const activeInvoices = invoices.filter(
     (inv) => !isExcludedFromLedgerTotals(inv.invoiceStatus, inv.archivedAt)
   );
