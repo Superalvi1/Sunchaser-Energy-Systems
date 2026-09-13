@@ -1056,4 +1056,25 @@ check("civil structured quantities feed BOQ and pending design does not fabricat
   assert.equal(validateProjectScope(incomplete, ctx({ structureType: "girder" })).some((e) => /Foundation pad quantity/.test(e)), true);
 });
 
+check("advanced scope extras do not double-count base installation", () => {
+  const scope = includePriced(buildPresetScope("commercial_standard"), "ins_scaffold", 1, 18000);
+  const rows = buildCommercialQuoteBoq({
+    ...base,
+    panelQuantity: 16,
+    panelWattage: 645,
+    installationRatePerWatt: DEFAULT_INSTALLATION_RATE_PER_WATT,
+    projectScope: scope,
+  });
+  const installRows = rows.filter((r) => r.id === "install_service_row");
+  assert.equal(installRows.length, 1);
+  assert.equal(installRows[0].total, 645 * 16 * 4);
+  const scaffold = rows.find((r) => r.id === `${SCOPE_BOQ_ID_PREFIX}ins_scaffold`);
+  assert.ok(scaffold);
+  assert.equal(Number(scaffold?.total), 18000);
+  assert.equal(
+    rows.filter((r) => r.type === "item" && /installation & commissioning/i.test(String(r.name))).length,
+    1
+  );
+});
+
 console.log(`\nAI project scope tests: ${pass} passed`);

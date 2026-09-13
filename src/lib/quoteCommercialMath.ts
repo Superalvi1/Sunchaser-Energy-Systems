@@ -97,3 +97,22 @@ export const DEFAULT_INSTALLATION_RATE_PER_WATT = 4;
 export const DEFAULT_ELEVATED_STRUCTURE_RATE_PER_WATT = 16;
 /** Existing AutoSizer girder commercial job amount — not a per-watt formula. */
 export const DEFAULT_GIRDER_STRUCTURE_AMOUNT = 180000;
+
+/**
+ * Read the financial installation amount from a BOQ row.
+ * Supports both:
+ *   - preferred: qty = actualArrayWatts, unit = W, rate = PKR/W
+ *   - legacy:    qty = 1, unit = Job, rate = total
+ */
+export function installationChargesFromBoqRow(
+  row: { qty?: unknown; rate?: unknown; total?: unknown; unit?: unknown } | null | undefined
+): number {
+  if (!row) return 0;
+  const total = finiteNumber(row.total, Number.NaN);
+  if (Number.isFinite(total) && total >= 0) return total;
+  const qty = finiteNumber(row.qty, 0);
+  const rate = finiteNumber(row.rate, 0);
+  const product = qty * rate;
+  if (product > 0) return product;
+  return Number.isFinite(rate) && rate >= 0 ? rate : 0;
+}

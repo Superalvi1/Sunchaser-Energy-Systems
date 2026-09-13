@@ -24,6 +24,15 @@ import {
 } from "./quotePdfLayout";
 import { normalizeRows } from "./normalizeRows";
 import { resolveQuoteValidityDays } from "./quoteValidity";
+import {
+  EXISTING_FALLBACK_QUOTE_TERMS,
+  paginateClauses,
+  paginateResolvedTerms,
+  resolveQuoteTerms,
+  resolveQuoteTermsClauses,
+  shouldRenderExtraCommercialCard,
+  TERMS_PAGE_CHAR_BUDGET,
+} from "./quoteTermsSnapshot";
 
 
 export { quoteBoqOverflow, THREE_PAGE_BOQ_COMPACT_MAX_WEIGHT } from "./quoteBoqPdf";
@@ -33,11 +42,11 @@ export {
 };
 
 export const THREE_PAGE_QUOTATION_PAGE_COUNT = 3;
-export const THREE_PAGE_TERMS_MAX_CHARS = 2800;
+export const THREE_PAGE_TERMS_MAX_CHARS = TERMS_PAGE_CHAR_BUDGET;
 export const THREE_PAGE_BOQ_OVERFLOW_MESSAGE =
   "Quotation contains too many line items for the standard 3-page format. Please consolidate or group items before generating the final PDF.";
 export const THREE_PAGE_TERMS_OVERFLOW_MESSAGE =
-  "Terms & Conditions exceed one page. Shorten or split clauses in company terms before generating the final PDF.";
+  "Terms & Conditions continue onto additional pages so no clauses are truncated.";
 
 export type ThreePageQuoteMode = "auto" | "manual";
 
@@ -82,53 +91,7 @@ function snapshotRows(quoteObj: any): BoqPdfRow[] {
   return normalizeRows(raw) as BoqPdfRow[];
 }
 
-const EXISTING_FALLBACK_QUOTE_TERMS = [
-  "Quotation validity: 3 days from date of issuance.",
-  "Rates are based on current fiscal/DISCO tariffs and duties. Any change will affect the net final price.",
-  "Standard Payment schedule: 50% Advance, 40% on delivery of equipment, 10% post-commissioning.",
-  "Accepted Payment methods: Bank transfer, pay order, or direct bank deposit.",
-  "Work will commence within 3 days after receipt of the advance payment.",
-  "Product substitution: In case of hardware supply limitations, Sunchaser may substitute components with equivalent grade models.",
-  "Installation standards: All electrical and mechanical works follow Sunchaser's ISO quality controls.",
-  "Warranty per manufacturer terms for imported equipment.",
-];
-
-function clausesFromUnknown(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw
-      .map((t) => {
-        if (typeof t === "string") return t.trim();
-        if (t && typeof t === "object") {
-          return String((t as any).termText || (t as any).term_text || (t as any).text || "").trim();
-        }
-        return "";
-      })
-      .filter(Boolean);
-  }
-  const text = String(raw || "").trim();
-  if (!text) return [];
-  return text.split(/\n+/).map((s) => s.trim()).filter(Boolean);
-}
-
-/** Saved quotation legal text is authoritative. Current company_terms only fill a missing snapshot. */
-export function resolveQuoteTermsClauses(quoteObj: any, activeState?: any): string[] {
-  const fromQuote = clausesFromUnknown(
-    quoteObj?.termsAndConditions ?? quoteObj?.terms_and_conditions
-  );
-  if (fromQuote.length) return fromQuote;
-
-  const dbTerms = Array.isArray(activeState?.companyTerms) ? activeState.companyTerms : [];
-  const fromDb = dbTerms
-    .map((t: any) => String(t?.termText || t?.term_text || "").trim())
-    .filter(Boolean);
-  if (fromDb.length) return fromDb;
-
-  return EXISTING_FALLBACK_QUOTE_TERMS.slice();
-}
-
-function companyTermsList(activeState: any, quoteObj: any): string[] {
-  return resolveQuoteTermsClauses(quoteObj, activeState);
-}
+export { resolveQuoteTermsClauses, EXISTING_FALLBACK_QUOTE_TERMS };
 
 /** Historical quotes without systemType must not be labeled Hybrid. */
 export function resolveDisplayedSystemType(quoteObj: any, proposal?: any): string {
@@ -195,11 +158,16 @@ function resolveCompany(activeState: any): {
   };
 }
 
-function pageFooter(settings: ReturnType<typeof resolveCompany>, docId: string, pageNum: number): string {
+function pageFooter(
+  settings: ReturnType<typeof resolveCompany>,
+  docId: string,
+  pageNum: number,
+  totalPages: number
+): string {
   return `
     <div class="page-footer">
       <div>${escapeHtml(settings.companyName)} · ${escapeHtml(settings.officeAddress)}</div>
-      <div class="footer-doc-id">${escapeHtml(docId)} · Page ${pageNum} of ${THREE_PAGE_QUOTATION_PAGE_COUNT}</div>
+      <div class="footer-doc-id">${escapeHtml(docId)} · Page ${pageNum} of ${totalPages}</div>
     </div>
   `;
 }
@@ -276,6 +244,44 @@ export function compileThreePageQuotationHtml(
         ${escapeHtml(customerBoq.message || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE)} All ${customerBoq.itemCount} priced lines are listed below for review — final PDF is blocked until this is resolved.
       </div>`
     : "";
+
+  const resolvedTerms = resolveQuoteTerms(quoteObj, activeState);
+  const clausePages = resolvedTerms.hasRichHtml ? null : paginateClauses(resolvedTerms.clauses);
+  const termsPageBodies = clausePages
+    ? clausePages.map((group, pageIndex) => {
+        const start = clausePages.slice(0, pageIndex).reduce((sum, g) => sum + g.length, 0);
+        return group
+          .map(
+            (clause, index) => `
+        <div style="display:flex;margin-bottom:7px;font-size:10px;line-height:1.45;align-items:flex-start;">
+          <span style="font-weight:800;color:#d97706;margin-right:6px;min-width:18px;">${start + index + 1}.</span>
+          <span style="color:#334155;font-weight:500;">${escapeHtml(clause)}</span>
+        </div>`
+          )
+          .join("");
+      })
+    : paginateResolvedTerms(resolvedTerms);
+  if (!termsPageBodies.length) termsPageBodies.push("");
+  const termsPageCount = Math.max(1, termsPageBodies.length);
+  const termsOverflow = termsPageCount > 1;
+  const totalPages = 2 + termsPageCount;
+  const payment = String(quoteObj?.paymentSchedule || quoteObj?.paymentTerms || "").trim();
+  const warranty = String(quoteObj?.warrantyTerms || "").trim();
+  const showPaymentCard = shouldRenderExtraCommercialCard("payment", payment, resolvedTerms);
+  const showWarrantyCard = shouldRenderExtraCommercialCard("warranty", warranty, resolvedTerms);
+  const signatureHtml = `
+        <div class="card quote-terms-signature" data-sunchaser-terms-signature="final" style="margin-top:auto;display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+          <div>
+            <div style="font-size:8px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;">Customer acceptance</div>
+            <div style="border-bottom:1px solid #94a3b8;height:36px;margin-top:22px;"></div>
+            <div style="font-size:9px;color:#475569;margin-top:4px;">Name / signature / date</div>
+          </div>
+          <div>
+            <div style="font-size:8px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;">For Sunchaser Energy Systems</div>
+            <div style="border-bottom:1px solid #94a3b8;height:36px;margin-top:22px;"></div>
+            <div style="font-size:9px;color:#475569;margin-top:4px;">${escapeHtml(proposal.bdmName !== "Not specified" ? proposal.bdmName : "Authorized signatory")}</div>
+          </div>
+        </div>`;
 
   const summaryBits = [
     systemKw && systemType ? `${systemKw} kW ${systemType}` : systemKw ? `${systemKw} kW` : systemType,
@@ -363,75 +369,53 @@ export function compileThreePageQuotationHtml(
           </table>
         </div>
         ${totalsHtml}
-        ${pageFooter(settings, docId, 2)}
+        ${pageFooter(settings, docId, 2, totalPages)}
       </div>
     </div>
   `;
 
-  const terms = companyTermsList(activeState, quoteObj);
-  const termsFit = quoteTermsOverflow(terms);
-  const termsCompact = terms.length > 10 || termsFit.charCount > 1800;
-  const termsHtml = terms
-    .map(
-      (clause, index) => `
-        <div style="display:flex;margin-bottom:${termsCompact ? "4px" : "7px"};font-size:${termsCompact ? "8.5px" : "10px"};line-height:1.4;align-items:flex-start;">
-          <span style="font-weight:800;color:#d97706;margin-right:6px;min-width:18px;">${index + 1}.</span>
-          <span style="color:#334155;font-weight:500;">${escapeHtml(clause)}</span>
+  const termsPagesHtml = termsPageBodies
+    .map((bodyHtml, index) => {
+      const isLast = index === termsPageBodies.length - 1;
+      const pageNum = 3 + index;
+      const heading =
+        termsPageCount > 1 ? `Terms & Conditions (${index + 1}/${termsPageCount})` : "Terms & Conditions";
+      const intro =
+        index === 0
+          ? `<div style="font-size:10.5px;line-height:1.45;color:#475569;margin:8px 0 10px;">
+          All supply, installation and LESCO utility work under this quotation is governed by the Sunchaser covenants below.
         </div>`
-    )
+          : `<div style="font-size:9px;color:#64748b;margin:6px 0 8px;">Terms continued from previous page.</div>`;
+      const extraCards = isLast
+        ? `${
+            showPaymentCard
+              ? `<div class="card" style="margin-top:10px;font-size:10px;"><strong>Payment:</strong> ${escapeHtml(payment)}</div>`
+              : ""
+          }${
+            showWarrantyCard
+              ? `<div class="card" style="margin-top:8px;font-size:10px;"><strong>Warranty:</strong> ${escapeHtml(warranty)}</div>`
+              : ""
+          }`
+        : "";
+      return `
+    <div class="page three-page-terms${index > 0 ? " terms-continued" : ""}" data-sunchaser-terms-page="${index + 1}" data-sunchaser-terms-pages="${termsPageCount}" data-sunchaser-terms-source="${escapeHtml(resolvedTerms.source)}">
+      <div class="quote-page-shell">
+        ${pageHeader(logoSrc, settings, heading)}
+        <div class="page-title">${heading}</div>
+        ${intro}
+        <div class="quote-terms-body" style="flex:1;min-height:0;">${bodyHtml}</div>
+        ${extraCards}
+        ${isLast ? signatureHtml : ""}
+        ${pageFooter(settings, docId, pageNum, totalPages)}
+      </div>
+    </div>`;
+    })
     .join("");
 
-  const payment = String(quoteObj?.paymentSchedule || quoteObj?.paymentTerms || "").trim();
-  const warranty = String(quoteObj?.warrantyTerms || "").trim();
-  const termsBanner = termsFit.overflow
-    ? `<div data-sunchaser-overflow="terms" style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;font-size:8.5px;font-weight:700;padding:5px 8px;border-radius:6px;margin:6px 0 8px;">
-        ${escapeHtml(THREE_PAGE_TERMS_OVERFLOW_MESSAGE)} All ${terms.length} clauses are listed below. Final PDF is blocked until this is resolved.
-      </div>`
-    : "";
-
-  const page3 = `
-    <div class="page three-page-terms${termsFit.overflow ? " preview-overflow" : ""}">
-      <div class="quote-page-shell">
-        ${pageHeader(logoSrc, settings, "Terms & Conditions")}
-        <div class="page-title">Terms & Conditions</div>
-        ${termsBanner}
-        <div style="font-size:10.5px;line-height:1.45;color:#475569;margin:8px 0 10px;">
-          All supply, installation and LESCO utility work under this quotation is governed by the Sunchaser covenants below.
-        </div>
-        <div style="${termsFit.overflow ? "overflow:auto;flex:1;min-height:0;" : ""}">${termsHtml}</div>
-        ${
-          payment
-            ? `<div class="card" style="margin-top:10px;font-size:10px;"><strong>Payment:</strong> ${escapeHtml(payment)}</div>`
-            : ""
-        }
-        ${
-          warranty
-            ? `<div class="card" style="margin-top:8px;font-size:10px;"><strong>Warranty:</strong> ${escapeHtml(warranty)}</div>`
-            : ""
-        }
-        <div class="card" style="margin-top:auto;display:grid;grid-template-columns:1fr 1fr;gap:18px;">
-          <div>
-            <div style="font-size:8px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;">Customer acceptance</div>
-            <div style="border-bottom:1px solid #94a3b8;height:36px;margin-top:22px;"></div>
-            <div style="font-size:9px;color:#475569;margin-top:4px;">Name / signature / date</div>
-          </div>
-          <div>
-            <div style="font-size:8px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;">For Sunchaser Energy Systems</div>
-            <div style="border-bottom:1px solid #94a3b8;height:36px;margin-top:22px;"></div>
-            <div style="font-size:9px;color:#475569;margin-top:4px;">${escapeHtml(proposal.bdmName !== "Not specified" ? proposal.bdmName : "Authorized signatory")}</div>
-          </div>
-        </div>
-        ${pageFooter(settings, docId, 3)}
-      </div>
-    </div>
-  `;
-
-  const exportBlocked = overflowBlocked || termsFit.overflow;
+  const exportBlocked = overflowBlocked;
   const exportBlockReason = overflowBlocked
     ? (customerBoq.message || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE)
-    : termsFit.overflow
-      ? THREE_PAGE_TERMS_OVERFLOW_MESSAGE
-      : null;
+    : null;
 
   const html = `<!DOCTYPE html>
 <html>
@@ -518,6 +502,29 @@ export function compileThreePageQuotationHtml(
       border-radius: 8px;
       padding: 10px 12px;
     }
+    .quote-terms-body {
+      font-size: 10px;
+      line-height: 1.45;
+      color: #334155;
+      font-weight: 500;
+    }
+    .quote-terms-body h1,
+    .quote-terms-body h2,
+    .quote-terms-body h3,
+    .quote-terms-body h4 {
+      font-size: 11.5px;
+      color: #d97706;
+      font-weight: 800;
+      margin: 8px 0 4px;
+      letter-spacing: 0.02em;
+    }
+    .quote-terms-body p { margin: 0 0 6px; }
+    .quote-terms-body ol,
+    .quote-terms-body ul { margin: 0 0 8px; padding-left: 18px; }
+    .quote-terms-body li { margin-bottom: 3px; }
+    .quote-terms-body strong,
+    .quote-terms-body b { font-weight: 800; color: #0f172a; }
+    .quote-terms-body u { text-decoration: underline; }
     .boq-table {
       width: 100%;
       border-collapse: collapse;
@@ -555,16 +562,16 @@ export function compileThreePageQuotationHtml(
     options.hideActionBar
       ? ""
       : `<div class="action-bar">
-        <div><strong>Sunchaser Quotation</strong> — ${escapeHtml(proposal.clientName)} · 3 pages</div>
+        <div><strong>Sunchaser Quotation</strong> — ${escapeHtml(proposal.clientName)} · ${totalPages} pages</div>
         <div class="action-bar-actions">
           <button type="button" class="btn-print" ${exportBlocked ? "disabled" : ""} onclick="sunchaserPrintDeck()">Print</button>
         </div>
       </div>`
   }
-  <div class="pages-container" data-sunchaser-page-count="${THREE_PAGE_QUOTATION_PAGE_COUNT}" data-sunchaser-export-blocked="${exportBlocked ? "true" : "false"}" data-sunchaser-boq-consolidated="${customerBoq.consolidated ? "true" : "false"}">
+  <div class="pages-container" data-sunchaser-page-count="${totalPages}" data-sunchaser-export-blocked="${exportBlocked ? "true" : "false"}" data-sunchaser-boq-consolidated="${customerBoq.consolidated ? "true" : "false"}" data-sunchaser-terms-source="${escapeHtml(resolvedTerms.source)}">
     ${page1}
     ${page2}
-    ${page3}
+    ${termsPagesHtml}
   </div>
   ${
     options.hideActionBar
@@ -590,10 +597,10 @@ export function compileThreePageQuotationHtml(
 
   return {
     html,
-    pageCount: THREE_PAGE_QUOTATION_PAGE_COUNT,
+    pageCount: totalPages,
     boqOverflow: overflowBlocked,
     boqOverflowMessage: overflowBlocked ? (customerBoq.message || THREE_PAGE_BOQ_STILL_OVERFLOW_MESSAGE) : null,
-    termsOverflow: termsFit.overflow,
+    termsOverflow,
     exportBlocked,
     exportBlockReason,
     itemCount: customerBoq.itemCount,

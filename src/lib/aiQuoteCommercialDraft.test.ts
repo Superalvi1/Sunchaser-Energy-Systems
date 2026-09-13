@@ -822,4 +822,34 @@ check("fractional equipment quantities are invalid", () => {
   );
 });
 
+check("installation row uses actual array watts as qty at PKR/W", () => {
+  const row16 = buildCommercialQuoteBoq({ ...base, panelWattage: 645, panelQuantity: 16 }).find(
+    (r) => r.id === "install_service_row"
+  )!;
+  assert.equal(row16.name, "Installation & Commissioning");
+  assert.equal(row16.unit, "W");
+  assert.equal(row16.qty, 10320);
+  assert.equal(row16.rate, 4);
+  assert.equal(row16.total, 41280);
+  const row10 = buildCommercialQuoteBoq({ ...base, panelWattage: 585, panelQuantity: 10 }).find(
+    (r) => r.id === "install_service_row"
+  )!;
+  assert.equal(row10.qty, 5850);
+  assert.equal(row10.rate, 4);
+  assert.equal(row10.total, 23400);
+  const apply = buildCommercialDraftApply(base);
+  const installRows = apply.boqRows.filter((r) => r.id === "install_service_row");
+  assert.equal(installRows.length, 1);
+  assert.equal(installRows[0].total, 41280);
+});
+
+check("AI Quote Builder shows a visible Installation & Commissioning section", () => {
+  const modal = readFileSync(join(__dirname, "../components/quoteAuthoring/AIQuoteBuilderModal.tsx"), "utf8");
+  assert.match(modal, /Installation & Commissioning/);
+  assert.match(modal, /data-testid="installation-commissioning"/);
+  assert.match(modal, /Actual Solar Array/);
+  assert.match(modal, /Installation Total/);
+  assert.doesNotMatch(modal, /Commercial rates/);
+});
+
 console.log(`\nAI quote commercial draft tests: ${pass} passed`);

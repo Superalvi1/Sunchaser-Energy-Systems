@@ -136,6 +136,23 @@ await test("sticky action area shows total, error count and Apply above the keyb
   assert.ok(modal.includes("disabled={validationErrors.length > 0}"));
 });
 
+await test("Installation & Commissioning is visible and phone-friendly", () => {
+  const section = modal.slice(
+    modal.indexOf('data-testid="installation-commissioning"'),
+    modal.indexOf("Other quotation charges")
+  );
+  assert.ok(section.includes("Installation & Commissioning"));
+  assert.ok(section.includes("Installation Rate"));
+  assert.ok(section.includes("Panel Quantity"));
+  assert.ok(section.includes("Panel Wattage"));
+  assert.ok(section.includes("Actual Solar Array"));
+  assert.ok(section.includes("Installation Total"));
+  assert.ok(section.includes('inputMode="decimal"'));
+  assert.ok(section.includes("min-h-[44px]"));
+  assert.ok(section.includes("grid-cols-1 md:grid-cols-2 xl:grid-cols-5"));
+  assert.equal(section.includes("Commercial rates"), false);
+});
+
 /* ── 4. no phone-hostile layout ───────────────────────────────────── */
 
 await test("no multi-column grid is left unprefixed in the builder", () => {

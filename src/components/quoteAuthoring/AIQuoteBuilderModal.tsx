@@ -1347,31 +1347,46 @@ export default function AIQuoteBuilderModal({
               )}
             </section>
 
-            <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Commercial rates</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <section className="rounded-2xl border border-amber-500/40 bg-slate-900/40 p-4 space-y-3" data-testid="installation-commissioning">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Installation & Commissioning</h3>
+              <p className="text-[11px] text-slate-400">
+                Base installation is {DEFAULT_INSTALLATION_RATE_PER_WATT} PKR/W × actual panel array watts (qty × wattage). Not nominal system kW.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                 <div>
-                  <FieldLabel>Actual array watts</FieldLabel>
+                  <FieldLabel>Installation Rate</FieldLabel>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Rs.</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      value={installationRatePerWatt}
+                      onChange={(e) => setInstallationRatePerWatt(Number(e.target.value))}
+                      className="min-h-[44px] w-full min-w-0 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
+                    />
+                    <span className="text-[11px] text-slate-400 whitespace-nowrap">/ Watt</span>
+                  </div>
+                </div>
+                <div>
+                  <FieldLabel>Panel Quantity</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">{panelQuantity}</p>
+                </div>
+                <div>
+                  <FieldLabel>Panel Wattage</FieldLabel>
+                  <p className="mt-1 text-sm text-white font-semibold">{panelWattage} W</p>
+                </div>
+                <div>
+                  <FieldLabel>Actual Solar Array</FieldLabel>
                   <p className="mt-1 text-sm text-white font-semibold">{money(arrayWatts)} W</p>
                   <p className="text-[10px] text-slate-500">
                     {panelQuantity} × {panelWattage}W = {arrayKilowattsPeak(panelWattage, panelQuantity).toFixed(3)} kWp
                   </p>
                 </div>
                 <div>
-                  <FieldLabel>Installation PKR/W (default 4)</FieldLabel>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    value={installationRatePerWatt}
-                    onChange={(e) => setInstallationRatePerWatt(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>Installation total</FieldLabel>
+                  <FieldLabel>Installation Total</FieldLabel>
                   <p className="mt-1 text-sm text-white font-semibold">Rs. {money(installTotal)}</p>
-                  <p className="text-[10px] text-slate-500">array watts × rate/W</p>
+                  <p className="text-[10px] text-slate-500">{money(arrayWatts)} W × Rs. {installationRatePerWatt}/W</p>
                 </div>
               </div>
             </section>
@@ -1582,12 +1597,18 @@ export default function AIQuoteBuilderModal({
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt>Installation</dt>
+                <dt>Installation & Commissioning</dt>
                 <dd className="text-right">
-                  Rs. {installationRatePerWatt}/W
-                  <div className="text-white">{money(groupAmount("installation"))}</div>
+                  Rs. {installationRatePerWatt}/W × {money(arrayWatts)} W
+                  <div className="text-white">Rs. {money(installTotal)}</div>
                 </dd>
               </div>
+              {groupAmount("installation") > installTotal && (
+                <div className="flex justify-between gap-3">
+                  <dt>Installation extras (scope)</dt>
+                  <dd className="text-right text-white">{money(groupAmount("installation") - installTotal)}</dd>
+                </div>
+              )}
               <div className="border-t border-slate-800 pt-2 space-y-1">
                 {costSummary.groups
                   .filter(
