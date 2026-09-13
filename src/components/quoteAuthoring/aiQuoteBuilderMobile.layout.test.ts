@@ -15,6 +15,10 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  calculateArrayWatts,
+  calculateInstallationTotal,
+} from "../../lib/quoteCommercialMath.ts";
 
 let failed = 0;
 
@@ -307,6 +311,18 @@ await test("installation rate uses a numeric keyboard on a 1-column phone grid",
   assert.ok(block.includes("setInstallationRatePerWatt"));
   assert.ok(block.includes("money(installTotal)"));
   assert.ok(block.includes("money(arrayWatts)"));
+});
+
+await test("16 × 645 W × Rs 4/W is 10,320 W / Rs 41,280 via the shared formula the modal displays", () => {
+  assert.equal(calculateArrayWatts(645, 16), 10320);
+  assert.equal(calculateInstallationTotal(645, 16, 4), 41280);
+  assert.ok(modal.includes("calculateArrayWatts(panelWattage, panelQuantity)"));
+  assert.ok(modal.includes("calculateInstallationTotal(panelWattage, panelQuantity, installationRatePerWatt)"));
+  assert.ok(modal.includes("{panelQuantity}"));
+  assert.ok(modal.includes("{panelWattage} W"));
+  assert.ok(modal.includes("money(arrayWatts)} W"));
+  assert.ok(modal.includes("Rs. {money(installTotal)}"));
+  assert.ok(modal.includes("buildCommercialDraftApply(commercialConfig)"));
 });
 
 await test("mobile does not fork Terms or PDF — shared snapshot path only", () => {
