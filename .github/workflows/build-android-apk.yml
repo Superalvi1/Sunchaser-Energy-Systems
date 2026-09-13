@@ -24,10 +24,10 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Install Java 21
-        uses: actions/setup-java@v4
+      - name: Install JetBrains Java 21
+        uses: actions/setup-java@v6
         with:
-          distribution: temurin
+          distribution: jetbrains
           java-version: '21'
 
       - name: Set up Android SDK
@@ -61,6 +61,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
+          java -version
           ./gradlew --version
 
       - name: Build debug APK
