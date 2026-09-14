@@ -7,7 +7,22 @@ function friendlyPdfError(status: number, text: string): string {
   const trimmed = (text || "").trim();
   if (trimmed.includes("PDF engine is not installed")) return PDF_ENGINE_MISSING_MESSAGE;
   if (/executable doesn't exist|playwright install/i.test(trimmed)) return PDF_ENGINE_MISSING_MESSAGE;
-  return trimmed || `PDF download failed (${status})`;
+
+  let message = trimmed;
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { error?: unknown; message?: unknown };
+      if (typeof parsed.error === "string") message = parsed.error;
+      else if (typeof parsed.message === "string") message = parsed.message;
+    } catch {
+      // Preserve plain-text server responses.
+    }
+  }
+
+  if (/save a quote first/i.test(message)) {
+    return "Please save the customer quotation before generating the PDF.";
+  }
+  return message || `PDF download failed (${status})`;
 }
 
 export function manualQuotePdfPreviewUrl(leadId: string, quoteId?: string): string {

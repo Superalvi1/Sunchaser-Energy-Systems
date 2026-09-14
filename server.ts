@@ -9854,15 +9854,15 @@ app.post("/api/export/pdf/stage-saved-quote", async (req, res) => {
     const quoteId = req.body?.quoteId ? String(req.body.quoteId) : "";
     if (!leadId) return res.status(400).json({ error: "leadId is required" });
     if (!(await guardSalesOwnedResource(req, res, "manual_quote_export", leadId))) return;
-    loadDb();
-    let activeState: Database = db;
-    if (isSupabaseActive()) activeState = await fetchAppStateFromSupabase();
-    const lead = activeState.leads.find((item: any) => String(item.id) === leadId);
-    if (!lead) return res.status(404).json({ error: "Lead not found" });
-    const quotes = (activeState.quotes || []).filter((q: any) => String(q.lead_id) === leadId);
-    const quote = quoteId ? quotes.find((q: any) => String(q.id) === quoteId) : quotes[quotes.length - 1];
-    if (!quote) return res.status(404).json({ error: "Save a quote first." });
-    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { hideActionBar: true });
+
+    // Use the same canonical resolver as browser preview/download. Quotes are stored
+    // on the hydrated lead (and in Supabase quotations), not activeState.quotes.
+    const resolved = await resolveSavedManualQuoteForExport(leadId, quoteId || undefined);
+    if ("error" in resolved && resolved.error) {
+      return res.status(resolved.error.status).json({ error: resolved.error.message });
+    }
+    const { activeState, lead, quote, options } = resolved;
+    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, hideActionBar: true });
     if (rendered.exportBlocked) return res.status(409).json({ error: rendered.exportBlockReason || "Quotation cannot be exported." });
     const filename = buildQuotationPdfFilename(lead, quote);
     const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
