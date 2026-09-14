@@ -55,6 +55,16 @@ check("manual PDF URLs remain on the manual-quote routes", () => {
   assert.doesNotMatch(manualQuotePdfDownloadUrl("lead-1", "q-m"), /auto-sizer/);
 });
 
+check("PDF API JSON errors become a customer-friendly message", () => {
+  const friendly = sliceBetween(
+    exportSrc,
+    "function friendlyPdfError",
+    "export function manualQuotePdfPreviewUrl"
+  );
+  assert.match(friendly, /JSON\.parse\(trimmed\)/);
+  assert.match(friendly, /Please save the customer quotation before generating the PDF\./);
+});
+
 check("quote type routing sends AutoSizer vs Manual to the correct helper", () => {
   assert.equal(isAutoSizerQuoteType("auto_sizer"), true);
   assert.equal(isAutoSizerQuoteType("manual_boq"), false);
@@ -139,6 +149,44 @@ check("SalesTeamApp no longer navigates the browser to the AutoSizer PDF URL", (
   assert.match(salesSrc, /openQuotePrintPreviewByType/);
 });
 
+check("customer quote save releases UI state before background lead refresh completes", () => {
+  const saveFn = sliceBetween(
+    salesSrc,
+    "const handleSaveQuote = async",
+    "const resolveTargetManualQuote"
+  );
+  assert.match(saveFn, /setEditingQuoteId\(savedQuoteId\)/);
+  assert.match(saveFn, /Promise\.resolve\(\)\s*\.then\(\(\) => onRefreshState\(\)\)/);
+  assert.doesNotMatch(saveFn, /await onRefreshState\(\)/);
+  assert.match(saveFn, /savingQuoteRef\.current = false/);
+});
+
+check("newly returned manual quote id remains immediately printable", () => {
+  const resolver = sliceBetween(
+    salesSrc,
+    "const resolveTargetManualQuote",
+    "const handleDownloadManualQuotePDF"
+  );
+  assert.match(resolver, /refreshedQuote \|\| \{ id: editingQuoteId, quote_type: "manual_boq" \}/);
+});
+
+check("manual download and print use the quote id returned by save", () => {
+  const downloadFn = sliceBetween(
+    salesSrc,
+    "const handleDownloadManualQuotePDF",
+    "const handlePrintManualQuotePDF"
+  );
+  const printFn = sliceBetween(
+    salesSrc,
+    "const handlePrintManualQuotePDF",
+    "const handleDownloadAutoSizerQuotePDF"
+  );
+  assert.match(downloadFn, /const savedId = await handleSaveQuote\(\)/);
+  assert.match(downloadFn, /resolvedQuoteId = savedId/);
+  assert.match(printFn, /const savedId = await handleSaveQuote\(\)/);
+  assert.match(printFn, /resolvedQuoteId = savedId/);
+});
+
 check("Generated Quotes routes AutoSizer versions to AutoSizer helpers", () => {
   const versionChunk = salesSrc.slice(
     salesSrc.indexOf("handleDownloadQuoteVersionPDF"),
@@ -147,6 +195,17 @@ check("Generated Quotes routes AutoSizer versions to AutoSizer helpers", () => {
   assert.match(versionChunk, /quote\.quote_type === "auto_sizer"/);
   assert.match(versionChunk, /handleDownloadAutoSizerQuotePDF/);
   assert.match(versionChunk, /handleDownloadManualQuotePDF/);
+});
+
+check("staged mobile PDF export uses the canonical saved manual quote resolver", () => {
+  const staged = sliceBetween(
+    serverSrc,
+    'app.post("/api/export/pdf/stage-saved-quote"',
+    'app.get("/api/export/pdf/staged-public/:token"'
+  );
+  assert.match(staged, /resolveSavedManualQuoteForExport\(leadId, quoteId \|\| undefined\)/);
+  assert.doesNotMatch(staged, /const quotes = \(activeState\.quotes/);
+  assert.match(staged, /compileManualQuoteExportHtml/);
 });
 
 check("server AutoSizer PDF routes remain staff-protected", () => {

@@ -988,6 +988,7 @@ export default function SalesTeamApp({
   const [systemSector, setSystemSector] = useState<'residential' | 'commercial'>('residential');
   const [confirmHighUnits, setConfirmHighUnits] = useState<boolean>(false);
   const [savingQuote, setSavingQuote] = useState<boolean>(false);
+  const savingQuoteRef = useRef<boolean>(false);
 
   // OCR Bill scanner mock state
   const [billFile, setBillFile] = useState<File | null>(null);
@@ -1631,7 +1632,7 @@ export default function SalesTeamApp({
   };
 
   const handleSaveSizerQuote = async () => {
-    if (!activeLead || savingQuote) return;
+    if (!activeLead || savingQuoteRef.current) return;
     if (isQuickQuoteMode) {
       setSubmitError("Quick Quotation mode uses Manual BOQ Builder and never creates CRM records.");
       return;
@@ -1641,6 +1642,7 @@ export default function SalesTeamApp({
       return;
     }
     setSubmitError(null);
+    savingQuoteRef.current = true;
     setSavingQuote(true);
     try {
       const sizerKw = systemSizekW;
@@ -1744,10 +1746,15 @@ export default function SalesTeamApp({
 
       setQuoteCreatedConfirm(true);
       setTimeout(() => setQuoteCreatedConfirm(false), 8000);
-      if (onRefreshState) await onRefreshState();
+      if (onRefreshState) {
+        void Promise.resolve()
+          .then(() => onRefreshState())
+          .catch((refreshErr) => console.error("Quote refresh failed:", refreshErr));
+      }
     } catch (err: any) {
       setSubmitError(err.message || "Failed to save auto sizer quote.");
     } finally {
+      savingQuoteRef.current = false;
       setSavingQuote(false);
     }
   };
@@ -1756,7 +1763,7 @@ export default function SalesTeamApp({
   const handleSaveQuote = async (e?: React.FormEvent): Promise<string | null> => {
     if (e) e.preventDefault();
     if (!activeLead) return null;
-    if (savingQuote) return null;
+    if (savingQuoteRef.current) return null;
     if (activeModule === "sizer") {
       await handleSaveSizerQuote();
       return null;
@@ -1771,6 +1778,7 @@ export default function SalesTeamApp({
       return null;
     }
 
+    savingQuoteRef.current = true;
     setSavingQuote(true);
 
     try {
@@ -1945,22 +1953,32 @@ export default function SalesTeamApp({
       setQuoteCreatedConfirm(true);
       setTimeout(() => setQuoteCreatedConfirm(false), 8000);
 
-      if (onRefreshState) await onRefreshState();
+      if (onRefreshState) {
+        void Promise.resolve()
+          .then(() => onRefreshState())
+          .catch((refreshErr) => console.error("Quote refresh failed:", refreshErr));
+      }
       return savedQuoteId || null;
     } catch (err: any) {
       console.error("Quote save failed:", err);
       setSubmitError(err.message || "Failed to save quotation on server.");
       return null;
     } finally {
+      savingQuoteRef.current = false;
       setSavingQuote(false);
     }
   };
 
   const resolveTargetManualQuote = () => {
     if (!activeLead) return null;
-    return editingQuoteId
-      ? activeLead.quotes?.find((q: any) => q.id === editingQuoteId && q.quote_type === "manual_boq")
-      : getLatestSavedQuote(activeLead, "manual_boq");
+    if (editingQuoteId) {
+      const refreshedQuote = activeLead.quotes?.find(
+        (q: any) => q.id === editingQuoteId && q.quote_type === "manual_boq"
+      );
+      // Save returns the durable quote id before the parent lead refresh necessarily finishes.
+      return refreshedQuote || { id: editingQuoteId, quote_type: "manual_boq" };
+    }
+    return getLatestSavedQuote(activeLead, "manual_boq");
   };
 
   const handleDownloadManualQuotePDF = async (quoteId?: string) => {
@@ -1995,7 +2013,7 @@ export default function SalesTeamApp({
       if (!resolvedQuoteId) {
         const targetManualQuote = resolveTargetManualQuote();
         if (!targetManualQuote) {
-          alert("Save a quote first.");
+          alert("Please save the customer quotation before generating the PDF.");
           return;
         }
         resolvedQuoteId = targetManualQuote.id;
@@ -2014,15 +2032,28 @@ export default function SalesTeamApp({
   const handlePrintManualQuotePDF = async (quoteId?: string) => {
     if (!activeLead) return;
 
-    const targetManualQuote = quoteId
-      ? activeLead.quotes?.find((q: any) => q.id === quoteId && q.quote_type === "manual_boq")
-      : resolveTargetManualQuote();
-    if (!targetManualQuote) {
-      alert("Save a quote first.");
-      return;
-    }
     try {
-      await openManualQuotePrintPreview(activeLead.id, targetManualQuote.id);
+      let resolvedQuoteId = quoteId;
+
+      if (!quoteId && activeModule === "boq_builder") {
+        const manualItemCount = boqRows.filter((r) => r && r.type === "item").length;
+        if (manualItemCount > 0 || !resolveTargetManualQuote()) {
+          const savedId = await handleSaveQuote();
+          if (!savedId) return;
+          resolvedQuoteId = savedId;
+        }
+      }
+
+      if (!resolvedQuoteId) {
+        const targetManualQuote = resolveTargetManualQuote();
+        if (!targetManualQuote) {
+          alert("Please save the customer quotation before generating the PDF.");
+          return;
+        }
+        resolvedQuoteId = targetManualQuote.id;
+      }
+
+      await openManualQuotePrintPreview(activeLead.id, resolvedQuoteId);
     } catch (err: any) {
       alert(err?.message || "Print preview failed.");
     }
