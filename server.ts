@@ -9539,7 +9539,20 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
     }
 
     const quoteForExport = { ...payload, boqRows: allRows, boqItems: allRows };
-    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, { mode: "manual" });
+    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, {
+      mode: "manual",
+      hideActionBar: req.query.download === "1",
+    });
+    if (req.query.download === "1") {
+      if (rendered.exportBlocked) {
+        return res.status(409).type("text/plain").send(
+          rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
+        );
+      }
+      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      await sendQuotationPdfResponse(res, rendered.html, filename);
+      return;
+    }
     res.send(rendered.html);
   } catch (err: any) {
     res.status(500).send("Error compiling Manual PDF structure: " + err.message);

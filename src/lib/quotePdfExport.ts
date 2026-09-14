@@ -1,3 +1,6 @@
+import { Capacitor } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 import { API_BASE_URL, authorizedFetch } from "../services/api";
 import { PDF_ENGINE_MISSING_MESSAGE } from "./quotePdfErrors";
 
@@ -40,11 +43,56 @@ function parseContentDispositionFilename(header: string | null): string | null {
   return plain ? plain[1].trim() : null;
 }
 
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function safePdfFilename(filename: string): string {
+  const cleaned = filename.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned || "Sunchaser-Quotation"}.pdf`;
+}
+
 async function triggerBlobDownload(res: Response): Promise<void> {
   const blob = await res.blob();
-  const filename =
+  const filename = safePdfFilename(
     parseContentDispositionFilename(res.headers.get("Content-Disposition")) ||
-    "Sunchaser-Quotation.pdf";
+      "Sunchaser-Quotation.pdf"
+  );
+
+  if (Capacitor.isNativePlatform()) {
+    const data = await blobToBase64(blob);
+    let written;
+    try {
+      written = await Filesystem.writeFile({
+        path: `Sunchaser/${filename}`,
+        data,
+        directory: Directory.Documents,
+        recursive: true,
+      });
+    } catch {
+      written = await Filesystem.writeFile({
+        path: filename,
+        data,
+        directory: Directory.Cache,
+        recursive: true,
+      });
+    }
+
+    await Share.share({
+      title: filename,
+      text: "Sunchaser quotation PDF",
+      files: [written.uri],
+      dialogTitle: "Save or share quotation PDF",
+    });
+    return;
+  }
+
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
@@ -52,7 +100,7 @@ async function triggerBlobDownload(res: Response): Promise<void> {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(objectUrl);
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
 /**
@@ -94,6 +142,24 @@ async function fetchAndWriteQuotePreview(url: string): Promise<void> {
     }
     throw err;
   }
+}
+
+export function ephemeralManualQuotePdfDownloadUrl(): string {
+  return `${API_BASE_URL}/api/export/pdf/manual-quote?download=1`;
+}
+
+/** Full Manual BOQ PDF generated from current editor state without creating a CRM lead/quote. */
+export async function downloadEphemeralManualQuotePdf(payload: unknown): Promise<void> {
+  const res = await authorizedFetch(ephemeralManualQuotePdfDownloadUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(friendlyPdfError(res.status, text));
+  }
+  await triggerBlobDownload(res);
 }
 
 /** Direct PDF file download — no new tab, no print dialog. */
