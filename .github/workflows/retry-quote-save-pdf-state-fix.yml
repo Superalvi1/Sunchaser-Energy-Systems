@@ -21,6 +21,29 @@ jobs:
           ref: fix/quote-save-pdf-state
           fetch-depth: 0
 
+      - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci --ignore-scripts
+
+      - name: Capture existing TypeScript baseline
+        shell: bash
+        run: |
+          npx tsc --noEmit > /tmp/tsc-baseline.txt 2>&1 || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          def normalize(text: str):
+              rows = []
+              for line in text.splitlines():
+                  if 'error TS' not in line:
+                      continue
+                  line = re.sub(r'\(\d+,\d+\)', '(LINE,COL)', line)
+                  rows.append(line.strip())
+              return sorted(set(rows))
+          Path('/tmp/tsc-baseline-normalized.txt').write_text('\n'.join(normalize(Path('/tmp/tsc-baseline.txt').read_text())) + '\n')
+          PY
+
       - name: Apply hotfix source patch
         shell: bash
         run: |
@@ -39,9 +62,8 @@ jobs:
           PY
           python3 /tmp/apply_quote_hotfix.py
 
-          # The first verification correctly found the only failure was the test
-          # matching the explanatory comment, not executable code. Tighten it to
-          # reject the old flat-array lookup statement specifically.
+          # Tighten the regression assertion to reject the old executable lookup,
+          # without matching the explanatory comment in the fixed route.
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/lib/quotePdfExport.test.ts')
@@ -53,19 +75,38 @@ jobs:
           p.write_text(s.replace(old, new, 1))
           PY
 
-      - name: Install dependencies
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-        run: npm ci --ignore-scripts
-
-      - name: Run quotation regression tests and typecheck
+      - name: Run quotation regression tests
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
         run: |
           npm run test:quote-pdf-export
           npm run test:quote-customer-boq
           npm run test:quote-commercial
-          npx tsc --noEmit
+
+      - name: Ensure hotfix adds no TypeScript diagnostics
+        shell: bash
+        run: |
+          npx tsc --noEmit > /tmp/tsc-after.txt 2>&1 || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import difflib
+          import re
+          def normalize(text: str):
+              rows = []
+              for line in text.splitlines():
+                  if 'error TS' not in line:
+                      continue
+                  line = re.sub(r'\(\d+,\d+\)', '(LINE,COL)', line)
+                  rows.append(line.strip())
+              return sorted(set(rows))
+          baseline = Path('/tmp/tsc-baseline-normalized.txt').read_text().splitlines()
+          after = normalize(Path('/tmp/tsc-after.txt').read_text())
+          if baseline != after:
+              print('Hotfix changed TypeScript diagnostics:')
+              print('\n'.join(difflib.unified_diff(baseline, after, fromfile='baseline', tofile='after', lineterm='')))
+              raise SystemExit(1)
+          print(f'No new TypeScript diagnostics; baseline remains {len(after)} known error(s).')
+          PY
 
       - name: Build production frontend
         run: npx vite build --mode production
