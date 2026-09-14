@@ -1,0 +1,87 @@
+name: Apply quotation fixes v2
+
+on:
+  push:
+    branches:
+      - feature/mobile-ai-quote-builder-sync
+    paths:
+      - .github/workflows/apply-quotation-fixes-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/mobile-ai-quote-builder-sync
+          fetch-depth: 0
+
+      - name: Reuse tested patch scripts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess, textwrap
+
+          workflow = Path('.github/workflows/apply-quotation-fixes.yml').read_text()
+
+          def run_step(name, next_name):
+              pattern = rf'      - name: {re.escape(name)}\n(?:.*\n)*?        run: \|\n(.*?)(?=      - name: {re.escape(next_name)}\n)'
+              match = re.search(pattern, workflow, flags=re.S)
+              if not match:
+                  raise SystemExit(f'Could not extract step: {name}')
+              script = textwrap.dedent(match.group(1))
+              subprocess.run(['bash', '-euo', 'pipefail', '-c', script], check=True)
+
+          run_step('Apply source fixes', 'Add Capacitor file/share plugins and update lockfile')
+          run_step('Write quick quotation regression test', 'Install dependencies cleanly')
+          PY
+
+      - name: Add Capacitor native PDF plugins
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm install --ignore-scripts --save @capacitor/filesystem@8 @capacitor/share@8
+
+      - name: Install dependencies cleanly
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci --ignore-scripts
+
+      - name: Run focused quotation tests
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
+        run: |
+          npm run test:quote-pdf-export
+          npx tsx src/lib/quickQuotationMode.test.ts
+          npm run test:ai-quote-mobile
+          npm run test:quote-customer-boq
+          npm run test:quote-commercial
+
+      - name: Build and sync
+        run: |
+          npx vite build --mode production
+          npx cap sync android
+
+      - name: Verify fixed Android wiring
+        shell: bash
+        run: |
+          grep -E 'applicationId|versionCode|versionName' android/app/build.gradle
+          grep -R '@capacitor/filesystem' -n android/capacitor.settings.gradle android/app/capacitor.build.gradle
+          grep -R '@capacitor/share' -n android/capacitor.settings.gradle android/app/capacitor.build.gradle
+
+      - name: Commit tested source changes
+        shell: bash
+        run: |
+          # GITHUB_TOKEN can push ordinary source changes, but workflow files are handled separately.
+          git checkout -- .github/workflows/build-android-apk.yml
+          git diff --check
+          git config user.name 'Sunchaser CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package.json package-lock.json server.ts src/lib/quotePdfExport.ts src/lib/quickQuotationMode.test.ts src/components/SalesTeamApp.tsx android/app/build.gradle android/app/capacitor.build.gradle android/capacitor.settings.gradle
+          git commit -m 'fix: mobile PDF download and no-lead quick quotations'
+          git push origin HEAD:feature/mobile-ai-quote-builder-sync
