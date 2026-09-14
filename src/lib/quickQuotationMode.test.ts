@@ -48,12 +48,20 @@ check("server ephemeral manual quote can return PDF without saving lead or quote
   assert.doesNotMatch(route, /create-quote/);
 });
 
-check("native PDF path writes a file and opens Android save/share sheet", () => {
-  assert.match(pdf, /Capacitor\.isNativePlatform\(\)/);
-  assert.match(pdf, /Filesystem\.writeFile/);
-  assert.match(pdf, /Directory\.Documents/);
-  assert.match(pdf, /Share\.share/);
-  assert.match(pdf, /Save or share quotation PDF/);
+check("native PDF path uses one-time Browser handoff and no file/share bridge", () => {
+  assert.match(pdf, /Browser\.open/);
+  assert.match(pdf, /openAndroidStagedPdf/);
+  assert.doesNotMatch(pdf, /Share\.share/);
+  assert.doesNotMatch(pdf, /Filesystem\.writeFile/);
+  assert.doesNotMatch(pdf, /FileTransfer\.downloadFile/);
+  assert.doesNotMatch(pdf, /FileViewer\.openDocumentFromLocalPath/);
+});
+
+check("server issues short-lived one-time public PDF URLs for Android browser", () => {
+  assert.match(server, /staged-public\/:token/);
+  assert.match(server, /takeStagedQuotationPdf/);
+  assert.match(server, /STAGED_QUOTATION_PDF_TTL_MS = 2 \* 60 \* 1000/);
+  assert.match(server, /Cache-Control", "no-store"/);
 });
 
 check("browser PDF path still uses standard anchor download", () => {
