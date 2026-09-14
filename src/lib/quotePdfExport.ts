@@ -1,6 +1,5 @@
 import { Capacitor } from "@capacitor/core";
-import { Directory, Filesystem } from "@capacitor/filesystem";
-import { Share } from "@capacitor/share";
+import { Browser } from "@capacitor/browser";
 import { API_BASE_URL, authorizedFetch } from "../services/api";
 import { PDF_ENGINE_MISSING_MESSAGE } from "./quotePdfErrors";
 
@@ -43,23 +42,6 @@ function parseContentDispositionFilename(header: string | null): string | null {
   return plain ? plain[1].trim() : null;
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error || new Error("Unable to read generated PDF."));
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("Unable to encode generated PDF."));
-        return;
-      }
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.readAsDataURL(blob);
-  });
-}
-
 function safePdfFilename(filename: string): string {
   const cleaned = filename.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
   return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned || "Sunchaser-Quotation"}.pdf`;
@@ -73,35 +55,8 @@ async function triggerBlobDownload(res: Response): Promise<void> {
   );
 
   if (Capacitor.isNativePlatform()) {
-  if (!blob.size) throw new Error("The generated PDF is empty.");
-
-  // Keep one native copy only to reduce Android bridge/base64 memory pressure.
-  const data = await blobToBase64(blob);
-  const shareable = await Filesystem.writeFile({
-    path: `sunchaser-${Date.now()}-${filename}`,
-    data,
-    directory: Directory.Cache,
-    recursive: true,
-  });
-
-  const canShare = await Share.canShare().catch(() => ({ value: false }));
-  if (!canShare.value) {
-    throw new Error("PDF generated successfully, but Android sharing is unavailable on this device.");
+    throw new Error("Android PDF export must use the external browser handoff.");
   }
-
-  try {
-    // One local PDF should use the single-file `url` path on Android.
-    await Share.share({
-      title: filename,
-      url: shareable.uri,
-      dialogTitle: "Save or share quotation PDF",
-    });
-  } catch (error) {
-    console.error("Android PDF share failed", error);
-    throw new Error("PDF generated successfully, but Android could not open the Save/Share sheet. Please try again.");
-  }
-  return;
-}
 
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -154,12 +109,34 @@ async function fetchAndWriteQuotePreview(url: string): Promise<void> {
   }
 }
 
+async function openAndroidStagedPdf(stagePath: string, init?: RequestInit): Promise<void> {
+  const res = await authorizedFetch(stagePath, init);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(friendlyPdfError(res.status, text));
+  }
+  const staged = await res.json() as { downloadUrl?: string };
+  if (!staged.downloadUrl) throw new Error("PDF staging did not return a download link.");
+  const url = staged.downloadUrl.startsWith("http")
+    ? staged.downloadUrl
+    : `${API_BASE_URL}${staged.downloadUrl}`;
+  await Browser.open({ url });
+}
+
 export function ephemeralManualQuotePdfDownloadUrl(): string {
   return `${API_BASE_URL}/api/export/pdf/manual-quote?download=1`;
 }
 
 /** Full Manual BOQ PDF generated from current editor state without creating a CRM lead/quote. */
 export async function downloadEphemeralManualQuotePdf(payload: unknown): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    await openAndroidStagedPdf('/api/export/pdf/manual-quote?stage=1', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return;
+  }
   const res = await authorizedFetch(ephemeralManualQuotePdfDownloadUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -174,6 +151,14 @@ export async function downloadEphemeralManualQuotePdf(payload: unknown): Promise
 
 /** Direct PDF file download — no new tab, no print dialog. */
 export async function downloadManualQuotePdf(leadId: string, quoteId?: string): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    await openAndroidStagedPdf('/api/export/pdf/stage-saved-quote', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leadId, quoteId, quoteType: "manual_boq" }),
+    });
+    return;
+  }
   const res = await authorizedFetch(manualQuotePdfDownloadUrl(leadId, quoteId));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -184,6 +169,14 @@ export async function downloadManualQuotePdf(leadId: string, quoteId?: string): 
 
 /** Direct AutoSizer PDF file download — authenticated fetch, never window.location. */
 export async function downloadAutoSizerQuotePdf(leadId: string, quoteId?: string): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    await openAndroidStagedPdf('/api/export/pdf/stage-saved-quote', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leadId, quoteId, quoteType: "auto_sizer" }),
+    });
+    return;
+  }
   const res = await authorizedFetch(autoSizerQuotePdfDownloadUrl(leadId, quoteId));
   if (!res.ok) {
     const text = await res.text().catch(() => "");

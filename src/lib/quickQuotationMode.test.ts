@@ -30,11 +30,17 @@ check("Quick Quotation exits before CRM create\/update quote persistence", () =>
   assert.doesNotMatch(quick, /\/api\/leads\//);
 });
 
-check("Quick PDF posts current editor payload to ephemeral manual PDF route", () => {
-  assert.match(pdf, /ephemeralManualQuotePdfDownloadUrl/);
+check("Quick PDF stages Android export and keeps browser download route", () => {
+  assert.match(pdf, /manual-quote\?stage=1/);
   assert.match(pdf, /manual-quote\?download=1/);
   assert.match(pdf, /method: "POST"/);
   assert.match(sales, /downloadEphemeralManualQuotePdf\(quickQuotePayloadRef\.current\)/);
+  const start = server.indexOf('app.post("/api/export/pdf/manual-quote"');
+  const end = server.indexOf("function buildTemplatePreviewMockData", start);
+  const route = server.slice(start, end);
+  assert.match(route, /req\.query\.stage === "1"/);
+  assert.match(route, /stageQuotationPdf\(pdfBuffer, filename\)/);
+  assert.match(route, /downloadUrl: `\/api\/export\/pdf\/staged-public\/\$\{token\}`/);
 });
 
 check("server ephemeral manual quote can return PDF without saving lead or quote", () => {
@@ -48,12 +54,20 @@ check("server ephemeral manual quote can return PDF without saving lead or quote
   assert.doesNotMatch(route, /create-quote/);
 });
 
-check("native PDF path writes a file and opens Android save/share sheet", () => {
-  assert.match(pdf, /Capacitor\.isNativePlatform\(\)/);
-  assert.match(pdf, /Filesystem\.writeFile/);
-  assert.match(pdf, /Directory\.Documents/);
-  assert.match(pdf, /Share\.share/);
-  assert.match(pdf, /Save or share quotation PDF/);
+check("native PDF path uses one-time Browser handoff and no file/share bridge", () => {
+  assert.match(pdf, /Browser\.open/);
+  assert.match(pdf, /openAndroidStagedPdf/);
+  assert.doesNotMatch(pdf, /Share\.share/);
+  assert.doesNotMatch(pdf, /Filesystem\.writeFile/);
+  assert.doesNotMatch(pdf, /FileTransfer\.downloadFile/);
+  assert.doesNotMatch(pdf, /FileViewer\.openDocumentFromLocalPath/);
+});
+
+check("server issues short-lived one-time public PDF URLs for Android browser", () => {
+  assert.match(server, /staged-public\/:token/);
+  assert.match(server, /takeStagedQuotationPdf/);
+  assert.match(server, /STAGED_QUOTATION_PDF_TTL_MS = 2 \* 60 \* 1000/);
+  assert.match(server, /Cache-Control", "no-store"/);
 });
 
 check("browser PDF path still uses standard anchor download", () => {

@@ -9541,8 +9541,23 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
     const quoteForExport = { ...payload, boqRows: allRows, boqItems: allRows };
     const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, {
       mode: "manual",
-      hideActionBar: req.query.download === "1",
+      hideActionBar: req.query.download === "1" || req.query.stage === "1",
     });
+    if (req.query.stage === "1") {
+      if (rendered.exportBlocked) {
+        return res.status(409).type("text/plain").send(
+          rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
+        );
+      }
+      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
+      const token = stageQuotationPdf(pdfBuffer, filename);
+      return res.json({
+        downloadUrl: `/api/export/pdf/staged-public/${token}`,
+        filename,
+        expiresInSeconds: 120,
+      });
+    }
     if (req.query.download === "1") {
       if (rendered.exportBlocked) {
         return res.status(409).type("text/plain").send(
@@ -9629,6 +9644,30 @@ async function compileTemplatePreviewHtml(
   }
   const filename = buildTemplateTestPdfFilename(pageTitle, scope);
   return { html, filename };
+}
+
+const STAGED_QUOTATION_PDF_TTL_MS = 2 * 60 * 1000;
+const stagedQuotationPdfs = new Map<string, { buffer: Buffer; filename: string; expiresAt: number }>();
+
+function cleanupStagedQuotationPdfs(now = Date.now()): void {
+  for (const [token, entry] of stagedQuotationPdfs.entries()) {
+    if (entry.expiresAt <= now) stagedQuotationPdfs.delete(token);
+  }
+}
+
+function stageQuotationPdf(buffer: Buffer, filename: string): string {
+  cleanupStagedQuotationPdfs();
+  const token = randomUUID();
+  stagedQuotationPdfs.set(token, { buffer, filename, expiresAt: Date.now() + STAGED_QUOTATION_PDF_TTL_MS });
+  return token;
+}
+
+function takeStagedQuotationPdf(token: string) {
+  cleanupStagedQuotationPdfs();
+  const entry = stagedQuotationPdfs.get(token);
+  if (!entry) return null;
+  stagedQuotationPdfs.delete(token);
+  return entry;
 }
 
 async function sendQuotationPdfResponse(
@@ -9805,6 +9844,46 @@ app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res
     console.error("[PDF DOWNLOAD]", err);
     res.status(500).send(formatQuotationPdfError(err));
   }
+});
+
+app.post("/api/export/pdf/stage-saved-quote", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  try {
+    const leadId = String(req.body?.leadId || "");
+    const quoteId = req.body?.quoteId ? String(req.body.quoteId) : "";
+    if (!leadId) return res.status(400).json({ error: "leadId is required" });
+    if (!(await guardSalesOwnedResource(req, res, "manual_quote_export", leadId))) return;
+    loadDb();
+    let activeState: Database = db;
+    if (isSupabaseActive()) activeState = await fetchAppStateFromSupabase();
+    const lead = activeState.leads.find((item: any) => String(item.id) === leadId);
+    if (!lead) return res.status(404).json({ error: "Lead not found" });
+    const quotes = (activeState.quotes || []).filter((q: any) => String(q.lead_id) === leadId);
+    const quote = quoteId ? quotes.find((q: any) => String(q.id) === quoteId) : quotes[quotes.length - 1];
+    if (!quote) return res.status(404).json({ error: "Save a quote first." });
+    const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { hideActionBar: true });
+    if (rendered.exportBlocked) return res.status(409).json({ error: rendered.exportBlockReason || "Quotation cannot be exported." });
+    const filename = buildQuotationPdfFilename(lead, quote);
+    const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
+    const token = stageQuotationPdf(pdfBuffer, filename);
+    return res.json({ downloadUrl: `/api/export/pdf/staged-public/${token}`, filename, expiresInSeconds: 120 });
+  } catch (err: any) {
+    console.error("[PDF STAGE SAVED QUOTE]", err);
+    return res.status(500).json({ error: formatQuotationPdfError(err) });
+  }
+});
+
+app.get("/api/export/pdf/staged-public/:token", (req, res) => {
+  const staged = takeStagedQuotationPdf(String(req.params.token || ""));
+  if (!staged) {
+    return res.status(404).type("text/plain").send("This PDF link has expired or was already used. Generate it again.");
+  }
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${staged.filename.replace(/[^\w.\-]+/g, "_")}"`);
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  return res.send(staged.buffer);
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId/debug-template-map", async (req, res) => {
