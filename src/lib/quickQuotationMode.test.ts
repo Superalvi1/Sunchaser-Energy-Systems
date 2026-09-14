@@ -30,10 +30,10 @@ check("Quick Quotation exits before CRM create\/update quote persistence", () =>
   assert.doesNotMatch(quick, /\/api\/leads\//);
 });
 
-check("Quick PDF posts current editor payload to ephemeral manual PDF route", () => {
-  assert.match(pdf, /ephemeralManualQuotePdfDownloadUrl/);
-  assert.match(pdf, /manual-quote\?download=1/);
-  assert.match(pdf, /method: "POST"/);
+check("Quick PDF stages on Android and downloads natively without CRM persistence", () => {
+  assert.match(pdf, /manual-quote\?stage=1/);
+  assert.match(pdf, /FileTransfer\.downloadFile/);
+  assert.match(pdf, /FileViewer\.openDocumentFromLocalPath/);
   assert.match(sales, /downloadEphemeralManualQuotePdf\(quickQuotePayloadRef\.current\)/);
 });
 
@@ -48,12 +48,20 @@ check("server ephemeral manual quote can return PDF without saving lead or quote
   assert.doesNotMatch(route, /create-quote/);
 });
 
-check("native PDF path writes a file and opens Android save/share sheet", () => {
-  assert.match(pdf, /Capacitor\.isNativePlatform\(\)/);
-  assert.match(pdf, /Filesystem\.writeFile/);
+check("native PDF path streams with FileTransfer instead of blob/Base64/Share", () => {
+  assert.match(pdf, /FileTransfer\.downloadFile/);
+  assert.match(pdf, /FileViewer\.openDocumentFromLocalPath/);
   assert.match(pdf, /Directory\.Documents/);
-  assert.match(pdf, /Share\.share/);
-  assert.match(pdf, /Save or share quotation PDF/);
+  assert.doesNotMatch(pdf, /Share\.share/);
+  assert.doesNotMatch(pdf, /blobToBase64/);
+});
+
+
+check("server staged PDF route is authenticated and one-time", () => {
+  assert.match(server, /app\.get\("\/api\/export\/pdf\/staged\/:token"/);
+  assert.match(server, /resolveStaffActor\(req, res\)/);
+  assert.match(server, /takeStagedQuotationPdf/);
+  assert.match(server, /Cache-Control", "no-store"/);
 });
 
 check("browser PDF path still uses standard anchor download", () => {
