@@ -9543,6 +9543,21 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
       mode: "manual",
       hideActionBar: req.query.download === "1" || req.query.stage === "1",
     });
+    if (req.query.stage === "1") {
+      if (rendered.exportBlocked) {
+        return res.status(409).type("text/plain").send(
+          rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
+        );
+      }
+      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
+      const token = stageQuotationPdf(pdfBuffer, filename);
+      return res.json({
+        downloadUrl: `/api/export/pdf/staged-public/${token}`,
+        filename,
+        expiresInSeconds: 120,
+      });
+    }
     if (req.query.download === "1") {
       if (rendered.exportBlocked) {
         return res.status(409).type("text/plain").send(
