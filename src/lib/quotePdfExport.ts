@@ -67,27 +67,33 @@ async function triggerBlobDownload(res: Response): Promise<void> {
 
   if (Capacitor.isNativePlatform()) {
     const data = await blobToBase64(blob);
-    let written;
+
+    // Keep a persistent copy in Documents when Android allows it. Sharing is
+    // deliberately done from Cache because Capacitor Share exposes cache files
+    // by default; other folders require custom Android FileProvider paths.
     try {
-      written = await Filesystem.writeFile({
+      await Filesystem.writeFile({
         path: `Sunchaser/${filename}`,
         data,
         directory: Directory.Documents,
         recursive: true,
       });
     } catch {
-      written = await Filesystem.writeFile({
-        path: filename,
-        data,
-        directory: Directory.Cache,
-        recursive: true,
-      });
+      // Some Android versions/storage policies may deny Documents access.
+      // The cache copy below still enables Save/Share through the system sheet.
     }
+
+    const shareable = await Filesystem.writeFile({
+      path: filename,
+      data,
+      directory: Directory.Cache,
+      recursive: true,
+    });
 
     await Share.share({
       title: filename,
       text: "Sunchaser quotation PDF",
-      files: [written.uri],
+      files: [shareable.uri],
       dialogTitle: "Save or share quotation PDF",
     });
     return;
