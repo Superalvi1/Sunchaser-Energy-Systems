@@ -27,7 +27,7 @@ jobs:
       - name: Install native PDF plugins
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-        run: npm install @capacitor/file-transfer@^8 @capacitor/file-viewer@^8 --save --ignore-scripts
+        run: npm install @capacitor/file-transfer@2.0.5 @capacitor/file-viewer@2.0.3 --save --ignore-scripts
 
       - name: Apply native PDF transfer patch
         run: python .github/scripts/native_pdf_patch.py
