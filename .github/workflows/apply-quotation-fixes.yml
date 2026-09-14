@@ -1,0 +1,349 @@
+name: Apply quotation fixes
+
+on:
+  push:
+    branches:
+      - feature/mobile-ai-quote-builder-sync
+    paths:
+      - .github/workflows/apply-quotation-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/mobile-ai-quote-builder-sync
+          fetch-depth: 0
+
+      - name: Apply source fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly 1 match, found {count} for marker: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          # 1) Native-safe PDF download/share + ephemeral Manual BOQ download helper.
+          p = Path("src/lib/quotePdfExport.ts")
+          text = p.read_text()
+          text = text.replace(
+              'import { API_BASE_URL, authorizedFetch } from "../services/api";\n',
+              'import { Capacitor } from "@capacitor/core";\nimport { Directory, Filesystem } from "@capacitor/filesystem";\nimport { Share } from "@capacitor/share";\nimport { API_BASE_URL, authorizedFetch } from "../services/api";\n',
+              1,
+          )
+          old_trigger = '''async function triggerBlobDownload(res: Response): Promise<void> {\n  const blob = await res.blob();\n  const filename =\n    parseContentDispositionFilename(res.headers.get("Content-Disposition")) ||\n    "Sunchaser-Quotation.pdf";\n  const objectUrl = URL.createObjectURL(blob);\n  const anchor = document.createElement("a");\n  anchor.href = objectUrl;\n  anchor.download = filename;\n  document.body.appendChild(anchor);\n  anchor.click();\n  anchor.remove();\n  URL.revokeObjectURL(objectUrl);\n}\n'''
+          new_trigger = '''async function blobToBase64(blob: Blob): Promise<string> {\n  const bytes = new Uint8Array(await blob.arrayBuffer());\n  let binary = "";\n  const chunkSize = 0x8000;\n  for (let i = 0; i < bytes.length; i += chunkSize) {\n    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));\n  }\n  return btoa(binary);\n}\n\nfunction safePdfFilename(filename: string): string {\n  const cleaned = filename.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");\n  return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned || "Sunchaser-Quotation"}.pdf`;\n}\n\nasync function triggerBlobDownload(res: Response): Promise<void> {\n  const blob = await res.blob();\n  const filename = safePdfFilename(\n    parseContentDispositionFilename(res.headers.get("Content-Disposition")) ||\n      "Sunchaser-Quotation.pdf"\n  );\n\n  if (Capacitor.isNativePlatform()) {\n    const data = await blobToBase64(blob);\n    let written;\n    try {\n      written = await Filesystem.writeFile({\n        path: `Sunchaser/${filename}`,\n        data,\n        directory: Directory.Documents,\n        recursive: true,\n      });\n    } catch {\n      written = await Filesystem.writeFile({\n        path: filename,\n        data,\n        directory: Directory.Cache,\n        recursive: true,\n      });\n    }\n\n    await Share.share({\n      title: filename,\n      text: "Sunchaser quotation PDF",\n      files: [written.uri],\n      dialogTitle: "Save or share quotation PDF",\n    });\n    return;\n  }\n\n  const objectUrl = URL.createObjectURL(blob);\n  const anchor = document.createElement("a");\n  anchor.href = objectUrl;\n  anchor.download = filename;\n  document.body.appendChild(anchor);\n  anchor.click();\n  anchor.remove();\n  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);\n}\n'''
+          if old_trigger not in text:
+              raise SystemExit("quotePdfExport.ts: triggerBlobDownload marker not found")
+          text = text.replace(old_trigger, new_trigger, 1)
+          marker = '''/** Direct PDF file download — no new tab, no print dialog. */\nexport async function downloadManualQuotePdf(leadId: string, quoteId?: string): Promise<void> {'''
+          addition = '''export function ephemeralManualQuotePdfDownloadUrl(): string {\n  return `${API_BASE_URL}/api/export/pdf/manual-quote?download=1`;\n}\n\n/** Full Manual BOQ PDF generated from current editor state without creating a CRM lead/quote. */\nexport async function downloadEphemeralManualQuotePdf(payload: unknown): Promise<void> {\n  const res = await authorizedFetch(ephemeralManualQuotePdfDownloadUrl(), {\n    method: "POST",\n    headers: { "Content-Type": "application/json" },\n    body: JSON.stringify(payload),\n  });\n  if (!res.ok) {\n    const text = await res.text().catch(() => "");\n    throw new Error(friendlyPdfError(res.status, text));\n  }\n  await triggerBlobDownload(res);\n}\n\n/** Direct PDF file download — no new tab, no print dialog. */\nexport async function downloadManualQuotePdf(leadId: string, quoteId?: string): Promise<void> {'''
+          if marker not in text:
+              raise SystemExit("quotePdfExport.ts: manual download marker not found")
+          text = text.replace(marker, addition, 1)
+          p.write_text(text)
+
+          # 2) Existing ephemeral manual route can return an actual PDF when ?download=1.
+          replace_once(
+              "server.ts",
+              '''    const quoteForExport = { ...payload, boqRows: allRows, boqItems: allRows };\n    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, { mode: "manual" });\n    res.send(rendered.html);\n''',
+              '''    const quoteForExport = { ...payload, boqRows: allRows, boqItems: allRows };\n    const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, {\n      mode: "manual",\n      hideActionBar: req.query.download === "1",\n    });\n    if (req.query.download === "1") {\n      if (rendered.exportBlocked) {\n        return res.status(409).type("text/plain").send(\n          rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."\n        );\n      }\n      const filename = buildQuotationPdfFilename(lead, quoteForExport);\n      await sendQuotationPdfResponse(res, rendered.html, filename);\n      return;\n    }\n    res.send(rendered.html);\n'''
+          )
+
+          # 3) Sales UI: sentinel quick-quotation mode; no CRM persistence.
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              'import React, { useState, useEffect, useMemo } from "react";',
+              'import React, { useState, useEffect, useMemo, useRef } from "react";'
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''import {\n  downloadManualQuotePdf,\n  downloadQuotePdfByType,\n  openManualQuotePrintPreview,\n  openQuotePrintPreviewByType,\n  printProposalPreviewIframe,\n} from "../lib/quotePdfExport";''',
+              '''import {\n  downloadEphemeralManualQuotePdf,\n  downloadManualQuotePdf,\n  downloadQuotePdfByType,\n  openManualQuotePrintPreview,\n  openQuotePrintPreviewByType,\n  printProposalPreviewIframe,\n} from "../lib/quotePdfExport";'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''/** Roof Studio / Design Project tab — Project Design Workspace (HelioScope layout). */\nconst DESIGN_PROJECT_ENABLED = isDesignProjectEnabled();\n\nexport default function SalesTeamApp({''',
+              '''/** Roof Studio / Design Project tab — Project Design Workspace (HelioScope layout). */\nconst DESIGN_PROJECT_ENABLED = isDesignProjectEnabled();\n\nconst QUICK_QUOTE_LEAD_ID = "__quick_quotation_no_crm__";\nconst QUICK_QUOTE_LEAD: Lead = {\n  id: QUICK_QUOTE_LEAD_ID,\n  name: "Quick Quotation — No CRM Lead",\n  email: "",\n  phone: "",\n  address: "",\n  status: "New",\n  monthlyBill: 0,\n  monthlyUnits: 0,\n  roofSpace: 0,\n  shading: "None",\n  rating: 0,\n  assignedSalesperson: "",\n  createdAt: new Date().toISOString(),\n  notes: "Ephemeral quotation context. Never persist as a CRM lead.",\n  quotes: [],\n};\n\nexport default function SalesTeamApp({'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''  const activeLead = leads.find(l => l.id === selectedLeadId);\n  const toast = useToast();\n  const [leadCustomerRecord, setLeadCustomerRecord] = useState<any | null>(null);\n\n  useEffect(() => {\n    if (!staffUser || !activeLead) {''',
+              '''  const isQuickQuoteMode = selectedLeadId === QUICK_QUOTE_LEAD_ID;\n  const activeLead = isQuickQuoteMode ? QUICK_QUOTE_LEAD : leads.find(l => l.id === selectedLeadId);\n  const toast = useToast();\n  const quickQuotePayloadRef = useRef<any | null>(null);\n  const [leadCustomerRecord, setLeadCustomerRecord] = useState<any | null>(null);\n\n  useEffect(() => {\n    if (!staffUser || !activeLead || isQuickQuoteMode) {'''
+          )
+          # Clear customer identity fields for Quick Quotation instead of showing the sentinel label.
+          sales = Path("src/components/SalesTeamApp.tsx").read_text()
+          replacements = {
+              'setClientName(activeLead.name || "");': 'setClientName(isQuickQuoteMode ? "" : activeLead.name || "");',
+              'setClientPhone(activeLead.phone || "");': 'setClientPhone(isQuickQuoteMode ? "" : activeLead.phone || "");',
+              'setClientEmail(activeLead.email || "");': 'setClientEmail(isQuickQuoteMode ? "" : activeLead.email || "");',
+              'setClientAddress(activeLead.address || "");': 'setClientAddress(isQuickQuoteMode ? "" : activeLead.address || "");',
+              'setCityArea(sanitizeLeadLocationInput(activeLead.location) || sanitizeLeadLocationInput(activeLead.address) || "");': 'setCityArea(isQuickQuoteMode ? "" : sanitizeLeadLocationInput(activeLead.location) || sanitizeLeadLocationInput(activeLead.address) || "");',
+              'setBdmName(sanitizeLeadAdvisorInput(activeLead.assignedSalesperson) || staffUser?.name || "");': 'setBdmName(isQuickQuoteMode ? (staffUser?.name || "") : sanitizeLeadAdvisorInput(activeLead.assignedSalesperson) || staffUser?.name || "");',
+          }
+          for old, new in replacements.items():
+              if old not in sales:
+                  raise SystemExit(f"SalesTeamApp.tsx missing client sync marker: {old}")
+              sales = sales.replace(old, new, 1)
+          Path("src/components/SalesTeamApp.tsx").write_text(sales)
+
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''  const handleSaveSizerQuote = async () => {\n    if (!activeLead || savingQuote) return;''',
+              '''  const handleSaveSizerQuote = async () => {\n    if (!activeLead || savingQuote) return;\n    if (isQuickQuoteMode) {\n      setSubmitError("Quick Quotation mode uses Manual BOQ Builder and never creates CRM records.");\n      return;\n    }'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''      let savedQuoteId = editingQuoteId;\n\n      if (editingQuoteId) {''',
+              '''      if (isQuickQuoteMode) {\n        quickQuotePayloadRef.current = quoteData;\n        setQuoteCreatedConfirm(true);\n        setTimeout(() => setQuoteCreatedConfirm(false), 5000);\n        return QUICK_QUOTE_LEAD_ID;\n      }\n\n      let savedQuoteId = editingQuoteId;\n\n      if (editingQuoteId) {'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''  const handleDownloadManualQuotePDF = async (quoteId?: string) => {\n    if (!activeLead) return;\n\n    try {\n      setDownloadingQuotePdf(true);\n      let resolvedQuoteId = quoteId;''',
+              '''  const handleDownloadManualQuotePDF = async (quoteId?: string) => {\n    if (!activeLead) return;\n\n    try {\n      setDownloadingQuotePdf(true);\n\n      if (isQuickQuoteMode) {\n        setQuotePdfStatus("Preparing quick quote…");\n        const prepared = await handleSaveQuote();\n        if (!prepared || !quickQuotePayloadRef.current) return;\n        setQuotePdfStatus("Generating PDF…");\n        await downloadEphemeralManualQuotePdf(quickQuotePayloadRef.current);\n        return;\n      }\n\n      let resolvedQuoteId = quoteId;'''
+          )
+
+          # Sidebar Quick Quotation card before CRM leads.
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''          <div className="space-y-2.5 max-h-[420px] md:max-h-[620px] overflow-y-auto pr-1" data-testid="target-clients-list">\n            {leads.length > 0 ? (''',
+              '''          <div className="space-y-2.5 max-h-[420px] md:max-h-[620px] overflow-y-auto pr-1" data-testid="target-clients-list">\n            <button\n              type="button"\n              data-testid="quick-quotation-no-lead"\n              onClick={() => {\n                setSelectedLeadId(QUICK_QUOTE_LEAD_ID);\n                setEditingQuoteId(null);\n                setSizerEditingQuoteId(null);\n                setActiveModule("boq_builder");\n                if (isMobile) setTargetClientsOpen(false);\n              }}\n              className={`w-full p-4 rounded-2xl border text-left cursor-pointer transition ${\n                isQuickQuoteMode\n                  ? "bg-amber-500/10 border-amber-500/60 text-white shadow-lg"\n                  : "bg-slate-950 border-dashed border-amber-500/35 hover:bg-amber-500/5 text-slate-300"\n              }`}\n            >\n              <div className="flex items-center justify-between gap-3">\n                <div>\n                  <div className="font-bold text-amber-300">⚡ Quick Quotation</div>\n                  <div className="mt-1 text-[10px] text-slate-400">No CRM lead • no customer record • PDF only</div>\n                </div>\n                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-[9px] font-bold text-amber-300">NO SAVE</span>\n              </div>\n            </button>\n            {leads.length > 0 ? ('''
+          )
+
+          # Quick-mode profile header and prevent CRM/WhatsApp actions against sentinel ID.
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''                    <h3 className="text-lg font-bold text-white font-sans">{activeLead.name}</h3>\n                    <span className="text-[10px] bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded-full">\n                      ID: {activeLead.id}\n                    </span>''',
+              '''                    <h3 className="text-lg font-bold text-white font-sans">\n                      {isQuickQuoteMode ? "Quick Quotation — No CRM Lead" : activeLead.name}\n                    </h3>\n                    <span className="text-[10px] bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded-full">\n                      {isQuickQuoteMode ? "Not saved to CRM" : `ID: ${activeLead.id}`}\n                    </span>'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">\n                    <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>\n                    <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>\n                    <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(activeLead)}</span>\n                    <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {formatLeadAdvisor(activeLead.assignedSalesperson)}</span>\n                  </div>''',
+              '''                  {isQuickQuoteMode ? (\n                    <div className="mt-2.5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">\n                      Enter the customer details inside Manual BOQ Builder. Nothing is added to Leads, Customers, or Generated Quotes.\n                    </div>\n                  ) : (\n                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">\n                      <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>\n                      <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>\n                      <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(activeLead)}</span>\n                      <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {formatLeadAdvisor(activeLead.assignedSalesperson)}</span>\n                    </div>\n                  )}'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''                <WhatsAppModule\n                  staffUser={staffUser}\n                  preset="quotation"\n                  phone={clientPhone || activeLead.phone}\n                  onPhoneChange={setClientPhone}\n                  onPhonePersist={async (p) => {\n                    setClientPhone(p);\n                    await onUpdateLead(activeLead.id, { phone: p });\n                  }}\n                  customerName={activeLead.name}\n                  leadId={activeLead.id}\n                  templateVars={{\n                    customerName: activeLead.name,\n                    amount: activeLead.quotes?.slice(-1)[0]?.totalCost,\n                  }}\n                  compact\n                />''',
+              '''                {!isQuickQuoteMode && (\n                  <WhatsAppModule\n                    staffUser={staffUser}\n                    preset="quotation"\n                    phone={clientPhone || activeLead.phone}\n                    onPhoneChange={setClientPhone}\n                    onPhonePersist={async (p) => {\n                      setClientPhone(p);\n                      await onUpdateLead(activeLead.id, { phone: p });\n                    }}\n                    customerName={activeLead.name}\n                    leadId={activeLead.id}\n                    templateVars={{\n                      customerName: activeLead.name,\n                      amount: activeLead.quotes?.slice(-1)[0]?.totalCost,\n                    }}\n                    compact\n                  />\n                )}'''
+          )
+          replace_once(
+              "src/components/SalesTeamApp.tsx",
+              '''                    disabled={!latestManualSavedQuote || downloadingQuotePdf}\n                    title={!latestManualSavedQuote ? "Save a quote first" : "Downloads final A4 PDF generated by server"}''',
+              '''                    disabled={(!isQuickQuoteMode && !latestManualSavedQuote) || downloadingQuotePdf}\n                    title={isQuickQuoteMode ? "Generate PDF without creating a CRM lead" : (!latestManualSavedQuote ? "Save a quote first" : "Downloads final A4 PDF generated by server")}'''
+          )
+
+          # Save button language must not imply persistence in Quick mode.
+          sales = Path("src/components/SalesTeamApp.tsx").read_text()
+          sales = sales.replace('<span>Save Quote</span>', '<span>{isQuickQuoteMode ? "Prepare Quick Quote" : "Save Quote"}</span>', 1)
+          sales = sales.replace(
+              'Save stores the current snapshot. AutoSizer will not overwrite edits unless you Re-run AutoSizer.',
+              '{isQuickQuoteMode ? "Quick quotation is prepared only for PDF export and is not stored in CRM." : "Save stores the current snapshot. AutoSizer will not overwrite edits unless you Re-run AutoSizer."}',
+              1,
+          )
+          sales = sales.replace(
+              '<span>Customer quote saved</span>',
+              '<span>{isQuickQuoteMode ? "Quick quotation prepared — nothing added to CRM" : "Customer quote saved"}</span>',
+              1,
+          )
+          Path("src/components/SalesTeamApp.tsx").write_text(sales)
+
+          # 4) Persistent Android app version bump.
+          replace_once("android/app/build.gradle", "versionCode 9", "versionCode 11")
+          replace_once("android/app/build.gradle", 'versionName "1.0.6"', 'versionName "1.0.8"')
+
+          # 5) Keep CI APK builder aligned with the committed version.
+          p = Path(".github/workflows/build-android-apk.yml")
+          build = p.read_text()
+          build = build.replace("1.0.7", "1.0.8").replace("build10", "build11")
+          build = build.replace("versionCode 10", "versionCode 11").replace("build 10", "build 11")
+          p.write_text(build)
+
+          # 6) Add focused static behavior regression test.
+          Path("src/lib/quickQuotationMode.test.ts").write_text(r'''import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { dirname, join } from "node:path";
+          import { fileURLToPath } from "node:url";
+
+          const here = dirname(fileURLToPath(import.meta.url));
+          const sales = readFileSync(join(here, "../components/SalesTeamApp.tsx"), "utf8");
+          const pdf = readFileSync(join(here, "quotePdfExport.ts"), "utf8");
+          const server = readFileSync(join(here, "../../server.ts"), "utf8");
+
+          let passed = 0;
+          function check(name: string, fn: () => void) { fn(); passed += 1; console.log(`PASS: ${name}`); }
+
+          check("Quick Quotation has a dedicated no-CRM sentinel and visible entry", () => {
+            assert.match(sales, /QUICK_QUOTE_LEAD_ID = "__quick_quotation_no_crm__"/);
+            assert.match(sales, /data-testid="quick-quotation-no-lead"/);
+            assert.match(sales, /No CRM lead .* no customer record .* PDF only/);
+          });
+
+          check("Quick Quotation exits before CRM create/update quote persistence", () => {
+            const from = sales.indexOf("if (isQuickQuoteMode) {", sales.indexOf("let savedQuoteId" ) - 700);
+            const to = sales.indexOf("let savedQuoteId = editingQuoteId", from);
+            assert.ok(from >= 0 && to > from);
+            const quick = sales.slice(from, to);
+            assert.match(quick, /quickQuotePayloadRef\.current = quoteData/);
+            assert.doesNotMatch(quick, /\/api\/leads\//);
+          });
+
+          check("Quick PDF posts current editor payload to ephemeral manual PDF route", () => {
+            assert.match(pdf, /ephemeralManualQuotePdfDownloadUrl/);
+            assert.match(pdf, /manual-quote\?download=1/);
+            assert.match(pdf, /method: "POST"/);
+            assert.match(sales, /downloadEphemeralManualQuotePdf\(quickQuotePayloadRef\.current\)/);
+          });
+
+          check("server ephemeral manual quote can return PDF without saving lead or quote", () => {
+            const start = server.indexOf('app.post("/api/export/pdf/manual-quote"');
+            const end = server.indexOf("function buildTemplatePreviewMockData", start);
+            assert.ok(start >= 0 && end > start);
+            const route = server.slice(start, end);
+            assert.match(route, /req\.query\.download === "1"/);
+            assert.match(route, /sendQuotationPdfResponse/);
+            assert.doesNotMatch(route, /persistQuotationToSupabase/);
+            assert.doesNotMatch(route, /create-quote/);
+          });
+
+          check("native PDF path writes a real file and opens Android share/save sheet", () => {
+            assert.match(pdf, /Capacitor\.isNativePlatform\(\)/);
+            assert.match(pdf, /Filesystem\.writeFile/);
+            assert.match(pdf, /Directory\.Documents/);
+            assert.match(pdf, /Share\.share/);
+            assert.match(pdf, /Save or share quotation PDF/);
+          });
+
+          check("browser PDF path still uses standard anchor download", () => {
+            assert.match(pdf, /URL\.createObjectURL\(blob\)/);
+            assert.match(pdf, /anchor\.download = filename/);
+          });
+
+          console.log(`\nquick quotation mode tests: ${passed} passed`);
+          ''').write_text if False else None
+          PY
+
+      - name: Add Capacitor file/share plugins and update lockfile
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm install --ignore-scripts --save @capacitor/filesystem@8 @capacitor/share@8
+
+      - name: Write quick quotation regression test
+        shell: bash
+        run: |
+          cat > src/lib/quickQuotationMode.test.ts <<'EOF'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { dirname, join } from "node:path";
+          import { fileURLToPath } from "node:url";
+
+          const here = dirname(fileURLToPath(import.meta.url));
+          const sales = readFileSync(join(here, "../components/SalesTeamApp.tsx"), "utf8");
+          const pdf = readFileSync(join(here, "quotePdfExport.ts"), "utf8");
+          const server = readFileSync(join(here, "../../server.ts"), "utf8");
+
+          let passed = 0;
+          function check(name: string, fn: () => void) {
+            fn();
+            passed += 1;
+            console.log(`PASS: ${name}`);
+          }
+
+          check("Quick Quotation has a dedicated no-CRM sentinel and visible entry", () => {
+            assert.match(sales, /QUICK_QUOTE_LEAD_ID = "__quick_quotation_no_crm__"/);
+            assert.match(sales, /data-testid="quick-quotation-no-lead"/);
+            assert.match(sales, /No CRM lead .* no customer record .* PDF only/);
+          });
+
+          check("Quick Quotation exits before CRM create\/update quote persistence", () => {
+            const marker = "quickQuotePayloadRef.current = quoteData";
+            const idx = sales.indexOf(marker);
+            const saveIdx = sales.indexOf("let savedQuoteId = editingQuoteId", idx);
+            assert.ok(idx >= 0 && saveIdx > idx);
+            const quick = sales.slice(idx - 100, saveIdx);
+            assert.doesNotMatch(quick, /\/api\/leads\//);
+          });
+
+          check("Quick PDF posts current editor payload to ephemeral manual PDF route", () => {
+            assert.match(pdf, /ephemeralManualQuotePdfDownloadUrl/);
+            assert.match(pdf, /manual-quote\?download=1/);
+            assert.match(pdf, /method: "POST"/);
+            assert.match(sales, /downloadEphemeralManualQuotePdf\(quickQuotePayloadRef\.current\)/);
+          });
+
+          check("server ephemeral manual quote can return PDF without saving lead or quote", () => {
+            const start = server.indexOf('app.post("/api/export/pdf/manual-quote"');
+            const end = server.indexOf("function buildTemplatePreviewMockData", start);
+            assert.ok(start >= 0 && end > start);
+            const route = server.slice(start, end);
+            assert.match(route, /req\.query\.download === "1"/);
+            assert.match(route, /sendQuotationPdfResponse/);
+            assert.doesNotMatch(route, /persistQuotationToSupabase/);
+            assert.doesNotMatch(route, /create-quote/);
+          });
+
+          check("native PDF path writes a file and opens Android save/share sheet", () => {
+            assert.match(pdf, /Capacitor\.isNativePlatform\(\)/);
+            assert.match(pdf, /Filesystem\.writeFile/);
+            assert.match(pdf, /Directory\.Documents/);
+            assert.match(pdf, /Share\.share/);
+            assert.match(pdf, /Save or share quotation PDF/);
+          });
+
+          check("browser PDF path still uses standard anchor download", () => {
+            assert.match(pdf, /URL\.createObjectURL\(blob\)/);
+            assert.match(pdf, /anchor\.download = filename/);
+          });
+
+          console.log(`\nquick quotation mode tests: ${passed} passed`);
+          EOF
+
+      - name: Install dependencies cleanly
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci --ignore-scripts
+
+      - name: Run focused quotation tests
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
+        run: |
+          npm run test:quote-pdf-export
+          npx tsx src/lib/quickQuotationMode.test.ts
+          npm run test:ai-quote-mobile
+          npm run test:quote-customer-boq
+          npm run test:quote-commercial
+
+      - name: Build web frontend
+        run: npx vite build --mode production
+
+      - name: Sync Android plugins
+        run: npx cap sync android
+
+      - name: Check generated Android version and plugin wiring
+        shell: bash
+        run: |
+          grep -E 'applicationId|versionCode|versionName' android/app/build.gradle
+          grep -R '@capacitor/filesystem' -n android/capacitor.settings.gradle android/app/capacitor.build.gradle
+          grep -R '@capacitor/share' -n android/capacitor.settings.gradle android/app/capacitor.build.gradle
+
+      - name: Commit tested fixes to PR branch
+        shell: bash
+        run: |
+          git diff --check
+          git config user.name "Sunchaser CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add package.json package-lock.json server.ts src/lib/quotePdfExport.ts src/lib/quickQuotationMode.test.ts src/components/SalesTeamApp.tsx android/app/build.gradle android/app/capacitor.build.gradle android/capacitor.settings.gradle .github/workflows/build-android-apk.yml
+          git commit -m "fix: mobile PDF download and no-lead quick quotations"
+          git push origin HEAD:feature/mobile-ai-quote-builder-sync
