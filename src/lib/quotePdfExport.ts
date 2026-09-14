@@ -44,13 +44,20 @@ function parseContentDispositionFilename(header: string | null): string | null {
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("Unable to read generated PDF."));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Unable to encode generated PDF."));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 function safePdfFilename(filename: string): string {
@@ -66,38 +73,35 @@ async function triggerBlobDownload(res: Response): Promise<void> {
   );
 
   if (Capacitor.isNativePlatform()) {
-    const data = await blobToBase64(blob);
+  if (!blob.size) throw new Error("The generated PDF is empty.");
 
-    // Keep a persistent copy in Documents when Android allows it. Sharing is
-    // deliberately done from Cache because Capacitor Share exposes cache files
-    // by default; other folders require custom Android FileProvider paths.
-    try {
-      await Filesystem.writeFile({
-        path: `Sunchaser/${filename}`,
-        data,
-        directory: Directory.Documents,
-        recursive: true,
-      });
-    } catch {
-      // Some Android versions/storage policies may deny Documents access.
-      // The cache copy below still enables Save/Share through the system sheet.
-    }
+  // Keep one native copy only to reduce Android bridge/base64 memory pressure.
+  const data = await blobToBase64(blob);
+  const shareable = await Filesystem.writeFile({
+    path: `sunchaser-${Date.now()}-${filename}`,
+    data,
+    directory: Directory.Cache,
+    recursive: true,
+  });
 
-    const shareable = await Filesystem.writeFile({
-      path: filename,
-      data,
-      directory: Directory.Cache,
-      recursive: true,
-    });
+  const canShare = await Share.canShare().catch(() => ({ value: false }));
+  if (!canShare.value) {
+    throw new Error("PDF generated successfully, but Android sharing is unavailable on this device.");
+  }
 
+  try {
+    // One local PDF should use the single-file `url` path on Android.
     await Share.share({
       title: filename,
-      text: "Sunchaser quotation PDF",
-      files: [shareable.uri],
+      url: shareable.uri,
       dialogTitle: "Save or share quotation PDF",
     });
-    return;
+  } catch (error) {
+    console.error("Android PDF share failed", error);
+    throw new Error("PDF generated successfully, but Android could not open the Save/Share sheet. Please try again.");
   }
+  return;
+}
 
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
