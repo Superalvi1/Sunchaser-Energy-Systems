@@ -14,7 +14,19 @@ export function ScopeLineTable({
 }) {
   if (!lines.length) return null;
   return (
-    <div className="overflow-x-auto">
+    <div>
+      {/* Phones: one card per line. The 8-column table needs 640px, so on a 390px
+          screen it would either scroll sideways or crush every field. Cards keep
+          every field — Include, Item, Specification, Qty, Unit, Rate, Total,
+          Status — nothing is dropped to save space. */}
+      <ul className="space-y-2 md:hidden">
+        {lines.map((line) => (
+          <li key={line.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-2.5">
+            <ScopeLineCard line={line} onChangeLine={onChangeLine} compact={compact} />
+          </li>
+        ))}
+      </ul>
+      <div className="hidden overflow-x-auto md:block">
       <table className="w-full min-w-[640px] text-left text-[11px]">
         <thead>
           <tr className="text-[10px] uppercase tracking-wider text-slate-500">
@@ -102,6 +114,7 @@ export function ScopeLineTable({
           })}
         </tbody>
       </table>
+      </div>
       <p className="mt-2 text-[10px] text-slate-500">
         Pending and excluded lines are not priced. Empty rates stay blank — catalog / company preset / manual only.
       </p>
@@ -109,10 +122,107 @@ export function ScopeLineTable({
   );
 }
 
+/**
+ * Mobile presentation of a single scope line. Same state, same `patchLine`
+ * semantics and same `onChangeLine` contract as the table row — this is layout
+ * only, so the shared quote engine stays the single source of truth.
+ */
+function ScopeLineCard({
+  line,
+  onChangeLine,
+  compact,
+}: {
+  line: ScopeLine;
+  onChangeLine: (id: string, next: ScopeLine) => void;
+  compact?: boolean;
+}) {
+  const total = lineAmount(line);
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-slate-200">{line.name}</p>
+          {line.catalogProductId ? (
+            <p className="text-[10px] text-slate-500">CRM {line.catalogProductId}</p>
+          ) : null}
+        </div>
+        <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wider ${statusTone(line.scopeStatus)}`}>
+          {line.scopeStatus}
+        </span>
+      </div>
+
+      <div>
+        <ScopeFieldLabel>Include</ScopeFieldLabel>
+        <select
+          value={line.include}
+          onChange={(e) => onChangeLine(line.id, patchLine(line, { include: e.target.value as IncludeChoice }))}
+          className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 text-sm text-white"
+        >
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+          <option value="conditional">Conditional</option>
+        </select>
+        <p className={`mt-1 text-[10px] ${inclusionTone(line.inclusionState)}`}>{line.inclusionState}</p>
+      </div>
+
+      {!compact && (
+        <div>
+          <ScopeFieldLabel>Specification</ScopeFieldLabel>
+          <input
+            value={line.specification}
+            onChange={(e) => onChangeLine(line.id, patchLine(line, { specification: e.target.value }))}
+            placeholder="Spec / notes"
+            className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 text-sm text-white"
+          />
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <ScopeFieldLabel>Qty ({line.unit})</ScopeFieldLabel>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            value={line.qty}
+            onChange={(e) => onChangeLine(line.id, patchLine(line, { qty: Number(e.target.value) }))}
+            className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 text-sm text-white"
+          />
+        </div>
+        <div>
+          <ScopeFieldLabel>Rate</ScopeFieldLabel>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            value={line.rate}
+            onChange={(e) =>
+              onChangeLine(line.id, patchLine(line, { rate: Number(e.target.value), rateSource: "manual" }))
+            }
+            className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 text-sm text-white"
+          />
+          {line.rateSource === "company_preset" && line.rate > 0 ? (
+            <p className="mt-0.5 text-[9px] text-slate-500">company preset</p>
+          ) : line.rateSource === "none" && line.rate === 0 ? (
+            <p className="mt-0.5 text-[9px] text-slate-600">no invented price</p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-slate-800/80 pt-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total</span>
+        <span className="text-sm font-semibold text-white">
+          {line.inclusionState === "included" ? money(total) : "—"}
+        </span>
+      </div>
+    </>
+  );
+}
+
 export function ScopeDetails({ title, children, defaultOpen }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   return (
     <details open={defaultOpen} className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-      <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wider text-amber-400/90">
+      <summary className="flex min-h-[44px] cursor-pointer items-center text-[10px] font-bold uppercase tracking-wider text-amber-400/90 md:min-h-0">
         {title}
       </summary>
       <div className="mt-3 space-y-3">{children}</div>
@@ -160,7 +270,7 @@ export function TextField({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+        className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
       />
     </div>
   );
@@ -180,10 +290,11 @@ export function NumberField({
       <ScopeFieldLabel>{label}</ScopeFieldLabel>
       <input
         type="number"
+        inputMode="decimal"
         min={0}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+        className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
       />
     </div>
   );
@@ -206,7 +317,7 @@ export function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+        className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
       >
         {options.map((opt) => (
           <option key={opt.value || "blank"} value={opt.value}>

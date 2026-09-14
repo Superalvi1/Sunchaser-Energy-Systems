@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
@@ -95,6 +95,7 @@ import {
   type WatermarkPlacement,
 } from "../lib/watermarkStyles";
 import {
+  downloadEphemeralManualQuotePdf,
   downloadManualQuotePdf,
   downloadQuotePdfByType,
   openManualQuotePrintPreview,
@@ -178,6 +179,25 @@ const SALES_MODULE_LABELS: Record<string, string> = {
 /** Roof Studio / Design Project tab — Project Design Workspace (HelioScope layout). */
 const DESIGN_PROJECT_ENABLED = isDesignProjectEnabled();
 
+const QUICK_QUOTE_LEAD_ID = "__quick_quotation_no_crm__";
+const QUICK_QUOTE_LEAD: Lead = {
+  id: QUICK_QUOTE_LEAD_ID,
+  name: "Quick Quotation — No CRM Lead",
+  email: "",
+  phone: "",
+  address: "",
+  status: "New",
+  monthlyBill: 0,
+  monthlyUnits: 0,
+  roofSpace: 0,
+  shading: "None",
+  rating: 0,
+  assignedSalesperson: "",
+  createdAt: new Date().toISOString(),
+  notes: "Ephemeral quotation context. Never persist as a CRM lead.",
+  quotes: [],
+};
+
 export default function SalesTeamApp({
   staffUser,
   leads,
@@ -205,12 +225,14 @@ export default function SalesTeamApp({
     leads.length > 0 ? leads[0].id : null
   );
 
-  const activeLead = leads.find(l => l.id === selectedLeadId);
+  const isQuickQuoteMode = selectedLeadId === QUICK_QUOTE_LEAD_ID;
+  const activeLead = isQuickQuoteMode ? QUICK_QUOTE_LEAD : leads.find(l => l.id === selectedLeadId);
   const toast = useToast();
+  const quickQuotePayloadRef = useRef<any | null>(null);
   const [leadCustomerRecord, setLeadCustomerRecord] = useState<any | null>(null);
 
   useEffect(() => {
-    if (!staffUser || !activeLead) {
+    if (!staffUser || !activeLead || isQuickQuoteMode) {
       setLeadCustomerRecord(null);
       return;
     }
@@ -1400,12 +1422,12 @@ export default function SalesTeamApp({
   // Sync client details and BOQ rows when activeLead changes
   useEffect(() => {
     if (activeLead) {
-      setClientName(activeLead.name || "");
-      setClientPhone(activeLead.phone || "");
-      setClientEmail(activeLead.email || "");
-      setClientAddress(activeLead.address || "");
-      setCityArea(sanitizeLeadLocationInput(activeLead.location) || sanitizeLeadLocationInput(activeLead.address) || "");
-      setBdmName(sanitizeLeadAdvisorInput(activeLead.assignedSalesperson) || staffUser?.name || "");
+      setClientName(isQuickQuoteMode ? "" : activeLead.name || "");
+      setClientPhone(isQuickQuoteMode ? "" : activeLead.phone || "");
+      setClientEmail(isQuickQuoteMode ? "" : activeLead.email || "");
+      setClientAddress(isQuickQuoteMode ? "" : activeLead.address || "");
+      setCityArea(isQuickQuoteMode ? "" : sanitizeLeadLocationInput(activeLead.location) || sanitizeLeadLocationInput(activeLead.address) || "");
+      setBdmName(isQuickQuoteMode ? (staffUser?.name || "") : sanitizeLeadAdvisorInput(activeLead.assignedSalesperson) || staffUser?.name || "");
       setQuoteDate(new Date().toISOString().split('T')[0]);
       
       // 1. Reset all quote editor states to standard defaults to prevent state leakage
@@ -1610,6 +1632,10 @@ export default function SalesTeamApp({
 
   const handleSaveSizerQuote = async () => {
     if (!activeLead || savingQuote) return;
+    if (isQuickQuoteMode) {
+      setSubmitError("Quick Quotation mode uses Manual BOQ Builder and never creates CRM records.");
+      return;
+    }
     if (!REQUIRE_EXPLICIT_QUOTE_SAVE) {
       setSubmitError("Auto Sizer quote saving is disabled.");
       return;
@@ -1876,6 +1902,13 @@ export default function SalesTeamApp({
         projectScopeSnapshot: freezeProjectScopeSnapshot(projectScopeSnapshot),
       };
 
+      if (isQuickQuoteMode) {
+        quickQuotePayloadRef.current = quoteData;
+        setQuoteCreatedConfirm(true);
+        setTimeout(() => setQuoteCreatedConfirm(false), 5000);
+        return QUICK_QUOTE_LEAD_ID;
+      }
+
       let savedQuoteId = editingQuoteId;
 
       if (editingQuoteId) {
@@ -1935,6 +1968,16 @@ export default function SalesTeamApp({
 
     try {
       setDownloadingQuotePdf(true);
+
+      if (isQuickQuoteMode) {
+        setQuotePdfStatus("Preparing quick quote…");
+        const prepared = await handleSaveQuote();
+        if (!prepared || !quickQuotePayloadRef.current) return;
+        setQuotePdfStatus("Generating PDF…");
+        await downloadEphemeralManualQuotePdf(quickQuotePayloadRef.current);
+        return;
+      }
+
       let resolvedQuoteId = quoteId;
 
       if (!quoteId && activeModule === "boq_builder") {
@@ -3022,6 +3065,30 @@ export default function SalesTeamApp({
 
           {(!isMobile || targetClientsOpen) && (
           <div className="space-y-2.5 max-h-[420px] md:max-h-[620px] overflow-y-auto pr-1" data-testid="target-clients-list">
+            <button
+              type="button"
+              data-testid="quick-quotation-no-lead"
+              onClick={() => {
+                setSelectedLeadId(QUICK_QUOTE_LEAD_ID);
+                setEditingQuoteId(null);
+                setSizerEditingQuoteId(null);
+                setActiveModule("boq_builder");
+                if (isMobile) setTargetClientsOpen(false);
+              }}
+              className={`w-full p-4 rounded-2xl border text-left cursor-pointer transition ${
+                isQuickQuoteMode
+                  ? "bg-amber-500/10 border-amber-500/60 text-white shadow-lg"
+                  : "bg-slate-950 border-dashed border-amber-500/35 hover:bg-amber-500/5 text-slate-300"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-amber-300">⚡ Quick Quotation</div>
+                  <div className="mt-1 text-[10px] text-slate-400">No CRM lead • no customer record • PDF only</div>
+                </div>
+                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-[9px] font-bold text-amber-300">NO SAVE</span>
+              </div>
+            </button>
             {leads.length > 0 ? (
               leads.map((lead) => {
                 const isSelected = selectedLeadId === lead.id;
@@ -3103,17 +3170,25 @@ export default function SalesTeamApp({
               <div className="bg-slate-900 border border-slate-850 p-5 rounded-3xl flex flex-col md:flex-row justify-between gap-4 text-left shadow-sm">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-white font-sans">{activeLead.name}</h3>
+                    <h3 className="text-lg font-bold text-white font-sans">
+                      {isQuickQuoteMode ? "Quick Quotation — No CRM Lead" : activeLead.name}
+                    </h3>
                     <span className="text-[10px] bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded-full">
-                      ID: {activeLead.id}
+                      {isQuickQuoteMode ? "Not saved to CRM" : `ID: ${activeLead.id}`}
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">
-                    <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>
-                    <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>
-                    <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(activeLead)}</span>
-                    <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {formatLeadAdvisor(activeLead.assignedSalesperson)}</span>
-                  </div>
+                  {isQuickQuoteMode ? (
+                    <div className="mt-2.5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                      Enter the customer details inside Manual BOQ Builder. Nothing is added to Leads, Customers, or Generated Quotes.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">
+                      <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>
+                      <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>
+                      <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(activeLead)}</span>
+                      <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {formatLeadAdvisor(activeLead.assignedSalesperson)}</span>
+                    </div>
+                  )}
                   {staffUser && leadCustomerRecord && (
                     <CustomerInvitationPanel
                       customerName={activeLead.name}
@@ -3125,23 +3200,25 @@ export default function SalesTeamApp({
                 </div>
 
                 <div className="flex flex-col gap-3 self-start md:self-end w-full md:max-w-md">
-                <WhatsAppModule
-                  staffUser={staffUser}
-                  preset="quotation"
-                  phone={clientPhone || activeLead.phone}
-                  onPhoneChange={setClientPhone}
-                  onPhonePersist={async (p) => {
-                    setClientPhone(p);
-                    await onUpdateLead(activeLead.id, { phone: p });
-                  }}
-                  customerName={activeLead.name}
-                  leadId={activeLead.id}
-                  templateVars={{
-                    customerName: activeLead.name,
-                    amount: activeLead.quotes?.slice(-1)[0]?.totalCost,
-                  }}
-                  compact
-                />
+                {!isQuickQuoteMode && (
+                  <WhatsAppModule
+                    staffUser={staffUser}
+                    preset="quotation"
+                    phone={clientPhone || activeLead.phone}
+                    onPhoneChange={setClientPhone}
+                    onPhonePersist={async (p) => {
+                      setClientPhone(p);
+                      await onUpdateLead(activeLead.id, { phone: p });
+                    }}
+                    customerName={activeLead.name}
+                    leadId={activeLead.id}
+                    templateVars={{
+                      customerName: activeLead.name,
+                      amount: activeLead.quotes?.slice(-1)[0]?.totalCost,
+                    }}
+                    compact
+                  />
+                )}
                 <div className="flex gap-2 flex-wrap">
                   {DESIGN_PROJECT_ENABLED && (
                   <button
@@ -3177,8 +3254,8 @@ export default function SalesTeamApp({
                   </button>
                   <button
                     type="button"
-                    disabled={!latestManualSavedQuote || downloadingQuotePdf}
-                    title={!latestManualSavedQuote ? "Save a quote first" : "Downloads final A4 PDF generated by server"}
+                    disabled={(!isQuickQuoteMode && !latestManualSavedQuote) || downloadingQuotePdf}
+                    title={isQuickQuoteMode ? "Generate PDF without creating a CRM lead" : (!latestManualSavedQuote ? "Save a quote first" : "Downloads final A4 PDF generated by server")}
                     onClick={() => handleDownloadManualQuotePDF()}
                     className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                   >
@@ -3799,12 +3876,12 @@ export default function SalesTeamApp({
                         ) : (
                           <>
                             <CheckCircle2 className="h-4 w-4" />
-                            <span>Save Quote</span>
+                            <span>{isQuickQuoteMode ? "Prepare Quick Quote" : "Save Quote"}</span>
                           </>
                         )}
                       </button>
                       <p className="text-[10px] text-slate-500 font-mono text-center">
-                        Save stores the current snapshot. AutoSizer will not overwrite edits unless you Re-run AutoSizer.
+                        {isQuickQuoteMode ? "Quick quotation is prepared only for PDF export and is not stored in CRM." : "Save stores the current snapshot. AutoSizer will not overwrite edits unless you Re-run AutoSizer."}
                       </p>
                     </div>
 
@@ -4460,7 +4537,7 @@ export default function SalesTeamApp({
                         {quoteCreatedConfirm && (
                           <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 text-xs font-bold rounded-xl text-left flex items-center gap-1">
                             <CheckCircle2 className="h-4 w-4 text-emerald-400 animate-bounce" />
-                            <span>Customer quote saved</span>
+                            <span>{isQuickQuoteMode ? "Quick quotation prepared — nothing added to CRM" : "Customer quote saved"}</span>
                           </div>
                         )}
 

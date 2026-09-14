@@ -1,0 +1,100 @@
+name: Apply quotation fixes v3
+
+on:
+  push:
+    branches:
+      - feature/mobile-ai-quote-builder-sync
+    paths:
+      - .github/workflows/apply-quotation-fixes-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/mobile-ai-quote-builder-sync
+          fetch-depth: 0
+
+      - name: Reuse proven patch scripts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess, textwrap
+
+          lines = Path('.github/workflows/apply-quotation-fixes.yml').read_text().splitlines()
+
+          def extract_step(name: str) -> str:
+              step_marker = f'      - name: {name}'
+              try:
+                  start = lines.index(step_marker)
+              except ValueError:
+                  raise SystemExit(f'missing step {name}')
+              run_line = None
+              for i in range(start + 1, len(lines)):
+                  if lines[i].startswith('      - name:'):
+                      break
+                  if lines[i] == '        run: |':
+                      run_line = i
+                      break
+              if run_line is None:
+                  raise SystemExit(f'missing run block for {name}')
+              body = []
+              for i in range(run_line + 1, len(lines)):
+                  if lines[i].startswith('      - name:'):
+                      break
+                  body.append(lines[i])
+              return textwrap.dedent('\n'.join(body)) + '\n'
+
+          for step in ('Apply source fixes', 'Write quick quotation regression test'):
+              subprocess.run(['bash', '-euo', 'pipefail', '-c', extract_step(step)], check=True)
+          PY
+
+      - name: Add Capacitor native PDF plugins
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm install --ignore-scripts --save @capacitor/filesystem@8 @capacitor/share@8
+
+      - name: Install dependencies cleanly
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci --ignore-scripts
+
+      - name: Test quotation fixes
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
+        run: |
+          npm run test:quote-pdf-export
+          npx tsx src/lib/quickQuotationMode.test.ts
+          npm run test:ai-quote-mobile
+          npm run test:quote-customer-boq
+          npm run test:quote-commercial
+
+      - name: Build web and sync Android
+        run: |
+          npx vite build --mode production
+          npx cap sync android
+
+      - name: Verify native wiring and version
+        shell: bash
+        run: |
+          grep -E 'applicationId|versionCode|versionName' android/app/build.gradle
+          grep -R '@capacitor/filesystem' -n android/capacitor.settings.gradle android/app/capacitor.build.gradle
+          grep -R '@capacitor/share' -n android/capacitor.settings.gradle android/app/capacitor.build.gradle
+
+      - name: Commit tested source changes
+        shell: bash
+        run: |
+          git checkout -- .github/workflows/build-android-apk.yml
+          git diff --check
+          git config user.name 'Sunchaser CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package.json package-lock.json server.ts src/lib/quotePdfExport.ts src/lib/quickQuotationMode.test.ts src/components/SalesTeamApp.tsx android/app/build.gradle android/app/capacitor.build.gradle android/capacitor.settings.gradle
+          git commit -m 'fix: mobile PDF download and no-lead quick quotations'
+          git push origin HEAD:feature/mobile-ai-quote-builder-sync

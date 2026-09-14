@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test:mobile-disclosure": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/components/mobileDisclosure.layout.test.ts",
-
+    "test:ai-quote-mobile": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/overlayBack.behavior.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/components/quoteAuthoring/aiQuoteBuilderMobile.layout.test.ts",
     "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 node ./node_modules/playwright/cli.js install chromium",
     "install:chromium": "PLAYWRIGHT_BROWSERS_PATH=0 node ./node_modules/playwright/cli.js install chromium",
     "dev": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server.ts",
@@ -13,7 +13,7 @@
     "start": "PLAYWRIGHT_BROWSERS_PATH=0 node dist/server.cjs",
     "clean": "rm -rf dist dist-server server.js",
     "lint": "tsc --noEmit",
-    "test": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappOfficialOnlyPolicy.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/autoSizer/autoSizer.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/middleware/cors.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts && node scripts/smoke-server-start.mjs && npm run test:mobile-disclosure",
+    "test": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/whatsappTransport/whatsappOfficialOnlyPolicy.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/autoSizer/autoSizer.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/middleware/cors.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/publicLeads/publicLeadGateway.test.ts && node scripts/smoke-server-start.mjs && npm run test:mobile-disclosure && npm run test:ai-quote-mobile",
     "test:quote-pdf-export": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/quotePdfExport.test.ts",
     "test:quote-customer-boq": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/quoteCustomerBoq.test.ts",
     "test:autosizer": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/autoSizer/autoSizer.test.ts",
@@ -94,9 +94,12 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
     "@capacitor/android": "^8.3.4",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/cli": "^8.3.4",
     "@capacitor/core": "^8.3.4",
+    "@capacitor/filesystem": "^8.1.3",
     "@capacitor/ios": "^8.3.4",
+    "@capacitor/share": "^8.0.1",
     "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.106.2",
     "@tailwindcss/vite": "^4.1.14",

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Bot, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, Bot, ChevronLeft, Sparkles } from "lucide-react";
 import AppModal from "../ui/AppModal";
 import CatalogProductPicker from "./CatalogProductPicker";
 import CatalogSpecGrid from "./CatalogSpecGrid";
@@ -147,6 +147,7 @@ function ChargeLineEditor({
             <FieldLabel>{qtyLabel} ({unit})</FieldLabel>
             <input
               type="number"
+              inputMode="decimal"
               min={0}
               value={line.qty}
               onChange={(e) => onChange({ qty: Number(e.target.value) })}
@@ -157,6 +158,7 @@ function ChargeLineEditor({
             <FieldLabel>{rateLabel}</FieldLabel>
             <input
               type="number"
+              inputMode="decimal"
               min={0}
               value={line.rate}
               onChange={(e) => onChange({ rate: Number(e.target.value) })}
@@ -614,25 +616,33 @@ export default function AIQuoteBuilderModal({
           : `${customStructureName || "Custom"} · ${customStructureAmount.toLocaleString()}`;
 
   return (
-    <AppModal open={open} onClose={onClose} panelClassName="max-w-7xl">
-      <div className="bg-slate-950 border border-slate-850 rounded-3xl p-5 md:p-6 text-left max-h-[94vh] overflow-y-auto">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+    <AppModal open={open} onClose={onClose} mobileFullScreen panelClassName="max-w-7xl">
+      <div className="flex h-full flex-col bg-slate-950 border-0 md:border border-slate-850 rounded-none md:rounded-3xl p-0 md:p-6 text-left md:max-h-[94vh] md:h-auto md:block overflow-hidden md:overflow-y-auto">
+        <div className="safe-area-top flex shrink-0 items-start justify-between gap-3 border-b border-slate-800 bg-slate-950 px-4 pb-3 pt-3 md:px-0 md:pb-4 md:pt-0">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Back"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-slate-300 transition active:scale-95 md:hidden"
+            >
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <div className="hidden h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400 md:flex">
               <Sparkles className="h-5 w-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wider text-amber-500">Draft only</p>
-              <h2 className="text-lg font-bold text-white">AI Quote Builder</h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <h2 className="truncate text-base font-bold text-white md:text-lg">AI Quote Builder</h2>
+              <p className="mt-0.5 hidden text-xs text-slate-400 md:block">
                 Deterministic configurator — no auto-save, no CRM mutation, no messaging.
               </p>
             </div>
           </div>
-          <Bot className="h-5 w-5 text-slate-600 shrink-0" />
+          <Bot className="hidden h-5 w-5 shrink-0 text-slate-600 md:block" />
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 pt-4 md:mt-5 md:flex-none md:overflow-visible md:px-0 md:pb-0 md:pt-0 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
           <div className="space-y-5">
             <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-400">System</h3>
@@ -672,7 +682,7 @@ export default function AIQuoteBuilderModal({
                       setCustomSize(false);
                       setSystemSizeKw(kw);
                     }}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(!customSize && systemSizeKw === kw)}`}
+                    className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(!customSize && systemSizeKw === kw)}`}
                   >
                     {kw} kW
                   </button>
@@ -680,7 +690,7 @@ export default function AIQuoteBuilderModal({
                 <button
                   type="button"
                   onClick={() => setCustomSize(true)}
-                  className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(customSize)}`}
+                  className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(customSize)}`}
                 >
                   Custom
                 </button>
@@ -688,6 +698,7 @@ export default function AIQuoteBuilderModal({
               {customSize && (
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={1}
                   step={0.1}
                   value={systemSizeKw}
@@ -701,7 +712,7 @@ export default function AIQuoteBuilderModal({
                     key={type}
                     type="button"
                     onClick={() => setSystemType(type)}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(systemType === type, "emerald")}`}
+                    className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(systemType === type, "emerald")}`}
                   >
                     {type}
                   </button>
@@ -779,7 +790,7 @@ export default function AIQuoteBuilderModal({
                         key={w}
                         type="button"
                         onClick={() => applyPanelWattage(w)}
-                        className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(!customWattage && panelWattage === w)}`}
+                        className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(!customWattage && panelWattage === w)}`}
                       >
                         {w}W
                       </button>
@@ -787,13 +798,14 @@ export default function AIQuoteBuilderModal({
                     <button
                       type="button"
                       onClick={() => setCustomWattage(true)}
-                      className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(customWattage || !isQuickPanelWattage(panelWattage))}`}
+                      className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(customWattage || !isQuickPanelWattage(panelWattage))}`}
                     >
                       Custom
                     </button>
                   </div>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={1}
                     value={panelWattage}
                     onChange={(e) => applyPanelWattage(Number(e.target.value), true)}
@@ -806,6 +818,7 @@ export default function AIQuoteBuilderModal({
                   <div className="mt-1 flex gap-2">
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={1}
                       value={panelQuantity}
                       onChange={(e) => {
@@ -848,6 +861,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Quote PKR/W</FieldLabel>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     step="0.01"
                     value={panelRatePerWatt}
@@ -952,6 +966,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Quantity</FieldLabel>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={1}
                     value={inverterQuantity}
                     onChange={(e) => setInverterQuantity(Number(e.target.value))}
@@ -976,6 +991,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Quote unit price</FieldLabel>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={inverterUnitPrice}
                     onChange={(e) => {
@@ -1094,6 +1110,7 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Quantity</FieldLabel>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={1}
                       value={batteryQuantity}
                       onChange={(e) => setBatteryQuantity(Number(e.target.value))}
@@ -1118,6 +1135,7 @@ export default function AIQuoteBuilderModal({
                     <FieldLabel>Quote unit price</FieldLabel>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={0}
                       value={batteryUnitPrice}
                       onChange={(e) => {
@@ -1166,7 +1184,7 @@ export default function AIQuoteBuilderModal({
                     key={option.id}
                     type="button"
                     onClick={() => setStructureType(option.id)}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(structureType === option.id)}`}
+                    className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(structureType === option.id)}`}
                   >
                     {option.label}
                   </button>
@@ -1180,14 +1198,14 @@ export default function AIQuoteBuilderModal({
                       <button
                         type="button"
                         onClick={() => setStructureMode("auto")}
-                        className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(structureMode === "auto")}`}
+                        className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(structureMode === "auto")}`}
                       >
                         Auto Calculate
                       </button>
                       <button
                         type="button"
                         onClick={enterManualStructure}
-                        className={`rounded-xl px-3 py-2 text-xs font-bold ${chipClass(structureMode === "manual")}`}
+                        className={`min-h-[44px] rounded-xl px-3 py-2 text-xs font-bold md:min-h-0 ${chipClass(structureMode === "manual")}`}
                       >
                         Manual
                       </button>
@@ -1198,11 +1216,12 @@ export default function AIQuoteBuilderModal({
                       {panelQuantity} panels → {standardSelection.l3} × L3 + {standardSelection.l2} × L2
                     </p>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <FieldLabel>L3 Quantity</FieldLabel>
                         <input
                           type="number"
+                          inputMode="decimal"
                           min={0}
                           value={manualL3Quantity}
                           onChange={(e) => setManualL3Quantity(Number(e.target.value))}
@@ -1213,6 +1232,7 @@ export default function AIQuoteBuilderModal({
                         <FieldLabel>L2 Quantity</FieldLabel>
                         <input
                           type="number"
+                          inputMode="decimal"
                           min={0}
                           value={manualL2Quantity}
                           onChange={(e) => setManualL2Quantity(Number(e.target.value))}
@@ -1221,7 +1241,7 @@ export default function AIQuoteBuilderModal({
                       </div>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <FieldLabel>L3 Qty</FieldLabel>
                       <p className="mt-1 text-sm text-white">{l3Qty}</p>
@@ -1230,6 +1250,7 @@ export default function AIQuoteBuilderModal({
                       <FieldLabel>L3 Rate / Section</FieldLabel>
                       <input
                         type="number"
+                        inputMode="decimal"
                         min={0}
                         value={l3RatePerSection}
                         onChange={(e) => setL3RatePerSection(Number(e.target.value))}
@@ -1248,6 +1269,7 @@ export default function AIQuoteBuilderModal({
                       <FieldLabel>L2 Rate / Section</FieldLabel>
                       <input
                         type="number"
+                        inputMode="decimal"
                         min={0}
                         value={l2RatePerSection}
                         onChange={(e) => setL2RatePerSection(Number(e.target.value))}
@@ -1277,6 +1299,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Elevated PKR/W (default 16)</FieldLabel>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={elevatedRatePerWatt}
                     onChange={(e) => setElevatedRatePerWatt(Number(e.target.value))}
@@ -1289,6 +1312,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Girder amount (existing commercial job rate)</FieldLabel>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={girderAmount}
                     onChange={(e) => setGirderAmount(Number(e.target.value))}
@@ -1306,6 +1330,7 @@ export default function AIQuoteBuilderModal({
                   />
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={customStructureAmount}
                     onChange={(e) => setCustomStructureAmount(Number(e.target.value))}
@@ -1334,10 +1359,11 @@ export default function AIQuoteBuilderModal({
                     <span className="text-[11px] text-slate-500">Rs.</span>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={0}
                       value={installationRatePerWatt}
                       onChange={(e) => setInstallationRatePerWatt(Number(e.target.value))}
-                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      className="min-h-[44px] w-full min-w-0 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white md:min-h-0"
                     />
                     <span className="text-[11px] text-slate-400 whitespace-nowrap">/ Watt</span>
                   </div>
@@ -1471,6 +1497,7 @@ export default function AIQuoteBuilderModal({
                   {discountMode !== "none" && (
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={0}
                       max={discountMode === "percentage" ? 100 : undefined}
                       value={localDiscountValue}
@@ -1492,6 +1519,7 @@ export default function AIQuoteBuilderModal({
                   {localTaxEnabled && (
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={0}
                       max={100}
                       value={localTaxRate}
@@ -1504,6 +1532,7 @@ export default function AIQuoteBuilderModal({
                   <FieldLabel>Society Charges</FieldLabel>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={localSocietyCharges}
                     onChange={(e) => setLocalSocietyCharges(Number(e.target.value))}
@@ -1646,15 +1675,26 @@ export default function AIQuoteBuilderModal({
           </aside>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
-          <p className="text-[10px] text-slate-500">
+        <div className="shrink-0 border-t border-slate-800 bg-slate-950 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 md:mt-5 md:flex md:flex-wrap md:items-center md:justify-between md:gap-3 md:px-0 md:pb-0 md:pt-4">
+          <div className="mb-2 flex items-center justify-between gap-3 md:hidden">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Estimated total</p>
+              <p className="truncate text-base font-bold text-white">Rs. {money(finalEstimate)}</p>
+            </div>
+            {validationErrors.length > 0 && (
+              <span className="shrink-0 rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-200">
+                {validationErrors.length} to fix
+              </span>
+            )}
+          </div>
+          <p className="hidden text-[10px] text-slate-500 md:block">
             Draft only · apply fills BOQ builder · you must save manually
           </p>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-900"
+              className="min-h-[44px] rounded-xl border border-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-900 md:min-h-0"
             >
               Close
             </button>
@@ -1662,7 +1702,7 @@ export default function AIQuoteBuilderModal({
               type="button"
               onClick={handleApply}
               disabled={validationErrors.length > 0}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40"
+              className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40 md:min-h-0 md:flex-none"
             >
               Apply draft to BOQ
               <ArrowRight className="h-3.5 w-3.5" />
