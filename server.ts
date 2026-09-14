@@ -9541,7 +9541,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
     const quoteForExport = { ...payload, boqRows: allRows, boqItems: allRows };
     const rendered = compileThreePageQuotationHtml(quoteForExport, lead, activeState, {
       mode: "manual",
-      hideActionBar: req.query.download === "1",
+      hideActionBar: req.query.download === "1" || req.query.stage === "1",
     });
     if (req.query.download === "1") {
       if (rendered.exportBlocked) {
@@ -9629,6 +9629,34 @@ async function compileTemplatePreviewHtml(
   }
   const filename = buildTemplateTestPdfFilename(pageTitle, scope);
   return { html, filename };
+}
+
+const STAGED_QUOTATION_PDF_TTL_MS = 5 * 60 * 1000;
+const stagedQuotationPdfs = new Map<string, { buffer: Buffer; filename: string; expiresAt: number }>();
+
+function cleanupStagedQuotationPdfs(now = Date.now()): void {
+  for (const [token, entry] of stagedQuotationPdfs.entries()) {
+    if (entry.expiresAt <= now) stagedQuotationPdfs.delete(token);
+  }
+}
+
+function stageQuotationPdf(buffer: Buffer, filename: string): string {
+  cleanupStagedQuotationPdfs();
+  const token = randomUUID();
+  stagedQuotationPdfs.set(token, {
+    buffer,
+    filename,
+    expiresAt: Date.now() + STAGED_QUOTATION_PDF_TTL_MS,
+  });
+  return token;
+}
+
+function takeStagedQuotationPdf(token: string) {
+  cleanupStagedQuotationPdfs();
+  const entry = stagedQuotationPdfs.get(token);
+  if (!entry) return null;
+  stagedQuotationPdfs.delete(token);
+  return entry;
 }
 
 async function sendQuotationPdfResponse(
@@ -9805,6 +9833,19 @@ app.get("/api/export/pdf/template-preview/:templateId/download", async (req, res
     console.error("[PDF DOWNLOAD]", err);
     res.status(500).send(formatQuotationPdfError(err));
   }
+});
+
+app.get("/api/export/pdf/staged/:token", (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  const staged = takeStagedQuotationPdf(String(req.params.token || ""));
+  if (!staged) {
+    return res.status(404).type("text/plain").send("This PDF download has expired. Generate it again.");
+  }
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${staged.filename.replace(/[^\w.\-]+/g, "_")}"`);
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(staged.buffer);
 });
 
 app.get("/api/export/pdf/manual-quote/:leadId/debug-template-map", async (req, res) => {

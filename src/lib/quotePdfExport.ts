@@ -1,7 +1,8 @@
 import { Capacitor } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
-import { Share } from "@capacitor/share";
-import { API_BASE_URL, authorizedFetch } from "../services/api";
+import { FileTransfer } from "@capacitor/file-transfer";
+import { FileViewer } from "@capacitor/file-viewer";
+import { API_BASE_URL, authorizedFetch, getStoredAuthToken } from "../services/api";
 import { PDF_ENGINE_MISSING_MESSAGE } from "./quotePdfErrors";
 
 function friendlyPdfError(status: number, text: string): string {
@@ -43,26 +44,70 @@ function parseContentDispositionFilename(header: string | null): string | null {
   return plain ? plain[1].trim() : null;
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error || new Error("Unable to read generated PDF."));
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("Unable to encode generated PDF."));
-        return;
-      }
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.readAsDataURL(blob);
-  });
-}
-
 function safePdfFilename(filename: string): string {
   const cleaned = filename.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
   return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned || "Sunchaser-Quotation"}.pdf`;
+}
+
+
+function absoluteApiUrl(pathOrUrl: string): string {
+  return pathOrUrl.startsWith("http") ? pathOrUrl : `${API_BASE_URL}${pathOrUrl}`;
+}
+
+function nativeAuthHeaders(): Record<string, string> {
+  const token = getStoredAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function nativeDownloadAndOpenPdf(url: string, filename: string): Promise<void> {
+  const safeName = safePdfFilename(filename);
+  const uniqueName = `${Date.now()}-${safeName}`;
+  let targetUri: string;
+
+  try {
+    await Filesystem.mkdir({
+      path: "Sunchaser",
+      directory: Directory.Documents,
+      recursive: true,
+    });
+    const target = await Filesystem.getUri({
+      path: `Sunchaser/${uniqueName}`,
+      directory: Directory.Documents,
+    });
+    targetUri = target.uri;
+  } catch {
+    const target = await Filesystem.getUri({
+      path: uniqueName,
+      directory: Directory.Cache,
+    });
+    targetUri = target.uri;
+  }
+
+  let localPath = targetUri;
+  try {
+    const result = await FileTransfer.downloadFile({
+      url: absoluteApiUrl(url),
+      path: targetUri,
+      headers: nativeAuthHeaders(),
+      progress: false,
+      method: "GET",
+      readTimeout: 120000,
+      connectTimeout: 60000,
+    });
+    localPath = result.path || targetUri;
+  } catch (error: any) {
+    console.error("Native PDF transfer failed", error);
+    throw new Error(error?.message || "Could not download the generated PDF to this device.");
+  }
+
+  try {
+    await FileViewer.openDocumentFromLocalPath({ path: localPath });
+  } catch (error: any) {
+    console.error("Native PDF viewer failed", error);
+    throw new Error(
+      "PDF downloaded successfully, but Android could not open it. Check the Sunchaser folder in Documents."
+    );
+  }
 }
 
 async function triggerBlobDownload(res: Response): Promise<void> {
@@ -73,35 +118,8 @@ async function triggerBlobDownload(res: Response): Promise<void> {
   );
 
   if (Capacitor.isNativePlatform()) {
-  if (!blob.size) throw new Error("The generated PDF is empty.");
-
-  // Keep one native copy only to reduce Android bridge/base64 memory pressure.
-  const data = await blobToBase64(blob);
-  const shareable = await Filesystem.writeFile({
-    path: `sunchaser-${Date.now()}-${filename}`,
-    data,
-    directory: Directory.Cache,
-    recursive: true,
-  });
-
-  const canShare = await Share.canShare().catch(() => ({ value: false }));
-  if (!canShare.value) {
-    throw new Error("PDF generated successfully, but Android sharing is unavailable on this device.");
+    throw new Error("This Android PDF export must use the native downloader.");
   }
-
-  try {
-    // One local PDF should use the single-file `url` path on Android.
-    await Share.share({
-      title: filename,
-      url: shareable.uri,
-      dialogTitle: "Save or share quotation PDF",
-    });
-  } catch (error) {
-    console.error("Android PDF share failed", error);
-    throw new Error("PDF generated successfully, but Android could not open the Save/Share sheet. Please try again.");
-  }
-  return;
-}
 
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -160,6 +178,25 @@ export function ephemeralManualQuotePdfDownloadUrl(): string {
 
 /** Full Manual BOQ PDF generated from current editor state without creating a CRM lead/quote. */
 export async function downloadEphemeralManualQuotePdf(payload: unknown): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    const stageRes = await authorizedFetch(`${API_BASE_URL}/api/export/pdf/manual-quote?stage=1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!stageRes.ok) {
+      const text = await stageRes.text().catch(() => "");
+      throw new Error(friendlyPdfError(stageRes.status, text));
+    }
+    const staged = await stageRes.json() as { downloadUrl?: string; filename?: string };
+    if (!staged.downloadUrl) throw new Error("PDF staging did not return a download URL.");
+    await nativeDownloadAndOpenPdf(
+      staged.downloadUrl,
+      staged.filename || "Sunchaser-Quotation.pdf"
+    );
+    return;
+  }
+
   const res = await authorizedFetch(ephemeralManualQuotePdfDownloadUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -174,7 +211,12 @@ export async function downloadEphemeralManualQuotePdf(payload: unknown): Promise
 
 /** Direct PDF file download — no new tab, no print dialog. */
 export async function downloadManualQuotePdf(leadId: string, quoteId?: string): Promise<void> {
-  const res = await authorizedFetch(manualQuotePdfDownloadUrl(leadId, quoteId));
+  const url = manualQuotePdfDownloadUrl(leadId, quoteId);
+  if (Capacitor.isNativePlatform()) {
+    await nativeDownloadAndOpenPdf(url, "Sunchaser-Quotation.pdf");
+    return;
+  }
+  const res = await authorizedFetch(url);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(friendlyPdfError(res.status, text));
@@ -184,7 +226,12 @@ export async function downloadManualQuotePdf(leadId: string, quoteId?: string): 
 
 /** Direct AutoSizer PDF file download — authenticated fetch, never window.location. */
 export async function downloadAutoSizerQuotePdf(leadId: string, quoteId?: string): Promise<void> {
-  const res = await authorizedFetch(autoSizerQuotePdfDownloadUrl(leadId, quoteId));
+  const url = autoSizerQuotePdfDownloadUrl(leadId, quoteId);
+  if (Capacitor.isNativePlatform()) {
+    await nativeDownloadAndOpenPdf(url, "Sunchaser-AutoSizer-Quotation.pdf");
+    return;
+  }
+  const res = await authorizedFetch(url);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(friendlyPdfError(res.status, text));
