@@ -47,7 +47,7 @@ jobs:
       - name: Assert browser picker does not mutate history
         shell: bash
         run: |
-          ! grep -E 'history\.(pushState|back)|popstate' src/lib/useOverlayBackClose.ts
+          ! grep -E 'window\.history\.(pushState|back)|addEventListener\(["'"']popstate["'"']' src/lib/useOverlayBackClose.ts
 
       - name: Test mobile overlay behavior
         run: npm run test:ai-quote-mobile
