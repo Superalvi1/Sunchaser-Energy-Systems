@@ -11,15 +11,67 @@ interface CatalogProductPickerProps {
   disabled?: boolean;
 }
 
+/**
+ * Website catalog rows are runtime data, so do not trust TypeScript-only
+ * string types at the UI boundary. A malformed object/array in name/brand/etc.
+ * must not become a React child or get copied into controlled form state.
+ */
+function safeCatalogText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value.map(safeCatalogText).filter(Boolean).join(", ");
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["value", "label", "name", "text"]) {
+      const candidate = record[key];
+      if (typeof candidate === "string" || typeof candidate === "number" || typeof candidate === "boolean") {
+        return String(candidate).trim();
+      }
+    }
+    return "";
+  }
+  return "";
+}
+
+function safeCatalogNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sanitizeCatalogProduct(product: Product): Product {
+  const runtime = product as unknown as Record<string, unknown>;
+  const safe = {
+    ...product,
+    id: safeCatalogText(runtime.id) || String(product.id || ""),
+    name: safeCatalogText(runtime.name) || "Unnamed product",
+    brand: safeCatalogText(runtime.brand),
+    model: safeCatalogText(runtime.model),
+    sku: safeCatalogText(runtime.sku),
+    warrantyPeriod: safeCatalogText(runtime.warrantyPeriod),
+    availability: safeCatalogText(runtime.availability),
+    price: safeCatalogNumber(runtime.price),
+  } as Product & { wattageCapacity?: string };
+
+  if ("wattageCapacity" in runtime) {
+    safe.wattageCapacity = safeCatalogText(runtime.wattageCapacity);
+  }
+  return safe;
+}
+
 function identityBits(product: Product): string {
+  const runtime = product as Product & { wattageCapacity?: unknown };
   const source = product.source === WEBSITE_CATALOG_SOURCE ? "website" : "CRM";
+  const price = safeCatalogNumber(product.price);
   return [
-    product.brand || "—",
-    product.model || "",
-    product.wattageCapacity || "",
-    product.price ? `Rs. ${Number(product.price).toLocaleString()}` : "",
+    safeCatalogText(product.brand) || "—",
+    safeCatalogText(product.model),
+    safeCatalogText(runtime.wattageCapacity),
+    price > 0 ? `Rs. ${price.toLocaleString()}` : "",
     source,
-    product.availability || "",
+    safeCatalogText(product.availability),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -35,7 +87,8 @@ export default function CatalogProductPicker({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const selected = products.find((p) => p.id === valueId) || null;
+  const selectedRaw = products.find((p) => safeCatalogText(p.id) === valueId) || null;
+  const selected = selectedRaw ? sanitizeCatalogProduct(selectedRaw) : null;
 
   const closePicker = () => {
     setOpen(false);
@@ -60,11 +113,20 @@ export default function CatalogProductPicker({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = q
-      ? products.filter((p) =>
-          `${p.brand} ${p.name} ${p.model} ${p.sku} ${p.wattageCapacity || ""} ${p.availability || ""}`
-            .toLowerCase()
-            .includes(q)
-        )
+      ? products.filter((p) => {
+          const runtime = p as Product & { wattageCapacity?: unknown };
+          const haystack = [
+            safeCatalogText(p.brand),
+            safeCatalogText(p.name),
+            safeCatalogText(p.model),
+            safeCatalogText(p.sku),
+            safeCatalogText(runtime.wattageCapacity),
+            safeCatalogText(p.availability),
+          ]
+            .join(" ")
+            .toLowerCase();
+          return haystack.includes(q);
+        })
       : products;
     return list.slice(0, 40);
   }, [products, query]);
@@ -100,20 +162,23 @@ export default function CatalogProductPicker({
           {filtered.length === 0 ? (
             <p className="px-3 py-2 text-xs text-slate-600">No matching products</p>
           ) : (
-            filtered.map((product) => (
-              <button
-                key={product.id}
-                type="button"
-                className="block min-h-[48px] w-full border-t border-slate-900 px-3 py-2 text-left hover:bg-slate-900 md:min-h-0"
-                onClick={() => {
-                  onSelect(product);
-                  closePicker();
-                }}
-              >
-                <div className="text-xs font-semibold text-white truncate">{product.name}</div>
-                <div className="text-[10px] text-slate-500">{identityBits(product)}</div>
-              </button>
-            ))
+            filtered.map((product) => {
+              const safeProduct = sanitizeCatalogProduct(product);
+              return (
+                <button
+                  key={safeProduct.id || safeCatalogText(product.id)}
+                  type="button"
+                  className="block min-h-[48px] w-full border-t border-slate-900 px-3 py-2 text-left hover:bg-slate-900 md:min-h-0"
+                  onClick={() => {
+                    onSelect(safeProduct);
+                    closePicker();
+                  }}
+                >
+                  <div className="truncate text-xs font-semibold text-white">{safeProduct.name}</div>
+                  <div className="text-[10px] text-slate-500">{identityBits(safeProduct)}</div>
+                </button>
+              );
+            })
           )}
         </div>
       )}
