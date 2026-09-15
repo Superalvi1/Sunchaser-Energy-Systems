@@ -162,20 +162,20 @@ export default function CatalogProductPicker({
           {filtered.length === 0 ? (
             <p className="px-3 py-2 text-xs text-slate-600">No matching products</p>
           ) : (
-            filtered.map((product) => {
-              const safeProduct = sanitizeCatalogProduct(product);
+            filtered.map((rawProduct) => {
+              const product = sanitizeCatalogProduct(rawProduct);
               return (
                 <button
-                  key={safeProduct.id || safeCatalogText(product.id)}
+                  key={product.id || safeCatalogText(rawProduct.id)}
                   type="button"
                   className="block min-h-[48px] w-full border-t border-slate-900 px-3 py-2 text-left hover:bg-slate-900 md:min-h-0"
                   onClick={() => {
-                    onSelect(safeProduct);
+                    onSelect(product);
                     closePicker();
                   }}
                 >
-                  <div className="truncate text-xs font-semibold text-white">{safeProduct.name}</div>
-                  <div className="text-[10px] text-slate-500">{identityBits(safeProduct)}</div>
+                  <div className="truncate text-xs font-semibold text-white">{product.name}</div>
+                  <div className="text-[10px] text-slate-500">{identityBits(product)}</div>
                 </button>
               );
             })
