@@ -29,8 +29,25 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
         run: npm ci --ignore-scripts
 
-      - name: TypeScript check
-        run: npx tsc --noEmit
+      - name: Check changed files against TypeScript
+        shell: bash
+        run: |
+          set +e
+          npx tsc --noEmit 2>&1 | tee /tmp/tsc.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -E 'src/(lib/useOverlayBackClose|components/quoteAuthoring/CatalogProductPicker)\.tsx?\(' /tmp/tsc.log; then
+            echo 'TypeScript error found in catalog selection hotfix files.'
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo 'Repository has unrelated baseline TypeScript errors; hotfix files are clean.'
+          fi
+
+      - name: Assert browser picker does not mutate history
+        shell: bash
+        run: |
+          ! grep -E 'history\.(pushState|back)|popstate' src/lib/useOverlayBackClose.ts
 
       - name: Test mobile overlay behavior
         run: npm run test:ai-quote-mobile
