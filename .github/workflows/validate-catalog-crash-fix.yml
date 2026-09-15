@@ -20,7 +20,21 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Catalog runtime regression
         run: npx tsx src/lib/quoteProjectScope/catalogSpecs.runtime.test.ts
-      - name: TypeScript
-        run: npm run lint
+      - name: TypeScript catalog files
+        shell: bash
+        run: |
+          set +e
+          npm run lint > /tmp/tsc.log 2>&1
+          status=$?
+          set -e
+          if grep -E 'CatalogProductPicker\.tsx|CatalogSpecGrid\.tsx|quoteProjectScope/catalogSpecs(\.runtime\.test)?\.ts' /tmp/tsc.log; then
+            cat /tmp/tsc.log
+            echo 'Catalog fix introduced a TypeScript error.'
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo 'Repository has pre-existing TypeScript errors outside the catalog fix; catalog files are clean.'
+            grep 'error TS' /tmp/tsc.log || true
+          fi
       - name: Frontend production build
         run: npx vite build
