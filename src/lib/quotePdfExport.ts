@@ -1,5 +1,4 @@
 import { Capacitor } from "@capacitor/core";
-import { Browser } from "@capacitor/browser";
 import { API_BASE_URL, authorizedFetch } from "../services/api";
 import { PDF_ENGINE_MISSING_MESSAGE } from "./quotePdfErrors";
 
@@ -135,7 +134,7 @@ async function openAndroidStagedPdf(stagePath: string, init?: RequestInit): Prom
   const url = staged.downloadUrl.startsWith("http")
     ? staged.downloadUrl
     : `${API_BASE_URL}${staged.downloadUrl}`;
-  await Browser.open({ url });
+  window.location.assign(url);
 }
 
 export function ephemeralManualQuotePdfDownloadUrl(): string {

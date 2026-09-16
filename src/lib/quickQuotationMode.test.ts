@@ -54,8 +54,9 @@ check("server ephemeral manual quote can return PDF without saving lead or quote
   assert.doesNotMatch(route, /create-quote/);
 });
 
-check("native PDF path uses one-time Browser handoff and no file/share bridge", () => {
-  assert.match(pdf, /Browser\.open/);
+check("native PDF path uses one-time URL handoff and no file/share bridge", () => {
+  assert.match(pdf, /window\.location\.assign\(url\)/);
+  assert.doesNotMatch(pdf, /Browser\.open/);
   assert.match(pdf, /openAndroidStagedPdf/);
   assert.doesNotMatch(pdf, /Share\.share/);
   assert.doesNotMatch(pdf, /Filesystem\.writeFile/);
