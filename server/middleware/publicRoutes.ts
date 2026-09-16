@@ -38,6 +38,16 @@ export function isPublicApiRoute(method: string, pathname: string): boolean {
   const normalizedMethod = normalizeHttpMethod(method);
   const path = pathname.split("?")[0] || pathname;
 
+  // Android opens this URL in an external browser without the CRM Bearer JWT.
+  // Only GET of one UUID token bypasses JWT; the handler enforces expiry and
+  // single-use consumption. Generation/staging and every other PDF route stay protected.
+  if (
+    normalizedMethod === "GET" &&
+    /^\/api\/export\/pdf\/staged-public\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(path)
+  ) {
+    return true;
+  }
+
   // marketplaceRouteLockdown surface — requires CRM JWT via central auth.
   // Admin + auto-import alias are never public (JWT + Super Admin gates).
   if (
