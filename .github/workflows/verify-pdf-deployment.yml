@@ -1,0 +1,30 @@
+name: Verify PDF deployment
+on:
+  push:
+    branches: [release/android-1.0.14-build17]
+    paths: [.github/workflows/verify-pdf-deployment.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check live Render access boundaries
+        shell: bash
+        run: |
+          base=https://sunchaser-energy-systems.onrender.com
+          code=$(curl --max-time 90 -sS -o /tmp/pdf-response -w '%{http_code}' "$base/api/export/pdf/staged-public/11111111-2222-4333-8444-555555555555")
+          echo "Staged PDF unknown token status: $code"
+          cat /tmp/pdf-response
+          test "$code" = 404
+          grep -q "expired or was already used" /tmp/pdf-response
+          for path in /api/auth/me /api/customer-portal/me /api/state; do
+            code=$(curl --max-time 30 -sS -o /dev/null -w '%{http_code}' "$base$path")
+            echo "$path unauthenticated status: $code"
+            test "$code" = 401
+          done
+          code=$(curl --max-time 30 -sS -X POST -H 'Content-Type: application/json' -d '{}' -o /dev/null -w '%{http_code}' "$base/api/export/pdf/stage-saved-quote")
+          echo "PDF staging unauthenticated status: $code"
+          test "$code" = 401
