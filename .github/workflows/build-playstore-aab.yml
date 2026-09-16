@@ -50,14 +50,20 @@ jobs:
           test -d "$ANDROID_SDK_ROOT"
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/build-tools/36.0.0" >> "$GITHUB_PATH"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --version
 
-      - name: Install Android SDK 35
+      - name: Install Android SDK 36
         shell: bash
         run: |
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Set Play Store version
+        shell: bash
+        run: |
+          sed -i 's/versionCode 15/versionCode 16/' android/app/build.gradle
+          sed -i 's/versionName "1.0.12"/versionName "1.0.13"/' android/app/build.gradle
 
       - name: Sync Capacitor
         run: npx cap sync android
@@ -71,14 +77,16 @@ jobs:
       - name: Verify AAB and version
         run: |
           test -f android/app/build/outputs/bundle/release/app-release.aab
-          grep -q 'versionCode 15' android/app/build.gradle
-          grep -q 'versionName "1.0.12"' android/app/build.gradle
+          grep -q 'compileSdkVersion = 36' android/variables.gradle
+          grep -q 'targetSdkVersion = 36' android/variables.gradle
+          grep -q 'versionCode 16' android/app/build.gradle
+          grep -q 'versionName "1.0.13"' android/app/build.gradle
           ls -lh android/app/build/outputs/bundle/release/app-release.aab
 
       - name: Upload Play Store AAB
         uses: actions/upload-artifact@v4
         with:
-          name: Sunchaser-CRM-1.0.12-build15-playstore-aab
+          name: Sunchaser-CRM-1.0.13-build16-api36-playstore-aab
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
