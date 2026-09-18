@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     branches:
-      - feature/mobile-ai-quote-builder-sync
+      - main
   workflow_dispatch:
 
 permissions:
@@ -50,11 +50,9 @@ jobs:
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
-      - name: Set APK version 1.0.8 build 11
+      - name: Confirm Android release version
         shell: bash
         run: |
-          sed -i -E 's/versionCode[[:space:]]+[0-9]+/versionCode 11/' android/app/build.gradle
-          sed -i -E 's/versionName[[:space:]]+"[^"]+"/versionName "1.0.8"/' android/app/build.gradle
           grep -E 'applicationId|versionCode|versionName' android/app/build.gradle
 
       - name: Show Gradle environment
@@ -64,14 +62,14 @@ jobs:
           java -version
           ./gradlew --version
 
-      - name: Build debug and release APKs
+      - name: Build debug APK, release APK, and Play Store bundle
         id: gradle_build
         continue-on-error: true
         working-directory: android
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace 2>&1 | tee ../gradle-build.log
+          ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon --stacktrace 2>&1 | tee ../gradle-build.log
 
       - name: Upload Gradle diagnostic log
         if: always()
@@ -88,14 +86,16 @@ jobs:
         run: |
           test -f android/app/build/outputs/apk/debug/app-debug.apk
           test -f android/app/build/outputs/apk/release/app-release.apk
+          test -f android/app/build/outputs/bundle/release/app-release.aab
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
           ls -lh android/app/build/outputs/apk/release/app-release.apk
+          ls -lh android/app/build/outputs/bundle/release/app-release.aab
 
       - name: Upload debug APK artifact
         if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Sunchaser-CRM-1.0.8-build11-debug
+          name: Sunchaser-CRM-1.0.14-build17-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -104,8 +104,17 @@ jobs:
         if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Sunchaser-CRM-1.0.8-build11-release
+          name: Sunchaser-CRM-1.0.14-build17-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Play Store AAB artifact
+        if: steps.gradle_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sunchaser-CRM-1.0.14-build17-play-store-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
 

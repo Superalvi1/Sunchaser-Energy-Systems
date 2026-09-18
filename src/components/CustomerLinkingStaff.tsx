@@ -11,9 +11,10 @@ import {
 
 interface CustomerLinkingStaffProps {
   staffUser: User;
+  initialUser?: User | null;
 }
 
-export default function CustomerLinkingStaff({ staffUser }: CustomerLinkingStaffProps) {
+export default function CustomerLinkingStaff({ staffUser, initialUser }: CustomerLinkingStaffProps) {
   const toast = useToast();
   const [custQuery, setCustQuery] = useState("");
   const [userQuery, setUserQuery] = useState("");
@@ -38,6 +39,19 @@ export default function CustomerLinkingStaff({ staffUser }: CustomerLinkingStaff
   useEffect(() => {
     void loadDuplicates();
   }, [staffUser.id]);
+
+  useEffect(() => {
+    if (!initialUser || initialUser.role !== "Customer") return;
+    setUserQuery(initialUser.name || initialUser.username);
+    setSelectedUser({
+      userId: initialUser.id,
+      username: initialUser.username,
+      name: initialUser.name,
+      email: initialUser.email,
+      customerId: initialUser.customerId || null,
+      accountStatus: initialUser.accountStatus || "Approved",
+    });
+  }, [initialUser?.id]);
 
   const searchCustomers = async () => {
     setLoading(true);
@@ -99,6 +113,15 @@ export default function CustomerLinkingStaff({ staffUser }: CustomerLinkingStaff
           Search CRM customers and portal users, then link accounts without SQL access. Duplicate detection is read-only.
         </p>
       </div>
+
+      {initialUser && (
+        <div className="rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-3">
+          <p className="font-bold text-amber-300">Portal user selected: {initialUser.name}</p>
+          <p className="text-[10px] text-neutral-400 font-mono">
+            @{initialUser.username} · {initialUser.customerId || "no CRM customer linked"}
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3">

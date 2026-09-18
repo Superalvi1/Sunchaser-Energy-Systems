@@ -13,16 +13,18 @@ import { useToast } from "../lib/toast";
 interface ClientPortalStaffToolsProps {
   staffUser: User;
   section?: "documents" | "warranty" | "all";
+  initialCustomerId?: string;
 }
 
 export default function ClientPortalStaffTools({
   staffUser,
   section = "all",
+  initialCustomerId = "",
 }: ClientPortalStaffToolsProps) {
   const toast = useToast();
   const showDocuments = section === "all" || section === "documents";
   const showWarranty = section === "all" || section === "warranty";
-  const [customerId, setCustomerId] = useState("");
+  const [customerId, setCustomerId] = useState(initialCustomerId);
   const [projectId, setProjectId] = useState("");
   const [documentType, setDocumentType] = useState(DOCUMENT_WALLET_TYPES[0].type);
   const [title, setTitle] = useState("");
@@ -37,6 +39,13 @@ export default function ClientPortalStaffTools({
 
   const [claims, setClaims] = useState<any[]>([]);
   const [claimsLoading, setClaimsLoading] = useState(true);
+  const visibleClaims = initialCustomerId
+    ? claims.filter((claim) => claim.customerId === initialCustomerId)
+    : claims;
+
+  useEffect(() => {
+    if (initialCustomerId) setCustomerId(initialCustomerId);
+  }, [initialCustomerId]);
 
   const loadClaims = async () => {
     setClaimsLoading(true);
@@ -98,13 +107,20 @@ export default function ClientPortalStaffTools({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900 border border-slate-800 rounded-2xl p-4">
-        <input
-          required
-          placeholder="Customer ID"
-          value={customerId}
-          onChange={(e) => setCustomerId(e.target.value)}
-          className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
-        />
+        {initialCustomerId ? (
+          <div className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm">
+            <span className="block text-[10px] uppercase text-slate-500">Customer</span>
+            <span className="font-mono text-amber-400">{customerId}</span>
+          </div>
+        ) : (
+          <input
+            required
+            placeholder="Customer ID"
+            value={customerId}
+            onChange={(e) => setCustomerId(e.target.value)}
+            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
+          />
+        )}
         <input
           placeholder="Project ID (optional)"
           value={projectId}
@@ -147,6 +163,20 @@ export default function ClientPortalStaffTools({
           Warranty records
         </h3>
         <form onSubmit={saveWarranty} className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900 border border-slate-800 rounded-2xl p-4">
+          {!initialCustomerId && (
+            <input
+              required
+              placeholder="Customer ID"
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              className="md:col-span-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
+            />
+          )}
+          {initialCustomerId && (
+            <p className="md:col-span-2 text-xs text-slate-500">
+              Adding warranty to <span className="font-mono text-amber-400">{customerId}</span>
+            </p>
+          )}
           <select
             value={warrantyComponent}
             onChange={(e) => setWarrantyComponent(e.target.value as any)}
@@ -204,11 +234,11 @@ export default function ClientPortalStaffTools({
         <h3 className="text-lg font-bold">Warranty claims</h3>
         {claimsLoading ? (
           <Loader2 className="w-6 h-6 animate-spin text-amber-500 mt-4" />
-        ) : claims.length === 0 ? (
+        ) : visibleClaims.length === 0 ? (
           <p className="text-sm text-slate-500 mt-2">No warranty claims yet.</p>
         ) : (
           <ul className="mt-3 space-y-2">
-            {claims.map((c) => (
+            {visibleClaims.map((c) => (
               <li
                 key={c.id}
                 className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-start"

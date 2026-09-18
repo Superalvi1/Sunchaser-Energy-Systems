@@ -39,6 +39,8 @@ interface InvoiceStaffProps {
   /** Open a specific invoice (e.g. from Party Ledger → Edit). */
   openInvoiceId?: string | null;
   onOpenInvoiceConsumed?: () => void;
+  /** Preselect and scope the editor to one customer from the client workspace. */
+  initialCustomerId?: string;
 }
 
 const PAYMENT_TERMS = ["Cash on delivery", "Net 7 days", "Net 15 days", "Net 30 days", "Advance"];
@@ -74,6 +76,7 @@ export default function InvoiceStaff({
   leads = [],
   openInvoiceId,
   onOpenInvoiceConsumed,
+  initialCustomerId,
 }: InvoiceStaffProps) {
   const allowed = canCreateInvoice(staffUser.username, staffUser.role);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -171,8 +174,11 @@ export default function InvoiceStaff({
 
   const filteredInvoices = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return invoices;
-    return invoices.filter((inv) => {
+    const scoped = initialCustomerId
+      ? invoices.filter((inv) => inv.customerId === initialCustomerId)
+      : invoices;
+    if (!q) return scoped;
+    return scoped.filter((inv) => {
       const lead = leads.find((l) => l.id === inv.leadId);
       return (
         String(inv.customerName || "").toLowerCase().includes(q) ||
@@ -182,7 +188,7 @@ export default function InvoiceStaff({
         String(lead?.name || "").toLowerCase().includes(q)
       );
     });
-  }, [invoices, searchQuery, leads]);
+  }, [invoices, searchQuery, leads, initialCustomerId]);
 
   const filteredReadyLeads = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -533,6 +539,11 @@ export default function InvoiceStaff({
       customerPhone: acc.phone || d.customerPhone,
     }));
   };
+
+  useEffect(() => {
+    if (!initialCustomerId || loading || selectedId || draft.customerId === initialCustomerId) return;
+    selectCustomer(initialCustomerId);
+  }, [initialCustomerId, loading, selectedId, customerOptions, draft.customerId]);
 
   const save = async () => {
     setMsg(null);
