@@ -8,9 +8,12 @@ import {
   UserPlus,
   Table,
   Trash2,
+  Link2,
+  UserCircle,
 } from "lucide-react";
 import RoleManagementPanel from "./RoleManagementPanel";
 import CustomerProfileStaff from "./CustomerProfileStaff";
+import CustomerLinkingStaff from "./CustomerLinkingStaff";
 import AppModal from "./ui/AppModal";
 import type { User } from "../types";
 import {
@@ -35,7 +38,7 @@ interface UserManagementStaffProps {
   staffUser: User;
 }
 
-type Tab = "pending" | "users" | "roles" | "customers" | "matrix" | "cleanup";
+type Tab = "pending" | "users" | "roles" | "customers" | "linking" | "matrix" | "cleanup";
 
 function mergeUserLists(local: User[], server: User[]): User[] {
   const serverIds = new Set(server.map((u) => u.id));
@@ -62,6 +65,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
   const [createOpen, setCreateOpen] = useState(false);
   const [createSaving, setCreateSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [focusedCustomerUser, setFocusedCustomerUser] = useState<User | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [demoUsers, setDemoUsers] = useState<User[]>([]);
@@ -266,7 +270,7 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       {msg && <p className="text-xs text-amber-400 font-mono">{msg}</p>}
 
       <div className="flex flex-wrap gap-2 text-xs font-bold">
-        {(["pending", "users", "roles", ...(showCustomers ? (["customers"] as Tab[]) : []), "matrix", "cleanup"] as Tab[]).map((t) => (
+        {(["pending", "users", "roles", ...(showCustomers ? (["customers", "linking"] as Tab[]) : []), "matrix", "cleanup"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -284,7 +288,9 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
                 : t === "roles"
                   ? "Roles"
                   : t === "customers"
-                    ? "Customer profiles"
+                    ? "Client workspace"
+                    : t === "linking"
+                      ? "Link portal account"
                     : t === "cleanup"
                       ? "Cleanup"
                       : "Permissions matrix"}
@@ -353,7 +359,9 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
       ) : tab === "roles" ? (
         <RoleManagementPanel staffUser={staffUser} />
       ) : tab === "customers" && showCustomers ? (
-        <CustomerProfileStaff staffUser={staffUser} />
+        <CustomerProfileStaff staffUser={staffUser} initialUserId={focusedCustomerUser?.id} />
+      ) : tab === "linking" && showCustomers ? (
+        <CustomerLinkingStaff staffUser={staffUser} initialUser={focusedCustomerUser} />
       ) : tab === "cleanup" ? (
         <div className="space-y-4">
           <p className="text-sm text-slate-400">
@@ -457,6 +465,30 @@ export default function UserManagementStaff({ staffUser }: UserManagementStaffPr
                       </td>
                       <td className="py-2">
                         <div className="flex flex-wrap gap-3 items-center">
+                          {u.role === "Customer" && showCustomers && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFocusedCustomerUser(u);
+                                  setTab("customers");
+                                }}
+                                className="text-emerald-400 hover:underline inline-flex items-center gap-1"
+                              >
+                                <UserCircle className="h-3.5 w-3.5" /> Open client
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFocusedCustomerUser(u);
+                                  setTab("linking");
+                                }}
+                                className="text-sky-400 hover:underline inline-flex items-center gap-1"
+                              >
+                                <Link2 className="h-3.5 w-3.5" /> Link CRM record
+                              </button>
+                            </>
+                          )}
                           {u.id !== staffUser.id && !protectedUser && (
                             <button
                               type="button"

@@ -10,9 +10,12 @@ import {
 import { DOCUMENT_WALLET_TYPES } from "../lib/clientPortalPhase2";
 import CustomerDocumentUploader from "./CustomerDocumentUploader";
 import CustomerInvitationPanel from "./CustomerInvitationPanel";
+import ClientPortalStaffTools from "./ClientPortalStaffTools";
+import InvoiceStaff from "./InvoiceStaff";
 
 interface CustomerProfileStaffProps {
   staffUser: User;
+  initialUserId?: string | null;
 }
 
 const emptySystem = {
@@ -37,7 +40,7 @@ const emptySystem = {
   notes: "",
 };
 
-export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaffProps) {
+export default function CustomerProfileStaff({ staffUser, initialUserId }: CustomerProfileStaffProps) {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [system, setSystem] = useState<any>(emptySystem);
@@ -102,6 +105,12 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
     loadAccounts();
   }, [staffUser.id]);
 
+  useEffect(() => {
+    if (!initialUserId || !accounts.length || selected?.userId === initialUserId) return;
+    const account = accounts.find((a) => a.userId === initialUserId);
+    if (account?.customerId) void loadCustomer(account);
+  }, [initialUserId, accounts, selected?.userId]);
+
   const saveSystem = async () => {
     if (!selected?.customerId) return;
     try {
@@ -131,8 +140,9 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
           <button
             key={a.userId}
             type="button"
-            onClick={() => loadCustomer(a)}
-            className={`w-full text-left p-3 rounded-xl border text-sm ${
+            onClick={() => a.customerId && loadCustomer(a)}
+            disabled={!a.customerId}
+            className={`w-full text-left p-3 rounded-xl border text-sm disabled:opacity-60 ${
               selected?.userId === a.userId
                 ? "border-amber-500 bg-amber-500/10"
                 : "border-slate-800 bg-slate-950"
@@ -140,6 +150,9 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
           >
             <span className="font-bold text-white block">{a.name}</span>
             <span className="text-[10px] text-slate-500 font-mono">@{a.username}</span>
+            {!a.customerId && (
+              <span className="block text-[10px] text-rose-400 mt-1">Needs CRM customer link</span>
+            )}
           </button>
         ))}
       </div>
@@ -247,6 +260,30 @@ export default function CustomerProfileStaff({ staffUser }: CustomerProfileStaff
                   </li>
                 ))}
               </ul>
+            </section>
+
+            <section className="border-t border-slate-800 pt-6 space-y-3">
+              <div>
+                <h4 className="text-sm font-bold text-amber-400">Warranties</h4>
+                <p className="text-xs text-slate-500">
+                  Add panel, inverter, battery, workmanship, and other warranty cards to this client portal.
+                </p>
+              </div>
+              <ClientPortalStaffTools
+                staffUser={staffUser}
+                section="warranty"
+                initialCustomerId={selected.customerId}
+              />
+            </section>
+
+            <section className="border-t border-slate-800 pt-6 space-y-3">
+              <div>
+                <h4 className="text-sm font-bold text-amber-400">Invoices, payments & clearance</h4>
+                <p className="text-xs text-slate-500">
+                  Create invoices, record received payments, review balance, and issue customer billing documents.
+                </p>
+              </div>
+              <InvoiceStaff staffUser={staffUser} initialCustomerId={selected.customerId} />
             </section>
           </>
         )}

@@ -200,6 +200,12 @@ export default function App() {
   };
 
   const refreshOnboardingGate = async (user: User, force = false) => {
+    // Customers should enter their portal immediately. The welcome wizard is
+    // staff training, not a prerequisite for viewing owned portal data.
+    if (user.role === "Customer") {
+      setShowOnboarding(false);
+      return;
+    }
     try {
       const ob = await fetchOnboardingMe(user.id, user.username);
       setShowOnboarding(force || !ob.onboardingCompleted);
@@ -560,7 +566,7 @@ export default function App() {
           error={portalError}
           onRefresh={() => loadCustomerPortal(currentUser)}
           onLogout={handleLogout}
-          onShowWelcomeGuide={() => setShowOnboarding(true)}
+          onShowWelcomeGuide={() => setShowOnboarding(false)}
         />
         <AICommandCenter layout="customer" />
       </>

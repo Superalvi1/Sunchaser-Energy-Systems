@@ -5,7 +5,6 @@ import {
   isSupabaseConnectivityError,
   SupabaseUnavailableError,
 } from "./supabaseConnectivity";
-import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
 import { findCustomerByCode, generateCustomerCode, normalizeCustomerCode } from "./customerCode.js";
 import { hashPassword, verifyPassword } from "./src/lib/passwordHash";
 import {
@@ -267,7 +266,6 @@ export async function registerUser(
 
   if (role === "Customer") {
     const phone = String(body.phone || "").trim();
-    const cnic = String(body.cnicNtn || body.cnic || "").trim();
     const rawInvitation = String(body.customerCode || body.invitationCode || "").trim();
 
     if (rawInvitation) {
@@ -285,17 +283,9 @@ export async function registerUser(
       row.customer_id = matchedCustomer.id;
       linkCustomerAfterInsert = true;
     } else {
-      const matchedCustomerId = await findExistingCustomerIdForLinking(
-        { phone: phone || null, email, cnicNtn: cnic || null },
-        localDb
-      );
-      const customerId = matchedCustomerId || `cust-${id.replace(/^u-/, "")}`;
-      row.customer_id = customerId;
-      if (matchedCustomerId) {
-        linkCustomerAfterInsert = true;
-      } else {
-        await ensureCustomerRecord(customerId, { name, email, phone }, localDb);
-      }
+      // Never attach self-registration to an existing financial customer from
+      // contact similarity alone. An invitation code is the explicit link.
+      row.customer_id = `cust-${id.replace(/^u-/, "")}`;
     }
   }
 
@@ -312,22 +302,31 @@ export async function registerUser(
           localDb
         );
       } else {
-        await getSupabase()!
-          .from("customers")
-          .update({ user_id: id })
-          .eq("id", row.customer_id);
+        await ensureCustomerRecord(
+          row.customer_id,
+          { name, email, phone: String(body.phone || "").trim(), userId: id },
+          localDb
+        );
       }
     }
   } else if (localDb) {
     localDb.users = localDb.users || [];
     localDb.users.push(row);
-    if (role === "Customer" && row.customer_id && linkCustomerAfterInsert) {
-      await linkExistingCustomerToPortalUser(
-        row.customer_id,
-        id,
-        { name, email, phone: String(body.phone || "").trim() },
-        localDb
-      );
+    if (role === "Customer" && row.customer_id) {
+      if (linkCustomerAfterInsert) {
+        await linkExistingCustomerToPortalUser(
+          row.customer_id,
+          id,
+          { name, email, phone: String(body.phone || "").trim() },
+          localDb
+        );
+      } else {
+        await ensureCustomerRecord(
+          row.customer_id,
+          { name, email, phone: String(body.phone || "").trim(), userId: id },
+          localDb
+        );
+      }
     }
   }
 
@@ -635,6 +634,7 @@ async function ensureCustomerRecord(
     phone: opts.phone || null,
     address: null,
     customer_code: customerCode,
+    user_id: opts.userId || null,
     created_at: now,
   };
 

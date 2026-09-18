@@ -119,7 +119,13 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
       const res = await registerUser(payload);
       setInfo(res.message);
       if (!res.needsApproval && role === "Customer") {
-        setMode("login");
+        // Establish the regular session immediately and enter the portal.
+        const login = await loginUser({ username, password });
+        if (login.success && login.user) {
+          await onLoginSuccess(login.user);
+        } else {
+          setMode("login");
+        }
       }
     } catch (err: any) {
       setError(err.message || "Registration failed.");
