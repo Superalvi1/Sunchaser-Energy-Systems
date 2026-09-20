@@ -313,6 +313,7 @@ import {
 import {
   authenticateUser,
   registerUser,
+  backfillUnlinkedClientUsers,
   verifyEmailToken,
   requestPasswordReset,
   resetPasswordWithToken,
@@ -382,6 +383,13 @@ import {
   OwnershipResolver,
   portalIdentityFromActor,
 } from "./server/ownership/OwnershipResolver.ts";
+import { registerInteractiveProposalRoutes } from "./server/interactiveProposals/interactiveProposalRoutes.ts";
+import {
+  createMemoryInteractiveProposalStore,
+  createSupabaseInteractiveProposalStore,
+  type InteractiveProposalRecord,
+} from "./server/interactiveProposals/interactiveProposalRepository.ts";
+import { buildPendingCustomerPortalPayload } from "./src/lib/clientPortalRouting.ts";
 import {
   TechnicianOwnershipError,
   TechnicianOwnershipResolver,
@@ -1239,6 +1247,20 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+app.post("/api/admin/backfill-client-profiles", async (req, res) => {
+  try {
+    assertSuperAdminOnly(req.actor);
+    loadDb();
+    const results = await backfillUnlinkedClientUsers(db);
+    saveDb();
+    return res.json({ success: true, count: results.length, results });
+  } catch (err: any) {
+    if (financeRouteLockdownErrorResponse(err, res)) return;
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/auth/verify-email", async (req, res) => {
   try {
     loadDb();
@@ -1778,12 +1800,16 @@ app.get("/api/customer-portal/system/me", async (req, res) => {
 });
 
 async function handleCustomerPortalMe(req: any, res: any) {
-  const identity = resolveCustomerPortalActor(req, res);
-  if (!identity) return;
-
   try {
+    if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+    if (req.actor.role !== "Customer") {
+      return res.status(403).json({ error: "Not authorized for customer portal." });
+    }
     loadDb();
-    const data = await fetchCustomerPortalData(identity.userId, identity.username, db);
+    if (!String(req.actor.customerId || "").trim()) {
+      return res.json(buildPendingCustomerPortalPayload(req.actor));
+    }
+    const data = await fetchCustomerPortalData(req.actor.id, req.actor.username, db);
     return res.json(data);
   } catch (err: any) {
     if (ownershipErrorResponse(err, res)) return;
@@ -1937,6 +1963,47 @@ async function guardSalesOwnedResourceText(
     throw err;
   }
 }
+
+function resolveInteractiveProposalStore() {
+  if (isSupabaseActive()) {
+    return createSupabaseInteractiveProposalStore(getSupabase()!);
+  }
+  loadDb();
+  const local = db as Database & { interactiveProposals?: InteractiveProposalRecord[] };
+  if (!Array.isArray(local.interactiveProposals)) local.interactiveProposals = [];
+  return createMemoryInteractiveProposalStore(local.interactiveProposals);
+}
+
+registerInteractiveProposalRoutes(app, {
+  resolveStore: resolveInteractiveProposalStore,
+  resolveSourceQuote: async (req, res, leadId, quotationId) => {
+    if (!(await guardSalesOwnedResource(req, res, "lead", leadId))) return null;
+    const context = await resolveLeadForMutation(leadId, { includeQuotes: true });
+    if (!context) {
+      res.status(404).json({ error: "Lead not found." });
+      return null;
+    }
+    const quote = (context.lead.quotes || []).find((item: any) => item.id === quotationId);
+    if (!quote) {
+      res.status(404).json({ error: "Saved quotation not found for this lead." });
+      return null;
+    }
+    return { lead: context.lead, quote };
+  },
+  afterMutation: () => {
+    if (!isSupabaseActive()) saveDb();
+  },
+  appendActivity: async ({ req, action, details }) => {
+    const actor = req.actor;
+    await appendActivityLog(
+      actor?.id || "public-proposal",
+      actor?.name || actor?.username || "Client",
+      actor?.role || "Customer",
+      action,
+      details
+    );
+  },
+});
 
 function formatPortalApiError(err: any, context: { endpoint: string; query: string }) {
   console.error(`[Customer Portal Phase2] ${context.endpoint}`, {

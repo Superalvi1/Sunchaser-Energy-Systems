@@ -80,7 +80,10 @@ export function findCustomerForUser(
   const cid = userCustomerId(user);
   if (cid) {
     const byId = customers.find((c) => c.id === cid);
-    if (byId) return byId;
+    if (byId) {
+      const owner = customerUserId(byId);
+      if (!owner || owner === uid) return byId;
+    }
   }
   return null;
 }
@@ -110,6 +113,17 @@ export function findReusableCustomer(opts: {
   return null;
 }
 
+export function allocateCustomerId(user: ClientLinkUser, customers: ClientLinkCustomer[]): string {
+  const uid = String(user.id || "").trim();
+  const preferred = userCustomerId(user) || `cust-${uid.replace(/^u-/, "")}`;
+  const existing = customers.find((c) => c.id === preferred);
+  if (!existing) return preferred;
+  const owner = customerUserId(existing);
+  if (!owner || owner === uid) return preferred;
+  const suffix = Date.now().toString(36);
+  return `cust-${uid.replace(/^u-/, "") || "client"}-${suffix}`;
+}
+
 export function decideCustomerProvision(opts: {
   user: ClientLinkUser;
   customers: ClientLinkCustomer[];
@@ -117,6 +131,13 @@ export function decideCustomerProvision(opts: {
 }): ProvisionDecision {
   const invited = String(opts.invitedCustomerId || "").trim();
   if (invited) {
+    const invitedCustomer = opts.customers.find((c) => c.id === invited);
+    const owner = invitedCustomer ? customerUserId(invitedCustomer) : "";
+    if (owner && owner !== String(opts.user.id || "").trim()) {
+      const already = findCustomerForUser(opts.customers, opts.user);
+      if (already) return { action: "reuse-linked", customerId: already.id };
+      return { action: "create", customerId: allocateCustomerId(opts.user, opts.customers) };
+    }
     return { action: "use-invitation", customerId: invited };
   }
 
@@ -135,9 +156,7 @@ export function decideCustomerProvision(opts: {
     return { action: "reuse-unlinked", customerId: reusable.customer.id, reason: reusable.reason };
   }
 
-  const fromUser = userCustomerId(opts.user);
-  const customerId = fromUser || `cust-${String(opts.user.id).replace(/^u-/, "")}`;
-  return { action: "create", customerId };
+  return { action: "create", customerId: allocateCustomerId(opts.user, opts.customers) };
 }
 
 export function findLeadForCustomer(
@@ -152,7 +171,11 @@ export function findLeadForCustomer(
   }
   const mail = normEmail(email);
   if (mail) {
-    const byEmail = leads.find((l) => isActiveLead(l) && normEmail(l.email) === mail);
+    const byEmail = leads.find((l) => {
+      if (!isActiveLead(l) || normEmail(l.email) !== mail) return false;
+      const owner = leadCustomerId(l);
+      return !owner || owner === cid;
+    });
     if (byEmail) return byEmail;
   }
   return null;

@@ -198,9 +198,9 @@ export async function deleteCatalogProduct(productId: string) {
 }
 
 export type ClientPortalResponse = {
-  user: User;
+  user?: User;
   customer: {
-    id: string;
+    id: string | null;
     name: string;
     email: string;
     phone?: string;
@@ -209,7 +209,8 @@ export type ClientPortalResponse = {
   lead: unknown;
   project: unknown;
   dashboard: Record<string, unknown>;
-  tracker: { stages: unknown[]; progressPercent: number };
+  tracker: { stages: unknown[]; progressPercent: number } | null;
+  profilePending?: boolean;
 };
 
 export async function fetchCustomerPortalMe(
@@ -226,6 +227,9 @@ export async function fetchCustomerPortalMe(
     if (!res.ok) {
       const body = await readApiErrorBody(res);
       logApiFailure("fetchCustomerPortalMe", url, res.status, body);
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(body.error || body.message || "Your account is not linked to a CRM profile yet.");
+      }
       throw new Error(CONNECTION_ERROR_MESSAGE);
     }
     return res.json();

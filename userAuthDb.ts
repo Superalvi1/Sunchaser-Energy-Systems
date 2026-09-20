@@ -17,6 +17,15 @@ import {
 } from "./src/lib/roles";
 import { canDeleteUser, isHighValueProtectedUser } from "./src/lib/userDeleteGuards.ts";
 import { isDemoSeedUser } from "./src/lib/demoUserCleanup.ts";
+import {
+  buildRegistrationCustomerRow,
+  buildRegistrationLeadRow,
+  decideCustomerProvision,
+  findLeadForCustomer,
+  userCustomerId,
+  type ClientLinkCustomer,
+  type ClientLinkLead,
+} from "./src/lib/clientCrmLinking.ts";
 
 export class UserAuthError extends Error {
   statusCode: number;
@@ -204,6 +213,20 @@ export async function authenticateUser(
     throw new UserAuthError("Please verify your email before signing in.", 403);
   }
 
+  if (role === "Customer") {
+    try {
+      await ensureClientCrmProfileForUser(row, {
+        name: row.name,
+        email: row.email,
+        phone: row.phone,
+      }, localDb);
+      const refreshed = await getUserById(row.id, localDb);
+      if (refreshed) return mapUserRow(refreshed);
+    } catch (err) {
+      console.error("[Auth] client CRM profile backfill failed", err);
+    }
+  }
+
   return mapUserRow(row);
 }
 
@@ -262,11 +285,19 @@ export async function registerUser(
     updated_at: new Date().toISOString(),
   };
 
-  let linkCustomerAfterInsert = false;
+  if (isSupabaseActive()) {
+    const supabase = getSupabase()!;
+    const { error } = await supabase.from("users").insert(row);
+    if (error) throw error;
+  } else if (localDb) {
+    localDb.users = localDb.users || [];
+    localDb.users.push(row);
+  }
 
   if (role === "Customer") {
     const phone = String(body.phone || "").trim();
     const rawInvitation = String(body.customerCode || body.invitationCode || "").trim();
+    let invitedCustomerId: string | undefined;
 
     if (rawInvitation) {
       const normalizedCode = normalizeCustomerCode(rawInvitation);
@@ -280,54 +311,15 @@ export async function registerUser(
       if (matchedCustomer.user_id && matchedCustomer.user_id !== id) {
         throw new UserAuthError("This customer code is already linked to another portal account.");
       }
-      row.customer_id = matchedCustomer.id;
-      linkCustomerAfterInsert = true;
-    } else {
-      // Never attach self-registration to an existing financial customer from
-      // contact similarity alone. An invitation code is the explicit link.
-      row.customer_id = `cust-${id.replace(/^u-/, "")}`;
+      invitedCustomerId = matchedCustomer.id;
     }
-  }
 
-  if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
-    const { error } = await supabase.from("users").insert(row);
-    if (error) throw error;
-    if (role === "Customer" && row.customer_id) {
-      if (linkCustomerAfterInsert) {
-        await linkExistingCustomerToPortalUser(
-          row.customer_id,
-          id,
-          { name, email, phone: String(body.phone || "").trim() },
-          localDb
-        );
-      } else {
-        await ensureCustomerRecord(
-          row.customer_id,
-          { name, email, phone: String(body.phone || "").trim(), userId: id },
-          localDb
-        );
-      }
-    }
-  } else if (localDb) {
-    localDb.users = localDb.users || [];
-    localDb.users.push(row);
-    if (role === "Customer" && row.customer_id) {
-      if (linkCustomerAfterInsert) {
-        await linkExistingCustomerToPortalUser(
-          row.customer_id,
-          id,
-          { name, email, phone: String(body.phone || "").trim() },
-          localDb
-        );
-      } else {
-        await ensureCustomerRecord(
-          row.customer_id,
-          { name, email, phone: String(body.phone || "").trim(), userId: id },
-          localDb
-        );
-      }
-    }
+    const profile = await ensureClientCrmProfileForUser(
+      row,
+      { name, email, phone, invitedCustomerId },
+      localDb
+    );
+    row.customer_id = profile.customerId;
   }
 
   let verificationUrl: string | null = null;
@@ -557,31 +549,30 @@ export async function createUserByAdmin(
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  if (role === "Customer") {
-    const customerId = String(body.customerId || `cust-${id.replace(/^u-/, "")}`);
-    row.customer_id = customerId;
-    await ensureCustomerRecord(
-      customerId,
-      { name, email, userId: id, phone: String(body.phone || "") },
-      localDb
-    );
-  }
-
   if (isSupabaseActive()) {
     const { error } = await getSupabase()!.from("users").insert(row);
     if (error) throw error;
-    if (role === "Customer" && row.customer_id) {
-      await getSupabase()!
-        .from("customers")
-        .update({ user_id: id })
-        .eq("id", row.customer_id);
-    }
-    const persisted = await getUserById(id, localDb);
-    mirrorUserToLocalDb(persisted, localDb);
-    return mapUserRow(persisted);
+  } else {
+    mirrorUserToLocalDb(row, localDb);
   }
-  mirrorUserToLocalDb(row, localDb);
-  return mapUserRow(row);
+
+  if (role === "Customer") {
+    const profile = await ensureClientCrmProfileForUser(
+      row,
+      {
+        name,
+        email,
+        phone: String(body.phone || ""),
+        invitedCustomerId: body.customerId ? String(body.customerId) : undefined,
+      },
+      localDb
+    );
+    row.customer_id = profile.customerId;
+  }
+
+  const persisted = (await getUserById(id, localDb)) || row;
+  mirrorUserToLocalDb(persisted, localDb);
+  return mapUserRow(persisted);
 }
 
 async function linkExistingCustomerToPortalUser(
@@ -620,6 +611,154 @@ async function linkExistingCustomerToPortalUser(
   if (idx >= 0) Object.assign(db.customers[idx], patch);
 }
 
+async function listCustomersForLinking(localDb?: Database): Promise<ClientLinkCustomer[]> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!.from("customers").select("id, name, email, phone, user_id, customer_code");
+    if (error) throw error;
+    return (data || []) as ClientLinkCustomer[];
+  }
+  return (((localDb as any)?.customers || []) as ClientLinkCustomer[]);
+}
+
+async function listLeadsForLinking(localDb?: Database): Promise<ClientLinkLead[]> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!.from("leads").select("id, name, email, phone, customer_id, deleted_at");
+    if (error) {
+      if (String(error.message || "").includes("deleted_at")) {
+        const fallback = await getSupabase()!.from("leads").select("id, name, email, phone, customer_id");
+        if (fallback.error) throw fallback.error;
+        return (fallback.data || []) as ClientLinkLead[];
+      }
+      throw error;
+    }
+    return (data || []) as ClientLinkLead[];
+  }
+  return (((localDb as any)?.leads || []) as ClientLinkLead[]);
+}
+
+async function persistUserCustomerId(userId: string, customerId: string, localDb?: Database) {
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("users").update({ customer_id: customerId }).eq("id", userId);
+    if (error) throw error;
+  }
+  if (localDb?.users) {
+    const row = localDb.users.find((u: any) => u.id === userId);
+    if (row) {
+      row.customer_id = customerId;
+      row.customerId = customerId;
+    }
+  }
+}
+
+async function ensureLeadForCustomer(
+  customerId: string,
+  opts: { name: string; email: string; phone?: string },
+  localDb?: Database
+) {
+  const leads = await listLeadsForLinking(localDb);
+  const existing = findLeadForCustomer(leads, customerId, opts.email);
+  if (existing) {
+    if (isSupabaseActive() && !existing.customer_id && !existing.customerId) {
+      await getSupabase()!.from("leads").update({ customer_id: customerId }).eq("id", existing.id);
+    } else if (localDb) {
+      const row = ((localDb as any).leads || []).find((l: any) => l.id === existing.id);
+      if (row && !row.customer_id && !row.customerId) {
+        row.customer_id = customerId;
+        row.customerId = customerId;
+      }
+    }
+    return existing.id;
+  }
+
+  const leadRow = buildRegistrationLeadRow({
+    customerId,
+    name: opts.name,
+    email: opts.email,
+    phone: opts.phone,
+  });
+
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("leads").insert(leadRow);
+    if (error) throw error;
+    return leadRow.id;
+  }
+
+  const db = localDb as any;
+  if (!db) return leadRow.id;
+  db.leads = db.leads || [];
+  db.leads.push({
+    ...leadRow,
+    customerId,
+    monthlyBill: 0,
+    roofSpace: 0,
+    quotes: [],
+    createdAt: leadRow.created_at,
+    leadSource: leadRow.lead_source,
+    assignedSalesperson: "",
+  });
+  return leadRow.id;
+}
+
+export async function ensureClientCrmProfileForUser(
+  userRow: any,
+  opts: { name?: string; email?: string; phone?: string; invitedCustomerId?: string },
+  localDb?: Database
+): Promise<{ customerId: string; leadId: string | null; createdCustomer: boolean }> {
+  const userId = String(userRow.id || "").trim();
+  const name = String(opts.name || userRow.name || userRow.username || "Client").trim();
+  const email = String(opts.email || userRow.email || "").trim().toLowerCase();
+  const phone = String(opts.phone || userRow.phone || "").trim();
+  const customers = await listCustomersForLinking(localDb);
+  const decision = decideCustomerProvision({
+    user: userRow,
+    customers,
+    invitedCustomerId: opts.invitedCustomerId,
+  });
+
+  let createdCustomer = false;
+  if (decision.action === "create") {
+    await ensureCustomerRecord(
+      decision.customerId,
+      { name, email, phone, userId },
+      localDb
+    );
+    createdCustomer = true;
+  } else {
+    await linkExistingCustomerToPortalUser(decision.customerId, userId, { name, email, phone }, localDb);
+  }
+
+  if (userCustomerId(userRow) !== decision.customerId) {
+    await persistUserCustomerId(userId, decision.customerId, localDb);
+    userRow.customer_id = decision.customerId;
+    userRow.customerId = decision.customerId;
+  }
+
+  const leadId = await ensureLeadForCustomer(decision.customerId, { name, email, phone }, localDb);
+  return { customerId: decision.customerId, leadId, createdCustomer };
+}
+
+export async function backfillUnlinkedClientUsers(localDb?: Database) {
+  const users = isSupabaseActive()
+    ? ((await getSupabase()!.from("users").select("*").eq("role", "Customer")).data || [])
+    : (localDb?.users || []).filter((u: any) => String(u.role) === "Customer");
+
+  const results: Array<{ userId: string; username?: string; customerId: string; leadId: string | null }> = [];
+  for (const user of users) {
+    const profile = await ensureClientCrmProfileForUser(user, {
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+    }, localDb);
+    results.push({
+      userId: user.id,
+      username: user.username,
+      customerId: profile.customerId,
+      leadId: profile.leadId,
+    });
+  }
+  return results;
+}
+
 async function ensureCustomerRecord(
   customerId: string,
   opts: { name: string; email: string; userId?: string; phone?: string },
@@ -627,31 +766,45 @@ async function ensureCustomerRecord(
 ) {
   const now = new Date().toISOString();
   const customerCode = await generateCustomerCode(localDb);
-  const customerRow = {
-    id: customerId,
+  const customerRow = buildRegistrationCustomerRow({
+    customerId,
+    userId: opts.userId || "",
     name: opts.name,
     email: opts.email,
-    phone: opts.phone || null,
-    address: null,
-    customer_code: customerCode,
-    user_id: opts.userId || null,
-    created_at: now,
-  };
+    phone: opts.phone,
+    customerCode,
+    now,
+  });
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const { data: existing } = await supabase
       .from("customers")
-      .select("id")
+      .select("id, name, email, phone, user_id")
       .eq("id", customerId)
       .maybeSingle();
     if (existing) {
-      const patch: Record<string, unknown> = { name: opts.name, email: opts.email };
-      if (opts.userId) patch.user_id = opts.userId;
-      await supabase.from("customers").update(patch).eq("id", customerId);
+      const owner = String(existing.user_id || "").trim();
+      if (owner && opts.userId && owner !== opts.userId) {
+        throw new UserAuthError("This customer profile is already linked to another portal account.");
+      }
+      const patch: Record<string, unknown> = {};
+      if (opts.userId && !owner) patch.user_id = opts.userId;
+      if (!String(existing.name || "").trim() && opts.name) patch.name = opts.name;
+      if (!String(existing.email || "").trim() && opts.email) patch.email = opts.email;
+      if (!String(existing.phone || "").trim() && opts.phone) patch.phone = opts.phone;
+      if (Object.keys(patch).length) {
+        await supabase.from("customers").update(patch).eq("id", customerId);
+      }
       return;
     }
     const { error } = await supabase.from("customers").insert(customerRow);
+    if (error && String(error.message || "").includes("customer_code")) {
+      const { customer_code: _omit, ...withoutCode } = customerRow as any;
+      const retry = await supabase.from("customers").insert(withoutCode);
+      if (retry.error) throw retry.error;
+      return;
+    }
     if (error) throw error;
     return;
   }
@@ -661,7 +814,18 @@ async function ensureCustomerRecord(
   db.customers = db.customers || [];
   const idx = db.customers.findIndex((c: any) => c.id === customerId);
   if (idx >= 0) {
-    db.customers[idx] = { ...db.customers[idx], ...customerRow };
+    const existing = db.customers[idx];
+    const owner = String(existing.user_id || existing.userId || "").trim();
+    if (owner && opts.userId && owner !== opts.userId) {
+      throw new UserAuthError("This customer profile is already linked to another portal account.");
+    }
+    db.customers[idx] = {
+      ...existing,
+      user_id: owner || opts.userId || existing.user_id,
+      name: String(existing.name || "").trim() ? existing.name : opts.name,
+      email: String(existing.email || "").trim() ? existing.email : opts.email,
+      phone: String(existing.phone || "").trim() ? existing.phone : opts.phone || existing.phone,
+    };
   } else {
     db.customers.push(customerRow);
   }

@@ -106,8 +106,10 @@ export default function CustomerProfileStaff({ staffUser, initialUserId }: Custo
   }, [staffUser.id]);
 
   useEffect(() => {
-    if (!initialUserId || !accounts.length || selected?.userId === initialUserId) return;
-    const account = accounts.find((a) => a.userId === initialUserId);
+    if (!initialUserId || !accounts.length || selected?.userId === initialUserId || selected?.customerId === initialUserId) return;
+    const account =
+      accounts.find((a) => a.userId === initialUserId) ||
+      accounts.find((a) => a.customerId === initialUserId);
     if (account?.customerId) void loadCustomer(account);
   }, [initialUserId, accounts, selected?.userId]);
 

@@ -4,6 +4,7 @@ import {
   Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox, FileText
 } from "lucide-react";
 import { Lead, User } from "../types";
+import StaffClientWorkspace from "./StaffClientWorkspace";
 import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../services/api";
 import { pickQuoteForInvoice } from "../lib/invoiceFromLead";
 import WhatsAppModule from "./WhatsAppModule";
@@ -37,6 +38,7 @@ export default function CRMApp({
 }: CRMAppProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("All");
+  const [workspaceLeadId, setWorkspaceLeadId] = useState<string | null>(null);
   
   // Lead scoring prioritization state: toggle sorting based on rating vs AI score vs creation date
   const [sortBy, setSortBy] = useState<'ai_score' | 'rating' | 'creation'>('ai_score');
@@ -585,6 +587,17 @@ export default function CRMApp({
                         <strong className="text-[10px] text-slate-500 uppercase block font-mono">Closing remarks</strong>
                         &ldquo;{lead.notes}&rdquo;
                       </p>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceLeadId((id) => (id === lead.id ? null : lead.id))}
+                      className="w-full min-h-[44px] rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm font-bold"
+                    >
+                      {workspaceLeadId === lead.id ? "Hide client workspace" : "Open Client Portal / Manage Client"}
+                    </button>
+                    {workspaceLeadId === lead.id && (
+                      <StaffClientWorkspace staffUser={staffUser} lead={lead} />
                     )}
 
                     <WhatsAppModule

@@ -48,6 +48,13 @@ export function isPublicApiRoute(method: string, pathname: string): boolean {
     return true;
   }
 
+  if (
+    (normalizedMethod === "GET" || normalizedMethod === "POST") &&
+    /^\/api\/public\/interactive-proposals\/[A-Za-z0-9_-]{40,80}(?:\/(?:preview|accept))?$/.test(path)
+  ) {
+    return true;
+  }
+
   // marketplaceRouteLockdown surface — requires CRM JWT via central auth.
   // Admin + auto-import alias are never public (JWT + Super Admin gates).
   if (

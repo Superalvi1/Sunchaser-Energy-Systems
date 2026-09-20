@@ -65,6 +65,7 @@ import InstallationTeamApp from "./components/InstallationTeamApp";
 import TechnicalStaffApp from "./components/TechnicalStaffApp";
 import WelcomeWizard from "./components/WelcomeWizard";
 import SolarConsultantWizard from "./components/SolarConsultantWizard";
+import InteractiveProposalPublicPage from "./components/InteractiveProposalPublicPage";
 import AIAssistant from "./components/AIAssistant";
 import AICommandCenter from "./components/AICommandCenter";
 import GlobalSearch from "./components/GlobalSearch";
@@ -72,6 +73,10 @@ import { isGlobalSearchAllowedForUser } from "./lib/globalSearch";
 import AdminApp from "./components/AdminApp";
 import AppLogo from "./components/AppLogo";
 import { isTechnicalStaffRole } from "./lib/technicalStaff";
+import {
+  customerMustSkipMandatoryWizard,
+  readInteractiveProposalTokenFromLocation,
+} from "./lib/clientPortalRouting";
 
 function needsCrmAppState(role: string) {
   return role !== "Customer" && !isTechnicalStaffRole(role);
@@ -90,6 +95,15 @@ function isAdminWhatsAppConnectionPath(): boolean {
 }
 
 export default function App() {
+  const proposalToken =
+    typeof window === "undefined"
+      ? null
+      : readInteractiveProposalTokenFromLocation(window.location);
+  if (proposalToken) return <InteractiveProposalPublicPage token={proposalToken} />;
+  return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
   const [appState, setAppState] = useState<AppState | null>(null);
   /*
    * Native cold start opens on Login; web keeps the marketing landing.
@@ -136,6 +150,7 @@ export default function App() {
         project: data.project as ClientPortalPayload["project"],
         dashboard: data.dashboard as unknown as ClientPortalPayload["dashboard"],
         tracker: data.tracker as ClientPortalPayload["tracker"],
+        profilePending: !!(data as any).profilePending,
       });
     } catch (err: any) {
       setPortalError(err.message || CONNECTION_ERROR_MESSAGE);
@@ -202,7 +217,7 @@ export default function App() {
   const refreshOnboardingGate = async (user: User, force = false) => {
     // Customers should enter their portal immediately. The welcome wizard is
     // staff training, not a prerequisite for viewing owned portal data.
-    if (user.role === "Customer") {
+    if (customerMustSkipMandatoryWizard(user.role)) {
       setShowOnboarding(false);
       return;
     }
@@ -665,7 +680,7 @@ export default function App() {
               </button>
             ) : null}
 
-            {currentUser && !isTechnicalStaffRole(currentUser.role) && currentUser.role !== "Customer" ? (
+            {currentUser && !isTechnicalStaffRole(currentUser.role) ? (
               <button
                 type="button"
                 onClick={() => setShowOnboarding(true)}

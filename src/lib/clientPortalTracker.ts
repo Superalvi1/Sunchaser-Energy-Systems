@@ -31,7 +31,7 @@ export interface ClientPortalDashboard {
 
 export interface ClientPortalPayload {
   customer: {
-    id: string;
+    id: string | null;
     name: string;
     email: string;
     phone?: string;
@@ -44,9 +44,10 @@ export interface ClientPortalPayload {
     stages: TrackerStage[];
     progressPercent: number;
     trackerType?: PortalTrackerType;
-  };
+  } | null;
   portalProfile?: PortalProfileRecord | null;
   freeService?: FreeServiceSummary | null;
+  profilePending?: boolean;
 }
 
 const STAGE_LABELS = [

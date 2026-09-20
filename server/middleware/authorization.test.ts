@@ -60,6 +60,14 @@ const mockDb = {
       account_status: "Approved",
       customerId: "cust-1",
     },
+    {
+      id: "u-unlinked",
+      username: "unlinkedclient",
+      name: "Hassan Unlinked",
+      email: "hassan.unlinked@test.com",
+      role: "Customer",
+      account_status: "Approved",
+    },
   ] as MockUser[],
 };
 
@@ -114,6 +122,12 @@ await test("public route allowlist includes login and health", () => {
   assert.equal(isPublicApiRoute("GET", "/api/marketplace/orders/x"), true);
   assert.equal(isPublicApiRoute("GET", "/api/marketplace/admin/payments"), false);
   assert.equal(isPublicApiRoute("GET", "/api/state"), false);
+  const proposalToken = "A".repeat(48);
+  assert.equal(isPublicApiRoute("GET", `/api/public/interactive-proposals/${proposalToken}`), true);
+  assert.equal(isPublicApiRoute("POST", `/api/public/interactive-proposals/${proposalToken}/preview`), true);
+  assert.equal(isPublicApiRoute("POST", `/api/public/interactive-proposals/${proposalToken}/accept`), true);
+  assert.equal(isPublicApiRoute("DELETE", `/api/public/interactive-proposals/${proposalToken}`), false);
+  assert.equal(isPublicApiRoute("POST", "/api/interactive-proposals"), false);
 });
 
 await test("non-public /api routes are protected by default", () => {
@@ -302,6 +316,8 @@ await test("customer allowed routes include portal and owned invoice PDF", () =>
   assert.equal(isCustomerAllowedApiRoute("/api/auth/me"), true);
   assert.equal(isCustomerAllowedApiRoute("/api/export/pdf/invoice/inv-1"), true);
   assert.equal(isCustomerAllowedApiRoute("/api/admin/users"), false);
+  assert.equal(isCustomerAllowedApiRoute("/api/interactive-proposals"), false);
+  assert.equal(isCustomerAllowedApiRoute("/api/leads"), false);
 });
 
 await test("customer JWT blocked from staff admin routes", async () => {
@@ -348,6 +364,29 @@ await test("customer JWT allowed on customer-portal routes", async () => {
   assert.equal(nextCalled, true);
   assert.equal(req.actor?.role, "Customer");
   assert.equal(req.actor?.customerId, "cust-1");
+});
+
+await test("unlinked customer JWT can still reach portal /me for pending state", async () => {
+  const middleware = createAuthorizationMiddleware({
+    resolveLocalDb: () => mockDb as never,
+  });
+  const token = signAccessToken({
+    userId: "u-unlinked",
+    username: "unlinkedclient",
+    role: "Customer",
+  });
+  const req = mockReq({
+    path: "/api/customer-portal/me",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const res = mockRes();
+  let nextCalled = false;
+  await middleware(req, res, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, true);
+  assert.equal(req.actor?.role, "Customer");
+  assert.equal(req.actor?.customerId || "", "");
 });
 
 console.log(`\nPhase 1B.1 tests: ${passed} passed, ${failed} failed`);

@@ -32,6 +32,8 @@ import ClientPortalEnergyMonitor from "./ClientPortalEnergyMonitor";
 import ClientPortalCare from "./ClientPortalCare";
 import PortalScreen from "./PortalScreen";
 import type { PortalServiceId } from "./ClientPortalPremiumServices";
+import SolarConsultantWizard from "./SolarConsultantWizard";
+import { isClientProfilePending } from "../lib/clientPortalRouting";
 
 interface ClientPortalAppProps {
   user: UserType;
@@ -46,8 +48,8 @@ interface ClientPortalAppProps {
 type MainTab = "home" | "documents" | "payments" | "support" | "account";
 
 const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
-  { id: "home", label: "Home", icon: Home },
-  { id: "documents", label: "Quotes", icon: FileText },
+  { id: "home", label: "Dashboard", icon: Home },
+  { id: "documents", label: "Proposals", icon: FileText },
   { id: "payments", label: "Payments", icon: CreditCard },
   { id: "support", label: "Support", icon: Headphones },
   { id: "account", label: "Account", icon: Settings },
@@ -96,6 +98,7 @@ export default function ClientPortalApp({
   const [mainTab, setMainTab] = useState<MainTab>("home");
   const [accountScreen, setAccountScreen] = useState<AccountScreen>("menu");
   const [homeService, setHomeService] = useState<PortalServiceId | null>(null);
+  const [showOptionalWizard, setShowOptionalWizard] = useState(false);
   const [branding, setBranding] = useState<CompanyBranding>(DEFAULT_BRANDING);
 
   useEffect(() => {
@@ -118,6 +121,15 @@ export default function ClientPortalApp({
   const customerName = displayOrNoData(data?.customer?.name || user.name);
   const customerId = displayOrNoData(data?.customer?.id);
   const projectStatus = data?.dashboard?.projectStatus || projectStatusHeadline(data);
+  const profilePending = isClientProfilePending(data) || (!loading && !error && !data?.customer?.id);
+
+  if (showOptionalWizard) {
+    return (
+      <div className="min-h-screen bg-slate-950 px-4 py-6">
+        <SolarConsultantWizard onBackToLanding={() => setShowOptionalWizard(false)} />
+      </div>
+    );
+  }
 
   const renderAccountSub = () => {
     const meta = accountScreen !== "menu" ? SERVICE_TITLES[accountScreen as PortalServiceId] : null;
@@ -162,12 +174,44 @@ export default function ClientPortalApp({
         );
       }
       if (error) {
+        const setupPending = /not linked|profile|pending/i.test(error);
         return (
-          <div className={`${portal.card} ${portal.cardPad} text-center`}>
-            <p className="text-sm text-red-400">{error}</p>
-            <button type="button" onClick={onRefresh} className={`${portal.btnPrimary} mt-4`}>
+          <div className={`${portal.card} ${portal.cardPad} text-center space-y-3`}>
+            <p className="text-sm text-amber-200">
+              {setupPending
+                ? "Your login works. Staff still need to finish linking this account to a CRM client profile."
+                : error}
+            </p>
+            <button type="button" onClick={onRefresh} className={portal.btnPrimary}>
               Try again
             </button>
+            <button type="button" onClick={() => setShowOptionalWizard(true)} className={portal.btnGhost}>
+              Optional solar sizing wizard
+            </button>
+          </div>
+        );
+      }
+      if (profilePending) {
+        return (
+          <div className="space-y-4">
+            <div className={`${portal.card} ${portal.cardPad} space-y-3`}>
+              <p className="text-sm font-semibold text-white">Profile setup pending</p>
+              <p className="text-sm text-slate-400">
+                You can use the client portal now. Proposals, invoices, and warranties appear once this login is linked to your project.
+              </p>
+              <button type="button" onClick={() => setShowOptionalWizard(true)} className={portal.btnPrimary}>
+                Optional solar sizing wizard
+              </button>
+            </div>
+            <ClientPortalHome
+              user={user}
+              data={data}
+              branding={branding}
+              onOpenDocuments={() => selectMainTab("documents")}
+              onOpenPayments={() => selectMainTab("payments")}
+              onOpenSupport={() => selectMainTab("support")}
+              onOpenService={openService}
+            />
           </div>
         );
       }
@@ -186,7 +230,7 @@ export default function ClientPortalApp({
 
     if (mainTab === "documents") {
       return (
-        <PortalScreen title="Documents" subtitle="Quotations, agreements, warranties, and certificates">
+        <PortalScreen title="Proposals & documents" subtitle="Quotations, agreements, warranties, and certificates">
           <div className="space-y-8">
             <ClientPortalDocuments user={user} />
             <section className={portal.divider + " pt-6 space-y-4"}>
@@ -248,6 +292,15 @@ export default function ClientPortalApp({
       >
         {CUSTOMER_PORTAL_VERSION}
       </p>
+      <div className="px-4 pb-2">
+        <button
+          type="button"
+          onClick={() => setShowOptionalWizard(true)}
+          className="w-full min-h-[40px] rounded-xl border border-slate-800 text-xs font-semibold text-slate-400"
+        >
+          Optional solar sizing wizard
+        </button>
+      </div>
 
       <nav className={portal.nav} aria-label="Main navigation">
         <div className={portal.navInner}>
