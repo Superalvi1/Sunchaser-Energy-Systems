@@ -49,6 +49,13 @@ export default function ClientPortalHome({
   const [warrantySummary, setWarrantySummary] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!data?.customer?.id) {
+      setSystem(null);
+      setDelivery(null);
+      setPayments(null);
+      setWarrantySummary(null);
+      return;
+    }
     fetchCustomerPortalSystem(user.id, user.username)
       .then((d) => setSystem(d.system))
       .catch(() => setSystem(null));
@@ -65,7 +72,7 @@ export default function ClientPortalHome({
         setWarrantySummary(active?.title || cards[0]?.status || dash?.warrantySummary || null);
       })
       .catch(() => setWarrantySummary(dash?.warrantySummary || null));
-  }, [user.id, user.username, dash?.warrantySummary]);
+  }, [user.id, user.username, dash?.warrantySummary, data?.customer?.id]);
 
   const timeline = buildPremiumProjectTimeline(data, delivery);
   const timelinePct = premiumTimelinePercent(timeline);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
-  FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, 
+  FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, Link2, 
   Sparkles, Bot, Loader2, ArrowRight, ClipboardList, CheckCircle2, MessageCircle, Send, Download, Inbox,
   Upload, Coins, TrendingUp, Zap, HardDrive, ShieldAlert, Plus, Trash2, Copy, ArrowUp, ArrowDown, Eye, Layers, Settings, FileSpreadsheet, Tag,
   Printer, Save, Headphones, Package, LayoutGrid, DraftingCompass, ChevronDown, MoreHorizontal
@@ -24,6 +24,8 @@ import {
 } from "../services/api";
 import WhatsAppModule from "./WhatsAppModule";
 import CustomerInvitationPanel from "./CustomerInvitationPanel";
+import InteractiveProposalShareModal from "./InteractiveProposalShareModal";
+import StaffClientWorkspace from "./StaffClientWorkspace";
 import { REQUIRE_EXPLICIT_QUOTE_SAVE } from "../crmFeatureFlags";
 import {
   billToMonthlyUnits,
@@ -1009,6 +1011,8 @@ export default function SalesTeamApp({
 
   // View state for quote detail
   const [selectedQuoteDetail, setSelectedQuoteDetail] = useState<Quote | null>(null);
+  const [interactiveProposalQuote, setInteractiveProposalQuote] = useState<Quote | null>(null);
+  const [clientWorkspaceOpen, setClientWorkspaceOpen] = useState(false);
 
   // Product CRUD forms modal states
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -3251,6 +3255,15 @@ export default function SalesTeamApp({
                   />
                 )}
                 <div className="flex gap-2 flex-wrap">
+                  {!isQuickQuoteMode && (
+                    <button
+                      type="button"
+                      onClick={() => setClientWorkspaceOpen((open) => !open)}
+                      className="min-h-[44px] px-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-xs font-bold"
+                    >
+                      {clientWorkspaceOpen ? "Hide client workspace" : "Open Client Portal"}
+                    </button>
+                  )}
                   {DESIGN_PROJECT_ENABLED && (
                   <button
                     type="button"
@@ -4821,6 +4834,15 @@ export default function SalesTeamApp({
                                     >
                                       <Download className="h-3 w-3" />
                                     </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setInteractiveProposalQuote(q)}
+                                      className="bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/50 text-emerald-300 p-1.5 rounded-lg cursor-pointer transition"
+                                      title="Create interactive client link"
+                                      aria-label={`Create interactive client link for quote ${q.id}`}
+                                    >
+                                      <Link2 className="h-3 w-3" />
+                                    </button>
                                     {onDeleteQuote && (
                                       <button
                                         type="button"
@@ -5646,6 +5668,21 @@ export default function SalesTeamApp({
         if (patch.societyCharges != null) setSocietyCharges(patch.societyCharges);
       }}
     />
+    {!isQuickQuoteMode && activeLead && clientWorkspaceOpen && staffUser && (
+      <StaffClientWorkspace
+        staffUser={staffUser}
+        lead={activeLead}
+        customerCode={leadCustomerRecord?.customerCode}
+      />
+    )}
+    {activeLead && interactiveProposalQuote && (
+      <InteractiveProposalShareModal
+        open
+        lead={activeLead}
+        quote={interactiveProposalQuote}
+        onClose={() => setInteractiveProposalQuote(null)}
+      />
+    )}
     </>
   );
 }
