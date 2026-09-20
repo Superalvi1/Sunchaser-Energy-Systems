@@ -1,8 +1,8 @@
 /**
- * Mobile CRM disclosure invariants (source-level).
+ * CRM disclosure invariants (source-level).
  *
- * Guards the "summary first → tap to expand → details second" mobile rules without
- * removing any existing desktop functionality.
+ * Guards the "summary first → tap/click to expand → details second" rules across
+ * mobile and desktop while preserving the existing CRM actions and data flow.
  * Run: npm run test:mobile-disclosure
  */
 import assert from "node:assert/strict";
@@ -56,28 +56,38 @@ await test("disclosure state is local UI state only — no browser storage", () 
 
 /* ── 2. CRM client cards ──────────────────────────────────────────── */
 
-await test("CRM client cards collapse by default on mobile", () => {
+await test("CRM client cards collapse by default on every viewport", () => {
   // nothing expanded initially
   assert.ok(crm.includes("useState<string | null>(null)"));
   assert.ok(crm.includes("const isExpanded = expandedLeadId === lead.id;"));
-  // details render on desktop always; on mobile only when expanded or editing
-  assert.ok(crm.includes("const showDetails = !isMobile || isExpanded || isEditing;"));
+  // desktop and mobile both require explicit expansion; edit mode keeps a form visible
+  assert.ok(crm.includes("const showDetails = isExpanded || isEditing;"));
+  assert.equal(crm.includes("const showDetails = !isMobile || isExpanded || isEditing;"), false);
   assert.ok(crm.includes(") : showDetails ? ("));
 });
 
-await test("CRM client card expands on tap and exposes state", () => {
-  assert.ok(crm.includes("aria-expanded={isExpanded}"));
+await test("CRM client card expands on click and exposes disclosure state", () => {
+  assert.ok(crm.includes("aria-expanded={showDetails}"));
   assert.ok(crm.includes("setExpandedLeadId((current) => (current === lead.id ? null : lead.id))"));
+  assert.ok(crm.includes("aria-controls={`crm-lead-details-${lead.id}`}"));
   // one open at a time: a single id, not a set
   assert.equal(/expandedLeadIds|Set<string>/.test(crm), false);
 });
 
-await test("collapsed CRM row shows only the summary fields", () => {
-  assert.ok(crm.includes("{lead.status}"));
-  assert.ok(crm.includes("Prob {probPercent}%"));
-  assert.ok(crm.includes("formatLeadLocation(lead)"));
+await test("collapsed CRM row is a single-line name + primary metric summary", () => {
   assert.ok(crm.includes("crm-lead-summary-"));
-  assert.ok(crm.includes("crm-lead-details-"));
+  assert.ok(crm.includes("crm-lead-primary-metric-"));
+  assert.ok(crm.includes("const primaryMetric ="));
+  assert.ok(crm.includes("systemSizekW"));
+  assert.ok(crm.includes("sanctionedLoad"));
+  assert.ok(crm.includes("grid grid-cols-1 gap-2 md:gap-3 items-start"));
+});
+
+await test("CRM client detail can collapse from the same row or explicit control", () => {
+  assert.ok(crm.includes("crm-lead-collapse-"));
+  assert.ok(crm.includes("onClick={() => setExpandedLeadId(null)}"));
+  assert.ok(crm.includes("Collapse"));
+  assert.ok(crm.includes("id={`crm-lead-details-${lead.id}`}"));
 });
 
 await test("CRM keeps every existing action available once expanded", () => {
