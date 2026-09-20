@@ -78,7 +78,7 @@ const clamped = calculateInteractiveProposal(definition, {
 assert.equal(clamped.configuration.panelCount, 20);
 assert.equal(clamped.configuration.inverterId, "goodwe-8");
 
-assert.equal(catalogPanelUnitPrice(645), 26_445);
+assert.equal(catalogPanelUnitPrice(645), 27_735);
 assert.equal(catalogPackagePrice(6, "standard", 5), 820_000);
 assert.equal(catalogPackagePrice(6, "elevated", 5), 900_000);
 assert.equal(catalogPackagePrice(8, "elevated", 5), 1_080_000);
@@ -125,14 +125,61 @@ const originalQuote = {
   batteryOption: "Dyness 10 kWh",
   selectedStructure: "standard",
   netTotal: 1_050_000,
-  boqRows: [{ type: "item", name: "JA Solar Panel", qty: 16, rate: 26_445, total: 423_120 }],
+  boqRows: [
+    { type: "item", name: "JA Solar Panel", qty: 16, rate: 26_445, total: 423_120 },
+    { type: "item", name: "GoodWe inverter", qty: 1, rate: 305_000, total: 305_000 },
+    { type: "item", name: "Dyness lithium battery", qty: 1, rate: 500_000, total: 500_000 },
+    { type: "item", name: "Standard structure", qty: 1, rate: 36_000, total: 36_000 },
+  ],
 };
 const frozenQuote = structuredClone(originalQuote);
 const derived = quoteToInteractiveProposalDefinition(frozenQuote, { name: "Ahmed" });
 assert.equal(derived.panel.unitPrice, 26_445);
 assert.equal(derived.customerName, "Ahmed");
 assert.equal(derived.basePrice, 1_050_000);
+assert.equal(derived.panel.options?.some((item) => item.id === "panel-canadian-625-20bb"), true);
+assert.equal(
+  derived.inverter.options.filter((item) => /GoodWe.*8 kW/i.test(item.label)).every((item) => item.priceAdjustment === 0),
+  true
+);
+assert.equal(derived.battery.options.some((item) => item.capacityKwh === 16), true);
 assert.deepEqual(frozenQuote, originalQuote);
+
+const standardL2 = calculateInteractiveProposal(derived, {
+  ...defaultInteractiveProposalConfig(derived),
+  structureId: "structure-standard-l2",
+});
+assert.equal(standardL2.structureStandCount, 8);
+assert.equal(standardL2.totalPrice, derived.basePrice);
+
+const foxQuote = {
+  ...originalQuote,
+  id: "q-fox",
+  systemSizekW: 12,
+  inverterBrand: "GoodWe",
+  inverterCapacity: "12 kW",
+  panelCount: 19,
+  netTotal: 2_000_000,
+  boqRows: [
+    { type: "item", name: "JA Solar Panel", qty: 19, rate: 26_445, total: 502_455 },
+    { type: "item", name: "GoodWe inverter", qty: 1, rate: 480_000, total: 480_000 },
+    { type: "item", name: "Dyness lithium battery", qty: 1, rate: 500_000, total: 500_000 },
+    { type: "item", name: "Elevated structure", qty: 1, rate: 196_080, total: 196_080 },
+  ],
+};
+const foxDefinition = quoteToInteractiveProposalDefinition(foxQuote, { name: "Ahmed" });
+const foxBundle = foxDefinition.inverter.options.find(
+  (item) => item.id === "inverter-fox-12-ip66-hv-bundle"
+);
+assert.ok(foxBundle);
+const foxCalculation = calculateInteractiveProposal(foxDefinition, {
+  ...defaultInteractiveProposalConfig(foxDefinition),
+  inverterId: foxBundle.id,
+  batteryId: "battery-invent-5",
+});
+assert.equal(foxCalculation.configuration.batteryId, "battery-fox-10-2-ip66-hv");
+assert.equal(foxCalculation.totalPrice, 1_990_000);
+assert.equal(foxCalculation.summary.some((item) => /10\.2 kWh.*included/i.test(item)), true);
 
 const snapshot = snapshotOriginalQuotation(originalQuote);
 const publicDef = publicInteractiveProposalDefinition({

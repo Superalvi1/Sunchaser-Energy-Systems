@@ -1,7 +1,7 @@
 /** Deterministic Sunchaser selling prices. Arithmetic only — never AI. */
 
 export const SUNCHASER_PANEL_UNIT_PRICE_PKR: Record<number, number> = {
-  645: 26_445,
+  645: 27_735,
 };
 
 export type CatalogStructure = "standard" | "elevated";

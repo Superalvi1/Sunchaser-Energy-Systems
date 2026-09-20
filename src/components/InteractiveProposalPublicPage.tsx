@@ -187,6 +187,14 @@ export default function InteractiveProposalPublicPage({ token }: { token: string
   }
 
   const accepted = proposal.status === "Accepted";
+  const selectedInverter = definition.inverter.options.find(
+    (option) => option.id === configuration.inverterId
+  );
+  const bundledBatteryIds = new Set(
+    definition.inverter.options
+      .map((option) => option.includedBatteryId)
+      .filter((id): id is string => Boolean(id))
+  );
   const expiresOn = new Date(proposal.expiresAt).toLocaleDateString("en-PK", {
     day: "numeric",
     month: "short",
@@ -254,6 +262,21 @@ export default function InteractiveProposalPublicPage({ token }: { token: string
                       <div className="text-xs text-amber-400">{localCalculation.panelCapacityKwp.toFixed(2)} kWp</div>
                     </div>
                   </div>
+                  {definition.panel.options && definition.panel.options.length > 1 && (
+                    <label className="mt-4 block">
+                      <span className="mb-2 block text-xs font-bold text-slate-300">Panel brand and wattage</span>
+                      <select
+                        aria-label="Panel brand and wattage"
+                        value={configuration.panelId || definition.panel.selectedId}
+                        onChange={(event) => applyConfiguration({ panelId: event.target.value })}
+                        className="min-h-12 w-full rounded-2xl border border-white/10 bg-slate-900 px-4 text-sm font-bold text-white outline-none focus:border-amber-400"
+                      >
+                        {definition.panel.options.map((option) => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {definition.panel.minCount !== definition.panel.maxCount && (
                     <div className="mt-4 grid grid-cols-[48px_1fr_48px] items-center gap-3">
                       <button
@@ -294,15 +317,32 @@ export default function InteractiveProposalPublicPage({ token }: { token: string
                   <fieldset key={key} className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
                     <legend className="sr-only">{title}</legend>
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold"><Icon className="h-4 w-4 text-amber-400" /> {title}</div>
+                    {key === "batteryId" && selectedInverter?.includedBatteryId && (
+                      <p className="mb-3 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-xs text-emerald-200">
+                        The matching FOX ESS battery is included automatically with this inverter.
+                      </p>
+                    )}
                     <div className="grid gap-2 sm:grid-cols-2">
-                      {group.options.map((option) => {
+                      {group.options
+                        .filter((option) => key !== "batteryId" || !selectedInverter?.includedBatteryId || option.id === selectedInverter.includedBatteryId)
+                        .map((option) => {
                         const selected = configuration[key] === option.id;
                         return (
                           <button
                             key={option.id}
                             type="button"
                             aria-pressed={selected}
-                            onClick={() => applyConfiguration({ [key]: option.id })}
+                            onClick={() => {
+                              if (key !== "inverterId") {
+                                applyConfiguration({ [key]: option.id });
+                                return;
+                              }
+                              const nextBatteryId = option.includedBatteryId
+                                || (bundledBatteryIds.has(configuration.batteryId)
+                                  ? definition.battery.selectedId
+                                  : configuration.batteryId);
+                              applyConfiguration({ inverterId: option.id, batteryId: nextBatteryId });
+                            }}
                             className={`min-h-[58px] rounded-2xl border p-3 text-left transition ${
                               selected
                                 ? "border-amber-400 bg-amber-400/10 text-white"
