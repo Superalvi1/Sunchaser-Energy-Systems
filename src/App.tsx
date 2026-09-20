@@ -66,6 +66,7 @@ import TechnicalStaffApp from "./components/TechnicalStaffApp";
 import WelcomeWizard from "./components/WelcomeWizard";
 import SolarConsultantWizard from "./components/SolarConsultantWizard";
 import InteractiveProposalPublicPage from "./components/InteractiveProposalPublicPage";
+import PublicQuotationBuilderPage from "./components/PublicQuotationBuilderPage";
 import AIAssistant from "./components/AIAssistant";
 import AICommandCenter from "./components/AICommandCenter";
 import GlobalSearch from "./components/GlobalSearch";
@@ -100,6 +101,11 @@ export default function App() {
       ? null
       : readInteractiveProposalTokenFromLocation(window.location);
   if (proposalToken) return <InteractiveProposalPublicPage token={proposalToken} />;
+  const isPublicQuoteBuilder =
+    typeof window !== "undefined" &&
+    (/^\/(quote|quotation)\/?$/.test(window.location.pathname) ||
+      window.location.hostname.toLowerCase() === "quote.sunchaserenergy.co");
+  if (isPublicQuoteBuilder) return <PublicQuotationBuilderPage />;
   return <AuthenticatedApp />;
 }
 
