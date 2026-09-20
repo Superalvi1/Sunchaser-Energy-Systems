@@ -104,7 +104,9 @@ export default function App() {
   const isPublicQuoteBuilder =
     typeof window !== "undefined" &&
     (/^\/(quote|quotation)\/?$/.test(window.location.pathname) ||
-      window.location.hostname.toLowerCase() === "quote.sunchaserenergy.co");
+      ["quote.sunchaserenergy.co", "smartquote.sunchaserenergy.co"].includes(
+        window.location.hostname.toLowerCase()
+      ));
   if (isPublicQuoteBuilder) return <PublicQuotationBuilderPage />;
   return <AuthenticatedApp />;
 }
