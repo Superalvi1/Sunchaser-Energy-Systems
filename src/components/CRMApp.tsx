@@ -43,7 +43,7 @@ export default function CRMApp({
 
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
   const isMobile = useIsMobile();
-  // Mobile shows a summary row per client; one expands at a time. Desktop is unchanged.
+  // Summary-first CRM disclosure on every viewport; one client can be expanded at a time.
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
   // Mobile: filters/sorting move into a bottom sheet instead of a desktop panel.
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
@@ -108,6 +108,8 @@ export default function CRMApp({
     }
   };
   const handleEditClick = (lead: Lead) => {
+    // Editing is a full-detail action, so keep the selected client open while editing.
+    setExpandedLeadId(lead.id);
     setEditLeadId(lead.id);
     setEditName(lead.name);
     setEditEmail(lead.email);
@@ -341,7 +343,10 @@ export default function CRMApp({
           {(['All', 'New', 'Contacted', 'Survey Scheduled', 'Quoted', 'Contracted', 'Installed', 'Negotiation', 'Won', 'Lost'] as const).map((status) => (
             <button
               key={status}
-              onClick={() => setSelectedStatus(status)}
+              onClick={() => {
+                setSelectedStatus(status);
+                setExpandedLeadId(null);
+              }}
               className={`px-3 py-1.5 rounded-xl text-[10.5px] font-bold border transition cursor-pointer ${
                 selectedStatus === status
                   ? "bg-slate-950 text-white border-amber-500/40 shadow-sm"
@@ -354,17 +359,41 @@ export default function CRMApp({
         </div>
       </div>
 
-      {/* MAIN CARDS LIST CONTAINER GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+      {/* SUMMARY-FIRST CLIENT LIST: compact by default, full detail on demand. */}
+      <div className="grid grid-cols-1 gap-2 md:gap-3 items-start">
         {sortedLeads.length > 0 ? (
           sortedLeads.map((lead) => {
             const isEditing = editLeadId === lead.id;
             const aScore = lead.conversionScore || 50;
             const probPercent = lead.conversionProbability || 45;
             const isExpanded = expandedLeadId === lead.id;
-            // Details/actions are always rendered on desktop; on mobile only when expanded
-            // (or while editing, so the edit form is never hidden behind a collapsed row).
-            const showDetails = !isMobile || isExpanded || isEditing;
+            // Every viewport starts compact. Editing keeps the detail panel visible so a form
+            // cannot disappear while the user is working in it.
+            const showDetails = isExpanded || isEditing;
+            // Derive primary metric from the current quotation (accepted/latest saved), falling back to sanctioned load or AI probability.
+            const preferredQuote = pickQuoteForInvoice(lead);
+            const preferredQuoteKw = Number(preferredQuote?.systemSizekW);
+            const fallbackQuoteKw = Number(
+              lead.quotes?.find((q) => Number(q?.systemSizekW) > 0)?.systemSizekW
+            );
+            const quotedSystemSize =
+              Number.isFinite(preferredQuoteKw) && preferredQuoteKw > 0
+                ? preferredQuoteKw
+                : Number.isFinite(fallbackQuoteKw) && fallbackQuoteKw > 0
+                  ? fallbackQuoteKw
+                  : null;
+            const parsedSanctionedLoad = Number(lead.sanctionedLoad);
+            const sanctionedLoad =
+              Number.isFinite(parsedSanctionedLoad) && parsedSanctionedLoad > 0
+                ? parsedSanctionedLoad
+                : null;
+
+            const primaryMetric =
+              quotedSystemSize !== null
+                ? `${quotedSystemSize} kW`
+                : sanctionedLoad !== null
+                  ? `${sanctionedLoad} kW`
+                  : `${probPercent}% probability`;
 
             // Rating color thresholds
             let scoreColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
@@ -372,74 +401,56 @@ export default function CRMApp({
             else if (aScore <= 40) scoreColor = "text-red-400 bg-red-400/10 border-red-400/20";
 
             return (
-              <div 
-                key={lead.id} 
-                className={`bg-slate-900 border rounded-3xl p-4 md:p-6 shadow-sm space-y-4 hover:border-slate-700/60 transition ${
-                  aScore >= 80 ? 'ring-1 ring-emerald-500/10' : ''
-                }`}
+              <div
+                key={lead.id}
+                className={`bg-slate-900 border shadow-sm transition ${
+                  showDetails
+                    ? "rounded-3xl p-3 md:p-5 border-slate-700/80 space-y-3"
+                    : "rounded-2xl p-2 border-slate-800 hover:border-amber-500/35 hover:bg-slate-900/95"
+                } ${aScore >= 80 ? "ring-1 ring-emerald-500/10" : ""}`}
               >
-                {/* Upper client tags and AI Lead Conversion metrics box */}
-                {isMobile ? (
-                  /* Mobile: compact summary row — tap to reveal the full card. */
-                  <button
-                    type="button"
-                    data-testid={`crm-lead-summary-${lead.id}`}
-                    onClick={() => setExpandedLeadId((current) => (current === lead.id ? null : lead.id))}
-                    aria-expanded={isExpanded}
-                    className="flex min-h-[48px] w-full items-center gap-3 border-b border-slate-800/65 pb-3 text-left"
+                {/* Compact client row on every viewport. The row itself is the disclosure control. */}
+                <button
+                  type="button"
+                  data-testid={`crm-lead-summary-${lead.id}`}
+                  onClick={() => {
+                    if (isEditing) return;
+                    setExpandedLeadId((current) => (current === lead.id ? null : lead.id));
+                  }}
+                  aria-expanded={showDetails}
+                  aria-controls={`crm-lead-details-${lead.id}`}
+                  aria-label={`${lead.name}, ${primaryMetric}. ${showDetails ? "Collapse" : "Expand"} client details`}
+                  className={`group flex min-h-[48px] w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
+                    showDetails
+                      ? "bg-slate-950/75 ring-1 ring-amber-500/20"
+                      : "bg-slate-950/35 hover:bg-slate-950/65"
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-100 font-sans">
+                    {lead.name}
+                  </span>
+                  <span
+                    data-testid={`crm-lead-primary-metric-${lead.id}`}
+                    className="shrink-0 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] font-extrabold text-amber-300 font-mono"
                   >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-bold text-slate-100 font-sans">{lead.name}</span>
-                      <span className="mt-0.5 block truncate text-[10px] text-slate-400 font-mono">
-                        <MapPin className="h-3 w-3 inline mr-1 text-slate-500" />
-                        {formatLeadLocation(lead)}
-                      </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[10px] font-mono">
-                        <span className="font-bold text-slate-300">{lead.status}</span>
-                        <span className="text-slate-600">·</span>
-                        <span className="font-bold text-amber-400">Prob {probPercent}%</span>
-                        {lead.monthlyBill ? (
-                          <>
-                            <span className="text-slate-600">·</span>
-                            <span className="text-slate-400">
-                              {currencySymbol}
-                              {lead.monthlyBill}/mo
-                            </span>
-                          </>
-                        ) : null}
-                      </span>
-                    </span>
-                    <ChevronDown
-                      className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
-                        isExpanded ? "rotate-180" : ""
-                      }`}
-                      aria-hidden="true"
-                    />
-                  </button>
-                ) : (
-                <div className="flex justify-between items-start border-b border-slate-800/65 pb-3">
-                  <div>
-                    <span className="text-[10px] uppercase font-mono font-bold tracking-tight text-slate-500">ID: {lead.id}</span>
-                    <h3 className="text-sm font-bold text-slate-100 font-sans mt-0.5">{lead.name}</h3>
-                    <p className="text-[10px] text-slate-400 font-mono">
-                      <MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(lead)}
-                    </p>
-                  </div>
+                    {primaryMetric}
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                      showDetails ? "rotate-180" : ""
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
 
-                  {/* AI Scoring Indicator Ring/Pill */}
-                  <div className={`p-2.5 rounded-2xl border text-right font-mono ${scoreColor} flex items-center gap-2 relative shadow-inner shadow-black/40`}>
-                    <Brain className="h-4.5 w-4.5 animate-pulse shrink-0" />
-                    <div>
-                      <span className="text-[8px] uppercase block leading-none font-bold">AI Probability Score</span>
-                      <span className="text-xs font-bold leading-none mt-1 block">{aScore} / 100 ({probPercent}%)</span>
-                    </div>
-                  </div>
-                </div>
-                )}
-
-                {isEditing ? (
-                  /* --- EDITING CARD MODE WORKSPACE VIEW --- */
-                  <div className="space-y-3 pt-2 font-mono text-xs">
+                {showDetails ? (
+                  <div
+                    id={`crm-lead-details-${lead.id}`}
+                    data-testid={`crm-lead-details-${lead.id}`}
+                  >
+                    {isEditing ? (
+                      /* --- EDITING CARD MODE WORKSPACE VIEW --- */
+                      <div className="space-y-3 pt-2 font-mono text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-slate-500 font-bold uppercase">Name</label>
@@ -524,9 +535,40 @@ export default function CRMApp({
                       </button>
                     </div>
                   </div>
-                ) : showDetails ? (
+                ) : (
                   /* --- STANDARD DISPLAY READ CARD VIEWS --- */
-                  <div className="space-y-3 pt-1 text-slate-300" data-testid={`crm-lead-details-${lead.id}`}>
+                  <div className="space-y-3 pt-1 text-slate-300">
+                    <div className="flex flex-col gap-3 border-b border-slate-800/65 pb-3 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-mono font-bold tracking-tight text-slate-500">ID: {lead.id}</span>
+                        <p className="mt-1 text-[10px] text-slate-400 font-mono">
+                          <MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(lead)}
+                        </p>
+                        <span className="mt-1 inline-flex rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-[10px] font-bold text-slate-300">
+                          {lead.status}
+                        </span>
+                      </div>
+
+                      <div className="flex items-start gap-2 self-stretch md:self-auto">
+                        <div className={`p-2.5 rounded-2xl border text-right font-mono ${scoreColor} flex items-center gap-2 relative shadow-inner shadow-black/40`}>
+                          <Brain className="h-4.5 w-4.5 animate-pulse shrink-0" />
+                          <div>
+                            <span className="text-[8px] uppercase block leading-none font-bold">AI Probability Score</span>
+                            <span className="text-xs font-bold leading-none mt-1 block">{aScore} / 100 ({probPercent}%)</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid={`crm-lead-collapse-${lead.id}`}
+                          onClick={() => setExpandedLeadId(null)}
+                          className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 px-3 text-[10px] font-bold text-slate-300 transition hover:border-amber-500/30 hover:text-white"
+                          aria-label={`Collapse ${lead.name} details`}
+                        >
+                          <ChevronDown className="h-3.5 w-3.5 rotate-180" aria-hidden="true" />
+                          Collapse
+                        </button>
+                      </div>
+                    </div>
                     
                     {/* Contacts info line row */}
                     <div className="grid grid-cols-2 gap-4 text-xs">
@@ -690,7 +732,9 @@ export default function CRMApp({
 
                     </div>
                   </div>
-                ) : null}
+                )}
+              </div>
+            ) : null}
 
               </div>
             );
@@ -744,7 +788,10 @@ export default function CRMApp({
                 <button
                   key={status}
                   type="button"
-                  onClick={() => setSelectedStatus(status)}
+                  onClick={() => {
+                setSelectedStatus(status);
+                setExpandedLeadId(null);
+              }}
                   aria-pressed={selectedStatus === status}
                   className={`min-h-[44px] rounded-xl border px-3 text-xs font-bold transition ${
                     selectedStatus === status
