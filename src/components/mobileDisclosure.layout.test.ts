@@ -63,13 +63,16 @@ await test("CRM client cards collapse by default on every viewport", () => {
   // desktop and mobile both require explicit expansion; edit mode keeps a form visible
   assert.ok(crm.includes("const showDetails = isExpanded || isEditing;"));
   assert.equal(crm.includes("const showDetails = !isMobile || isExpanded || isEditing;"), false);
-  assert.ok(crm.includes(") : showDetails ? ("));
+  assert.ok(crm.includes("{showDetails ? ("));
 });
 
 await test("CRM client card expands on click and exposes disclosure state", () => {
   assert.ok(crm.includes("aria-expanded={showDetails}"));
   assert.ok(crm.includes("setExpandedLeadId((current) => (current === lead.id ? null : lead.id))"));
   assert.ok(crm.includes("aria-controls={`crm-lead-details-${lead.id}`}"));
+  assert.ok(crm.includes("focus-visible:ring-amber-500"));
+  // edit mode preserves the controlled detail ID by wrapping workspace and read views
+  assert.ok(crm.includes("id={`crm-lead-details-${lead.id}`}") && crm.includes("{isEditing ? ("));
   // one open at a time: a single id, not a set
   assert.equal(/expandedLeadIds|Set<string>/.test(crm), false);
 });
@@ -78,7 +81,8 @@ await test("collapsed CRM row is a single-line name + primary metric summary", (
   assert.ok(crm.includes("crm-lead-summary-"));
   assert.ok(crm.includes("crm-lead-primary-metric-"));
   assert.ok(crm.includes("const primaryMetric ="));
-  assert.ok(crm.includes("systemSizekW"));
+  assert.ok(crm.includes("pickQuoteForInvoice(lead)"));
+  assert.ok(crm.includes("Number.isFinite(preferredQuoteKw)"));
   assert.ok(crm.includes("sanctionedLoad"));
   assert.ok(crm.includes("grid grid-cols-1 gap-2 md:gap-3 items-start"));
 });

@@ -370,12 +370,29 @@ export default function CRMApp({
             // Every viewport starts compact. Editing keeps the detail panel visible so a form
             // cannot disappear while the user is working in it.
             const showDetails = isExpanded || isEditing;
-            const quotedSystemSize = lead.quotes?.find((quote) => Number(quote.systemSizekW) > 0)?.systemSizekW;
+            // Derive primary metric from the current quotation (accepted/latest saved), falling back to sanctioned load or AI probability.
+            const preferredQuote = pickQuoteForInvoice(lead);
+            const preferredQuoteKw = Number(preferredQuote?.systemSizekW);
+            const fallbackQuoteKw = Number(
+              lead.quotes?.find((q) => Number(q?.systemSizekW) > 0)?.systemSizekW
+            );
+            const quotedSystemSize =
+              Number.isFinite(preferredQuoteKw) && preferredQuoteKw > 0
+                ? preferredQuoteKw
+                : Number.isFinite(fallbackQuoteKw) && fallbackQuoteKw > 0
+                  ? fallbackQuoteKw
+                  : null;
+            const parsedSanctionedLoad = Number(lead.sanctionedLoad);
+            const sanctionedLoad =
+              Number.isFinite(parsedSanctionedLoad) && parsedSanctionedLoad > 0
+                ? parsedSanctionedLoad
+                : null;
+
             const primaryMetric =
-              typeof quotedSystemSize === "number" && quotedSystemSize > 0
+              quotedSystemSize !== null
                 ? `${quotedSystemSize} kW`
-                : typeof lead.sanctionedLoad === "number" && lead.sanctionedLoad > 0
-                  ? `${lead.sanctionedLoad} kW`
+                : sanctionedLoad !== null
+                  ? `${sanctionedLoad} kW`
                   : `${probPercent}% probability`;
 
             // Rating color thresholds
@@ -403,7 +420,7 @@ export default function CRMApp({
                   aria-expanded={showDetails}
                   aria-controls={`crm-lead-details-${lead.id}`}
                   aria-label={`${lead.name}, ${primaryMetric}. ${showDetails ? "Collapse" : "Expand"} client details`}
-                  className={`group flex min-h-[48px] w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${
+                  className={`group flex min-h-[48px] w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
                     showDetails
                       ? "bg-slate-950/75 ring-1 ring-amber-500/20"
                       : "bg-slate-950/35 hover:bg-slate-950/65"
@@ -426,9 +443,14 @@ export default function CRMApp({
                   />
                 </button>
 
-                {isEditing ? (
-                  /* --- EDITING CARD MODE WORKSPACE VIEW --- */
-                  <div className="space-y-3 pt-2 font-mono text-xs">
+                {showDetails ? (
+                  <div
+                    id={`crm-lead-details-${lead.id}`}
+                    data-testid={`crm-lead-details-${lead.id}`}
+                  >
+                    {isEditing ? (
+                      /* --- EDITING CARD MODE WORKSPACE VIEW --- */
+                      <div className="space-y-3 pt-2 font-mono text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-slate-500 font-bold uppercase">Name</label>
@@ -513,13 +535,9 @@ export default function CRMApp({
                       </button>
                     </div>
                   </div>
-                ) : showDetails ? (
+                ) : (
                   /* --- STANDARD DISPLAY READ CARD VIEWS --- */
-                  <div
-                    id={`crm-lead-details-${lead.id}`}
-                    className="space-y-3 pt-1 text-slate-300"
-                    data-testid={`crm-lead-details-${lead.id}`}
-                  >
+                  <div className="space-y-3 pt-1 text-slate-300">
                     <div className="flex flex-col gap-3 border-b border-slate-800/65 pb-3 md:flex-row md:items-start md:justify-between">
                       <div className="min-w-0">
                         <span className="text-[10px] uppercase font-mono font-bold tracking-tight text-slate-500">ID: {lead.id}</span>
@@ -714,7 +732,9 @@ export default function CRMApp({
 
                     </div>
                   </div>
-                ) : null}
+                )}
+              </div>
+            ) : null}
 
               </div>
             );
