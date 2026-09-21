@@ -16,6 +16,7 @@ import {
   PUBLIC_LEAD_MAX_BODY_BYTES,
   validatePublicLeadPayload,
 } from "./publicLeadValidation.ts";
+import { toPublicLeadInput, validateSmartQuoteLeadPayload } from "./smartQuoteLead.ts";
 
 export type PublicLeadRouterDeps = {
   persistLead: PersistPublicLeadFn;
@@ -50,7 +51,10 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
       }
 
       const contentLength = Number(req.headers["content-length"] || 0);
-      if (Number.isFinite(contentLength) && contentLength > PUBLIC_LEAD_MAX_BODY_BYTES) {
+      if (
+        (Number.isFinite(contentLength) && contentLength > PUBLIC_LEAD_MAX_BODY_BYTES) ||
+        estimateJsonBodyBytes(req.body) > PUBLIC_LEAD_MAX_BODY_BYTES
+      ) {
         return res.status(400).json({ ok: false, error: "Payload too large." });
       }
 
@@ -101,6 +105,45 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
       const message = err instanceof Error ? err.message : "Failed to create lead.";
       console.error("[public-leads] persistence failure:", message);
       return res.status(500).json({ ok: false, error: "Failed to create lead." });
+    }
+  });
+
+  router.get("/smart-quotes", (_req, res) => {
+    return res.status(405).set("Allow", "POST").json({ ok: false, error: "Method not allowed." });
+  });
+
+  // Public, no-login Smart Quote capture. Strict validation, per-IP rate limiting,
+  // server-owned source/notes, and idempotency keep this narrow endpoint safe.
+  router.post("/smart-quotes", rateLimit, async (req, res) => {
+    try {
+      const contentLength = Number(req.headers["content-length"] || 0);
+      if (
+        (Number.isFinite(contentLength) && contentLength > PUBLIC_LEAD_MAX_BODY_BYTES) ||
+        estimateJsonBodyBytes(req.body) > PUBLIC_LEAD_MAX_BODY_BYTES
+      ) {
+        return res.status(400).json({ ok: false, error: "Payload too large." });
+      }
+      const validation = validateSmartQuoteLeadPayload(req.body);
+      if (validation.ok === false) {
+        return res.status(validation.status).json({ ok: false, error: validation.error });
+      }
+
+      const idempotencyKey =
+        readIdempotencyKeyFromHeaders(req.headers as Record<string, unknown>) ||
+        `smart-quote:${validation.value.quoteNumber}`;
+      const existing = idempotencyStore.get(idempotencyKey);
+      if (existing) {
+        return res.status(200).json({ ok: true, success: true, leadId: existing.leadId, message: "Smart Quote lead saved" });
+      }
+
+      const { leadId } = await createPublicLead(toPublicLeadInput(validation.value), deps.persistLead);
+      idempotencyStore.set(idempotencyKey, { leadId, createdAtMs: Date.now() });
+      console.info(`[smart-quotes] created leadId=${leadId} quote=${validation.value.quoteNumber}`);
+      return res.status(201).json({ ok: true, success: true, leadId, message: "Smart Quote lead saved" });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to save Smart Quote lead.";
+      console.error("[smart-quotes] persistence failure:", message);
+      return res.status(500).json({ ok: false, error: "Could not save your details. Please try again." });
     }
   });
 
