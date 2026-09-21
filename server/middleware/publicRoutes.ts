@@ -21,6 +21,10 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   // GET is public so the router can return 405 Method Not Allowed (Allow: POST).
   { method: "POST", path: "/api/public/leads" },
   { method: "GET", path: "/api/public/leads" },
+  // No-login Smart Quote capture. Handler applies strict field validation,
+  // rate limiting and idempotency before writing a CRM lead.
+  { method: "POST", path: "/api/public/smart-quotes" },
+  { method: "GET", path: "/api/public/smart-quotes" },
   // WhatsApp Cloud API webhook (HMAC-gated inside the handler — not CRM JWT).
   // Canonical path: /api/whatsapp/webhook (GET verify + POST inbound).
   { method: "GET", path: "/api/whatsapp/webhook" },
