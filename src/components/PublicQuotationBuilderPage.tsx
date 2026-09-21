@@ -25,6 +25,7 @@ import {
   type PublicQuoteLine,
   type PublicQuoteStructure,
 } from "../lib/publicQuotationBuilder";
+import { submitPublicSmartQuoteLead } from "../services/api";
 
 const CONTACT_PHONE = "0330-7776444 / 0309-0236666";
 const WHATSAPP_PHONE = "923307776444";
@@ -254,6 +255,9 @@ export default function PublicQuotationBuilderPage() {
   const [quoteNumber, setQuoteNumber] = useState(makeQuoteNumber);
   const [exporting, setExporting] = useState<"pdf" | "image" | null>(null);
   const [exportMessage, setExportMessage] = useState("");
+  const [savingLead, setSavingLead] = useState(false);
+  const [leadMessage, setLeadMessage] = useState("");
+  const [leadError, setLeadError] = useState("");
 
   useEffect(() => {
     const previous = document.title;
@@ -277,6 +281,8 @@ export default function PublicQuotationBuilderPage() {
 
   const updateConfig = (patch: Partial<PublicQuoteConfig>) => {
     setGenerated(false);
+    setLeadMessage("");
+    setLeadError("");
     setConfig((current) => ({ ...current, ...patch }));
   };
 
@@ -315,11 +321,48 @@ export default function PublicQuotationBuilderPage() {
     });
   };
 
-  const generateQuote = () => {
+  const generateQuote = async () => {
     if (!calculation) return;
-    setQuoteNumber(makeQuoteNumber());
-    setGenerated(true);
-    window.setTimeout(() => document.getElementById("generated-quotation")?.scrollIntoView({ behavior: "smooth" }), 50);
+    const name = clientName.trim();
+    const phone = clientPhone.trim();
+    if (!name) {
+      setLeadError("Please enter your name so our team can identify your quotation.");
+      document.getElementById("smart-quote-client-name")?.focus();
+      return;
+    }
+    if (!/^[+\d][\d\s().-]{6,24}$/.test(phone)) {
+      setLeadError("Please enter a valid mobile number, for example 0300-1234567.");
+      document.getElementById("smart-quote-client-phone")?.focus();
+      return;
+    }
+
+    const nextQuoteNumber = makeQuoteNumber();
+    setSavingLead(true);
+    setLeadError("");
+    setLeadMessage("");
+    try {
+      await submitPublicSmartQuoteLead({
+        name,
+        phone,
+        city: clientCity.trim() || undefined,
+        quoteNumber: nextQuoteNumber,
+        systemCapacityKw: calculation.systemCapacityKw,
+        estimatedTotalPkr: calculation.totalPkr,
+        panel: `${config.panelQuantity} × ${calculation.panel.brand} ${calculation.panel.watts}W`,
+        inverter: `${config.inverterQuantity} × ${calculation.inverter.brand} ${calculation.inverter.capacityKw}kW`,
+        battery: `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh`,
+        structure: `${calculation.structureLabel} (${calculation.configuredStructureCapacityPanels} panels)`,
+        generatedAt: new Date().toISOString(),
+      });
+      setQuoteNumber(nextQuoteNumber);
+      setGenerated(true);
+      setLeadMessage("Quotation generated. Your request is now visible to the Sunchaser sales team.");
+      window.setTimeout(() => document.getElementById("generated-quotation")?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch (error) {
+      setLeadError(error instanceof Error ? error.message : "Could not save your details. Please try again.");
+    } finally {
+      setSavingLead(false);
+    }
   };
 
   const sendToWhatsApp = () => {
@@ -377,6 +420,8 @@ export default function PublicQuotationBuilderPage() {
     setClientCity("");
     setGenerated(false);
     setExportMessage("");
+    setLeadMessage("");
+    setLeadError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -567,22 +612,24 @@ export default function PublicQuotationBuilderPage() {
             <div className="mb-5 flex items-center gap-3">
               <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-sm font-black text-amber-900">4</span>
               <div>
-                <h2 className="text-lg font-black">Your details</h2>
-                <p className="text-sm text-slate-500">Optional—used only on your downloaded quote.</p>
+                <h2 className="text-lg font-black">Your contact details</h2>
+                <p className="text-sm text-slate-500">Name and mobile number are required so our sales team can follow up on this quote.</p>
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               {[
-                ["Your name", clientName, setClientName, "e.g. Hassan"],
-                ["Phone number", clientPhone, setClientPhone, "03XX-XXXXXXX"],
-                ["City", clientCity, setClientCity, "e.g. Lahore"],
-              ].map(([label, value, setter, placeholder]) => (
+                ["Your name *", clientName, setClientName, "e.g. Hassan", "smart-quote-client-name", "text"],
+                ["Mobile number *", clientPhone, setClientPhone, "03XX-XXXXXXX", "smart-quote-client-phone", "tel"],
+                ["City", clientCity, setClientCity, "e.g. Lahore", "smart-quote-client-city", "text"],
+              ].map(([label, value, setter, placeholder, id, type]) => (
                 <label key={label as string} className="block">
                   <span className="mb-2 block text-sm font-bold text-slate-800">{label as string}</span>
-                  <input value={value as string} onChange={(event) => (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)} placeholder={placeholder as string} className="min-h-14 w-full rounded-2xl border border-slate-200 px-4 text-base outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100" />
+                  <input id={id as string} type={type as string} value={value as string} onChange={(event) => { (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value); setGenerated(false); setLeadMessage(""); setLeadError(""); }} placeholder={placeholder as string} className="min-h-14 w-full rounded-2xl border border-slate-200 px-4 text-base outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100" />
                 </label>
               ))}
             </div>
+            {leadError ? <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{leadError}</div> : null}
+            {leadMessage ? <div role="status" className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{leadMessage}</div> : null}
           </div>
         </section>
 
@@ -598,10 +645,10 @@ export default function PublicQuotationBuilderPage() {
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Battery</span><span className="text-right font-bold">{selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × {calculation.battery.brand} {calculation.battery.capacityKwh}kWh</span></div>
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Structure</span><span className="text-right font-bold">{calculation.structureLabel}</span></div>
               </div>
-              <button type="button" onClick={generateQuote} className="min-h-14 w-full rounded-2xl bg-amber-400 px-5 text-base font-black text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-300 active:scale-[0.99]">
-                Generate My Quote
+              <button type="button" disabled={savingLead || generated} onClick={() => void generateQuote()} className="min-h-14 w-full rounded-2xl bg-amber-400 px-5 text-base font-black text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70">
+                {savingLead ? <span className="inline-flex items-center gap-2"><LoaderCircle className="h-5 w-5 animate-spin" /> Saving…</span> : generated ? "Quote Generated" : "Generate My Quote"}
               </button>
-              <p className="mt-3 text-center text-xs leading-5 text-slate-400">No login needed. Your choices calculate on this device.</p>
+              <p className="mt-3 text-center text-xs leading-5 text-slate-400">No login needed. Generating the quote sends your details and selections to Sunchaser for follow-up.</p>
             </>
           ) : (
             <div className="mt-4 rounded-2xl bg-red-500/10 p-4 text-sm leading-6 text-red-200">{calculationState.error}</div>
