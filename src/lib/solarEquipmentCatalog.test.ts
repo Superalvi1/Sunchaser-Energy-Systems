@@ -21,6 +21,14 @@ const goodwe16 = BATTERY_CATALOG.filter(
 assert.deepEqual(goodwe16.map((item) => item.pricePkr), [725_000]);
 assert.equal(BATTERY_CATALOG.some((item) => item.pricePkr === 735_000), false);
 
+const dynessPowerBrickMax = BATTERY_CATALOG.find(
+  (item) => item.id === "battery-dyness-powerbrick-max-16-08"
+);
+assert.equal(dynessPowerBrickMax?.model, "PowerBrick MAX");
+assert.equal(dynessPowerBrickMax?.capacityKwh, 16.08);
+assert.equal(dynessPowerBrickMax?.voltageClass, "LV");
+assert.equal(dynessPowerBrickMax?.pricePkr, 590_000);
+
 assert.equal(
   PANEL_CATALOG.some((item) => /longi.*jinko|jinko.*longi/i.test(`${item.brand} ${item.model}`)),
   false
@@ -41,6 +49,7 @@ assert.equal(fox?.bundle?.totalBundlePricePkr, 970_000);
 const sixKwBatterySizes = new Set(compatibleBatteries(6).map((item) => item.capacityKwh));
 assert.equal(sixKwBatterySizes.has(10), true);
 assert.equal(sixKwBatterySizes.has(16), true);
+assert.equal(sixKwBatterySizes.has(16.08), true);
 
 assert.deepEqual(standardStandPrice(16, "l2"), {
   standCount: 8,

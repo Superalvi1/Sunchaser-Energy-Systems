@@ -69,6 +69,7 @@ export const BATTERY_CATALOG: readonly BatteryCatalogItem[] = [
   { id: "battery-dyness-10-ip65", brand: "Dyness", model: "Lithium", capacityKwh: 10, protection: "IP65", pricePkr: 500_000 },
   { id: "battery-renesola-16", brand: "ReneSola", model: "Lithium", capacityKwh: 16, pricePkr: 550_000 },
   { id: "battery-ses-16", brand: "SES", model: "Lithium", capacityKwh: 16, pricePkr: 550_000 },
+  { id: "battery-dyness-powerbrick-max-16-08", brand: "Dyness", model: "PowerBrick MAX", capacityKwh: 16.08, voltageClass: "LV", pricePkr: 590_000 },
   { id: "battery-soluna-venus-16", brand: "Soluna", model: "Venus", capacityKwh: 16, protection: "IP66", pricePkr: 625_000 },
   { id: "battery-pylontech-16", brand: "Pylontech", model: "Lithium", capacityKwh: 16, pricePkr: 635_000 },
   { id: "battery-dyness-16-ip66", brand: "Dyness", model: "Lithium", capacityKwh: 16, protection: "IP66", pricePkr: 635_000 },
@@ -138,8 +139,7 @@ export function compatibleBatteries(systemCapacityKw: number): BatteryCatalogIte
   if (!Number.isFinite(capacity) || capacity <= 0) return [];
   return BATTERY_CATALOG.filter((item) => {
     if (item.bundleOnly) return true;
-    if (capacity <= 6) return [5, 10, 16].includes(item.capacityKwh);
-    if (capacity <= 20) return item.capacityKwh <= 16;
+    if (capacity <= 20) return item.capacityKwh <= 16.1;
     return item.capacityKwh >= 16;
   });
 }
