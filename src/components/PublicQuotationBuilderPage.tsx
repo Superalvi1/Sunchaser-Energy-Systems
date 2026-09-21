@@ -70,6 +70,50 @@ function SelectField({
   );
 }
 
+function QuantityField({
+  label,
+  value,
+  onChange,
+  min = 0,
+  max = 300,
+  hint,
+  disabled = false,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  hint?: string;
+  disabled?: boolean;
+}) {
+  const clamp = (value: number) => Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+  return (
+    <div>
+      <span className="mb-2 block text-sm font-bold text-slate-800">{label}</span>
+      <div className="flex min-h-14 items-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <button type="button" disabled={disabled || value <= min} aria-label={`Decrease ${label}`} onClick={() => onChange(clamp(value - 1))} className="grid h-14 w-14 place-items-center text-slate-700 hover:bg-slate-100 disabled:opacity-30">
+          <Minus className="h-5 w-5" />
+        </button>
+        <input
+          aria-label={label}
+          type="number"
+          min={min}
+          max={max}
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(clamp(Number(event.target.value)))}
+          className="h-14 min-w-0 flex-1 border-x border-slate-200 text-center text-lg font-black outline-none disabled:bg-slate-100"
+        />
+        <button type="button" disabled={disabled || value >= max} aria-label={`Increase ${label}`} onClick={() => onChange(clamp(value + 1))} className="grid h-14 w-14 place-items-center text-slate-700 hover:bg-slate-100 disabled:opacity-30">
+          <Plus className="h-5 w-5" />
+        </button>
+      </div>
+      {hint ? <p className="mt-1.5 text-xs leading-5 text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
 function QuoteTable({ lines }: { lines: PublicQuoteLine[] }) {
   const groups = ["Equipment", "Cables & protection", "Structure", "Services"] as const;
   return (
@@ -151,19 +195,25 @@ export default function PublicQuotationBuilderPage() {
     const next = defaultPublicQuoteConfig(capacity);
     const panel = PANEL_CATALOG.find((item) => item.id === config.panelId) || PANEL_CATALOG[0];
     setGenerated(false);
+    const panelQuantity = recommendedPanelQuantity(capacity, panel.watts);
     setConfig({
       ...next,
       panelId: panel.id,
-      panelQuantity: recommendedPanelQuantity(capacity, panel.watts),
+      panelQuantity,
+      structurePanelQuantity: panelQuantity,
+      mixedL2StandQuantity: Math.ceil(panelQuantity / 2),
     });
   };
 
   const selectPanel = (panelId: string) => {
     const panel = PANEL_CATALOG.find((item) => item.id === panelId);
     if (!panel) return;
+    const panelQuantity = recommendedPanelQuantity(config.systemCapacityKw, panel.watts);
     updateConfig({
       panelId,
-      panelQuantity: recommendedPanelQuantity(config.systemCapacityKw, panel.watts),
+      panelQuantity,
+      structurePanelQuantity: panelQuantity,
+      mixedL2StandQuantity: Math.ceil(panelQuantity / 2),
     });
   };
 
@@ -189,9 +239,9 @@ export default function PublicQuotationBuilderPage() {
       "Hello Sunchaser Energy Systems,",
       `I generated quotation ${quoteNumber} for a ${calculation.systemCapacityKw} kW solar system.`,
       `${calculation.panel.brand} ${calculation.panel.watts}W × ${config.panelQuantity}`,
-      `${calculation.inverter.brand} ${calculation.inverter.capacityKw} kW inverter`,
-      `${calculation.battery.brand} ${calculation.battery.capacityKwh} kWh battery`,
-      calculation.structureLabel,
+      `${config.inverterQuantity} × ${calculation.inverter.brand} ${calculation.inverter.capacityKw} kW inverter`,
+      `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh} kWh battery`,
+      `${calculation.structureLabel} (capacity: ${calculation.configuredStructureCapacityPanels} panels)`,
       `Estimated total: ${formatPkr(calculation.totalPkr)}`,
       clientName.trim() ? `Name: ${clientName.trim()}` : "",
       clientCity.trim() ? `City: ${clientCity.trim()}` : "",
@@ -281,27 +331,14 @@ export default function PublicQuotationBuilderPage() {
                 ))}
               </SelectField>
 
-              <div>
-                <span className="mb-2 block text-sm font-bold text-slate-800">Number of panels</span>
-                <div className="flex min-h-14 items-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <button type="button" aria-label="Remove one panel" onClick={() => updateConfig({ panelQuantity: Math.max(1, config.panelQuantity - 1) })} className="grid h-14 w-14 place-items-center text-slate-700 hover:bg-slate-100">
-                    <Minus className="h-5 w-5" />
-                  </button>
-                  <input
-                    aria-label="Panel quantity"
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={config.panelQuantity}
-                    onChange={(event) => updateConfig({ panelQuantity: Number(event.target.value) })}
-                    className="h-14 min-w-0 flex-1 border-x border-slate-200 text-center text-lg font-black outline-none"
-                  />
-                  <button type="button" aria-label="Add one panel" onClick={() => updateConfig({ panelQuantity: Math.min(200, config.panelQuantity + 1) })} className="grid h-14 w-14 place-items-center text-slate-700 hover:bg-slate-100">
-                    <Plus className="h-5 w-5" />
-                  </button>
-                </div>
-                {calculation ? <p className="mt-1.5 text-xs text-slate-500">Panel array: {calculation.configuredPanelCapacityKw.toFixed(2)} kW</p> : null}
-              </div>
+              <QuantityField
+                label="Number of panels"
+                value={config.panelQuantity}
+                min={1}
+                max={200}
+                onChange={(panelQuantity) => updateConfig({ panelQuantity })}
+                hint={calculation ? `Panel array: ${calculation.configuredPanelCapacityKw.toFixed(2)} kW` : undefined}
+              />
 
               <SelectField label="Hybrid inverter" value={config.inverterId} onChange={selectInverter}>
                 {inverters.map((inverter) => (
@@ -310,6 +347,15 @@ export default function PublicQuotationBuilderPage() {
                   </option>
                 ))}
               </SelectField>
+
+              <QuantityField
+                label="Number of inverters"
+                value={config.inverterQuantity}
+                min={1}
+                max={10}
+                onChange={(inverterQuantity) => updateConfig({ inverterQuantity })}
+                hint="The selected inverter price is multiplied by this quantity."
+              />
 
               <SelectField
                 label="Lithium battery"
@@ -326,6 +372,16 @@ export default function PublicQuotationBuilderPage() {
                   </option>
                 ))}
               </SelectField>
+
+              <QuantityField
+                label="Number of batteries"
+                value={selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity}
+                min={1}
+                max={20}
+                disabled={Boolean(selectedInverter?.bundle)}
+                onChange={(batteryQuantity) => updateConfig({ batteryQuantity })}
+                hint={selectedInverter?.bundle ? "One FOX battery is included per inverter." : "Choose one or more batteries of any listed capacity."}
+              />
             </div>
           </div>
 
@@ -334,14 +390,15 @@ export default function PublicQuotationBuilderPage() {
               <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-sm font-black text-amber-900">3</span>
               <div>
                 <h2 className="text-lg font-black">Choose panel structure</h2>
-                <p className="text-sm text-slate-500">Stand quantity is calculated automatically.</p>
+                <p className="text-sm text-slate-500">Structure capacity can be different from the installed panel quantity.</p>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {([
                 ["standard-l2", "L2 standard", "2 panels per stand · Rs. 4,500"],
                 ["standard-l3", "L3 standard", "3 panels per stand · Rs. 7,200"],
-                ["elevated", "Elevated", "Fabricated for this system size"],
+                ["elevated", "Elevated", "Panels × watts × Rs. 16"],
+                ["mixed", "Mix structures", "Combine L2, L3 and elevated"],
               ] as Array<[PublicQuoteStructure, string, string]>).map(([value, label, detail]) => (
                 <button
                   key={value}
@@ -354,6 +411,34 @@ export default function PublicQuotationBuilderPage() {
                 </button>
               ))}
             </div>
+
+            {config.structureType === "mixed" ? (
+              <div className="mt-5 grid gap-4 rounded-2xl bg-slate-50 p-4 sm:grid-cols-3">
+                <QuantityField label="L2 stands" value={config.mixedL2StandQuantity} max={150} onChange={(mixedL2StandQuantity) => updateConfig({ mixedL2StandQuantity })} hint={`${config.mixedL2StandQuantity * 2} panel capacity`} />
+                <QuantityField label="L3 stands" value={config.mixedL3StandQuantity} max={100} onChange={(mixedL3StandQuantity) => updateConfig({ mixedL3StandQuantity })} hint={`${config.mixedL3StandQuantity * 3} panel capacity`} />
+                <QuantityField label="Elevated panels" value={config.mixedElevatedPanelQuantity} max={300} onChange={(mixedElevatedPanelQuantity) => updateConfig({ mixedElevatedPanelQuantity })} hint="Panels supported by elevated structure" />
+              </div>
+            ) : (
+              <div className="mt-5 max-w-sm rounded-2xl bg-slate-50 p-4">
+                <QuantityField
+                  label="Structure capacity (panels)"
+                  value={config.structurePanelQuantity}
+                  min={1}
+                  max={300}
+                  onChange={(structurePanelQuantity) => updateConfig({ structurePanelQuantity })}
+                  hint={`You can install ${config.panelQuantity} panels now and buy structure capacity for a different number.`}
+                />
+              </div>
+            )}
+
+            {calculation ? (
+              <div className={`mt-4 rounded-2xl border p-4 text-sm ${calculation.configuredStructureCapacityPanels < config.panelQuantity ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                <span className="font-black">Structure capacity: {calculation.configuredStructureCapacityPanels} panels.</span>{" "}
+                {calculation.configuredStructureCapacityPanels < config.panelQuantity
+                  ? `This is short of the ${config.panelQuantity} panels being installed. Increase the structure capacity.`
+                  : `This covers the ${config.panelQuantity} installed panels${calculation.configuredStructureCapacityPanels > config.panelQuantity ? " and leaves room for expansion" : ""}.`}
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
@@ -387,8 +472,8 @@ export default function PublicQuotationBuilderPage() {
               <div className="mt-1 text-sm text-slate-400">Complete {calculation.systemCapacityKw} kW quotation</div>
               <div className="my-5 space-y-3 border-y border-white/10 py-5 text-sm">
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Panels</span><span className="text-right font-bold">{config.panelQuantity} × {calculation.panel.watts}W</span></div>
-                <div className="flex justify-between gap-3"><span className="text-slate-400">Inverter</span><span className="text-right font-bold">{calculation.inverter.brand} {calculation.inverter.capacityKw}kW</span></div>
-                <div className="flex justify-between gap-3"><span className="text-slate-400">Battery</span><span className="text-right font-bold">{calculation.battery.brand} {calculation.battery.capacityKwh}kWh</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-400">Inverter</span><span className="text-right font-bold">{config.inverterQuantity} × {calculation.inverter.brand} {calculation.inverter.capacityKw}kW</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-400">Battery</span><span className="text-right font-bold">{selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × {calculation.battery.brand} {calculation.battery.capacityKwh}kWh</span></div>
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Structure</span><span className="text-right font-bold">{calculation.structureLabel}</span></div>
               </div>
               <button type="button" onClick={generateQuote} className="min-h-14 w-full rounded-2xl bg-amber-400 px-5 text-base font-black text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-300 active:scale-[0.99]">

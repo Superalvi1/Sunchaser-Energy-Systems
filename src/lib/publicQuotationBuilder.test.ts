@@ -1,47 +1,54 @@
 import assert from "node:assert/strict";
-import {
-  calculatePublicQuotation,
-  defaultPublicQuoteConfig,
-  publicQuoteBatteries,
-  publicQuoteInverters,
-  recommendedPanelQuantity,
-} from "./publicQuotationBuilder.ts";
+import { calculatePublicQuotation, defaultPublicQuoteConfig, publicQuoteBatteries, publicQuoteInverters, recommendedPanelQuantity } from "./publicQuotationBuilder.ts";
 import { BATTERY_CATALOG, INVERTER_CATALOG, PANEL_CATALOG } from "./solarEquipmentCatalog.ts";
 
 const base = defaultPublicQuoteConfig(12);
 const aiko645 = PANEL_CATALOG.find((item) => item.id === "panel-aiko-abc-645")!;
 const result = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuantity: 19 });
-const panelLine = result.lines.find((line) => line.description.includes("solar panels"))!;
-assert.equal(panelLine.totalPkr, 43 * 645 * 19, "panel formula must be rate × watts × quantity");
+assert.equal(result.lines.find((line) => line.description.includes("solar panels"))?.totalPkr, 43 * 645 * 19);
 assert.equal(recommendedPanelQuantity(12, 645), 19);
 
-const fox = INVERTER_CATALOG.find((item) => item.id === "inverter-fox-12-ip66-hv-bundle")!;
-const foxResult = calculatePublicQuotation({ ...base, inverterId: fox.id, batteryId: "not-a-real-battery" });
-assert.equal(foxResult.battery.id, "battery-fox-10-2-ip66-hv");
-assert.equal(foxResult.lines.find((line) => line.description.includes("FOX ESS 10.2"))?.totalPkr, 0);
-assert.equal(foxResult.lines.find((line) => line.description.includes("hybrid inverter"))?.totalPkr, 970_000);
+const installation = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuantity: 16 });
+assert.equal(installation.lines.find((line) => line.description === "Installation and electrical wiring")?.totalPkr, 16 * 645 * 4);
 
-const l2 = calculatePublicQuotation({ ...base, panelQuantity: 16, structureType: "standard-l2" });
-const l2Line = l2.lines.find((line) => line.category === "Structure")!;
-assert.equal(l2Line.quantity, 8);
-assert.equal(l2Line.totalPkr, 36_000);
-const l3 = calculatePublicQuotation({ ...base, panelQuantity: 16, structureType: "standard-l3" });
-assert.equal(l3.lines.find((line) => line.category === "Structure")?.quantity, 6);
-assert.equal(l3.lines.find((line) => line.category === "Structure")?.totalPkr, 43_200);
+const fox = INVERTER_CATALOG.find((item) => item.id === "inverter-fox-12-ip66-hv-bundle")!;
+const foxResult = calculatePublicQuotation({ ...base, inverterId: fox.id, inverterQuantity: 2, batteryId: "not-a-real-battery" });
+assert.equal(foxResult.battery.id, "battery-fox-10-2-ip66-hv");
+assert.equal(foxResult.lines.find((line) => line.description.includes("FOX ESS 10.2"))?.quantity, 2);
+assert.equal(foxResult.lines.find((line) => line.description.includes("FOX ESS 10.2"))?.totalPkr, 0);
+assert.equal(foxResult.lines.find((line) => line.description.includes("hybrid inverter"))?.totalPkr, 2 * 970_000);
+
+const l2 = calculatePublicQuotation({ ...base, panelQuantity: 16, structurePanelQuantity: 20, structureType: "standard-l2" });
+assert.equal(l2.configuredStructureCapacityPanels, 20);
+assert.equal(l2.lines.find((line) => line.description === "L2 standard panel stands")?.quantity, 10);
+assert.equal(l2.lines.find((line) => line.description === "L2 standard panel stands")?.totalPkr, 45_000);
+const l3 = calculatePublicQuotation({ ...base, panelQuantity: 16, structurePanelQuantity: 20, structureType: "standard-l3" });
+assert.equal(l3.lines.find((line) => line.description === "L3 standard panel stands")?.quantity, 7);
+assert.equal(l3.lines.find((line) => line.description === "L3 standard panel stands")?.totalPkr, 50_400);
+
+const elevated = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuantity: 16, structurePanelQuantity: 20, structureType: "elevated" });
+assert.equal(elevated.configuredStructureCapacityPanels, 20);
+assert.equal(elevated.lines.find((line) => line.description.startsWith("Elevated structure"))?.totalPkr, 20 * 645 * 16);
+
+const mixed = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuantity: 16, structureType: "mixed", mixedL2StandQuantity: 4, mixedL3StandQuantity: 2, mixedElevatedPanelQuantity: 6 });
+assert.equal(mixed.configuredStructureCapacityPanels, 20);
+assert.equal(mixed.lines.filter((line) => line.category === "Structure").reduce((sum, line) => sum + line.totalPkr, 0), 4 * 4_500 + 2 * 7_200 + 6 * 645 * 16);
+
+const goodweInverter = publicQuoteInverters(12).find((item) => !item.bundle)!;
+const battery = publicQuoteBatteries(12).find((item) => item.capacityKwh === 5)!;
+const quantities = calculatePublicQuotation({ ...base, inverterId: goodweInverter.id, inverterQuantity: 2, batteryId: battery.id, batteryQuantity: 3 });
+assert.equal(quantities.lines.find((line) => line.description.includes("hybrid inverter"))?.totalPkr, goodweInverter.pricePkr * 2);
+assert.equal(quantities.lines.find((line) => line.description.includes("lithium battery"))?.totalPkr, battery.pricePkr * 3);
 
 assert.deepEqual(publicQuoteInverters(15).map((item) => item.capacityKw), [15, 16]);
 assert.ok(publicQuoteInverters(6).some((item) => item.id === "inverter-goodwe-6"));
 assert.ok(publicQuoteInverters(10).some((item) => item.id === "inverter-goodwe-10"));
-assert.ok(publicQuoteBatteries(8).every((item) => [5, 10, 16].includes(item.capacityKwh)));
+assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh === 2.5));
 assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh === 10));
 assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh === 16));
-assert.ok(publicQuoteBatteries(15).every((item) => item.capacityKwh === 16));
+assert.ok(publicQuoteBatteries(15).some((item) => item.capacityKwh === 5));
 assert.equal(INVERTER_CATALOG.filter((item) => item.brand === "GoodWe" && item.capacityKw === 8).length, 1);
 assert.equal(BATTERY_CATALOG.filter((item) => item.brand === "GoodWe" && item.capacityKwh === 16).length, 1);
-
-assert.throws(
-  () => calculatePublicQuotation({ ...base, systemCapacityKw: 7 }),
-  /No verified BOQ exists for 7 kW/,
-);
+assert.throws(() => calculatePublicQuotation({ ...base, systemCapacityKw: 7 }), /No verified BOQ exists for 7 kW/);
 
 console.log("public quotation builder tests passed");
