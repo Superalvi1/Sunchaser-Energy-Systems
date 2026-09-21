@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 73228)
-Total output lines: 5759
-
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, Link2, 
@@ -2487,7 +2484,1660 @@ export default function SalesTeamApp({
             ...page,
             page_type: templateMeta.pageType,
             pageType: templateMeta.pageType,
-   …23228 tokens truncated…                         <span className="text-amber-300/90 text-[10px] font-mono uppercase tracking-wide">
+            title: state.title,
+            body_text: serializeQuotePageBody({
+              bodyText: state.body_text,
+              bodyHtml: sanitizeQuoteEditorHtml(state.body_html || ""),
+              authoringPageType: state.authoringPageType,
+              layoutMode: state.layoutMode,
+              coverLayoutMode: state.coverLayoutMode,
+              header: {
+                mode: state.headerMode,
+                text: state.headerText,
+                logoUrl: state.headerLogoUrl,
+                logoSize: state.headerLogoSize,
+                lineColor: state.headerLineColor,
+                alignment: state.headerAlignment
+              },
+              footer: {
+                mode: state.footerMode,
+                text: state.footerText,
+                lineColor: state.footerLineColor,
+                alignment: state.footerAlignment
+              },
+              bodyImages: state.bodyImages,
+              imageSections: state.imageSections,
+              typography: {
+                densityMode: state.densityMode,
+                fontSize: state.fontSize || globalFontSize || undefined,
+                lineHeight: state.lineHeight || globalLineHeight || undefined,
+                paragraphSpacing: state.paragraphSpacing || undefined,
+                paddingTop: state.paddingTop || undefined,
+                paddingBottom: state.paddingBottom || undefined,
+                contentWidth: state.contentWidth || undefined,
+                textAlign: state.textAlign || undefined,
+                fontFamily: state.fontFamily || globalFontFamily || undefined,
+                headingColor: state.headingColor || globalHeadingColor || undefined,
+                bodyColor: state.bodyColor || globalBodyColor || undefined,
+              },
+              watermark: {
+                imageUrl: state.watermarkUrl || undefined,
+                opacity: state.watermarkOpacity,
+                position: state.watermarkPosition,
+                repeat: "no-repeat",
+              },
+              signatureBlock: {
+                leftName: state.sigCeoName,
+                leftTitle: state.sigCeoTitle,
+                leftSignatureUrl: state.sigCeoUrl,
+                rightName: state.sigSalesName,
+                rightTitle: state.sigSalesTitle,
+                rightSignatureUrl: state.sigSalesUrl,
+                ceo: {
+                  enabled: state.sigCeoEnabled,
+                  name: state.sigCeoName,
+                  title: state.sigCeoTitle,
+                  signatureUrl: state.sigCeoUrl,
+                },
+                technicalDirector: {
+                  enabled: state.sigTechEnabled,
+                  name: state.sigTechName,
+                  title: state.sigTechTitle,
+                  signatureUrl: state.sigTechUrl,
+                },
+                salesAdvisor: {
+                  enabled: state.sigSalesEnabled,
+                  name: state.sigSalesName,
+                  title: state.sigSalesTitle,
+                  signatureUrl: state.sigSalesUrl,
+                },
+              },
+            }),
+            image_url: state.image_url,
+            bg_image_url: state.bg_image_url,
+            is_enabled: state.is_enabled
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || `HTTP error ${response.status}`);
+      }
+
+      setLocalPageStates(prev => ({
+        ...prev,
+        [pageId]: {
+          ...prev[pageId],
+          saveStatus: 'Saved'
+        }
+      }));
+
+      if (!options?.silent) {
+        alert("Page configuration saved successfully!");
+      }
+      if (onRefreshState) await onRefreshState();
+      return true;
+    } catch (err: any) {
+      console.error("Save error:", err);
+      if (!options?.silent) {
+        alert("Failed to save template page changes: " + (err.message || err.toString()));
+      }
+      setLocalPageStates(prev => ({
+        ...prev,
+        [pageId]: {
+          ...prev[pageId],
+          saveStatus: 'Unsaved'
+        }
+      }));
+      return false;
+    }
+  };
+
+  const handleImageUpload = async (pageId: string, file: File, type: 'image' | 'bg') => {
+    try {
+      if (!file.type.startsWith('image/')) {
+        alert("Please select a valid image file.");
+        return;
+      }
+
+      const compressImage = (file: File, maxWidth: number = 800, quality: number = 0.7): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Failed to read file."));
+          reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject(new Error("Failed to load image."));
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
+              
+              if (width > maxWidth) {
+                height = Math.round((height * maxWidth) / width);
+                width = maxWidth;
+              }
+              
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) { reject(new Error("Canvas not supported.")); return; }
+              ctx.drawImage(img, 0, 0, width, height);
+              
+              const dataUrl = canvas.toDataURL('image/jpeg', quality);
+              resolve(dataUrl);
+            };
+            img.src = reader.result as string;
+          };
+          reader.readAsDataURL(file);
+        });
+      };
+
+      const maxW = type === 'bg' ? 800 : 400;
+      let dataUrl = await compressImage(file, maxW, 0.7);
+      
+      let sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+      if (sizeKB > 500) {
+        dataUrl = await compressImage(file, type === 'bg' ? 600 : 300, 0.5);
+        sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+        if (sizeKB > 500) {
+          alert(`Image is still too large (${sizeKB}KB) after compression. Please use a smaller image.`);
+          return;
+        }
+      }
+
+      const response = await authorizedFetch(`${API_BASE_URL}/api/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64Data: dataUrl,
+          filename: file.name
+        })
+      });
+
+      if (!response.ok) {
+        let errMsg = `HTTP error ${response.status}`;
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errData.message || errMsg;
+        } catch {
+          const errText = await response.text();
+          if (errText) errMsg = errText;
+        }
+        throw new Error(errMsg);
+      }
+
+      const resData = await response.json();
+      const finalUrl = resData.dataUrl || resData.url || dataUrl;
+
+      const fieldKey = type === 'image' ? 'image_url' : 'bg_image_url';
+      handleFieldChange(pageId, fieldKey, finalUrl);
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      alert("Upload failed: " + (err.message || err.toString()));
+    }
+  };
+
+  const handleUpdatePageSortOrder = async (pageId: string, currentOrder: number, direction: 'up' | 'down') => {
+    const list = [...quoteTemplatePages].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+    const idx = list.findIndex(p => p.id === pageId);
+    if (idx === -1) return;
+    
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+    
+    const tempOrder = list[idx].sort_order;
+    list[idx].sort_order = list[targetIdx].sort_order;
+    list[targetIdx].sort_order = tempOrder;
+
+    try {
+      // Save both pages updates
+      await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit", table: "quoteTemplatePages", id: list[idx].id, data: { sort_order: list[idx].sort_order } })
+      });
+      await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit", table: "quoteTemplatePages", id: list[targetIdx].id, data: { sort_order: list[targetIdx].sort_order } })
+      });
+
+      if (onRefreshState) onRefreshState();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDuplicateTemplatePage = async (pageId: string) => {
+    const page = quoteTemplatePages.find((p) => p.id === pageId);
+    if (!page) return;
+    const maxOrder = Math.max(0, ...quoteTemplatePages.map((p) => Number(p.sort_order || p.sortOrder || 0)));
+    const newId = `tmpl-p-${Date.now()}`;
+    try {
+      const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add",
+          table: "quoteTemplatePages",
+          data: {
+            ...page,
+            id: newId,
+            title: `${page.title || "Page"} (Copy)`,
+            sort_order: maxOrder + 1,
+            sortOrder: maxOrder + 1,
+          },
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      alert("Page duplicated.");
+      if (onRefreshState) onRefreshState();
+    } catch (err: any) {
+      alert("Duplicate failed: " + (err.message || err));
+    }
+  };
+
+  // Product library CRUD helpers
+  const handleOpenAddProduct = () => {
+    setEditingProduct(null);
+    setProductFormBrand("");
+    setProductFormModel("");
+    setProductFormCategory("Solar Panels");
+    setProductFormSku("");
+    setProductFormPrice(0);
+    setProductFormCostPrice(0);
+    setProductFormStock(10);
+    setProductFormWarranty("");
+    setProductFormWattage(0);
+    setProductFormDesc("");
+    setIsProductModalOpen(true);
+  };
+
+  const handleOpenEditProduct = (prod: any) => {
+    setEditingProduct(prod);
+    setProductFormBrand(prod.brand || "");
+    setProductFormModel(prod.model || "");
+    setProductFormCategory(prod.category || "Solar Panels");
+    setProductFormSku(prod.sku || "");
+    setProductFormPrice(prod.price || 0);
+    setProductFormCostPrice(prod.specifications?.costPrice || 0);
+    setProductFormStock(prod.stock || 0);
+    setProductFormWarranty(prod.warrantyPeriod || "");
+    setProductFormWattage(prod.specifications?.wattage || 0);
+    setProductFormDesc(prod.specifications?.description || "");
+    setIsProductModalOpen(true);
+  };
+
+  const handleSaveProductForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = {
+      id: editingProduct ? editingProduct.id : `prod-${Date.now()}`,
+      name: `${productFormBrand} ${productFormModel}`,
+      category: productFormCategory,
+      brand: productFormBrand,
+      model: productFormModel,
+      sku: productFormSku || `SKU-${Date.now().toString().slice(-6)}`,
+      price: Number(productFormPrice),
+      stock: Number(productFormStock),
+      warrantyPeriod: productFormWarranty,
+      images: editingProduct?.images || ["https://images.unsplash.com/photo-1509391366360-2e959784a276?w=800&auto=format&fit=crop&q=60"],
+      specifications: {
+        wattage: Number(productFormWattage),
+        costPrice: Number(productFormCostPrice),
+        description: productFormDesc
+      }
+    };
+
+    try {
+      if (editingProduct) {
+        await updateCatalogProduct(payload as any);
+      } else {
+        const response = await authorizedFetch(`${API_BASE_URL}/api/db/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "add",
+            table: "products",
+            id: payload.id,
+            data: payload
+          })
+        });
+        if (!response.ok) throw new Error("Catalog synchronization failed.");
+      }
+      
+      setIsProductModalOpen(false);
+      if (onRefreshState) onRefreshState();
+      toast.success("Product catalog updated successfully!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to update product library.");
+    }
+  };
+
+  const handleDeleteProduct = async (prodId: string) => {
+    if (!window.confirm("Are you sure you want to delete this product from database?")) return;
+    try {
+      await deleteCatalogProduct(prodId);
+      if (onRefreshState) onRefreshState();
+      toast.success("Product deleted.");
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e.message || "Error deleting product.");
+    }
+  };
+
+  // Math Sizer calculations preview (Pakistan bill → units → kW / 120)
+  const sizingConfig = getSolarSizingSettings(settings);
+  const tariffRate = sizingConfig.blendedTariffPkrPerKwh;
+  const calculatedRoofArea = formRoofWidth * formRoofLength;
+
+  const minKw = systemSector === 'residential' ? 3.0 : 30.0;
+  const maxKw = systemSector === 'residential' ? 30.0 : 500.0;
+  const calculatedSystemSizekW = Number(
+    Math.max(
+      minKw,
+      Math.min(maxKw, recommendSystemSizeKw(formMonthlyUnits, sizingConfig))
+    ).toFixed(1)
+  );
+
+  const maxPanelsByRoof = Math.floor(calculatedRoofArea / 20);
+  const maxKwByRoof = Number(((maxPanelsByRoof * 400) / 1000).toFixed(1));
+  const isRoofConstrained = calculatedSystemSizekW > maxKwByRoof;
+  const actualSystemSizekW = Math.max(
+    minKw,
+    Math.min(maxKw, isRoofConstrained ? maxKwByRoof : calculatedSystemSizekW)
+  );
+
+  const isHighUnits = systemSector === 'residential'
+    ? formMonthlyUnits > 3500
+    : formMonthlyUnits > 60000;
+
+  const sizerPreviewKw = activeModule === "sizer" ? systemSizekW : actualSystemSizekW;
+  const actualPanelCount = Math.ceil((sizerPreviewKw * 1000) / (panelWattage || 580));
+  const inverterRec = `${inverterBrand} ${inverterCapacity} Inverter`;
+  const monthlyGeneration = estimateMonthlyGenerationKw(sizerPreviewKw, sizingConfig);
+  const monthlySavingsAmt = Math.round(monthlyGeneration * tariffRate);
+  
+  const calculatedTotalCost = Math.round((sizerPreviewKw * 1550) + (sizerPreviewKw * 450) + 1200 + installationCharges + netMeteringCharges);
+  const calculatedROI = Number(((monthlySavingsAmt * 12 / calculatedTotalCost) * 100).toFixed(1));
+  const calculatedPayback = Number((calculatedTotalCost / (monthlySavingsAmt * 12)).toFixed(1));
+
+  // Dynamic manual BOQ calculations
+  const grandTotal = boqRows
+    .filter(r => r && r.type === 'item')
+    .reduce((sum, r) => sum + (r.total || 0), 0);
+  const sizerPanelRow = boqRows.find((r) => r.id === "panel_row");
+  const sizerInverterRow = boqRows.find((r) => r.id === "inverter_row");
+  const sizerDcRow = boqRows.find((r) => r.id === "dc_cable_row");
+  const sizerAcRow = boqRows.find((r) => r.id === "ac_cable_row");
+  const sizerStructure = readStructureBreakdownFromRows(boqRows);
+  const sizerCustomerBoq = resolveCustomerFacingBoq(boqRows as any);
+  const calculatedTaxAmount = taxEnabled ? Math.round(grandTotal * (taxRate / 100)) : 0;
+  const resolvedManualDiscount = useMemo(
+    () => resolveQuoteDiscountAmount(grandTotal, { discountType, discountValue }),
+    [grandTotal, discountType, discountValue]
+  );
+  const netTotal = computeNetProposalValue(grandTotal, resolvedManualDiscount.discountAmount, {
+    taxAmount: calculatedTaxAmount,
+    societyCharges: Number(societyCharges) || 0,
+  });
+
+  // Format helper for PKR currency representation
+  const formatPKR = (num: number) => {
+    return "Rs. " + (num || 0).toLocaleString('en-PK');
+  };
+
+  // Filter products by search and category (live Supabase catalog only)
+  const filteredProducts = liveCatalogProducts.filter((p) => {
+    const matchesCat = p.category === selectedProductCategory;
+    const matchesSearch = !productSearchQuery
+      ? true
+      : String(p.brand || "")
+          .toLowerCase()
+          .includes(productSearchQuery.toLowerCase()) ||
+        String(p.model || "")
+          .toLowerCase()
+          .includes(productSearchQuery.toLowerCase()) ||
+        String(p.name || "")
+          .toLowerCase()
+          .includes(productSearchQuery.toLowerCase());
+    return matchesCat && matchesSearch;
+  });
+
+  /**
+   * Secondary Manual BOQ controls. Rendered inline on desktop/tablet and inside the
+   * mobile action panel — one definition, so the two layouts cannot drift apart.
+   */
+  const renderBoqSecondaryActions = () => (
+    <>
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('heading')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-blue-400" /> Add Heading
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addBoqRow('subtotal')}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-emerald-400" /> Add Subtotal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingQuoteId(null);
+                          clearLoadedPackage();
+                          setBoqRows([]);
+                          setManualBoqItems([]);
+                          setProjectScopeSnapshot(undefined);
+                          if (activeLead?.id) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        New Quote
+                      </button>
+                      <select
+                        title="Reusable company package"
+                        onChange={(e) => {
+                          const packageId = e.target.value;
+                          if (packageId) {
+                            const pkg = loadablePackages.find((p) => p.id === packageId);
+                            const label = pkg ? `${pkg.systemSizeKw}kW ${getPackageShortLabel(pkg)}` : "selected package";
+                            if (window.confirm(`Load "${label}" and replace current BOQ rows?`)) {
+                              applyBoqPackage(packageId);
+                            }
+                            e.target.value = "";
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans min-w-[180px]"
+                      >
+                        <option value="">🎁 Load Package...</option>
+                        {PACKAGE_SYSTEM_SIZES_KW.map((kw) => {
+                          const group = packagesBySize.get(kw) || [];
+                          if (!group.length) return null;
+                          return (
+                            <optgroup key={kw} label={`${kw}kW`}>
+                              {group.map((pkg) => (
+                                <option key={pkg.id} value={pkg.id}>
+                                  {getPackageShortLabel(pkg)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          );
+                        })}
+                      </select>
+
+                      {loadedPackageId && (
+                        <button
+                          type="button"
+                          disabled={savingPackage || !boqRows.length}
+                          onClick={handleUpdateLoadedPackage}
+                          className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans font-bold disabled:opacity-40"
+                          title="Save BOQ edits back to the loaded package library record"
+                        >
+                          {savingPackage ? "Updating…" : "Update Loaded Package"}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={savingPackage || !boqRows.filter((r) => r.type === "item").length}
+                        onClick={openSaveNewPackageModal}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                        title="Save current BOQ as a new reusable package"
+                      >
+                        Save as New Package
+                      </button>
+
+                      {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                      <button
+                        type="button"
+                        onClick={handleCopyAutoSizerToManualBoq}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1 font-sans"
+                        title="Copy latest auto sizer quote rows to this manual builder"
+                      >
+                        📋 Copy Auto Sizer
+                      </button>
+                      )}
+
+                      <select
+                        title="Saved quote for this selected customer"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const q = activeLead?.quotes?.find((quote: any) => quote.id === e.target.value);
+                            if (q) {
+                              if (window.confirm(`Load saved quote ${q.id} into Manual BOQ builder? This will overwrite current rows.`)) {
+                                handleLoadQuoteForEditing(q);
+                              }
+                            }
+                            e.target.value = "";
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        <option value="">📂 Load Saved Quote (customer)...</option>
+                        {getLeadManualQuotes(activeLead).map((q: any) => (
+                          <option key={q.id} value={q.id}>
+                            Quote {q.id} (Manual BOQ - {q.systemSizekW}kW)
+                          </option>
+                        ))}
+                        {(activeLead?.quotes || [])
+                          .filter((q: any) => q?.quote_type === "auto_sizer")
+                          .map((q: any) => (
+                            <option key={q.id} value={q.id}>
+                              Quote {q.id} (Auto Sizer - {q.systemSizekW}kW)
+                            </option>
+                          ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Overwrite BOQ rows with calculated sizer default layout?")) {
+                            applyPackage(systemSizekW || 10);
+                          }
+                        }}
+                        className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-xl cursor-pointer font-sans"
+                      >
+                        Reset to Defaults
+                      </button>
+    </>
+  );
+
+  return (
+    <>
+    <div id="sales-team-workspace" className="space-y-6 text-xs text-slate-200">
+      
+      {/* Information Header Banner Card */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-sm">
+        <div>
+          <span className="text-[10px] text-amber-400 font-bold tracking-wider font-mono bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+            SUNCHASER CRM &amp; GENERATIVE PROPOSAL DECK
+          </span>
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight text-white font-sans mt-2">
+            Quotation RESTUCTURE workspace
+          </h2>
+          <p className="text-slate-400 mt-1 text-xs">
+            Calculate system offsets, compile custom spreadsheet bills of quantities, audit PDF template layouts, and inventory real Pakistan solar parts.
+          </p>
+        </div>
+      </div>
+
+      <div className={`grid gap-8 items-start ${activeModule === "templates" || activeModule === "smart_quote_leads" ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-12"}`}>
+        {/* SIDE BAR: CRM TARGET CLIENT SELECTION — hidden in template workspace */}
+        {activeModule !== "templates" && activeModule !== "smart_quote_leads" && (
+        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-3 md:p-5 space-y-4 shadow-md text-left">
+          {isMobile ? (
+            <button
+              type="button"
+              data-testid="target-clients-toggle"
+              onClick={() => setTargetClientsOpen((open) => !open)}
+              aria-expanded={targetClientsOpen}
+              className="flex min-h-[48px] w-full items-center gap-3 border-b border-slate-800 pb-2 text-left"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold text-slate-100 font-sans">Target Clients</span>
+                <span className="block text-[10px] text-slate-500 font-sans">Active sales assignments</span>
+              </span>
+              <span className="shrink-0 rounded bg-slate-850 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-400">
+                {leads.length}
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                  targetClientsOpen ? "rotate-180" : ""
+                }`}
+                aria-hidden="true"
+              />
+            </button>
+          ) : (
+          <div className="border-b border-slate-800 pb-2 flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-bold text-slate-100 font-sans">Target Clients</h3>
+              <span className="text-[10px] text-slate-500 font-sans">Active sales assignments.</span>
+            </div>
+            <span className="bg-slate-850 px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 font-bold">
+              {leads.length}
+            </span>
+          </div>
+          )}
+
+          {(!isMobile || targetClientsOpen) && (
+          <div className="space-y-2.5 max-h-[420px] md:max-h-[620px] overflow-y-auto pr-1" data-testid="target-clients-list">
+            <button
+              type="button"
+              data-testid="quick-quotation-no-lead"
+              onClick={() => {
+                setSelectedLeadId(QUICK_QUOTE_LEAD_ID);
+                setEditingQuoteId(null);
+                setSizerEditingQuoteId(null);
+                setActiveModule("boq_builder");
+                if (isMobile) setTargetClientsOpen(false);
+              }}
+              className={`w-full p-4 rounded-2xl border text-left cursor-pointer transition ${
+                isQuickQuoteMode
+                  ? "bg-amber-500/10 border-amber-500/60 text-white shadow-lg"
+                  : "bg-slate-950 border-dashed border-amber-500/35 hover:bg-amber-500/5 text-slate-300"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-amber-300">⚡ Quick Quotation</div>
+                  <div className="mt-1 text-[10px] text-slate-400">No CRM lead • no customer record • PDF only</div>
+                </div>
+                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-[9px] font-bold text-amber-300">NO SAVE</span>
+              </div>
+            </button>
+            {leads.length > 0 ? (
+              leads.map((lead) => {
+                const isSelected = selectedLeadId === lead.id;
+                return (
+                  <button
+                    key={lead.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedLeadId(lead.id);
+                      setEditingQuoteId(null);
+                    }}
+                    className={`w-full p-4 rounded-2xl border text-left cursor-pointer transition ${
+                      isSelected
+                        ? "bg-slate-950 border-amber-500/40 text-white shadow-lg"
+                        : "bg-slate-950/70 border-slate-850 hover:bg-slate-800/50 text-slate-350"
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-1 font-sans">
+                      <span className="font-bold text-neutral-100 block max-w-[130px] truncate">{lead.name}</span>
+                      <div className="flex items-center gap-1">
+                        {onDeleteLead && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            title="Delete lead"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm("Delete this lead?")) {
+                                if (selectedLeadId === lead.id) setSelectedLeadId(null);
+                                onDeleteLead(lead.id);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (window.confirm("Delete this lead?")) {
+                                  if (selectedLeadId === lead.id) setSelectedLeadId(null);
+                                  onDeleteLead(lead.id);
+                                }
+                              }
+                            }}
+                            className="p-1 rounded-lg text-red-400 hover:bg-red-950/50 border border-transparent hover:border-red-900/40 cursor-pointer inline-flex"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </span>
+                        )}
+                        <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${
+                          isSelected ? "bg-amber-400 text-slate-950 font-bold" : "bg-slate-800 text-slate-400"
+                        }`}>
+                          {lead.status}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] font-mono text-slate-400 mb-2 truncate"><MapPin className="h-3 w-3 inline mr-1 text-amber-500" /> {formatLeadLocation(lead)}</p>
+                    
+                    <div className="flex justify-between text-[9px] font-mono text-slate-500 pt-1.5 border-t border-slate-800/50">
+                      <span>Units: {lead.monthlyUnits ? `${lead.monthlyUnits} kWh` : "0 kWh"}</span>
+                      <span className="text-amber-500 font-bold">Prob: {lead.conversionProbability || 50}%</span>
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="text-center py-12 text-slate-500 font-mono">No target clients available.</div>
+            )}
+          </div>
+          )}
+        </div>
+        )}
+
+        {/* MAIN CONFIGURATION AREA */}
+        <div className={activeModule === "templates" || activeModule === "smart_quote_leads" ? "col-span-full space-y-6" : "lg:col-span-9 space-y-6"}>
+          {activeLead || activeModule === "smart_quote_leads" ? (
+            <div className="space-y-6">
+              {activeModule !== "templates" && activeModule !== "smart_quote_leads" && activeLead && (
+              <>
+              {/* Client Briefing Profile summary card */}
+              <div className="bg-slate-900 border border-slate-850 p-5 rounded-3xl flex flex-col md:flex-row justify-between gap-4 text-left shadow-sm">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-white font-sans">
+                      {isQuickQuoteMode ? "Quick Quotation — No CRM Lead" : activeLead.name}
+                    </h3>
+                    <span className="text-[10px] bg-slate-800 text-slate-400 font-mono px-2 py-0.5 rounded-full">
+                      {isQuickQuoteMode ? "Not saved to CRM" : `ID: ${activeLead.id}`}
+                    </span>
+                  </div>
+                  {isQuickQuoteMode ? (
+                    <div className="mt-2.5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                      Enter the customer details inside Manual BOQ Builder. Nothing is added to Leads, Customers, or Generated Quotes.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 mt-2.5 text-xs text-slate-400 font-mono">
+                      <span className="truncate"><Mail className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.email || "No Email"}</span>
+                      <span><Phone className="h-3 w-3 inline mr-1 text-slate-500" /> {activeLead.phone}</span>
+                      <span><MapPin className="h-3 w-3 inline mr-1 text-slate-500" /> {formatLeadLocation(activeLead)}</span>
+                      <span><ClipboardList className="h-3 w-3 inline mr-1 text-slate-500" /> Assigned: {formatLeadAdvisor(activeLead.assignedSalesperson)}</span>
+                    </div>
+                  )}
+                  {staffUser && leadCustomerRecord && (
+                    <CustomerInvitationPanel
+                      customerName={activeLead.name}
+                      customerCode={leadCustomerRecord.customerCode}
+                      phone={activeLead.phone}
+                      compact
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-3 self-start md:self-end w-full md:max-w-md">
+                {!isQuickQuoteMode && (
+                  <WhatsAppModule
+                    staffUser={staffUser}
+                    preset="quotation"
+                    phone={clientPhone || activeLead.phone}
+                    onPhoneChange={setClientPhone}
+                    onPhonePersist={async (p) => {
+                      setClientPhone(p);
+                      await onUpdateLead(activeLead.id, { phone: p });
+                    }}
+                    customerName={activeLead.name}
+                    leadId={activeLead.id}
+                    templateVars={{
+                      customerName: activeLead.name,
+                      amount: activeLead.quotes?.slice(-1)[0]?.totalCost,
+                    }}
+                    compact
+                  />
+                )}
+                <div className="flex gap-2 flex-wrap">
+                  {!isQuickQuoteMode && (
+                    <button
+                      type="button"
+                      onClick={() => setClientWorkspaceOpen((open) => !open)}
+                      className="min-h-[44px] px-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-xs font-bold"
+                    >
+                      {clientWorkspaceOpen ? "Hide client workspace" : "Open Client Portal"}
+                    </button>
+                  )}
+                  {DESIGN_PROJECT_ENABLED && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveModule("roof_studio")}
+                    className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <DraftingCompass className="h-3.5 w-3.5" /> Roof Studio
+                  </button>
+                  )}
+                  {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                  <button
+                    type="button"
+                    disabled={!latestAutoSizerSavedQuote}
+                    title={!latestAutoSizerSavedQuote ? "Save a quote first" : "Download latest Auto Sizer PDF"}
+                    onClick={() => {
+                      if (!latestAutoSizerSavedQuote) return;
+                      void handleDownloadAutoSizerQuotePDF(latestAutoSizerSavedQuote.id);
+                    }}
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5 text-amber-500" /> Download Auto Sizer PDF
+                  </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={!latestManualSavedQuote}
+                    title={!latestManualSavedQuote ? "Save a quote first" : "Browser print may vary. Use Download PDF for final client sharing."}
+                    onClick={() => handlePrintManualQuotePDF()}
+                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer className="h-3.5 w-3.5 text-amber-500" /> Print Preview
+                  </button>
+                  <button
+                    type="button"
+                    disabled={(!isQuickQuoteMode && !latestManualSavedQuote) || downloadingQuotePdf}
+                    title={isQuickQuoteMode ? "Generate PDF without creating a CRM lead" : (!latestManualSavedQuote ? "Save a quote first" : "Downloads final A4 PDF generated by server")}
+                    onClick={() => handleDownloadManualQuotePDF()}
+                    className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-sans font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {quotePdfStatus || (downloadingQuotePdf ? "Downloading…" : "Download PDF")}
+                  </button>
+                </div>
+                </div>
+              </div>
+              </>
+              )}
+
+              {/* MODULE SELECTOR ROUTING TAB BAR */}
+              {isMobile && (
+                <button
+                  type="button"
+                  data-testid="sales-tools-toggle"
+                  onClick={() => setSalesToolsOpen((open) => !open)}
+                  aria-expanded={salesToolsOpen}
+                  aria-controls="sales-tools-panel"
+                  className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl border border-slate-850 bg-slate-950 px-4 py-3 text-left"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold text-slate-100 font-sans">Sales Tools</span>
+                    <span className="block truncate text-[10px] text-slate-500 font-mono">{activeModuleLabel}</span>
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                      salesToolsOpen ? "rotate-180" : ""
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+              )}
+              <div
+                className={
+                  isMobile
+                    ? `flex flex-col bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5 ${
+                        salesToolsOpen ? "" : "hidden"
+                      }`
+                    : "flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-850 gap-1.5"
+                }
+                id="sales-tools-panel"
+              >
+                {[
+                  { id: 'smart_quote_leads', label: `Smart Quote Leads (${smartQuoteLeads.length})`, icon: Inbox },
+                  { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
+                  ...(PROPOSAL_STUDIO_ENABLED
+                    ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
+                    : []),
+                  ...(DESIGN_PROJECT_ENABLED
+                    ? [{ id: 'roof_studio' as const, label: 'Roof Studio', icon: DraftingCompass }]
+                    : []),
+                  { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
+                  { id: 'templates', label: 'Quote Templates', icon: Layers },
+                  { id: 'quotes', label: 'Generated Quotes', icon: FileText },
+                  { id: 'products', label: 'Product Library', icon: Settings },
+                  ...(staffUser
+                    ? [{ id: 'inventory' as const, label: 'Inventory', icon: Package }]
+                    : []),
+                  ...(staffUser
+                    ? [{ id: 'after_sales' as const, label: 'After Sales Admin', icon: Headphones }]
+                    : []),
+                ].map((mod) => {
+                  const Icon = mod.icon;
+                  const isCurrent = activeModule === mod.id;
+                  return (
+                    <button
+                      key={mod.id}
+                      type="button"
+                      onClick={() => setActiveModule(mod.id as any)}
+                      onClickCapture={() => {
+                        if (isMobile) setSalesToolsOpen(false);
+                      }}
+                      className={`min-h-[48px] py-2 px-3 rounded-xl font-sans font-bold text-xs transition flex items-center gap-1.5 cursor-pointer md:flex-1 md:min-w-[120px] md:justify-center ${
+                        isCurrent
+                          ? 'bg-amber-500 text-slate-950 shadow'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{mod.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Editing active banner notice */}
+              {editingQuoteId && (
+                <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 p-3 rounded-2xl flex justify-between items-center text-left">
+                  <div>
+                    <strong className="block font-bold">⚠️ EDITING MODE ACTIVE: Quote #{editingQuoteId}</strong>
+                    <span className="text-[10px] font-mono">Any save or submit operations will overwrite this version instead of duplicating.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingQuoteId(null);
+                      if (activeModule === "boq_builder") {
+                        setBoqRows([]);
+                        setManualBoqItems([]);
+                        setProjectScopeSnapshot(undefined);
+                        if (activeLead) localStorage.removeItem(`sunchaser_boq_${activeLead.id}`);
+                      }
+                    }}
+                    className="bg-amber-500 text-slate-950 px-3 py-1 rounded-xl text-[10px] font-sans font-bold hover:bg-amber-400 cursor-pointer"
+                  >
+                    Cancel Edit
+                  </button>
+                </div>
+              )}
+
+              {activeModule === "smart_quote_leads" && (
+                <section className="rounded-3xl border border-slate-800 bg-slate-900 p-4 text-left shadow-sm md:p-6" data-testid="smart-quote-leads-workspace">
+                  <div className="flex flex-col gap-4 border-b border-slate-800 pb-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-amber-400">
+                        <Inbox className="h-5 w-5" />
+                        <h3 className="text-lg font-black text-white">Smart Quote Leads</h3>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">Clients who generated a self-service quotation from smartquote.sunchaserenergy.co.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-300">{smartQuoteLeads.length} total</span>
+                      {onRefreshState ? (
+                        <button type="button" onClick={onRefreshState} className="min-h-[42px] rounded-xl border border-slate-700 bg-slate-950 px-4 text-xs font-bold text-slate-200 hover:border-amber-500/50">Refresh</button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {smartQuoteLeads.length ? (
+                    <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                      {smartQuoteLeads.map((lead) => {
+                        const quote = parseSmartQuoteLeadNotes(lead.notes);
+                        const whatsappPhone = String(lead.phone || "").replace(/\D/g, "").replace(/^0/, "92");
+                        const generatedDate = quote?.generatedAt ? new Date(quote.generatedAt) : new Date(lead.createdAt);
+                        return (
+                          <article key={lead.id} className="rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <h4 className="truncate text-base font-black text-white">{lead.name}</h4>
+                                <a href={`tel:${lead.phone}`} className="mt-1 inline-flex items-center gap-1 text-sm font-bold text-amber-300 hover:text-amber-200"><Phone className="h-4 w-4" />{lead.phone}</a>
+                                <p className="mt-1 text-xs text-slate-500"><MapPin className="mr-1 inline h-3 w-3" />{formatLeadLocation(lead)}</p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-black uppercase text-emerald-300">{lead.status}</span>
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs">
+                              <div><span className="block text-slate-500">Quote</span><strong className="text-slate-100">{quote?.quoteNumber || "Saved quote"}</strong></div>
+                              <div><span className="block text-slate-500">Estimate</span><strong className="text-emerald-300">Rs. {(quote?.estimatePkr || 0).toLocaleString("en-PK")}</strong></div>
+                              <div><span className="block text-slate-500">System</span><strong className="text-slate-100">{quote?.system || "Not specified"}</strong></div>
+                              <div><span className="block text-slate-500">Generated</span><strong className="text-slate-100">{Number.isNaN(generatedDate.getTime()) ? "Unknown" : generatedDate.toLocaleString("en-PK")}</strong></div>
+                            </div>
+
+                            <dl className="mt-4 space-y-2 text-xs">
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Panels</dt><dd className="font-semibold text-slate-200">{quote?.panel || "Not specified"}</dd></div>
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Inverter</dt><dd className="font-semibold text-slate-200">{quote?.inverter || "Not specified"}</dd></div>
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Battery</dt><dd className="font-semibold text-slate-200">{quote?.battery || "Not specified"}</dd></div>
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Structure</dt><dd className="font-semibold text-slate-200">{quote?.structure || "Not specified"}</dd></div>
+                            </dl>
+
+                            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              <a href={`https://wa.me/${whatsappPhone}`} target="_blank" rel="noreferrer" className="grid min-h-[44px] place-items-center rounded-xl bg-emerald-600 px-3 text-xs font-black text-white hover:bg-emerald-500">WhatsApp</a>
+                              <a href={`tel:${lead.phone}`} className="grid min-h-[44px] place-items-center rounded-xl border border-slate-700 px-3 text-xs font-black text-slate-200 hover:bg-slate-800">Call</a>
+                              <button type="button" onClick={() => { setSelectedLeadId(lead.id); setActiveModule("boq_builder"); }} className="col-span-2 min-h-[44px] rounded-xl bg-amber-500 px-3 text-xs font-black text-slate-950 hover:bg-amber-400 sm:col-span-1">Open Lead</button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-5 rounded-2xl border border-dashed border-slate-700 p-10 text-center text-sm text-slate-400">No Smart Quote leads yet. New clients will appear here after entering their name and mobile number and pressing Generate My Quote.</div>
+                  )}
+                </section>
+              )}
+
+              {/* MODULE: Project Design Workspace (HelioScope) — RoofIntelligenceStudio is canvas-only inside */}
+              {activeModule === "proposal_studio" && PROPOSAL_STUDIO_ENABLED && <SolarProposalStudio />}
+              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && activeLead && (
+                <RoofStudioErrorBoundary title="Roof Studio failed to render">
+                  <ProjectDesignWorkspace
+                    lead={activeLead}
+                    sanctionedLoad={lescoSanctionedLoad || activeLead.sanctionedLoad}
+                  />
+                </RoofStudioErrorBoundary>
+              )}
+              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && !activeLead && (
+                <StudioEmptyState
+                  icon={DraftingCompass}
+                  title="Select a lead to open Roof Studio"
+                  description="Choose a customer from the left list, then open Roof Studio for Property Location, satellite imagery, and panel layout."
+                  className="studio-fade-in"
+                />
+              )}
+
+              {/* MODULE 1: AUTO SIZER VIEW */}
+              {activeModule === 'sizer' && (
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 text-left">
+                  
+                  {/* Left config form inputs */}
+                  <div className="xl:col-span-7 bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6">
+                    
+                    <div className="space-y-3.5">
+                      <div className="flex items-center gap-1.5 border-b border-slate-800 pb-2">
+                        <Upload className="h-4 w-4 text-amber-500" />
+                        <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">1. LESCO Bill Scanner &amp; Inputs</h4>
+                      </div>
+
+                      {/* OCR Scanner upload box */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">LESCO Electric bill scan (OCR)</label>
+                          <div className="border border-dashed border-slate-800 rounded-xl p-3 bg-slate-950/90 text-center hover:border-amber-500/50 transition relative group cursor-pointer">
+                            <input
+                              type="file"
+                              accept=".pdf,.png,.jpg,.jpeg"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+
+                                setBillFile(file);
+                                setBillLoading(true);
+                                setBillParsedData(null);
+
+                                setTimeout(() => {
+                                  const parsed = {
+                                    monthlyBill: 48000,
+                                    monthlyUnits: 1370,
+                                    location: activeLead ? activeLead.address.split(",").slice(-2).join(",").trim() || "Lahore, Pakistan" : "Lahore, Pakistan",
+                                    width: 32,
+                                    length: 28,
+                                    area: 896,
+                                    backupReq: "Essential Loads (Sunchaser Core 13.5kWh)",
+                                    fileName: file.name
+                                  };
+
+                                  const detectedSector = parsed.monthlyUnits > 3500 ? 'commercial' : 'residential';
+                                  setSystemSector(detectedSector);
+                                  const rawSize = recommendSystemSizeKw(parsed.monthlyUnits, sizingConfig);
+                                  const sectorMin = detectedSector === 'residential' ? 3.0 : 30.0;
+                                  const sectorMax = detectedSector === 'residential' ? 30.0 : 500.0;
+                                  const cappedSize = Number(Math.max(sectorMin, Math.min(sectorMax, rawSize)).toFixed(1));
+
+                                  setBillParsedData(parsed);
+                                  setFormMonthlyUnits(parsed.monthlyUnits);
+                                  setFormLocation(parsed.location);
+                                  setFormRoofWidth(parsed.width);
+                                  setFormRoofLength(parsed.length);
+                                  setBillLoading(false);
+                                }, 1500);
+                              }}
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                              disabled={billLoading}
+                            />
+                            {billLoading ? (
+                              <div className="py-2 flex flex-col items-center justify-center gap-1.5">
+                                <Loader2 className="h-6 w-6 text-amber-400 animate-spin" />
+                                <span className="text-[10px] text-slate-400">Scanning meter rates & history...</span>
+                              </div>
+                            ) : billParsedData ? (
+                              <div className="py-1 flex flex-col items-center justify-center">
+                                <CheckCircle2 className="h-6 w-6 text-emerald-400 animate-bounce" />
+                                <span className="text-[10px] text-slate-100 font-bold mt-0.5">OCR Scan Completed</span>
+                                <span className="text-[9px] text-slate-400 truncate max-w-[160px]">{billFile?.name}</span>
+                              </div>
+                            ) : (
+                              <div className="py-2 flex flex-col items-center justify-center gap-1">
+                                <Upload className="h-5 w-5 text-slate-500 group-hover:text-amber-500 transition" />
+                                <span className="text-[10px] text-slate-300 block">Drag bill PDF or click here</span>
+                                <span className="text-[8px] text-slate-500 font-mono block font-sans">Max file size 5MB</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Sector Type</label>
+                            <select
+                              value={systemSector}
+                              onChange={(e) => setSystemSector(e.target.value as any)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer focus:outline-none focus:border-amber-500"
+                            >
+                              <option value="residential">Residential (3.0kW - 30.0kW)</option>
+                              <option value="commercial">Commercial (30.0kW - 500.0kW)</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">
+                              Monthly Bill (PKR) · Tariff Rs {tariffRate}/kWh
+                            </label>
+                            <input
+                              type="number"
+                              value={formMonthlyBill || ""}
+                              onChange={(e) => {
+                                const bill = Number(e.target.value) || 0;
+                                setFormMonthlyBill(bill);
+                                const units = billToMonthlyUnits(bill, tariffRate);
+                                setFormMonthlyUnits(units);
+                                const kw = recommendSystemSizeKw(units, sizingConfig);
+                                if (kw > 0) setSystemSizekW(kw);
+                              }}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Monthly Units (kWh)</label>
+                            <input
+                              type="number"
+                              value={formMonthlyUnits}
+                              onChange={(e) => {
+                                const units = Number(e.target.value) || 0;
+                                setFormMonthlyUnits(units);
+                                const kw = recommendSystemSizeKw(units, sizingConfig);
+                                if (kw > 0) setSystemSizekW(kw);
+                              }}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Roof Space (W x L ft)</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              value={formRoofWidth}
+                              onChange={(e) => setFormRoofWidth(Number(e.target.value))}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
+                            <span className="text-slate-500 self-center">×</span>
+                            <input
+                              type="number"
+                              value={formRoofLength}
+                              onChange={(e) => setFormRoofLength(Number(e.target.value))}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Backup battery Pack</label>
+                          <select
+                            value={formBackupReq}
+                            onChange={(e) => setFormBackupReq(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer focus:outline-none"
+                          >
+                            <option value="None">None (Standard Grid-tied)</option>
+                            <option value="Essential Loads (Sunchaser Core 13.5kWh)">Essential Loads (1x Sunchaser Core 13.5kWh)</option>
+                            <option value="Whole Home Backup (2x Sunchaser Core 27kWh)">Whole Home Backup (2x Sunchaser Core 27kWh)</option>
+                            <option value="Off-Grid Prep (3x Sunchaser Core 40.5kWh)">Off-Grid Prep (3x Sunchaser Core 40.5kWh)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* QUICK PACKAGE BUILDER */}
+                    <div className="space-y-3.5 pt-3 border-t border-slate-800">
+                      <div className="flex items-center gap-1.5">
+                        <Tag className="h-4 w-4 text-amber-500" />
+                        <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">2. Quick Solar Packages (Pakistan Standards)</h4>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                        {PACKAGE_SYSTEM_SIZES_KW.map((kw) => (
+                          <button
+                            key={kw}
+                            type="button"
+                            onClick={() => applyPackage(kw)}
+                            className="bg-slate-950 hover:bg-slate-800 hover:text-amber-400 border border-slate-800 hover:border-amber-500/30 text-white font-mono py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer"
+                          >
+                            {kw}kW
+                          </button>
+                        ))}
+                      </div>
+                      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <h5 className="text-[10px] font-bold text-amber-300 uppercase tracking-wider font-mono">Everyday Auto Size</h5>
+                          <span className="text-[9px] text-slate-400 font-mono">6 / 8 / 10 kW company presets</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {AUTOSIZER_PRESET_SIZES_KW.map((kw) => (
+                            <button
+                              key={`auto-${kw}`}
+                              type="button"
+                              onClick={() => runAutoSizer(kw)}
+                              className={`font-mono py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                                Number(systemSizekW) === kw && snapshotHasItems(boqRows)
+                                  ? "bg-amber-500 text-slate-950"
+                                  : "bg-slate-950 hover:bg-slate-800 text-white border border-amber-500/40"
+                              }`}
+                            >
+                              Auto Size {kw}kW
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-sans leading-relaxed">
+                          Auto Size fills panels, inverter, cables and L2/L3 structure. Edit anything below. Re-run AutoSizer is the only action that replaces those edits.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* SIZER ACTIONS AND VALIDATIONS */}
+                    <div className="space-y-4 pt-3 border-t border-slate-800">
+                      {isHighUnits && (
+                        <div className="bg-amber-950/40 border border-amber-900/50 rounded-2xl p-4 space-y-3 text-left">
+                          <div className="flex items-start gap-2.5">
+                            <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                            <div className="space-y-1 text-xs">
+                              <h5 className="font-extrabold text-amber-400">High Consumption Warning</h5>
+                              <p className="text-slate-300 font-sans leading-relaxed">
+                                Monthly units entered ({formMonthlyUnits.toLocaleString()} kWh/mo) are exceptionally high for the {systemSector} sector.
+                                Please verify if this consumption is correct.
+                              </p>
+                            </div>
+                          </div>
+                          <label className="flex items-center gap-2 cursor-pointer select-none border-t border-amber-900/40 pt-2.5">
+                            <input
+                              type="checkbox"
+                              checked={confirmHighUnits}
+                              onChange={(e) => setConfirmHighUnits(e.target.checked)}
+                              className="rounded border-amber-900 text-amber-500 focus:ring-amber-500 bg-slate-950 h-4 w-4"
+                            />
+                            <span className="text-[11px] text-amber-400 font-bold font-sans">I confirm this high usage is correct</span>
+                          </label>
+                        </div>
+                      )}
+
+                      {submitError && (
+                        <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold">
+                          ❌ Error: {submitError}
+                        </div>
+                      )}
+
+                      {quoteCreatedConfirm && (
+                        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3.5 rounded-2xl text-[11px] font-sans font-bold flex flex-col gap-1.5 leading-snug">
+                          <div className="flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 animate-bounce" />
+                            <span>Solar proposal compiled &amp; synced! PDF created successfully.</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 uppercase font-mono font-bold block">System size (kW)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={systemSizekW}
+                          onChange={(e) => setSystemSizekW(Number(e.target.value) || 0)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white font-mono"
+                        />
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">System Equipment</h5>
+                          {snapshotHasItems(boqRows) ? (
+                            <span className="text-[9px] text-emerald-400 font-mono">snapshot ready · {boqRows.filter((r) => r.type === "item").length} items</span>
+                          ) : (
+                            <span className="text-[9px] text-slate-500 font-mono">Click Auto Size to fill</span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">System type</label>
+                            <select
+                              value={systemType}
+                              onChange={(e) => setSystemType(e.target.value as any)}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              <option value="On-grid">On-grid</option>
+                              <option value="Hybrid">Hybrid</option>
+                              <option value="Off-grid">Off-grid</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Panel brand</label>
+                            <select
+                              value={panelBrand}
+                              onChange={(e) => {
+                                const brand = e.target.value;
+                                setPanelBrand(brand);
+                                if (sizerPanelRow) {
+                                  patchNamedEquipmentRow("panel_row", {
+                                    brand,
+                                    name: `${brand} ${panelWattage}W Mono-PERC Solar Panels`,
+                                  }, "panel");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              {["Jinko", "Longi", "Canadian Solar", "JA Solar"].map((b) => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Panel wattage</label>
+                            <input
+                              type="number"
+                              value={panelWattage}
+                              onChange={(e) => {
+                                const wattage = Number(e.target.value) || 0;
+                                setPanelWattage(wattage);
+                                if (sizerPanelRow) {
+                                  patchNamedEquipmentRow("panel_row", {
+                                    name: `${panelBrand} ${wattage}W Mono-PERC Solar Panels`,
+                                  }, "panel");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Panel qty</label>
+                            <input
+                              type="number"
+                              value={sizerPanelRow?.qty ?? actualPanelCount}
+                              onChange={(e) => {
+                                const qty = Math.max(0, Number(e.target.value) || 0);
+                                if (sizerPanelRow) patchNamedEquipmentRow("panel_row", { qty }, "panel");
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Inverter brand</label>
+                            <select
+                              value={inverterBrand}
+                              onChange={(e) => {
+                                const brand = e.target.value;
+                                setInverterBrand(brand);
+                                if (sizerInverterRow) {
+                                  patchNamedEquipmentRow("inverter_row", {
+                                    brand,
+                                    name: `${brand} ${inverterCapacity} Smart Sync Inverter`,
+                                  }, "inverter");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              {["Knox", "Goodwe", "Solis", "Growatt"].map((b) => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Inverter capacity</label>
+                            <input
+                              value={inverterCapacity}
+                              onChange={(e) => {
+                                const capacity = e.target.value;
+                                setInverterCapacity(capacity);
+                                if (sizerInverterRow) {
+                                  patchNamedEquipmentRow("inverter_row", {
+                                    name: `${inverterBrand} ${capacity} Smart Sync Inverter`,
+                                  }, "inverter");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-2">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Battery</label>
+                            <select
+                              value={batteryOption}
+                              onChange={(e) => {
+                                const batt = e.target.value;
+                                setBatteryOption(batt);
+                                if (boqRows.some((r) => r.id === "battery_row")) {
+                                  patchNamedEquipmentRow("battery_row", { name: batt }, "battery");
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                            >
+                              <option value="None">None</option>
+                              <option value="Lithium Battery Pack 5.12kWh">Lithium Battery Pack 5.12kWh</option>
+                              <option value="Lithium Battery Pack 10.24kWh">Lithium Battery Pack 10.24kWh</option>
+                              <option value="Lithium Battery Pack 15.0kWh">Lithium Battery Pack 15.0kWh</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L3 Structure – 3 Panel Section</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerStructure?.l3 ?? 0}
+                              onChange={(e) => patchStructureKits(Math.max(0, Number(e.target.value) || 0), sizerStructure?.l2 ?? 0)}
+                              disabled={!snapshotHasItems(boqRows) || selectedStructure !== "standard"}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">L2 Structure – 2 Panel Section</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerStructure?.l2 ?? 0}
+                              onChange={(e) => patchStructureKits(sizerStructure?.l3 ?? 0, Math.max(0, Number(e.target.value) || 0))}
+                              disabled={!snapshotHasItems(boqRows) || selectedStructure !== "standard"}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">Validity (days)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={365}
+                              value={validityDays}
+                              onChange={(e) => setValidityDays(Math.max(1, Math.min(365, Number(e.target.value) || EXISTING_COMPANY_VALIDITY_DAYS)))}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">DC cable meters</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerDcRow?.qty ?? 0}
+                              onChange={(e) => patchNamedEquipmentRow("dc_cable_row", { qty: Math.max(0, Number(e.target.value) || 0) }, "cables")}
+                              disabled={!sizerDcRow}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] text-slate-500 uppercase font-mono font-bold">AC cable meters</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={sizerAcRow?.qty ?? 0}
+                              onChange={(e) => patchNamedEquipmentRow("ac_cable_row", { qty: Math.max(0, Number(e.target.value) || 0) }, "cables")}
+                              disabled={!sizerAcRow}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono disabled:opacity-40"
+                            />
+                          </div>
+                        </div>
+                        {selectedStructure === "standard" && sizerStructure && (
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            Structure positions: {sizerStructure.positions} / {sizerStructure.panelCount} panels
+                            {sizerStructure.remainder ? ` · remainder ${sizerStructure.remainder}` : ""}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => runAutoSizer(systemSizekW || 10)}
+                          className="font-sans font-bold text-xs py-2.5 px-3 rounded-xl border border-amber-500/40 bg-slate-950 text-amber-300 hover:bg-slate-800"
+                        >
+                          Re-run AutoSizer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleCopyAutoSizerToManualBoq();
+                          }}
+                          className="font-sans font-bold text-xs py-2.5 px-3 rounded-xl border border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-800"
+                        >
+                          Start Manual
+                        </button>
+                      </div>
+
+                      {sizerCustomerBoq.blocked && snapshotHasItems(boqRows) && (
+                        <div className="bg-amber-950/40 border border-amber-700/50 text-amber-200 p-3 rounded-2xl text-[11px] font-sans leading-relaxed">
+                          {sizerCustomerBoq.message} Preview can still list all {sizerCustomerBoq.itemCount} priced lines. Final customer PDF is blocked until items are consolidated.
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={savingQuote || !REQUIRE_EXPLICIT_QUOTE_SAVE}
+                        onClick={() => handleSaveSizerQuote()}
+                        className="w-full font-sans font-extrabold text-sm py-3 px-4 rounded-xl shadow flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 transition"
+                      >
+                        {savingQuote ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Saving Quote...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>{isQuickQuoteMode ? "Prepare Quick Quote" : "Save Quote"}</span>
+                          </>
+                        )}
+                      </button>
+                      <p className="text-[10px] text-slate-500 font-mono text-center">
+                        {isQuickQuoteMode ? "Quick quotation is prepared only for PDF export and is not stored in CRM." : "Save stores the current snapshot. AutoSizer will not overwrite edits unless you Re-run AutoSizer."}
+                      </p>
+                    </div>
+
+                  </div>
+
+                  {/* Right Column: Calculations Preview & AI briefing */}
+                  <div className="xl:col-span-5 space-y-6">
+                    
+                    {/* Technical values preview */}
+                    <div className="bg-slate-950 border border-slate-850 p-5 rounded-3xl space-y-4">
+                      <div className="flex justify-between items-center border-b border-slate-900 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Zap className="h-4 w-4 text-emerald-400" />
+                          <h4 className="text-[10px] font-bold text-slate-100 uppercase tracking-wider font-mono">Sizing Calculation Preview</h4>
+                        </div>
+                        <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[8px] font-mono font-bold">
+                          calculated
+                        </span>
+                      </div>
+
+                      {isRoofConstrained && (
+                        <div className="bg-amber-950/20 border border-amber-900/50 rounded-xl p-3 text-[10px] text-amber-300 leading-relaxed">
+                          ⚠️ <strong>Space Constrained:</strong> Consumption requires {calculatedSystemSizekW}kW but roof area limits panel array layout to <strong>{actualSystemSizekW}kW</strong> ({actualPanelCount} panels).
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3 font-mono text-xs">
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
+                          <span className="text-[8px] text-slate-500 uppercase block">Offset Requirement</span>
+                          <span className="text-xs font-bold text-white block mt-0.5">{sizerPreviewKw} kW Array</span>
+                        </div>
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
+                          <span className="text-[8px] text-slate-500 uppercase block">Solar Panel Count</span>
+                          <span className="text-xs font-bold text-slate-200 block mt-0.5">{actualPanelCount}x (580W panels)</span>
+                        </div>
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850 col-span-2">
+                          <span className="text-[8px] text-slate-500 uppercase block">Inverter Specification</span>
+                          <span className="text-[11px] font-bold text-slate-300 block mt-0.5">{inverterRec}</span>
+                        </div>
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850 col-span-2">
+                          <span className="text-[8px] text-slate-500 uppercase block">Storage Battery Option</span>
+                          <span className="text-[11px] font-bold text-slate-300 block mt-0.5">
+                            {formBackupReq.includes("None") ? "On-Grid (No Battery Backup)" : formBackupReq}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-center pt-1 font-mono text-[11px]">
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Monthly Generation</span>
+                          <span className="text-white font-bold block mt-0.5">{monthlyGeneration.toLocaleString()} kWh</span>
+                        </div>
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Savings Estimate</span>
+                          <span className="text-emerald-400 font-bold block mt-0.5">{formatPKR(monthlySavingsAmt)}/mo</span>
+                        </div>
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Estimated ROI</span>
+                          <span className="text-amber-500 font-bold block mt-0.5">{calculatedROI}% /yr</span>
+                        </div>
+                        <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-850/60">
+                          <span className="text-[8px] text-slate-500 uppercase block">Payback Duration</span>
+                          <span className="text-sky-400 font-bold block mt-0.5">{calculatedPayback} Years</span>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Gemini report card block */}
+                    <div className="bg-slate-905 bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4">
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Bot className="h-4 w-4 text-amber-500" />
+                          <h4 className="text-xs font-bold text-slate-200 font-sans">Gemini Technical Audit Briefing</h4>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={aiReportLoading}
+                          onClick={async () => {
+                            setAiReportLoading(true);
+                            setAiReportMarkdown(null);
+                            try {
+                              const res = await generateSizingRecommendations({
+                                monthlyBill: Math.round(formMonthlyUnits * tariffRate),
+                                roofSpace: calculatedRoofArea,
+                                shading: activeLead.shading || "None",
+                                stateLocation: formLocation,
+                                notes: formBackupReq
+                              });
+                              setAiReportMarkdown(res.recommendations);
+                            } catch (e: any) {
+                              setAiReportMarkdown("### AI Technical Sizing Checklist\nFailed to sync sizing recommendation report.");
+                            } finally {
+                              setAiReportLoading(false);
+                            }
+                          }}
+                          className="bg-slate-950 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/30 text-slate-300 text-[10px] font-sans font-bold px-2 py-1 rounded-lg cursor-pointer flex items-center gap-1 transition"
+                        >
+                          {aiReportLoading ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+                              <span>Analyzing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3 w-3 text-amber-500" />
+                              <span>Audit Sizing</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {aiReportMarkdown ? (
+                        <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-850 text-slate-350 text-[10px] leading-relaxed max-h-[220px] overflow-y-auto font-sans text-left">
+                          <div className="whitespace-pre-wrap">{aiReportMarkdown}</div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-500 text-[10px] text-center py-6 font-mono">
+                          Click "Audit Sizing" to generate deep structural feasibility details.
+                        </p>
+                      )}
+                    </div>
+
+                  </div>
+
+                </div>
+              )}
+
+              {/* MODULE 2: MANUAL BOQ BUILDER */}
+              {activeModule === 'boq_builder' && (
+                <div className="bg-slate-900 border border-slate-850 p-5 md:p-6 rounded-3xl space-y-6 text-left">
+
+                  {(loadedPackageId || loadedPackageName) && (
+                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-sans">
+                        <Package className="h-4 w-4 text-amber-400 shrink-0" />
+                        <span className="text-amber-200 font-bold">
+                          Loaded package: {loadedPackageName || `${loadedPackageSize}kW package`}
+                        </span>
+                        {hasUnsavedPackageChanges && (
+                          <span className="text-amber-300/90 text-[10px] font-mono uppercase tracking-wide">
                             Unsaved package changes
                           </span>
                         )}
