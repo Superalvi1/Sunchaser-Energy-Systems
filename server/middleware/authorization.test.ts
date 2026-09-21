@@ -116,6 +116,9 @@ await test("public route allowlist includes login and health", () => {
   assert.equal(isPublicApiRoute("GET", "/health"), true);
   assert.equal(isPublicApiRoute("POST", "/api/public/leads"), true);
   assert.equal(isPublicApiRoute("GET", "/api/public/leads"), true);
+  assert.equal(isPublicApiRoute("POST", "/api/public/smart-quotes"), true);
+  assert.equal(isPublicApiRoute("GET", "/api/public/smart-quotes"), true);
+  assert.equal(isPublicApiRoute("DELETE", "/api/public/smart-quotes"), false);
   assert.equal(isPublicApiRoute("GET", "/api/whatsapp/webhook"), true);
   assert.equal(isPublicApiRoute("POST", "/api/whatsapp/webhook"), true);
   assert.equal(isPublicApiRoute("POST", "/api/marketplace/cart"), true);
