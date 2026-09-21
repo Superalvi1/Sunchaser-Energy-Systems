@@ -490,7 +490,7 @@ export default function PublicQuotationBuilderPage() {
                   <option value={selectedInverter.bundle.batteryId}>{selectedInverter.bundle.batteryLabel}</option>
                 ) : batteries.map((battery) => (
                   <option key={battery.id} value={battery.id}>
-                    {battery.brand} {battery.capacityKwh}kWh{battery.protection ? ` ${battery.protection}` : ""} — {formatPkr(battery.pricePkr)}
+                    {battery.brand} {battery.model !== "Lithium" ? `${battery.model} · ` : ""}{battery.capacityKwh}kWh{battery.protection ? ` ${battery.protection}` : ""} — {formatPkr(battery.pricePkr)}
                   </option>
                 ))}
               </SelectField>
