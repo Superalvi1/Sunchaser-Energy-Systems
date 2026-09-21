@@ -10,15 +10,21 @@ import {
 
 export const PUBLIC_QUOTE_CAPACITIES = [6, 8, 10, 12, 15, 20] as const;
 export type PublicQuoteCapacity = (typeof PUBLIC_QUOTE_CAPACITIES)[number];
-export type PublicQuoteStructure = "standard-l2" | "standard-l3" | "elevated";
+export type PublicQuoteStructure = "standard-l2" | "standard-l3" | "elevated" | "mixed";
 
 export type PublicQuoteConfig = {
   systemCapacityKw: number;
   panelId: string;
   panelQuantity: number;
   inverterId: string;
+  inverterQuantity: number;
   batteryId: string;
+  batteryQuantity: number;
   structureType: PublicQuoteStructure;
+  structurePanelQuantity: number;
+  mixedL2StandQuantity: number;
+  mixedL3StandQuantity: number;
+  mixedElevatedPanelQuantity: number;
 };
 
 export type PublicQuoteLine = {
@@ -38,6 +44,7 @@ export type PublicQuoteCalculation = {
   inverter: InverterCatalogItem;
   battery: BatteryCatalogItem;
   structureLabel: string;
+  configuredStructureCapacityPanels: number;
   lines: PublicQuoteLine[];
   totalPkr: number;
 };
@@ -49,7 +56,6 @@ type FixedLine = Omit<PublicQuoteLine, "category"> & {
 type CapacityRule = {
   fixedLines: readonly FixedLine[];
   elevatedFixedLines?: readonly FixedLine[];
-  elevatedStructurePkr: number;
   standardFoundationPkr?: number;
 };
 
@@ -78,11 +84,9 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "6 sq.mm PVC/PVC solar cable", "GM/FAST or equivalent", 40, "meter", 250),
       pricedLine("Cables & protection", "DB boxes, breakers, SPDs and RCCB", "GADA/Chint; complete internal wiring", 1, "job", 15_000),
       pricedLine("Cables & protection", "Electrical and mechanical accessories", "PVC fittings, connectors, clamps, lugs and fasteners", 1, "job", 10_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 25_800),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
-    elevatedStructurePkr: 112_700,
     standardFoundationPkr: 10_000,
   },
   8: {
@@ -92,11 +96,9 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "DB boxes, breakers, SPDs and RCCB", "GADA/Chint 4P; complete internal wiring", 1, "job", 20_000),
       pricedLine("Cables & protection", "Electrical and mechanical accessories", "PVC fittings, connectors, clamps, lugs and fasteners", 1, "job", 10_000),
       pricedLine("Cables & protection", "Complete system earthing", "Less than 5 ohms; copper electrode and lightning arrester", 1, "job", 37_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 27_720),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
-    elevatedStructurePkr: 184_040,
     standardFoundationPkr: 12_000,
   },
   10: {
@@ -108,7 +110,6 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "Panel and SPD earthing wire", "GM CU/PVC", 1, "job", 10_000),
       pricedLine("Cables & protection", "AC/DC earthing bore and materials", "Less than 5 ohms", 1, "job", 18_000),
       pricedLine("Cables & protection", "Copper lightning arrester", "Copper", 1, "pcs", 5_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 41_280),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
@@ -120,11 +121,9 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "Panel and SPD earthing wire", "GM CU/PVC", 1, "job", 10_000),
       pricedLine("Cables & protection", "AC/DC earthing bore and materials", "Less than 5 ohms", 1, "job", 18_000),
       pricedLine("Cables & protection", "Copper lightning arrester", "Copper", 1, "pcs", 6_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 30_960),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
-    elevatedStructurePkr: 173_120,
     standardFoundationPkr: 16_000,
   },
   12: {
@@ -134,11 +133,9 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "DB boxes, breakers, SPDs and RCCB", "GADA/Chint; complete internal wiring", 1, "job", 18_000),
       pricedLine("Cables & protection", "Electrical and mechanical accessories", "PVC fittings, connectors, clamps, lugs and fasteners", 1, "job", 13_000),
       pricedLine("Cables & protection", "Complete system earthing", "Less than 5 ohms; copper electrode and lightning arrester", 1, "job", 35_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 49_020),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
-    elevatedStructurePkr: 207_280,
   },
   15: {
     fixedLines: [
@@ -147,11 +144,9 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "DB boxes, breakers, SPDs and RCCB", "GADA/Chint 4P; complete internal wiring", 1, "job", 20_000),
       pricedLine("Cables & protection", "Electrical and mechanical accessories", "PVC fittings, connectors, clamps, lugs and fasteners", 1, "job", 10_000),
       pricedLine("Cables & protection", "Complete system earthing", "Less than 5 ohms; copper electrode and lightning arrester", 1, "job", 37_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 46_440),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
-    elevatedStructurePkr: 206_320,
   },
   20: {
     fixedLines: [
@@ -160,11 +155,9 @@ export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, C
       pricedLine("Cables & protection", "DB boxes, breakers, SPDs and RCCB", "GADA/Chint; complete internal wiring", 1, "job", 30_000),
       pricedLine("Cables & protection", "Electrical and mechanical accessories", "PVC fittings, connectors, clamps, lugs and fasteners", 1, "job", 15_000),
       pricedLine("Cables & protection", "Complete system earthing", "Less than 5 ohms; copper electrode and lightning arrester", 1, "job", 40_000),
-      pricedLine("Services", "Installation and electrical wiring", "Complete installation", 1, "job", 82_560),
       pricedLine("Services", "Transportation", "Within standard service area", 1, "job", 10_000),
       pricedLine("Services", "Survey, design, testing and commissioning", "Project management", 1, "job", 5_000),
     ],
-    elevatedStructurePkr: 348_240,
   },
 };
 
@@ -187,8 +180,12 @@ export function publicQuoteInverters(capacityKw: number): InverterCatalogItem[] 
 }
 
 export function publicQuoteBatteries(capacityKw: number): BatteryCatalogItem[] {
-  const capacities = capacityKw <= 10 ? new Set([5, 10, 16]) : capacityKw <= 12 ? new Set([10, 16]) : new Set([16]);
-  return BATTERY_CATALOG.filter((item) => !item.bundleOnly && capacities.has(item.capacityKwh));
+  return BATTERY_CATALOG
+    .filter((item) => !item.bundleOnly)
+    .sort((a, b) => {
+      const target = capacityKw <= 10 ? 5 : capacityKw <= 12 ? 10 : 16;
+      return Math.abs(a.capacityKwh - target) - Math.abs(b.capacityKwh - target);
+    });
 }
 
 export function recommendedPanelQuantity(capacityKw: number, panelWatts: number): number {
@@ -204,8 +201,14 @@ export function defaultPublicQuoteConfig(capacityKw: PublicQuoteCapacity = 8): P
     panelId: panel.id,
     panelQuantity: recommendedPanelQuantity(capacityKw, panel.watts),
     inverterId: inverter.id,
+    inverterQuantity: 1,
     batteryId: inverter.bundle?.batteryId || battery.id,
+    batteryQuantity: 1,
     structureType: "standard-l2",
+    structurePanelQuantity: recommendedPanelQuantity(capacityKw, panel.watts),
+    mixedL2StandQuantity: Math.ceil(recommendedPanelQuantity(capacityKw, panel.watts) / 2),
+    mixedL3StandQuantity: 0,
+    mixedElevatedPanelQuantity: 0,
   };
 }
 
@@ -226,14 +229,21 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   if (!Number.isInteger(config.panelQuantity) || config.panelQuantity < 1 || config.panelQuantity > 200) {
     throw new PublicQuoteConfigurationError("Panel quantity must be a whole number between 1 and 200.");
   }
+  if (!Number.isInteger(config.inverterQuantity) || config.inverterQuantity < 1 || config.inverterQuantity > 10) {
+    throw new PublicQuoteConfigurationError("Inverter quantity must be a whole number between 1 and 10.");
+  }
+  if (!Number.isInteger(config.batteryQuantity) || config.batteryQuantity < 1 || config.batteryQuantity > 20) {
+    throw new PublicQuoteConfigurationError("Battery quantity must be a whole number between 1 and 20.");
+  }
 
   const bundledBattery = inverter.bundle
     ? byId(BATTERY_CATALOG, inverter.bundle.batteryId, "included battery")
     : null;
   const battery = bundledBattery || byId(BATTERY_CATALOG, config.batteryId, "battery");
   if (!bundledBattery && !publicQuoteBatteries(capacity).some((item) => item.id === battery.id)) {
-    throw new PublicQuoteConfigurationError(`${battery.capacityKwh} kWh ${battery.brand} is not approved for the ${capacity} kW tier.`);
+    throw new PublicQuoteConfigurationError("Please select a battery from the approved catalog.");
   }
+  const batteryQuantity = bundledBattery ? config.inverterQuantity : config.batteryQuantity;
 
   const panelUnitPrice = panel.watts * panel.pricePerWattPkr;
   const equipmentLines: PublicQuoteLine[] = [
@@ -250,47 +260,81 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
       category: "Equipment",
       description: `${inverter.brand} ${inverter.capacityKw} kW hybrid inverter`,
       specification: [inverter.phase === "three" ? "3-phase" : "single-phase", inverter.protection, inverter.voltageClass, inverter.bundle ? "battery bundle" : ""].filter(Boolean).join(" · "),
-      quantity: 1,
+      quantity: config.inverterQuantity,
       unit: "pcs",
       unitPricePkr: inverter.pricePkr,
-      totalPkr: inverter.pricePkr,
+      totalPkr: inverter.pricePkr * config.inverterQuantity,
     },
     {
       category: "Equipment",
       description: `${battery.brand} ${battery.capacityKwh} kWh lithium battery`,
       specification: inverter.bundle ? "Included in FOX ESS inverter bundle" : [battery.model, battery.protection, battery.voltageClass].filter(Boolean).join(" · "),
-      quantity: 1,
+      quantity: batteryQuantity,
       unit: "pcs",
       unitPricePkr: inverter.bundle ? 0 : battery.pricePkr,
-      totalPkr: inverter.bundle ? 0 : battery.pricePkr,
+      totalPkr: inverter.bundle ? 0 : battery.pricePkr * batteryQuantity,
     },
   ];
 
-  let structureLabel = "Elevated structure (on-site fabrication)";
-  let structurePrice = rule.elevatedStructurePkr;
-  let structureQuantity = 1;
-  let structureUnit = "job";
-  let structureSpecification = "Capacity-specific H-beam/C-channel structure, finishing and foundation";
-  if (config.structureType !== "elevated") {
-    const standType = config.structureType === "standard-l3" ? "l3" : "l2";
-    const stand = standardStandPrice(config.panelQuantity, standType);
-    structureLabel = `${standType.toUpperCase()} standard panel stands`;
-    structurePrice = stand.totalPricePkr;
-    structureQuantity = stand.standCount;
-    structureUnit = "stands";
-    structureSpecification = `${standType === "l2" ? 2 : 3} panels per stand`;
-  }
-  const structureLine: PublicQuoteLine = {
-    category: "Structure",
-    description: structureLabel,
-    specification: structureSpecification,
-    quantity: structureQuantity,
-    unit: structureUnit,
-    unitPricePkr: structureQuantity === 1 ? structurePrice : structurePrice / structureQuantity,
-    totalPkr: structurePrice,
+  const validateStructureQuantity = (value: number, label: string, max: number) => {
+    if (!Number.isInteger(value) || value < 0 || value > max) {
+      throw new PublicQuoteConfigurationError(`${label} must be a whole number between 0 and ${max}.`);
+    }
   };
+  validateStructureQuantity(config.structurePanelQuantity, "Structure panel capacity", 300);
+  validateStructureQuantity(config.mixedL2StandQuantity, "L2 stand quantity", 150);
+  validateStructureQuantity(config.mixedL3StandQuantity, "L3 stand quantity", 100);
+  validateStructureQuantity(config.mixedElevatedPanelQuantity, "Elevated panel capacity", 300);
+
+  let structureLabel = "";
+  let configuredStructureCapacityPanels = config.structurePanelQuantity;
+  const structureLines: PublicQuoteLine[] = [];
+  if (config.structureType === "elevated") {
+    if (config.structurePanelQuantity < 1) throw new PublicQuoteConfigurationError("Elevated structure capacity must be at least 1 panel.");
+    const total = config.structurePanelQuantity * panel.watts * 16;
+    structureLabel = `Elevated structure for ${config.structurePanelQuantity} panels`;
+    structureLines.push({
+      category: "Structure",
+      description: "Elevated structure (on-site fabrication)",
+      specification: `${config.structurePanelQuantity} panels × ${panel.watts}W × Rs. 16/W`,
+      quantity: config.structurePanelQuantity,
+      unit: "panel capacity",
+      unitPricePkr: panel.watts * 16,
+      totalPkr: total,
+    });
+  } else if (config.structureType === "mixed") {
+    configuredStructureCapacityPanels = config.mixedL2StandQuantity * 2 + config.mixedL3StandQuantity * 3 + config.mixedElevatedPanelQuantity;
+    if (configuredStructureCapacityPanels < 1) throw new PublicQuoteConfigurationError("Mixed structure must include at least one stand or elevated panel.");
+    structureLabel = `Mixed structure for ${configuredStructureCapacityPanels} panels`;
+    if (config.mixedL2StandQuantity > 0) structureLines.push({
+      category: "Structure", description: "L2 standard panel stands", specification: "2 panels per stand · Rs. 4,500 per stand",
+      quantity: config.mixedL2StandQuantity, unit: "stands", unitPricePkr: 4_500, totalPkr: config.mixedL2StandQuantity * 4_500,
+    });
+    if (config.mixedL3StandQuantity > 0) structureLines.push({
+      category: "Structure", description: "L3 standard panel stands", specification: "3 panels per stand · Rs. 7,200 per stand",
+      quantity: config.mixedL3StandQuantity, unit: "stands", unitPricePkr: 7_200, totalPkr: config.mixedL3StandQuantity * 7_200,
+    });
+    if (config.mixedElevatedPanelQuantity > 0) structureLines.push({
+      category: "Structure", description: "Elevated structure (on-site fabrication)", specification: `${config.mixedElevatedPanelQuantity} panels × ${panel.watts}W × Rs. 16/W`,
+      quantity: config.mixedElevatedPanelQuantity, unit: "panel capacity", unitPricePkr: panel.watts * 16, totalPkr: config.mixedElevatedPanelQuantity * panel.watts * 16,
+    });
+  } else {
+    if (config.structurePanelQuantity < 1) throw new PublicQuoteConfigurationError("Standard structure capacity must be at least 1 panel.");
+    const standType = config.structureType === "standard-l3" ? "l3" : "l2";
+    const stand = standardStandPrice(config.structurePanelQuantity, standType);
+    structureLabel = `${standType.toUpperCase()} standard stands for ${config.structurePanelQuantity} panels`;
+    structureLines.push({
+      category: "Structure",
+      description: `${standType.toUpperCase()} standard panel stands`,
+      specification: `${standType === "l2" ? 2 : 3} panels per stand · rounded up for ${config.structurePanelQuantity}-panel capacity`,
+      quantity: stand.standCount,
+      unit: "stands",
+      unitPricePkr: standType === "l2" ? 4_500 : 7_200,
+      totalPkr: stand.totalPricePkr,
+    });
+  }
   const foundationLine: PublicQuoteLine[] =
-    config.structureType !== "elevated" && rule.standardFoundationPkr
+    (config.structureType === "standard-l2" || config.structureType === "standard-l3") && rule.standardFoundationPkr
       ? [{
           category: "Structure",
           description: "Foundation work for standard structure",
@@ -304,7 +348,16 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   const fixedLines = config.structureType === "elevated" && rule.elevatedFixedLines
     ? rule.elevatedFixedLines
     : rule.fixedLines;
-  const lines = [...equipmentLines, ...fixedLines, structureLine, ...foundationLine];
+  const installationLine: PublicQuoteLine = {
+    category: "Services",
+    description: "Installation and electrical wiring",
+    specification: `${config.panelQuantity} panels × ${panel.watts}W × Rs. 4/W`,
+    quantity: config.panelQuantity,
+    unit: "panels",
+    unitPricePkr: panel.watts * 4,
+    totalPkr: config.panelQuantity * panel.watts * 4,
+  };
+  const lines = [...equipmentLines, ...fixedLines, ...structureLines, ...foundationLine, installationLine];
   return {
     systemCapacityKw: capacity,
     configuredPanelCapacityKw: (panel.watts * config.panelQuantity) / 1_000,
@@ -312,6 +365,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
     inverter,
     battery,
     structureLabel,
+    configuredStructureCapacityPanels,
     lines,
     totalPkr: lines.reduce((sum, item) => sum + item.totalPkr, 0),
   };
