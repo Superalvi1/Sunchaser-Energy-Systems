@@ -34,3 +34,8 @@ export {
   validatePublicLeadPayload,
   type PublicLeadInput,
 } from "./publicLeadValidation.ts";
+export {
+  toPublicLeadInput,
+  validateSmartQuoteLeadPayload,
+  type SmartQuoteLeadInput,
+} from "./smartQuoteLead.ts";
