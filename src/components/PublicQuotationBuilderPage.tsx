@@ -3,6 +3,8 @@ import {
   CheckCircle2,
   ChevronDown,
   FileDown,
+  ImageDown,
+  LoaderCircle,
   MessageCircle,
   Minus,
   Plus,
@@ -34,6 +36,91 @@ function formatPkr(value: number) {
 function makeQuoteNumber() {
   const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
   return `SES-${date}-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+function safeQuoteFilename(quoteNumber: string, extension: "pdf" | "png") {
+  return `Sunchaser-Quotation-${quoteNumber.replace(/[^a-zA-Z0-9-]/g, "-")}.${extension}`;
+}
+
+async function renderQuotationCanvas() {
+  const quotation = document.getElementById("generated-quotation");
+  if (!quotation) throw new Error("Please generate the quotation before saving it.");
+  await document.fonts?.ready;
+  const { default: html2canvas } = await import("html2canvas");
+  return html2canvas(quotation, {
+    backgroundColor: "#ffffff",
+    scale: 2,
+    useCORS: true,
+    logging: false,
+    windowWidth: 1100,
+    ignoreElements: (element) => element.classList.contains("public-quote-no-print"),
+    onclone: (clonedDocument) => {
+      const clonedQuotation = clonedDocument.getElementById("generated-quotation");
+      if (!clonedQuotation) return;
+      clonedQuotation.style.width = "900px";
+      clonedQuotation.style.maxWidth = "none";
+      clonedQuotation.style.margin = "0";
+      clonedQuotation.style.borderRadius = "0";
+      clonedQuotation.style.boxShadow = "none";
+      clonedQuotation.querySelectorAll<HTMLElement>(".public-quote-no-print").forEach((element) => {
+        element.style.display = "none";
+      });
+    },
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not create the quotation file.")), type, quality);
+  });
+}
+
+async function saveOrShareFile(blob: Blob, filename: string, title: string) {
+  const file = new File([blob], filename, { type: blob.type });
+  const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+  const isTouchDevice = navigator.maxTouchPoints > 0;
+  if (isTouchDevice && nav.canShare?.({ files: [file] }) && navigator.share) {
+    await navigator.share({ files: [file], title });
+    return "share" as const;
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return "download" as const;
+}
+
+async function createQuotationPdf(canvas: HTMLCanvasElement) {
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+  const margin = 8;
+  const usableWidth = 210 - margin * 2;
+  const usableHeight = 297 - margin * 2;
+  const sliceHeight = Math.floor((canvas.width * usableHeight) / usableWidth);
+  let offsetY = 0;
+  let page = 0;
+
+  while (offsetY < canvas.height) {
+    const height = Math.min(sliceHeight, canvas.height - offsetY);
+    const pageCanvas = document.createElement("canvas");
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = height;
+    const context = pageCanvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare the PDF page.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    context.drawImage(canvas, 0, offsetY, canvas.width, height, 0, 0, canvas.width, height);
+    if (page > 0) pdf.addPage();
+    const renderedHeight = (height * usableWidth) / canvas.width;
+    pdf.addImage(pageCanvas.toDataURL("image/jpeg", 0.94), "JPEG", margin, margin, usableWidth, renderedHeight, undefined, "FAST");
+    offsetY += height;
+    page += 1;
+  }
+  return pdf.output("blob");
 }
 
 function SelectField({
@@ -165,6 +252,8 @@ export default function PublicQuotationBuilderPage() {
   const [clientCity, setClientCity] = useState("");
   const [generated, setGenerated] = useState(false);
   const [quoteNumber, setQuoteNumber] = useState(makeQuoteNumber);
+  const [exporting, setExporting] = useState<"pdf" | "image" | null>(null);
+  const [exportMessage, setExportMessage] = useState("");
 
   useEffect(() => {
     const previous = document.title;
@@ -249,12 +338,45 @@ export default function PublicQuotationBuilderPage() {
     window.open(`https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   };
 
+  const savePdf = async () => {
+    setExporting("pdf");
+    setExportMessage("");
+    try {
+      const canvas = await renderQuotationCanvas();
+      const blob = await createQuotationPdf(canvas);
+      const method = await saveOrShareFile(blob, safeQuoteFilename(quoteNumber, "pdf"), `Sunchaser quotation ${quoteNumber}`);
+      setExportMessage(method === "share" ? "PDF is ready. Choose Save to Files or share it." : "PDF downloaded successfully.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setExportMessage(error instanceof Error ? error.message : "Could not save the PDF. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const savePicture = async () => {
+    setExporting("image");
+    setExportMessage("");
+    try {
+      const canvas = await renderQuotationCanvas();
+      const blob = await canvasToBlob(canvas, "image/png");
+      const method = await saveOrShareFile(blob, safeQuoteFilename(quoteNumber, "png"), `Sunchaser quotation ${quoteNumber}`);
+      setExportMessage(method === "share" ? "Picture is ready. Choose Save Image or share it." : "Quotation picture downloaded successfully.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setExportMessage(error instanceof Error ? error.message : "Could not save the picture. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const reset = () => {
     setConfig(defaultPublicQuoteConfig(8));
     setClientName("");
     setClientPhone("");
     setClientCity("");
     setGenerated(false);
+    setExportMessage("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -532,11 +654,19 @@ export default function PublicQuotationBuilderPage() {
             </div>
           </div>
 
-          <div className="public-quote-no-print mt-7 grid gap-3 sm:grid-cols-3">
-            <button type="button" onClick={() => window.print()} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-amber-400 px-5 font-black text-slate-950"><FileDown className="h-5 w-5" /> Save as PDF</button>
-            <button type="button" onClick={sendToWhatsApp} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 font-black text-white"><MessageCircle className="h-5 w-5" /> Send on WhatsApp</button>
-            <button type="button" onClick={reset} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 font-black text-slate-800"><RotateCcw className="h-5 w-5" /> Start again</button>
+          <div className="public-quote-no-print mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <button type="button" disabled={Boolean(exporting)} onClick={savePdf} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 disabled:cursor-wait disabled:opacity-60">
+              {exporting === "pdf" ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <FileDown className="h-5 w-5" />}
+              {exporting === "pdf" ? "Preparing PDF..." : "Save PDF"}
+            </button>
+            <button type="button" disabled={Boolean(exporting)} onClick={savePicture} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-sky-600 px-4 font-black text-white disabled:cursor-wait disabled:opacity-60">
+              {exporting === "image" ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImageDown className="h-5 w-5" />}
+              {exporting === "image" ? "Preparing image..." : "Save Picture"}
+            </button>
+            <button type="button" onClick={sendToWhatsApp} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 font-black text-white"><MessageCircle className="h-5 w-5" /> WhatsApp</button>
+            <button type="button" onClick={reset} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 font-black text-slate-800"><RotateCcw className="h-5 w-5" /> Start again</button>
           </div>
+          {exportMessage ? <div className="public-quote-no-print mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">{exportMessage}</div> : null}
           <div className="mt-7 flex items-center justify-center gap-2 text-center text-xs text-slate-400"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Generated instantly—no account or laptop required.</div>
         </section>
       ) : null}
