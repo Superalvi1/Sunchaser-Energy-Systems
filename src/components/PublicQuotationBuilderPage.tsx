@@ -46,7 +46,7 @@ async function renderQuotationCanvas() {
   const quotation = document.getElementById("generated-quotation");
   if (!quotation) throw new Error("Please generate the quotation before saving it.");
   await document.fonts?.ready;
-  const { default: html2canvas } = await import("html2canvas");
+  const { default: html2canvas } = await import("html2canvas-pro");
   return html2canvas(quotation, {
     backgroundColor: "#ffffff",
     scale: 2,
