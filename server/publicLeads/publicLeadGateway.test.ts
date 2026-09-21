@@ -21,6 +21,7 @@ import {
 import { createPublicLeadRouter } from "./publicLeadRoutes.ts";
 import { createPublicLead } from "./publicLeadService.ts";
 import { validatePublicLeadPayload } from "./publicLeadValidation.ts";
+import { toPublicLeadInput, validateSmartQuoteLeadPayload } from "./smartQuoteLead.ts";
 
 let failed = 0;
 
@@ -130,6 +131,37 @@ await test("validatePublicLeadPayload rejects invalid auth fields and unknown ke
   });
   assert.equal(unknown.ok, false);
   if (!unknown.ok) assert.match(unknown.error, /Unknown field/);
+});
+
+const validSmartQuoteBody = {
+  name: "Hassan Ali",
+  phone: "03001234567",
+  city: "Lahore",
+  quoteNumber: "SES-20260921-1234",
+  systemCapacityKw: 8,
+  estimatedTotalPkr: 1_328_595,
+  panel: "13 × AIKO 645W",
+  inverter: "1 × itel 8kW",
+  battery: "1 × Dyness PowerBrick MAX 16.08kWh",
+  structure: "L2 standard stands (13 panels)",
+  generatedAt: "2026-09-21T06:52:00.000Z",
+};
+
+await test("Smart Quote validation builds a server-owned CRM lead", () => {
+  const validation = validateSmartQuoteLeadPayload(validSmartQuoteBody);
+  assert.equal(validation.ok, true);
+  if (!validation.ok) return;
+  const lead = toPublicLeadInput(validation.value);
+  assert.equal(lead.leadSource, "Smart Quote");
+  assert.equal(lead.email, "");
+  assert.match(lead.notes || "", /Estimate: PKR 1328595/);
+  assert.match(lead.notes || "", /Dyness PowerBrick MAX/);
+});
+
+await test("Smart Quote validation rejects incomplete or arbitrary fields", () => {
+  assert.equal(validateSmartQuoteLeadPayload({ ...validSmartQuoteBody, phone: "1" }).ok, false);
+  assert.equal(validateSmartQuoteLeadPayload({ ...validSmartQuoteBody, systemCapacityKw: 9 }).ok, false);
+  assert.equal(validateSmartQuoteLeadPayload({ ...validSmartQuoteBody, leadSource: "Injected" }).ok, false);
 });
 
 await test("normalizeIdempotencyKey rejects unsafe keys", () => {
@@ -261,6 +293,45 @@ await test("integration: valid request succeeds with leadId", async () => {
       assert.equal(res.body.success, true);
       assert.equal(res.body.message, "Lead created");
       assert.ok(String(res.body.leadId).startsWith("lead-"));
+    }
+  );
+});
+
+await test("integration: Smart Quote creates a lead without login or API key", async () => {
+  let captured: any = null;
+  await withServer(
+    async (lead) => {
+      captured = lead;
+      return { leadId: lead.id };
+    },
+    new MapIdempotencyStore(),
+    new Map(),
+    async (base) => {
+      const res = await postJson(base, "/api/public/smart-quotes", validSmartQuoteBody);
+      assert.equal(res.status, 201);
+      assert.equal(res.body.success, true);
+      assert.equal(captured.leadSource, "Smart Quote");
+      assert.equal(captured.phone, "03001234567");
+    }
+  );
+});
+
+await test("integration: duplicate Smart Quote number is idempotent", async () => {
+  let persistCount = 0;
+  await withServer(
+    async (lead) => {
+      persistCount += 1;
+      return { leadId: lead.id };
+    },
+    new MapIdempotencyStore(),
+    new Map(),
+    async (base) => {
+      const first = await postJson(base, "/api/public/smart-quotes", validSmartQuoteBody);
+      const second = await postJson(base, "/api/public/smart-quotes", validSmartQuoteBody);
+      assert.equal(first.status, 201);
+      assert.equal(second.status, 200);
+      assert.equal(first.body.leadId, second.body.leadId);
+      assert.equal(persistCount, 1);
     }
   );
 });

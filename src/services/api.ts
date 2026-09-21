@@ -3177,6 +3177,36 @@ export async function submitPublicLead(payload: {
   return res.json() as Promise<{ success: boolean; leadId: string; message: string }>;
 }
 
+export type PublicSmartQuoteLeadPayload = {
+  name: string;
+  phone: string;
+  city?: string;
+  quoteNumber: string;
+  systemCapacityKw: number;
+  estimatedTotalPkr: number;
+  panel: string;
+  inverter: string;
+  battery: string;
+  structure: string;
+  generatedAt: string;
+};
+
+export async function submitPublicSmartQuoteLead(payload: PublicSmartQuoteLeadPayload) {
+  const res = await fetch(`${API_BASE_URL}/api/public/smart-quotes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": `smart-quote:${payload.quoteNumber}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Could not save your quote details. Please try again.");
+  }
+  return data as { success: boolean; leadId: string; message: string };
+}
+
 
 // ---------------------------------------------------------------------------
 // Marketplace CEO auto-import (Super Admin JWT)

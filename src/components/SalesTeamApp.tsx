@@ -81,6 +81,7 @@ import {
   type ProjectScopeState,
 } from "../lib/quoteProjectScope";
 import { installationChargesFromBoqRow } from "../lib/quoteCommercialMath";
+import { isSmartQuoteLead, parseSmartQuoteLeadNotes } from "../lib/smartQuoteLead";
 import { buildSavedQuoteTermsSnapshot, termsSnapshotPlainText } from "../lib/quoteTermsSnapshot";
 import {
   mergeContentLibrary,
@@ -167,6 +168,7 @@ interface SalesTeamAppProps {
 const PROPOSAL_STUDIO_ENABLED = isProposalStudioEnabled();
 /** Display names for the Sales Advisor tool tabs (used by the mobile "Sales Tools" summary). */
 const SALES_MODULE_LABELS: Record<string, string> = {
+  smart_quote_leads: "Smart Quote Leads",
   sizer: "Auto Sizer",
   proposal_studio: "Proposal Studio",
   roof_studio: "Roof Studio",
@@ -269,8 +271,12 @@ export default function SalesTeamApp({
 
   // Modular routing tab selector
   const [activeModule, setActiveModule] = useState<
-    "sizer" | "proposal_studio" | "roof_studio" | "boq_builder" | "templates" | "quotes" | "products" | "inventory" | "after_sales"
+    "smart_quote_leads" | "sizer" | "proposal_studio" | "roof_studio" | "boq_builder" | "templates" | "quotes" | "products" | "inventory" | "after_sales"
   >("boq_builder");
+  const smartQuoteLeads = useMemo(
+    () => leads.filter(isSmartQuoteLead).sort((a, b) => Date.parse(b.createdAt || "") - Date.parse(a.createdAt || "")),
+    [leads],
+  );
 
   const isMobile = useIsMobile();
   // Phone-only disclosure state. Desktop renders these sections expanded as before.
@@ -3060,9 +3066,9 @@ export default function SalesTeamApp({
         </div>
       </div>
 
-      <div className={`grid gap-8 items-start ${activeModule === "templates" ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-12"}`}>
+      <div className={`grid gap-8 items-start ${activeModule === "templates" || activeModule === "smart_quote_leads" ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-12"}`}>
         {/* SIDE BAR: CRM TARGET CLIENT SELECTION — hidden in template workspace */}
-        {activeModule !== "templates" && (
+        {activeModule !== "templates" && activeModule !== "smart_quote_leads" && (
         <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-3 md:p-5 space-y-4 shadow-md text-left">
           {isMobile ? (
             <button
@@ -3196,10 +3202,10 @@ export default function SalesTeamApp({
         )}
 
         {/* MAIN CONFIGURATION AREA */}
-        <div className={activeModule === "templates" ? "col-span-full" : "lg:col-span-9 space-y-6"}>
-          {activeLead ? (
+        <div className={activeModule === "templates" || activeModule === "smart_quote_leads" ? "col-span-full space-y-6" : "lg:col-span-9 space-y-6"}>
+          {activeLead || activeModule === "smart_quote_leads" ? (
             <div className="space-y-6">
-              {activeModule !== "templates" && (
+              {activeModule !== "templates" && activeModule !== "smart_quote_leads" && activeLead && (
               <>
               {/* Client Briefing Profile summary card */}
               <div className="bg-slate-900 border border-slate-850 p-5 rounded-3xl flex flex-col md:flex-row justify-between gap-4 text-left shadow-sm">
@@ -3345,6 +3351,7 @@ export default function SalesTeamApp({
                 id="sales-tools-panel"
               >
                 {[
+                  { id: 'smart_quote_leads', label: `Smart Quote Leads (${smartQuoteLeads.length})`, icon: Inbox },
                   { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
                   ...(PROPOSAL_STUDIO_ENABLED
                     ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
@@ -3409,6 +3416,70 @@ export default function SalesTeamApp({
                     Cancel Edit
                   </button>
                 </div>
+              )}
+
+              {activeModule === "smart_quote_leads" && (
+                <section className="rounded-3xl border border-slate-800 bg-slate-900 p-4 text-left shadow-sm md:p-6" data-testid="smart-quote-leads-workspace">
+                  <div className="flex flex-col gap-4 border-b border-slate-800 pb-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-amber-400">
+                        <Inbox className="h-5 w-5" />
+                        <h3 className="text-lg font-black text-white">Smart Quote Leads</h3>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">Clients who generated a self-service quotation from smartquote.sunchaserenergy.co.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-300">{smartQuoteLeads.length} total</span>
+                      {onRefreshState ? (
+                        <button type="button" onClick={onRefreshState} className="min-h-[42px] rounded-xl border border-slate-700 bg-slate-950 px-4 text-xs font-bold text-slate-200 hover:border-amber-500/50">Refresh</button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {smartQuoteLeads.length ? (
+                    <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                      {smartQuoteLeads.map((lead) => {
+                        const quote = parseSmartQuoteLeadNotes(lead.notes);
+                        const whatsappPhone = String(lead.phone || "").replace(/\D/g, "").replace(/^0/, "92");
+                        const generatedDate = quote?.generatedAt ? new Date(quote.generatedAt) : new Date(lead.createdAt);
+                        return (
+                          <article key={lead.id} className="rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <h4 className="truncate text-base font-black text-white">{lead.name}</h4>
+                                <a href={`tel:${lead.phone}`} className="mt-1 inline-flex items-center gap-1 text-sm font-bold text-amber-300 hover:text-amber-200"><Phone className="h-4 w-4" />{lead.phone}</a>
+                                <p className="mt-1 text-xs text-slate-500"><MapPin className="mr-1 inline h-3 w-3" />{formatLeadLocation(lead)}</p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-black uppercase text-emerald-300">{lead.status}</span>
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs">
+                              <div><span className="block text-slate-500">Quote</span><strong className="text-slate-100">{quote?.quoteNumber || "Saved quote"}</strong></div>
+                              <div><span className="block text-slate-500">Estimate</span><strong className="text-emerald-300">Rs. {(quote?.estimatePkr || 0).toLocaleString("en-PK")}</strong></div>
+                              <div><span className="block text-slate-500">System</span><strong className="text-slate-100">{quote?.system || "Not specified"}</strong></div>
+                              <div><span className="block text-slate-500">Generated</span><strong className="text-slate-100">{Number.isNaN(generatedDate.getTime()) ? "Unknown" : generatedDate.toLocaleString("en-PK")}</strong></div>
+                            </div>
+
+                            <dl className="mt-4 space-y-2 text-xs">
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Panels</dt><dd className="font-semibold text-slate-200">{quote?.panel || "Not specified"}</dd></div>
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Inverter</dt><dd className="font-semibold text-slate-200">{quote?.inverter || "Not specified"}</dd></div>
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Battery</dt><dd className="font-semibold text-slate-200">{quote?.battery || "Not specified"}</dd></div>
+                              <div className="flex gap-2"><dt className="w-20 shrink-0 text-slate-500">Structure</dt><dd className="font-semibold text-slate-200">{quote?.structure || "Not specified"}</dd></div>
+                            </dl>
+
+                            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              <a href={`https://wa.me/${whatsappPhone}`} target="_blank" rel="noreferrer" className="grid min-h-[44px] place-items-center rounded-xl bg-emerald-600 px-3 text-xs font-black text-white hover:bg-emerald-500">WhatsApp</a>
+                              <a href={`tel:${lead.phone}`} className="grid min-h-[44px] place-items-center rounded-xl border border-slate-700 px-3 text-xs font-black text-slate-200 hover:bg-slate-800">Call</a>
+                              <button type="button" onClick={() => { setSelectedLeadId(lead.id); setActiveModule("boq_builder"); }} className="col-span-2 min-h-[44px] rounded-xl bg-amber-500 px-3 text-xs font-black text-slate-950 hover:bg-amber-400 sm:col-span-1">Open Lead</button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-5 rounded-2xl border border-dashed border-slate-700 p-10 text-center text-sm text-slate-400">No Smart Quote leads yet. New clients will appear here after entering their name and mobile number and pressing Generate My Quote.</div>
+                  )}
+                </section>
               )}
 
               {/* MODULE: Project Design Workspace (HelioScope) — RoofIntelligenceStudio is canvas-only inside */}
