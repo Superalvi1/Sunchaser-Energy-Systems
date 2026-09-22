@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
-import { isSmartQuoteLead, parseSmartQuoteLeadNotes } from "./smartQuoteLead";
+import { isSmartQuoteLead, normalizePakistanMobile, parseSmartQuoteLeadNotes } from "./smartQuoteLead";
 
 assert.equal(isSmartQuoteLead({ leadSource: "Smart Quote" }), true);
 assert.equal(isSmartQuoteLead({ leadSource: "Marketing Website" }), false);
+
+assert.equal(normalizePakistanMobile("0300-4415484"), "923004415484");
+assert.equal(normalizePakistanMobile("0300 4415484"), "923004415484");
+assert.equal(normalizePakistanMobile("+92 300 4415484"), "923004415484");
+assert.equal(normalizePakistanMobile("0092 300 4415484"), "923004415484");
+assert.equal(normalizePakistanMobile("۰۳۰۰‑۴۴۱۵۴۸۴"), "923004415484");
+assert.equal(normalizePakistanMobile("0300-ABC-5484"), null);
+assert.equal(normalizePakistanMobile("03000000000"), null);
 
 const parsed = parseSmartQuoteLeadNotes([
   "SMART_QUOTE_V1",
