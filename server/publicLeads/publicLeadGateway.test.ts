@@ -156,6 +156,15 @@ await test("Smart Quote validation builds a server-owned CRM lead", () => {
   assert.equal(lead.email, "");
   assert.match(lead.notes || "", /Estimate: PKR 1328595/);
   assert.match(lead.notes || "", /Dyness PowerBrick MAX/);
+  assert.equal(lead.phone, "923001234567");
+});
+
+await test("Smart Quote accepts common Pakistan mobile formatting", () => {
+  for (const phone of ["0300-4415484", "0300 4415484", "+92 300 4415484", "0092 300 4415484", "۰۳۰۰‑۴۴۱۵۴۸۴"]) {
+    const validation = validateSmartQuoteLeadPayload({ ...validSmartQuoteBody, phone });
+    assert.equal(validation.ok, true, phone);
+    if (validation.ok) assert.equal(validation.value.phone, "923004415484");
+  }
 });
 
 await test("Smart Quote validation rejects incomplete or arbitrary fields", () => {
@@ -311,7 +320,7 @@ await test("integration: Smart Quote creates a lead without login or API key", a
       assert.equal(res.status, 201);
       assert.equal(res.body.success, true);
       assert.equal(captured.leadSource, "Smart Quote");
-      assert.equal(captured.phone, "03001234567");
+      assert.equal(captured.phone, "923001234567");
     }
   );
 });
