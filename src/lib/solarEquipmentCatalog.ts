@@ -58,6 +58,7 @@ export const BATTERY_CATALOG: readonly BatteryCatalogItem[] = [
   { id: "battery-invent-5", brand: "Invent", model: "Lithium", capacityKwh: 5, pricePkr: 185_000 },
   { id: "battery-ses-5", brand: "SES", model: "Lithium", capacityKwh: 5, pricePkr: 210_000 },
   { id: "battery-hystorix-5", brand: "Hystorix", model: "Lithium", capacityKwh: 5, pricePkr: 220_000 },
+  { id: "battery-dyness-5", brand: "Dyness", model: "Lithium", capacityKwh: 5, pricePkr: 225_000 },
   { id: "battery-soluna-5", brand: "Soluna", model: "Lithium", capacityKwh: 5, pricePkr: 225_000 },
   { id: "battery-itel-5", brand: "itel", model: "Lithium", capacityKwh: 5, pricePkr: 228_000 },
   { id: "battery-pytes-5", brand: "Pytes", model: "51V Lithium", capacityKwh: 5, voltageClass: "LV", pricePkr: 230_000 },
