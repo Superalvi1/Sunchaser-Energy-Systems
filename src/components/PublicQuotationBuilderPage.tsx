@@ -25,6 +25,7 @@ import {
   type PublicQuoteLine,
   type PublicQuoteStructure,
 } from "../lib/publicQuotationBuilder";
+import { normalizePakistanMobile } from "../lib/smartQuoteLead";
 import { submitPublicSmartQuoteLead } from "../services/api";
 
 const CONTACT_PHONE = "0330-7776444 / 0309-0236666";
@@ -324,14 +325,14 @@ export default function PublicQuotationBuilderPage() {
   const generateQuote = async () => {
     if (!calculation) return;
     const name = clientName.trim();
-    const phone = clientPhone.trim();
+    const phone = normalizePakistanMobile(clientPhone);
     if (!name) {
       setLeadError("Please enter your name so our team can identify your quotation.");
       document.getElementById("smart-quote-client-name")?.focus();
       return;
     }
-    if (!/^[+\d][\d\s().-]{6,24}$/.test(phone)) {
-      setLeadError("Please enter a valid mobile number, for example 0300-1234567.");
+    if (!phone) {
+      setLeadError("Please enter a valid Pakistan mobile number, for example 0300-1234567, +923001234567, or 00923001234567.");
       document.getElementById("smart-quote-client-phone")?.focus();
       return;
     }
