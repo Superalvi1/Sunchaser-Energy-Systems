@@ -26,6 +26,7 @@ import {
   type PublicQuoteStructure,
 } from "../lib/publicQuotationBuilder";
 import { normalizePakistanMobile } from "../lib/smartQuoteLead";
+import { ProfessionalQuotationDocument } from "./ProfessionalQuotationDocument";
 import { submitPublicSmartQuoteLead } from "../services/api";
 
 const CONTACT_PHONE = "0330-7776444 / 0309-0236666";
@@ -658,64 +659,30 @@ export default function PublicQuotationBuilderPage() {
       </div>
 
       {generated && calculation ? (
-        <section id="generated-quotation" className="public-quote-print mx-auto mb-28 max-w-5xl bg-white p-5 shadow-2xl sm:mb-12 sm:rounded-3xl sm:p-9">
-          <div className="flex flex-col justify-between gap-5 border-b-4 border-amber-400 pb-6 sm:flex-row sm:items-start">
-            <div className="flex items-center gap-3">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-400"><Sun className="h-7 w-7" /></div>
-              <div>
-                <h2 className="text-xl font-black">Sunchaser Energy Systems</h2>
-                <p className="text-xs leading-5 text-slate-600">ceo.sunchaser@gmail.com · www.sunchaserenergy.co<br />{CONTACT_PHONE}</p>
-              </div>
-            </div>
-            <div className="sm:text-right">
-              <div className="text-xs font-bold uppercase tracking-widest text-amber-700">Technical & Financial BOQ</div>
-              <div className="mt-1 text-lg font-black">{calculation.systemCapacityKw} kW Hybrid Solar System</div>
-              <div className="text-xs text-slate-500">Quote {quoteNumber} · {new Date().toLocaleDateString("en-PK")}</div>
-            </div>
-          </div>
+        <section className="mx-auto mb-28 max-w-5xl px-4 sm:mb-12">
+          <ProfessionalQuotationDocument
+            calculation={calculation}
+            config={config}
+            quoteNumber={quoteNumber}
+            clientName={clientName}
+            clientPhone={clientPhone}
+            clientCity={clientCity}
+            batteryQuantity={selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity}
+          />
 
-          <div className="grid gap-3 border-b border-slate-200 py-5 text-sm sm:grid-cols-3">
-            <div><span className="block text-xs font-bold uppercase text-slate-400">Prepared for</span><span className="font-bold">{clientName.trim() || "Valued Client"}</span></div>
-            <div><span className="block text-xs font-bold uppercase text-slate-400">Phone</span><span className="font-bold">{clientPhone.trim() || "Not provided"}</span></div>
-            <div><span className="block text-xs font-bold uppercase text-slate-400">City</span><span className="font-bold">{clientCity.trim() || "Not provided"}</span></div>
-          </div>
-
-          <div className="py-6">
-            <QuoteTable lines={calculation.lines} />
-          </div>
-
-          <div className="ml-auto max-w-sm rounded-2xl bg-slate-950 p-5 text-white">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm font-bold text-slate-300">Final estimated cost</span>
-              <span className="text-2xl font-black text-amber-400">{formatPkr(calculation.totalPkr)}</span>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-4 text-xs leading-5 text-slate-600 sm:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 p-4">
-              <div className="mb-1 flex items-center gap-2 font-black text-slate-900"><ShieldCheck className="h-4 w-4 text-emerald-600" /> Included</div>
-              Capacity-specific cables, protection, accessories, earthing, installation, transport, testing and commissioning shown above.
-            </div>
-            <div className="rounded-2xl border border-slate-200 p-4">
-              <div className="mb-1 font-black text-slate-900">Important</div>
-              Estimate is valid for 3 days and subject to site survey, stock availability and final technical approval. Civil work outside the listed scope is excluded.
-            </div>
-          </div>
-
-          <div className="public-quote-no-print mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <button type="button" disabled={Boolean(exporting)} onClick={savePdf} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 disabled:cursor-wait disabled:opacity-60">
+          <div className="public-quote-no-print mx-auto mt-5 grid max-w-4xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <button type="button" disabled={Boolean(exporting)} onClick={savePdf} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 shadow-sm disabled:cursor-wait disabled:opacity-60">
               {exporting === "pdf" ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <FileDown className="h-5 w-5" />}
               {exporting === "pdf" ? "Preparing PDF..." : "Save PDF"}
             </button>
-            <button type="button" disabled={Boolean(exporting)} onClick={savePicture} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-sky-600 px-4 font-black text-white disabled:cursor-wait disabled:opacity-60">
+            <button type="button" disabled={Boolean(exporting)} onClick={savePicture} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-sky-600 px-4 font-black text-white shadow-sm disabled:cursor-wait disabled:opacity-60">
               {exporting === "image" ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImageDown className="h-5 w-5" />}
               {exporting === "image" ? "Preparing image..." : "Save Picture"}
             </button>
-            <button type="button" onClick={sendToWhatsApp} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 font-black text-white"><MessageCircle className="h-5 w-5" /> WhatsApp</button>
-            <button type="button" onClick={reset} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 font-black text-slate-800"><RotateCcw className="h-5 w-5" /> Start again</button>
+            <button type="button" onClick={sendToWhatsApp} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 font-black text-white shadow-sm"><MessageCircle className="h-5 w-5" /> WhatsApp</button>
+            <button type="button" onClick={reset} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 font-black text-slate-800 shadow-sm"><RotateCcw className="h-5 w-5" /> Start again</button>
           </div>
-          {exportMessage ? <div className="public-quote-no-print mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">{exportMessage}</div> : null}
-          <div className="mt-7 flex items-center justify-center gap-2 text-center text-xs text-slate-400"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Generated instantly—no account or laptop required.</div>
+          {exportMessage ? <div className="public-quote-no-print mx-auto mt-3 max-w-4xl rounded-2xl bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">{exportMessage}</div> : null}
         </section>
       ) : null}
 
