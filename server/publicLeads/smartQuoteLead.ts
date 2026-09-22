@@ -1,3 +1,4 @@
+import { normalizePakistanMobile } from "../../src/lib/smartQuoteLead.ts";
 import type { PublicLeadInput } from "./publicLeadValidation.ts";
 
 const SMART_QUOTE_CAPACITIES = new Set([6, 8, 10, 12, 15, 20]);
@@ -33,7 +34,6 @@ export type SmartQuoteValidationResult =
   | { ok: true; value: SmartQuoteLeadInput }
   | { ok: false; status: 400; error: string };
 
-const PHONE_RE = /^[+\d][\d\s().-]{6,24}$/;
 const QUOTE_RE = /^SES-\d{8}-\d{4}$/;
 
 function requiredText(record: Record<string, unknown>, key: string, max: number): string | null {
@@ -52,7 +52,8 @@ export function validateSmartQuoteLeadPayload(body: unknown): SmartQuoteValidati
   }
 
   const name = requiredText(record, "name", 200);
-  const phone = requiredText(record, "phone", 25);
+  const phoneInput = requiredText(record, "phone", 40);
+  const phone = phoneInput ? normalizePakistanMobile(phoneInput) : null;
   const quoteNumber = requiredText(record, "quoteNumber", 32);
   const panel = requiredText(record, "panel", 300);
   const inverter = requiredText(record, "inverter", 300);
@@ -64,7 +65,7 @@ export function validateSmartQuoteLeadPayload(body: unknown): SmartQuoteValidati
   const generatedAt = typeof record.generatedAt === "string" ? record.generatedAt.trim() : "";
 
   if (!name) return { ok: false, status: 400, error: "name is required." };
-  if (!phone || !PHONE_RE.test(phone)) return { ok: false, status: 400, error: "phone is invalid." };
+  if (!phone) return { ok: false, status: 400, error: "phone is invalid." };
   if (!quoteNumber || !QUOTE_RE.test(quoteNumber)) return { ok: false, status: 400, error: "quoteNumber is invalid." };
   if (!SMART_QUOTE_CAPACITIES.has(capacity)) return { ok: false, status: 400, error: "systemCapacityKw is invalid." };
   if (!Number.isFinite(total) || total <= 0 || total > 100_000_000) {
