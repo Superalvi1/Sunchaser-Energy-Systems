@@ -250,10 +250,10 @@ function QuoteTable({ lines }: { lines: PublicQuoteLine[] }) {
 
 export default function PublicQuotationBuilderPage() {
   const [config, setConfig] = useState<PublicQuoteConfig>(() => defaultPublicQuoteConfig(8));
-  const [clientName, setClientName] = useState("");
-  const [clientPhone, setClientPhone] = useState("");
-  const [clientCity, setClientCity] = useState("");
-  const [generated, setGenerated] = useState(false);
+  const [clientName, setClientName] = useState("Export Preview");
+  const [clientPhone, setClientPhone] = useState("0300-1234567");
+  const [clientCity, setClientCity] = useState("Lahore");
+  const [generated, setGenerated] = useState(true);
   const [quoteNumber, setQuoteNumber] = useState(makeQuoteNumber);
   const [exporting, setExporting] = useState<"pdf" | "image" | null>(null);
   const [exportMessage, setExportMessage] = useState("");
