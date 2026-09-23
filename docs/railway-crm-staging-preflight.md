@@ -153,3 +153,22 @@ Recommended order: Railway private boot smoke → fresh isolated staging DB
 with no production data → verify auth/RLS/storage/quotes/PDF/inbox in staging →
 production-ready parallel traffic, backup/restore rehearsal, and rollback.
 Production Supabase remains untouched until all gates pass.
+
+## Stage 2 verification — private Railway health-only deployment
+
+- Branch code commit: `b5c753c1c04578bb73f69b378469a4bcb06591f3`.
+- Railway deployment: `e0735f6c-bd9f-4614-8c53-9dd47cebde9b` —
+  **SUCCESS**, with healthcheck `/health`. App started and bound to Railway's
+  injected port **8080**. Build compiled Vite (3,378 modules), esbuild server,
+  and Chromium without errors.
+- No Railway public/custom domain; no production Supabase or Meta credentials.
+  `RAILWAY_CRM_PRIVATE_SMOKE_MODE=true` makes the private instance health-only:
+  /health is allowed and all customer-facing/WhatsApp/API routes return 404.
+- Targeted GitHub CI passed all port, private-mode safety, and bundle tests.
+- This is an **infrastructure/boot check only**; it is not a functioning client
+  CRM deployment, not a persistence test, not a live PDF test, and not a
+  Supabase migration. Existing production systems remain unchanged.
+- Next required step: provision a separate isolated staging database using a
+  user-approved project/organization and confirmed cost, reproduce all schema,
+  RLS and storage policies, create synthetic users/customers, and test each
+  module on Railway with the health-only mode removed.
