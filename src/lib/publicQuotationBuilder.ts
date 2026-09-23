@@ -1,5 +1,8 @@
 import {
+  BATTERY_ACCESSORY_CATALOG,
   BATTERY_CATALOG,
+  compatibleInverters,
+  inverterDisplayName,
   INVERTER_CATALOG,
   PANEL_CATALOG,
   standardStandPrice,
@@ -20,6 +23,7 @@ export type PublicQuoteConfig = {
   inverterQuantity: number;
   batteryId: string;
   batteryQuantity: number;
+  batteryAccessoryIds: string[];
   structureType: PublicQuoteStructure;
   structurePanelQuantity: number;
   mixedL2StandQuantity: number;
@@ -175,8 +179,7 @@ const byId = <T extends { id: string }>(catalog: readonly T[], id: string, label
 };
 
 export function publicQuoteInverters(capacityKw: number): InverterCatalogItem[] {
-  const allowed = capacityKw === 15 ? new Set([15, 16]) : new Set([capacityKw]);
-  return INVERTER_CATALOG.filter((item) => allowed.has(item.capacityKw));
+  return compatibleInverters(capacityKw);
 }
 
 export function publicQuoteBatteries(capacityKw: number): BatteryCatalogItem[] {
@@ -204,6 +207,7 @@ export function defaultPublicQuoteConfig(capacityKw: PublicQuoteCapacity = 8): P
     inverterQuantity: 1,
     batteryId: inverter.bundle?.batteryId || battery.id,
     batteryQuantity: 1,
+    batteryAccessoryIds: [],
     structureType: "standard-l2",
     structurePanelQuantity: recommendedPanelQuantity(capacityKw, panel.watts),
     mixedL2StandQuantity: Math.ceil(recommendedPanelQuantity(capacityKw, panel.watts) / 2),
@@ -224,7 +228,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   const inverter = byId(INVERTER_CATALOG, config.inverterId, "inverter");
   const allowedInverters = publicQuoteInverters(capacity);
   if (!allowedInverters.some((item) => item.id === inverter.id)) {
-    throw new PublicQuoteConfigurationError(`${inverter.capacityKw} kW ${inverter.brand} is not approved for the ${capacity} kW tier.`);
+    throw new PublicQuoteConfigurationError(`${inverterDisplayName(inverter)} is not approved for the ${capacity} kW tier.`);
   }
   if (!Number.isInteger(config.panelQuantity) || config.panelQuantity < 1 || config.panelQuantity > 200) {
     throw new PublicQuoteConfigurationError("Panel quantity must be a whole number between 1 and 200.");
@@ -245,6 +249,19 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   }
   const batteryQuantity = bundledBattery ? config.inverterQuantity : config.batteryQuantity;
 
+  const accessoryIds = Array.from(new Set(config.batteryAccessoryIds || []));
+  const allowedAccessoryIds = battery.id === "battery-knox-hv-5"
+    ? new Set(["battery-accessory-knox-hv-box-52ah", "battery-accessory-knox-base-wheel-52ah"])
+    : battery.id === "battery-knox-hv-10"
+      ? new Set(["battery-accessory-knox-hv-box-100ah", "battery-accessory-knox-base-wheel-100ah"])
+      : new Set<string>();
+  if (accessoryIds.some((id) => !allowedAccessoryIds.has(id))) {
+    throw new PublicQuoteConfigurationError("The selected Knox HV accessories do not match the selected battery module.");
+  }
+  const batteryAccessories = accessoryIds.map((id) =>
+    byId(BATTERY_ACCESSORY_CATALOG, id, "battery accessory"),
+  );
+
   const panelUnitPrice = panel.watts * panel.pricePerWattPkr;
   const equipmentLines: PublicQuoteLine[] = [
     {
@@ -258,7 +275,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
     },
     {
       category: "Equipment",
-      description: `${inverter.brand} ${inverter.capacityKw} kW hybrid inverter`,
+      description: `${inverterDisplayName(inverter)} hybrid inverter`,
       specification: [inverter.phase === "three" ? "3-phase" : "single-phase", inverter.protection, inverter.voltageClass, inverter.bundle ? "battery bundle" : ""].filter(Boolean).join(" · "),
       quantity: config.inverterQuantity,
       unit: "pcs",
@@ -274,6 +291,15 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
       unitPricePkr: inverter.bundle ? 0 : battery.pricePkr,
       totalPkr: inverter.bundle ? 0 : battery.pricePkr * batteryQuantity,
     },
+    ...batteryAccessories.map((accessory): PublicQuoteLine => ({
+      category: "Equipment",
+      description: `${accessory.brand} ${accessory.model}`,
+      specification: accessory.accessoryType === "hv-box" ? "High-voltage battery control box" : "High-voltage battery base wheel",
+      quantity: 1,
+      unit: "pcs",
+      unitPricePkr: accessory.pricePkr,
+      totalPkr: accessory.pricePkr,
+    })),
   ];
 
   const validateStructureQuantity = (value: number, label: string, max: number) => {
