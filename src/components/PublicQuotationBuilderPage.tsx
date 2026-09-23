@@ -13,7 +13,11 @@ import {
   Sun,
   Zap,
 } from "lucide-react";
-import { PANEL_CATALOG } from "../lib/solarEquipmentCatalog";
+import {
+  BATTERY_ACCESSORY_CATALOG,
+  PANEL_CATALOG,
+  inverterDisplayName,
+} from "../lib/solarEquipmentCatalog";
 import {
   PUBLIC_QUOTE_CAPACITIES,
   calculatePublicQuotation,
@@ -280,6 +284,12 @@ export default function PublicQuotationBuilderPage() {
   const inverters = publicQuoteInverters(config.systemCapacityKw);
   const selectedInverter = inverters.find((item) => item.id === config.inverterId);
   const batteries = publicQuoteBatteries(config.systemCapacityKw);
+  const selectedBattery = batteries.find((item) => item.id === config.batteryId);
+  const compatibleBatteryAccessories = selectedBattery?.id === "battery-knox-hv-5"
+    ? BATTERY_ACCESSORY_CATALOG.filter((item) => item.model.includes("52Ah"))
+    : selectedBattery?.id === "battery-knox-hv-10"
+      ? BATTERY_ACCESSORY_CATALOG.filter((item) => item.model.includes("100Ah"))
+      : [];
 
   const updateConfig = (patch: Partial<PublicQuoteConfig>) => {
     setGenerated(false);
@@ -323,6 +333,15 @@ export default function PublicQuotationBuilderPage() {
     });
   };
 
+  const toggleBatteryAccessory = (accessoryId: string) => {
+    const selected = config.batteryAccessoryIds.includes(accessoryId);
+    updateConfig({
+      batteryAccessoryIds: selected
+        ? config.batteryAccessoryIds.filter((id) => id !== accessoryId)
+        : [...config.batteryAccessoryIds, accessoryId],
+    });
+  };
+
   const generateQuote = async () => {
     if (!calculation) return;
     const name = clientName.trim();
@@ -351,7 +370,7 @@ export default function PublicQuotationBuilderPage() {
         systemCapacityKw: calculation.systemCapacityKw,
         estimatedTotalPkr: calculation.totalPkr,
         panel: `${config.panelQuantity} × ${calculation.panel.brand} ${calculation.panel.watts}W`,
-        inverter: `${config.inverterQuantity} × ${calculation.inverter.brand} ${calculation.inverter.capacityKw}kW`,
+        inverter: `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)}`,
         battery: `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh`,
         structure: `${calculation.structureLabel} (${calculation.configuredStructureCapacityPanels} panels)`,
         generatedAt: new Date().toISOString(),
@@ -373,7 +392,7 @@ export default function PublicQuotationBuilderPage() {
       "Hello Sunchaser Energy Systems,",
       `I generated quotation ${quoteNumber} for a ${calculation.systemCapacityKw} kW solar system.`,
       `${calculation.panel.brand} ${calculation.panel.watts}W × ${config.panelQuantity}`,
-      `${config.inverterQuantity} × ${calculation.inverter.brand} ${calculation.inverter.capacityKw} kW inverter`,
+      `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)} inverter`,
       `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh} kWh battery`,
       `${calculation.structureLabel} (capacity: ${calculation.configuredStructureCapacityPanels} panels)`,
       `Estimated total: ${formatPkr(calculation.totalPkr)}`,
@@ -512,7 +531,7 @@ export default function PublicQuotationBuilderPage() {
               <SelectField label="Hybrid inverter" value={config.inverterId} onChange={selectInverter}>
                 {inverters.map((inverter) => (
                   <option key={inverter.id} value={inverter.id}>
-                    {inverter.brand} {inverter.capacityKw}kW{inverter.phase === "three" ? " 3P" : ""}{inverter.protection ? ` ${inverter.protection}` : ""} — {formatPkr(inverter.pricePkr)}
+                    {inverterDisplayName(inverter)}{inverter.phase === "three" ? " 3P" : ""}{inverter.protection ? ` ${inverter.protection}` : ""} — {formatPkr(inverter.pricePkr)}
                   </option>
                 ))}
               </SelectField>
@@ -530,7 +549,7 @@ export default function PublicQuotationBuilderPage() {
                 label="Lithium battery"
                 value={selectedInverter?.bundle?.batteryId || config.batteryId}
                 disabled={Boolean(selectedInverter?.bundle)}
-                onChange={(batteryId) => updateConfig({ batteryId })}
+                onChange={(batteryId) => updateConfig({ batteryId, batteryAccessoryIds: [] })}
                 hint={selectedInverter?.bundle ? "FOX ESS includes its matching 10.2 kWh battery automatically." : "Battery sizes are matched to the selected system."}
               >
                 {selectedInverter?.bundle ? (
@@ -551,6 +570,28 @@ export default function PublicQuotationBuilderPage() {
                 onChange={(batteryQuantity) => updateConfig({ batteryQuantity })}
                 hint={selectedInverter?.bundle ? "One FOX battery is included per inverter." : "Choose one or more batteries of any listed capacity."}
               />
+
+              {compatibleBatteryAccessories.length ? <div className="sm:col-span-2">
+                <div className="mb-2 text-sm font-bold text-slate-700">Optional Knox HV accessories</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {compatibleBatteryAccessories.map((accessory) => {
+                    const selected = config.batteryAccessoryIds.includes(accessory.id);
+                    return (
+                      <button
+                        key={accessory.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => toggleBatteryAccessory(accessory.id)}
+                        className={`rounded-xl border px-3 py-3 text-left text-sm transition ${selected ? "border-amber-500 bg-amber-50 font-bold text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:border-amber-300"}`}
+                      >
+                        <span className="block">{selected ? "✓ " : "+ "}{accessory.brand} {accessory.model}</span>
+                        <span className="mt-1 block text-xs text-slate-500">{formatPkr(accessory.pricePkr)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Select only the HV control box and base wheel required for a custom high-voltage stack. Complete PowerStack battery prices are already available in the battery list.</p>
+              </div> : null}
             </div>
           </div>
 
@@ -643,7 +684,7 @@ export default function PublicQuotationBuilderPage() {
               <div className="mt-1 text-sm text-slate-400">Complete {calculation.systemCapacityKw} kW quotation</div>
               <div className="my-5 space-y-3 border-y border-white/10 py-5 text-sm">
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Panels</span><span className="text-right font-bold">{config.panelQuantity} × {calculation.panel.watts}W</span></div>
-                <div className="flex justify-between gap-3"><span className="text-slate-400">Inverter</span><span className="text-right font-bold">{config.inverterQuantity} × {calculation.inverter.brand} {calculation.inverter.capacityKw}kW</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-400">Inverter</span><span className="text-right font-bold">{config.inverterQuantity} × {inverterDisplayName(calculation.inverter)}</span></div>
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Battery</span><span className="text-right font-bold">{selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × {calculation.battery.brand} {calculation.battery.capacityKwh}kWh</span></div>
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Structure</span><span className="text-right font-bold">{calculation.structureLabel}</span></div>
               </div>

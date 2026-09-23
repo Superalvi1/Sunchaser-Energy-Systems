@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  BATTERY_ACCESSORY_CATALOG,
   BATTERY_CATALOG,
   INVERTER_CATALOG,
   PANEL_CATALOG,
@@ -15,6 +16,17 @@ const goodwe8 = INVERTER_CATALOG.filter(
 assert.deepEqual(goodwe8.map((item) => item.pricePkr), [305_000]);
 assert.equal(INVERTER_CATALOG.some((item) => item.pricePkr === 310_000), false);
 
+const goodwe12 = INVERTER_CATALOG.filter(
+  (item) => item.brand === "GoodWe" && item.capacityKw === 12
+);
+assert.deepEqual(
+  goodwe12.map((item) => ({ phase: item.phase, pricePkr: item.pricePkr })),
+  [
+    { phase: "single", pricePkr: 420_000 },
+    { phase: "three", pricePkr: 480_000 },
+  ]
+);
+
 const goodwe16 = BATTERY_CATALOG.filter(
   (item) => item.brand === "GoodWe" && item.capacityKwh === 16
 );
@@ -27,7 +39,58 @@ const dynessPowerBrickMax = BATTERY_CATALOG.find(
 assert.equal(dynessPowerBrickMax?.model, "PowerBrick MAX");
 assert.equal(dynessPowerBrickMax?.capacityKwh, 16.08);
 assert.equal(dynessPowerBrickMax?.voltageClass, "LV");
-assert.equal(dynessPowerBrickMax?.pricePkr, 590_000);
+assert.equal(dynessPowerBrickMax?.pricePkr, 585_000);
+
+const expectedKnoxBatteryPrices = new Map([
+  ["Powerwall 3.0", 130_000],
+  ["Powerwall 4.15", 133_000],
+  ["Powerwall 6.0", 225_000],
+  ["Powerwall 6.11", 230_000],
+  ["Powerbase 10", 430_000],
+  ["Powerbase 16", 570_000],
+  ["Powerbase 32", 1_090_000],
+  ["PowerStack 5-HV", 556_000],
+  ["PowerStack 10-HV", 867_000],
+  ["HV Battery 5-HV", 300_000],
+  ["HV Battery 10-HV", 562_000],
+]);
+for (const [model, pricePkr] of expectedKnoxBatteryPrices) {
+  assert.equal(BATTERY_CATALOG.find((item) => item.brand === "Knox" && item.model === model)?.pricePkr, pricePkr);
+}
+
+assert.deepEqual(
+  BATTERY_ACCESSORY_CATALOG.map((item) => [item.model, item.pricePkr]),
+  [
+    ["HV Box 52Ah", 215_000],
+    ["HV Box 100Ah", 255_000],
+    ["Base wheel 52Ah", 51_000],
+    ["Base wheel 100Ah", 60_000],
+  ],
+);
+
+const expectedKnoxInverterPrices = new Map([
+  ["Krypton ECO 5000 WiFi", 98_000],
+  ["Krypton ECO 6600 WiFi", 104_000],
+  ["Krypton 6500", 118_000],
+  ["Krypton 9000", 138_000],
+  ["Krypton 9055", 160_000],
+  ["Krypton 11008", 174_000],
+  ["Krypton 12002", 245_000],
+  ["Krypton 13002", 255_000],
+  ["Krypton 15002", 265_000],
+  ["Xenon 12066", 200_000],
+]);
+for (const [model, pricePkr] of expectedKnoxInverterPrices) {
+  assert.equal(INVERTER_CATALOG.find((item) => item.brand === "Knox" && item.model === model)?.pricePkr, pricePkr);
+}
+assert.deepEqual(
+  INVERTER_CATALOG.filter((item) => item.brand === "Knox" && item.model === "Zapher")
+    .map((item) => [item.capacityKw, item.pricePkr]),
+  [
+    [6.6, 195_000], [9.2, 295_000], [11.2, 330_000], [12, 480_000],
+    [15, 580_000], [20, 740_000], [30, 955_000], [50, 1_280_000],
+  ],
+);
 
 assert.equal(
   PANEL_CATALOG.some((item) => /longi.*jinko|jinko.*longi/i.test(`${item.brand} ${item.model}`)),

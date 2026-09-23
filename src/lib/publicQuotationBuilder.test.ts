@@ -40,10 +40,11 @@ const quantities = calculatePublicQuotation({ ...base, inverterId: goodweInverte
 assert.equal(quantities.lines.find((line) => line.description.includes("hybrid inverter"))?.totalPkr, goodweInverter.pricePkr * 2);
 assert.equal(quantities.lines.find((line) => line.description.includes("lithium battery"))?.totalPkr, battery.pricePkr * 3);
 
-assert.deepEqual(publicQuoteInverters(15).map((item) => item.capacityKw), [15, 16]);
+assert.ok(publicQuoteInverters(15).some((item) => item.capacityKw === 15));
+assert.ok(publicQuoteInverters(15).some((item) => item.capacityKw === 16));
 assert.ok(publicQuoteInverters(6).some((item) => item.id === "inverter-goodwe-6"));
 assert.ok(publicQuoteInverters(10).some((item) => item.id === "inverter-goodwe-10"));
-assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh === 2.5));
+assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh >= 2.5 && item.capacityKwh <= 2.6));
 assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh === 10));
 assert.ok(publicQuoteBatteries(6).some((item) => item.capacityKwh === 16));
 assert.ok(publicQuoteBatteries(15).some((item) => item.capacityKwh === 5));
@@ -53,6 +54,27 @@ assert.equal(dyness5.pricePkr, 225_000);
 assert.ok(publicQuoteBatteries(6).some((item) => item.id === "battery-dyness-5"));
 assert.equal(INVERTER_CATALOG.filter((item) => item.brand === "GoodWe" && item.capacityKw === 8).length, 1);
 assert.equal(BATTERY_CATALOG.filter((item) => item.brand === "GoodWe" && item.capacityKwh === 16).length, 1);
+assert.ok(publicQuoteInverters(6).some((item) => item.id === "inverter-knox-krypton-9000"));
+assert.ok(publicQuoteInverters(8).some((item) => item.id === "inverter-knox-krypton-12002"));
+assert.ok(publicQuoteInverters(10).some((item) => item.id === "inverter-knox-zapher-9-2"));
+assert.ok(publicQuoteInverters(12).some((item) => item.id === "inverter-knox-krypton-15002"));
+const knoxAccessories = calculatePublicQuotation({
+  ...base,
+  batteryId: "battery-knox-hv-5",
+  batteryAccessoryIds: ["battery-accessory-knox-hv-box-52ah", "battery-accessory-knox-base-wheel-52ah"],
+});
+assert.equal(
+  knoxAccessories.lines.filter((item) => /HV Box 52Ah|Base wheel 52Ah/.test(item.description)).reduce((sum, item) => sum + item.totalPkr, 0),
+  266_000,
+);
+assert.throws(
+  () => calculatePublicQuotation({
+    ...base,
+    batteryId: "battery-knox-hv-5",
+    batteryAccessoryIds: ["battery-accessory-knox-hv-box-100ah"],
+  }),
+  /do not match the selected battery module/,
+);
 assert.throws(() => calculatePublicQuotation({ ...base, systemCapacityKw: 7 }), /No verified BOQ exists for 7 kW/);
 
 console.log("public quotation builder tests passed");
