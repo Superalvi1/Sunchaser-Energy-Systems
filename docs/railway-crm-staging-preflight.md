@@ -131,3 +131,25 @@ This tests only application boot, port binding and build compatibility; it
 cannot verify customer login, Supabase authorization, PDF rendering, or
 persistence. Next phase uses a new synthetic-data staging database and
 isolated keys, and removes the smoke flag before functional testing.
+
+## Production database inventory (read-only; 2026-09-23)
+
+From Sunchaser Production's schema and aggregate-size queries only (no
+customer records, passwords or document bytes exported):
+
+- Database: **53 MB**; **142 public tables**. There are also older
+  `*_backup_20260606` tables that must not be silently discarded.
+- CRM: **112 customers** and **71 leads** at the time of inspection.
+- Storage: **10 objects / approximately 18 MB**. Bucket policies and media
+  URL behavior need migration validation.
+- `auth.users`: **0 users**; inspect the custom `public.users` login and
+  password-hash compatibility separately before any user migration.
+- Migration registry only lists **3 tracked migrations**, so production
+  schema cannot be assumed reproducible by running tracked migrations alone.
+  Establish an independently verified schema-only dump and extension/RLS
+  inventory before bringing up a disposable staging database.
+
+Recommended order: Railway private boot smoke → fresh isolated staging DB
+with no production data → verify auth/RLS/storage/quotes/PDF/inbox in staging →
+production-ready parallel traffic, backup/restore rehearsal, and rollback.
+Production Supabase remains untouched until all gates pass.
