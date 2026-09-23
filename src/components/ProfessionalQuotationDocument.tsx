@@ -1,5 +1,6 @@
 import React from "react";
 import type { PublicQuoteCalculation, PublicQuoteConfig, PublicQuoteLine } from "../lib/publicQuotationBuilder";
+import { inverterDisplayName } from "../lib/solarEquipmentCatalog";
 
 const COLORS = {
   navy: "#0f172a",
@@ -142,7 +143,7 @@ export function ProfessionalQuotationDocument({
 
         <div style={{ marginTop: 14, border: `1px solid ${COLORS.line}`, borderRadius: 12, background: COLORS.panel, padding: "10px 12px", display: "grid", gridTemplateColumns: "1.15fr 1fr 1fr 1.2fr", gap: 5 }}>
           <EquipmentCard label="Solar array" value={`${config.panelQuantity} x ${calculation.panel.watts}W`} note={`${calculation.panel.brand} - ${calculation.configuredPanelCapacityKw.toFixed(2)} kW DC`} />
-          <EquipmentCard label="Hybrid inverter" value={`${config.inverterQuantity} x ${calculation.inverter.capacityKw}kW`} note={calculation.inverter.brand} />
+          <EquipmentCard label="Hybrid inverter" value={`${config.inverterQuantity} x ${calculation.inverter.capacityKw}kW`} note={inverterDisplayName(calculation.inverter)} />
           <EquipmentCard label="Lithium storage" value={`${batteryQuantity} x ${calculation.battery.capacityKwh}kWh`} note={calculation.battery.brand} />
           <EquipmentCard label="Structure" value={calculation.structureLabel} note={`Capacity for ${calculation.configuredStructureCapacityPanels} panels`} />
         </div>
