@@ -1,0 +1,23 @@
+name: Verify Railway CRM staging preflight
+
+on:
+  pull_request:
+    paths:
+      - "server.ts"
+      - "server/runtime/listenPort*"
+      - ".github/workflows/verify-railway-crm-staging.yml"
+  workflow_dispatch:
+
+jobs:
+  listen-port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx tsx server/runtime/listenPort.test.ts
+      - run: npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=/tmp/sunchaser-server-smoke.cjs
