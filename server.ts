@@ -332,6 +332,7 @@ import {
   findUserByUsername,
 } from "./userAuthDb.js";
 import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
+import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
 import { createCorsMiddleware } from "./server/middleware/cors.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
@@ -523,7 +524,7 @@ async function syncQuotationVaultForLead(
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = resolveListenPort();
 
 // CORS must run before body parsers so parser/error responses still include ACAO.
 // Never pair credentials with a wildcard — see server/middleware/cors.ts.
