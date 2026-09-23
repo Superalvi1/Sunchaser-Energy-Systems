@@ -89,3 +89,32 @@ internally or via read-only Railway logs.
 
 Do not switch live website, DNS, billing, or customer applications as part of
 this preflight.
+
+## Observed first private smoke build — September 23, 2026
+
+Railway private service: `sunchaser-crm-private-smoke`
+Deployment: `1dff95ef-3650-400c-8dd1-1cbe7c302dfd`.
+
+- GitHub targeted CI passed: listen-port unit tests and esbuild bundle.
+- Railway dependency install, Vite build (3,378 modules), esbuild server bundle,
+  and Playwright/Chromium downloads completed successfully.
+- The service **FAILED at runtime before /health** without Supabase because
+  `server.ts` unconditionally calls `buildProductionWebhookAutoLinkLead()`,
+  which calls `createProductionWhatsAppServices()` and then
+  `createDefaultWhatsAppInboxRepositories()`. The latter requires active
+  Supabase persistence **even with `WHATSAPP_CONVERSATIONS_ENABLED=false`**.
+  The inbox service options also wire persistent connection stores at startup.
+- The error was: `WhatsApp inbox repositories require active Supabase persistence.
+  Use createInMemoryWhatsAppInboxRepositories() for tests.`
+- No production credentials, Supabase project or Meta webhooks were linked.
+  The private service has **no public domain**. Failed deployment is stopped.
+- The installation reported 15 npm audit findings (including 2 critical);
+  investigate separately before production rollout—do not blindly run
+  `npm audit fix --force`. esbuild reported an existing `import.meta`
+  warning in the CommonJS server bundle; verify PDF config behavior later.
+
+**Do not work around this by injecting production Supabase secrets into this
+private smoke service.** Next stage is a targeted, fail-closed WhatsApp
+initialization review with tests to avoid weakening production auth/security,
+or a fresh disposable Supabase project with synthetic data. Neither is
+completed by this preflight.
