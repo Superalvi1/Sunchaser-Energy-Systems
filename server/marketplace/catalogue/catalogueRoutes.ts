@@ -5,6 +5,7 @@ import {
   readMarketplaceConfig,
 } from "../marketplaceConfig.ts";
 import type { CatalogueRepository } from "./catalogueRepository.ts";
+import { createCachedPublicCatalogueRepository } from "./cachedPublicCatalogueRepository.ts";
 import {
   CatalogueRepositoryError,
 } from "./catalogueRepository.ts";
@@ -72,11 +73,13 @@ function handleRepositoryError(res: Response, err: unknown): Response {
 export function createCatalogueRouter(deps: CatalogueRouterDeps = {}): Router {
   const router = express.Router();
   const env = deps.env ?? process.env;
-  const { repository, publication } = resolvePublicCatalogueRepository(env, {
+  const { repository: sourceRepository, publication } = resolvePublicCatalogueRepository(env, {
     repository: deps.repository,
     createStaticRepository: deps.createStaticRepository,
     createDatabaseRepository: deps.createDatabaseRepository,
   });
+  // Cache only this public read router, never private CRM or admin data.
+  const repository = createCachedPublicCatalogueRepository(sourceRepository);
 
   /**
    * Truthful publication status for the public catalogue router.
