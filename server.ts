@@ -333,6 +333,7 @@ import {
 } from "./userAuthDb.js";
 import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
+import { assertRailwayPrivateSmokeEnvironment } from "./server/runtime/railwayPrivateSmoke.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
 import { createCorsMiddleware } from "./server/middleware/cors.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
@@ -524,7 +525,15 @@ async function syncQuotationVaultForLead(
 }
 
 const app = express();
+// Health-only private trial: all app routes, signup, webhooks and local fallback
+// data writes are unreachable. Refuse boot if the service gets a public domain.
+app.use((req, res, next) => {
+  if (!railwayPrivateSmokeMode || req.path === "/health") return next();
+  res.status(404).json({ error: "Not found" });
+});
 const PORT = resolveListenPort();
+// An explicit, private, health-only Railway pilot; NEVER active in production CRM.
+const railwayPrivateSmokeMode = assertRailwayPrivateSmokeEnvironment();
 
 // CORS must run before body parsers so parser/error responses still include ACAO.
 // Never pair credentials with a wildcard — see server/middleware/cors.ts.
@@ -571,6 +580,7 @@ const messagingProductionWiring = createMessagingProductionWiring();
 const messagingRepository = messagingProductionWiring.repository;
 
 // Meta webhook must be public and mounted before JWT authorization middleware.
+if (!railwayPrivateSmokeMode) {
 app.use(
   "/api/whatsapp",
   createWhatsAppWebhookRouter({
@@ -581,6 +591,7 @@ app.use(
     },
   })
 );
+}
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
 
@@ -753,6 +764,9 @@ app.use(
   }),
 );
 
+// Production wiring remains unchanged; only the private health-only pilot
+// skips WhatsApp persistence setup while it intentionally has no database.
+if (!railwayPrivateSmokeMode) {
 productionAutoLinkLead = buildProductionWebhookAutoLinkLead({
   resolveLocalDb: resolveAuthLocalDb,
   persistLead: persistPublicMarketingLead,
@@ -775,6 +789,7 @@ app.use(
     resolveListAvailability: createWhatsAppInboxListAvailabilityResolver({}),
   })
 );
+}
 
 const requireAuth = createRequireAuth({ resolveLocalDb: resolveAuthLocalDb });
 

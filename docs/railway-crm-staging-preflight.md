@@ -118,3 +118,16 @@ private smoke service.** Next stage is a targeted, fail-closed WhatsApp
 initialization review with tests to avoid weakening production auth/security,
 or a fresh disposable Supabase project with synthetic data. Neither is
 completed by this preflight.
+
+## Stage 2: explicit health-only boot without production credentials
+
+Set `RAILWAY_CRM_PRIVATE_SMOKE_MODE=true` on the **private** Railway smoke
+service only. Startup rejects any public Railway domain, live database or
+WhatsApp credentials, or enabled WhatsApp/marketplace flags. The HTTP guard
+returns 404 for every route except `GET /health`; WhatsApp persistence wiring
+is skipped only for this mode. Normal Render/CRM behavior is unchanged.
+
+This tests only application boot, port binding and build compatibility; it
+cannot verify customer login, Supabase authorization, PDF rendering, or
+persistence. Next phase uses a new synthetic-data staging database and
+isolated keys, and removes the smoke flag before functional testing.
