@@ -21,6 +21,7 @@ import {
 } from "./server/ownership/TechnicianOwnershipResolver.ts";
 import type { RequestActor } from "./server/middleware/actor.ts";
 import { liftWebsiteSourceFields } from "./src/lib/websiteCatalog/normalize.ts";
+import { rewriteLegacyStorageUrl } from "./server/storage/railwayObjectStorage.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -107,26 +108,28 @@ let isConfigured = false;
 export type SupabaseBackendConfig = {
   host: string;
   configured: boolean;
-  /** Backend reads SUPABASE_URL only — never VITE_SUPABASE_URL. */
-  source: "SUPABASE_URL";
+  /** Legacy name retained because the application data layer still exposes Supabase-style queries. */
+  source: "SUPABASE_URL" | "RAILWAY_POSTGREST_URL";
 };
 
 /** Safe startup diagnostics — hostname only, no keys or full URLs. */
 export function describeSupabaseBackendConfig(): SupabaseBackendConfig {
-  const raw = String(process.env.SUPABASE_URL || "").trim();
-  if (!raw) {
-    return { host: "unset", configured: false, source: "SUPABASE_URL" };
-  }
+  const railway = String(process.env.RAILWAY_POSTGREST_URL || "").trim();
+  const raw = railway || String(process.env.SUPABASE_URL || "").trim();
+  const source: SupabaseBackendConfig["source"] = railway
+    ? "RAILWAY_POSTGREST_URL"
+    : "SUPABASE_URL";
+  if (!raw) return { host: "unset", configured: false, source };
   try {
     const host = new URL(raw).hostname;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     return {
       host: host || "invalid-host",
       configured: Boolean(host && key),
-      source: "SUPABASE_URL",
+      source,
     };
   } catch {
-    return { host: "invalid-url", configured: false, source: "SUPABASE_URL" };
+    return { host: "invalid-url", configured: false, source };
   }
 }
 
@@ -148,10 +151,34 @@ export function toSupabaseStorageRole(role: string): string {
   return role;
 }
 
+function railwayPostgrestFetch(baseUrl: string): typeof fetch {
+  const targetBase = baseUrl.replace(/\/$/, "");
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const original =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    const parsed = new URL(original);
+    const marker = "/rest/v1";
+    if (!parsed.pathname.startsWith(marker)) {
+      return fetch(input, init);
+    }
+    const suffix = parsed.pathname.slice(marker.length) || "/";
+    const target = new URL(targetBase + suffix);
+    target.search = parsed.search;
+    return fetch(target, init);
+  }) as typeof fetch;
+}
+
 export function getSupabase(): SupabaseClient | null {
   if (clientInstance) return clientInstance;
 
-  let url = process.env.SUPABASE_URL || "";
+  const railwayPostgrestUrl = String(process.env.RAILWAY_POSTGREST_URL || "").trim();
+  let url = railwayPostgrestUrl
+    ? "https://railway-postgrest.internal.invalid"
+    : String(process.env.SUPABASE_URL || "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
   if (url && url.endsWith("/rest/v1/")) {
@@ -159,29 +186,33 @@ export function getSupabase(): SupabaseClient | null {
   } else if (url && url.endsWith("/rest/v1")) {
     url = url.substring(0, url.length - "/rest/v1".length);
   }
-  if (url && url.endsWith("/")) {
-    url = url.substring(0, url.length - 1);
-  }
+  if (url && url.endsWith("/")) url = url.substring(0, url.length - 1);
 
   if (!url || !key) {
     console.warn(
       "\x1b[33m%s\x1b[0m",
-      "⚠️ [Supabase Warning] Credentials missing. Running in local JSON database.json mode as fallback."
+      "⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback."
     );
     return null;
   }
 
   try {
     clientInstance = createClient(url, key, {
-      auth: {
-        persistSession: false,
-      },
+      auth: { persistSession: false },
+      ...(railwayPostgrestUrl
+        ? { global: { fetch: railwayPostgrestFetch(railwayPostgrestUrl) } }
+        : {}),
     });
     isConfigured = true;
-    console.log("\x1b[32m%s\x1b[0m", "✅ [Supabase] Client initialized successfully.");
+    console.log(
+      "\x1b[32m%s\x1b[0m",
+      railwayPostgrestUrl
+        ? "✅ [Railway] Private PostgREST data API initialized."
+        : "✅ [Supabase] Client initialized successfully."
+    );
     return clientInstance;
   } catch (err: any) {
-    console.error("❌ Failed to initialize Supabase client instance:", err);
+    console.error("❌ Failed to initialize application data client:", err);
     return null;
   }
 }
@@ -2939,11 +2970,21 @@ export async function fetchCustomerPortalDocuments(
         .order("uploaded_at", { ascending: false });
       if (fallback.error) throw error;
       const documents = (fallback.data || [])
-        .map(mapDocumentRow)
+        .map((row: any) =>
+          mapDocumentRow({
+            ...row,
+            file_url: rewriteLegacyStorageUrl(row.file_url, row.storage_path),
+          })
+        )
         .filter((d) => d.visibleToCustomer && !d.internalOnly);
       return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
     }
-    const documents = (data || []).map(mapDocumentRow).filter((d) => !d.internalOnly);
+    const documents = (data || []).map((row: any) =>
+          mapDocumentRow({
+            ...row,
+            file_url: rewriteLegacyStorageUrl(row.file_url, row.storage_path),
+          })
+        ).filter((d) => !d.internalOnly);
     return { customerId, documents, wallet: buildDocumentWalletSlots(documents) };
   }
 

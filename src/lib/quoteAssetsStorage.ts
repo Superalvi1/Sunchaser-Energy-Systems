@@ -1,6 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
+import {
+  buildRailwayObjectProxyUrl,
+  deleteRailwayObject,
+  isRailwayObjectStorageConfigured,
+  putRailwayObject,
+} from "../../server/storage/railwayObjectStorage.ts";
 import { getQuoteAssetPublicUrl } from "./quotePdfSettingsStore.ts";
 import {
   QUOTE_ASSETS_BUCKET,
@@ -67,6 +73,14 @@ export async function uploadQuoteWatermarkAsset(
   const safeId = String(settingsId || "settings-1").replace(/[^a-zA-Z0-9_-]/g, "_");
   const storagePath = `watermarks/${safeId}-${Date.now()}.${extension}`;
 
+  if (isRailwayObjectStorageConfigured()) {
+    await putRailwayObject("quote-assets", storagePath, buffer, contentType);
+    return {
+      globalWatermarkFile: storagePath,
+      publicUrl: buildRailwayObjectProxyUrl("quote-assets", storagePath),
+    };
+  }
+
   if (isSupabaseActive()) {
     await ensureQuoteAssetsBucket();
     const supabase = getSupabase()!;
@@ -96,6 +110,11 @@ export async function uploadQuoteWatermarkAsset(
 export async function deleteQuoteWatermarkAsset(storagePath: string): Promise<void> {
   const normalized = String(storagePath || "").trim().replace(/^\/+/, "");
   if (!normalized) return;
+
+  if (isRailwayObjectStorageConfigured()) {
+    await deleteRailwayObject("quote-assets", normalized);
+    return;
+  }
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
