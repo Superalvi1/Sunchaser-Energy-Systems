@@ -1,3 +1,4 @@
+// Railway daily price-sync entrypoint.
 /**
  * Render Cron entry point for the daily supplier price-only sync.
  *
