@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import {
+  getRailwayObject,
   isRailwayObjectStorageConfigured,
   putRailwayObject,
 } from "../server/storage/railwayObjectStorage.ts";
@@ -26,7 +28,8 @@ async function main() {
     throw new Error("Railway object storage credentials are not configured.");
   }
 
-  let copied = 0;
+  const verifyOnly = process.argv.includes("--verify-only");
+  let verified = 0;
   let bytes = 0;
   for (const item of manifest) {
     const sourceUrl =
@@ -43,16 +46,24 @@ async function main() {
       );
     }
     const contentType = res.headers.get("content-type")?.split(";")[0] || item.mime;
-    await putRailwayObject(item.namespace, item.key, body, contentType);
-    copied += 1;
+    if (!verifyOnly) {
+      await putRailwayObject(item.namespace, item.key, body, contentType);
+    }
+    const stored = await getRailwayObject(item.namespace, item.key);
+    if (!stored || stored.body.byteLength !== body.byteLength ||
+        createHash("sha256").update(stored.body).digest("hex") !==
+        createHash("sha256").update(body).digest("hex")) {
+      throw new Error(`Railway object content verification failed for ${item.namespace}/${item.key}.`);
+    }
+    verified += 1;
     bytes += body.byteLength;
   }
 
   const expectedBytes = manifest.reduce((sum, item) => sum + item.size, 0);
-  if (copied !== manifest.length || bytes !== expectedBytes) {
+  if (verified !== manifest.length || bytes !== expectedBytes) {
     throw new Error("Storage migration verification failed.");
   }
-  console.log(`RAILWAY_STORAGE_MIGRATION_COMPLETE objects=${copied} bytes=${bytes}`);
+  console.log(`RAILWAY_STORAGE_VERIFICATION_COMPLETE objects=${verified} bytes=${bytes} mode=${verifyOnly ? "read-only" : "copy-and-verify"}`);
 }
 
 main().catch((err) => {
