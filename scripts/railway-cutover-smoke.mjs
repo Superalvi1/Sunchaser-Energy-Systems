@@ -1,3 +1,4 @@
+import { resolve4, resolveCname } from "node:dns/promises";
 const CRM = "https://crm.sunchaserenergy.co";
 const RAILWAY_CRM = "https://sunchaser-crm-private-smoke-production.up.railway.app";
 const SITE = "https://www.sunchaserenergy.co";
@@ -28,18 +29,29 @@ const password = "RailwayVerify" + stamp + "X9";
 const email = username + "@example.com";
 let jwt = "";
 
+for (const host of ["crm.sunchaserenergy.co", "www.sunchaserenergy.co", "sunchaserenergy.co"]) {
+  try { console.log("DNS_A", host, JSON.stringify(await resolve4(host))); }
+  catch (error) { console.log("DNS_A", host, "ERROR", String(error?.code || error)); }
+  try { console.log("DNS_CNAME", host, JSON.stringify(await resolveCname(host))); }
+  catch (error) { console.log("DNS_CNAME", host, "NONE", String(error?.code || error)); }
+}
+
 await check("Railway CRM health", async () => {
   const response = await fetch(RAILWAY_CRM + "/health");
   if (response.status !== 200) throw new Error("HTTP " + response.status);
 });
 
-await check("Custom CRM domain health", async () => {
-  const response = await fetch(CRM + "/health");
+await check("Custom CRM domain reaches Sunchaser CRM", async () => {
+  const { response, body } = await json(CRM + "/health");
+  console.log("CUSTOM_CRM_HEALTH", response.status, JSON.stringify(body).slice(0, 240));
   if (response.status !== 200) throw new Error("HTTP " + response.status);
+  if (body?.service !== "sunchaser-crm" || body?.status !== "ok") {
+    throw new Error("custom domain is not reaching Railway CRM");
+  }
 });
 
 await check("Marketplace catalogue comes from Railway database", async () => {
-  const { response, body } = await json(CRM + "/api/marketplace/catalogue/products");
+  const { response, body } = await json(RAILWAY_CRM + "/api/marketplace/catalogue/products");
   if (response.status !== 200) throw new Error("HTTP " + response.status);
   if (body?.ok !== true) throw new Error("response ok flag missing");
   if (!Array.isArray(body?.data?.items) || body.data.items.length === 0) {
@@ -48,7 +60,7 @@ await check("Marketplace catalogue comes from Railway database", async () => {
 });
 
 await check("Customer registration provisions CRM customer link", async () => {
-  const { response, body } = await json(CRM + "/api/auth/register", {
+  const { response, body } = await json(RAILWAY_CRM + "/api/auth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -67,7 +79,7 @@ await check("Customer registration provisions CRM customer link", async () => {
 });
 
 await check("Customer login returns JWT", async () => {
-  const { response, body } = await json(CRM + "/api/auth/login", {
+  const { response, body } = await json(RAILWAY_CRM + "/api/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -80,7 +92,7 @@ await check("Customer login returns JWT", async () => {
 });
 
 await check("Authenticated user retains customerId", async () => {
-  const { response, body } = await json(CRM + "/api/auth/me", {
+  const { response, body } = await json(RAILWAY_CRM + "/api/auth/me", {
     headers: { authorization: "Bearer " + jwt },
   });
   if (response.status !== 200) throw new Error("HTTP " + response.status);
@@ -90,7 +102,7 @@ await check("Authenticated user retains customerId", async () => {
 });
 
 await check("Customer portal loads from Railway database", async () => {
-  const { response, body } = await json(CRM + "/api/customer-portal/me", {
+  const { response, body } = await json(RAILWAY_CRM + "/api/customer-portal/me", {
     headers: { authorization: "Bearer " + jwt },
   });
   if (response.status !== 200) {
@@ -99,7 +111,7 @@ await check("Customer portal loads from Railway database", async () => {
 });
 
 await check("PDF engine launches Chromium", async () => {
-  const { response, body } = await json(CRM + "/api/debug/pdf-engine");
+  const { response, body } = await json(RAILWAY_CRM + "/api/debug/pdf-engine");
   if (response.status !== 200) {
     throw new Error("HTTP " + response.status + " " + JSON.stringify(body).slice(0, 240));
   }
@@ -108,6 +120,13 @@ await check("PDF engine launches Chromium", async () => {
 
 await check("Marketing homepage", async () => {
   const response = await fetch(SITE + "/", { redirect: "follow" });
+  console.log("MARKETING_HOME_HEADERS", JSON.stringify({
+    status: response.status,
+    server: response.headers.get("server"),
+    via: response.headers.get("via"),
+    railwayRequestId: response.headers.get("x-railway-request-id"),
+    vercelId: response.headers.get("x-vercel-id"),
+  }));
   if (response.status !== 200) throw new Error("HTTP " + response.status);
 });
 
