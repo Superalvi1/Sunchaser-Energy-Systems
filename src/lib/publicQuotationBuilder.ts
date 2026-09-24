@@ -1,7 +1,6 @@
 import {
   BATTERY_ACCESSORY_CATALOG,
   BATTERY_CATALOG,
-  compatibleInverters,
   inverterDisplayName,
   INVERTER_CATALOG,
   PANEL_CATALOG,
@@ -14,6 +13,9 @@ import {
 export const PUBLIC_QUOTE_CAPACITIES = [6, 8, 10, 12, 15, 20] as const;
 export type PublicQuoteCapacity = (typeof PUBLIC_QUOTE_CAPACITIES)[number];
 export type PublicQuoteStructure = "standard-l2" | "standard-l3" | "elevated" | "mixed";
+export type QuoteItemKey = "panels" | "inverter" | "battery" | "structure" | "installation" | "acCable" | "dcCable" | "breakers" | "miscellaneous" | "earthingCable" | "earthingBore" | "lightningArrester" | "transport" | "survey";
+export const QUOTE_ITEM_KEYS: readonly QuoteItemKey[] = ["panels", "inverter", "battery", "structure", "installation", "acCable", "dcCable", "breakers", "miscellaneous", "earthingCable", "earthingBore", "lightningArrester", "transport", "survey"];
+export const QUOTE_ITEM_PRICES = { acCable: 300, dcCable: 275, earthingCable: 115, bore: 9_000, lightningArrester: 6_000, transport: 10_000, survey: 5_000, singlePhaseBreakers: 20_000, threePhaseBreakers: 25_000, miscellaneous: 10_000 } as const;
 
 export type PublicQuoteConfig = {
   systemCapacityKw: number;
@@ -29,6 +31,16 @@ export type PublicQuoteConfig = {
   mixedL2StandQuantity: number;
   mixedL3StandQuantity: number;
   mixedElevatedPanelQuantity: number;
+  included: Record<QuoteItemKey, boolean>;
+  acCableBrand: "Pakistan Cables" | "Innovative";
+  acCableMeters: number;
+  dcCableMeters: number;
+  earthingCableMeters: number;
+  earthingBoreCount: 1 | 2;
+  wiringPhase: "single" | "three";
+  transportationPkr: number;
+  transportOutOfCity: boolean;
+  discountPkr: number;
 };
 
 export type PublicQuoteLine = {
@@ -50,6 +62,8 @@ export type PublicQuoteCalculation = {
   structureLabel: string;
   configuredStructureCapacityPanels: number;
   lines: PublicQuoteLine[];
+  subtotalPkr: number;
+  discountPkr: number;
   totalPkr: number;
 };
 
@@ -80,7 +94,7 @@ const pricedLine = (
   totalPkr: quantity * unitPricePkr,
 });
 
-/** Exact fixed-cost rules transcribed from the supplied capacity-specific BOQs. */
+/** Historical source BOQs, used here only for standard-structure foundation allowances. */
 export const PUBLIC_QUOTE_CAPACITY_RULES: Readonly<Record<PublicQuoteCapacity, CapacityRule>> = {
   6: {
     fixedLines: [
@@ -179,7 +193,8 @@ const byId = <T extends { id: string }>(catalog: readonly T[], id: string, label
 };
 
 export function publicQuoteInverters(capacityKw: number): InverterCatalogItem[] {
-  return compatibleInverters(capacityKw);
+  void capacityKw;
+  return [...INVERTER_CATALOG];
 }
 
 export function publicQuoteBatteries(capacityKw: number): BatteryCatalogItem[] {
@@ -213,10 +228,20 @@ export function defaultPublicQuoteConfig(capacityKw: PublicQuoteCapacity = 8): P
     mixedL2StandQuantity: Math.ceil(recommendedPanelQuantity(capacityKw, panel.watts) / 2),
     mixedL3StandQuantity: 0,
     mixedElevatedPanelQuantity: 0,
+    included: Object.fromEntries(QUOTE_ITEM_KEYS.map((key) => [key, true])) as Record<QuoteItemKey, boolean>,
+    acCableBrand: "Pakistan Cables",
+    acCableMeters: 30,
+    dcCableMeters: 40,
+    earthingCableMeters: 90,
+    earthingBoreCount: 2,
+    wiringPhase: inverter.phase === "three" ? "three" : "single",
+    transportationPkr: QUOTE_ITEM_PRICES.transport,
+    transportOutOfCity: false,
+    discountPkr: 0,
   };
 }
 
-export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuoteCalculation {
+export function calculatePublicQuotation(config: PublicQuoteConfig, options: { allowDiscount?: boolean; allowCustomTransport?: boolean } = {}): PublicQuoteCalculation {
   if (!PUBLIC_QUOTE_CAPACITIES.includes(config.systemCapacityKw as PublicQuoteCapacity)) {
     throw new PublicQuoteConfigurationError(
       `No verified BOQ exists for ${config.systemCapacityKw} kW. Please contact Sunchaser for a manual specification.`,
@@ -226,10 +251,8 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   const rule = PUBLIC_QUOTE_CAPACITY_RULES[capacity];
   const panel = byId(PANEL_CATALOG, config.panelId, "solar panel");
   const inverter = byId(INVERTER_CATALOG, config.inverterId, "inverter");
-  const allowedInverters = publicQuoteInverters(capacity);
-  if (!allowedInverters.some((item) => item.id === inverter.id)) {
-    throw new PublicQuoteConfigurationError(`${inverterDisplayName(inverter)} is not approved for the ${capacity} kW tier.`);
-  }
+  const included = config.included;
+  if (!included || QUOTE_ITEM_KEYS.some((key) => typeof included[key] !== "boolean")) throw new PublicQuoteConfigurationError("Please select valid quotation items.");
   if (!Number.isInteger(config.panelQuantity) || config.panelQuantity < 1 || config.panelQuantity > 200) {
     throw new PublicQuoteConfigurationError("Panel quantity must be a whole number between 1 and 200.");
   }
@@ -239,10 +262,21 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   if (!Number.isInteger(config.batteryQuantity) || config.batteryQuantity < 1 || config.batteryQuantity > 20) {
     throw new PublicQuoteConfigurationError("Battery quantity must be a whole number between 1 and 20.");
   }
+  const validateMeters = (enabled: boolean, value: number, label: string) => {
+    if (enabled && (!Number.isInteger(value) || value < 1 || value > 10_000)) throw new PublicQuoteConfigurationError(`${label} must be between 1 and 10,000 meters.`);
+  };
+  validateMeters(included.acCable, config.acCableMeters, "AC cable length");
+  validateMeters(included.dcCable, config.dcCableMeters, "DC cable length");
+  validateMeters(included.earthingCable, config.earthingCableMeters, "Earthing cable length");
+  if (included.acCable && !["Pakistan Cables", "Innovative"].includes(config.acCableBrand)) throw new PublicQuoteConfigurationError("Please choose a valid AC cable brand.");
+  if (included.earthingBore && config.earthingBoreCount !== 1 && config.earthingBoreCount !== 2) throw new PublicQuoteConfigurationError("Choose one or two earthing bores.");
+  if (included.breakers && config.wiringPhase !== "single" && config.wiringPhase !== "three") throw new PublicQuoteConfigurationError("Choose single-phase or three-phase wiring.");
+  if (included.transport && options.allowCustomTransport && config.transportOutOfCity && (!Number.isSafeInteger(config.transportationPkr) || config.transportationPkr < 0 || config.transportationPkr > 1_000_000)) throw new PublicQuoteConfigurationError("Transport must be between Rs. 0 and Rs. 1,000,000.");
 
   const bundledBattery = inverter.bundle
     ? byId(BATTERY_CATALOG, inverter.bundle.batteryId, "included battery")
     : null;
+  if (bundledBattery && !included.inverter && included.battery) throw new PublicQuoteConfigurationError("The bundled FOX battery requires its inverter.");
   const battery = bundledBattery || byId(BATTERY_CATALOG, config.batteryId, "battery");
   if (!bundledBattery && !publicQuoteBatteries(capacity).some((item) => item.id === battery.id)) {
     throw new PublicQuoteConfigurationError("Please select a battery from the approved catalog.");
@@ -263,7 +297,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   );
 
   const panelUnitPrice = panel.watts * panel.pricePerWattPkr;
-  const equipmentLines: PublicQuoteLine[] = [
+  const equipmentLines: PublicQuoteLine[] = ([
     {
       category: "Equipment",
       description: `${panel.brand} ${panel.watts}W solar panels`,
@@ -300,7 +334,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
       unitPricePkr: accessory.pricePkr,
       totalPkr: accessory.pricePkr,
     })),
-  ];
+  ] as PublicQuoteLine[]).filter((line) => line.description.includes("solar panels") ? included.panels : line.description.includes("hybrid inverter") ? included.inverter : included.battery);
 
   const validateStructureQuantity = (value: number, label: string, max: number) => {
     if (!Number.isInteger(value) || value < 0 || value > max) {
@@ -315,7 +349,10 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
   let structureLabel = "";
   let configuredStructureCapacityPanels = config.structurePanelQuantity;
   const structureLines: PublicQuoteLine[] = [];
-  if (config.structureType === "elevated") {
+  if (!included.structure) {
+    structureLabel = "Not included";
+    configuredStructureCapacityPanels = 0;
+  } else if (config.structureType === "elevated") {
     if (config.structurePanelQuantity < 1) throw new PublicQuoteConfigurationError("Elevated structure capacity must be at least 1 panel.");
     const total = config.structurePanelQuantity * panel.watts * 16;
     structureLabel = `Elevated structure for ${config.structurePanelQuantity} panels`;
@@ -360,7 +397,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
     });
   }
   const foundationLine: PublicQuoteLine[] =
-    (config.structureType === "standard-l2" || config.structureType === "standard-l3") && rule.standardFoundationPkr
+    included.structure && (config.structureType === "standard-l2" || config.structureType === "standard-l3") && rule.standardFoundationPkr
       ? [{
           category: "Structure",
           description: "Foundation work for standard structure",
@@ -371,9 +408,23 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
           totalPkr: rule.standardFoundationPkr,
         }]
       : [];
-  const fixedLines = config.structureType === "elevated" && rule.elevatedFixedLines
-    ? rule.elevatedFixedLines
-    : rule.fixedLines;
+  const cableLine = (description: string, specification: string, quantity: number, price: number): PublicQuoteLine => ({
+    category: "Cables & protection", description, specification, quantity, unit: "meter", unitPricePkr: price, totalPkr: quantity * price,
+  });
+  const pricedItem = (category: PublicQuoteLine["category"], description: string, specification: string, quantity: number, unit: string, price: number): PublicQuoteLine => ({
+    category, description, specification, quantity, unit, unitPricePkr: price, totalPkr: quantity * price,
+  });
+  const selectedLines: PublicQuoteLine[] = [
+    ...(included.acCable ? [cableLine("AC cable", config.acCableBrand, config.acCableMeters, QUOTE_ITEM_PRICES.acCable)] : []),
+    ...(included.dcCable ? [cableLine("DC solar cable", "Solar DC cable", config.dcCableMeters, QUOTE_ITEM_PRICES.dcCable)] : []),
+    ...(included.breakers ? [pricedItem("Cables & protection", `${config.wiringPhase === "three" ? "Three-phase" : "Single-phase"} breakers and protection`, "DB, breakers and protection", 1, "set", config.wiringPhase === "three" ? QUOTE_ITEM_PRICES.threePhaseBreakers : QUOTE_ITEM_PRICES.singlePhaseBreakers)] : []),
+    ...(included.miscellaneous ? [pricedItem("Cables & protection", "Electrical miscellaneous", `${config.wiringPhase === "three" ? "Three-phase" : "Single-phase"} duct pipes, fittings and accessories`, 1, "job", QUOTE_ITEM_PRICES.miscellaneous)] : []),
+    ...(included.earthingCable ? [cableLine("Earthing cable", "Panel and equipment earthing", config.earthingCableMeters, QUOTE_ITEM_PRICES.earthingCable)] : []),
+    ...(included.earthingBore ? [pricedItem("Cables & protection", "Earthing bore", "Earthing bore and materials", config.earthingBoreCount, "bore", QUOTE_ITEM_PRICES.bore)] : []),
+    ...(included.lightningArrester ? [pricedItem("Cables & protection", "Lightning arrester", "Copper lightning arrester", 1, "pcs", QUOTE_ITEM_PRICES.lightningArrester)] : []),
+    ...(included.transport ? [pricedItem("Services", "Transportation", options.allowCustomTransport && config.transportOutOfCity ? "Out-of-city travel" : "Within-city travel", 1, "job", options.allowCustomTransport && config.transportOutOfCity ? config.transportationPkr : QUOTE_ITEM_PRICES.transport)] : []),
+    ...(included.survey ? [pricedItem("Services", "Survey and design", "Survey and system design", 1, "job", QUOTE_ITEM_PRICES.survey)] : []),
+  ];
   const installationLine: PublicQuoteLine = {
     category: "Services",
     description: "Installation and electrical wiring",
@@ -383,7 +434,11 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
     unitPricePkr: panel.watts * 4,
     totalPkr: config.panelQuantity * panel.watts * 4,
   };
-  const lines = [...equipmentLines, ...fixedLines, ...structureLines, ...foundationLine, installationLine];
+  const lines = [...equipmentLines, ...selectedLines, ...structureLines, ...foundationLine, ...(included.installation ? [installationLine] : [])];
+  const subtotalPkr = lines.reduce((sum, item) => sum + item.totalPkr, 0);
+  if (!Number.isSafeInteger(config.discountPkr) || config.discountPkr < 0) throw new PublicQuoteConfigurationError("Discount must be a positive whole rupee amount.");
+  const discountPkr = options.allowDiscount ? config.discountPkr : 0;
+  if (discountPkr > subtotalPkr) throw new PublicQuoteConfigurationError("Discount cannot exceed the quotation subtotal.");
   return {
     systemCapacityKw: capacity,
     configuredPanelCapacityKw: (panel.watts * config.panelQuantity) / 1_000,
@@ -393,6 +448,8 @@ export function calculatePublicQuotation(config: PublicQuoteConfig): PublicQuote
     structureLabel,
     configuredStructureCapacityPanels,
     lines,
-    totalPkr: lines.reduce((sum, item) => sum + item.totalPkr, 0),
+    subtotalPkr,
+    discountPkr,
+    totalPkr: subtotalPkr - discountPkr,
   };
 }
