@@ -53,11 +53,22 @@ try {
   token = typeof x.json?.token === "string" ? x.json.token : "";
   result(x.res.status === 200 && !!token, "Synthetic customer login", `HTTP ${x.res.status}, token=${token ? "captured" : "missing"}`);
 
+  // The same just-created Railway-only account must also authenticate through
+  // the custom CRM domain. This proves the custom domain is reaching Railway's
+  // migrated data plane rather than the old Render/Supabase backend.
+  x = await request(`${CRM_CUSTOM}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  result(x.res.status === 200 && typeof x.json?.token === "string", "CRM custom domain uses Railway data", `HTTP ${x.res.status}`);
+
+  // Customer access to the staff-only PDF diagnostic must remain denied.
+  // Chromium launch itself is checked by the opt-in deployment startup gate.
   x = await request(`${CRM}/api/debug/pdf-engine`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  const launch = x.json?.browserLaunchSuccess;
-  result(x.res.status === 200 && (launch === undefined || launch === true), "PDF engine diagnostic", `HTTP ${x.res.status}, browserLaunchSuccess=${String(launch)}`);
+  result(x.res.status === 403, "PDF diagnostic authorization guard", `HTTP ${x.res.status}`);
 
   x = await request(`${WEB}/`);
   result(x.res.status === 200, "Marketing root", `HTTP ${x.res.status}`);
