@@ -8,5 +8,7 @@ test("storage migration is explicit, source-pinned and does not embed credential
   assert.match(source, /xxtdfvgkurxabpbmjban\.supabase\.co/);
   assert.equal(/service_role|SUPABASE_SERVICE_ROLE_KEY|SECRET_ACCESS_KEY\s*=/.test(source), false);
   assert.match(source, /body\.byteLength !== item\.size/);
-  assert.match(source, /RAILWAY_STORAGE_MIGRATION_COMPLETE/);
+  assert.match(source, /--verify-only/);
+  assert.match(source, /getRailwayObject/);
+  assert.match(source, /RAILWAY_STORAGE_VERIFICATION_COMPLETE/);
 });
