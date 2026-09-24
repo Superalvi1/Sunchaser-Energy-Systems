@@ -129,7 +129,7 @@ export function ProfessionalQuotationDocument({
         </div>
         <div style={{ textAlign: "right", flex: "0 0 285px" }}>
           <div style={{ color: COLORS.gold, fontSize: 10, fontWeight: 900, letterSpacing: "0.18em" }}>TECHNICAL &amp; FINANCIAL BOQ</div>
-          <div style={{ fontSize: 19, fontWeight: 900, marginTop: 7 }}>{calculation.systemCapacityKw} kW Hybrid Solar System</div>
+          <div style={{ fontSize: 19, fontWeight: 900, marginTop: 7 }}>{calculation.systemCapacityKw} kW Solar Quotation</div>
           <div style={{ color: "#cbd5e1", fontSize: 10.5, marginTop: 7 }}>Quote {quoteNumber}&nbsp;&nbsp;|&nbsp;&nbsp;{date}</div>
         </div>
       </header>
@@ -142,10 +142,10 @@ export function ProfessionalQuotationDocument({
         </div>
 
         <div style={{ marginTop: 14, border: `1px solid ${COLORS.line}`, borderRadius: 12, background: COLORS.panel, padding: "10px 12px", display: "grid", gridTemplateColumns: "1.15fr 1fr 1fr 1.2fr", gap: 5 }}>
-          <EquipmentCard label="Solar array" value={`${config.panelQuantity} x ${calculation.panel.watts}W`} note={`${calculation.panel.brand} - ${calculation.configuredPanelCapacityKw.toFixed(2)} kW DC`} />
-          <EquipmentCard label="Hybrid inverter" value={`${config.inverterQuantity} x ${calculation.inverter.capacityKw}kW`} note={inverterDisplayName(calculation.inverter)} />
-          <EquipmentCard label="Lithium storage" value={`${batteryQuantity} x ${calculation.battery.capacityKwh}kWh`} note={calculation.battery.brand} />
-          <EquipmentCard label="Structure" value={calculation.structureLabel} note={`Capacity for ${calculation.configuredStructureCapacityPanels} panels`} />
+          <EquipmentCard label="Solar array" value={config.included.panels ? `${config.panelQuantity} x ${calculation.panel.watts}W` : "Excluded"} note={config.included.panels ? `${calculation.panel.brand} - ${calculation.configuredPanelCapacityKw.toFixed(2)} kW DC` : "Client supplied / not selected"} />
+          <EquipmentCard label="Hybrid inverter" value={config.included.inverter ? `${config.inverterQuantity} x ${calculation.inverter.capacityKw}kW` : "Excluded"} note={config.included.inverter ? inverterDisplayName(calculation.inverter) : "Client supplied / not selected"} />
+          <EquipmentCard label="Lithium storage" value={config.included.battery ? `${batteryQuantity} x ${calculation.battery.capacityKwh}kWh` : "Excluded"} note={config.included.battery ? calculation.battery.brand : "Client supplied / not selected"} />
+          <EquipmentCard label="Structure" value={calculation.structureLabel} note={config.included.structure ? `Capacity for ${calculation.configuredStructureCapacityPanels} panels` : "Client supplied / not selected"} />
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "18px 0 9px" }}>
@@ -158,7 +158,9 @@ export function ProfessionalQuotationDocument({
 
         <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
           <div style={{ width: 350, borderRadius: 12, overflow: "hidden", border: `1px solid ${COLORS.navy}` }}>
-            <div style={{ background: COLORS.navySoft, color: "#cbd5e1", padding: "7px 14px", fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Complete system estimate</div>
+            <div style={{ background: COLORS.navySoft, color: "#cbd5e1", padding: "7px 14px", fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Selected items estimate</div>
+            {calculation.discountPkr > 0 ? <div style={{ background: COLORS.panel, padding: "8px 14px", fontSize: 11, display: "flex", justifyContent: "space-between" }}><span>Subtotal</span><span>{currency(calculation.subtotalPkr)}</span></div> : null}
+            {calculation.discountPkr > 0 ? <div style={{ background: COLORS.panel, padding: "8px 14px", fontSize: 11, display: "flex", justifyContent: "space-between", color: COLORS.green }}><span>Staff discount</span><span>−{currency(calculation.discountPkr)}</span></div> : null}
             <div style={{ background: COLORS.navy, color: "#ffffff", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
               <span style={{ fontSize: 12, fontWeight: 800 }}>Final estimated cost</span>
               <span style={{ color: COLORS.gold, fontSize: 21, fontWeight: 950, whiteSpace: "nowrap" }}>{currency(calculation.totalPkr)}</span>
@@ -169,7 +171,7 @@ export function ProfessionalQuotationDocument({
         <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div style={{ border: `1px solid #a7f3d0`, background: COLORS.greenSoft, borderRadius: 11, padding: "10px 12px" }}>
             <div style={{ color: COLORS.green, fontSize: 10, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase" }}>Included in this estimate</div>
-            <div style={{ color: "#365147", fontSize: 9.5, lineHeight: 1.45, marginTop: 5 }}>Capacity-specific cabling, protection, accessories, earthing, installation, transport, testing and commissioning as listed above.</div>
+            <div style={{ color: "#365147", fontSize: 9.5, lineHeight: 1.45, marginTop: 5 }}>Only items listed in the bill of quantities are included in this quotation.</div>
           </div>
           <div style={{ border: `1px solid ${COLORS.line}`, background: COLORS.panel, borderRadius: 11, padding: "10px 12px" }}>
             <div style={{ color: COLORS.navy, fontSize: 10, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase" }}>Commercial notes</div>
