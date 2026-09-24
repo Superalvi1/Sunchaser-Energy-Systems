@@ -6,7 +6,12 @@ import {
   type Database,
 } from "./dbManager";
 import { mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
-import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
+import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";\nimport {
+  buildRailwayObjectProxyUrl,
+  isRailwayObjectStorageConfigured,
+  putRailwayObject,
+  rewriteLegacyStorageUrl,
+} from "./server/storage/railwayObjectStorage.ts";
 
 export class CustomerProfileError extends Error {
   statusCode: number;
@@ -14,6 +19,16 @@ export class CustomerProfileError extends Error {
     super(message);
     this.statusCode = statusCode;
   }
+}
+
+function mapCustomerDocumentForResponse(row: any) {
+  return mapDocumentRow({
+    ...row,
+    file_url: rewriteLegacyStorageUrl(
+      row?.file_url ?? row?.fileUrl,
+      row?.storage_path ?? row?.storagePath,
+    ),
+  });
 }
 
 async function assertCustomerAdmin(
@@ -168,7 +183,7 @@ export async function listAdminCustomerDocuments(
       .eq("customer_id", customerId)
       .order("uploaded_at", { ascending: false });
     if (error) throw error;
-    return (data || []).map(mapDocumentRow);
+    return (data || []).map(mapCustomerDocumentForResponse);
   }
   return (localDb?.customerDocuments || [])
     .filter((d: any) => (d.customerId || d.customer_id) === customerId)
@@ -228,7 +243,7 @@ export async function assignCustomerDocument(
       .select("*")
       .single();
     if (error) throw error;
-    return mapDocumentRow(data);
+    return mapCustomerDocumentForResponse(data);
   }
 
   localDb!.customerDocuments = localDb!.customerDocuments || [];
@@ -240,7 +255,7 @@ export async function assignCustomerDocument(
     visibleToCustomer: doc.visible_to_customer,
     internalOnly: doc.internal_only,
   });
-  return mapDocumentRow(doc);
+  return mapCustomerDocumentForResponse(doc);
 }
 
 const CUSTOMER_DOC_MAX_BYTES = 25 * 1024 * 1024;
@@ -283,6 +298,14 @@ export async function uploadFileToCustomerStorage(
 
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${customerId}/${Date.now()}_${safeName}`;
+
+  if (isRailwayObjectStorageConfigured()) {
+    await putRailwayObject("customer-documents", storagePath, buffer, contentType);
+    return {
+      url: buildRailwayObjectProxyUrl("customer-documents", storagePath),
+      storagePath,
+    };
+  }
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
