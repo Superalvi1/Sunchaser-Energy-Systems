@@ -2,6 +2,7 @@ import { resolve4, resolveCname, resolveNs } from "node:dns/promises";
 const CRM = "https://crm.sunchaserenergy.co";
 const RAILWAY_CRM = "https://sunchaser-crm-private-smoke-production.up.railway.app";
 const SITE = "https://www.sunchaserenergy.co";
+const RAILWAY_SITE = "https://sunchaser-staging-production.up.railway.app";
 
 const checks = [];
 async function check(name, fn) {
@@ -119,6 +120,27 @@ await check("PDF engine launches Chromium", async () => {
     throw new Error("HTTP " + response.status + " " + JSON.stringify(body).slice(0, 240));
   }
   if (body?.browserLaunchSuccess === false) throw new Error("browserLaunchSuccess=false");
+});
+
+
+await check("Railway marketing homepage", async () => {
+  const response = await fetch(RAILWAY_SITE + "/", { redirect: "follow" });
+  if (response.status !== 200) throw new Error("HTTP " + response.status);
+});
+
+await check("Railway marketing shop", async () => {
+  const response = await fetch(RAILWAY_SITE + "/shop", { redirect: "follow" });
+  if (response.status !== 200) throw new Error("HTTP " + response.status);
+});
+
+await check("Railway production robots are not globally blocked", async () => {
+  const response = await fetch(RAILWAY_SITE + "/robots.txt");
+  if (response.status !== 200) throw new Error("HTTP " + response.status);
+  const robots = await response.text();
+  console.log("RAILWAY_ROBOTS", JSON.stringify(robots.slice(0, 400)));
+  if (/User-agent:\s*\*[\s\S]*?Disallow:\s*\/\s*(?:\n|$)/i.test(robots)) {
+    throw new Error("Railway robots.txt still contains global Disallow: /");
+  }
 });
 
 await check("Marketing homepage", async () => {
