@@ -34,6 +34,31 @@ const mixed = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuan
 assert.equal(mixed.configuredStructureCapacityPanels, 20);
 assert.equal(mixed.lines.filter((line) => line.category === "Structure").reduce((sum, line) => sum + line.totalPkr, 0), 4 * 4_500 + 2 * 7_200 + 6 * 645 * 16);
 
+const metered = calculatePublicQuotation({ ...base, acCableBrand: "Innovative", acCableMeters: 90, dcCableMeters: 25, earthingCableMeters: 90, earthingBoreCount: 1, wiringPhase: "single" });
+assert.ok(metered.lines.every((line) => !/fire-proof solar cable|Complete system earthing|AC\/DC earthing bore|DB boxes, breakers/.test(line.description)), "legacy bundled charges must not be added again");
+assert.equal(metered.lines.find((line) => line.description === "AC cable")?.totalPkr, 90 * 300);
+assert.equal(metered.lines.find((line) => line.description === "AC cable")?.specification, "Innovative");
+assert.equal(metered.lines.find((line) => line.description === "DC solar cable")?.totalPkr, 25 * 275);
+assert.equal(metered.lines.find((line) => line.description === "Earthing cable")?.totalPkr, 90 * 115);
+assert.equal(metered.lines.find((line) => line.description === "Earthing bore")?.totalPkr, 9_000);
+assert.equal(metered.lines.find((line) => line.description === "Single-phase breakers and protection")?.totalPkr, 20_000);
+assert.equal(calculatePublicQuotation({ ...base, wiringPhase: "three" }).lines.find((line) => line.description === "Three-phase breakers and protection")?.totalPkr, 25_000);
+const omitted = calculatePublicQuotation({ ...base, included: { ...base.included, panels: false, structure: false, acCable: false, earthingBore: false, lightningArrester: false, transport: false, survey: false } });
+for (const description of ["solar panels", "AC cable", "Earthing bore", "Lightning arrester", "Transportation", "Survey and design"]) {
+  assert.ok(omitted.lines.every((line) => !line.description.includes(description)), `${description} must be removed from the quote`);
+}
+assert.equal(omitted.structureLabel, "Not included");
+const customTransport = calculatePublicQuotation({ ...base, transportOutOfCity: true, transportationPkr: 18_000 }, { allowCustomTransport: true });
+assert.equal(customTransport.lines.find((line) => line.description === "Transportation")?.totalPkr, 18_000);
+assert.equal(calculatePublicQuotation({ ...base, transportOutOfCity: true, transportationPkr: 18_000 }).lines.find((line) => line.description === "Transportation")?.totalPkr, 10_000);
+const staffDiscount = calculatePublicQuotation({ ...base, discountPkr: 4_555 }, { allowDiscount: true });
+assert.equal(staffDiscount.totalPkr, staffDiscount.subtotalPkr - 4_555);
+assert.equal(calculatePublicQuotation({ ...base, discountPkr: 4_555 }).discountPkr, 0);
+assert.throws(() => calculatePublicQuotation({ ...base, discountPkr: 99_999_999 }, { allowDiscount: true }), /Discount cannot exceed/);
+assert.throws(() => calculatePublicQuotation({ ...base, acCableMeters: -1 }), /AC cable length/);
+const upsizedInverter = INVERTER_CATALOG.find((item) => item.capacityKw === 10 && !item.bundle)!;
+assert.equal(calculatePublicQuotation({ ...defaultPublicQuoteConfig(8), inverterId: upsizedInverter.id }).inverter.id, upsizedInverter.id);
+
 const goodweInverter = publicQuoteInverters(12).find((item) => !item.bundle)!;
 const battery = publicQuoteBatteries(12).find((item) => item.capacityKwh === 5)!;
 const quantities = calculatePublicQuotation({ ...base, inverterId: goodweInverter.id, inverterQuantity: 2, batteryId: battery.id, batteryQuantity: 3 });
