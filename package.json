@@ -7,7 +7,7 @@
     "test:mobile-disclosure": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/components/mobileDisclosure.layout.test.ts",
     "test:ai-quote-mobile": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/overlayBack.behavior.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/components/quoteAuthoring/aiQuoteBuilderMobile.layout.test.ts",
     "test:interactive-proposal": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/solarEquipmentCatalog.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/interactiveProposal.test.ts",
-    "test:public-quotation": "PLAYWRIGHT_BROWSERS_PATH=0 node --import tsx src/lib/publicQuotationBuilder.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 node --import tsx src/lib/smartQuoteLead.test.ts",
+    "test:public-quotation": "PLAYWRIGHT_BROWSERS_PATH=0 node --import tsx src/lib/publicQuotationBuilder.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 node --import tsx src/lib/smartQuoteLead.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 node --import tsx src/lib/staffQuotationAccess.test.ts",
     "test:client-crm-link": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/clientCrmLinking.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/clientPortalRouting.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx userAuthDb.clientLink.test.ts",
     "test:authorization": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/middleware/authorization.test.ts",
     "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 node ./node_modules/playwright/cli.js install chromium",
