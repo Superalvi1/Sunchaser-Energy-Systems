@@ -167,9 +167,11 @@ await check("Website /shop renders live catalogue (not 30-item static fallback)"
   const res = await request("/shop", { origin: SITE });
   expectOk(res);
   const html = res.buffer.toString("utf8");
-  const productLinks = new Set(html.match(/\/shop\/[a-z0-9][a-z0-9-]{2,}/gi) || []);
-  if (productLinks.size <= 30) throw new Error(`distinct product links=${productLinks.size}`);
-  return `distinct product links=${productLinks.size}`;
+  if (html.includes("Live catalogue is temporarily unavailable")) throw new Error("live catalogue unavailable notice shown");
+  const match = html.match(/(\d+)(?:<!-- -->)?\s*products across/);
+  const shown = match ? Number(match[1]) : 0;
+  if (shown <= 30) throw new Error(`shop product count=${shown}`);
+  return `shop products=${shown} crm catalogue products=${crmCatalogueCount}`;
 });
 
 await check("Website AI lead gateway validates input before forwarding", async () => {
