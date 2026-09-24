@@ -26,4 +26,5 @@ jobs:
       - run: npx tsx server/runtime/listenPort.test.ts
       - run: npx tsx server/runtime/railwayPrivateSmoke.test.ts
       - run: npx tsx server/storage/railwayObjectStorage.test.ts
+      - run: npx tsx scripts/migrate-supabase-storage-to-railway.test.ts
       - run: npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=/tmp/sunchaser-server-smoke.cjs
