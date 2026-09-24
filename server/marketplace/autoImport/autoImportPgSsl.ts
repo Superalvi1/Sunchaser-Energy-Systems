@@ -45,6 +45,11 @@ export type BuildAutoImportPgSslOptions = {
 function isLocalOrDisabledSsl(host: string, sslmode: string): boolean {
   if (sslmode === "disable") return true;
   if (host === "localhost" || host === "127.0.0.1") return true;
+  // Railway's private PostgreSQL endpoint is reached over Railway's encrypted
+  // private network and does not accept PostgreSQL SSL negotiation. Keep TLS
+  // disabled only for that internal-only hostname; public/remote DB hosts
+  // continue to use the verified/encrypt-only TLS paths below.
+  if (host === "railway.internal" || host.endsWith(".railway.internal")) return true;
   return false;
 }
 
