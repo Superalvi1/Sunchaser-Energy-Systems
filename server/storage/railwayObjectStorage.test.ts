@@ -31,8 +31,8 @@ test("proxy URL is stable, signed and tamper evident", () => {
   const parsed = new URL(url);
   const parts = parsed.pathname.split("/");
   const verified = verifyRailwayObjectProxySignature(
-    parts[3]!,
     parts[4]!,
+    parts[5]!,
     parsed.searchParams.get("sig") || "",
     env,
   );
@@ -43,8 +43,8 @@ test("proxy URL is stable, signed and tamper evident", () => {
   });
   assert.deepEqual(
     verifyRailwayObjectProxySignature(
-      parts[3]!,
       parts[4]!,
+      parts[5]!,
       "0".repeat(64),
       env,
     ),
