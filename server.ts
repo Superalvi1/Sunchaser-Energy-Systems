@@ -10405,6 +10405,17 @@ async function startServer() {
 
   logServerBuildIdentity();
 
+  // Optional deployment gate for hosts that must prove Playwright/Chromium
+  // availability before accepting traffic. Disabled by default.
+  if (String(process.env.RAILWAY_PDF_STARTUP_CHECK || "").trim().toLowerCase() === "true") {
+    const diagnostic = await diagnosePdfEngine();
+    const browserLaunchSuccess = diagnostic?.browserLaunchSuccess === true;
+    console.log(`[PDF_STARTUP_CHECK] browserLaunchSuccess=${browserLaunchSuccess}`);
+    if (!browserLaunchSuccess) {
+      throw new Error("PDF startup check failed: Chromium could not launch.");
+    }
+  }
+
   if (!shouldServeBuiltFrontend()) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
