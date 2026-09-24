@@ -20,6 +20,7 @@ import {
 } from "../lib/solarEquipmentCatalog";
 import {
   PUBLIC_QUOTE_CAPACITIES,
+  QUOTE_ITEM_PRICES,
   calculatePublicQuotation,
   defaultPublicQuoteConfig,
   publicQuoteBatteries,
@@ -252,7 +253,10 @@ function QuoteTable({ lines }: { lines: PublicQuoteLine[] }) {
   );
 }
 
-export default function PublicQuotationBuilderPage() {
+type QuotationBuilderMode = "public" | "staff";
+
+export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?: QuotationBuilderMode }) {
+  const isStaffMode = mode === "staff";
   const [config, setConfig] = useState<PublicQuoteConfig>(() => defaultPublicQuoteConfig(8));
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
@@ -267,19 +271,21 @@ export default function PublicQuotationBuilderPage() {
 
   useEffect(() => {
     const previous = document.title;
-    document.title = "Build Your Solar Quote | Sunchaser Energy Systems";
+    document.title = isStaffMode
+      ? "Staff Solar Quote | Sunchaser Energy Systems"
+      : "Build Your Solar Quote | Sunchaser Energy Systems";
     return () => {
       document.title = previous;
     };
-  }, []);
+  }, [isStaffMode]);
 
   const calculationState = useMemo(() => {
     try {
-      return { calculation: calculatePublicQuotation(config), error: "" };
+      return { calculation: calculatePublicQuotation(config, { allowDiscount: isStaffMode, allowCustomTransport: isStaffMode }), error: "" };
     } catch (error) {
       return { calculation: null, error: error instanceof Error ? error.message : "This combination needs manual review." };
     }
-  }, [config]);
+  }, [config, isStaffMode]);
   const calculation = calculationState.calculation;
   const inverters = publicQuoteInverters(config.systemCapacityKw);
   const selectedInverter = inverters.find((item) => item.id === config.inverterId);
@@ -297,6 +303,17 @@ export default function PublicQuotationBuilderPage() {
     setLeadError("");
     setConfig((current) => ({ ...current, ...patch }));
   };
+  const toggleItem = (key: keyof PublicQuoteConfig["included"]) => {
+    if (key === "battery" && selectedInverter?.bundle && config.included.inverter) return;
+    const next = !config.included[key];
+    updateConfig({ included: { ...config.included, [key]: next, ...(key === "inverter" && !next && selectedInverter?.bundle ? { battery: false } : {}) } });
+  };
+  const itemToggle = (key: keyof PublicQuoteConfig["included"], label: string) => (
+    <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 text-sm font-bold text-slate-800">
+      <input type="checkbox" checked={config.included[key]} disabled={key === "battery" && Boolean(selectedInverter?.bundle) && config.included.inverter} onChange={() => toggleItem(key)} className="h-5 w-5 accent-amber-500 disabled:opacity-50" />
+      {label}
+    </label>
+  );
 
   const selectCapacity = (capacity: (typeof PUBLIC_QUOTE_CAPACITIES)[number]) => {
     const next = defaultPublicQuoteConfig(capacity);
@@ -309,6 +326,18 @@ export default function PublicQuotationBuilderPage() {
       panelQuantity,
       structurePanelQuantity: panelQuantity,
       mixedL2StandQuantity: Math.ceil(panelQuantity / 2),
+      included: config.included,
+      acCableBrand: config.acCableBrand,
+      acCableMeters: config.acCableMeters,
+      dcCableMeters: config.dcCableMeters,
+      earthingCableMeters: config.earthingCableMeters,
+      earthingBoreCount: config.earthingBoreCount,
+      transportationPkr: config.transportationPkr,
+      transportOutOfCity: config.transportOutOfCity,
+      discountPkr: config.discountPkr,
+      inverterId: config.inverterId,
+      wiringPhase: config.wiringPhase,
+      batteryId: config.batteryId,
     });
   };
 
@@ -330,6 +359,7 @@ export default function PublicQuotationBuilderPage() {
     updateConfig({
       inverterId,
       batteryId: inverter.bundle?.batteryId || batteries[0]?.id || "",
+      wiringPhase: inverter.phase === "three" ? "three" : "single",
     });
   };
 
@@ -344,6 +374,17 @@ export default function PublicQuotationBuilderPage() {
 
   const generateQuote = async () => {
     if (!calculation) return;
+    const nextQuoteNumber = makeQuoteNumber();
+
+    if (isStaffMode) {
+      setQuoteNumber(nextQuoteNumber);
+      setGenerated(true);
+      setLeadError("");
+      setLeadMessage("Internal quotation generated. No Smart Quote lead was created.");
+      window.setTimeout(() => document.getElementById("generated-quotation")?.scrollIntoView({ behavior: "smooth" }), 50);
+      return;
+    }
+
     const name = clientName.trim();
     const phone = normalizePakistanMobile(clientPhone);
     if (!name) {
@@ -357,7 +398,6 @@ export default function PublicQuotationBuilderPage() {
       return;
     }
 
-    const nextQuoteNumber = makeQuoteNumber();
     setSavingLead(true);
     setLeadError("");
     setLeadMessage("");
@@ -369,10 +409,10 @@ export default function PublicQuotationBuilderPage() {
         quoteNumber: nextQuoteNumber,
         systemCapacityKw: calculation.systemCapacityKw,
         estimatedTotalPkr: calculation.totalPkr,
-        panel: `${config.panelQuantity} × ${calculation.panel.brand} ${calculation.panel.watts}W`,
-        inverter: `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)}`,
-        battery: `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh`,
-        structure: `${calculation.structureLabel} (${calculation.configuredStructureCapacityPanels} panels)`,
+        panel: config.included.panels ? `${config.panelQuantity} × ${calculation.panel.brand} ${calculation.panel.watts}W` : "Not included",
+        inverter: config.included.inverter ? `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)}` : "Not included",
+        battery: config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh` : "Not included",
+        structure: calculation.structureLabel,
         generatedAt: new Date().toISOString(),
       });
       setQuoteNumber(nextQuoteNumber);
@@ -391,10 +431,10 @@ export default function PublicQuotationBuilderPage() {
     const message = [
       "Hello Sunchaser Energy Systems,",
       `I generated quotation ${quoteNumber} for a ${calculation.systemCapacityKw} kW solar system.`,
-      `${calculation.panel.brand} ${calculation.panel.watts}W × ${config.panelQuantity}`,
-      `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)} inverter`,
-      `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh} kWh battery`,
-      `${calculation.structureLabel} (capacity: ${calculation.configuredStructureCapacityPanels} panels)`,
+      config.included.panels ? `${calculation.panel.brand} ${calculation.panel.watts}W × ${config.panelQuantity}` : "",
+      config.included.inverter ? `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)} inverter` : "",
+      config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh} kWh battery` : "",
+      config.included.structure ? `${calculation.structureLabel} (capacity: ${calculation.configuredStructureCapacityPanels} panels)` : "",
       `Estimated total: ${formatPkr(calculation.totalPkr)}`,
       clientName.trim() ? `Name: ${clientName.trim()}` : "",
       clientCity.trim() ? `City: ${clientCity.trim()}` : "",
@@ -465,8 +505,8 @@ export default function PublicQuotationBuilderPage() {
               <Sun className="h-6 w-6" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-black tracking-tight sm:text-lg">Sunchaser Solar Quote</h1>
-              <p className="text-xs text-slate-500">Choose your system. See your price instantly.</p>
+              <h1 className="truncate text-base font-black tracking-tight sm:text-lg">{isStaffMode ? "Sunchaser Staff Quote" : "Sunchaser Solar Quote"}</h1>
+              <p className="text-xs text-slate-500">{isStaffMode ? "Private quotation builder · client details optional" : "Choose your system. See your price instantly."}</p>
             </div>
           </div>
           {calculation ? (
@@ -500,6 +540,7 @@ export default function PublicQuotationBuilderPage() {
                 </button>
               ))}
             </div>
+            <p className="mt-3 text-xs text-slate-500">System size suggests panel quantity only. You may choose any inverter size below.</p>
           </div>
 
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
@@ -507,11 +548,12 @@ export default function PublicQuotationBuilderPage() {
               <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-sm font-black text-amber-900">2</span>
               <div>
                 <h2 className="text-lg font-black">Choose equipment</h2>
-                <p className="text-sm text-slate-500">Only compatible options are shown.</p>
+                <p className="text-sm text-slate-500">Select equipment independently and include only what the client needs.</p>
               </div>
             </div>
             <div className="grid gap-5 sm:grid-cols-2">
-              <SelectField label="Solar panel" value={config.panelId} onChange={selectPanel}>
+              <div className="sm:col-span-2">{itemToggle("panels", "Include solar panels")}</div>
+              {config.included.panels ? <><SelectField label="Solar panel" value={config.panelId} onChange={selectPanel}>
                 {PANEL_CATALOG.map((panel) => (
                   <option key={panel.id} value={panel.id}>
                     {panel.brand} {panel.watts}W — Rs. {panel.pricePerWattPkr}/W
@@ -526,8 +568,10 @@ export default function PublicQuotationBuilderPage() {
                 max={200}
                 onChange={(panelQuantity) => updateConfig({ panelQuantity })}
                 hint={calculation ? `Panel array: ${calculation.configuredPanelCapacityKw.toFixed(2)} kW` : undefined}
-              />
+              /></> : null}
 
+              <div className="sm:col-span-2">{itemToggle("inverter", "Include hybrid inverter")}</div>
+              {config.included.inverter ? <>
               <SelectField label="Hybrid inverter" value={config.inverterId} onChange={selectInverter}>
                 {inverters.map((inverter) => (
                   <option key={inverter.id} value={inverter.id}>
@@ -543,8 +587,10 @@ export default function PublicQuotationBuilderPage() {
                 max={10}
                 onChange={(inverterQuantity) => updateConfig({ inverterQuantity })}
                 hint="The selected inverter price is multiplied by this quantity."
-              />
+              /></> : null}
 
+              <div className="sm:col-span-2">{itemToggle("battery", "Include lithium battery")}{selectedInverter?.bundle && config.included.inverter ? <p className="text-xs text-slate-500">This inverter comes with its battery. Choose a different inverter to exclude the battery.</p> : null}</div>
+              {config.included.battery ? <>
               <SelectField
                 label="Lithium battery"
                 value={selectedInverter?.bundle?.batteryId || config.batteryId}
@@ -569,9 +615,9 @@ export default function PublicQuotationBuilderPage() {
                 disabled={Boolean(selectedInverter?.bundle)}
                 onChange={(batteryQuantity) => updateConfig({ batteryQuantity })}
                 hint={selectedInverter?.bundle ? "One FOX battery is included per inverter." : "Choose one or more batteries of any listed capacity."}
-              />
+              /></> : null}
 
-              {compatibleBatteryAccessories.length ? <div className="sm:col-span-2">
+              {config.included.battery && compatibleBatteryAccessories.length ? <div className="sm:col-span-2">
                 <div className="mb-2 text-sm font-bold text-slate-700">Optional Knox HV accessories</div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {compatibleBatteryAccessories.map((accessory) => {
@@ -603,6 +649,8 @@ export default function PublicQuotationBuilderPage() {
                 <p className="text-sm text-slate-500">Structure capacity can be different from the installed panel quantity.</p>
               </div>
             </div>
+            {itemToggle("structure", "Include panel structure")}
+            {config.included.structure ? <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {([
                 ["standard-l2", "L2 standard", "2 panels per stand · Rs. 4,500"],
@@ -641,7 +689,7 @@ export default function PublicQuotationBuilderPage() {
               </div>
             )}
 
-            {calculation ? (
+            {calculation && config.included.panels ? (
               <div className={`mt-4 rounded-2xl border p-4 text-sm ${calculation.configuredStructureCapacityPanels < config.panelQuantity ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
                 <span className="font-black">Structure capacity: {calculation.configuredStructureCapacityPanels} panels.</span>{" "}
                 {calculation.configuredStructureCapacityPanels < config.panelQuantity
@@ -649,20 +697,87 @@ export default function PublicQuotationBuilderPage() {
                   : `This covers the ${config.panelQuantity} installed panels${calculation.configuredStructureCapacityPanels > config.panelQuantity ? " and leaves room for expansion" : ""}.`}
               </div>
             ) : null}
+            </> : null}
           </div>
 
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
             <div className="mb-5 flex items-center gap-3">
               <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-sm font-black text-amber-900">4</span>
               <div>
-                <h2 className="text-lg font-black">Your contact details</h2>
-                <p className="text-sm text-slate-500">Name and mobile number are required so our sales team can follow up on this quote.</p>
+                <h2 className="text-lg font-black">Cables, protection and services</h2>
+                <p className="text-sm text-slate-500">Untick anything the client will provide. Lengths and selected charges appear in the quotation.</p>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("acCable", `AC cable · Rs. ${QUOTE_ITEM_PRICES.acCable}/meter`)}
+                {config.included.acCable ? <div className="mt-2 grid gap-3">
+                  <SelectField label="AC cable brand" value={config.acCableBrand} onChange={(acCableBrand) => updateConfig({ acCableBrand: acCableBrand as PublicQuoteConfig["acCableBrand"] })}>
+                    <option value="Pakistan Cables">Pakistan Cables</option><option value="Innovative">Innovative</option>
+                  </SelectField>
+                  <QuantityField label="AC cable length (meters)" value={config.acCableMeters} min={1} max={10_000} onChange={(acCableMeters) => updateConfig({ acCableMeters })} />
+                </div> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("dcCable", `DC cable · Rs. ${QUOTE_ITEM_PRICES.dcCable}/meter`)}
+                {config.included.dcCable ? <div className="mt-2"><QuantityField label="DC cable length (meters)" value={config.dcCableMeters} min={1} max={10_000} onChange={(dcCableMeters) => updateConfig({ dcCableMeters })} /></div> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("breakers", "Breakers and protection")}
+                <div className="mt-2"><SelectField label="Wiring phase" value={config.wiringPhase} onChange={(wiringPhase) => updateConfig({ wiringPhase: wiringPhase as PublicQuoteConfig["wiringPhase"] })}>
+                  <option value="single">Single phase · Rs. 20,000</option><option value="three">Three phase · Rs. 25,000</option>
+                </SelectField></div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("miscellaneous", `Miscellaneous · Rs. ${QUOTE_ITEM_PRICES.miscellaneous.toLocaleString("en-PK")}`)}
+                <p className="mt-1 text-xs text-slate-500">Duct pipes, fittings and electrical accessories for the selected phase.</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("earthingCable", `Earthing cable · Rs. ${QUOTE_ITEM_PRICES.earthingCable}/meter`)}
+                {config.included.earthingCable ? <div className="mt-2"><QuantityField label="Earthing cable length (meters)" value={config.earthingCableMeters} min={1} max={10_000} onChange={(earthingCableMeters) => updateConfig({ earthingCableMeters })} /></div> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("earthingBore", "Earthing bore · Rs. 9,000 each")}
+                {config.included.earthingBore ? <div className="mt-2"><SelectField label="Number of bores" value={String(config.earthingBoreCount)} onChange={(value) => updateConfig({ earthingBoreCount: Number(value) as 1 | 2 })}>
+                  <option value="1">One bore · Rs. 9,000</option><option value="2">Two bores · Rs. 18,000</option>
+                </SelectField></div> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("lightningArrester", "Lightning arrester · Rs. 6,000")}</div>
+              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("installation", "Installation and wiring · Rs. 4/W")}</div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("transport", "Transportation")}
+                {config.included.transport ? <div className="mt-2 text-xs text-slate-500">Within city: Rs. 10,000.
+                  {isStaffMode ? <><label className="mt-2 flex items-center gap-2 text-sm font-bold text-slate-700"><input type="checkbox" checked={config.transportOutOfCity} onChange={(event) => updateConfig({ transportOutOfCity: event.target.checked })} className="h-5 w-5 accent-amber-500" />Out-of-city travel</label>
+                    {config.transportOutOfCity ? <label className="mt-2 block text-sm font-bold text-slate-700">Out-of-city transport charge (Rs.)
+                      <input type="number" min="0" max="1000000" step="1" value={config.transportationPkr} onChange={(event) => updateConfig({ transportationPkr: Number(event.target.value) })} className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 px-3 text-base" />
+                    </label> : null}</> : null}
+                </div> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("survey", "Survey and design · Rs. 5,000")}</div>
+            </div>
+          </div>
+
+          {isStaffMode ? <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
+            <h2 className="text-lg font-black">Staff discount</h2>
+            <p className="mt-1 text-sm text-slate-500">Enter an amount to discount or round the final total. The PDF shows the subtotal and discount.</p>
+            <label className="mt-4 block max-w-xs text-sm font-bold text-slate-700">Discount (Rs.)
+              <input type="number" min="0" max={calculation?.subtotalPkr || undefined} step="1" value={config.discountPkr} onChange={(event) => updateConfig({ discountPkr: Number(event.target.value) })} className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 px-3 text-base" />
+            </label>
+            {calculation ? <button type="button" onClick={() => updateConfig({ discountPkr: calculation.subtotalPkr % 1_000 })} className="mt-3 min-h-11 rounded-xl border border-amber-400 px-4 text-sm font-bold text-slate-800">Round total down to nearest Rs. 1,000</button> : null}
+          </div> : null}
+
+          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
+            <div className="mb-5 flex items-center gap-3">
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-sm font-black text-amber-900">5</span>
+              <div>
+                <h2 className="text-lg font-black">{isStaffMode ? "Client details (optional)" : "Your contact details"}</h2>
+                <p className="text-sm text-slate-500">{isStaffMode ? "Leave these blank when you need a quick internal quotation. No CRM lead will be created." : "Name and mobile number are required so our sales team can follow up on this quote."}</p>
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               {[
-                ["Your name *", clientName, setClientName, "e.g. Hassan", "smart-quote-client-name", "text"],
-                ["Mobile number *", clientPhone, setClientPhone, "03XX-XXXXXXX", "smart-quote-client-phone", "tel"],
+                [isStaffMode ? "Client name" : "Your name *", clientName, setClientName, "e.g. Hassan", "smart-quote-client-name", "text"],
+                [isStaffMode ? "Mobile number" : "Mobile number *", clientPhone, setClientPhone, "03XX-XXXXXXX", "smart-quote-client-phone", "tel"],
                 ["City", clientCity, setClientCity, "e.g. Lahore", "smart-quote-client-city", "text"],
               ].map(([label, value, setter, placeholder, id, type]) => (
                 <label key={label as string} className="block">
@@ -683,15 +798,16 @@ export default function PublicQuotationBuilderPage() {
               <div className="mt-4 text-3xl font-black">{formatPkr(calculation.totalPkr)}</div>
               <div className="mt-1 text-sm text-slate-400">Complete {calculation.systemCapacityKw} kW quotation</div>
               <div className="my-5 space-y-3 border-y border-white/10 py-5 text-sm">
-                <div className="flex justify-between gap-3"><span className="text-slate-400">Panels</span><span className="text-right font-bold">{config.panelQuantity} × {calculation.panel.watts}W</span></div>
-                <div className="flex justify-between gap-3"><span className="text-slate-400">Inverter</span><span className="text-right font-bold">{config.inverterQuantity} × {inverterDisplayName(calculation.inverter)}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-slate-400">Battery</span><span className="text-right font-bold">{selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × {calculation.battery.brand} {calculation.battery.capacityKwh}kWh</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-400">Panels</span><span className="text-right font-bold">{config.included.panels ? `${config.panelQuantity} × ${calculation.panel.watts}W` : "Excluded"}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-400">Inverter</span><span className="text-right font-bold">{config.included.inverter ? `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)}` : "Excluded"}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-400">Battery</span><span className="text-right font-bold">{config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh` : "Excluded"}</span></div>
                 <div className="flex justify-between gap-3"><span className="text-slate-400">Structure</span><span className="text-right font-bold">{calculation.structureLabel}</span></div>
+                {calculation.discountPkr > 0 ? <><div className="flex justify-between gap-3"><span>Subtotal</span><span>{formatPkr(calculation.subtotalPkr)}</span></div><div className="flex justify-between gap-3 text-emerald-300"><span>Discount</span><span>−{formatPkr(calculation.discountPkr)}</span></div></> : null}
               </div>
               <button type="button" disabled={savingLead || generated} onClick={() => void generateQuote()} className="min-h-14 w-full rounded-2xl bg-amber-400 px-5 text-base font-black text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70">
-                {savingLead ? <span className="inline-flex items-center gap-2"><LoaderCircle className="h-5 w-5 animate-spin" /> Saving…</span> : generated ? "Quote Generated" : "Generate My Quote"}
+                {savingLead ? <span className="inline-flex items-center gap-2"><LoaderCircle className="h-5 w-5 animate-spin" /> Saving…</span> : generated ? "Quote Generated" : isStaffMode ? "Generate Quotation" : "Generate My Quote"}
               </button>
-              <p className="mt-3 text-center text-xs leading-5 text-slate-400">No login needed. Generating the quote sends your details and selections to Sunchaser for follow-up.</p>
+              <p className="mt-3 text-center text-xs leading-5 text-slate-400">{isStaffMode ? "Staff-only mode. This quotation is not added to Smart Quote Leads." : "No login needed. Generating the quote sends your details and selections to Sunchaser for follow-up."}</p>
             </>
           ) : (
             <div className="mt-4 rounded-2xl bg-red-500/10 p-4 text-sm leading-6 text-red-200">{calculationState.error}</div>
@@ -730,7 +846,7 @@ export default function PublicQuotationBuilderPage() {
       {calculation && !generated ? (
         <div className="public-quote-no-print fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white p-3 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] lg:hidden">
           <button type="button" onClick={generateQuote} className="mx-auto flex min-h-14 w-full max-w-lg items-center justify-between rounded-2xl bg-amber-400 px-5 text-slate-950">
-            <span className="font-black">Generate My Quote</span><span className="font-black">{formatPkr(calculation.totalPkr)}</span>
+            <span className="font-black">{isStaffMode ? "Generate Quotation" : "Generate My Quote"}</span><span className="font-black">{formatPkr(calculation.totalPkr)}</span>
           </button>
         </div>
       ) : null}
