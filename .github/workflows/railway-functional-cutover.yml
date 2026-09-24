@@ -1,0 +1,24 @@
+name: Railway functional cutover smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/railway-cutover-smoke.mjs"
+      - ".github/workflows/railway-functional-cutover.yml"
+  pull_request:
+    paths:
+      - "scripts/railway-cutover-smoke.mjs"
+      - ".github/workflows/railway-functional-cutover.yml"
+  workflow_dispatch:
+
+jobs:
+  railway-functional-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node scripts/railway-cutover-smoke.mjs
