@@ -1,6 +1,20 @@
-const CRM = "https://crm.sunchaserenergy.co";
-const RAILWAY_CRM = "https://sunchaser-crm-private-smoke-production.up.railway.app";
-const SITE = "https://www.sunchaserenergy.co";
+// This script creates synthetic accounts and leads. Require an explicit target
+// and opt-in so a routine CI push cannot write to the live CRM by accident.
+if (process.env.RAILWAY_CUTOVER_TEST_WRITES_CONFIRMED !== "true") {
+  throw new Error("Set RAILWAY_CUTOVER_TEST_WRITES_CONFIRMED=true to permit synthetic writes.");
+}
+function requiredHttpsUrl(name) {
+  const raw = process.env[name];
+  if (!raw) throw new Error(`${name} is required; never infer a production target.`);
+  const url = new URL(raw);
+  if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`${name} must be an HTTPS origin without credentials or a path.`);
+  }
+  return url.origin;
+}
+const CRM = requiredHttpsUrl("CUTOVER_CRM_ORIGIN");
+const RAILWAY_CRM = requiredHttpsUrl("CUTOVER_RAILWAY_CRM_ORIGIN");
+const SITE = requiredHttpsUrl("CUTOVER_SITE_ORIGIN");
 
 const checks = [];
 async function check(name, fn) {
@@ -99,7 +113,9 @@ await check("Customer portal loads from Railway database", async () => {
 });
 
 await check("PDF engine launches Chromium", async () => {
-  const { response, body } = await json(CRM + "/api/debug/pdf-engine");
+  const { response, body } = await json(CRM + "/api/debug/pdf-engine", {
+    headers: { authorization: "Bearer " + jwt },
+  });
   if (response.status !== 200) {
     throw new Error("HTTP " + response.status + " " + JSON.stringify(body).slice(0, 240));
   }
