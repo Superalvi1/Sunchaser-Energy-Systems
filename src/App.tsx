@@ -67,6 +67,7 @@ import WelcomeWizard from "./components/WelcomeWizard";
 import SolarConsultantWizard from "./components/SolarConsultantWizard";
 import InteractiveProposalPublicPage from "./components/InteractiveProposalPublicPage";
 import PublicQuotationBuilderPage from "./components/PublicQuotationBuilderPage";
+import StaffQuotationBuilderRoute from "./components/StaffQuotationBuilderRoute";
 import AIAssistant from "./components/AIAssistant";
 import AICommandCenter from "./components/AICommandCenter";
 import GlobalSearch from "./components/GlobalSearch";
@@ -78,6 +79,7 @@ import {
   customerMustSkipMandatoryWizard,
   readInteractiveProposalTokenFromLocation,
 } from "./lib/clientPortalRouting";
+import { isStaffQuotePath, STAFF_QUOTE_PATH } from "./lib/staffQuotationAccess";
 
 function needsCrmAppState(role: string) {
   return role !== "Customer" && !isTechnicalStaffRole(role);
@@ -101,6 +103,9 @@ export default function App() {
       ? null
       : readInteractiveProposalTokenFromLocation(window.location);
   if (proposalToken) return <InteractiveProposalPublicPage token={proposalToken} />;
+  const isStaffQuoteBuilder =
+    typeof window !== "undefined" && isStaffQuotePath(window.location.pathname);
+  if (isStaffQuoteBuilder) return <StaffQuotationBuilderRoute />;
   const isPublicQuoteBuilder =
     typeof window !== "undefined" &&
     (/^\/(quote|quotation)\/?$/.test(window.location.pathname) ||
@@ -689,6 +694,16 @@ function AuthenticatedApp() {
             ) : null}
 
             {currentUser && !isTechnicalStaffRole(currentUser.role) ? (
+              <a
+                href={STAFF_QUOTE_PATH}
+                className="text-[10px] font-bold text-slate-950 bg-amber-400 border border-amber-300 px-2.5 md:px-3 py-2 rounded-xl hover:bg-amber-300 shrink-0"
+                title="Open the private staff quotation builder"
+              >
+                Staff Quote
+              </a>
+            ) : null}
+
+            {currentUser && !isTechnicalStaffRole(currentUser.role) ? (
               <button
                 type="button"
                 onClick={() => setShowOnboarding(true)}
@@ -1175,9 +1190,16 @@ function AuthenticatedApp() {
         >
           <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
             <a
+              href={STAFF_QUOTE_PATH}
+              className="flex min-h-[48px] w-full items-center gap-3 px-3 py-2.5 text-sm font-bold text-amber-300 hover:bg-slate-800/50"
+            >
+              <FileText className="h-4 w-4" aria-hidden="true" />
+              Staff Quote
+            </a>
+            <a
               href={PRIVACY_POLICY_URL}
               {...EXTERNAL_LINK_PROPS}
-              className="flex min-h-[48px] w-full items-center gap-3 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-800/50"
+              className="flex min-h-[48px] w-full items-center gap-3 border-t border-slate-800 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-800/50"
             >
               Privacy Policy
             </a>
