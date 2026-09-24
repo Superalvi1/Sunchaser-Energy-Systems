@@ -1,0 +1,42 @@
+name: Railway staging parity
+
+# Pre-DNS parity suite against the Railway staging origins only.
+# Staff checks are GET-only and run when the RAILWAY_PARITY_STAFF_* secrets
+# exist. The website -> CRM lead write runs only when explicitly enabled.
+on:
+  push:
+    branches:
+      - "claude/**"
+    paths:
+      - "scripts/railway-staging-parity.mjs"
+      - ".github/workflows/railway-staging-parity.yml"
+  workflow_dispatch:
+    inputs:
+      site_lead_write:
+        description: "Create one synthetic lead via the Railway website (confirm its CRM_PUBLIC_LEAD_ENDPOINT targets Railway first)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: railway-staging-parity
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node scripts/railway-staging-parity.mjs
+        env:
+          PARITY_RAILWAY_CRM_ORIGIN: https://sunchaser-crm-private-smoke-production.up.railway.app
+          PARITY_RAILWAY_SITE_ORIGIN: https://sunchaser-staging-production.up.railway.app
+          PARITY_STAFF_USERNAME: ${{ secrets.RAILWAY_PARITY_STAFF_USERNAME }}
+          PARITY_STAFF_PASSWORD: ${{ secrets.RAILWAY_PARITY_STAFF_PASSWORD }}
+          SITE_LEAD_WRITE_CONFIRMED: ${{ inputs.site_lead_write && 'true' || 'false' }}
