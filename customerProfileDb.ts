@@ -6,7 +6,8 @@ import {
   type Database,
 } from "./dbManager";
 import { mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
-import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";\nimport {
+import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
+import {
   buildRailwayObjectProxyUrl,
   isRailwayObjectStorageConfigured,
   putRailwayObject,
