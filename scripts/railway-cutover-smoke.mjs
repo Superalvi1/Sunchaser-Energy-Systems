@@ -1,4 +1,4 @@
-import { resolve4, resolveCname } from "node:dns/promises";
+import { resolve4, resolveCname, resolveNs } from "node:dns/promises";
 const CRM = "https://crm.sunchaserenergy.co";
 const RAILWAY_CRM = "https://sunchaser-crm-private-smoke-production.up.railway.app";
 const SITE = "https://www.sunchaserenergy.co";
@@ -28,6 +28,9 @@ const username = "railwayverify" + stamp;
 const password = "RailwayVerify" + stamp + "X9";
 const email = username + "@example.com";
 let jwt = "";
+
+try { console.log("DNS_NS", "sunchaserenergy.co", JSON.stringify(await resolveNs("sunchaserenergy.co"))); }
+catch (error) { console.log("DNS_NS", "sunchaserenergy.co", "ERROR", String(error?.code || error)); }
 
 for (const host of ["crm.sunchaserenergy.co", "www.sunchaserenergy.co", "sunchaserenergy.co"]) {
   try { console.log("DNS_A", host, JSON.stringify(await resolve4(host))); }
@@ -111,7 +114,7 @@ await check("Customer portal loads from Railway database", async () => {
 });
 
 await check("PDF engine launches Chromium", async () => {
-  const { response, body } = await json(RAILWAY_CRM + "/api/debug/pdf-engine");
+  const { response, body } = await json(RAILWAY_CRM + "/api/debug/pdf-engine", { headers: { authorization: "Bearer " + jwt } });
   if (response.status !== 200) {
     throw new Error("HTTP " + response.status + " " + JSON.stringify(body).slice(0, 240));
   }
