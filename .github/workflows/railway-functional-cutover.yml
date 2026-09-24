@@ -1,6 +1,11 @@
 name: Railway functional cutover smoke
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/railway-cutover-smoke.mjs"
+      - ".github/workflows/railway-functional-cutover.yml"
   pull_request:
     paths:
       - "scripts/railway-cutover-smoke.mjs"
