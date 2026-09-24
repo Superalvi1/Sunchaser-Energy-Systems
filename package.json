@@ -67,6 +67,8 @@
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android",
     "test:startup-smoke": "node scripts/smoke-server-start.mjs",
+    "test:comprehensive-smoke": "node scripts/comprehensive-smoke.mjs --job",
+    "smoke:serve": "node scripts/comprehensive-smoke.mjs --serve",
     "test:vercel-spa": "PLAYWRIGHT_BROWSERS_PATH=0 tsx scripts/vercelSpaConfig.test.ts",
     "test:vyapar-import": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/lib/vyaparMatchedImport.test.ts",
     "test:invoice-ready-route": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/invoiceReadyRouteWiring.test.ts",

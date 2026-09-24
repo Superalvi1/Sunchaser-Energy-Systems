@@ -19,6 +19,10 @@ export const CAPACITOR_IOS_ORIGIN = "capacitor://localhost";
 const STATIC_ALLOWED_ORIGINS = new Set<string>([
   PRODUCTION_CRM_ORIGIN,
   CAPACITOR_IOS_ORIGIN,
+  "https://www.sunchaserenergy.co",
+  "https://sunchaserenergy.co",
+  "https://quote.sunchaserenergy.co",
+  "https://smartquote.sunchaserenergy.co",
   "http://localhost:5173",
   "http://localhost:3000",
   "http://127.0.0.1:5173",

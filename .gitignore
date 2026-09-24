@@ -14,3 +14,8 @@ coverage/
 /var/data/whatsapp-web-auth/
 whatsapp-web-auth/
 **/.whatsapp-web-auth/
+
+# Database dumps & backups — never commit
+backups/
+*.dump
+*.dump.enc

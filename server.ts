@@ -521,6 +521,14 @@ const PORT = 3000;
 // Never pair credentials with a wildcard — see server/middleware/cors.ts.
 app.use(createCorsMiddleware());
 
+// Request correlation ID and structured observability
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const correlationId = (req.headers["x-request-id"] as string) || `req_${randomUUID()}`;
+  res.setHeader("x-request-id", correlationId);
+  (req as any).id = correlationId;
+  next();
+});
+
 // Preserve exact Meta webhook POST bytes before global JSON parsing.
 installWhatsAppRawBodyMiddleware(app);
 
@@ -10214,10 +10222,80 @@ setInterval(async () => {
   }
 }, 24 * 60 * 60 * 1000); // 24-hour cycle schedule
 
-// Simple health check and status endpoints for separated deployments
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "sunchaser-crm" });
-});
+// Health and readiness endpoints for Railway and load balancers
+const handleHealth = (req: express.Request, res: express.Response) => {
+  res.json({
+    status: "ok",
+    service: "sunchaser-crm",
+    timestamp: new Date().toISOString(),
+    correlationId: (req as any).id,
+  });
+};
+
+const handleReady = async (req: express.Request, res: express.Response) => {
+  const correlationId = (req as any).id;
+  const startTime = Date.now();
+  let dbStatus = "connected";
+  let dbLatencyMs = 0;
+  let storageStatus = "connected";
+  let storageError: string | null = null;
+
+  try {
+    const dbStart = Date.now();
+    const active = isSupabaseActive();
+    const supabase = getSupabase();
+    if (active && supabase) {
+      const { error } = await supabase.from("users").select("id", { count: "exact", head: true });
+      if (error) {
+        dbStatus = "degraded";
+      }
+    } else {
+      dbStatus = "fallback_local";
+    }
+    dbLatencyMs = Date.now() - dbStart;
+  } catch (err: any) {
+    dbStatus = "error";
+  }
+
+  // Check upload storage directory accessibility
+  try {
+    const uploadDir = path.join(__dirname, "public", "uploads");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    fs.accessSync(uploadDir, fs.constants.R_OK | fs.constants.W_OK);
+  } catch (err: any) {
+    storageStatus = "warning";
+    storageError = err.message;
+  }
+
+  const isHealthy = dbStatus !== "error";
+  const statusCode = isHealthy ? 200 : 503;
+
+  return res.status(statusCode).json({
+    status: isHealthy ? "ready" : "unhealthy",
+    uptimeSeconds: Math.floor(process.uptime()),
+    database: {
+      status: dbStatus,
+      latencyMs: dbLatencyMs,
+    },
+    storage: {
+      status: storageStatus,
+      error: storageError,
+    },
+    memory: {
+      heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    },
+    correlationId,
+    responseTimeMs: Date.now() - startTime,
+  });
+};
+
+app.get("/health", handleHealth);
+app.get("/api/health", handleHealth);
+app.get("/ready", handleReady);
+app.get("/api/ready", handleReady);
 
 /** PDF engine diagnostic — confirms Playwright/Chromium availability on this host (Render, not Vercel). */
 app.get("/api/debug/pdf-engine", async (_req, res) => {
