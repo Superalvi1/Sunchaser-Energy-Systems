@@ -5,6 +5,7 @@ on:
     paths:
       - "server.ts"
       - "server/runtime/listenPort*"
+      - "server/runtime/railwayPostgrestCompatibility.test.ts"
       - "server/storage/**"
       - "dbManager.ts"
       - "customerProfileDb.ts"
@@ -25,6 +26,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npx tsx server/runtime/listenPort.test.ts
       - run: npx tsx server/runtime/railwayPrivateSmoke.test.ts
+      - run: npx tsx server/runtime/railwayPostgrestCompatibility.test.ts
       - run: npx tsx server/storage/railwayObjectStorage.test.ts
       - run: npx tsx scripts/migrate-supabase-storage-to-railway.test.ts
       - run: npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=/tmp/sunchaser-server-smoke.cjs
