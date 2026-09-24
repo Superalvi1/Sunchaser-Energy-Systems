@@ -1,16 +1,20 @@
 name: Railway functional cutover smoke
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "scripts/railway-cutover-smoke.mjs"
-      - ".github/workflows/railway-functional-cutover.yml"
-  pull_request:
-    paths:
-      - "scripts/railway-cutover-smoke.mjs"
-      - ".github/workflows/railway-functional-cutover.yml"
   workflow_dispatch:
+    inputs:
+      crm_origin:
+        description: "Verified CRM HTTPS origin (creates synthetic records)"
+        required: true
+        type: string
+      railway_crm_origin:
+        description: "Verified Railway CRM HTTPS origin"
+        required: true
+        type: string
+      site_origin:
+        description: "Verified marketing site HTTPS origin"
+        required: true
+        type: string
 
 jobs:
   railway-functional-smoke:
@@ -22,3 +26,8 @@ jobs:
         with:
           node-version: "22"
       - run: node scripts/railway-cutover-smoke.mjs
+        env:
+          RAILWAY_CUTOVER_TEST_WRITES_CONFIRMED: "true"
+          CUTOVER_CRM_ORIGIN: ${{ inputs.crm_origin }}
+          CUTOVER_RAILWAY_CRM_ORIGIN: ${{ inputs.railway_crm_origin }}
+          CUTOVER_SITE_ORIGIN: ${{ inputs.site_origin }}
