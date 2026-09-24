@@ -58,7 +58,7 @@ function isCostingTableMissing(err: any) {
 }
 
 const TABLES_NOT_READY =
-  "Internal costing tables are not ready. Run scripts/internal-costing-investor-schema.sql on Supabase.";
+  "Internal costing tables are not ready. Apply the required internal-costing schema to the active data backend.";
 
 async function assertInternalCostingAdmin(
   userId: string,
