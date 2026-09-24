@@ -36,6 +36,7 @@ jobs:
       - run: node scripts/railway-staging-parity.mjs
         env:
           PARITY_RAILWAY_CRM_ORIGIN: https://sunchaser-crm-private-smoke-production.up.railway.app
+          PARITY_REFERENCE_CRM_ORIGIN: https://sunchaser-energy-systems.onrender.com
           PARITY_RAILWAY_SITE_ORIGIN: https://sunchaser-staging-production.up.railway.app
           PARITY_STAFF_USERNAME: ${{ secrets.RAILWAY_PARITY_STAFF_USERNAME }}
           PARITY_STAFF_PASSWORD: ${{ secrets.RAILWAY_PARITY_STAFF_PASSWORD }}

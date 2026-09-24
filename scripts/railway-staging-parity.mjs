@@ -154,6 +154,30 @@ await check("CRM catalogue served from Railway database", async () => {
   return `products=${crmCatalogueCount} (first page)`;
 });
 
+// Read-only reference comparison with the live Render API (public GET only).
+const REFERENCE = String(process.env.PARITY_REFERENCE_CRM_ORIGIN || "").trim();
+if (REFERENCE) {
+  const ref = new URL(REFERENCE);
+  if (ref.protocol !== "https:" || !ref.hostname.endsWith(".onrender.com") || ref.pathname !== "/") {
+    throw new Error("PARITY_REFERENCE_CRM_ORIGIN must be a bare https://*.onrender.com origin.");
+  }
+  await check("Catalogue parity with production (read-only GET)", async () => {
+    const res = await request("/api/marketplace/catalogue/products", { origin: ref.origin });
+    expectOk(res);
+    const refRows = rows(res.json, "items") || [];
+    const railway = await request("/api/marketplace/catalogue/products");
+    const railRows = rows(railway.json, "items") || [];
+    const key = (p) => String(p?.slug || p?.id || "");
+    const refKeys = new Set(refRows.map(key));
+    const railKeys = new Set(railRows.map(key));
+    const missing = [...refKeys].filter((k) => !railKeys.has(k)).length;
+    const extra = [...railKeys].filter((k) => !refKeys.has(k)).length;
+    const detail = `production=${refRows.length} railway=${railRows.length} missingOnRailway=${missing} extraOnRailway=${extra}`;
+    if (missing || extra) throw new Error(detail);
+    return detail;
+  });
+}
+
 // ---------------------------------------------------------------- website
 for (const path of ["/", "/shop", "/solar-panels", "/contact", "/robots.txt", "/sitemap.xml"]) {
   await check(`Website ${path}`, async () => {
