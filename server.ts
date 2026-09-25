@@ -529,6 +529,19 @@ async function syncQuotationVaultForLead(
 }
 
 const app = express();
+
+// Branded SmartQuote entry point: keep the public customer URL on the
+// Sunchaser domain while serving the quotation UI from this CRM deployment.
+app.use((req, res, next) => {
+  const hostname = String(req.headers.host || "")
+    .split(":")[0]
+    .trim()
+    .toLowerCase();
+  if (hostname === "smartquote.sunchaserenergy.co" && req.path === "/") {
+    return res.redirect(302, "/quote");
+  }
+  next();
+});
 // Health-only private trial: all app routes, signup, webhooks and local fallback
 // data writes are unreachable. Refuse boot if the service gets a public domain.
 app.use((req, res, next) => {
