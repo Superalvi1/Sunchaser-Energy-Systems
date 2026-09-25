@@ -13,6 +13,7 @@ import {
 export const PUBLIC_QUOTE_CAPACITIES = [6, 8, 10, 12, 15, 20] as const;
 export type PublicQuoteCapacity = (typeof PUBLIC_QUOTE_CAPACITIES)[number];
 export type PublicQuoteStructure = "standard-l2" | "standard-l3" | "elevated" | "mixed";
+export type CableBrand = "Pakistan Cables" | "Industrial Innovative";
 export type QuoteItemKey = "panels" | "inverter" | "battery" | "structure" | "civilPad" | "installation" | "acCable" | "dcCable" | "breakers" | "miscellaneous" | "earthingCable" | "earthingBore" | "lightningArrester" | "transport" | "survey";
 export const QUOTE_ITEM_KEYS: readonly QuoteItemKey[] = ["panels", "inverter", "battery", "structure", "civilPad", "installation", "acCable", "dcCable", "breakers", "miscellaneous", "earthingCable", "earthingBore", "lightningArrester", "transport", "survey"];
 export const QUOTE_ITEM_PRICES = { acCable: 300, dcCable: 275, earthingCable: 115, bore: 9_000, lightningArrester: 6_000, transport: 10_000, survey: 5_000, singlePhaseBreakers: 20_000, threePhaseBreakers: 25_000, miscellaneous: 10_000, civilPadPerLeg: 500 } as const;
@@ -32,8 +33,9 @@ export type PublicQuoteConfig = {
   mixedL3StandQuantity: number;
   mixedElevatedPanelQuantity: number;
   included: Record<QuoteItemKey, boolean>;
-  acCableBrand: "Pakistan Cables" | "Innovative";
+  acCableBrand: CableBrand;
   acCableMeters: number;
+  dcCableBrand: CableBrand;
   dcCableMeters: number;
   earthingCableMeters: number;
   earthingBoreCount: 1 | 2;
@@ -268,7 +270,8 @@ export function defaultPublicQuoteConfig(capacityKw: PublicQuoteCapacity = 8): P
     included: Object.fromEntries(QUOTE_ITEM_KEYS.map((key) => [key, true])) as Record<QuoteItemKey, boolean>,
     acCableBrand: "Pakistan Cables",
     acCableMeters: 30,
-    dcCableMeters: 40,
+    dcCableBrand: "Pakistan Cables",
+    dcCableMeters: 90,
     earthingCableMeters: 90,
     earthingBoreCount: 2,
     wiringPhase: inverter.phase === "three" ? "three" : "single",
@@ -313,7 +316,8 @@ export function calculatePublicQuotation(config: PublicQuoteConfig, options: { a
   validateMeters(included.acCable, config.acCableMeters, "AC cable length");
   validateMeters(included.dcCable, config.dcCableMeters, "DC cable length");
   validateMeters(included.earthingCable, config.earthingCableMeters, "Earthing cable length");
-  if (included.acCable && !["Pakistan Cables", "Innovative"].includes(config.acCableBrand)) throw new PublicQuoteConfigurationError("Please choose a valid AC cable brand.");
+  if (included.acCable && !["Pakistan Cables", "Industrial Innovative"].includes(config.acCableBrand)) throw new PublicQuoteConfigurationError("Please choose a valid AC cable brand.");
+  if (included.dcCable && !["Pakistan Cables", "Industrial Innovative"].includes(config.dcCableBrand)) throw new PublicQuoteConfigurationError("Please choose a valid DC cable brand.");
   if (included.earthingBore && config.earthingBoreCount !== 1 && config.earthingBoreCount !== 2) throw new PublicQuoteConfigurationError("Choose one or two earthing bores.");
   if (included.breakers && config.wiringPhase !== "single" && config.wiringPhase !== "three") throw new PublicQuoteConfigurationError("Choose single-phase or three-phase wiring.");
   if (included.transport && options.allowCustomTransport && config.transportOutOfCity && (!Number.isSafeInteger(config.transportationPkr) || config.transportationPkr < 0 || config.transportationPkr > 1_000_000)) throw new PublicQuoteConfigurationError("Transport must be between Rs. 0 and Rs. 1,000,000.");
@@ -466,7 +470,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig, options: { a
   });
   const selectedLines: PublicQuoteLine[] = [
     ...(included.acCable ? [cableLine("AC cable", config.acCableBrand, config.acCableMeters, QUOTE_ITEM_PRICES.acCable)] : []),
-    ...(included.dcCable ? [cableLine("DC solar cable", "Solar DC cable", config.dcCableMeters, QUOTE_ITEM_PRICES.dcCable)] : []),
+    ...(included.dcCable ? [cableLine("DC solar cable", config.dcCableBrand, config.dcCableMeters, QUOTE_ITEM_PRICES.dcCable)] : []),
     ...(included.breakers ? [pricedItem("Cables & protection", `${config.wiringPhase === "three" ? "Three-phase" : "Single-phase"} breakers and protection`, "DB, breakers and protection", 1, "set", config.wiringPhase === "three" ? QUOTE_ITEM_PRICES.threePhaseBreakers : QUOTE_ITEM_PRICES.singlePhaseBreakers)] : []),
     ...(included.miscellaneous ? [pricedItem("Cables & protection", "Electrical miscellaneous", `${config.wiringPhase === "three" ? "Three-phase" : "Single-phase"} duct pipes, fittings and accessories`, 1, "job", QUOTE_ITEM_PRICES.miscellaneous)] : []),
     ...(included.earthingCable ? [cableLine("Earthing cable", "Panel and equipment earthing", config.earthingCableMeters, QUOTE_ITEM_PRICES.earthingCable)] : []),

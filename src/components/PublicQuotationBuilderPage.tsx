@@ -402,6 +402,23 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       inverter.voltageClass || "",
     ].join(" "),
   }));
+  const batterySearchOptions = selectedInverter?.bundle
+    ? [{
+        value: selectedInverter.bundle.batteryId,
+        label: selectedInverter.bundle.batteryLabel,
+        keywords: `${selectedInverter.bundle.batteryLabel} bundled battery`,
+      }]
+    : batteries.map((battery) => ({
+        value: battery.id,
+        label: `${battery.brand} ${battery.model !== "Lithium" ? `${battery.model} · ` : ""}${battery.capacityKwh}kWh${battery.protection ? ` ${battery.protection}` : ""} — ${formatPkr(battery.pricePkr)}`,
+        keywords: [
+          battery.brand,
+          battery.model,
+          `${battery.capacityKwh} kWh`,
+          battery.protection || "",
+          battery.voltageClass || "",
+        ].join(" "),
+      }));
 
   const updateConfig = (patch: Partial<PublicQuoteConfig>) => {
     setGenerated(false);
@@ -435,6 +452,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       included: config.included,
       acCableBrand: config.acCableBrand,
       acCableMeters: config.acCableMeters,
+      dcCableBrand: config.dcCableBrand,
       dcCableMeters: config.dcCableMeters,
       earthingCableMeters: config.earthingCableMeters,
       earthingBoreCount: config.earthingBoreCount,
@@ -540,6 +558,8 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       config.included.panels ? `${calculation.panel.brand} ${calculation.panel.watts}W × ${config.panelQuantity}` : "",
       config.included.inverter ? `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)} inverter` : "",
       config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh} kWh battery` : "",
+      config.included.acCable ? `AC cable: ${config.acCableBrand} · ${config.acCableMeters} m` : "",
+      config.included.dcCable ? `DC cable: ${config.dcCableBrand} · ${config.dcCableMeters} m` : "",
       config.included.structure ? `${calculation.structureLabel} (capacity: ${calculation.configuredStructureCapacityPanels} panels)` : "",
       `Estimated total: ${formatPkr(calculation.totalPkr)}`,
       clientName.trim() ? `Name: ${clientName.trim()}` : "",
@@ -697,21 +717,14 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
 
               <div className="sm:col-span-2">{itemToggle("battery", "Include lithium battery")}{selectedInverter?.bundle && config.included.inverter ? <p className="text-xs text-slate-500">This inverter comes with its battery. Choose a different inverter to exclude the battery.</p> : null}</div>
               {config.included.battery ? <>
-              <SelectField
+              <SearchableSelectField
                 label="Lithium battery"
                 value={selectedInverter?.bundle?.batteryId || config.batteryId}
                 disabled={Boolean(selectedInverter?.bundle)}
                 onChange={(batteryId) => updateConfig({ batteryId, batteryAccessoryIds: [] })}
-                hint={selectedInverter?.bundle ? "FOX ESS includes its matching 10.2 kWh battery automatically." : "Battery sizes are matched to the selected system."}
-              >
-                {selectedInverter?.bundle ? (
-                  <option value={selectedInverter.bundle.batteryId}>{selectedInverter.bundle.batteryLabel}</option>
-                ) : batteries.map((battery) => (
-                  <option key={battery.id} value={battery.id}>
-                    {battery.brand} {battery.model !== "Lithium" ? `${battery.model} · ` : ""}{battery.capacityKwh}kWh{battery.protection ? ` ${battery.protection}` : ""} — {formatPkr(battery.pricePkr)}
-                  </option>
-                ))}
-              </SelectField>
+                options={batterySearchOptions}
+                hint={selectedInverter?.bundle ? "This inverter includes its matching battery automatically." : "Search by brand, model, capacity, IP rating or voltage class."}
+              />
 
               <QuantityField
                 label="Number of batteries"
@@ -819,14 +832,19 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
                 {itemToggle("acCable", `AC cable · Rs. ${QUOTE_ITEM_PRICES.acCable}/meter`)}
                 {config.included.acCable ? <div className="mt-2 grid gap-3">
                   <SelectField label="AC cable brand" value={config.acCableBrand} onChange={(acCableBrand) => updateConfig({ acCableBrand: acCableBrand as PublicQuoteConfig["acCableBrand"] })}>
-                    <option value="Pakistan Cables">Pakistan Cables</option><option value="Innovative">Innovative</option>
+                    <option value="Pakistan Cables">Pakistan Cables</option><option value="Industrial Innovative">Industrial Innovative</option>
                   </SelectField>
                   <QuantityField label="AC cable length (meters)" value={config.acCableMeters} min={1} max={10_000} onChange={(acCableMeters) => updateConfig({ acCableMeters })} />
                 </div> : null}
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
                 {itemToggle("dcCable", `DC cable · Rs. ${QUOTE_ITEM_PRICES.dcCable}/meter`)}
-                {config.included.dcCable ? <div className="mt-2"><QuantityField label="DC cable length (meters)" value={config.dcCableMeters} min={1} max={10_000} onChange={(dcCableMeters) => updateConfig({ dcCableMeters })} /></div> : null}
+                {config.included.dcCable ? <div className="mt-2 grid gap-3">
+                  <SelectField label="DC cable brand" value={config.dcCableBrand} onChange={(dcCableBrand) => updateConfig({ dcCableBrand: dcCableBrand as PublicQuoteConfig["dcCableBrand"] })}>
+                    <option value="Pakistan Cables">Pakistan Cables</option><option value="Industrial Innovative">Industrial Innovative</option>
+                  </SelectField>
+                  <QuantityField label="DC cable length (meters)" value={config.dcCableMeters} min={1} max={10_000} onChange={(dcCableMeters) => updateConfig({ dcCableMeters })} />
+                </div> : null}
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
                 {itemToggle("breakers", "Breakers and protection")}

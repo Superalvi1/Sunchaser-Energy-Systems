@@ -44,11 +44,14 @@ assert.deepEqual(
 const noCivilPad = calculatePublicQuotation({ ...base, structurePanelQuantity: 20, structureType: "standard-l2", included: { ...base.included, civilPad: false } });
 assert.ok(noCivilPad.lines.every((line) => line.description !== "Civil pads for structure legs"));
 
-const metered = calculatePublicQuotation({ ...base, acCableBrand: "Innovative", acCableMeters: 90, dcCableMeters: 25, earthingCableMeters: 90, earthingBoreCount: 1, wiringPhase: "single" });
+const metered = calculatePublicQuotation({ ...base, acCableBrand: "Industrial Innovative", acCableMeters: 90, dcCableBrand: "Pakistan Cables", dcCableMeters: 25, earthingCableMeters: 90, earthingBoreCount: 1, wiringPhase: "single" });
 assert.ok(metered.lines.every((line) => !/fire-proof solar cable|Complete system earthing|AC\/DC earthing bore|DB boxes, breakers/.test(line.description)), "legacy bundled charges must not be added again");
 assert.equal(metered.lines.find((line) => line.description === "AC cable")?.totalPkr, 90 * 300);
-assert.equal(metered.lines.find((line) => line.description === "AC cable")?.specification, "Innovative");
+assert.equal(metered.lines.find((line) => line.description === "AC cable")?.specification, "Industrial Innovative");
 assert.equal(metered.lines.find((line) => line.description === "DC solar cable")?.totalPkr, 25 * 275);
+assert.equal(metered.lines.find((line) => line.description === "DC solar cable")?.specification, "Pakistan Cables");
+assert.equal(defaultPublicQuoteConfig(8).dcCableBrand, "Pakistan Cables");
+assert.equal(defaultPublicQuoteConfig(8).dcCableMeters, 90);
 assert.equal(metered.lines.find((line) => line.description === "Earthing cable")?.totalPkr, 90 * 115);
 assert.equal(metered.lines.find((line) => line.description === "Earthing bore")?.totalPkr, 9_000);
 assert.equal(metered.lines.find((line) => line.description === "Single-phase breakers and protection")?.totalPkr, 20_000);
