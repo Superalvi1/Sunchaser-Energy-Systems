@@ -561,6 +561,8 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       config.included.acCable ? `AC cable: ${config.acCableBrand} · ${config.acCableMeters} m` : "",
       config.included.dcCable ? `DC cable: ${config.dcCableBrand} · ${config.dcCableMeters} m` : "",
       config.included.structure ? `${calculation.structureLabel} (capacity: ${calculation.configuredStructureCapacityPanels} panels)` : "",
+      calculation.discountPkr > 0 ? `Subtotal: ${formatPkr(calculation.subtotalPkr)}` : "",
+      calculation.discountPkr > 0 ? `Discount: -${formatPkr(calculation.discountPkr)}` : "",
       `Estimated total: ${formatPkr(calculation.totalPkr)}`,
       clientName.trim() ? `Name: ${clientName.trim()}` : "",
       clientCity.trim() ? `City: ${clientCity.trim()}` : "",
@@ -890,12 +892,24 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
           </div>
 
           {isStaffMode ? <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
-            <h2 className="text-lg font-black">Staff discount</h2>
-            <p className="mt-1 text-sm text-slate-500">Enter an amount to discount or round the final total. The PDF shows the subtotal and discount.</p>
-            <label className="mt-4 block max-w-xs text-sm font-bold text-slate-700">Discount (Rs.)
-              <input type="number" min="0" max={calculation?.subtotalPkr || undefined} step="1" value={config.discountPkr} onChange={(event) => updateConfig({ discountPkr: Number(event.target.value) })} className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 px-3 text-base" />
-            </label>
-            {calculation ? <button type="button" onClick={() => updateConfig({ discountPkr: calculation.subtotalPkr % 1_000 })} className="mt-3 min-h-11 rounded-xl border border-amber-400 px-4 text-sm font-bold text-slate-800">Round total down to nearest Rs. 1,000</button> : null}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-black">Discount</h2>
+                <p className="mt-1 text-sm text-slate-500">Optional. Enter the approved rupee discount to reduce the final quotation total.</p>
+              </div>
+              {calculation && config.discountPkr > 0 ? <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-700">−{formatPkr(calculation.discountPkr)}</div> : null}
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,20rem)_auto] sm:items-end">
+              <label className="block text-sm font-bold text-slate-700">Discount amount (Rs.)
+                <input type="number" min="0" max={calculation?.subtotalPkr || undefined} step="1" value={config.discountPkr} onChange={(event) => updateConfig({ discountPkr: Math.max(0, Math.round(Number(event.target.value) || 0)) })} className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 px-3 text-base" />
+              </label>
+              {calculation ? <button type="button" onClick={() => updateConfig({ discountPkr: calculation.subtotalPkr % 1_000 })} className="min-h-12 rounded-xl border border-amber-400 px-4 text-sm font-bold text-slate-800">Round total down to nearest Rs. 1,000</button> : null}
+            </div>
+            {calculation ? <div className="mt-4 grid gap-2 rounded-2xl bg-slate-50 p-4 text-sm sm:grid-cols-3">
+              <div><span className="block text-xs font-bold uppercase tracking-wide text-slate-500">Subtotal</span><span className="font-black text-slate-900">{formatPkr(calculation.subtotalPkr)}</span></div>
+              <div><span className="block text-xs font-bold uppercase tracking-wide text-slate-500">Discount</span><span className="font-black text-emerald-700">−{formatPkr(calculation.discountPkr)}</span></div>
+              <div><span className="block text-xs font-bold uppercase tracking-wide text-slate-500">Final total</span><span className="font-black text-slate-900">{formatPkr(calculation.totalPkr)}</span></div>
+            </div> : null}
           </div> : null}
 
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
