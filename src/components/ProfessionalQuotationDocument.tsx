@@ -160,7 +160,7 @@ export function ProfessionalQuotationDocument({
           <div style={{ width: 350, borderRadius: 12, overflow: "hidden", border: `1px solid ${COLORS.navy}` }}>
             <div style={{ background: COLORS.navySoft, color: "#cbd5e1", padding: "7px 14px", fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Selected items estimate</div>
             {calculation.discountPkr > 0 ? <div style={{ background: COLORS.panel, padding: "8px 14px", fontSize: 11, display: "flex", justifyContent: "space-between" }}><span>Subtotal</span><span>{currency(calculation.subtotalPkr)}</span></div> : null}
-            {calculation.discountPkr > 0 ? <div style={{ background: COLORS.panel, padding: "8px 14px", fontSize: 11, display: "flex", justifyContent: "space-between", color: COLORS.green }}><span>Staff discount</span><span>−{currency(calculation.discountPkr)}</span></div> : null}
+            {calculation.discountPkr > 0 ? <div style={{ background: COLORS.panel, padding: "8px 14px", fontSize: 11, display: "flex", justifyContent: "space-between", color: COLORS.green }}><span>Discount</span><span>−{currency(calculation.discountPkr)}</span></div> : null}
             <div style={{ background: COLORS.navy, color: "#ffffff", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
               <span style={{ fontSize: 12, fontWeight: 800 }}>Final estimated cost</span>
               <span style={{ color: COLORS.gold, fontSize: 21, fontWeight: 950, whiteSpace: "nowrap" }}>{currency(calculation.totalPkr)}</span>
