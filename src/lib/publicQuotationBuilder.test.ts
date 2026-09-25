@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { calculatePublicQuotation, defaultPublicQuoteConfig, publicQuoteBatteries, publicQuoteInverters, recommendedPanelQuantity } from "./publicQuotationBuilder.ts";
+import { calculateCivilPadBreakdown, calculatePublicQuotation, defaultPublicQuoteConfig, publicQuoteBatteries, publicQuoteInverters, recommendedPanelQuantity } from "./publicQuotationBuilder.ts";
 import { BATTERY_CATALOG, INVERTER_CATALOG, PANEL_CATALOG } from "./solarEquipmentCatalog.ts";
 
 const base = defaultPublicQuoteConfig(12);
@@ -22,17 +22,27 @@ const l2 = calculatePublicQuotation({ ...base, panelQuantity: 16, structurePanel
 assert.equal(l2.configuredStructureCapacityPanels, 20);
 assert.equal(l2.lines.find((line) => line.description === "L2 standard panel stands")?.quantity, 10);
 assert.equal(l2.lines.find((line) => line.description === "L2 standard panel stands")?.totalPkr, 45_000);
+assert.equal(l2.lines.find((line) => line.description === "Civil pads for structure legs")?.totalPkr, 10 * 4 * 500);
+assert.ok(l2.lines.every((line) => line.description !== "Foundation work for standard structure"), "legacy hidden foundation charge must not be added");
 const l3 = calculatePublicQuotation({ ...base, panelQuantity: 16, structurePanelQuantity: 20, structureType: "standard-l3" });
 assert.equal(l3.lines.find((line) => line.description === "L3 standard panel stands")?.quantity, 7);
 assert.equal(l3.lines.find((line) => line.description === "L3 standard panel stands")?.totalPkr, 50_400);
+assert.equal(l3.lines.find((line) => line.description === "Civil pads for structure legs")?.totalPkr, 7 * 6 * 500);
 
 const elevated = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuantity: 16, structurePanelQuantity: 20, structureType: "elevated" });
 assert.equal(elevated.configuredStructureCapacityPanels, 20);
 assert.equal(elevated.lines.find((line) => line.description.startsWith("Elevated structure"))?.totalPkr, 20 * 645 * 16);
+assert.ok(elevated.lines.every((line) => line.description !== "Civil pads for structure legs"));
 
 const mixed = calculatePublicQuotation({ ...base, panelId: aiko645.id, panelQuantity: 16, structureType: "mixed", mixedL2StandQuantity: 4, mixedL3StandQuantity: 2, mixedElevatedPanelQuantity: 6 });
 assert.equal(mixed.configuredStructureCapacityPanels, 20);
-assert.equal(mixed.lines.filter((line) => line.category === "Structure").reduce((sum, line) => sum + line.totalPkr, 0), 4 * 4_500 + 2 * 7_200 + 6 * 645 * 16);
+assert.equal(mixed.lines.filter((line) => line.category === "Structure").reduce((sum, line) => sum + line.totalPkr, 0), 4 * 4_500 + 2 * 7_200 + 6 * 645 * 16 + (4 * 4 + 2 * 6) * 500);
+assert.deepEqual(
+  calculateCivilPadBreakdown({ structureType: "mixed", structurePanelQuantity: 0, mixedL2StandQuantity: 4, mixedL3StandQuantity: 2 }),
+  { l2Stands: 4, l3Stands: 2, l2Legs: 16, l3Legs: 12, totalLegs: 28, totalPkr: 14_000 },
+);
+const noCivilPad = calculatePublicQuotation({ ...base, structurePanelQuantity: 20, structureType: "standard-l2", included: { ...base.included, civilPad: false } });
+assert.ok(noCivilPad.lines.every((line) => line.description !== "Civil pads for structure legs"));
 
 const metered = calculatePublicQuotation({ ...base, acCableBrand: "Innovative", acCableMeters: 90, dcCableMeters: 25, earthingCableMeters: 90, earthingBoreCount: 1, wiringPhase: "single" });
 assert.ok(metered.lines.every((line) => !/fire-proof solar cable|Complete system earthing|AC\/DC earthing bore|DB boxes, breakers/.test(line.description)), "legacy bundled charges must not be added again");
