@@ -66,6 +66,26 @@
   ],
   "rewrites": [
     {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "smartquote.sunchaserenergy.co"
+        }
+      ],
+      "destination": "https://sunchaser-crm-private-smoke-production.up.railway.app/quote"
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "smartquote.sunchaserenergy.co"
+        }
+      ],
+      "destination": "https://sunchaser-crm-private-smoke-production.up.railway.app/:path*"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },
