@@ -13,9 +13,9 @@ import {
 export const PUBLIC_QUOTE_CAPACITIES = [6, 8, 10, 12, 15, 20] as const;
 export type PublicQuoteCapacity = (typeof PUBLIC_QUOTE_CAPACITIES)[number];
 export type PublicQuoteStructure = "standard-l2" | "standard-l3" | "elevated" | "mixed";
-export type QuoteItemKey = "panels" | "inverter" | "battery" | "structure" | "installation" | "acCable" | "dcCable" | "breakers" | "miscellaneous" | "earthingCable" | "earthingBore" | "lightningArrester" | "transport" | "survey";
-export const QUOTE_ITEM_KEYS: readonly QuoteItemKey[] = ["panels", "inverter", "battery", "structure", "installation", "acCable", "dcCable", "breakers", "miscellaneous", "earthingCable", "earthingBore", "lightningArrester", "transport", "survey"];
-export const QUOTE_ITEM_PRICES = { acCable: 300, dcCable: 275, earthingCable: 115, bore: 9_000, lightningArrester: 6_000, transport: 10_000, survey: 5_000, singlePhaseBreakers: 20_000, threePhaseBreakers: 25_000, miscellaneous: 10_000 } as const;
+export type QuoteItemKey = "panels" | "inverter" | "battery" | "structure" | "civilPad" | "installation" | "acCable" | "dcCable" | "breakers" | "miscellaneous" | "earthingCable" | "earthingBore" | "lightningArrester" | "transport" | "survey";
+export const QUOTE_ITEM_KEYS: readonly QuoteItemKey[] = ["panels", "inverter", "battery", "structure", "civilPad", "installation", "acCable", "dcCable", "breakers", "miscellaneous", "earthingCable", "earthingBore", "lightningArrester", "transport", "survey"];
+export const QUOTE_ITEM_PRICES = { acCable: 300, dcCable: 275, earthingCable: 115, bore: 9_000, lightningArrester: 6_000, transport: 10_000, survey: 5_000, singlePhaseBreakers: 20_000, threePhaseBreakers: 25_000, miscellaneous: 10_000, civilPadPerLeg: 500 } as const;
 
 export type PublicQuoteConfig = {
   systemCapacityKw: number;
@@ -210,6 +210,43 @@ export function recommendedPanelQuantity(capacityKw: number, panelWatts: number)
   return Math.ceil((capacityKw * 1_000) / panelWatts);
 }
 
+export type CivilPadBreakdown = {
+  l2Stands: number;
+  l3Stands: number;
+  l2Legs: number;
+  l3Legs: number;
+  totalLegs: number;
+  totalPkr: number;
+};
+
+export function calculateCivilPadBreakdown(
+  config: Pick<PublicQuoteConfig, "structureType" | "structurePanelQuantity" | "mixedL2StandQuantity" | "mixedL3StandQuantity">,
+): CivilPadBreakdown {
+  let l2Stands = 0;
+  let l3Stands = 0;
+
+  if (config.structureType === "standard-l2") {
+    l2Stands = Math.ceil(Math.max(0, config.structurePanelQuantity) / 2);
+  } else if (config.structureType === "standard-l3") {
+    l3Stands = Math.ceil(Math.max(0, config.structurePanelQuantity) / 3);
+  } else if (config.structureType === "mixed") {
+    l2Stands = Math.max(0, Math.floor(config.mixedL2StandQuantity));
+    l3Stands = Math.max(0, Math.floor(config.mixedL3StandQuantity));
+  }
+
+  const l2Legs = l2Stands * 4;
+  const l3Legs = l3Stands * 6;
+  const totalLegs = l2Legs + l3Legs;
+  return {
+    l2Stands,
+    l3Stands,
+    l2Legs,
+    l3Legs,
+    totalLegs,
+    totalPkr: totalLegs * QUOTE_ITEM_PRICES.civilPadPerLeg,
+  };
+}
+
 export function defaultPublicQuoteConfig(capacityKw: PublicQuoteCapacity = 8): PublicQuoteConfig {
   const panel = PANEL_CATALOG.find((item) => item.id === "panel-aiko-abc-645") || PANEL_CATALOG[0];
   const inverter = publicQuoteInverters(capacityKw)[0];
@@ -252,7 +289,15 @@ export function calculatePublicQuotation(config: PublicQuoteConfig, options: { a
   const panel = byId(PANEL_CATALOG, config.panelId, "solar panel");
   const inverter = byId(INVERTER_CATALOG, config.inverterId, "inverter");
   const included = config.included;
-  if (!included || QUOTE_ITEM_KEYS.some((key) => typeof included[key] !== "boolean")) throw new PublicQuoteConfigurationError("Please select valid quotation items.");
+  if (
+    !included ||
+    QUOTE_ITEM_KEYS.some((key) =>
+      key === "civilPad"
+        ? included[key] !== undefined && typeof included[key] !== "boolean"
+        : typeof included[key] !== "boolean",
+    )
+  ) throw new PublicQuoteConfigurationError("Please select valid quotation items.");
+  const civilPadIncluded = included.civilPad === true;
   if (!Number.isInteger(config.panelQuantity) || config.panelQuantity < 1 || config.panelQuantity > 200) {
     throw new PublicQuoteConfigurationError("Panel quantity must be a whole number between 1 and 200.");
   }
@@ -396,16 +441,21 @@ export function calculatePublicQuotation(config: PublicQuoteConfig, options: { a
       totalPkr: stand.totalPricePkr,
     });
   }
-  const foundationLine: PublicQuoteLine[] =
-    included.structure && (config.structureType === "standard-l2" || config.structureType === "standard-l3") && rule.standardFoundationPkr
+  const civilPad = calculateCivilPadBreakdown(config);
+  const civilPadParts = [
+    civilPad.l2Stands > 0 ? `${civilPad.l2Stands} L2 stand${civilPad.l2Stands === 1 ? "" : "s"} × 4 legs` : "",
+    civilPad.l3Stands > 0 ? `${civilPad.l3Stands} L3 stand${civilPad.l3Stands === 1 ? "" : "s"} × 6 legs` : "",
+  ].filter(Boolean);
+  const civilPadLine: PublicQuoteLine[] =
+    civilPadIncluded && included.structure && civilPad.totalLegs > 0
       ? [{
           category: "Structure",
-          description: "Foundation work for standard structure",
-          specification: "Concrete filling and civil work from source BOQ",
-          quantity: 1,
-          unit: "job",
-          unitPricePkr: rule.standardFoundationPkr,
-          totalPkr: rule.standardFoundationPkr,
+          description: "Civil pads for structure legs",
+          specification: `${civilPadParts.join(" + ")} × Rs. ${QUOTE_ITEM_PRICES.civilPadPerLeg.toLocaleString("en-PK")} per pad`,
+          quantity: civilPad.totalLegs,
+          unit: "pads",
+          unitPricePkr: QUOTE_ITEM_PRICES.civilPadPerLeg,
+          totalPkr: civilPad.totalPkr,
         }]
       : [];
   const cableLine = (description: string, specification: string, quantity: number, price: number): PublicQuoteLine => ({
@@ -434,7 +484,7 @@ export function calculatePublicQuotation(config: PublicQuoteConfig, options: { a
     unitPricePkr: panel.watts * 4,
     totalPkr: config.panelQuantity * panel.watts * 4,
   };
-  const lines = [...equipmentLines, ...selectedLines, ...structureLines, ...foundationLine, ...(included.installation ? [installationLine] : [])];
+  const lines = [...equipmentLines, ...selectedLines, ...structureLines, ...civilPadLine, ...(included.installation ? [installationLine] : [])];
   const subtotalPkr = lines.reduce((sum, item) => sum + item.totalPkr, 0);
   if (!Number.isSafeInteger(config.discountPkr) || config.discountPkr < 0) throw new PublicQuoteConfigurationError("Discount must be a positive whole rupee amount.");
   const discountPkr = options.allowDiscount ? config.discountPkr : 0;

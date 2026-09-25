@@ -9,6 +9,7 @@ import {
   Minus,
   Plus,
   RotateCcw,
+  Search,
   ShieldCheck,
   Sun,
   Zap,
@@ -21,6 +22,7 @@ import {
 import {
   PUBLIC_QUOTE_CAPACITIES,
   QUOTE_ITEM_PRICES,
+  calculateCivilPadBreakdown,
   calculatePublicQuotation,
   defaultPublicQuoteConfig,
   publicQuoteBatteries,
@@ -165,6 +167,97 @@ function SelectField({
   );
 }
 
+function SearchableSelectField({
+  label,
+  value,
+  onChange,
+  options,
+  disabled = false,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string; keywords?: string }>;
+  disabled?: boolean;
+  hint?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = options.find((option) => option.value === value);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = normalizedQuery
+    ? options.filter((option) =>
+        `${option.label} ${option.keywords || ""}`.toLowerCase().includes(normalizedQuery),
+      )
+    : options;
+
+  const choose = (nextValue: string) => {
+    onChange(nextValue);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+          setQuery("");
+        }
+      }}
+    >
+      <span className="mb-2 block text-sm font-bold text-slate-800">{label}</span>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-left text-[15px] font-semibold text-slate-900 shadow-sm outline-none transition hover:border-amber-300 focus:border-amber-500 focus:ring-4 focus:ring-amber-100 disabled:bg-slate-100 disabled:text-slate-600"
+      >
+        <span className="min-w-0 flex-1 truncate">{selected?.label || "Select inverter"}</span>
+        <ChevronDown className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && !disabled ? (
+        <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div className="border-b border-slate-100 p-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search Goodwe, Solis, Knox, 10 kW..."
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-amber-500 focus:bg-white focus:ring-2 focus:ring-amber-100"
+              />
+            </div>
+          </div>
+          <div role="listbox" className="max-h-72 overflow-y-auto p-1">
+            {filteredOptions.length ? filteredOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={option.value === value}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choose(option.value)}
+                className={`w-full rounded-xl px-3 py-2.5 text-left text-sm transition ${option.value === value ? "bg-amber-50 font-bold text-slate-950" : "text-slate-700 hover:bg-slate-50"}`}
+              >
+                {option.label}
+              </button>
+            )) : (
+              <div className="px-3 py-5 text-center text-sm text-slate-500">No inverter matches “{query}”.</div>
+            )}
+          </div>
+        </div>
+      ) : null}
+      {hint ? <span className="mt-1.5 block text-xs leading-5 text-slate-500">{hint}</span> : null}
+    </div>
+  );
+}
+
 function QuantityField({
   label,
   value,
@@ -296,6 +389,19 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
     : selectedBattery?.id === "battery-knox-hv-10"
       ? BATTERY_ACCESSORY_CATALOG.filter((item) => item.model.includes("100Ah"))
       : [];
+  const civilPad = calculateCivilPadBreakdown(config);
+  const inverterSearchOptions = inverters.map((inverter) => ({
+    value: inverter.id,
+    label: `${inverterDisplayName(inverter)}${inverter.phase === "three" ? " 3P" : ""}${inverter.protection ? ` ${inverter.protection}` : ""} — ${formatPkr(inverter.pricePkr)}`,
+    keywords: [
+      inverter.brand,
+      inverter.model,
+      `${inverter.capacityKw} kW`,
+      inverter.phase === "three" ? "three phase 3 phase 3p" : "single phase 1 phase",
+      inverter.protection || "",
+      inverter.voltageClass || "",
+    ].join(" "),
+  }));
 
   const updateConfig = (patch: Partial<PublicQuoteConfig>) => {
     setGenerated(false);
@@ -572,13 +678,13 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
 
               <div className="sm:col-span-2">{itemToggle("inverter", "Include hybrid inverter")}</div>
               {config.included.inverter ? <>
-              <SelectField label="Hybrid inverter" value={config.inverterId} onChange={selectInverter}>
-                {inverters.map((inverter) => (
-                  <option key={inverter.id} value={inverter.id}>
-                    {inverterDisplayName(inverter)}{inverter.phase === "three" ? " 3P" : ""}{inverter.protection ? ` ${inverter.protection}` : ""} — {formatPkr(inverter.pricePkr)}
-                  </option>
-                ))}
-              </SelectField>
+              <SearchableSelectField
+                label="Hybrid inverter"
+                value={config.inverterId}
+                onChange={selectInverter}
+                options={inverterSearchOptions}
+                hint="Search by brand, model, capacity, phase or protection."
+              />
 
               <QuantityField
                 label="Number of inverters"
@@ -741,6 +847,14 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
                 {config.included.earthingBore ? <div className="mt-2"><SelectField label="Number of bores" value={String(config.earthingBoreCount)} onChange={(value) => updateConfig({ earthingBoreCount: Number(value) as 1 | 2 })}>
                   <option value="1">One bore · Rs. 9,000</option><option value="2">Two bores · Rs. 18,000</option>
                 </SelectField></div> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                {itemToggle("civilPad", `Civil pads · Rs. ${QUOTE_ITEM_PRICES.civilPadPerLeg}/leg`)}
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {civilPad.totalLegs > 0
+                    ? `${civilPad.l2Stands ? `${civilPad.l2Stands} L2 stand${civilPad.l2Stands === 1 ? "" : "s"} × 4 legs${civilPad.l3Stands ? " + " : ""}` : ""}${civilPad.l3Stands ? `${civilPad.l3Stands} L3 stand${civilPad.l3Stands === 1 ? "" : "s"} × 6 legs` : ""} = ${civilPad.totalLegs} pads · ${formatPkr(civilPad.totalPkr)}`
+                    : "Civil pads apply to L2/L3 stands. Elevated-only structure has no civil-pad charge."}
+                </p>
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("lightningArrester", "Lightning arrester · Rs. 6,000")}</div>
               <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("installation", "Installation and wiring · Rs. 4/W")}</div>
