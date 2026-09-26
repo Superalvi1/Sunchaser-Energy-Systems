@@ -46,13 +46,11 @@ fi
 case "${OPENCLAW_BOOTSTRAP_AUTH:-}" in
   openai)
     echo "Starting ChatGPT/Codex device authorization; follow the URL and code below."
-    (gosu node node dist/index.js models auth login --provider openai --method device-code \\
-      && echo "ChatGPT authorization completed; remove OPENCLAW_BOOTSTRAP_AUTH and restart Gateway.") &
+    (gosu node node dist/index.js models auth login --provider openai --method device-code && echo "ChatGPT authorization completed; remove OPENCLAW_BOOTSTRAP_AUTH and restart Gateway.") &
     ;;
   xai)
     echo "Starting xAI subscription device authorization; follow the URL and code below."
-    (gosu node node dist/index.js models auth login --provider xai --method oauth \\
-      && echo "xAI authorization completed; remove OPENCLAW_BOOTSTRAP_AUTH and restart Gateway.") &
+    (gosu node node dist/index.js models auth login --provider xai --method oauth && echo "xAI authorization completed; remove OPENCLAW_BOOTSTRAP_AUTH and restart Gateway.") &
     ;;
 esac
 
