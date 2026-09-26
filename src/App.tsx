@@ -540,6 +540,7 @@ function AuthenticatedApp() {
         return [
           { id: "CRM Database", label: "My CRM Leads", icon: Users },
           { id: "Sales Advisor", label: "Solar Sizing & Calculator", icon: FileText },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot }
         ];
       case "Technical CEO":
@@ -564,10 +565,14 @@ function AuthenticatedApp() {
       case "Installation Team":
       case "Service Technician":
       case "Technician":
-        return [{ id: "Field Portal", label: "Field Portal", icon: Wrench }];
+        return [
+          { id: "Field Portal", label: "Field Portal", icon: Wrench },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap }
+        ];
       case "Customer":
         return [
           { id: "Customer Portal", label: "My Sunchaser Home Portal", icon: UserCircle },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap },
           { id: "Sunchaser AI", label: "Chat with Solar AI", icon: Bot }
         ];
       default:
