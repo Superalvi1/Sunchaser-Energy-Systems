@@ -340,6 +340,7 @@ import {
 import { assertRailwayPrivateSmokeEnvironment } from "./server/runtime/railwayPrivateSmoke.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
 import { createCorsMiddleware } from "./server/middleware/cors.ts";
+import { createLearningRouter } from "./server/learning/learningRoutes.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
 import { actorToApiUser, type RequestActor } from "./server/middleware/actor.ts";
 import {
@@ -636,6 +637,10 @@ app.use(
 }
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+
+// Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
+// The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.
+app.use("/api/learning", createLearningRouter());
 
 /** Persist a validated public marketing lead into CRM storage (Supabase or local). */
 async function persistPublicMarketingLead(

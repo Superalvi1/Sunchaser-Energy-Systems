@@ -1,0 +1,50 @@
+name: Learning Studio Integration
+
+on:
+  pull_request:
+    paths:
+      - "server/learning/**"
+      - "server/middleware/customerRoutePolicy.ts"
+      - "src/lib/learningStudioClient.ts"
+      - "learning-studio/**"
+      - "scripts/learning-studio-schema.sql"
+      - ".github/workflows/learning-studio.yml"
+  push:
+    branches:
+      - "feat/learning-studio-openmaic-v1"
+    paths:
+      - "server/learning/**"
+      - "server/middleware/customerRoutePolicy.ts"
+      - "src/lib/learningStudioClient.ts"
+      - "learning-studio/**"
+      - "scripts/learning-studio-schema.sql"
+      - ".github/workflows/learning-studio.yml"
+
+jobs:
+  crm-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:learning-studio
+      - run: npm run test:authorization
+
+  learning-overlay-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production safety defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'OPENMAIC_COMMIT=21d83ec51b908a4b169ee2be7498a29da213c74d' learning-studio/Dockerfile
+          grep -q 'NEXT_PUBLIC_ENABLE_VIDEO_EXPORT=false' learning-studio/Dockerfile
+          grep -q 'LEARNING_SSO_SECRET' learning-studio/overlay/lib/server/sunchaser-sso.ts
+          grep -q "meta.isPublic ? 'allow' : 'forbid'" learning-studio/overlay/lib/persistence/document-access.ts
+          test -f learning-studio/THIRD_PARTY_NOTICES.md
