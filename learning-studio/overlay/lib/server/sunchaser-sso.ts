@@ -34,6 +34,19 @@ function toBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  // TypeScript's newer typed-array definitions permit ArrayBufferLike
+  // (including SharedArrayBuffer). Web Crypto requires BufferSource backed by
+  // a concrete ArrayBuffer, so copy into a fresh ArrayBuffer deliberately.
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+function utf8Buffer(value: string): ArrayBuffer {
+  return toArrayBuffer(toBytes(value));
+}
+
 function encodeBase64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -52,7 +65,7 @@ function decodeBase64Url(value: string): Uint8Array {
 async function hmacKey(): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    toBytes(secret()),
+    utf8Buffer(secret()),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign', 'verify'],
@@ -60,7 +73,7 @@ async function hmacKey(): Promise<CryptoKey> {
 }
 
 async function signUnsigned(unsigned: string): Promise<string> {
-  const signature = await crypto.subtle.sign('HMAC', await hmacKey(), toBytes(unsigned));
+  const signature = await crypto.subtle.sign('HMAC', await hmacKey(), utf8Buffer(unsigned));
   return encodeBase64Url(new Uint8Array(signature));
 }
 
@@ -68,8 +81,8 @@ async function verifyUnsigned(unsigned: string, signature: string): Promise<bool
   return crypto.subtle.verify(
     'HMAC',
     await hmacKey(),
-    decodeBase64Url(signature),
-    toBytes(unsigned),
+    toArrayBuffer(decodeBase64Url(signature)),
+    utf8Buffer(unsigned),
   );
 }
 
@@ -140,7 +153,11 @@ export async function verifyLearningSession(token: string): Promise<SunchaserIde
 }
 
 export async function stableOwnerUuid(userId: string): Promise<string> {
-  const signature = await crypto.subtle.sign('HMAC', await hmacKey(), toBytes('owner:' + userId));
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    await hmacKey(),
+    utf8Buffer('owner:' + userId),
+  );
   const bytes = new Uint8Array(signature).slice(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
