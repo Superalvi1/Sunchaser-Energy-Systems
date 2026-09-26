@@ -153,12 +153,14 @@ export async function verifyLearningSession(token: string): Promise<SunchaserIde
 }
 
 export async function stableOwnerUuid(userId: string): Promise<string> {
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    await hmacKey(),
-    utf8Buffer('owner:' + userId),
+  // Owner identity must survive SSO-secret rotation. It does not need to be
+  // secret; it only needs to be deterministic, opaque-ish and UUID-shaped for
+  // OpenMAIC's existing anonymous-owner compatibility layer.
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    utf8Buffer('sunchaser-learning-owner-v1:' + userId),
   );
-  const bytes = new Uint8Array(signature).slice(0, 16);
+  const bytes = new Uint8Array(digest).slice(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
