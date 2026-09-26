@@ -2,7 +2,8 @@
 
 # Sunchaser overlay is deliberately applied to a reviewed, pinned OpenMAIC
 # commit. Do not track upstream main implicitly.
-FROM alpine/git:2.49.1 AS source
+FROM node:22-alpine AS source
+RUN apk add --no-cache git ca-certificates
 ARG OPENMAIC_COMMIT=21d83ec51b908a4b169ee2be7498a29da213c74d
 RUN git clone https://github.com/THU-MAIC/OpenMAIC.git /src \
   && cd /src \
