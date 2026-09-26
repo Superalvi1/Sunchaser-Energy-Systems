@@ -40,5 +40,21 @@ if [ ! -f "$CONFIG_PATH" ]; then
   chown node:node "$CONFIG_PATH"
 fi
 
+# Start the requested one-time subscription login alongside the private
+# gateway so Railway health checks remain available while the owner approves
+# the device code. Tokens are written only to the persistent state volume.
+case "${OPENCLAW_BOOTSTRAP_AUTH:-}" in
+  openai)
+    echo "Starting ChatGPT/Codex device authorization; follow the URL and code below."
+    (gosu node node dist/index.js models auth login --provider openai --method device-code \\
+      && echo "ChatGPT authorization completed; remove OPENCLAW_BOOTSTRAP_AUTH and restart Gateway.") &
+    ;;
+  xai)
+    echo "Starting xAI subscription device authorization; follow the URL and code below."
+    (gosu node node dist/index.js models auth login --provider xai --method oauth \\
+      && echo "xAI authorization completed; remove OPENCLAW_BOOTSTRAP_AUTH and restart Gateway.") &
+    ;;
+esac
+
 echo "Learning OpenClaw starting: state=$STATE_DIR port=$GATEWAY_PORT model=$PRIMARY_MODEL"
 exec gosu node node dist/index.js gateway --bind lan --port "$GATEWAY_PORT"
