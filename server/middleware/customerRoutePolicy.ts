@@ -11,11 +11,13 @@ const CUSTOMER_ALLOWED_EXACT = new Set([
   "/api/auth/me",
   "/api/customer-portal",
   "/api/ai/chat",
+  "/api/learning",
 ]);
 
 const CUSTOMER_ALLOWED_PREFIXES = [
   "/api/customer-portal/",
   "/api/marketplace/",
+  "/api/learning/",
 ];
 
 /** Staff PDF routes that customers may access when handler enforces ownership. */
