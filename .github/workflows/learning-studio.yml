@@ -45,6 +45,6 @@ jobs:
           set -euo pipefail
           grep -q 'OPENMAIC_COMMIT=21d83ec51b908a4b169ee2be7498a29da213c74d' learning-studio/Dockerfile
           grep -q 'NEXT_PUBLIC_ENABLE_VIDEO_EXPORT=false' learning-studio/Dockerfile
-          grep -q 'LEARNING_SSO_SECRET' learning-studio/overlay/middleware.ts
+          grep -q 'LEARNING_SSO_SECRET' learning-studio/overlay/lib/server/sunchaser-sso.ts
           grep -q "meta.isPublic ? 'allow' : 'forbid'" learning-studio/overlay/lib/persistence/document-access.ts
           test -f learning-studio/THIRD_PARTY_NOTICES.md
