@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">Sunchaser</title>
+  <defs>
+    <linearGradient id="sun" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd65a"/>
+      <stop offset="1" stop-color="#e39a00"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b4f87"/>
+      <stop offset="1" stop-color="#071d3b"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#sun)" transform="translate(60 44)">
+    <circle r="23"/>
+    <path d="M0-41 6-29-6-29Z M0 41 6 29-6 29Z M41 0 29 6 29-6Z M-41 0-29 6-29-6Z M29-29 23-17 17-23Z M-29 29-23 17-17 23Z M29 29 17 23 23 17Z M-29-29-17-23-23-17Z"/>
+  </g>
+  <path d="M15 101C31 72 79 66 105 94 79 82 49 83 27 105c-7 6-18 3-12-4Z" fill="url(#blue)"/>
+  <path d="M20 103c27-15 55-15 82 0" fill="none" stroke="#f4b41a" stroke-width="7" stroke-linecap="round"/>
+</svg>
