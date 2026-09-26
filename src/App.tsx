@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { 
-  Sun, Users, Wrench, Bot, Shield, FileText, UserCircle, 
+  Sun, Users, Wrench, Bot, Shield, FileText, UserCircle, GraduationCap,
   Loader2, Inbox, RefreshCw, LogOut, ClipboardList, Send, FileSpreadsheet, Download,
   ChevronRight, ChevronLeft, Battery, Zap,
 } from "lucide-react";
@@ -80,6 +80,7 @@ import {
   readInteractiveProposalTokenFromLocation,
 } from "./lib/clientPortalRouting";
 import { isStaffQuotePath, STAFF_QUOTE_PATH } from "./lib/staffQuotationAccess";
+import { openLearningStudio } from "./lib/learningStudioClient";
 
 function needsCrmAppState(role: string) {
   return role !== "Customer" && !isTechnicalStaffRole(role);
@@ -146,6 +147,7 @@ function AuthenticatedApp() {
   const [portalError, setPortalError] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [forceWelcomeGuide, setForceWelcomeGuide] = useState(false);
+  const [learningLaunching, setLearningLaunching] = useState(false);
 
   // Mobile app shell (staff/admin surface only; desktop keeps its own chrome).
   const isMobile = useIsMobile();
@@ -344,6 +346,16 @@ function AuthenticatedApp() {
     loadSessionForUser(currentUser);
   };
 
+  const handleOpenLearningStudio = async () => {
+    try {
+      setLearningLaunching(true);
+      await openLearningStudio("/");
+    } catch (err: any) {
+      toast.error(err?.message || "Unable to open Sunchaser Learning Studio.");
+      setLearningLaunching(false);
+    }
+  };
+
   /* --- DATA MUTATION PROXIES --- */
 
   const handleAddLead = async (leadData: any) => {
@@ -511,6 +523,7 @@ function AuthenticatedApp() {
           { id: "CRM Database", label: "CRM Database", icon: Users },
           { id: "Sales Advisor", label: "Sales Advisor", icon: FileText },
           { id: "Installer Deck", label: "Installer Deck", icon: Wrench },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
           { id: "Activity Telemetry", label: "Activities & SMS Logs", icon: ClipboardList }
         ];
@@ -518,6 +531,7 @@ function AuthenticatedApp() {
         return [
           { id: "Admin Dashboard", label: "Manager Overview", icon: Shield },
           { id: "CRM Database", label: "CRM Lead Pool", icon: Users },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
           { id: "Activity Telemetry", label: "Enterprise Tracing logs", icon: ClipboardList }
         ];
@@ -534,6 +548,7 @@ function AuthenticatedApp() {
           { id: "Admin Dashboard", label: "Executive Dashboard", icon: Shield },
           { id: "CRM Database", label: "CRM Database", icon: Users },
           { id: "Sales Advisor", label: "Sales Advisor", icon: FileText },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
           { id: "Activity Telemetry", label: "Activities & SMS Logs", icon: ClipboardList }
         ];
@@ -542,6 +557,7 @@ function AuthenticatedApp() {
         return [
           { id: "Admin Dashboard", label: "Admin Dashboard", icon: Shield },
           { id: "CRM Database", label: "CRM Database", icon: Users },
+          { id: "Learning Studio", label: "AI Learning Studio", icon: GraduationCap },
           { id: "Sunchaser AI", label: "Sunchaser AI Assistant", icon: Bot },
         ];
       case "Survey Engineer":
@@ -993,6 +1009,40 @@ function AuthenticatedApp() {
                   await loadDatabaseState();
                 }}
               />
+            )}
+
+            {activeTab === "Learning Studio" && (
+              <section className="max-w-3xl mx-auto rounded-3xl border border-slate-800 bg-slate-900 p-6 md:p-8 space-y-5">
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                    <GraduationCap className="h-6 w-6" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-xl md:text-2xl font-extrabold text-white">
+                      Sunchaser AI Learning Studio
+                    </h2>
+                    <p className="text-sm text-slate-400 leading-relaxed">
+                      Build and deliver narrated AI courses with slides, quizzes and interactive classroom teaching. Video generation is disabled in V1.
+                    </p>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-xs text-slate-400 leading-relaxed">
+                  Your CRM login is used to open the Learning Studio securely. Course creation, enrollment, progress and AI usage will be linked back to Sunchaser.
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenLearningStudio}
+                  disabled={learningLaunching}
+                  className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 px-5 py-2.5 text-sm font-extrabold text-slate-950 transition"
+                >
+                  {learningLaunching ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <GraduationCap className="h-4 w-4" />
+                  )}
+                  {learningLaunching ? "Opening Learning Studio…" : "Open Learning Studio"}
+                </button>
+              </section>
             )}
 
             {activeTab === "Sunchaser AI" && (
