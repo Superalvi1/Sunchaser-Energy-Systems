@@ -23,8 +23,10 @@ RUN apk add --no-cache python3 build-base g++ cairo-dev pango-dev jpeg-dev gifli
 COPY --from=source /src/package.json /src/pnpm-lock.yaml /src/pnpm-workspace.yaml ./
 COPY --from=source /src/packages ./packages/
 COPY --from=source /src/scripts ./scripts/
-RUN --mount=type=cache,id=sunchaser-openmaic-pnpm,target=/root/.local/share/pnpm/store \
-  pnpm install --frozen-lockfile --ignore-scripts
+# Keep this install intentionally cache-mount-free on Railway staging.
+# Railway's Docker cache mount IDs are service-scoped; the generic BuildKit
+# cache id used previously could fail before useful build output appeared.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM base AS builder
 ARG ALLOWED_FRAME_ANCESTORS=https://crm.sunchaserenergy.co
