@@ -67,6 +67,7 @@ Required variables for the first authenticated smoke:
 NODE_ENV=production
 LEARNING_SSO_SECRET=<same high-entropy value as CRM>
 SUNCHASER_CRM_URL=https://crm.sunchaserenergy.co
+LEARNING_PUBLIC_URL=https://sunchaser-learning-studio-staging-production.up.railway.app
 ```
 
 Do not enable paid AI until authentication and access isolation pass.
@@ -74,6 +75,19 @@ Do not enable paid AI until authentication and access isolation pass.
 When generation is enabled later, add at least one server-side LLM provider
 credential supported by OpenMAIC. Provider keys belong only on this Railway
 service.
+
+For the private OpenClaw subscription gateway used by Sunchaser, configure:
+
+```
+OPENAI_API_KEY=<same value as the private gateway bearer token>
+OPENAI_BASE_URL=http://learning-openclaw-core.railway.internal:18789/v1
+OPENAI_MODELS=openclaw/default
+DEFAULT_MODEL=openai:openclaw/default
+```
+
+`learning-openclaw-core` must run in this same Railway project and environment.
+Do not expose its gateway publicly. Railway private DNS does not cross project
+or environment boundaries.
 
 ## Persistence safety
 

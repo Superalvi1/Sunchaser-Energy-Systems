@@ -11,6 +11,8 @@ RUN git clone https://github.com/THU-MAIC/OpenMAIC.git /src \
   && rm -rf .git
 COPY overlay/ /overlay/
 RUN cp -a /overlay/. /src/
+COPY branding/ /branding/
+RUN node /branding/apply-branding.mjs /src
 
 FROM node:22-alpine AS base
 RUN apk add --no-cache libc6-compat \
