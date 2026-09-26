@@ -80,12 +80,12 @@ For the private OpenClaw subscription gateway used by Sunchaser, configure:
 
 ```
 OPENAI_API_KEY=<same value as the private gateway bearer token>
-OPENAI_BASE_URL=http://learning-openclaw.railway.internal:18789/v1
+OPENAI_BASE_URL=http://learning-openclaw-core.railway.internal:18789/v1
 OPENAI_MODELS=openclaw/default
 DEFAULT_MODEL=openai:openclaw/default
 ```
 
-`learning-openclaw` must run in this same Railway project and environment.
+`learning-openclaw-core` must run in this same Railway project and environment.
 Do not expose its gateway publicly. Railway private DNS does not cross project
 or environment boundaries.
 
