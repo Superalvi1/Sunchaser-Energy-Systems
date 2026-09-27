@@ -30,6 +30,9 @@ function readUrlAuthHint(): { mode: AuthMode; token: string } | null {
   if (path.includes("reset-password") || params.get("reset") === "1") {
     return { mode: "reset", token };
   }
+  if (params.get("learning") === "1" && params.get("auth") === "register") {
+    return { mode: "register", token: "" };
+  }
   return null;
 }
 
