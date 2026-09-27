@@ -118,6 +118,13 @@ export default function App() {
 }
 
 function AuthenticatedApp() {
+  const learningEntry =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("learning") === "1";
+  const learningNext =
+    typeof window === "undefined"
+      ? "/"
+      : new URLSearchParams(window.location.search).get("next") || "/";
   const [appState, setAppState] = useState<AppState | null>(null);
   /*
    * Native cold start opens on Login; web keeps the marketing landing.
@@ -130,7 +137,7 @@ function AuthenticatedApp() {
    * away from Login, so nothing is removed.
    */
   const [guestView, setGuestView] = useState<"landing" | "wizard" | "login">(
-    () => (isNativeApp() ? "login" : "landing")
+    () => (isNativeApp() || learningEntry ? "login" : "landing")
   );
   const [loading, setLoading] = useState(false);
   const toast = useToast();
@@ -316,6 +323,16 @@ function AuthenticatedApp() {
 
   const handleAuthLoginSuccess = async (user: User) => {
     setCurrentUser(user);
+    if (learningEntry) {
+      setLearningLaunching(true);
+      try {
+        await openLearningStudio(learningNext);
+        return;
+      } catch (err: any) {
+        toast.error(err?.message || "Unable to open Sunchaser Learning Studio.");
+        setLearningLaunching(false);
+      }
+    }
     await loadSessionForUser(user);
     await refreshOnboardingGate(user);
   };
