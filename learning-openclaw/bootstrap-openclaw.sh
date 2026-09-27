@@ -32,12 +32,32 @@ if [ ! -f "$CONFIG_PATH" ]; then
       defaults: {
         workspace: $workspace,
         skipBootstrap: true,
-        model: { primary: $model }
+        model: { primary: $model, fallbacks: ["openai/gpt-5.5"] }
       }
     },
     tools: { profile: "coding" }
   }' > "$CONFIG_PATH"
   chown node:node "$CONFIG_PATH"
+fi
+
+# The persistent volume can predate the fallback configuration. Update only
+# the model policy, retaining OAuth profiles and all other user configuration.
+# A same-provider fallback needs no additional credential when OpenAI OAuth
+# already covers both models. Client cancellations are terminal, not fallback.
+if [ -f "$CONFIG_PATH" ]; then
+  CONFIG_TMP="$(mktemp "$STATE_DIR/openclaw.json.XXXXXX")"
+  if jq --arg model "$PRIMARY_MODEL" '
+    .agents.defaults.model = ((.agents.defaults.model // {})
+      + {primary: $model, fallbacks: ["openai/gpt-5.5"]})
+  ' "$CONFIG_PATH" > "$CONFIG_TMP"; then
+    chown node:node "$CONFIG_TMP"
+    chmod 0600 "$CONFIG_TMP"
+    mv "$CONFIG_TMP" "$CONFIG_PATH"
+  else
+    rm -f "$CONFIG_TMP"
+    echo "OpenClaw config is invalid; refusing to overwrite persistent state" >&2
+    exit 1
+  fi
 fi
 
 # Start the requested one-time subscription login alongside the private
