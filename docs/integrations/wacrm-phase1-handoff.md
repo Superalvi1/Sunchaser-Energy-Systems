@@ -1,6 +1,6 @@
 # Sunchaser × WA CRM: isolated Phase 1 handoff
 
-Date: 2026-09-27. Upstream: https://github.com/ArnasDon/wacrm (MIT, currently v0.8.0).
+Date: 2026-09-27; updated for Railway-only infrastructure 2026-09-28. Upstream: https://github.com/ArnasDon/wacrm (MIT, currently v0.8.0).
 Sunchaser repository: https://github.com/Superalvi1/Sunchaser-Energy-Systems
 Branch: `feat/wacrm-isolated-readonly-integration`.
 
@@ -51,21 +51,30 @@ production-capable. Existing `sunchaser-crm-private-smoke` and
    as part of this branch.
 2. Make a dedicated Railway **sandbox** project/environment for the fork,
    preferably separate from Sunchaser Railway Staging. Connect the new fork.
-3. Provision an isolated Supabase project for the stock template or explicitly
-   implement and test an alternative backend. Upstream uses Supabase Postgres,
-   Auth, Storage, RLS and realtime; a Railway PostgreSQL DATABASE_URL alone is
-   not drop-in compatible. Do not apply its 42 SQL migration files to Sunchaser's
-   production/staging CRM database.
-4. Set isolated NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
-   SUPABASE_SERVICE_ROLE_KEY, ENCRYPTION_KEY, META_APP_SECRET,
-   NEXT_PUBLIC_SITE_URL. Configure optional META_APP_ID and automation cron only
-   when needed. NEXT_PUBLIC_* values need to exist at build time with the
-   upstream Dockerfile; Railway build strategy/config must pass them as Docker
-   build args, or adapt the fork to Nixpacks/Node with appropriate build vars.
-   No credentials in Git, PRs, test logs, or ChatGPT.
-5. Use a Meta test-number/WABA first. **Do not register, subscribe, disconnect
+3. **Railway-only deployment requirement (user update, 2026-09-28):** Do not
+   create a new hosted Supabase, Vercel, or Render project. Fork the upstream
+   application and perform a dependency audit of all Supabase client/server,
+   auth, storage, realtime, edge-function and RLS calls. Provision an isolated
+   Railway PostgreSQL service/DB for the sandbox; do not point any forked
+   service at the current production CRM database.
+4. Stock upstream is NOT PostgreSQL-only: merely setting DATABASE_URL cannot
+   make it run on Railway PostgreSQL. Implement a tested Railway-native
+   persistence/auth/storage/realtime abstraction or, only if fully audited and
+   isolated, deploy the required Supabase-compatible components self-hosted on
+   Railway. Prefer reusing the established Sunchaser CRM auth/roles and porting
+   useful WA CRM modules rather than duplicating auth stacks. Preserve all
+   security semantics and migration parity. Upstream's 42 SQL migrations must
+   be reviewed and translated as needed; never apply them wholesale to the
+   Sunchaser production or staging CRM database.
+5. Keep any needed legacy NEXT_PUBLIC_SUPABASE_*/SUPABASE_* compatibility
+   variables **sandbox-local** only if a complete Railway-hosted compatible
+   backend was actually deployed; otherwise remove their use in the fork.
+   Store all credentials in Railway private environment variables and verify
+   build-time NEXT_PUBLIC_* injection. No credentials in Git, PRs, tests or
+   ChatGPT. No production DNS changes.
+6. Use a Meta test-number/WABA first. **Do not register, subscribe, disconnect
    or change the webhook for the existing Sunchaser business phone number.**
-6. Test signup/login, inbox, one inbound+outbound test exchange, authorized
+7. Test signup/login, inbox, one inbound+outbound test exchange, authorized
    API read scopes, message status, media and template dry-run/approval flows.
    If an outbound live test is required, use the sandbox number and explicit
    test recipients, not customer contacts.
@@ -101,11 +110,14 @@ data stores, separate employee authentication systems, or competing AI senders.
 - AI must begin in **draft-only / human approval**; no self-approved quotes,
   invented pricing, unauthorized discounts, autonomous bulk sends or silent
   credential changes.
-- Preserve current Railway, Render, Vercel and Supabase deployments and rollback.
+- Railway is the deployment destination for all new WA CRM infrastructure.
+  Do not re-enable or create hosted Supabase/Render/Vercel dependencies; preserve
+  current production data, backup, rollback and unrelated services.
 
 ## Acceptance criteria for next phase
 
-1. Sandbox WA CRM is deployed and authenticated with isolated credentials.
+1. Sandbox WA CRM runs entirely on Railway with isolated credentials and a
+   separately verified database/auth/storage/realtime strategy.
 2. Read-only `GET /api/v1/me`, contacts, conversations and messages work.
 3. No request to upstream `POST /api/v1/messages` from Sunchaser.
 4. Sunchaser official Meta inbox, lead linking and existing webhook regression
