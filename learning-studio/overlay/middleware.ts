@@ -6,7 +6,10 @@ import { verifyLearningSession } from '@/lib/server/sunchaser-sso';
 function unauthorizedPage(request: NextRequest): NextResponse {
   const crmUrl = String(process.env.SUNCHASER_CRM_URL || 'https://crm.sunchaserenergy.co').trim();
   try {
-    return NextResponse.redirect(new URL(crmUrl));
+    const signInUrl = new URL(crmUrl);
+    signInUrl.searchParams.set('learning', '1');
+    signInUrl.searchParams.set('next', request.nextUrl.pathname + request.nextUrl.search);
+    return NextResponse.redirect(signInUrl);
   } catch {
     return new NextResponse('Sunchaser Learning Studio sign-in required.', { status: 401 });
   }
