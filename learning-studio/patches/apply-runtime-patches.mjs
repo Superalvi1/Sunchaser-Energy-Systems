@@ -21,8 +21,7 @@ const headersNeedle = `        'Content-Type': 'text/event-stream',
         Connection: 'keep-alive',`;
 const headersReplacement = `        'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
-        'X-Accel-Buffering': 'no',
-        Connection: 'keep-alive',`;
+        'X-Accel-Buffering': 'no',`;
 
 if (!source.includes(heartbeatNeedle)) {
   throw new Error('Outline heartbeat patch target was not found');
@@ -35,3 +34,16 @@ source = source
   .replace(heartbeatNeedle, heartbeatReplacement)
   .replace(headersNeedle, headersReplacement);
 fs.writeFileSync(routePath, source);
+
+
+// HTTP/2 forbids Connection and other hop-by-hop headers. Remove this from
+// PBL streaming too; the public Railway edge negotiates HTTP/2 with Chrome.
+const pblSsePath = `${sourceRoot}/lib/pbl/v2/api/sse.ts`;
+let pblSse = fs.readFileSync(pblSsePath, 'utf8');
+const pblConnection = `      Connection: 'keep-alive',
+      // Disable Nginx response buffering`;
+if (!pblSse.includes(pblConnection)) {
+  throw new Error('PBL SSE header patch target was not found');
+}
+pblSse = pblSse.replace(pblConnection, `      // Disable Nginx response buffering`);
+fs.writeFileSync(pblSsePath, pblSse);
