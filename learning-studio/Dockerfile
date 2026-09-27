@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# Railway SSE keepalive patch is applied during the source stage.
 
 # Sunchaser overlay is deliberately applied to a reviewed, pinned OpenMAIC
 # commit. Do not track upstream main implicitly.
