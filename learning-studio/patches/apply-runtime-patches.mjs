@@ -53,11 +53,11 @@ fs.writeFileSync(pblSsePath, pblSse);
 // supports browser-native narration already, but leaves it opt-in upstream.
 // Enable it once for both new and existing Sunchaser learners while preserving
 // any voice setting they choose afterwards.
-const settingsPath = \`${sourceRoot}/lib/store/settings.ts\`;
+const settingsPath = `${sourceRoot}/lib/store/settings.ts`;
 let settings = fs.readFileSync(settingsPath, 'utf8');
-const mergeNeedle = \`        const merged = { ...currentState, ...persisted };
-        ensureBuiltInProviders(merged as Partial<SettingsState>);\`;
-const mergeReplacement = \`        const merged = { ...currentState, ...persisted };
+const mergeNeedle = `        const merged = { ...currentState, ...persisted };
+        ensureBuiltInProviders(merged as Partial<SettingsState>);`;
+const mergeReplacement = `        const merged = { ...currentState, ...persisted };
         if (typeof window !== 'undefined') {
           try {
             const sunchaserVoiceKey = 'sunchaser-browser-voice-v1';
@@ -80,7 +80,7 @@ const mergeReplacement = \`        const merged = { ...currentState, ...persiste
             // still enable Browser Native TTS from the normal voice control.
           }
         }
-        ensureBuiltInProviders(merged as Partial<SettingsState>);\`;
+        ensureBuiltInProviders(merged as Partial<SettingsState>);`;
 if (!settings.includes(mergeNeedle)) {
   throw new Error('Browser narration patch target was not found');
 }
