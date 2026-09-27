@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { isAgentRuntimeConfigured, isProWorkbenchEnabled } from '@/lib/config/feature-flags';
-import { verifyLearningSession } from '@/lib/server/sunchaser-sso';
+import { verifyLearningSession } from '@/lib/server/learning-session';
 
-function unauthorizedPage(request: NextRequest): NextResponse {
-  const crmUrl = String(process.env.SUNCHASER_CRM_URL || 'https://crm.sunchaserenergy.co').trim();
-  try {
-    const signInUrl = new URL(crmUrl);
-    signInUrl.searchParams.set('learning', '1');
-    signInUrl.searchParams.set('next', request.nextUrl.pathname + request.nextUrl.search);
-    return NextResponse.redirect(signInUrl);
-  } catch {
-    return new NextResponse('Sunchaser Learning Studio sign-in required.', { status: 401 });
-  }
+function signInPage(request: NextRequest): NextResponse {
+  const url = request.nextUrl.clone();
+  url.pathname = '/auth';
+  url.search = '';
+  url.searchParams.set('mode', 'login');
+  url.searchParams.set('next', request.nextUrl.pathname + request.nextUrl.search);
+  return NextResponse.redirect(url);
 }
 
 export async function middleware(request: NextRequest) {
@@ -27,8 +24,11 @@ export async function middleware(request: NextRequest) {
 
   if (
     pathname === '/welcome' ||
-    pathname === '/api/sunchaser-sso' ||
+    pathname === '/auth' ||
+    pathname.startsWith('/api/auth/') ||
     pathname === '/api/health' ||
+    pathname === '/api/server-providers' ||
+    pathname === '/api/access-code/status' ||
     /\.(?:avif|gif|ico|jpe?g|png|svg|webp|woff2?)$/i.test(pathname)
   ) {
     return NextResponse.next();
@@ -40,24 +40,22 @@ export async function middleware(request: NextRequest) {
       await verifyLearningSession(session);
       return NextResponse.next();
     } catch {
-      // Invalid/expired sessions fall through to a fail-closed response below.
+      // Invalid or expired sessions are handled as unauthenticated below.
     }
   }
 
   if (pathname.startsWith('/api/')) {
     return NextResponse.json(
-      { success: false, errorCode: 'UNAUTHORIZED', error: 'Sunchaser Learning Studio session required' },
+      { success: false, errorCode: 'UNAUTHORIZED', error: 'Learning Studio sign-in required' },
       { status: 401, headers: { 'Cache-Control': 'no-store' } },
     );
   }
 
-  // Keep the product homepage public. Course creation, playback and all data
-  // APIs remain behind the Sunchaser SSO session above.
   if (pathname === '/') {
     return NextResponse.rewrite(new URL('/welcome', request.url));
   }
 
-  return unauthorizedPage(request);
+  return signInPage(request);
 }
 
 export const config = {
