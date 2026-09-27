@@ -47,3 +47,42 @@ if (!pblSse.includes(pblConnection)) {
 }
 pblSse = pblSse.replace(pblConnection, `      // Disable Nginx response buffering`);
 fs.writeFileSync(pblSsePath, pblSse);
+
+
+// Sunchaser Learning Studio ships a free, local read-aloud voice. OpenMAIC
+// supports browser-native narration already, but leaves it opt-in upstream.
+// Enable it once for both new and existing Sunchaser learners while preserving
+// any voice setting they choose afterwards.
+const settingsPath = \`${sourceRoot}/lib/store/settings.ts\`;
+let settings = fs.readFileSync(settingsPath, 'utf8');
+const mergeNeedle = \`        const merged = { ...currentState, ...persisted };
+        ensureBuiltInProviders(merged as Partial<SettingsState>);\`;
+const mergeReplacement = \`        const merged = { ...currentState, ...persisted };
+        if (typeof window !== 'undefined') {
+          try {
+            const sunchaserVoiceKey = 'sunchaser-browser-voice-v1';
+            if (window.localStorage.getItem(sunchaserVoiceKey) !== 'enabled') {
+              merged.ttsEnabled = true;
+              merged.ttsProviderId = 'browser-native-tts';
+              merged.ttsProvidersConfig = {
+                ...merged.ttsProvidersConfig,
+                'browser-native-tts': {
+                  ...merged.ttsProvidersConfig?.['browser-native-tts'],
+                  apiKey: '',
+                  baseUrl: '',
+                  enabled: true,
+                },
+              };
+              window.localStorage.setItem(sunchaserVoiceKey, 'enabled');
+            }
+          } catch {
+            // Storage may be unavailable in a private browser. The learner can
+            // still enable Browser Native TTS from the normal voice control.
+          }
+        }
+        ensureBuiltInProviders(merged as Partial<SettingsState>);\`;
+if (!settings.includes(mergeNeedle)) {
+  throw new Error('Browser narration patch target was not found');
+}
+settings = settings.replace(mergeNeedle, mergeReplacement);
+fs.writeFileSync(settingsPath, settings);
