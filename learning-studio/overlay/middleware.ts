@@ -25,7 +25,12 @@ export async function middleware(request: NextRequest) {
     return new NextResponse('Not found', { status: 404 });
   }
 
-  if (pathname === '/api/sunchaser-sso' || pathname === '/api/health') {
+  if (
+    pathname === '/welcome' ||
+    pathname === '/api/sunchaser-sso' ||
+    pathname === '/api/health' ||
+    /\.(?:avif|gif|ico|jpe?g|png|svg|webp|woff2?)$/i.test(pathname)
+  ) {
     return NextResponse.next();
   }
 
@@ -44,6 +49,12 @@ export async function middleware(request: NextRequest) {
       { success: false, errorCode: 'UNAUTHORIZED', error: 'Sunchaser Learning Studio session required' },
       { status: 401, headers: { 'Cache-Control': 'no-store' } },
     );
+  }
+
+  // Keep the product homepage public. Course creation, playback and all data
+  // APIs remain behind the Sunchaser SSO session above.
+  if (pathname === '/') {
+    return NextResponse.rewrite(new URL('/welcome', request.url));
   }
 
   return unauthorizedPage(request);
