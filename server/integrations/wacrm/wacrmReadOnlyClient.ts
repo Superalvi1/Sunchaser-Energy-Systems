@@ -46,12 +46,14 @@ export type WacrmReadOnlyErrorCode =
   | "invalid_input";
 
 export class WacrmReadOnlyError extends Error {
-  constructor(
-    public readonly code: WacrmReadOnlyErrorCode,
-    public readonly status: number | null = null
-  ) {
+  readonly code: WacrmReadOnlyErrorCode;
+  readonly status: number | null;
+
+  constructor(code: WacrmReadOnlyErrorCode, status: number | null = null) {
     super(`WA CRM integration: ${code}`);
     this.name = "WacrmReadOnlyError";
+    this.code = code;
+    this.status = status;
   }
 }
 
@@ -158,7 +160,7 @@ export function createWacrmReadOnlyClient(
     if (!record(payload) || !("data" in payload)) {
       throw new WacrmReadOnlyError("malformed_response");
     }
-    return payload as T;
+    return payload as unknown as T;
   }
 
   return Object.freeze({
