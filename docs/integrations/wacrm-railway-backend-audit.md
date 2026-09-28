@@ -1,122 +1,108 @@
-# WA CRM on Railway: Supabase dependency audit and backend decision
+# WA CRM: selective integration decision (supersedes standalone-stack proposal)
 
-Date: 2026-09-28. Fork: https://github.com/Superalvi1/Sunchaser-WA-CRM
-Pinned upstream commit: `aee1b01f4b557870f1bbf9e7f566a2759e8f20f3` (v0.8.0, 2026-09-21)
-Pinned deployment branch: `sunchaser-pinned-aee1b01` (never deploy upstream `main`).
-Railway sandbox project: `Sunchaser WA CRM Sandbox` (`032d2726-7784-4cca-bb70-6b4d17a147e8`).
-
-## Why this document exists
-
-The Railway-only update asks for upstream's Supabase dependencies to be audited
-and replaced. This measures that surface first, because the size of it decides
-which replacement is actually safe.
-
-## Measured coupling at the pinned commit
-
-Counted over `src/` (`*.ts`, `*.tsx`) and `supabase/migrations/`:
-
-| Surface | Measure | Count |
-|---|---|---|
-| App files | `.ts` / `.tsx` under `src/` | 393 |
-| Files importing Supabase | files matching `supabase` | 164 |
-| Total Supabase references | occurrences | 803 |
-| PostgREST table access | `.from(` | 466 |
-| PostgREST reads | `.select(` | 300 |
-| PostgREST filters | `.eq(` | 417 |
-| Writes | `.insert(` / `.update(` / `.upsert(` / `.delete(` | 58 / 100 / 7 / 43 |
-| Stored procedures | `.rpc(` | 15 |
-| Auth calls | `auth.getUser` / `getSession` / others | 24 / 12 / 10 |
-| Storage | `.storage` | 21 |
-| Realtime | `.channel(` / `realtime` | 7 / 39 |
-| **RLS policies** | `CREATE POLICY` across 23 migration files | **155** |
-
-Upstream `docker-compose.yml` defines only the `app` service: it assumes a
-Supabase-compatible API endpoint exists. `.env.local.example` requires
-`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and
-`SUPABASE_SERVICE_ROLE_KEY`. Migration 030 additionally wants `pgvector`.
-
-## What this rules out
-
-**Rewriting the data layer to plain SQL/Prisma against a Railway
-`DATABASE_URL` is not a viable next step.** It would touch on the order of
-1,000 call sites and, critically, require re-implementing **155 RLS policies**
-as hand-written application authorization. Tenancy upstream is per-user
-(`user_id UUID REFERENCES auth.users(id)` on every table); a single missed
-policy is a cross-account data leak. The effort is large and the failure mode
-is silent.
-
-Setting only `DATABASE_URL` is likewise impossible: `@supabase/supabase-js`
-speaks HTTP to PostgREST/GoTrue/Storage/Realtime, not the Postgres wire
-protocol.
+Date: 2026-09-28. Status: **decided — selective integration into Sunchaser CRM.**
+Fork (reference only): https://github.com/Superalvi1/Sunchaser-WA-CRM
+Pinned upstream commit: `aee1b01f4b557870f1bbf9e7f566a2759e8f20f3` (v0.8.0, 2026-09-21),
+branch `sunchaser-pinned-aee1b01`. Upstream is MIT licensed.
 
 ## Decision
 
-Use the Railway sandbox as an **evaluation and module-harvest environment**,
-not as a second production CRM, and give it a **self-hosted,
-Supabase-compatible API stack on Railway** rather than a rewritten data layer.
+WA CRM will **not** run as a standalone application. Useful upstream modules are
+ported into the existing Sunchaser CRM, on its existing JWT/RBAC, Railway
+infrastructure, customer records, WhatsApp inbox and official Meta Cloud API
+transport. The fork and its pinned branch are kept as reference source only.
 
-This is the alternate the handoff permits "only if documented and proved
-superior in complexity/cost/security". On all three axes it is:
+**Superseded:** the earlier revision of this document proposed a self-hosted
+Supabase-compatible stack (Postgres + PostgREST + GoTrue + gateway + app) in a
+Railway sandbox. That proposal is withdrawn and none of those services will be
+provisioned. Its cost estimate of $8–18/month was also overstated; see below.
 
-- **Complexity** — 0 changed call sites versus ~1,000.
-- **Security** — the 155 reviewed RLS policies keep running in Postgres,
-  instead of being re-expressed by hand.
-- **Cost** — one Railway project either way; no hosted Supabase, Vercel or
-  Render project is created.
+## Why
 
-Minimal pilot stack, in the sandbox project only:
+### 1. Only one application may own the production number
 
-1. `Postgres` — Railway managed, already provisioned, isolated. **Never the
-   production CRM database.**
-2. `postgrest` — serves `/rest/v1`.
-3. `gotrue` — serves `/auth/v1`.
-4. `gateway` — path-routes `/rest/v1`, `/auth/v1` (later `/storage/v1`,
-   `/realtime/v1`) and presents one HTTPS origin as
-   `NEXT_PUBLIC_SUPABASE_URL`.
-5. `wacrm` — the pinned fork.
+Sunchaser's official transport owns the Meta webhook and the production
+WhatsApp number, and the single-writer rule forbids two handlers replying to
+the same inbound event. A standalone WA CRM could therefore only ever run
+against a test number. Anything built to connect it long-term would be glue
+for a system that cannot serve real customers.
 
-Storage (21 sites) and Realtime (7 channels) are deferred to a second pass:
-they are not needed to prove signup/login, migrations, `/api/v1/me` and the
-read-only endpoints, and the handoff asks for a minimal single-instance pilot.
+### 2. It would create a second customer database and a second login
 
-The long-term target is unchanged and this decision serves it: selectively port
-WA CRM modules into Sunchaser's existing `src/inbox/`,
-`server/unifiedMessaging/` and CRM RBAC. No second authentication system
-reaches Sunchaser production, because the sandbox auth stack stays in the
-sandbox.
+Standalone WA CRM brings its own auth (GoTrue) and its own contacts store,
+which would need a two-way sync and dedupe layer against Sunchaser leads. That
+contradicts the goal of one integrated WhatsApp menu with one customer record.
 
-## Migrations
+### 3. The upstream backend is deeply Supabase-bound
 
-Upstream's 42 SQL migrations run against the **sandbox** Postgres only. They
-are never applied to the Sunchaser production or staging CRM database. They
-need a Supabase-shaped target first: they reference `auth.users`, the
-`auth`/`storage` schemas, and the `anon` / `authenticated` / `service_role`
-roles, which the GoTrue + PostgREST stack above provides.
+Measured at the pinned commit over `src/` and `supabase/migrations/`:
 
-## Cost note (Railway HOBBY, $5 included usage)
+| Surface | Count |
+|---|---|
+| App files (`.ts`/`.tsx`) | 393 |
+| PostgREST `.from(` call sites | 466 |
+| `.select(` / `.eq(` | 300 / 417 |
+| Writes (`insert`/`update`/`upsert`/`delete`) | 208 |
+| `.rpc(` | 15 |
+| Auth calls | 46 |
+| `.storage` / realtime channels | 21 / 7 |
+| `CREATE POLICY` RLS rules | 155 across 23 migrations |
 
-The pilot adds four small always-on services beyond the existing projects.
-Railway bills by consumption, so the exact figure depends on idle footprint;
-a 4–5 service pilot of this shape is expected to run **above the $5 included
-credit**, in the rough range of **$8–18/month**, i.e. an incremental **$5–13**
-against today's bill. This is an estimate from Railway's per-GB-RAM and
-per-vCPU pricing, not a quoted price. Confirm before the remaining three
-services are provisioned.
+Running it on a plain Railway `DATABASE_URL` is impossible (`supabase-js`
+speaks HTTP to PostgREST/GoTrue, not the Postgres wire protocol), and
+rewriting its data layer means ~1,000 call sites plus re-implementing 155
+tenant-isolation policies by hand.
 
-## Status at time of writing
+### 4. The reusable value is in the logic, not the plumbing
 
-Done: fork created (MIT preserved), upstream commit pinned, sandbox Railway
-project created, isolated Postgres provisioned and `SUCCESS`.
+Supabase references are concentrated in data access. The business logic in the
+modules Sunchaser lacks is comparatively decoupled — e.g. flows 6,153 LOC with
+14 Supabase references, automations 2,924 LOC with 21, notifications 563 LOC
+with 0. That logic ports cleanly onto Sunchaser's repositories.
 
-Not done, and why:
+## Gap analysis
 
-- `postgrest` / `gotrue` / `gateway` / `wacrm` services — pending the cost
-  confirmation above.
-- Meta test number roundtrip — **blocked**: requires a test WABA/number and
-  opted-in test recipients from the Sunchaser Meta developer app. No Meta
-  credentials are available to this environment, and the production number is
-  deliberately untouched.
-- Sunchaser-side RBAC endpoint and signed webhook consumer — gated by the
-  handoff behind isolated API proof, which needs the stack above.
+Already present in Sunchaser (no port needed): official Meta webhook and
+outbound transport, inbox, conversations, assignment, CRM lead linking, AI
+drafts, AI engine/query agent, knowledge base, inbound media, the 24-hour
+customer-service window guard, and RBAC.
 
-`WACRM_INTEGRATION_ENABLED` remains `false` everywhere.
+Missing, and ported in this order:
+
+1. **Approved message templates and template sending** — the only compliant
+   way to message a customer outside the 24-hour window. Sunchaser has no
+   template-send code today.
+2. **Staff notifications.**
+3. **Consent tracking** — opt-in, opt-out, source, timestamp, audit history.
+4. **Broadcasts** — permission-controlled, approved templates only, rate
+   limited, deduplicated, opted-out recipients suppressed. Depends on 1 and 3.
+5. **Automations and conversation flows.**
+
+Each is a separate focused PR with reviewed migrations. Adapted upstream code
+carries an MIT attribution header naming the source path and pinned commit.
+
+## Cost
+
+Selective integration adds **no infrastructure**: ported features run in the
+existing Railway CRM service and database.
+
+For the record, the standalone option was re-estimated from measured idle
+usage — the sandbox Postgres used ~66 MB RAM, ~0.0001 vCPU and a 138 MB volume
+over a day, about $0.70/month — giving roughly **$4–7/month** for the full
+stack, not $8–18. Estimated from Railway's published rates, not quoted.
+
+## Sandbox project status
+
+Project `Sunchaser WA CRM Sandbox` (`032d2726-7784-4cca-bb70-6b4d17a147e8`)
+holds a single `Postgres` service created 2026-09-27 and never attached to an
+application. It is retained until its deletion has been reviewed; see the PR
+for the verification findings.
+
+## PR #99 read-only adapter
+
+Under this decision there is no WA CRM instance for
+`server/integrations/wacrm/wacrmReadOnlyClient.ts` to call. It is not imported
+by any server or client code and reads no configuration outside its own module,
+so it cannot enter the esbuild server bundle, but merging it would add
+unused code and a CI workflow to maintain. Recommendation: do not merge the
+adapter; keep the documentation.
