@@ -11,6 +11,7 @@ import type {
   InboxAiDraftConfigStatus,
   InboxConversationDetail,
   InboxMessage,
+  InboxTemplateSendInput,
 } from "../types";
 import { fetchInboxAiDraftConfig } from "../api/inboxApi";
 import { useAiDraft } from "../hooks/useAiDraft";
@@ -35,6 +36,9 @@ type ConversationViewProps = {
   onLoadOlder?: () => void;
   sending?: boolean;
   onSend: (text: string) => void;
+  onSendTemplate?: (input: InboxTemplateSendInput) => void;
+  sendingTemplate?: boolean;
+  templateSentToken?: number;
   onAssignToMe: () => void;
   onUnassign: () => void;
   onResolve: () => void;
@@ -58,6 +62,9 @@ export default function ConversationView({
   onLoadOlder,
   sending,
   onSend,
+  onSendTemplate,
+  sendingTemplate,
+  templateSentToken,
   onAssignToMe,
   onUnassign,
   onResolve,
@@ -321,6 +328,10 @@ export default function ConversationView({
         onSend={onSend}
         seedText={composerSeed.text}
         seedToken={composerSeed.token}
+        conversationId={detail?.conversation.id}
+        onSendTemplate={onSendTemplate}
+        sendingTemplate={sendingTemplate}
+        templateSentToken={templateSentToken}
       />
     </section>
   );

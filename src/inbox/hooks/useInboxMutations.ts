@@ -8,6 +8,7 @@ import {
   createInboxLead,
   markInboxRead,
   sendInboxMessage,
+  sendInboxTemplateMessage,
   unassignInboxConversation,
   updateInboxStatus,
 } from "../api/inboxApi";
@@ -18,6 +19,7 @@ import type {
   InboxMessage,
   InboxMessagesPage,
   InboxConversationStatus,
+  InboxTemplateSendInput,
 } from "../types";
 import { newIdempotencyKey } from "../utils/format";
 import { applyFilteredMembershipUpdate } from "./inboxConversationCache";
@@ -100,6 +102,21 @@ export function useInboxMutations() {
         );
       }
     },
+    onSettled: (_data, _err, input) => {
+      void queryClient.invalidateQueries({
+        queryKey: inboxKeys.messages(input.conversationId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: inboxKeys.detail(input.conversationId),
+      });
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.lists() });
+    },
+  });
+
+  /** Approved-template send. No optimistic bubble: the rendered text is server-side. */
+  const sendTemplate = useMutation({
+    mutationFn: (input: InboxTemplateSendInput) =>
+      sendInboxTemplateMessage({ ...input, idempotencyKey: newIdempotencyKey() }),
     onSettled: (_data, _err, input) => {
       void queryClient.invalidateQueries({
         queryKey: inboxKeys.messages(input.conversationId),
@@ -338,5 +355,5 @@ export function useInboxMutations() {
     },
   });
 
-  return { send, assign, unassign, setStatus, markRead, createLead };
+  return { send, sendTemplate, assign, unassign, setStatus, markRead, createLead };
 }

@@ -14,6 +14,8 @@ import {
   type WhatsAppConnectionStatusPayload,
   type WhatsAppConnectionTestResult,
   type WhatsAppOnboardingDiagnostics,
+  type InboxTemplateSendInput,
+  type InboxTemplateSummary,
 } from "../types";
 
 type Envelope<T> =
@@ -178,6 +180,41 @@ export async function sendInboxMessage(input: {
     error?: string | null;
     replay: boolean;
   }>("/api/inbox/messages/send", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return data;
+}
+
+/** Approved templates for the connected WhatsApp account. */
+export async function fetchInboxTemplates(): Promise<{
+  templates: InboxTemplateSummary[];
+  fetchedAt: string;
+  truncated: boolean;
+}> {
+  const { data } = await inboxRequest<{
+    templates: InboxTemplateSummary[];
+    fetchedAt: string;
+    truncated: boolean;
+  }>("/api/inbox/templates");
+  return data;
+}
+
+/** Send an approved template. Allowed outside the 24h window. */
+export async function sendInboxTemplateMessage(
+  input: InboxTemplateSendInput & { idempotencyKey: string }
+): Promise<{
+  state: string;
+  messageId?: string | null;
+  error?: string | null;
+  replay: boolean;
+}> {
+  const { data } = await inboxRequest<{
+    state: string;
+    messageId?: string | null;
+    error?: string | null;
+    replay: boolean;
+  }>("/api/inbox/messages/send-template", {
     method: "POST",
     body: JSON.stringify(input),
   });

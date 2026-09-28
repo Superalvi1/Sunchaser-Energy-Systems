@@ -1,6 +1,7 @@
-import { Loader2, Paperclip, Send, Smile } from "lucide-react";
+import { FileText, Loader2, Paperclip, Send, Smile } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import type { FreeFormEligibility } from "../types";
+import type { FreeFormEligibility, InboxTemplateSendInput } from "../types";
+import TemplatePicker from "./TemplatePicker";
 
 const QUICK_EMOJI = ["👍", "✅", "🙏", "😊", "☀️"];
 
@@ -15,6 +16,12 @@ type ComposerProps = {
    */
   seedText?: string | null;
   seedToken?: number;
+  /** Approved-template sending; allowed even when the 24h window is closed. */
+  conversationId?: string;
+  onSendTemplate?: (input: InboxTemplateSendInput) => void;
+  sendingTemplate?: boolean;
+  /** Increment to close the picker after a successful template send. */
+  templateSentToken?: number;
 };
 
 export default function Composer({
@@ -24,7 +31,13 @@ export default function Composer({
   onSend,
   seedText,
   seedToken,
+  conversationId,
+  onSendTemplate,
+  sendingTemplate,
+  templateSentToken,
 }: ComposerProps) {
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const templatesAvailable = Boolean(onSendTemplate && conversationId);
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const textId = useId();
@@ -37,6 +50,14 @@ export default function Composer({
       setText(seedText);
     }
   }, [seedToken, seedText]);
+
+  useEffect(() => {
+    if (templateSentToken) setTemplateOpen(false);
+  }, [templateSentToken]);
+
+  useEffect(() => {
+    setTemplateOpen(false);
+  }, [conversationId]);
 
   const submit = () => {
     const trimmed = text.trim();
@@ -65,6 +86,15 @@ export default function Composer({
                 ? ` (ended ${new Date(freeForm.windowExpiresAt).toLocaleString()})`
                 : ""}
               .
+              {templatesAvailable && !templateOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setTemplateOpen(true)}
+                  className="ml-2 font-semibold underline"
+                >
+                  Choose an approved template
+                </button>
+              ) : null}
             </>
           ) : (
             <>
@@ -76,6 +106,16 @@ export default function Composer({
             </>
           )}
         </div>
+      ) : null}
+
+      {templatesAvailable && templateOpen ? (
+        <TemplatePicker
+          conversationId={conversationId!}
+          sending={sendingTemplate}
+          disabled={disabled}
+          onSend={(input) => onSendTemplate!(input)}
+          onClose={() => setTemplateOpen(false)}
+        />
       ) : null}
 
       <div className="flex items-end gap-2">
@@ -116,6 +156,20 @@ export default function Composer({
             </div>
           ) : null}
         </div>
+
+        {templatesAvailable ? (
+          <button
+            type="button"
+            aria-label="Send approved template"
+            aria-expanded={templateOpen}
+            title="Send an approved WhatsApp template"
+            disabled={disabled}
+            onClick={() => setTemplateOpen((v) => !v)}
+            className="rounded-lg border border-[var(--inbox-border)] bg-[var(--inbox-surface-2)] p-2 text-[var(--inbox-muted)] hover:text-[var(--inbox-fg)] disabled:opacity-40"
+          >
+            <FileText className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
 
         <button
           type="button"
