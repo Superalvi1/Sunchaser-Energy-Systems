@@ -17,6 +17,7 @@ import {
   parseListMessagesQuery,
   parseReadWatermarkBody,
   parseSendMessageBody,
+  parseSendTemplateMessageBody,
   parseStatusBody,
   parseUnassignBody,
   isDtoErr,
@@ -46,7 +47,20 @@ import {
   type AiDraftOutcome,
   type InboxAiDraftAdapter,
 } from "./aiDraft/index.ts";
-import { canGenerateAiDraft } from "./whatsappInboxPermissions.ts";
+import {
+  canGenerateAiDraft,
+  isApprovedStaff,
+  isInboxAdminRole,
+} from "./whatsappInboxPermissions.ts";
+import { canSendOutboundWhatsApp } from "./whatsappPermissions.ts";
+import {
+  buildTemplateSendComponents,
+  renderTemplatePreview,
+  toTemplateSummary,
+  type TemplateSendComponent,
+  type WhatsAppTemplate,
+} from "./whatsappTemplates.ts";
+import type { TemplateCatalogResult } from "./whatsappTemplateCatalog.ts";
 import type { WhatsAppConversationInbox } from "./whatsappInboxDatabaseTypes.ts";
 import { readQueryAgentConfig } from "./aiQueryAgent/queryAgentConfig.ts";
 
@@ -182,10 +196,33 @@ export type InboxSendPort = (input: {
   conversationId: string;
   text: string;
   actor: RequestActor;
-}) => Promise<
+}) => Promise<SendPortResult>;
+
+type SendPortResult =
   | { ok: true; messageId: string }
-  | { ok: false; error: string; permanent?: boolean }
->;
+  | { ok: false; error: string; permanent?: boolean };
+
+/** Sends an already-resolved APPROVED template on one conversation. */
+export type InboxTemplateSendPort = (input: {
+  conversationId: string;
+  actor: RequestActor;
+  templateName: string;
+  languageCode: string;
+  components: TemplateSendComponent[];
+  previewText: string;
+}) => Promise<SendPortResult>;
+
+/** Read side of the approved-template catalog. */
+export type InboxTemplateCatalogPort = {
+  list(options?: { refresh?: boolean }): Promise<TemplateCatalogResult>;
+  find(
+    name: string,
+    language: string
+  ): Promise<
+    | { ok: true; template: WhatsAppTemplate }
+    | { ok: false; reason: string; message: string }
+  >;
+};
 
 function actorOf(req: Request): RequestActor {
   return req.actor as RequestActor;
@@ -235,6 +272,10 @@ export type InboxControllerDeps = {
   aiDraftAdapter?: InboxAiDraftAdapter;
   /** AI-03 config override (tests). */
   aiDraftConfig?: AiDraftConfig;
+  /** Approved-template sending. Absent → POST /messages/send-template is 503. */
+  templateSendPort?: InboxTemplateSendPort;
+  /** Approved-template catalog. Absent → template endpoints are 503. */
+  templateCatalog?: InboxTemplateCatalogPort;
 };
 
 /**
@@ -261,6 +302,119 @@ export function createInboxControllers(
   const aiDraftAdapter =
     deps.aiDraftAdapter ??
     createInboxAiDraftAdapter({ config: aiDraftConfig });
+
+  /** Only administrators may force a fresh template fetch from Meta. */
+  const canRefreshTemplates = (actor: RequestActor | undefined): boolean =>
+    isApprovedStaff(actor) && isInboxAdminRole(String(actor!.role || ""));
+
+  /**
+   * Claim → send → finalize for one outbound request. Every successful claim
+   * reaches a terminal idempotency state. Shared by text and template sends so
+   * both have identical replay and failure semantics.
+   */
+  const runIdempotentSend = async (
+    res: Response,
+    input: {
+      conversationId: string;
+      idempotencyKey: string;
+      actor: RequestActor;
+      /** false only for approved templates, which are allowed outside 24h. */
+      enforceFreeForm: boolean;
+      send: () => Promise<SendPortResult>;
+    }
+  ) => {
+    const begin = await services.messages.beginOutboundIdempotency({
+      conversationId: input.conversationId,
+      idempotencyKey: input.idempotencyKey,
+      actor: input.actor,
+      enforceFreeForm: input.enforceFreeForm,
+    });
+
+    if (begin.kind === "replay_completed") {
+      return inboxOk(res, {
+        state: begin.row.state,
+        messageId: begin.row.messageId,
+        replay: true,
+      });
+    }
+    if (begin.kind === "replay_failed") {
+      return inboxOk(res, {
+        state: begin.row.state,
+        error: begin.row.error,
+        replay: true,
+      });
+    }
+    if (begin.kind === "processing") {
+      return inboxFail(
+        res,
+        409,
+        "idempotency_processing",
+        "Request with this Idempotency-Key is still processing",
+        { state: begin.row.state }
+      );
+    }
+    if (begin.kind === "outcome_unknown") {
+      return inboxFail(
+        res,
+        409,
+        "idempotency_outcome_unknown",
+        "Previous outcome for this Idempotency-Key is unknown",
+        { state: begin.row.state }
+      );
+    }
+
+    // claimed — every successful claim must reach a terminal state.
+    const scope = {
+      conversationId: input.conversationId,
+      idempotencyKey: input.idempotencyKey,
+    };
+    let finalized = false;
+    const finalizeFailedKnown = async (error: string) => {
+      if (finalized) return;
+      await services.messages.failOutboundIdempotency({
+        ...scope,
+        error,
+      });
+      finalized = true;
+    };
+
+    try {
+      const sent = await input.send();
+      if (sent.ok === false) {
+        await finalizeFailedKnown(sent.error);
+        return inboxFail(
+          res,
+          sent.permanent === false ? 502 : 400,
+          "send_failed",
+          sent.error
+        );
+      }
+
+      const completed = await services.messages.completeOutboundIdempotency({
+        ...scope,
+        messageId: sent.messageId,
+      });
+      finalized = true;
+      return inboxOk(
+        res,
+        {
+          state: completed.state,
+          messageId: completed.messageId,
+          replay: false,
+        },
+        201
+      );
+    } catch (err) {
+      try {
+        await finalizeFailedKnown(
+          err instanceof Error ? err.message : "send_pipeline_error"
+        );
+      } catch {
+        // Best-effort finalize; original error is reported below.
+      }
+      return sendInboxError(res, err);
+    }
+  };
 
   return {
     async listConversations(req: Request, res: Response) {
@@ -390,100 +544,118 @@ export function createInboxControllers(
         }
 
         const actor = actorOf(req);
-        const begin = await services.messages.beginOutboundIdempotency({
+        return await runIdempotentSend(res, {
           conversationId: parsed.value.conversationId,
           idempotencyKey: parsed.value.idempotencyKey,
           actor,
+          enforceFreeForm: true,
+          send: () =>
+            deps.sendPort!({
+              conversationId: parsed.value.conversationId,
+              text: parsed.value.text,
+              actor,
+            }),
         });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
 
-        if (begin.kind === "replay_completed") {
-          return inboxOk(res, {
-            state: begin.row.state,
-            messageId: begin.row.messageId,
-            replay: true,
-          });
+    async sendTemplateMessage(req: Request, res: Response) {
+      try {
+        const parsed = parseSendTemplateMessageBody(req.body);
+        if (isDtoErr(parsed)) {
+          return validationFail(res, parsed);
         }
-        if (begin.kind === "replay_failed") {
-          return inboxOk(res, {
-            state: begin.row.state,
-            error: begin.row.error,
-            replay: true,
-          });
+        if (!deps.templateSendPort || !deps.templateCatalog || !sendEnabled) {
+          return inboxFail(
+            res,
+            503,
+            "send_unavailable",
+            "Template sending is not configured"
+          );
         }
-        if (begin.kind === "processing") {
+        const actor = actorOf(req);
+        // Role check before any template or conversation lookup.
+        if (!canSendOutboundWhatsApp(actor)) {
+          return inboxFail(res, 403, "forbidden", "Forbidden");
+        }
+
+        const found = await deps.templateCatalog.find(
+          parsed.value.templateName,
+          parsed.value.languageCode
+        );
+        if (found.ok === false) {
+          const status = found.reason === "not_found" ? 404 : 503;
+          return inboxFail(res, status, `template_${found.reason}`, found.message);
+        }
+        const params = {
+          body: parsed.value.bodyParameters,
+          ...(parsed.value.headerParameter !== undefined
+            ? { headerText: parsed.value.headerParameter }
+            : {}),
+          buttonUrlParams: parsed.value.buttonUrlParameters,
+        };
+        const built = buildTemplateSendComponents(found.template, params);
+        if (built.ok === false) {
+          return inboxFail(res, 400, "template_invalid", built.error);
+        }
+
+        // Templates may be sent outside the 24h window, but only to customers
+        // who have contacted the business at least once. Consent tracking
+        // (a later PR) will replace this interim guard.
+        const eligibility = await services.messages.getFreeFormEligibility(
+          parsed.value.conversationId,
+          actor
+        );
+        if (!eligibility.latestInboundMessageId) {
           return inboxFail(
             res,
             409,
-            "idempotency_processing",
-            "Request with this Idempotency-Key is still processing",
-            { state: begin.row.state }
-          );
-        }
-        if (begin.kind === "outcome_unknown") {
-          return inboxFail(
-            res,
-            409,
-            "idempotency_outcome_unknown",
-            "Previous outcome for this Idempotency-Key is unknown",
-            { state: begin.row.state }
+            "no_customer_contact",
+            "This customer has never messaged the business; template sending is not allowed yet"
           );
         }
 
-        // claimed — every successful claim must reach a terminal state.
-        const scope = {
+        const previewText = renderTemplatePreview(found.template, params);
+        return await runIdempotentSend(res, {
           conversationId: parsed.value.conversationId,
           idempotencyKey: parsed.value.idempotencyKey,
-        };
-        let finalized = false;
-        const finalizeFailedKnown = async (error: string) => {
-          if (finalized) return;
-          await services.messages.failOutboundIdempotency({
-            ...scope,
-            error,
-          });
-          finalized = true;
-        };
+          actor,
+          enforceFreeForm: false,
+          send: () =>
+            deps.templateSendPort!({
+              conversationId: parsed.value.conversationId,
+              actor,
+              templateName: found.template.name,
+              languageCode: found.template.language,
+              components: built.components,
+              previewText,
+            }),
+        });
+      } catch (err) {
+        return sendInboxError(res, err);
+      }
+    },
 
-        try {
-          const sent = await deps.sendPort({
-            conversationId: parsed.value.conversationId,
-            text: parsed.value.text,
-            actor,
-          });
-          if (sent.ok === false) {
-            await finalizeFailedKnown(sent.error);
-            return inboxFail(
-              res,
-              sent.permanent === false ? 502 : 400,
-              "send_failed",
-              sent.error
-            );
-          }
-
-          const completed = await services.messages.completeOutboundIdempotency({
-            ...scope,
-            messageId: sent.messageId,
-          });
-          finalized = true;
-          return inboxOk(
-            res,
-            {
-              state: completed.state,
-              messageId: completed.messageId,
-              replay: false,
-            },
-            201
-          );
-        } catch (err) {
-          try {
-            await finalizeFailedKnown(
-              err instanceof Error ? err.message : "send_pipeline_error"
-            );
-          } catch {
-            // Best-effort finalize; original error is reported below.
-          }
-          return sendInboxError(res, err);
+    async listTemplates(req: Request, res: Response) {
+      try {
+        if (!deps.templateCatalog) {
+          return inboxFail(res, 503, "templates_unavailable", "Templates are not configured");
         }
+        const refresh = req.query?.refresh === "true";
+        if (refresh && !canRefreshTemplates(actorOf(req))) {
+          return inboxFail(res, 403, "forbidden", "Only administrators can refresh templates");
+        }
+        const listed = await deps.templateCatalog.list({ refresh });
+        if (listed.ok === false) {
+          return inboxFail(res, 503, `templates_${listed.reason}`, listed.message);
+        }
+        return inboxOk(res, {
+          templates: listed.templates.map(toTemplateSummary),
+          fetchedAt: listed.fetchedAt,
+          truncated: listed.truncated,
+        });
       } catch (err) {
         return sendInboxError(res, err);
       }

@@ -27,7 +27,15 @@ import {
   type CreateWhatsAppInboxServicesOptions,
   type WhatsAppInboxServices,
 } from "./whatsappInboxServices.ts";
-import { createInboxOutboundSendPort } from "./whatsappInboxSendTransport.ts";
+import {
+  createInboxOutboundSendPort,
+  createInboxTemplateCatalog,
+  createInboxTemplateSendPort,
+} from "./whatsappInboxSendTransport.ts";
+import type {
+  InboxTemplateCatalogPort,
+  InboxTemplateSendPort,
+} from "./whatsappInboxControllers.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
 import type { AiDraftConfig, InboxAiDraftAdapter } from "./aiDraft/index.ts";
 
@@ -66,6 +74,14 @@ export type WhatsAppInboxRouterDeps = {
   aiDraftAdapter?: InboxAiDraftAdapter;
   /** AI-03 config override (tests). */
   aiDraftConfig?: AiDraftConfig;
+  /**
+   * Approved-template sending.
+   * - omit: production port (createInboxTemplateSendPort)
+   * - null: disabled
+   */
+  templateSendPort?: InboxTemplateSendPort | null;
+  /** Approved-template catalog. omit: production; null: disabled. */
+  templateCatalog?: InboxTemplateCatalogPort | null;
 };
 
 /**
@@ -115,6 +131,18 @@ export function createWhatsAppInboxRouter(
   const router = Router();
   const sendPort = resolveOutboundSendPort(deps);
   const sendEnabled = deps.sendEnabled ?? sendPort != null;
+  const templateSendPort =
+    deps.templateSendPort !== undefined
+      ? deps.templateSendPort
+      : deps.sendPort !== undefined || deps.resolveSendPort
+        ? null // injected/test text transport: never build a live template port
+        : createInboxTemplateSendPort({ messagingRepository: deps.messagingRepository });
+  const templateCatalog =
+    deps.templateCatalog !== undefined
+      ? deps.templateCatalog
+      : deps.sendPort !== undefined || deps.resolveSendPort
+        ? null
+        : createInboxTemplateCatalog();
   let controllers: InboxControllers | null = null;
 
   const getControllers = (): InboxControllers => {
@@ -128,6 +156,8 @@ export function createWhatsAppInboxRouter(
       resolveListAvailability: deps.resolveListAvailability,
       aiDraftAdapter: deps.aiDraftAdapter,
       aiDraftConfig: deps.aiDraftConfig,
+      templateSendPort: templateSendPort ?? undefined,
+      templateCatalog: templateCatalog ?? undefined,
     });
     return controllers;
   };
@@ -174,6 +204,20 @@ export function createWhatsAppInboxRouter(
   router.post(
     "/messages/send",
     run((c, req, res) => c.sendMessage(req, res))
+  );
+
+  /**
+   * Approved WhatsApp templates. Listing needs inbox access; ?refresh=true is
+   * admin-only. Sending shares the text send's idempotency and RBAC but is
+   * allowed outside the 24h customer-service window.
+   */
+  router.get(
+    "/templates",
+    run((c, req, res) => c.listTemplates(req, res))
+  );
+  router.post(
+    "/messages/send-template",
+    run((c, req, res) => c.sendTemplateMessage(req, res))
   );
 
   /**

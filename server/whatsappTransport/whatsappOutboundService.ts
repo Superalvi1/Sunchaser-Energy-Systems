@@ -16,7 +16,11 @@ import {
 } from "./whatsappOutboundCredentials.ts";
 import { getWhatsAppConnectionRepository } from "./whatsappConnectionService.ts";
 import { resolveCompanyId } from "./whatsappConstants.ts";
-import { sendWhatsAppTextMessage } from "./whatsappGraphClient.ts";
+import {
+  sendWhatsAppTemplateMessage,
+  sendWhatsAppTextMessage,
+} from "./whatsappGraphClient.ts";
+import type { TemplateSendComponent } from "./whatsappTemplates.ts";
 import {
   authorizeOutboundWhatsAppActor,
   canSendOutboundWhatsApp,
@@ -153,9 +157,46 @@ async function recordPersistenceDegraded(
   });
 }
 
+/**
+ * What is being sent. Text is validated here; a template payload arrives
+ * already resolved and validated by the caller (see whatsappTemplates.ts).
+ */
+export type OutboundPayload =
+  | { kind: "text"; rawText: unknown }
+  | {
+      kind: "template";
+      templateName: string;
+      languageCode: string;
+      components: TemplateSendComponent[];
+      /** Rendered customer-visible text, stored as the inbox message body. */
+      previewText: string;
+    };
+
 export async function sendOutboundPlainText(
   conversationId: string,
   rawText: unknown,
+  deps: OutboundSendDeps
+): Promise<OutboundSendResult> {
+  return sendOutboundMessage(conversationId, { kind: "text", rawText }, deps);
+}
+
+/**
+ * Send an APPROVED template. Shares the text pipeline end to end: RBAC,
+ * conversation authorization, connection-first credentials, phone-identity
+ * guard, idempotency, persistence and provider-id binding. The 24-hour
+ * free-form window does not apply to templates.
+ */
+export async function sendOutboundTemplate(
+  conversationId: string,
+  template: Omit<Extract<OutboundPayload, { kind: "template" }>, "kind">,
+  deps: OutboundSendDeps
+): Promise<OutboundSendResult> {
+  return sendOutboundMessage(conversationId, { kind: "template", ...template }, deps);
+}
+
+async function sendOutboundMessage(
+  conversationId: string,
+  payload: OutboundPayload,
   deps: OutboundSendDeps
 ): Promise<OutboundSendResult> {
   if (!deps.config.enabled) {
@@ -177,11 +218,19 @@ export async function sendOutboundPlainText(
     return { httpStatus: 503, error: "WhatsApp send configuration incomplete" };
   }
 
-  const textValidation = validateOutboundText(rawText);
-  if (textValidation.ok === false) {
-    return { httpStatus: 400, error: textValidation.error };
+  let text: string;
+  if (payload.kind === "text") {
+    const textValidation = validateOutboundText(payload.rawText);
+    if (textValidation.ok === false) {
+      return { httpStatus: 400, error: textValidation.error };
+    }
+    text = textValidation.text;
+  } else {
+    if (!payload.previewText.trim()) {
+      return { httpStatus: 400, error: "Template preview is empty" };
+    }
+    text = payload.previewText;
   }
-  const text = textValidation.text;
 
   const bundle = await deps.repo.getConversationBundle(conversationId);
   const auth = authorizeOutboundWhatsAppActor(deps.actor, bundle);
@@ -405,14 +454,22 @@ export async function sendOutboundPlainText(
   });
 
   // Meta is called at most once for this request. Never retry after response/timeout.
-  const graphResult = await sendWhatsAppTextMessage({
+  const graphTarget = {
     toWaId: conversationBundle.contact.phoneE164,
-    text,
     phoneNumberId: credentials.phoneNumberId,
     accessToken: credentials.accessToken,
     graphApiVersion: deps.config.graphApiVersion,
     fetchImpl: deps.fetchImpl,
-  });
+  };
+  const graphResult =
+    payload.kind === "text"
+      ? await sendWhatsAppTextMessage({ ...graphTarget, text })
+      : await sendWhatsAppTemplateMessage({
+          ...graphTarget,
+          templateName: payload.templateName,
+          languageCode: payload.languageCode,
+          components: payload.components,
+        });
 
   if (graphResult.ok === true) {
     const providerMessageId = graphResult.providerMessageId;
