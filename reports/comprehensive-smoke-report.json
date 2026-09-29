@@ -1,0 +1,266 @@
+{
+  "testRunId": "CUTOVER_1790286350386",
+  "targetApi": "https://crm.sunchaserenergy.co",
+  "startTime": "2026-09-24T21:45:50.386Z",
+  "endTime": "2026-09-24T21:46:05.544Z",
+  "durationMs": 15158,
+  "totalTests": 23,
+  "passed": 23,
+  "failed": 0,
+  "status": "PASS",
+  "results": [
+    {
+      "id": "T01_HEALTH",
+      "title": "CRM Service Liveness & Health",
+      "category": "System",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:51.072Z",
+      "details": {
+        "status": 200,
+        "body": {
+          "status": "ok",
+          "service": "sunchaser-crm"
+        }
+      }
+    },
+    {
+      "id": "T02_UNAUTH_REJECTION",
+      "title": "Protected API Rejection When Unauthenticated",
+      "category": "Security",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:52.166Z",
+      "details": {
+        "rolesMatrixStatus": 401,
+        "adminUsersStatus": 401,
+        "adminInvoicesStatus": 401
+      }
+    },
+    {
+      "id": "T03_ADMIN_LOGIN",
+      "title": "Owner/Admin Authentication",
+      "category": "Auth",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:52.596Z",
+      "details": {
+        "user": "admin",
+        "role": "Super Admin"
+      }
+    },
+    {
+      "id": "T04_RBAC_MATRIX",
+      "title": "Role-Based Access Control & Roles Matrix",
+      "category": "RBAC",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:53.604Z",
+      "details": {
+        "rolesCount": 9,
+        "dynamic": true
+      }
+    },
+    {
+      "id": "T05_CLIENT_REGISTRATION",
+      "title": "Client Registration & Auto-Approval",
+      "category": "Auth",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:54.033Z",
+      "details": {
+        "status": 201,
+        "userId": "u-1790286354133",
+        "customerId": "cust-1790286354133"
+      }
+    },
+    {
+      "id": "T06_HASSAN_LINKING",
+      "title": "User-to-Customer Auto-Linking (Hassan Case)",
+      "category": "Data-Integrity",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:54.033Z",
+      "details": {
+        "hasCustomerId": true,
+        "customerId": "cust-1790286354133"
+      }
+    },
+    {
+      "id": "T07_CLIENT_LOGIN",
+      "title": "Client Login & Session Issuance",
+      "category": "Auth",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:54.494Z",
+      "details": {
+        "status": 200,
+        "role": "Customer"
+      }
+    },
+    {
+      "id": "T08_SESSION_INVALIDATION",
+      "title": "Session Invalidation & Rejection",
+      "category": "Security",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:54.802Z",
+      "details": {
+        "status": 401
+      }
+    },
+    {
+      "id": "T09_PASSWORD_RESET_OTP",
+      "title": "Password Reset & Recovery Gateway",
+      "category": "Auth",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:55.145Z",
+      "details": {
+        "status": 200
+      }
+    },
+    {
+      "id": "T10_STAFF_WORKSPACE",
+      "title": "Staff Customer Directory Access",
+      "category": "Staff",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:55.487Z",
+      "details": {
+        "accountsCount": 7
+      }
+    },
+    {
+      "id": "T11_LEAD_CREATION",
+      "title": "Lead Creation with Commercial Sizing",
+      "category": "CRM",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:55.866Z",
+      "details": {
+        "status": 201,
+        "leadId": "lead-9476f771-fb61-4b45-9432-040d85c87d99"
+      }
+    },
+    {
+      "id": "T12_PUBLIC_LEAD_GATEWAY",
+      "title": "Quote / SmartQuote Public Lead Ingestion",
+      "category": "Integrations",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:56.498Z",
+      "details": {
+        "unauthBlocked": true,
+        "authCreated": false,
+        "capturedLeadId": null
+      }
+    },
+    {
+      "id": "T13_PROPOSAL_CREATION",
+      "title": "Interactive Quotation & BOQ Creation",
+      "category": "Quotation",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:57.970Z",
+      "details": {
+        "status": 200,
+        "quoteId": "lead-9476f771-fb61-4b45-9432-040d85c87d99"
+      }
+    },
+    {
+      "id": "T14_PORTAL_VISIBILITY",
+      "title": "Client Portal Dashboard & Profile Access",
+      "category": "Portal",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:58.395Z",
+      "details": {
+        "status": 200
+      }
+    },
+    {
+      "id": "T15_INVOICES_LEDGER",
+      "title": "Invoices & Payment Records Visibility",
+      "category": "Finance",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:59.189Z",
+      "details": {
+        "status": 200,
+        "invoicesCount": 133
+      }
+    },
+    {
+      "id": "T16_WARRANTY_DOCUMENTS",
+      "title": "Warranties & Document Storage Access",
+      "category": "Documents",
+      "passed": true,
+      "timestamp": "2026-09-24T21:45:59.631Z",
+      "details": {
+        "status": 200
+      }
+    },
+    {
+      "id": "T17_PDF_ENGINE",
+      "title": "Headless Chromium PDF Generation Engine",
+      "category": "Export",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:00.048Z",
+      "details": {
+        "status": 200,
+        "browserLaunchSuccess": true
+      }
+    },
+    {
+      "id": "T18_FILE_LIFECYCLE",
+      "title": "Document Upload & Object Storage Storage",
+      "category": "Storage",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:00.540Z",
+      "details": {
+        "status": 201,
+        "fileUrl": "https://crm.sunchaserenergy.co/api/storage/object/customer-documents/Y3VzdC0xNzkwMjg2MzU0MTMzLzE3OTAyODYzNjA1NzhfdmVyaWZ5X3Rlc3RfMTc5MDI4NjM2MDA0OC5wZGY?sig=552806e010d73e9611fcca379adefe0ef8d41475ca4d4daf1137550a18d67946"
+      }
+    },
+    {
+      "id": "T19_IMAGE_UPLOAD",
+      "title": "Watermark & Media Upload Engine",
+      "category": "Storage",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:00.978Z",
+      "details": {
+        "status": 200,
+        "url": "https://crm.sunchaserenergy.co/api/storage/object/quote-assets/d2F0ZXJtYXJrcy9zZXR0aW5ncy1jdXRvdmVyLXRlc3QtMTc5MDI4NjM2MTA1OS5wbmc?sig=369b22e785d7244c2edbb10a2705fbaf0818ee34d328f666b31c4baf599b5429"
+      }
+    },
+    {
+      "id": "T20_MARKETPLACE_CATALOGUE",
+      "title": "Marketplace Live Product Catalogue",
+      "category": "Marketplace",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:02.490Z",
+      "details": {
+        "source": "database",
+        "productsCount": 736
+      }
+    },
+    {
+      "id": "T21_PRICE_SYNC_CONSUMPTION",
+      "title": "Marketplace Price-Sync Result Consumption",
+      "category": "Marketplace",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:03.455Z",
+      "details": {
+        "sampleCount": 736,
+        "hasPricedProducts": true
+      }
+    },
+    {
+      "id": "T22_LEAD_CONVERSION",
+      "title": "Lead-to-Project Conversion Flow",
+      "category": "CRM",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:04.067Z",
+      "details": {
+        "status": 200
+      }
+    },
+    {
+      "id": "T23_DB_CONNECTIVITY",
+      "title": "Database Pool & Active Connection Diagnostics",
+      "category": "Database",
+      "passed": true,
+      "timestamp": "2026-09-24T21:46:04.400Z",
+      "details": {
+        "supabaseActive": true,
+        "userCount": 10
+      }
+    }
+  ]
+}

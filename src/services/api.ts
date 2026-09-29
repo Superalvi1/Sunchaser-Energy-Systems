@@ -11,17 +11,18 @@ import {
   toLoginError,
 } from "../lib/startupFetch.ts";
 
-const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
+const RAILWAY_PRODUCTION_API = "https://crm.sunchaserenergy.co";
+const RENDER_FALLBACK_API = "https://sunchaser-energy-systems.onrender.com";
 
 function resolveApiBaseUrl(): string {
   const fromEnv = String((import.meta as any).env?.VITE_API_BASE_URL ?? "").trim();
   if (fromEnv) return fromEnv.replace(/\/$/, "");
-  // Local Vite / same-origin: use relative /api paths so Design Studio login hits this server.
+  // Local Vite / Railway CRM same-origin: use relative /api paths so requests hit this server.
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
-    if (host === "localhost" || host === "127.0.0.1") return "";
+    if (host === "localhost" || host === "127.0.0.1" || host === "crm.sunchaserenergy.co") return "";
   }
-  return RENDER_PRODUCTION_API;
+  return RAILWAY_PRODUCTION_API;
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
