@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response, Router } from "express";
 import express from "express";
 import { authenticatePublicLeadRequest } from "./publicLeadAuth.ts";
@@ -135,13 +136,15 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
       const idempotencyKey =
         readIdempotencyKeyFromHeaders(req.headers as Record<string, unknown>) ||
         `smart-quote:${validation.value.quoteNumber}`;
+      const quoteFingerprint = createHash("sha256").update(JSON.stringify(validation.value)).digest("hex");
       const existing = idempotencyStore.get(idempotencyKey);
       if (existing) {
+        if (existing.quoteFingerprint !== quoteFingerprint) return res.status(409).json({ error: "This quotation number is already in use. Generate a new quotation." });
         return res.status(200).json({ ok: true, success: true, leadId: existing.leadId, pdfUploadToken: uploadToken(existing.leadId, validation.value.quoteNumber), message: "Smart Quote lead saved" });
       }
 
       const { leadId } = await createPublicLead(toPublicLeadInput(validation.value), deps.persistLead);
-      idempotencyStore.set(idempotencyKey, { leadId, createdAtMs: Date.now() });
+      idempotencyStore.set(idempotencyKey, { leadId, createdAtMs: Date.now(), quoteFingerprint });
       console.info(`[smart-quotes] created leadId=${leadId} quote=${validation.value.quoteNumber}`);
       return res.status(201).json({ ok: true, success: true, leadId, pdfUploadToken: uploadToken(leadId, validation.value.quoteNumber), message: "Smart Quote lead saved" });
     } catch (err: unknown) {

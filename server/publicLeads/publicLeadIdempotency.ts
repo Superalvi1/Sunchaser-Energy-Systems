@@ -1,6 +1,7 @@
 export type IdempotencyRecord = {
   leadId: string;
   createdAtMs: number;
+  quoteFingerprint?: string;
 };
 
 export type IdempotencyStore = {

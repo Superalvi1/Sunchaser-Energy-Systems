@@ -39,6 +39,13 @@ await new Promise<void>(resolve => server.once("listening", resolve));
 const address = server.address() as { port: number };
 const post = (body: unknown) => fetch(`http://127.0.0.1:${address.port}/api/public/smart-quote-pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 try {
+  const quoteBody = { name: "Client", phone: "03004415484", quoteNumber, systemCapacityKw: 8, estimatedTotalPkr: 1000, panel: "Panel", inverter: "Inverter", battery: "Battery", structure: "Standard", generatedAt: new Date(now).toISOString() };
+  const submitQuote = (body: unknown) => fetch(`http://127.0.0.1:${address.port}/api/public/smart-quotes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const captured = await submitQuote(quoteBody); assert.equal(captured.status, 201);
+  const captureData = await captured.json(); assert.ok(verifyQuotePdfUploadToken(leadId, quoteNumber, captureData.pdfUploadToken));
+  assert.equal((await submitQuote(quoteBody)).status, 200);
+  const collision = await submitQuote({ ...quoteBody, name: "Another client", phone: "03005515484" });
+  assert.equal(collision.status, 409); assert.equal((await collision.json()).pdfUploadToken, undefined);
   assert.equal((await post({ leadId, quoteNumber, uploadToken: "invalid", pdfBase64: pdf.toString("base64") })).status, 403);
   assert.equal(archiveCalls, 0);
   assert.equal((await post({ leadId, quoteNumber, uploadToken: token, pdfBase64: "bm90LXBkZg==" })).status, 400);
