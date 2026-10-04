@@ -430,6 +430,20 @@ function AuthenticatedApp() {
     }
   };
 
+  const handleDeleteLeads = async (ids: string[]) => {
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    for (const id of [...new Set(ids)]) {
+      try {
+        await deleteLead(id);
+        deleted.push(id);
+        try { localStorage.removeItem(`sunchaser_boq_${id}`); } catch { /* Deletion succeeded even if browser storage is unavailable. */ }
+      } catch { failed.push(id); }
+    }
+    setAppState(prev => prev ? { ...prev, leads: prev.leads.filter(lead => !deleted.includes(lead.id)) } : prev);
+    return { deleted, failed };
+  };
+
   const handleDeleteQuote = async (leadId: string, quoteId: string) => {
     try {
       setLoading(true);
@@ -1025,6 +1039,7 @@ function AuthenticatedApp() {
                 onUpdateLead={handleUpdateLead}
                 onAddLead={handleAddLead}
                 onDeleteLead={handleDeleteLead}
+                onDeleteLeads={handleDeleteLeads}
               />
             )}
 
