@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import { buildSmartQuotationPdf } from "./smartQuotationPdf";
+import { calculatePublicQuotation, defaultPublicQuoteConfig } from "./publicQuotationBuilder";
+const calculation = calculatePublicQuotation(defaultPublicQuoteConfig(8));
+const data = { quoteNumber: "SES-20261004-4825", system: "8 kW", generatedAt: "2026-10-04T10:35:19Z", clientName: "Faisal Baig", clientPhone: "923234786239", clientCity: "Lahore", lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr };
+const pdf = await buildSmartQuotationPdf(data);
+assert.equal(pdf.getNumberOfPages(), 2);
+const pages = (pdf.internal as any).pages as string[][];
+assert.ok(pages[1].join("\n").includes("8 kW Solar System"));
+assert.ok(pages[1].join("\n").includes("PREPARED BY"));
+assert.ok(!pages[1].join("\n").includes("BILL OF QUANTITIES"));
+assert.ok(pages[2].join("\n").includes("BILL OF QUANTITIES"));
+assert.ok(pages[2].join("\n").includes("FINAL ESTIMATED COST"));
+const longPdf = await buildSmartQuotationPdf({ ...data, lines: Array.from({ length: 50 }, (_, i) => ({ ...calculation.lines[i % calculation.lines.length], description: `Line ${i + 1}: ${calculation.lines[i % calculation.lines.length].description}` })) });
+assert.ok(longPdf.getNumberOfPages() > 2);
+assert.ok((longPdf.internal as any).pages.flat().join("\n").includes("Line 50:"));
+console.log("PDF cover/detail separation, totals and multipage overflow tests passed.");

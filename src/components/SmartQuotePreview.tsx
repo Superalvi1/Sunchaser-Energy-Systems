@@ -1,13 +1,14 @@
 import React, { useRef, useState } from "react";
 import type { Lead } from "../types";
 import AppModal from "./ui/AppModal";
-import { formatLeadReceivedAt, parseSmartQuoteLeadNotes, quoteSnapshot } from "../lib/smartQuoteLead";
+import { formatLeadReceivedAt, parseSmartQuoteLeadNotes, quoteSnapshot, parseSmartQuotePdfArchive } from "../lib/smartQuoteLead";
 
 export default function SmartQuotePreview({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const summary = parseSmartQuoteLeadNotes(lead.notes);
+  const archive = parseSmartQuotePdfArchive(lead.notes);
   const snapshot = quoteSnapshot(lead.notes);
   const money = (n: number) => `PKR ${Math.round(n).toLocaleString("en-PK")}`;
   const download = async (kind: "pdf" | "png") => {
@@ -30,7 +31,8 @@ export default function SmartQuotePreview({ lead, onClose }: { lead: Lead; onClo
   };
   return <AppModal open onClose={onClose} panelClassName="max-w-4xl w-full p-5"><button onClick={onClose} className="mb-3">Close quotation</button>
     <div className="space-y-3">
-      <div className="flex gap-3"><button disabled={busy} onClick={() => download("pdf")}>Download PDF</button><button disabled={busy} onClick={() => download("png")}>Download picture</button></div>
+      {archive && <a href={archive.fileUrl} target="_blank" rel="noopener noreferrer" download={archive.fileName} className="block rounded-xl border border-emerald-400/40 bg-emerald-500/15 p-3 text-emerald-200">Open / download original client PDF (includes cover)</a>}
+      <div className="flex gap-3"><button disabled={busy} onClick={() => download("pdf")}>Download preview PDF</button><button disabled={busy} onClick={() => download("png")}>Download picture</button></div>
       {error && <p role="alert">{error}</p>}
       <div className="overflow-auto"><div ref={ref} style={{ background: "white", color: "#172033", padding: 24, minWidth: 550, fontFamily: "Arial" }}>
         <h2>Sunchaser Energy Systems</h2><h3>Client quotation · {summary?.quoteNumber}</h3>

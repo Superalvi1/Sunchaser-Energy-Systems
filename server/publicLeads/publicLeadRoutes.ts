@@ -16,10 +16,13 @@ import {
   PUBLIC_LEAD_MAX_BODY_BYTES,
   validatePublicLeadPayload,
 } from "./publicLeadValidation.ts";
+import { createQuotePdfUploadToken, verifyQuotePdfUploadToken, parseQuotePdfBase64 } from "./smartQuotePdfArchive";
 import { toPublicLeadInput, validateSmartQuoteLeadPayload } from "./smartQuoteLead.ts";
 
 export type PublicLeadRouterDeps = {
   persistLead: PersistPublicLeadFn;
+  archivePdf?: (leadId: string, quoteNumber: string, pdf: Buffer) => Promise<import("./smartQuotePdfArchive").SmartQuotePdfArchive>;
+  issuePdfUploadToken?: (leadId: string, quoteNumber: string) => string;
   idempotencyStore?: IdempotencyStore;
   rateLimit?: (req: Request, res: Response, next: NextFunction) => void;
   env?: NodeJS.ProcessEnv;
@@ -35,6 +38,7 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
     deps.idempotencyStore ?? defaultPublicLeadIdempotencyStore;
   const rateLimit = deps.rateLimit ?? createPublicLeadRateLimit();
   const env = deps.env ?? process.env;
+  const uploadToken = deps.issuePdfUploadToken ?? (deps.archivePdf ? createQuotePdfUploadToken : () => undefined);
 
   router.get("/leads", (_req, res) => {
     return res
@@ -133,13 +137,13 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
         `smart-quote:${validation.value.quoteNumber}`;
       const existing = idempotencyStore.get(idempotencyKey);
       if (existing) {
-        return res.status(200).json({ ok: true, success: true, leadId: existing.leadId, message: "Smart Quote lead saved" });
+        return res.status(200).json({ ok: true, success: true, leadId: existing.leadId, pdfUploadToken: uploadToken(existing.leadId, validation.value.quoteNumber), message: "Smart Quote lead saved" });
       }
 
       const { leadId } = await createPublicLead(toPublicLeadInput(validation.value), deps.persistLead);
       idempotencyStore.set(idempotencyKey, { leadId, createdAtMs: Date.now() });
       console.info(`[smart-quotes] created leadId=${leadId} quote=${validation.value.quoteNumber}`);
-      return res.status(201).json({ ok: true, success: true, leadId, message: "Smart Quote lead saved" });
+      return res.status(201).json({ ok: true, success: true, leadId, pdfUploadToken: uploadToken(leadId, validation.value.quoteNumber), message: "Smart Quote lead saved" });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to save Smart Quote lead.";
       console.error("[smart-quotes] persistence failure:", message);
@@ -147,5 +151,20 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
     }
   });
 
+  // A short-lived capability issued after lead capture authorizes this PDF only.
+  router.post("/smart-quote-pdf", rateLimit, async (req, res) => {
+    const { leadId, quoteNumber, uploadToken: token, pdfBase64 } = req.body || {};
+    try {
+      if (typeof leadId !== "string" || typeof quoteNumber !== "string" || typeof token !== "string" || !verifyQuotePdfUploadToken(leadId, quoteNumber, token)) return res.status(403).json({ error: "Quotation upload authorization is invalid or expired. Generate your quotation again." });
+      let pdf: Buffer;
+      try { pdf = parseQuotePdfBase64(pdfBase64); } catch { return res.status(400).json({ error: "A valid PDF of up to 5 MB is required." }); }
+      if (!deps.archivePdf) return res.status(503).json({ error: "CRM PDF archiving is unavailable. Please try again." });
+      const archive = await deps.archivePdf(leadId, quoteNumber, pdf);
+      return res.status(201).json({ ok: true, archive });
+    } catch (error) {
+      console.error("[smart-quote-pdf] archive failed:", error instanceof Error ? error.message : error);
+      return res.status(500).json({ error: "Your PDF could not be saved to the CRM. Please try Save PDF again." });
+    }
+  });
   return router;
 }

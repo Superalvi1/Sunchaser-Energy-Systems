@@ -3177,6 +3177,17 @@ export async function submitPublicLead(payload: {
   return res.json() as Promise<{ success: boolean; leadId: string; message: string }>;
 }
 
+export async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, uploadToken: string, pdf: Blob) {
+  if (pdf.size > 5 * 1024 * 1024) throw new Error("The quotation PDF exceeds the 5 MB archive limit.");
+  const pdfBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("Could not read quotation PDF.")); reader.readAsDataURL(pdf);
+  });
+  const res = await fetch(`${API_BASE_URL}/api/public/smart-quote-pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leadId, quoteNumber, uploadToken, pdfBase64 }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "CRM could not save the PDF. Please try again.");
+  return data.archive as import("../lib/smartQuoteLead").SmartQuotePdfArchive;
+}
+
 export type PublicSmartQuoteLeadPayload = {
   snapshot?: { lines: import("../lib/publicQuotationBuilder").PublicQuoteLine[]; subtotalPkr: number; discountPkr: number };
   name: string;
@@ -3205,7 +3216,7 @@ export async function submitPublicSmartQuoteLead(payload: PublicSmartQuoteLeadPa
   if (!res.ok) {
     throw new Error(data.error || "Could not save your quote details. Please try again.");
   }
-  return data as { success: boolean; leadId: string; message: string };
+  return data as { success: boolean; leadId: string; message: string; pdfUploadToken?: string };
 }
 
 
