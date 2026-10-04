@@ -83,3 +83,16 @@ export function leadReceivedAt(lead: Pick<Lead, "createdAt">) {
 export function formatLeadReceivedAt(value: string) {
   return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat("en-PK", { timeZone: "Asia/Karachi", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) + " PKT" : "Date unavailable";
 }
+
+export type SmartQuotePdfArchive = { quoteNumber: string; fileName: string; fileUrl: string; sha256: string; savedAt: string; sizeBytes: number };
+export function parseSmartQuotePdfArchive(notes: string | null | undefined): SmartQuotePdfArchive | null {
+  const line = String(notes || "").split(/\r?\n/).find(line => line.startsWith("PdfArchive: "));
+  try {
+    const value = line ? JSON.parse(line.slice(12)) : null;
+    if (!value || typeof value.fileUrl !== "string" || !/^(https?:\/\/|\/api\/storage\/)/.test(value.fileUrl) || typeof value.fileName !== "string" || typeof value.quoteNumber !== "string" || !Number.isFinite(Date.parse(value.savedAt))) return null;
+    return value;
+  } catch { return null; }
+}
+export function visibleLeadNotes(notes: string | null | undefined) {
+  return String(notes || "").split(/\r?\n/).filter(line => !/^(Snapshot|PdfArchive): /.test(line)).join("\n");
+}

@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 /**
  * Project root for uploads / static paths.
@@ -331,10 +331,15 @@ import {
   mapUserRow,
   findUserByUsername,
 } from "./userAuthDb.js";
+import { parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
+import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
 import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
+  putRailwayObject,
+  isRailwayObjectStorageConfigured,
+  buildRailwayObjectProxyUrl,
   verifyRailwayObjectProxySignature,
 } from "./server/storage/railwayObjectStorage.ts";
 import { assertRailwayPrivateSmokeEnvironment } from "./server/runtime/railwayPrivateSmoke.ts";
@@ -754,10 +759,47 @@ async function persistPublicMarketingLead(
   return { leadId: newLead.id };
 }
 
+// Archive the exact PDF downloaded by a guest, scoped to their captured quotation.
+async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, pdf: Buffer) {
+  if (!isRailwayObjectStorageConfigured()) throw new Error("Durable CRM object storage is unavailable.");
+  const readLead = async () => {
+    if (isSupabaseActive()) {
+      const { data, error } = await getSupabase()!.from("leads").select("id,notes,deleted_at").eq("id", leadId).maybeSingle();
+      if (error || !data || data.deleted_at) throw new Error("Quotation lead is unavailable.");
+      return { id: data.id, notes: String(data.notes || "") };
+    }
+    loadDb();
+    const lead = db.leads.find(l => l.id === leadId && !l.deletedAt);
+    if (!lead) throw new Error("Quotation lead is unavailable.");
+    return { id: lead.id, notes: lead.notes || "" };
+  };
+  const original = await readLead();
+  if (parseSmartQuoteLeadNotes(original.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation does not belong to this lead.");
+  const key = quotePdfObjectKey(leadId, quoteNumber, pdf);
+  await putRailwayObject("customer-documents", key, pdf, "application/pdf");
+  const archive = { quoteNumber, fileName: `Sunchaser-Quotation-${quoteNumber}.pdf`, fileUrl: buildRailwayObjectProxyUrl("customer-documents", key), sha256: createHash("sha256").update(pdf).digest("hex"), savedAt: new Date().toISOString(), sizeBytes: pdf.length };
+  // Compare-and-swap preserves staff notes if they edit while the upload is running.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await readLead();
+    if (parseSmartQuoteLeadNotes(current.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation lead changed during upload.");
+    const notes = addPdfArchiveToNotes(current.notes, archive);
+    if (isSupabaseActive()) {
+      const { data, error } = await getSupabase()!.from("leads").update({ notes }).eq("id", leadId).eq("notes", current.notes).is("deleted_at", null).select("id").maybeSingle();
+      if (error) throw new Error("Could not link PDF to CRM lead.");
+      if (!data) continue;
+    } else {
+      const lead = db.leads.find(l => l.id === leadId)!; lead.notes = notes; saveDb();
+    }
+    return archive;
+  }
+  throw new Error("Lead changed repeatedly. Retry PDF save.");
+}
+
 app.use(
   "/api/public",
   createPublicLeadRouter({
     persistLead: persistPublicMarketingLead,
+    archivePdf: archivePublicSmartQuotePdf,
   })
 );
 
@@ -831,6 +873,7 @@ app.use(
     serviceOptions: buildProductionInboxServiceOptions({
       resolveLocalDb: resolveAuthLocalDb,
       persistLead: persistPublicMarketingLead,
+    archivePdf: archivePublicSmartQuotePdf,
     }),
     // Meta-only wiring: no QR getter — resolver treats it as DISCONNECTED.
     resolveListAvailability: createWhatsAppInboxListAvailabilityResolver({}),

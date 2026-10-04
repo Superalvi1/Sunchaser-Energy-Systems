@@ -95,7 +95,8 @@
     "test:marketplace-ceo-auto-import-privileges": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/autoImport/autoImportPrivileges.pg.test.ts",
     "test:marketplace-ws5": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/cartRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cart/marketplaceWs5Cart.test.ts",
     "test:marketplace-ws6a": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/receiptValidation.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/paymentRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/payments/marketplaceWs6aPayments.test.ts",
-    "test:marketplace-ws6b": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/codRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/marketplaceWs6bCod.test.ts"
+    "test:marketplace-ws6b": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/codRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/marketplaceWs6bCod.test.ts",
+    "test:smart-quote-pdf": "node --import tsx server/publicLeads/smartQuotePdfArchive.test.ts && node --import tsx src/lib/smartQuotationPdf.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",

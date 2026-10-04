@@ -4,7 +4,7 @@ import {
   Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox, FileText
 } from "lucide-react";
 import { Lead, User } from "../types";
-import { formatLeadReceivedAt, leadReceivedAt, parseSmartQuoteLeadNotes } from "../lib/smartQuoteLead";
+import { formatLeadReceivedAt, leadReceivedAt, parseSmartQuoteLeadNotes, visibleLeadNotes } from "../lib/smartQuoteLead";
 import SmartQuotePreview from "./SmartQuotePreview";
 import StaffClientWorkspace from "./StaffClientWorkspace";
 import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../services/api";
@@ -51,6 +51,7 @@ export default function CRMApp({
   };
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("All");
+  const [workspaceInitialTab, setWorkspaceInitialTab] = useState<"overview" | "quotes">("overview");
   const [workspaceLeadId, setWorkspaceLeadId] = useState<string | null>(null);
   
   // Lead scoring prioritization state: toggle sorting based on rating vs AI score vs creation date
@@ -410,8 +411,9 @@ export default function CRMApp({
                 ? parsedSanctionedLoad
                 : null;
 
+            const smartQuoteKw = Number(parseSmartQuoteLeadNotes(lead.notes)?.system.match(/[\d.]+/)?.[0]);
             const primaryMetric =
-              quotedSystemSize !== null
+              Number.isFinite(smartQuoteKw) && smartQuoteKw > 0 ? `${smartQuoteKw} kW` : quotedSystemSize !== null
                 ? `${quotedSystemSize} kW`
                 : sanctionedLoad !== null
                   ? `${sanctionedLoad} kW`
@@ -450,7 +452,10 @@ export default function CRMApp({
                 >
                   <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-100 font-sans">
                     {lead.name}
-                    <span className="mt-1 block text-[11px] font-normal text-slate-400">{lead.leadSource || "Source not recorded"} · {formatLeadReceivedAt(lead.createdAt)}</span>
+                    <span className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+                      <span className={`rounded-full border px-2.5 py-1 ${lead.leadSource === "Smart Quote" ? "border-violet-400/50 bg-violet-500/20 text-violet-200" : lead.leadSource === "Staff Quote" ? "border-amber-400/50 bg-amber-500/20 text-amber-200" : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"}`}>{lead.leadSource || "Source not recorded"}</span>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-cyan-400/50 bg-cyan-500/15 px-2.5 py-1 text-cyan-200"><Calendar className="h-3.5 w-3.5"/>{formatLeadReceivedAt(lead.createdAt)}</span>
+                    </span>
                   </span>
                   <span
                     data-testid={`crm-lead-primary-metric-${lead.id}`}
@@ -467,9 +472,9 @@ export default function CRMApp({
                 </button>
 
                 <div className="flex flex-wrap justify-end gap-3 px-3 pt-2">
-                  {parseSmartQuoteLeadNotes(lead.notes) && <button className="text-emerald-300 min-h-10" onClick={() => { setPreviewLead(lead); markRead([lead.id]); }}><FileText className="inline h-4 w-4 mr-1"/>View / download quotation{!seenQuotes.includes(lead.id) ? " · New" : ""}</button>}
-                  {Boolean(lead.quotes?.length) && <button className="text-sky-300 min-h-10" onClick={() => { setExpandedLeadId(lead.id); setWorkspaceLeadId(lead.id); }}>View saved proposals</button>}
-                  {onDeleteLead && <button aria-label={`Delete lead ${lead.name}`} className="text-red-300 min-h-10" onClick={() => { if (window.confirm(`Delete lead ${lead.name} from the CRM list?`)) onDeleteLead(lead.id); }}><Trash className="inline h-4 w-4 mr-1"/>Delete</button>}
+                  {parseSmartQuoteLeadNotes(lead.notes) && <button className="inline-flex items-center rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 text-emerald-200 min-h-10" onClick={() => { setPreviewLead(lead); markRead([lead.id]); }}><FileText className="inline h-4 w-4 mr-1"/>View / download quotation{!seenQuotes.includes(lead.id) ? " · New" : ""}</button>}
+                  {(Boolean(lead.quotes?.length) || Boolean(parseSmartQuoteLeadNotes(lead.notes))) && <button className="rounded-xl border border-sky-400/40 bg-sky-500/15 px-3 text-sky-200 min-h-10" onClick={() => { setWorkspaceInitialTab("quotes"); setExpandedLeadId(lead.id); setWorkspaceLeadId(lead.id); }}>View saved proposals</button>}
+                  {onDeleteLead && <button aria-label={`Delete lead ${lead.name}`} className="rounded-xl border border-rose-400/40 bg-rose-500/15 px-3 text-rose-200 min-h-10" onClick={() => { if (window.confirm(`Delete lead ${lead.name} from the CRM list?`)) onDeleteLead(lead.id); }}><Trash className="inline h-4 w-4 mr-1"/>Delete</button>}
                 </div>
                 {showDetails ? (
                   <div
@@ -656,19 +661,19 @@ export default function CRMApp({
                     {lead.notes && (
                       <p className="bg-slate-950/40 p-2.5 rounded-2xl text-slate-400 text-[11px] leading-relaxed select-all">
                         <strong className="text-[10px] text-slate-500 uppercase block font-mono">Closing remarks</strong>
-                        &ldquo;{lead.notes?.split(/\r?\n/).filter(line => !line.startsWith("Snapshot: ")).join("\n")}&rdquo;
+                        &ldquo;{visibleLeadNotes(lead.notes)}&rdquo;
                       </p>
                     )}
 
                     <button
                       type="button"
-                      onClick={() => setWorkspaceLeadId((id) => (id === lead.id ? null : lead.id))}
+                      onClick={() => { setWorkspaceInitialTab("overview"); setWorkspaceLeadId((id) => (id === lead.id ? null : lead.id)); }}
                       className="w-full min-h-[44px] rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm font-bold"
                     >
                       {workspaceLeadId === lead.id ? "Hide client workspace" : "Open Client Portal / Manage Client"}
                     </button>
                     {workspaceLeadId === lead.id && (
-                      <StaffClientWorkspace staffUser={staffUser} lead={lead} />
+                      <StaffClientWorkspace staffUser={staffUser} lead={lead} initialTab={workspaceInitialTab} />
                     )}
 
                     <WhatsAppModule

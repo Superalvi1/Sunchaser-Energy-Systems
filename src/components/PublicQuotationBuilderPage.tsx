@@ -34,7 +34,8 @@ import {
 } from "../lib/publicQuotationBuilder";
 import { normalizePakistanMobile } from "../lib/smartQuoteLead";
 import { ProfessionalQuotationDocument } from "./ProfessionalQuotationDocument";
-import { submitPublicSmartQuoteLead } from "../services/api";
+import { buildSmartQuotationPdf, loadQuotationLogo } from "../lib/smartQuotationPdf";
+import { archivePublicSmartQuotePdf, submitPublicSmartQuoteLead } from "../services/api";
 
 const CONTACT_PHONE = "0330-7776444 / 0309-0236666";
 const WHATSAPP_PHONE = "923307776444";
@@ -104,34 +105,6 @@ async function saveOrShareFile(blob: Blob, filename: string, title: string) {
   return "download" as const;
 }
 
-async function createQuotationPdf(canvas: HTMLCanvasElement) {
-  const { jsPDF } = await import("jspdf");
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
-  const margin = 8;
-  const usableWidth = 210 - margin * 2;
-  const usableHeight = 297 - margin * 2;
-  const sliceHeight = Math.floor((canvas.width * usableHeight) / usableWidth);
-  let offsetY = 0;
-  let page = 0;
-
-  while (offsetY < canvas.height) {
-    const height = Math.min(sliceHeight, canvas.height - offsetY);
-    const pageCanvas = document.createElement("canvas");
-    pageCanvas.width = canvas.width;
-    pageCanvas.height = height;
-    const context = pageCanvas.getContext("2d");
-    if (!context) throw new Error("Could not prepare the PDF page.");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-    context.drawImage(canvas, 0, offsetY, canvas.width, height, 0, 0, canvas.width, height);
-    if (page > 0) pdf.addPage();
-    const renderedHeight = (height * usableWidth) / canvas.width;
-    pdf.addImage(pageCanvas.toDataURL("image/jpeg", 0.94), "JPEG", margin, margin, usableWidth, renderedHeight, undefined, "FAST");
-    offsetY += height;
-    page += 1;
-  }
-  return pdf.output("blob");
-}
 
 function SelectField({
   label,
@@ -354,6 +327,8 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [clientCity, setClientCity] = useState("");
+  const [savedLead, setSavedLead] = useState<{ leadId: string; pdfUploadToken?: string } | null>(null);
+  const [generatedAt, setGeneratedAt] = useState("");
   const [generated, setGenerated] = useState(false);
   const [quoteNumber, setQuoteNumber] = useState(makeQuoteNumber);
   const [exporting, setExporting] = useState<"pdf" | "image" | null>(null);
@@ -499,6 +474,9 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   const generateQuote = async () => {
     if (!calculation) return;
     const nextQuoteNumber = makeQuoteNumber();
+    const capturedAt = new Date().toISOString();
+    setSavedLead(null);
+    setGeneratedAt(capturedAt);
 
     if (isStaffMode) {
       setQuoteNumber(nextQuoteNumber);
@@ -526,7 +504,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
     setLeadError("");
     setLeadMessage("");
     try {
-      await submitPublicSmartQuoteLead({
+      const submission = await submitPublicSmartQuoteLead({
         name,
         phone,
         city: clientCity.trim() || undefined,
@@ -537,9 +515,10 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
         inverter: config.included.inverter ? `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)}` : "Not included",
         battery: config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh` : "Not included",
         structure: calculation.structureLabel,
-        generatedAt: new Date().toISOString(),
+        generatedAt: capturedAt,
         snapshot: { lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr },
       });
+      setSavedLead({ leadId: submission.leadId, pdfUploadToken: submission.pdfUploadToken });
       setQuoteNumber(nextQuoteNumber);
       setGenerated(true);
       setLeadMessage("Quotation generated. Your request is now visible to the Sunchaser sales team.");
@@ -575,10 +554,16 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
     setExporting("pdf");
     setExportMessage("");
     try {
-      const canvas = await renderQuotationCanvas();
-      const blob = await createQuotationPdf(canvas);
+      if (!calculation) throw new Error("Generate your quotation first.");
+      const logoDataUrl = await loadQuotationLogo();
+      const pdf = await buildSmartQuotationPdf({ quoteNumber, system: `${calculation.systemCapacityKw} kW`, generatedAt, clientName, clientPhone, clientCity, lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr, logoDataUrl });
+      const blob = pdf.output("blob");
+      if (!isStaffMode) {
+        if (!savedLead?.pdfUploadToken) throw new Error("Generate your quotation again to save both the client and CRM PDF copies.");
+        await archivePublicSmartQuotePdf(savedLead.leadId, quoteNumber, savedLead.pdfUploadToken, blob);
+      }
       const method = await saveOrShareFile(blob, safeQuoteFilename(quoteNumber, "pdf"), `Sunchaser quotation ${quoteNumber}`);
-      setExportMessage(method === "share" ? "PDF is ready. Choose Save to Files or share it." : "PDF downloaded successfully.");
+      setExportMessage(method === "share" ? (isStaffMode ? "PDF is ready. Choose Save to Files or share it." : "PDF saved to Sunchaser CRM. Choose Save to Files or share your copy.") : isStaffMode ? "PDF downloaded successfully." : "PDF saved to Sunchaser CRM and downloaded for you.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setExportMessage(error instanceof Error ? error.message : "Could not save the PDF. Please try again.");

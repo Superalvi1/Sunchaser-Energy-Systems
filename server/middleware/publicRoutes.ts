@@ -25,6 +25,8 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   // rate limiting and idempotency before writing a CRM lead.
   { method: "POST", path: "/api/public/smart-quotes" },
   { method: "GET", path: "/api/public/smart-quotes" },
+  // PDF upload is capability-gated inside the handler; no CRM login required.
+  { method: "POST", path: "/api/public/smart-quote-pdf" },
   // WhatsApp Cloud API webhook (HMAC-gated inside the handler — not CRM JWT).
   // Canonical path: /api/whatsapp/webhook (GET verify + POST inbound).
   { method: "GET", path: "/api/whatsapp/webhook" },
