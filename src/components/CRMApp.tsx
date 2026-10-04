@@ -28,6 +28,7 @@ interface CRMAppProps {
   onUpdateLead: (id: string, updatedData: any) => void;
   onAddLead: (data: any) => void | Promise<void>;
   onDeleteLead?: (id: string) => void;
+  onDeleteLeads?: (ids: string[]) => Promise<{ deleted: string[]; failed: string[] }>;
 }
 
 export default function CRMApp({
@@ -36,8 +37,27 @@ export default function CRMApp({
   staffUsers = [],
   onUpdateLead,
   onAddLead,
-  onDeleteLead
+  onDeleteLead,
+  onDeleteLeads
 }: CRMAppProps) {
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteMessage, setBulkDeleteMessage] = useState("");
+  const selectedLeads = leads.filter(lead => selectedLeadIds.includes(lead.id));
+  const toggleLeadSelection = (id: string) => setSelectedLeadIds(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
+  const deleteSelectedLeads = async () => {
+    if (!onDeleteLeads || bulkDeleting || !selectedLeads.length) return;
+    if (!window.confirm(`Delete ${selectedLeads.length} selected lead(s) and their quotations from the CRM list?`)) return;
+    setBulkDeleting(true);
+    setBulkDeleteMessage("");
+    try {
+      const result = await onDeleteLeads(selectedLeads.map(lead => lead.id));
+      setSelectedLeadIds(result.failed);
+      setBulkDeleteMessage(`${result.deleted.length} lead(s) deleted.${result.failed.length ? ` ${result.failed.length} could not be deleted. They remain selected; please retry.` : ""}`);
+    } catch {
+      setBulkDeleteMessage("Could not delete selected leads. Please retry.");
+    } finally { setBulkDeleting(false); }
+  };
   const [previewLead, setPreviewLead] = useState<Lead | null>(null);
   const seenKey = `sunchaser-quote-seen:${staffUser.id}`;
   const [seenQuotes, setSeenQuotes] = useState<string[]>(() => {
@@ -382,6 +402,21 @@ export default function CRMApp({
         </div>
       </div>
 
+      {onDeleteLeads && <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-cyan-400/30 bg-slate-900 p-3">
+        <label className="flex min-h-10 items-center gap-2 text-cyan-200">
+          <input type="checkbox" className="h-5 w-5 accent-cyan-400" disabled={bulkDeleting || !sortedLeads.length}
+            checked={sortedLeads.length > 0 && sortedLeads.every(lead => selectedLeadIds.includes(lead.id))}
+            onChange={event => setSelectedLeadIds(current => event.target.checked ? [...new Set([...current, ...sortedLeads.map(lead => lead.id)])] : current.filter(id => !sortedLeads.some(lead => lead.id === id)))} />
+          Select all shown ({sortedLeads.length})
+        </label>
+        <span className="text-white">{selectedLeads.length} selected{selectedLeads.some(lead => !sortedLeads.some(shown => shown.id === lead.id)) ? " (including hidden leads)" : ""}</span>
+        <button type="button" disabled={bulkDeleting || !selectedLeads.length} onClick={deleteSelectedLeads} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-400/50 bg-rose-500/20 px-3 font-bold text-rose-200 disabled:opacity-40">
+          {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash className="h-4 w-4"/>}{bulkDeleting ? "Deleting…" : "Delete selected"}
+        </button>
+        {selectedLeads.length > 0 && <button type="button" disabled={bulkDeleting} onClick={() => setSelectedLeadIds([])} className="min-h-10 px-2 text-slate-300">Clear selection</button>}
+        {bulkDeleteMessage && <p role="status" className="w-full text-cyan-200">{bulkDeleteMessage}</p>}
+      </div>}
+
       {/* SUMMARY-FIRST CLIENT LIST: compact by default, full detail on demand. */}
       <div className="grid grid-cols-1 gap-2 md:gap-3 items-start">
         {sortedLeads.length > 0 ? (
@@ -433,6 +468,10 @@ export default function CRMApp({
                     : "rounded-2xl p-2 border-slate-800 hover:border-amber-500/35 hover:bg-slate-900/95"
                 } ${aScore >= 80 ? "ring-1 ring-emerald-500/10" : ""}`}
               >
+                {onDeleteLeads && <label className="mb-1 flex min-h-10 items-center gap-2 px-3 text-cyan-200">
+                  <input type="checkbox" className="h-5 w-5 accent-cyan-400" aria-label={`Select lead ${lead.name}`} checked={selectedLeadIds.includes(lead.id)} disabled={bulkDeleting} onChange={() => toggleLeadSelection(lead.id)} />
+                  Select
+                </label>}
                 {/* Compact client row on every viewport. The row itself is the disclosure control. */}
                 <button
                   type="button"
