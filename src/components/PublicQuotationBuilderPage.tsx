@@ -538,6 +538,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
         battery: config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh` : "Not included",
         structure: calculation.structureLabel,
         generatedAt: new Date().toISOString(),
+        snapshot: { lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr },
       });
       setQuoteNumber(nextQuoteNumber);
       setGenerated(true);

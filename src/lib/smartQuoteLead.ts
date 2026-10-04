@@ -66,3 +66,20 @@ export function parseSmartQuoteLeadNotes(notes: string | null | undefined): Smar
   };
 }
 
+
+export function quoteSnapshot(notes: string) {
+  const line = notes.split(/\r?\n/).find(line => line.startsWith("Snapshot: "));
+  try {
+    const value = line ? JSON.parse(line.slice(10)) : null;
+    if (!value || !Array.isArray(value.lines) || !Number.isFinite(value.subtotalPkr) || !Number.isFinite(value.discountPkr) || !value.lines.every((l: any) => l && typeof l.description === "string" && typeof l.specification === "string" && typeof l.unit === "string" && [l.quantity, l.unitPricePkr, l.totalPkr].every(Number.isFinite))) return null;
+    return value as { lines: import("./publicQuotationBuilder").PublicQuoteLine[]; subtotalPkr: number; discountPkr: number };
+  }
+  catch { return null; }
+}
+export function leadReceivedAt(lead: Pick<Lead, "createdAt">) {
+  const time = Date.parse(lead.createdAt);
+  return Number.isFinite(time) ? time : 0;
+}
+export function formatLeadReceivedAt(value: string) {
+  return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat("en-PK", { timeZone: "Asia/Karachi", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) + " PKT" : "Date unavailable";
+}

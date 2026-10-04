@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { validateSmartQuoteLeadPayload, toPublicLeadInput } from "../../server/publicLeads/smartQuoteLead";
+import { quoteSnapshot, leadReceivedAt, formatLeadReceivedAt } from "./smartQuoteLead";
+const body = { name: "Client", phone: "03004415484", quoteNumber: "SES-20261004-1234", systemCapacityKw: 8, estimatedTotalPkr: 1000, panel: "Panel", inverter: "Inverter", battery: "Battery", structure: "Standard", generatedAt: "2026-10-04T10:00:00Z", snapshot: { lines: [{ category: "Equipment", description: "Panel", specification: "585W", quantity: 2, unit: "pcs", unitPricePkr: 500, totalPkr: 1000 }], subtotalPkr: 1000, discountPkr: 0 } };
+const validated = validateSmartQuoteLeadPayload(body);
+assert.ok(validated.ok);
+if (validated.ok) assert.deepEqual(quoteSnapshot(toPublicLeadInput(validated.value).notes!), body.snapshot);
+assert.equal(quoteSnapshot("SMART_QUOTE_V1\nSnapshot: {}"), null);
+assert.equal(quoteSnapshot("historical quote"), null);
+assert.equal(validateSmartQuoteLeadPayload({ ...body, panel: "Panel\nSnapshot: {}" }).ok, false);
+assert.equal(validateSmartQuoteLeadPayload({ ...body, snapshot: { ...body.snapshot, lines: [{ ...body.snapshot.lines[0], totalPkr: -1 }] } }).ok, false);
+assert.equal(validateSmartQuoteLeadPayload({ ...body, snapshot: { ...body.snapshot, lines: Array(81).fill(body.snapshot.lines[0]) } }).ok, false);
+assert.equal(leadReceivedAt({ createdAt: "unknown" }), 0);
+assert.ok(formatLeadReceivedAt("2026-10-04T10:00:00Z").includes("3:00"));
+assert.ok(formatLeadReceivedAt("2026-10-04T10:00:00Z").endsWith("PKT"));
+console.log("Quotation snapshot persistence, malformed input, limits and Pakistan timestamp tests passed.");

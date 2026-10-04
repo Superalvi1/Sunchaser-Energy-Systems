@@ -98,7 +98,7 @@ export default function StaffClientWorkspace({
             <Fact label="Project status" value={lead.status} />
             <Fact label="Latest proposal" value={accepted ? `${accepted.systemSizekW} kW · ${accepted.status}` : "None yet"} />
             <Fact label="Clearance" value={clearance} />
-            <Fact label="Notes" value={lead.notes || "No notes"} />
+            <Fact label="Notes" value={lead.notes?.split(/\r?\n/).filter(line => !line.startsWith("Snapshot: ")).join("\n") || "No notes"} />
             {customerCode ? (
               <div className="md:col-span-2">
                 <CustomerInvitationPanel customerName={lead.name} customerCode={customerCode} phone={lead.phone} compact />

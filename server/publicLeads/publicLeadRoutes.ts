@@ -118,8 +118,8 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
     try {
       const contentLength = Number(req.headers["content-length"] || 0);
       if (
-        (Number.isFinite(contentLength) && contentLength > PUBLIC_LEAD_MAX_BODY_BYTES) ||
-        estimateJsonBodyBytes(req.body) > PUBLIC_LEAD_MAX_BODY_BYTES
+        (Number.isFinite(contentLength) && contentLength > 64 * 1024) ||
+        estimateJsonBodyBytes(req.body) > 64 * 1024
       ) {
         return res.status(400).json({ ok: false, error: "Payload too large." });
       }
