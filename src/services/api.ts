@@ -3178,6 +3178,7 @@ export async function submitPublicLead(payload: {
 }
 
 export type PublicSmartQuoteLeadPayload = {
+  snapshot?: { lines: import("../lib/publicQuotationBuilder").PublicQuoteLine[]; subtotalPkr: number; discountPkr: number };
   name: string;
   phone: string;
   city?: string;

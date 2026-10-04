@@ -14,6 +14,7 @@ const SMART_QUOTE_FIELDS = new Set([
   "battery",
   "structure",
   "generatedAt",
+  "snapshot",
 ]);
 
 export type SmartQuoteLeadInput = {
@@ -28,6 +29,7 @@ export type SmartQuoteLeadInput = {
   battery: string;
   structure: string;
   generatedAt: string;
+  snapshot?: { lines: import("../../src/lib/publicQuotationBuilder.ts").PublicQuoteLine[]; subtotalPkr: number; discountPkr: number };
 };
 
 export type SmartQuoteValidationResult =
@@ -38,7 +40,7 @@ const QUOTE_RE = /^SES-\d{8}-\d{4}$/;
 
 function requiredText(record: Record<string, unknown>, key: string, max: number): string | null {
   const value = typeof record[key] === "string" ? record[key].trim() : "";
-  return value && value.length <= max ? value : null;
+  return value && value.length <= max && !/[\r\n]/.test(value) ? value : null;
 }
 
 export function validateSmartQuoteLeadPayload(body: unknown): SmartQuoteValidationResult {
@@ -78,6 +80,18 @@ export function validateSmartQuoteLeadPayload(body: unknown): SmartQuoteValidati
     return { ok: false, status: 400, error: "generatedAt is invalid." };
   }
 
+  let snapshot: SmartQuoteLeadInput["snapshot"];
+  if (record.snapshot !== undefined) {
+    const raw = record.snapshot as any;
+    const validNumber = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100_000_000;
+    if (!raw || !Array.isArray(raw.lines) || raw.lines.length > 80 || !validNumber(raw.subtotalPkr) || !validNumber(raw.discountPkr) || !raw.lines.every((line: any) =>
+      line && ["Equipment", "Cables & protection", "Structure", "Services"].includes(line.category) &&
+      ["description", "specification", "unit"].every(key => typeof line[key] === "string" && line[key].length <= 500 && !/[\r\n]/.test(line[key])) &&
+      ["quantity", "unitPricePkr", "totalPkr"].every(key => validNumber(line[key])))) {
+      return { ok: false, status: 400, error: "Quotation snapshot is invalid." };
+    }
+    snapshot = { lines: raw.lines.map((line: any) => ({ category: line.category, description: line.description, specification: line.specification, unit: line.unit, quantity: line.quantity, unitPricePkr: line.unitPricePkr, totalPkr: line.totalPkr })), subtotalPkr: raw.subtotalPkr, discountPkr: raw.discountPkr };
+  }
   return {
     ok: true,
     value: {
@@ -92,6 +106,7 @@ export function validateSmartQuoteLeadPayload(body: unknown): SmartQuoteValidati
       battery,
       structure,
       generatedAt: new Date(generatedAt).toISOString(),
+      snapshot,
     },
   };
 }
@@ -107,6 +122,7 @@ export function toPublicLeadInput(input: SmartQuoteLeadInput): PublicLeadInput {
     `Battery: ${input.battery}`,
     `Structure: ${input.structure}`,
     `Generated: ${input.generatedAt}`,
+    ...(input.snapshot ? [`Snapshot: ${JSON.stringify(input.snapshot)}`] : []),
   ].join("\n");
 
   return {

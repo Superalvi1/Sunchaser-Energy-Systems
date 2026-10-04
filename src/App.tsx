@@ -34,6 +34,7 @@ import {
   updateStoredUser,
   getStoredUser,
 } from "./services/api";
+import { parseSmartQuoteLeadNotes } from "./lib/smartQuoteLead";
 import { CONNECTION_ERROR_MESSAGE } from "./lib/startupFetch";
 import { isNativeApp } from "./lib/appPlatform";
 import {
@@ -303,6 +304,19 @@ function AuthenticatedApp() {
       cancelled = true;
     };
   }, []);
+
+  // Refresh submitted quotations quietly while staff are signed in.
+  useEffect(() => {
+    if (!currentUser || !needsCrmAppState(currentUser.role)) return;
+    let cancelled = false;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") return;
+      try { const state = await fetchAppState(); if (!cancelled) setAppState(state); } catch { /* Retain the last successful state. */ }
+    };
+    const timer = window.setInterval(refresh, 60000);
+    window.addEventListener("focus", refresh);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [currentUser?.id]);
 
   // Set default tab based on logged-in role
   useEffect(() => {
@@ -694,6 +708,11 @@ function AuthenticatedApp() {
   return (
     <>
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      {currentUser && needsCrmAppState(currentUser.role) && appState?.leads.some(l => parseSmartQuoteLeadNotes(l.notes)) && activeTab !== "CRM Database" && (
+        <button className="bg-amber-500/15 text-amber-200 border-b border-amber-500/30 p-3 text-sm" onClick={() => setActiveTab("CRM Database")}>
+          Client quotations are available — open CRM to review new submissions
+        </button>
+      )}
       {/* Mobile app shell: compact top bar. Desktop keeps its masthead below. */}
       {isMobile && (
         <MobileTopBar

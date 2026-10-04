@@ -4,6 +4,8 @@ import {
   Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox, FileText
 } from "lucide-react";
 import { Lead, User } from "../types";
+import { formatLeadReceivedAt, leadReceivedAt, parseSmartQuoteLeadNotes } from "../lib/smartQuoteLead";
+import SmartQuotePreview from "./SmartQuotePreview";
 import StaffClientWorkspace from "./StaffClientWorkspace";
 import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../services/api";
 import { pickQuoteForInvoice } from "../lib/invoiceFromLead";
@@ -36,12 +38,23 @@ export default function CRMApp({
   onAddLead,
   onDeleteLead
 }: CRMAppProps) {
+  const [previewLead, setPreviewLead] = useState<Lead | null>(null);
+  const seenKey = `sunchaser-quote-seen:${staffUser.id}`;
+  const [seenQuotes, setSeenQuotes] = useState<string[]>(() => {
+    try { const value = JSON.parse(localStorage.getItem(seenKey) || "[]"); return Array.isArray(value) ? value.filter(id => typeof id === "string") : []; } catch { return []; }
+  });
+  const incomingQuotes = leads.filter(l => parseSmartQuoteLeadNotes(l.notes));
+  const unreadQuotes = incomingQuotes.filter(l => !seenQuotes.includes(l.id));
+  const markRead = (ids: string[]) => {
+    const next = Array.from(new Set([...seenQuotes, ...ids])); setSeenQuotes(next);
+    try { localStorage.setItem(seenKey, JSON.stringify(next)); } catch { /* UI still works without storage */ }
+  };
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("All");
   const [workspaceLeadId, setWorkspaceLeadId] = useState<string | null>(null);
   
   // Lead scoring prioritization state: toggle sorting based on rating vs AI score vs creation date
-  const [sortBy, setSortBy] = useState<'ai_score' | 'rating' | 'creation'>('ai_score');
+  const [sortBy, setSortBy] = useState<'ai_score' | 'rating' | 'creation'>('creation');
 
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
   const isMobile = useIsMobile();
@@ -239,11 +252,18 @@ export default function CRMApp({
       return b.rating - a.rating;
     }
     // Sort by creation date list
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    return leadReceivedAt(b) - leadReceivedAt(a) || b.id.localeCompare(a.id);
   });
 
   return (
     <div id="crm-view-portal" className="space-y-6 text-xs">
+      {previewLead && <SmartQuotePreview lead={previewLead} onClose={() => setPreviewLead(null)} />}
+      {unreadQuotes.length > 0 && <div role="status" className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 text-amber-200">
+        <strong>{unreadQuotes.length} unreviewed client quotation{unreadQuotes.length === 1 ? "" : "s"}</strong>
+        <p>Saved by clients through Smart Quote. Open a quotation below to review it.</p>
+        <button onClick={() => { setSearchTerm(""); setSelectedStatus("All"); setSortBy("creation"); const latest = [...unreadQuotes].sort((a,b) => leadReceivedAt(b) - leadReceivedAt(a))[0]; setPreviewLead(latest); markRead([latest.id]); }}>View latest quotation</button>
+        <button className="ml-4" onClick={() => markRead(unreadQuotes.map(l => l.id))}>Mark all reviewed</button>
+      </div>}
       {invoiceLeadMsg && (
         <p className="text-xs bg-emerald-950/60 border border-emerald-800 text-emerald-200 px-4 py-2 rounded-xl">
           {invoiceLeadMsg}
@@ -430,6 +450,7 @@ export default function CRMApp({
                 >
                   <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-100 font-sans">
                     {lead.name}
+                    <span className="mt-1 block text-[11px] font-normal text-slate-400">{lead.leadSource || "Source not recorded"} · {formatLeadReceivedAt(lead.createdAt)}</span>
                   </span>
                   <span
                     data-testid={`crm-lead-primary-metric-${lead.id}`}
@@ -445,6 +466,11 @@ export default function CRMApp({
                   />
                 </button>
 
+                <div className="flex flex-wrap justify-end gap-3 px-3 pt-2">
+                  {parseSmartQuoteLeadNotes(lead.notes) && <button className="text-emerald-300 min-h-10" onClick={() => { setPreviewLead(lead); markRead([lead.id]); }}><FileText className="inline h-4 w-4 mr-1"/>View / download quotation{!seenQuotes.includes(lead.id) ? " · New" : ""}</button>}
+                  {Boolean(lead.quotes?.length) && <button className="text-sky-300 min-h-10" onClick={() => { setExpandedLeadId(lead.id); setWorkspaceLeadId(lead.id); }}>View saved proposals</button>}
+                  {onDeleteLead && <button aria-label={`Delete lead ${lead.name}`} className="text-red-300 min-h-10" onClick={() => { if (window.confirm(`Delete lead ${lead.name} from the CRM list?`)) onDeleteLead(lead.id); }}><Trash className="inline h-4 w-4 mr-1"/>Delete</button>}
+                </div>
                 {showDetails ? (
                   <div
                     id={`crm-lead-details-${lead.id}`}
@@ -493,6 +519,9 @@ export default function CRMApp({
                       <div className="space-y-1">
                         <label className="text-slate-500 font-bold uppercase">Lead Source</label>
                         <select value={editLeadSource} onChange={(e) => setEditLeadSource(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
+                          <option value="Smart Quote">Smart Quote</option>
+                          <option value="Staff Quote">Staff Quote</option>
+                          {editLeadSource && !["Smart Quote", "Staff Quote", "Direct/Referral", "Web Search", "Facebook Ad", "Google Maps Plataform"].includes(editLeadSource) && <option value={editLeadSource}>{editLeadSource}</option>}
                           <option value="Direct/Referral">Direct/Referral</option>
                           <option value="Web Search">Web Search</option>
                           <option value="Facebook Ad">Facebook Ad</option>
@@ -627,7 +656,7 @@ export default function CRMApp({
                     {lead.notes && (
                       <p className="bg-slate-950/40 p-2.5 rounded-2xl text-slate-400 text-[11px] leading-relaxed select-all">
                         <strong className="text-[10px] text-slate-500 uppercase block font-mono">Closing remarks</strong>
-                        &ldquo;{lead.notes}&rdquo;
+                        &ldquo;{lead.notes?.split(/\r?\n/).filter(line => !line.startsWith("Snapshot: ")).join("\n")}&rdquo;
                       </p>
                     )}
 
