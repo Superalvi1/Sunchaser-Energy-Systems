@@ -197,6 +197,7 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
             filters={filters}
             onFiltersChange={setFilters}
             currentUserId={staffUser.id}
+
             conversations={list.conversations}
             selectedId={selectedId}
             onSelect={onSelect}
@@ -236,6 +237,8 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
             sending={mutations.send.isPending}
             onSend={handleSend}
             currentUserId={staffUser.id}
+            canManageAgent={["Super Admin","Admin","Technical CEO"].includes(staffUser.role)}
+            onAgentChange={()=>void detail.refetch()}
             mutating={mutating}
             onAssignToMe={() => {
               if (!selectedId) return;

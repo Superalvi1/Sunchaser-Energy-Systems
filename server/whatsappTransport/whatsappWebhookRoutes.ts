@@ -38,6 +38,7 @@ export type WhatsAppWebhookRouterDeps = {
   config?: WhatsAppConfig;
   env?: NodeJS.ProcessEnv;
   autoLinkLead?: (conversationId: string) => Promise<unknown>;
+  enqueueSalesAgent?: (conversationId: string, messageId: string) => Promise<void>;
   /**
    * Normalized messaging repository (Task 5B dual-write).
    * When set, inbound persistence also writes messaging_* and failures are not ignored.
@@ -59,7 +60,8 @@ async function persistNormalizedEvents(
   repo: WhatsAppRepository,
   events: NormalizedWebhookEvent[],
   autoLinkLead?: (conversationId: string) => Promise<unknown>,
-  messagingBridge?: WhatsAppMessagingBridge | null
+  messagingBridge?: WhatsAppMessagingBridge | null,
+  enqueueSalesAgent?: (conversationId: string, messageId: string) => Promise<void>
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     /** Map Meta wa_message_id → messaging message id for same-envelope status events. */
@@ -167,6 +169,7 @@ async function persistNormalizedEvents(
             messagingDualWrite: Boolean(messagingBridge),
           },
         });
+        if (enqueueSalesAgent && textBody && messageType === "text") await enqueueSalesAgent(conversation.id, inserted.row.id);
         continue;
       }
 
@@ -348,7 +351,8 @@ export function createWhatsAppWebhookRouter(
       repo,
       parsed.events,
       deps.autoLinkLead,
-      messagingBridge
+      messagingBridge,
+      deps.enqueueSalesAgent
     );
     if (persist.ok === false) {
       await repo.markWebhookEventError(claim.event.id, persist.error);

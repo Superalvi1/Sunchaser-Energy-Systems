@@ -206,6 +206,7 @@ export type InboxControllerDeps = {
    * Checked before any idempotency claim.
    */
   sendPort?: InboxSendPort;
+  beforeStaffSend?: (conversationId: string) => Promise<void>;
   /**
    * When false, POST /messages/send rejects with 503 before claiming.
    * Defaults to true only when a sendPort is provided.
@@ -445,6 +446,7 @@ export function createInboxControllers(
         };
 
         try {
+          await deps.beforeStaffSend?.(parsed.value.conversationId);
           const sent = await deps.sendPort({
             conversationId: parsed.value.conversationId,
             text: parsed.value.text,

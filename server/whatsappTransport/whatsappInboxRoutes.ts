@@ -43,6 +43,7 @@ export type WhatsAppInboxRouterDeps = {
    * - function: use injected port (tests / custom wiring)
    */
   sendPort?: InboxSendPort | null;
+  beforeStaffSend?: (conversationId: string) => Promise<void>;
   /**
    * Optional factory used when `sendPort` is omitted (tests of production
    * resolution). Defaults to createInboxOutboundSendPort.
@@ -122,6 +123,7 @@ export function createWhatsAppInboxRouter(
     const services = resolveServices(deps);
     controllers = createInboxControllers(services, {
       sendPort: sendPort ?? undefined,
+      beforeStaffSend: deps.beforeStaffSend,
       sendEnabled,
       getConnectionStatus: deps.getConnectionStatus,
       getQrConnectionStatus: deps.getQrConnectionStatus,
