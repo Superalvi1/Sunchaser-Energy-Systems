@@ -14,6 +14,19 @@ echo "==> Production web build (mode production)"
 echo "==> Capacitor sync android"
 ./node_modules/.bin/cap sync android
 
+# Runtime uploads belong on the CRM server, not in distributable app assets.
+node --input-type=module <<'JS'
+import { rmSync, lstatSync } from 'node:fs';
+import { resolve } from 'node:path';
+const uploads = resolve('android/app/src/main/assets/public/uploads');
+try {
+  if (lstatSync(uploads).isSymbolicLink()) throw new Error('Refusing linked upload assets');
+  rmSync(uploads, { recursive: true });
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+JS
+
 echo "==> Signed release AAB"
 cd android
 ./gradlew bundleRelease
