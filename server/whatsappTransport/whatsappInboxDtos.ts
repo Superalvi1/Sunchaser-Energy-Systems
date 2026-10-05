@@ -349,6 +349,102 @@ export function parseSendMessageBody(body: unknown): DtoResult<SendMessageBody> 
   };
 }
 
+export type SendTemplateMessageBody = {
+  conversationId: string;
+  idempotencyKey: string;
+  templateName: string;
+  languageCode: string;
+  bodyParameters: string[];
+  headerParameter?: string;
+  buttonUrlParameters: Record<number, string>;
+};
+
+const MAX_TEMPLATE_PARAMETERS = 20;
+
+/**
+ * Template send request. Parameter VALUES are validated against the resolved
+ * template later (whatsappTemplates.ts); this only checks shape.
+ */
+export function parseSendTemplateMessageBody(
+  body: unknown
+): DtoResult<SendTemplateMessageBody> {
+  const rec = asRecord(body);
+  if (!rec) return { ok: false, message: "JSON body is required" };
+  const unknown = rejectUnknownKeys(rec, [
+    "conversationId",
+    "idempotencyKey",
+    "templateName",
+    "languageCode",
+    "bodyParameters",
+    "headerParameter",
+    "buttonUrlParameters",
+  ]);
+  if (unknown) return unknown;
+  const conversationId = requireNonEmptyString(rec.conversationId, "conversationId");
+  if (isDtoErr(conversationId)) return conversationId;
+  const idempotencyKey = requireNonEmptyString(rec.idempotencyKey, "idempotencyKey");
+  if (isDtoErr(idempotencyKey)) return idempotencyKey;
+  const templateName = requireNonEmptyString(rec.templateName, "templateName");
+  if (isDtoErr(templateName)) return templateName;
+  const languageCode = requireNonEmptyString(rec.languageCode, "languageCode");
+  if (isDtoErr(languageCode)) return languageCode;
+
+  let bodyParameters: string[] = [];
+  if (rec.bodyParameters !== undefined) {
+    if (
+      !Array.isArray(rec.bodyParameters) ||
+      rec.bodyParameters.length > MAX_TEMPLATE_PARAMETERS ||
+      !rec.bodyParameters.every((v) => typeof v === "string")
+    ) {
+      return {
+        ok: false,
+        field: "bodyParameters",
+        message: `bodyParameters must be an array of at most ${MAX_TEMPLATE_PARAMETERS} strings`,
+      };
+    }
+    bodyParameters = rec.bodyParameters as string[];
+  }
+
+  let headerParameter: string | undefined;
+  if (rec.headerParameter !== undefined) {
+    if (typeof rec.headerParameter !== "string") {
+      return { ok: false, field: "headerParameter", message: "headerParameter must be a string" };
+    }
+    headerParameter = rec.headerParameter;
+  }
+
+  const buttonUrlParameters: Record<number, string> = {};
+  if (rec.buttonUrlParameters !== undefined) {
+    const buttons = asRecord(rec.buttonUrlParameters);
+    if (!buttons) {
+      return { ok: false, field: "buttonUrlParameters", message: "buttonUrlParameters must be an object" };
+    }
+    for (const [key, value] of Object.entries(buttons)) {
+      if (!/^\d{1,2}$/.test(key) || typeof value !== "string") {
+        return {
+          ok: false,
+          field: "buttonUrlParameters",
+          message: "buttonUrlParameters keys must be button indexes with string values",
+        };
+      }
+      buttonUrlParameters[Number(key)] = value;
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      conversationId: conversationId.value,
+      idempotencyKey: idempotencyKey.value,
+      templateName: templateName.value,
+      languageCode: languageCode.value,
+      bodyParameters,
+      ...(headerParameter !== undefined ? { headerParameter } : {}),
+      buttonUrlParameters,
+    },
+  };
+}
+
 export type ReadWatermarkBody = {
   conversationId: string;
   lastSeenMessageId: string;

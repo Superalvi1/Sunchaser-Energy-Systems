@@ -12,7 +12,7 @@ import { useInboxConversation } from "../hooks/useInboxConversation";
 import { useInboxConversations } from "../hooks/useInboxConversations";
 import { useInboxMessages } from "../hooks/useInboxMessages";
 import { useInboxMutations } from "../hooks/useInboxMutations";
-import type { InboxListFilters } from "../types";
+import type { InboxListFilters, InboxTemplateSendInput } from "../types";
 import ConversationList from "./ConversationList";
 import ConversationView from "./ConversationView";
 import CRMPanel from "./CRMPanel";
@@ -122,6 +122,18 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
           toast.error(err instanceof Error ? err.message : "Send failed"),
       }
     );
+  };
+
+  const [templateSentToken, setTemplateSentToken] = useState(0);
+  const handleSendTemplate = (input: InboxTemplateSendInput) => {
+    mutations.sendTemplate.mutate(input, {
+      onSuccess: () => {
+        setTemplateSentToken((n) => n + 1);
+        toast.success("Template sent");
+      },
+      onError: (err) =>
+        toast.error(err instanceof Error ? err.message : "Template send failed"),
+    });
   };
 
   const lock = conversation?.lockVersion ?? 1;
@@ -235,6 +247,9 @@ export default function InboxPage({ staffUser }: InboxPageProps) {
             onLoadOlder={() => void messages.fetchNextPage()}
             sending={mutations.send.isPending}
             onSend={handleSend}
+            onSendTemplate={handleSendTemplate}
+            sendingTemplate={mutations.sendTemplate.isPending}
+            templateSentToken={templateSentToken}
             currentUserId={staffUser.id}
             mutating={mutating}
             onAssignToMe={() => {

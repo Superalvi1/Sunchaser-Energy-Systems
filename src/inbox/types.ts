@@ -59,6 +59,33 @@ export type InboxCrmLink = {
   linkedAt: string;
 };
 
+/** Approved-template summary from GET /api/inbox/templates (no ids/tokens). */
+export type InboxTemplateSummary = {
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  header:
+    | { format: "TEXT"; text: string; varCount: number }
+    | { format: string }
+    | null;
+  bodyText: string;
+  bodyVarCount: number;
+  footerText: string | null;
+  buttons: Array<{ kind: string; text: string; url: string | null; urlVarCount: number }>;
+  sendable: boolean;
+  unsupportedReason: string | null;
+};
+
+export type InboxTemplateSendInput = {
+  conversationId: string;
+  templateName: string;
+  languageCode: string;
+  bodyParameters: string[];
+  headerParameter?: string;
+  buttonUrlParameters: Record<number, string>;
+};
+
 export type FreeFormEligibility = {
   freeFormAllowed: boolean;
   windowExpiresAt: string | null;
