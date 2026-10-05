@@ -199,10 +199,10 @@ function AuthenticatedApp() {
   };
 
   // Staff/admin CRM state — only after login, not on guest boot
-  const loadDatabaseState = async () => {
+  const loadDatabaseState = async (quiet = false) => {
     const homeStateUrl = `${API_BASE_URL}/api/state`;
     console.log("Home screen API request:", homeStateUrl);
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setSessionSyncError(null);
     try {
       const state = await fetchAppState();
@@ -458,13 +458,11 @@ function AuthenticatedApp() {
 
   const handleUpdateLead = async (id: string, updatedData: any) => {
     try {
-      setLoading(true);
       await updateLead(id, updatedData);
-      await loadDatabaseState();
+      await loadDatabaseState(true);
     } catch (err: any) {
       toast.error(err.message);
-    } finally {
-      setLoading(false);
+      throw err;
     }
   };
 

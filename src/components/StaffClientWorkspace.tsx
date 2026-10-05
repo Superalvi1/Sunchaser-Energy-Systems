@@ -18,7 +18,9 @@ import CustomerProfileStaff from "./CustomerProfileStaff";
 import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import InvoiceStaff from "./InvoiceStaff";
 import SmartQuotePreview from "./SmartQuotePreview";
-import { parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, formatLeadReceivedAt, visibleLeadNotes } from "../lib/smartQuoteLead";
+import CustomerDocumentList from "./CustomerDocumentList";
+import { prepareLeadCustomerProfile } from "../services/api";
+import { parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, formatLeadReceivedAt, visibleLeadNotes, normalizePakistanMobile } from "../lib/smartQuoteLead";
 import InteractiveProposalShareModal from "./InteractiveProposalShareModal";
 
 type WorkspaceTab =
@@ -49,19 +51,34 @@ export default function StaffClientWorkspace({
   lead,
   customerCode,
   initialTab = "overview",
+  relatedLeads = [],
 }: {
   staffUser: User;
   lead: Lead;
   customerCode?: string;
   initialTab?: WorkspaceTab;
+  relatedLeads?: Lead[];
 }) {
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
   useEffect(() => setTab(initialTab), [initialTab]);
   const [proposalQuote, setProposalQuote] = useState<Quote | null>(null);
-  const [smartQuoteOpen, setSmartQuoteOpen] = useState(false);
+  const [previewLead, setPreviewLead] = useState<Lead | null>(null);
+  const [preparedCustomerId, setPreparedCustomerId] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState("");
+  useEffect(() => { setPreparedCustomerId(""); setPrepareError(""); }, [lead.id]);
   const smartQuote = parseSmartQuoteLeadNotes(lead.notes);
   const pdfArchive = parseSmartQuotePdfArchive(lead.notes);
-  const customerId = leadCustomerId(lead);
+  const customerId = leadCustomerId(lead) || preparedCustomerId;
+  const phone = normalizePakistanMobile(lead.phone);
+  const submissions = [lead, ...relatedLeads.filter(l => l.id !== lead.id && phone && normalizePakistanMobile(l.phone) === phone)]
+    .filter(l => parseSmartQuoteLeadNotes(l.notes)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const prepareDocuments = async () => {
+    setPreparing(true); setPrepareError("");
+    try { setPreparedCustomerId((await prepareLeadCustomerProfile(lead.id)).customerId); }
+    catch (error) { setPrepareError(error instanceof Error ? error.message : "Could not prepare documents."); }
+    finally { setPreparing(false); }
+  };
   const quotes = lead.quotes || [];
   const accepted = quotes.find((q) => q.status === "Accepted") || quotes[quotes.length - 1];
   const clearance = useMemo(() => {
@@ -74,7 +91,7 @@ export default function StaffClientWorkspace({
 
   return (
     <section className="rounded-3xl border border-slate-800 bg-slate-950/80 overflow-hidden">
-      {smartQuoteOpen && <SmartQuotePreview lead={lead} onClose={() => setSmartQuoteOpen(false)} />}
+      {previewLead && <SmartQuotePreview lead={previewLead} onClose={() => setPreviewLead(null)} />}
       <header className="px-4 py-4 border-b border-slate-800">
         <p className="text-[10px] uppercase tracking-wide font-mono text-slate-500">Manage client</p>
         <h3 className="text-lg font-bold text-white">{lead.name}</h3>
@@ -118,15 +135,19 @@ export default function StaffClientWorkspace({
         {tab === "profile" && <CustomerProfileStaff staffUser={staffUser} initialUserId={customerId} />}
         {tab === "quotes" && (
           <div className="space-y-2">
-            {smartQuote && <div className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-4 space-y-3">
-              <div className="flex flex-wrap items-center gap-2"><FileText className="h-5 w-5 text-violet-300"/><strong className="text-white">{smartQuote.quoteNumber} · {smartQuote.system}</strong><span className="text-cyan-200">{formatLeadReceivedAt(lead.createdAt)}</span></div>
+            {submissions.map(submission => {
+              const smartQuote = parseSmartQuoteLeadNotes(submission.notes)!;
+              const pdfArchive = parseSmartQuotePdfArchive(submission.notes);
+              return <div key={submission.id} className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2"><FileText className="h-5 w-5 text-violet-300"/><strong className="text-white">{smartQuote.quoteNumber} · {smartQuote.system}</strong><span className="text-cyan-200">{formatLeadReceivedAt(submission.createdAt)}</span></div>
               <p className="text-sm text-violet-200">Client Smart Quote · PKR {smartQuote.estimatePkr.toLocaleString("en-PK")}</p>
-              <div className="flex flex-wrap gap-3"><button className="rounded-xl bg-violet-500/20 border border-violet-400/40 px-3 py-2 text-violet-100" onClick={() => setSmartQuoteOpen(true)}>View quotation</button>
+              <div className="flex flex-wrap gap-3"><button className="rounded-xl bg-violet-500/20 border border-violet-400/40 px-3 py-2 text-violet-100" onClick={() => setPreviewLead(submission)}>View quotation</button>
                 {pdfArchive && <a className="rounded-xl bg-emerald-500/20 border border-emerald-400/40 px-3 py-2 text-emerald-100" href={pdfArchive.fileUrl} target="_blank" rel="noopener noreferrer" download={pdfArchive.fileName}>Open / download saved client PDF</a>}
               </div>
               <p className="text-xs text-slate-300">{pdfArchive ? `Original client PDF archived ${formatLeadReceivedAt(pdfArchive.savedAt)}.` : "The quotation submission is saved. An original PDF appears here after the client uses Save PDF."}</p>
-            </div>}
-            {quotes.length === 0 && !smartQuote && <p className="text-sm text-slate-500">No saved quotations yet.</p>}
+            </div>; })}
+            <CustomerDocumentList staffUser={staffUser} customerId={customerId} quotationOnly />
+            {quotes.length === 0 && submissions.length === 0 && <p className="text-sm text-slate-500">No saved quotations yet.</p>}
             {quotes.map((quote) => (
               <div key={quote.id} className="rounded-2xl border border-slate-800 px-3 py-2 text-sm text-slate-200 flex flex-wrap items-center justify-between gap-3">
                 <span>{quote.id} · {quote.systemSizekW} kW · {quote.status}</span>
@@ -159,7 +180,7 @@ export default function StaffClientWorkspace({
         )}
         {tab === "system" && <ClientPortalStaffTools staffUser={staffUser} section="warranty" initialCustomerId={customerId} />}
         {tab === "support" && <AfterSalesAdminTabs staffUser={staffUser} leads={[lead]} />}
-        {tab === "documents" && <ClientPortalStaffTools staffUser={staffUser} section="documents" initialCustomerId={customerId} />}
+        {tab === "documents" && (customerId ? <ClientPortalStaffTools staffUser={staffUser} section="documents" initialCustomerId={customerId} /> : <div className="space-y-3"><p className="text-sm text-slate-300">Prepare this client's document wallet to upload files.</p><button type="button" disabled={preparing} onClick={() => void prepareDocuments()} className="rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-4 py-3 text-cyan-200">{preparing ? "Preparing…" : "Enable client documents"}</button>{prepareError && <p role="alert" className="text-red-300">{prepareError}</p>}</div>)}
       </div>
       {proposalQuote ? (
         <InteractiveProposalShareModal

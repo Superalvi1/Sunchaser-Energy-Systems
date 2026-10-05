@@ -7,6 +7,8 @@ import {
 } from "./dbManager";
 import { mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
 import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
+import { randomUUID } from "node:crypto";
+import { generateCustomerCode } from "./customerCode";
 import {
   buildRailwayObjectProxyUrl,
   isRailwayObjectStorageConfigured,
@@ -191,6 +193,37 @@ export async function listAdminCustomerDocuments(
     .map((d: any) => mapDocumentRow(d));
 }
 
+/** Prepare a document wallet for an existing CRM lead without creating a login. */
+export async function prepareLeadCustomerProfile(actorId: string, actorUsername: string, actorRole: string, leadId: string, localDb?: Database) {
+  await assertCustomerAdmin(actorId, actorUsername, actorRole, localDb);
+  const client = isSupabaseActive() ? getSupabase()! : null;
+  let lead: any;
+  if (client) {
+    const { data, error } = await client.from("leads").select("id,customer_id,name,email,phone,address,deleted_at").eq("id", leadId).maybeSingle();
+    if (error) throw error;
+    lead = data;
+  } else lead = localDb?.leads.find(l => l.id === leadId);
+  if (!lead || lead.deleted_at || lead.deletedAt) throw new CustomerProfileError("Lead not found.", 404);
+  const existing = lead.customer_id || lead.customerId;
+  if (existing) return { customerId: existing };
+  const customerId = `cust-${leadId.replace(/^lead-/, "")}`;
+  const row = { id: customerId, name: lead.name, email: lead.email || "", phone: lead.phone || "", address: lead.address || "", customer_code: await generateCustomerCode(localDb) };
+  if (client) {
+    const { error } = await client.from("customers").upsert(row, { onConflict: "id", ignoreDuplicates: true });
+    if (error) throw error;
+    const { error: linkError } = await client.from("leads").update({ customer_id: customerId }).eq("id", leadId).is("customer_id", null).is("deleted_at", null);
+    if (linkError) throw linkError;
+    const { data, error: readError } = await client.from("leads").select("customer_id").eq("id", leadId).single();
+    if (readError || !data?.customer_id) throw readError || new Error("Could not link client profile.");
+    return { customerId: data.customer_id };
+  }
+  const local = localDb as any;
+  local.customers ||= [];
+  if (!local.customers.some((c: any) => c.id === customerId)) local.customers.push(row);
+  lead.customerId = customerId;
+  return { customerId };
+}
+
 export async function assignCustomerDocument(
   actorId: string,
   actorUsername: string,
@@ -221,7 +254,7 @@ export async function assignCustomerDocument(
   const visibleToCustomer = body.visibleToCustomer !== false && !internalOnly;
 
   const doc = {
-    id: `doc-${Date.now()}`,
+    id: `doc-${randomUUID()}`,
     customer_id: customerId,
     project_id: body.projectId || null,
     document_type: body.documentType,
@@ -285,11 +318,11 @@ export async function uploadFileToCustomerStorage(
   fileName: string,
   mimeType?: string
 ): Promise<{ url: string; storagePath: string }> {
-  const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+  const matches = base64Data.match(/^data:([^;]*);base64,(.+)$/);
   let buffer: Buffer;
   let contentType = mimeType || "application/octet-stream";
   if (matches) {
-    contentType = matches[1];
+    contentType = mimeType || matches[1];
     buffer = Buffer.from(matches[2], "base64");
   } else {
     buffer = Buffer.from(base64Data, "base64");

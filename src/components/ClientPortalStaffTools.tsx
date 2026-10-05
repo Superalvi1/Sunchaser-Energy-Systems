@@ -8,6 +8,7 @@ import {
 } from "../services/api";
 import { DOCUMENT_WALLET_TYPES, WARRANTY_COMPONENT_TYPES } from "../lib/clientPortalPhase2";
 import CustomerDocumentUploader from "./CustomerDocumentUploader";
+import CustomerDocumentList from "./CustomerDocumentList";
 import { useToast } from "../lib/toast";
 
 interface ClientPortalStaffToolsProps {
@@ -28,6 +29,7 @@ export default function ClientPortalStaffTools({
   const [projectId, setProjectId] = useState("");
   const [documentType, setDocumentType] = useState(DOCUMENT_WALLET_TYPES[0].type);
   const [title, setTitle] = useState("");
+  const [documentRefresh, setDocumentRefresh] = useState(0);
 
   const [warrantyComponent, setWarrantyComponent] = useState(WARRANTY_COMPONENT_TYPES[0].type);
   const [brand, setBrand] = useState("");
@@ -60,8 +62,8 @@ export default function ClientPortalStaffTools({
   };
 
   useEffect(() => {
-    loadClaims();
-  }, [staffUser.id, staffUser.username]);
+    if (showWarranty) void loadClaims();
+  }, [staffUser.id, staffUser.username, showWarranty]);
 
   const saveWarranty = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +104,7 @@ export default function ClientPortalStaffTools({
           Client Portal — Document Upload
         </h3>
         <p className="text-xs text-slate-500 font-mono mt-1">
-          Upload files to Supabase Storage and link them to the customer Document Wallet.
+          Save documents for this client. Uploaded quotation PDFs also appear in Proposals.
         </p>
       </div>
 
@@ -150,9 +152,10 @@ export default function ClientPortalStaffTools({
           projectId={projectId}
           documentType={documentType}
           title={title}
-          onSuccess={() => setTitle("")}
+          onSuccess={() => { setTitle(""); setDocumentRefresh(n => n + 1); }}
         />
       </div>
+      <CustomerDocumentList staffUser={staffUser} customerId={customerId} refreshVersion={documentRefresh} />
       </>
       )}
 

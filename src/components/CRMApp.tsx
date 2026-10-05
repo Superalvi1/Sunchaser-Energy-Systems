@@ -25,7 +25,7 @@ interface CRMAppProps {
   staffUser: User;
   leads: Lead[];
   staffUsers?: User[];
-  onUpdateLead: (id: string, updatedData: any) => void;
+  onUpdateLead: (id: string, updatedData: any) => void | Promise<void>;
   onAddLead: (data: any) => void | Promise<void>;
   onDeleteLead?: (id: string) => void;
   onDeleteLeads?: (ids: string[]) => Promise<{ deleted: string[]; failed: string[] }>;
@@ -78,6 +78,8 @@ export default function CRMApp({
   const [sortBy, setSortBy] = useState<'ai_score' | 'rating' | 'creation'>('creation');
 
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
   const isMobile = useIsMobile();
   // Summary-first CRM disclosure on every viewport; one client can be expanded at a time.
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
@@ -144,6 +146,7 @@ export default function CRMApp({
     }
   };
   const handleEditClick = (lead: Lead) => {
+    setEditError("");
     // Editing is a full-detail action, so keep the selected client open while editing.
     setExpandedLeadId(lead.id);
     setEditLeadId(lead.id);
@@ -160,8 +163,10 @@ export default function CRMApp({
     setEditBackupReq(lead.backupRequirement || "None");
   };
 
-  const handleEditSave = (id: string) => {
-    onUpdateLead(id, {
+  const handleEditSave = async (id: string) => {
+    if (!editName.trim()) { setEditError("Client name is required."); return; }
+    setEditSaving(true); setEditError("");
+    try { await onUpdateLead(id, {
       name: editName,
       email: editEmail,
       phone: editPhone,
@@ -175,14 +180,16 @@ export default function CRMApp({
       backupRequirement: editBackupReq
     });
     setEditLeadId(null);
+    } catch (err) { setEditError(err instanceof Error ? err.message : "Could not save client details."); }
+    finally { setEditSaving(false); }
   };
 
   const handleStatusChange = (id: string, newStatus: any) => {
-    onUpdateLead(id, { status: newStatus });
+    void Promise.resolve(onUpdateLead(id, { status: newStatus })).catch(() => {});
   };
 
   const handleRatingChange = (id: string, newRating: number) => {
-    onUpdateLead(id, { rating: newRating });
+    void Promise.resolve(onUpdateLead(id, { rating: newRating })).catch(() => {});
   };
 
   // Submit new lead
@@ -511,6 +518,7 @@ export default function CRMApp({
                 </button>
 
                 <div className="flex flex-wrap justify-end gap-3 px-3 pt-2">
+                  <button type="button" onClick={() => handleEditClick(lead)} className="min-h-10 rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-3 text-cyan-200">Edit name / contact</button>
                   {parseSmartQuoteLeadNotes(lead.notes) && <button className="inline-flex items-center rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 text-emerald-200 min-h-10" onClick={() => { setPreviewLead(lead); markRead([lead.id]); }}><FileText className="inline h-4 w-4 mr-1"/>View / download quotation{!seenQuotes.includes(lead.id) ? " · New" : ""}</button>}
                   {(Boolean(lead.quotes?.length) || Boolean(parseSmartQuoteLeadNotes(lead.notes))) && <button className="rounded-xl border border-sky-400/40 bg-sky-500/15 px-3 text-sky-200 min-h-10" onClick={() => { setWorkspaceInitialTab("quotes"); setExpandedLeadId(lead.id); setWorkspaceLeadId(lead.id); }}>View saved proposals</button>}
                   {onDeleteLead && <button aria-label={`Delete lead ${lead.name}`} className="rounded-xl border border-rose-400/40 bg-rose-500/15 px-3 text-rose-200 min-h-10" onClick={() => { if (window.confirm(`Delete lead ${lead.name} from the CRM list?`)) onDeleteLead(lead.id); }}><Trash className="inline h-4 w-4 mr-1"/>Delete</button>}
@@ -598,17 +606,20 @@ export default function CRMApp({
                     <div className="flex gap-2 pt-2 justify-end">
                       <button 
                         onClick={() => setEditLeadId(null)}
+                        disabled={editSaving}
                         className="bg-slate-950 border border-slate-850 hover:bg-slate-800 font-sans font-bold px-4 py-2 rounded-xl transition cursor-pointer"
                       >
                         Cancel
                       </button>
                       <button 
                         onClick={() => handleEditSave(lead.id)}
+                        disabled={editSaving}
                         className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold px-4 py-2 rounded-xl transition cursor-pointer"
                       >
-                        Save Details Update
+                        {editSaving ? "Saving…" : "Save Details Update"}
                       </button>
                     </div>
+                    {editError && <p role="alert" className="text-sm text-red-300">{editError}</p>}
                   </div>
                 ) : (
                   /* --- STANDARD DISPLAY READ CARD VIEWS --- */
@@ -712,7 +723,7 @@ export default function CRMApp({
                       {workspaceLeadId === lead.id ? "Hide client workspace" : "Open Client Portal / Manage Client"}
                     </button>
                     {workspaceLeadId === lead.id && (
-                      <StaffClientWorkspace staffUser={staffUser} lead={lead} initialTab={workspaceInitialTab} />
+                      <StaffClientWorkspace staffUser={staffUser} lead={lead} relatedLeads={leads} initialTab={workspaceInitialTab} />
                     )}
 
                     <WhatsAppModule
