@@ -1,3 +1,5 @@
+import { SALES_AI_PROVIDERS, providerStatuses, resolveSalesProvider } from "./providerConfig.ts";
+import { decideSalesReply } from "./agentProvider.ts";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import type { RequestActor } from "../middleware/actor.ts";
@@ -14,18 +16,30 @@ export function createSalesAgentRouter(invalidate: () => void) {
     next();
   });
   router.get("/settings", async (_req,res)=> {
-    try { const {settings} = await loadAgentSettings(); res.json({settings,readiness:agentReadiness(),catalog:publicAgentCatalog}); }
+    try { const {settings} = await loadAgentSettings(); const config=resolveSalesProvider(process.env,settings); res.json({settings:{...settings,provider:config.provider,model:config.model},readiness:agentReadiness(process.env,settings),providers:providerStatuses(),catalog:publicAgentCatalog}); }
     catch { res.status(503).json({error:"Agent storage is unavailable. Check Railway object storage configuration."}); }
   });
   router.put("/settings",async(req,res)=> {
     try {
       const b = req.body;
       if (!b || typeof b.enabled !== "boolean" || typeof b.autoQuotes !== "boolean" || typeof b.businessFacts !== "string" || b.businessFacts.length > 12000 || !Number.isInteger(b.dailyLimit) || b.dailyLimit < 1 || b.dailyLimit > 500 || !Number.isInteger(b.revision)) return res.status(400).json({error:"Invalid agent settings."});
-      if (b.enabled && !canEnableAgent()) return res.status(409).json({error:"Add GEMINI_API_KEY and WHATSAPP_SALES_AI_MODEL in Railway, and verify WhatsApp and storage before enabling replies."});
+      if (!SALES_AI_PROVIDERS.includes(b.provider) || typeof b.model !== "string" || b.model.length>120 || (b.model && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(b.model))) return res.status(400).json({error:"Choose a supported provider and valid model ID."});
+      if (b.enabled && !canEnableAgent(process.env,b)) return res.status(409).json({error:`Add ${resolveSalesProvider(process.env,b).keyName} in Railway, select a model, and verify WhatsApp and storage before enabling replies.`});
       const actor = (req as any).actor as RequestActor;
-      const settings = await updateAgentSettings(b.revision,current=> ({...current, enabled:b.enabled,autoQuotes:b.autoQuotes,businessFacts:b.businessFacts,dailyLimit:b.dailyLimit,ownerUsername:actor.username}));
-      invalidate(); res.json({settings,readiness:agentReadiness()});
+      const settings = await updateAgentSettings(b.revision,current=> ({...current, enabled:b.enabled,autoQuotes:b.autoQuotes,businessFacts:b.businessFacts,dailyLimit:b.dailyLimit,ownerUsername:actor.username,provider:b.provider,model:b.model.trim()}));
+      invalidate(); res.json({settings,readiness:agentReadiness(process.env,settings),providers:providerStatuses()});
     } catch (e:any) { res.status(e.status || 503).json({error:e.status === 409 ? e.message : "Could not save agent settings."}); }
+  });
+  router.post("/test-connection",async(req,res)=> {
+    try {
+      const {provider,model}=req.body || {};
+      if(!SALES_AI_PROVIDERS.includes(provider) || typeof model!=="string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(model)) return res.status(400).json({error:"Choose a supported provider and valid model ID."});
+      const config=resolveSalesProvider(process.env,{provider,model});
+      if(!config.apiKey) return res.status(409).json({error:`Configure ${config.keyName} in Railway first.`});
+      const reply=await decideSalesReply({enabled:false,autoQuotes:false,dailyLimit:1,ownerUsername:"",businessFacts:"Sunchaser Energy Systems provides solar services in Lahore.",quotations:[],revision:0,provider,model},[{role:"customer",text:"Hello, which city do you serve?"}],AbortSignal.timeout(25000));
+      if(!["reply","clarify"].includes(reply.action) || !reply.text.trim()) return res.status(502).json({error:"The selected model did not return a valid sales reply. Try a different model."});
+      res.json({ok:true,provider,model,reply:reply.text,authentication:"api_key"});
+    } catch {res.status(502).json({error:"Connection test failed. Check the API key, model access and provider billing. No customer message was sent."});}
   });
   router.post("/quotations",async(req,res)=> {
     try {
@@ -39,7 +53,7 @@ export function createSalesAgentRouter(invalidate: () => void) {
       const id=randomUUID(), storagePath=`whatsapp-agent/approved/${id}.pdf`;
       await putRailwayObject("customer-documents",storagePath,pdf,"application/pdf");
       const settings=await updateAgentSettings(b.revision,c=>({...c,quotations:[...c.quotations,{id,title:b.title.trim(),description:b.description.trim(),capacityKw:b.capacityKw,expiresAt:new Date(b.expiresAt).toISOString(),storagePath,approved:true}]}));
-      invalidate(); res.json({settings});
+      invalidate(); const config=resolveSalesProvider(process.env,settings); res.json({settings:{...settings,provider:config.provider,model:config.model},readiness:agentReadiness(process.env,settings),providers:providerStatuses()});
     } catch(e:any) { res.status(e.status||503).json({error:e.status === 409 ? e.message : "Could not save the approved quotation."}); }
   });
   router.patch("/quotations/:id",async(req,res)=> {
@@ -49,7 +63,7 @@ export function createSalesAgentRouter(invalidate: () => void) {
         if(!c.quotations.some(d=>d.id===req.params.id)) throw Object.assign(new Error("Quotation not found."),{status:404});
         return {...c,quotations:c.quotations.map(d=>d.id===req.params.id ? {...d,approved:req.body.approved} : d)};
       });
-      invalidate(); res.json({settings});
+      invalidate(); const config=resolveSalesProvider(process.env,settings); res.json({settings:{...settings,provider:config.provider,model:config.model},readiness:agentReadiness(process.env,settings),providers:providerStatuses()});
     } catch(e:any) { res.status(e.status||503).json({error:"Could not change quotation approval. Refresh and retry."}); }
   });
   router.get("/quotations/:id",async(req,res)=> {
@@ -60,7 +74,7 @@ export function createSalesAgentRouter(invalidate: () => void) {
     try {
       const state=req.body?.state;
       if (!["AI_ACTIVE","AI_PAUSED","HUMAN_HANDLING"].includes(state)) return res.status(400).json({error:"Invalid ownership state."});
-      if(state==="AI_ACTIVE" && (!canEnableAgent() || !(await loadAgentSettings()).settings.enabled)) return res.status(409).json({error:"Configure and enable the agent first."});
+      if(state==="AI_ACTIVE") {const {settings}=await loadAgentSettings();if(!settings.enabled || !canEnableAgent(process.env,settings)) return res.status(409).json({error:"Configure and enable the agent first."});}
       const repos=createDefaultWhatsAppInboxRepositories(),c=await repos.conversations.getById(req.params.id,"sunchaser");
       if (!c) return res.status(404).json({error:"Conversation not found."});
       if(state==="AI_ACTIVE" && c.assignedUserId) return res.status(409).json({error:"Unassign this conversation before returning it to the AI."});

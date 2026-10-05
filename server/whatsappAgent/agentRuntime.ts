@@ -1,3 +1,4 @@
+import { hasSalesProviderKey } from "./providerConfig.ts";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
 import { hydrateActorFromUsername } from "../middleware/actor.ts";
 import { canSendOutboundWhatsApp } from "../whatsappTransport/whatsappPermissions.ts";
@@ -22,18 +23,18 @@ export function createSalesAgentRuntime(createQuote: AgentTurnPorts["createQuote
     return cached.settings;
   };
   const enqueue = async (conversationId: string, messageId: string) => {
-    if (!canEnableAgent() || !isSupabaseActive()) return;
+    if (!hasSalesProviderKey() || !isSupabaseActive()) return;
     const config = await settings();
-    if (!config.enabled) return;
+    if (!config.enabled || !canEnableAgent(process.env,config)) return;
     const repos = createDefaultWhatsAppInboxRepositories();
     await repos.idempotency.claim({ idempotencyKey: JOB + messageId, conversationId, companyId });
   };
   const drain = async () => {
-    if (draining || !canEnableAgent() || !isSupabaseActive()) return;
+    if (draining || !hasSalesProviderKey() || !isSupabaseActive()) return;
     draining = true;
     try {
       const config = await settings();
-      if (!config.enabled) return;
+      if (!config.enabled || !canEnableAgent(process.env,config)) return;
       const actor = await hydrateActorFromUsername(config.ownerUsername, undefined, "jwt");
       if (!actor.ok || !canSendOutboundWhatsApp(actor.actor)) return;
       const client = getSupabase()!;
@@ -73,7 +74,7 @@ export function createSalesAgentRuntime(createQuote: AgentTurnPorts["createQuote
           createQuote,
           documentUrl:path=>absoluteCrmFileUrl(buildRailwayObjectProxyUrl("customer-documents",path)),
           handoff,
-          stillEnabled:async()=> {const latest=await settings(true); return latest.enabled && latest.revision===config.revision;},
+          stillEnabled:async()=> {const latest=await settings(true); return latest.enabled && canEnableAgent(process.env,latest) && latest.revision===config.revision;},
           confirmation:async()=> {
             const obj=await getRailwayObject("customer-documents",`whatsapp-agent/pending/${conversationId}.json`);
             return obj ? JSON.parse(obj.body.toString("utf8")) : null;
@@ -97,7 +98,7 @@ export function createSalesAgentRuntime(createQuote: AgentTurnPorts["createQuote
     finally { draining = false; }
   };
   const pauseForStaff = async (conversationId:string) => {
-    if(!canEnableAgent()) return;
+    if(!hasSalesProviderKey()) return;
     const repos=createDefaultWhatsAppInboxRepositories(),c=await repos.conversations.getById(conversationId,companyId);
     if(c && !await repos.conversations.compareAndSet(c.id,c.lockVersion,{companyId,aiOwnershipState:"HUMAN_HANDLING"}).then(r=>r.ok)) throw new Error("Conversation changed; retry the staff reply.");
   };
