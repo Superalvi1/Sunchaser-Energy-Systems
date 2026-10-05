@@ -147,7 +147,7 @@ export default function StaffClientWorkspace({
               <p className="text-xs text-slate-300">{pdfArchive ? `Original client PDF archived ${formatLeadReceivedAt(pdfArchive.savedAt)}.` : "The quotation submission is saved. An original PDF appears here after the client uses Save PDF."}</p>
             </div>; })}
             <CustomerDocumentList staffUser={staffUser} customerId={customerId} quotationOnly />
-            {quotes.length === 0 && submissions.length === 0 && <p className="text-sm text-slate-500">No saved quotations yet.</p>}
+            {!customerId && quotes.length === 0 && submissions.length === 0 && <p className="text-sm text-slate-500">No saved quotations yet.</p>}
             {quotes.map((quote) => (
               <div key={quote.id} className="rounded-2xl border border-slate-800 px-3 py-2 text-sm text-slate-200 flex flex-wrap items-center justify-between gap-3">
                 <span>{quote.id} · {quote.systemSizekW} kW · {quote.status}</span>

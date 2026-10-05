@@ -17,6 +17,6 @@ assert.match(html, /835,695/);
 assert.match(html, /Open \/ download saved client PDF/);
 assert.doesNotMatch(html, /SES-20261005-9999/);
 assert.doesNotMatch(html, /No saved quotations yet/);
-assert.match(render([]), /No saved quotations yet/);
+assert.doesNotMatch(render([]), /No saved quotations yet/, "linked clients use the document list's loading/empty state");
 assert.equal(isSmartQuoteLead(submission), true, "changing source cannot hide a saved Smart Quote");
 console.log("Existing WhatsApp client sees the matching Smart Quote and archived PDF; unrelated client proposals remain excluded.");
