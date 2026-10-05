@@ -87,7 +87,7 @@ async function signedBucketRequest(
   method: "GET" | "PUT" | "DELETE",
   namespace: RailwayObjectNamespace,
   objectKey: string,
-  options: { body?: Buffer; contentType?: string } = {},
+  options: { body?: Buffer; contentType?: string; ifMatch?: string; ifNoneMatch?: string } = {},
 ): Promise<Response> {
   const config = resolveRailwayObjectStorageConfig();
   if (!config) throw new Error("Railway object storage is not configured.");
@@ -133,6 +133,8 @@ async function signedBucketRequest(
     "x-amz-date": xAmzDate,
   };
   if (options.contentType) headers["content-type"] = options.contentType;
+  if (options.ifMatch) headers["if-match"] = options.ifMatch;
+  if (options.ifNoneMatch) headers["if-none-match"] = options.ifNoneMatch;
 
   return fetch(url, {
     method,
@@ -161,6 +163,14 @@ export async function deleteRailwayObject(
   if (!res.ok && res.status !== 404) {
     throw new Error(`Railway object delete failed (HTTP ${res.status}).`);
   }
+}
+
+/** Atomic metadata update; false means another writer changed the object. */
+export async function putRailwayObjectConditional(namespace: RailwayObjectNamespace, key: string, body: Buffer, contentType: string, etag: string | null): Promise<boolean> {
+  const res = await signedBucketRequest("PUT", namespace, key, { body, contentType, ...(etag ? { ifMatch: etag } : { ifNoneMatch: "*" }) });
+  if (res.status === 412 || res.status === 409) return false;
+  if (!res.ok) throw new Error(`Railway object update failed (HTTP ${res.status}).`);
+  return true;
 }
 
 export async function getRailwayObject(

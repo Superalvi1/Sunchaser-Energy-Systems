@@ -17,6 +17,7 @@ import { useAiDraft } from "../hooks/useAiDraft";
 import { isAiDraftUiEnabled } from "../lib/aiDraftFeature";
 import { displayContactLabel, initialsFromId } from "../utils/format";
 import AiDraftPanel from "./AiDraftPanel";
+import SalesAgentConversationControls from "./SalesAgentConversationControls";
 import Composer from "./Composer";
 import MessageTimeline from "./MessageTimeline";
 import InboxEmptyState from "./InboxEmptyState";
@@ -42,6 +43,8 @@ type ConversationViewProps = {
   onCreateLead: () => void;
   onOpenCrm: () => void;
   currentUserId: string;
+  canManageAgent?: boolean;
+  onAgentChange?: () => void;
   mutating?: boolean;
 };
 
@@ -65,6 +68,8 @@ export default function ConversationView({
   onCreateLead,
   onOpenCrm,
   currentUserId,
+  canManageAgent,
+  onAgentChange,
   mutating,
 }: ConversationViewProps) {
   const conversationId = detail?.conversation.id ?? null;
@@ -314,6 +319,7 @@ export default function ConversationView({
         }}
       />
 
+      {canManageAgent && conversationId && <SalesAgentConversationControls conversationId={conversationId} state={detail?.conversation.aiOwnershipState} onChange={()=>onAgentChange?.()} />}
       <Composer
         freeForm={detail?.freeForm}
         sending={sending}

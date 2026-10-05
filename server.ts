@@ -1,6 +1,12 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { createSalesAgentRuntime, absoluteCrmFileUrl } from "./server/whatsappAgent/agentRuntime.ts";
+import { createSalesAgentRouter } from "./server/whatsappAgent/agentRoutes.ts";
+import { calculateAgentQuote } from "./server/whatsappAgent/quoteTools.ts";
+import { buildSmartQuotationPdf } from "./src/lib/smartQuotationPdf.ts";
+import { toPublicLeadInput } from "./server/publicLeads/smartQuoteLead.ts";
+import { buildPublicLeadRecord } from "./server/publicLeads/publicLeadService.ts";
 import { randomUUID, createHash } from "crypto";
 
 /**
@@ -630,6 +636,21 @@ let productionAutoLinkLead: ReturnType<
  */
 const messagingProductionWiring = createMessagingProductionWiring();
 const messagingRepository = messagingProductionWiring.repository;
+const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,messageId)=> {
+  const {result}=calculateAgentQuote(requirements,phone);
+  const hash=createHash("sha256").update(messageId).digest("hex");
+  const leadId=`lead-ai-${hash.slice(0,24)}`;
+  const generatedAt=new Date().toISOString();
+  const quoteNumber=`SES-${new Date(Date.now()+5*3600000).toISOString().slice(0,10).replaceAll("-","")}-${String(parseInt(hash.slice(0,6),16)%10000).padStart(4,"0")}`;
+  const input=toPublicLeadInput({name:requirements.name,phone,city:requirements.city,quoteNumber,systemCapacityKw:requirements.systemCapacityKw,estimatedTotalPkr:result.totalPkr,panel:`${requirements.panelQuantity} × ${result.panel.brand} ${result.panel.watts}W`,inverter:`${requirements.inverterQuantity} × ${result.inverter.brand} ${result.inverter.capacityKw}kW`,battery:requirements.batteryId ? `${requirements.batteryQuantity} × ${result.battery.brand} ${result.battery.capacityKwh}kWh` : "Not included",structure:result.structureLabel,generatedAt,snapshot:{lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr}});
+  const record={...buildPublicLeadRecord(input),id:leadId};
+  await persistPublicMarketingLead(record,{sendWelcome:false});
+  const logoPath=path.resolve("public/assets/sunchaser-logo.png");
+  const logoDataUrl=fs.existsSync(logoPath) ? `data:image/png;base64,${fs.readFileSync(logoPath).toString("base64")}` : undefined;
+  const pdf=await buildSmartQuotationPdf({quoteNumber,system:`${requirements.systemCapacityKw} kW`,generatedAt,clientName:requirements.name,clientPhone:phone,clientCity:requirements.city,lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr,totalPkr:result.totalPkr,logoDataUrl});
+  const archive=await archivePublicSmartQuotePdf(leadId,quoteNumber,Buffer.from(pdf.output("arraybuffer")));
+  return {quoteNumber,totalPkr:result.totalPkr,url:absoluteCrmFileUrl(archive.fileUrl)};
+});
 
 // Meta webhook must be public and mounted before JWT authorization middleware.
 if (!railwayPrivateSmokeMode) {
@@ -637,6 +658,7 @@ app.use(
   "/api/whatsapp",
   createWhatsAppWebhookRouter({
     messagingRepository,
+    enqueueSalesAgent: salesAgentRuntime.enqueue,
     autoLinkLead: async (conversationId) => {
       const result = await productionAutoLinkLead(conversationId);
       return result.leadId;
@@ -646,6 +668,8 @@ app.use(
 }
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
+if (!railwayPrivateSmokeMode) setInterval(()=>{void salesAgentRuntime.drain();},5000).unref();
 
 // Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
 // The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.
@@ -653,7 +677,8 @@ app.use("/api/learning", createLearningRouter());
 
 /** Persist a validated public marketing lead into CRM storage (Supabase or local). */
 async function persistPublicMarketingLead(
-  lead: PersistedPublicLead
+  lead: PersistedPublicLead,
+  options: {sendWelcome?:boolean} = {}
 ): Promise<{ leadId: string }> {
   loadDb();
   const newLead: any = {
@@ -755,7 +780,7 @@ async function persistPublicMarketingLead(
 
   try {
     const msgText = `☀️ Hi ${newLead.name}! Thanks for contacting Sunchaser Energy. Our team will follow up shortly.`;
-    await triggerWhatsAppNotification(newLead.name, newLead.phone, "survey_confirmation", msgText);
+    if(options.sendWelcome !== false) await triggerWhatsAppNotification(newLead.name, newLead.phone, "survey_confirmation", msgText);
   } catch (sideErr: any) {
     console.warn("[public-leads] notification failed:", sideErr?.message || sideErr);
   }
@@ -885,6 +910,7 @@ app.use(
   "/api/inbox",
   createWhatsAppInboxRouter({
     messagingRepository,
+    beforeStaffSend:salesAgentRuntime.pauseForStaff,
     serviceOptions: buildProductionInboxServiceOptions({
       resolveLocalDb: resolveAuthLocalDb,
       persistLead: persistPublicMarketingLead,

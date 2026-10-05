@@ -889,6 +889,7 @@ export class SupabaseWhatsAppInboxConversationRepository
     if (patch.hasFailedMessage !== undefined) {
       updateRow.has_failed_message = patch.hasFailedMessage;
     }
+    if (patch.aiOwnershipState !== undefined) updateRow.ai_ownership_state = patch.aiOwnershipState;
 
     const { data, error } = await this.client()
       .from("whatsapp_conversations")
