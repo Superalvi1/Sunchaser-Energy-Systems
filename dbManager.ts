@@ -1472,6 +1472,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
 
     return {
       id: lead.id,
+      customerId: lead.customer_id,
       name: lead.name,
       email: lead.email,
       phone: lead.phone,

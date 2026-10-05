@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, FileText, Image as ImageIcon, Loader2, Upload, X } from "lucide-react";
 import type { User } from "../types";
 import { uploadAdminCustomerDocumentWithProgress } from "../services/api";
@@ -7,6 +7,7 @@ import {
   formatDocumentSize,
   isImageMime,
   readFileAsDataUrl,
+  resolveCustomerDocumentMime,
   validateCustomerDocumentFile,
 } from "../lib/customerDocumentUpload";
 
@@ -43,6 +44,7 @@ export default function CustomerDocumentUploader({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const resetSelection = useCallback(() => {
     setFile(null);
@@ -83,7 +85,7 @@ export default function CustomerDocumentUploader({
           customerId: customerId.trim(),
           base64Data,
           fileName: picked.name,
-          mimeType: picked.type || undefined,
+          mimeType: resolveCustomerDocumentMime(picked) || undefined,
           documentType,
           title: title?.trim() || picked.name,
           visibleToCustomer: internalOnly ? false : visibleToCustomer,
@@ -98,7 +100,7 @@ export default function CustomerDocumentUploader({
       onSuccess?.(doc);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Upload failed.");
-      resetSelection();
+      setProgress(0);
     } finally {
       setUploading(false);
     }
@@ -210,7 +212,7 @@ export default function CustomerDocumentUploader({
           {success}
         </p>
       )}
-      {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
+      {error && <div role="alert" className="text-xs text-red-400 font-mono"><p>{error}</p>{file && !uploading && <button type="button" onClick={() => void uploadFile(file)} className="mt-2 rounded-lg border border-red-400 px-3 py-2">Retry upload</button>}</div>}
     </div>
   );
 }

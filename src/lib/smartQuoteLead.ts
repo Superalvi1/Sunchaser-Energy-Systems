@@ -40,8 +40,8 @@ export type SmartQuoteLeadSummary = {
   generatedAt: string;
 };
 
-export function isSmartQuoteLead(lead: Pick<Lead, "leadSource">): boolean {
-  return String(lead.leadSource || "").trim().toLowerCase() === "smart quote";
+export function isSmartQuoteLead(lead: Pick<Lead, "leadSource"> & { notes?: string }): boolean {
+  return String(lead.leadSource || "").trim().toLowerCase() === "smart quote" || Boolean(parseSmartQuoteLeadNotes(lead.notes));
 }
 
 export function parseSmartQuoteLeadNotes(notes: string | null | undefined): SmartQuoteLeadSummary | null {

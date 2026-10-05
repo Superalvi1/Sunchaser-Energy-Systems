@@ -522,6 +522,17 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       setQuoteNumber(nextQuoteNumber);
       setGenerated(true);
       setLeadMessage("Quotation generated. Your request is now visible to the Sunchaser sales team.");
+      // Archive at generation as well as at download: a client who saves a
+      // picture or leaves the page still has a complete proposal in the CRM.
+      try {
+        if (!submission.pdfUploadToken) throw new Error("PDF archive permission is missing.");
+        const logoDataUrl = await loadQuotationLogo();
+        const pdf = await buildSmartQuotationPdf({ quoteNumber: nextQuoteNumber, system: `${calculation.systemCapacityKw} kW`, generatedAt: capturedAt, clientName: name, clientPhone: phone, clientCity, lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr, logoDataUrl });
+        await archivePublicSmartQuotePdf(submission.leadId, nextQuoteNumber, submission.pdfUploadToken, pdf.output("blob"));
+        setLeadMessage("Quotation and PDF saved to Sunchaser CRM. You can now download your copy.");
+      } catch {
+        setExportMessage("Your quotation details are saved, but the PDF archive needs a retry. Press Save PDF to save both copies.");
+      }
       window.setTimeout(() => document.getElementById("generated-quotation")?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (error) {
       setLeadError(error instanceof Error ? error.message : "Could not save your details. Please try again.");
@@ -602,6 +613,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
+      <fieldset disabled={savingLead || Boolean(exporting)} style={{ display: "contents" }}>
       <style>{`
         @media print {
           body { background: #fff !important; }
@@ -982,6 +994,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
           </button>
         </div>
       ) : null}
+      </fieldset>
     </main>
   );
 }

@@ -129,6 +129,7 @@ export interface Installation {
 
 export interface Lead {
   id: string;
+  customerId?: string;
   name: string;
   email: string;
   phone: string;
@@ -431,4 +432,3 @@ export type UserRole =
   | "Survey Engineer"
   | "Installation Team"
   | "Customer";
-

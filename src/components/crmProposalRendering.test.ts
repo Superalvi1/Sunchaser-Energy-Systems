@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import StaffClientWorkspace from "./StaffClientWorkspace";
+import type { Lead, User } from "../types";
+import { isSmartQuoteLead } from "../lib/smartQuoteLead";
+
+const staff = { id: "staff", username: "admin", role: "Admin" } as User;
+const lead = { id: "lead-whatsapp", customerId: "cust-fixture", name: "Existing client", phone: "03004415484", notes: "WhatsApp enquiry", createdAt: "2026-10-05T12:00:00Z", quotes: [], status: "New" } as Lead;
+const archive = { quoteNumber: "SES-20261005-1234", fileName: "quote.pdf", fileUrl: "/api/storage/object/customer-documents/pdf?sig=fixture", savedAt: "2026-10-05T12:01:00Z" };
+const submission = { ...lead, id: "lead-smart", phone: "+92 300 4415484", notes: `SMART_QUOTE_V1\nQuote: SES-20261005-1234\nSystem: 8 kW\nEstimate: PKR 835695\nPdfArchive: ${JSON.stringify(archive)}`, leadSource: "Edited source" };
+const unrelated = { ...submission, id: "lead-other", phone: "03005515484", notes: submission.notes.replaceAll("1234", "9999") };
+const render = (relatedLeads: Lead[]) => renderToStaticMarkup(React.createElement(StaffClientWorkspace, { staffUser: staff, lead, relatedLeads, initialTab: "quotes" }));
+const html = render([submission, unrelated]);
+assert.match(html, /SES-20261005-1234/);
+assert.match(html, /835,695/);
+assert.match(html, /Open \/ download saved client PDF/);
+assert.doesNotMatch(html, /SES-20261005-9999/);
+assert.doesNotMatch(html, /No saved quotations yet/);
+assert.match(render([]), /No saved quotations yet/);
+assert.equal(isSmartQuoteLead(submission), true, "changing source cannot hide a saved Smart Quote");
+console.log("Existing WhatsApp client sees the matching Smart Quote and archived PDF; unrelated client proposals remain excluded.");

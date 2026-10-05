@@ -14,6 +14,9 @@ import {
 const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
 
 function resolveApiBaseUrl(): string {
+  // These web domains proxy the production API as well as the UI. Using the
+  // current origin avoids a second DNS/TLS/CORS dependency for guest saves.
+  if (typeof window !== "undefined" && ["crm.sunchaserenergy.co", "smartquote.sunchaserenergy.co"].includes(window.location.hostname)) return "";
   const fromEnv = String((import.meta as any).env?.VITE_API_BASE_URL ?? "").trim();
   if (fromEnv) return fromEnv.replace(/\/$/, "");
   // Local Vite / same-origin: use relative /api paths so Design Studio login hits this server.
@@ -1117,6 +1120,13 @@ export async function fetchAdminCustomerDocumentsList(staff: User, customerId: s
   return data as { documents: any[] };
 }
 
+export async function prepareLeadCustomerProfile(leadId: string): Promise<{ customerId: string }> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/customer-profile`, { method: "POST", body: "{}" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Could not prepare client documents.");
+  return data;
+}
+
 export async function uploadAdminCustomerDocument(
   staff: User,
   body: {
@@ -1198,6 +1208,9 @@ export function uploadAdminCustomerDocumentWithProgress(
     };
 
     xhr.onerror = () => reject(new Error("Failed to upload document: network error."));
+    xhr.timeout = 120000;
+    xhr.ontimeout = () => reject(new Error("Document upload timed out. Please retry."));
+    xhr.onabort = () => reject(new Error("Document upload was cancelled. Please retry."));
     xhr.send(payload);
   });
 }

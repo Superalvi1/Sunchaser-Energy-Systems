@@ -429,6 +429,7 @@ import {
   getCustomerSystemProfile,
   upsertCustomerSystemProfile,
   listAdminCustomerDocuments,
+  prepareLeadCustomerProfile,
   assignCustomerDocument,
   uploadFileToCustomerStorage,
   fetchCustomerPortalSystemMe,
@@ -565,6 +566,9 @@ app.use(createCorsMiddleware());
 // Preserve exact Meta webhook POST bytes before global JSON parsing.
 installWhatsAppRawBodyMiddleware(app);
 
+// A 25 MB file becomes ~34 MB after base64 encoding. Keep the larger parser
+// restricted to the authenticated customer-document upload path.
+app.use('/api/admin/customer-documents/upload', express.json({ limit: '36mb' }));
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -764,20 +768,31 @@ async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, p
   if (!isRailwayObjectStorageConfigured()) throw new Error("Durable CRM object storage is unavailable.");
   const readLead = async () => {
     if (isSupabaseActive()) {
-      const { data, error } = await getSupabase()!.from("leads").select("id,notes,deleted_at").eq("id", leadId).maybeSingle();
+      const { data, error } = await getSupabase()!.from("leads").select("id,customer_id,notes,deleted_at").eq("id", leadId).maybeSingle();
       if (error || !data || data.deleted_at) throw new Error("Quotation lead is unavailable.");
-      return { id: data.id, notes: String(data.notes || "") };
+      return { id: data.id, customerId: data.customer_id, notes: String(data.notes || "") };
     }
     loadDb();
     const lead = db.leads.find(l => l.id === leadId && !l.deletedAt);
     if (!lead) throw new Error("Quotation lead is unavailable.");
-    return { id: lead.id, notes: lead.notes || "" };
+    return { id: lead.id, customerId: lead.customerId, notes: lead.notes || "" };
   };
   const original = await readLead();
   if (parseSmartQuoteLeadNotes(original.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation does not belong to this lead.");
   const key = quotePdfObjectKey(leadId, quoteNumber, pdf);
   await putRailwayObject("customer-documents", key, pdf, "application/pdf");
   const archive = { quoteNumber, fileName: `Sunchaser-Quotation-${quoteNumber}.pdf`, fileUrl: buildRailwayObjectProxyUrl("customer-documents", key), sha256: createHash("sha256").update(pdf).digest("hex"), savedAt: new Date().toISOString(), sizeBytes: pdf.length };
+  if (original.customerId) {
+    const document = { id: `doc-smart-${leadId}-${quoteNumber}`, customer_id: original.customerId, document_type: "quotation_pdf", title: `Client Smart Quote ${quoteNumber}`, file_url: archive.fileUrl, file_name: archive.fileName, mime_type: "application/pdf", storage_path: key, visible_to_customer: true, internal_only: false, uploaded_by: "Smart Quote", uploaded_at: archive.savedAt };
+    if (isSupabaseActive()) {
+      const { error } = await getSupabase()!.from("customer_documents").upsert(document, { onConflict: "id" });
+      if (error) throw new Error("Could not save PDF in client proposals: " + error.message);
+    } else {
+      const local = db as any; local.customerDocuments ||= [];
+      const index = local.customerDocuments.findIndex((d: any) => d.id === document.id);
+      if (index >= 0) local.customerDocuments[index] = document; else local.customerDocuments.push(document);
+    }
+  }
   // Compare-and-swap preserves staff notes if they edit while the upload is running.
   for (let attempt = 0; attempt < 3; attempt++) {
     const current = await readLead();
@@ -1820,6 +1835,19 @@ app.put("/api/admin/customer-systems", async (req, res) => {
   }
 });
 
+app.post("/api/leads/:id/customer-profile", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
+  try {
+    loadDb();
+    const result = await prepareLeadCustomerProfile(staff.id, staff.username, staff.role, req.params.id, db);
+    saveDb();
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(err instanceof CustomerProfileError ? err.statusCode : 500).json({ error: err.message || "Could not prepare client documents." });
+  }
+});
+
 app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -1860,7 +1888,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
   const { id: userId, username, role } = staff;
-  const { customerId, base64Data, fileName, mimeType, documentType, title, visibleToCustomer, internalOnly, notes } =
+  const { customerId, base64Data, fileName, mimeType, documentType, title, visibleToCustomer, internalOnly, notes, projectId } =
     req.body || {};
   try {
     loadDb();
@@ -1881,6 +1909,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
       visibleToCustomer: visibleToCustomer !== false,
       internalOnly: !!internalOnly,
       notes,
+      projectId,
       uploadedBy: username,
     }, db);
     saveDb();
