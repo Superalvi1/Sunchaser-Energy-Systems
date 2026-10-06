@@ -1,0 +1,58 @@
+.accounts-workspace .bg-neutral-900,
+.accounts-workspace .bg-neutral-950 {
+  background-color: #fff;
+}
+.accounts-workspace .border-neutral-800,
+.accounts-workspace .border-neutral-700 {
+  border-color: #dbe4ef;
+}
+.accounts-workspace .text-neutral-100,
+.accounts-workspace .text-neutral-200 {
+  color: #1e293b;
+}
+.accounts-workspace .text-neutral-300,
+.accounts-workspace .text-neutral-400 {
+  color: #475569;
+}
+.accounts-workspace .text-neutral-500,
+.accounts-workspace .text-neutral-600 {
+  color: #64748b;
+}
+.accounts-workspace .text-violet-300,
+.accounts-workspace .text-violet-400 {
+  color: #2563eb;
+}
+.accounts-workspace .text-emerald-300,
+.accounts-workspace .text-emerald-400 {
+  color: #059669;
+}
+.accounts-workspace .text-red-300,
+.accounts-workspace .text-red-400 {
+  color: #dc2626;
+}
+.accounts-workspace .text-amber-200,
+.accounts-workspace .text-amber-300 {
+  color: #b45309;
+}
+.accounts-workspace input:not([type="checkbox"]),
+.accounts-workspace select,
+.accounts-workspace textarea {
+  min-height: 44px;
+  font-size: 14px;
+}
+.accounts-workspace .invoice-workspace button {
+  min-height: 40px;
+}
+@media (max-width: 640px) {
+  .accounts-workspace .invoice-workspace .grid-cols-12 {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .accounts-workspace .invoice-workspace .grid-cols-12 > * {
+    width: 100%;
+  }
+  .accounts-workspace .invoice-workspace table {
+    min-width: 780px;
+  }
+}

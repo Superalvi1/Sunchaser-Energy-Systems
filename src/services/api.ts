@@ -1354,10 +1354,10 @@ export async function deleteDemoSeedUsers(
 }
 
 export async function fetchAuthMe(): Promise<{ success: boolean; user: User }> {
-  const res = await apiFetch("/api/auth/me");
+  const res = await apiFetch("/api/auth/me", { signal: AbortSignal.timeout(12000) });
   const parsed = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(parsed.error || `Session expired (HTTP ${res.status}).`);
+    throw Object.assign(new Error(parsed.error || `Session expired (HTTP ${res.status}).`), { status: res.status });
   }
   return parsed as { success: boolean; user: User };
 }

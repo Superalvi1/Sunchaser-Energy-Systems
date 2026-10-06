@@ -85,8 +85,10 @@ export default function PartyLedgerStaff({
   onEditInvoice,
   initialPartyKey,
   onInitialPartyConsumed,
+  fullPage = false,
 }: {
   staffUser: StaffUser;
+  fullPage?: boolean;
   onEditInvoice?: (invoiceId: string) => void;
   initialPartyKey?: string | null;
   onInitialPartyConsumed?: () => void;
@@ -614,7 +616,13 @@ export default function PartyLedgerStaff({
                 <h4 className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
                   <FileText className="h-3.5 w-3.5" /> Invoice History
                 </h4>
-                <div className="overflow-x-auto rounded-xl border border-neutral-800">
+                {fullPage && <div className="space-y-3 sm:hidden">{detail.transactions.map(tx=><article key={tx.invoiceId} className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="flex justify-between gap-3"><strong>Sale · {tx.invoiceNumber}</strong><span className="text-sm text-slate-500">{tx.invoiceDate}</span></div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm"><div>Total<p className="font-bold">Rs {Number(tx.grandTotal).toLocaleString()}</p></div><div>Balance<p className="font-bold text-amber-600">Rs {Number(tx.balanceDue).toLocaleString()}</p></div></div>
+                  <p className="mt-2 text-sm text-emerald-600">Received: Rs {Number(tx.paidAmount).toLocaleString()} · {tx.paymentStatus}</p>
+                  <div className="mt-3 flex flex-wrap gap-3 text-sm"><a className="min-h-11 inline-flex items-center text-blue-600" href={invoicePdfUrl(tx.invoiceId,staffUser)} target="_blank" rel="noreferrer">View PDF</a>{onEditInvoice&&<button className="min-h-11 text-blue-600" onClick={()=>onEditInvoice(tx.invoiceId)}>Edit Sale</button>}{Number(tx.balanceDue)>0&&<button className="min-h-11 rounded-full bg-rose-600 px-4 font-bold text-white" onClick={()=>openPaymentModal(tx)}>Take Payment</button>}</div>
+                </article>)}</div>}
+                <div className={`overflow-x-auto rounded-xl border border-neutral-800 ${fullPage ? "hidden sm:block" : ""}`}>
                   <table className="w-full text-[10px]">
                     <thead>
                       <tr className="bg-neutral-950 text-neutral-500 border-b border-neutral-800">
@@ -711,7 +719,8 @@ export default function PartyLedgerStaff({
                 <h4 className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2 flex items-center gap-2">
                   <Receipt className="h-3.5 w-3.5" /> Payment History
                 </h4>
-                <div className="overflow-x-auto rounded-xl border border-neutral-800">
+                {fullPage && <div className="space-y-3 sm:hidden">{detail.payments.length ? detail.payments.map(p=><article key={p.id} className="rounded-xl border border-slate-200 bg-white p-4 text-sm"><div className="flex justify-between gap-3"><strong>Payment-In · {p.invoiceNumber}</strong><span>{p.paymentDate}</span></div><p className="mt-2 font-bold text-emerald-600">Rs {Number(p.amount).toLocaleString()} · {p.paymentMethod}</p><p className="mt-1 text-slate-500">{p.referenceNumber || 'No reference'}</p>{p.receiptUrl&&<a href={p.receiptUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-11 items-center text-blue-600">View receipt</a>}</article>):<p className="p-4 text-slate-500">No payments recorded yet.</p>}</div>}
+                <div className={`overflow-x-auto rounded-xl border border-neutral-800 ${fullPage ? "hidden sm:block" : ""}`}>
                   <table className="w-full text-[10px]">
                     <thead>
                       <tr className="bg-neutral-950 text-neutral-500 border-b border-neutral-800">
@@ -770,7 +779,7 @@ export default function PartyLedgerStaff({
       {/* Archive confirmation modal */}
       {archiveModalOpen && party && (
         <AppModal open onClose={() => setArchiveModalOpen(false)} panelClassName="max-w-md">
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+          <div data-accounts={fullPage || undefined} className={`bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl ${fullPage ? "accounts-workspace min-h-full pt-[env(safe-area-inset-top)]" : ""}`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
               <h3 className="font-bold text-neutral-100">Archive Party</h3>
               <button
@@ -812,7 +821,7 @@ export default function PartyLedgerStaff({
       {/* Restore confirmation modal */}
       {restoreModalOpen && party && (
         <AppModal open onClose={() => setRestoreModalOpen(false)} panelClassName="max-w-md">
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+          <div data-accounts={fullPage || undefined} className={`bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl ${fullPage ? "accounts-workspace min-h-full pt-[env(safe-area-inset-top)]" : ""}`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
               <h3 className="font-bold text-neutral-100">Restore Party</h3>
               <button
@@ -854,7 +863,7 @@ export default function PartyLedgerStaff({
       {/* Hard delete modal (no invoices/payments only) */}
       {hardDeleteModalOpen && party && (
         <AppModal open onClose={() => setHardDeleteModalOpen(false)} panelClassName="max-w-md">
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+          <div data-accounts={fullPage || undefined} className={`bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl ${fullPage ? "accounts-workspace min-h-full pt-[env(safe-area-inset-top)]" : ""}`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
               <h3 className="font-bold text-red-300">Delete Permanently</h3>
               <button
@@ -902,8 +911,8 @@ export default function PartyLedgerStaff({
 
       {/* Record payment modal */}
       {paymentModal && (
-        <AppModal open onClose={() => setPaymentModal(null)} panelClassName="max-w-md">
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl">
+        <AppModal open fullScreen={fullPage} onClose={() => setPaymentModal(null)} panelClassName={fullPage ? "!max-w-none !w-full !h-[100dvh] !rounded-none overflow-y-auto" : "max-w-md"}>
+          <div data-accounts={fullPage || undefined} className={`bg-neutral-900 border border-neutral-700 rounded-2xl w-full shadow-2xl ${fullPage ? "accounts-workspace min-h-full pt-[env(safe-area-inset-top)]" : ""}`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
               <h3 className="font-bold text-neutral-100">Record Payment</h3>
               <button type="button" onClick={() => setPaymentModal(null)} className="text-neutral-500 hover:text-white">

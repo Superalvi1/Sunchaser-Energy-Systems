@@ -1,3 +1,4 @@
+import { isNativeApp } from "../lib/appPlatform";
 import React, { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -64,6 +65,7 @@ export type AdminSegmentId =
   | "knowledge";
 
 export type AdminQuickAction =
+  | "accounts"
   | "lead"
   | "quotation"
   | "invoice"
@@ -496,6 +498,10 @@ export default function AdminModuleNav({
   showMarketplaceAutoImport,
   onQuickAction,
 }: AdminModuleNavProps) {
+  const selectModule = (id: AdminSegmentId, options?: {settingsSubTab?:"settings"}) => {
+    if ((id === "invoices" || id === "parties") && onQuickAction) {onQuickAction(id === "invoices" ? "invoice" : "accounts");return;}
+    onSelect(id,options);
+  };
   const [query, setQuery] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const isMobile = useIsMobile();
@@ -513,7 +519,7 @@ export default function AdminModuleNav({
         showUserManagement,
         showInternalCosting,
         showMarketplaceAutoImport,
-      }),
+      }).map(g=>({...g,modules:g.modules.filter(m=>!isNativeApp() || ["overview","reports","invoices","parties","finance-dashboard","project-delivery","project-operations","service-desk","tickets","support-desk","inventory","client-portal"].includes(m.id))})).filter(g=>g.modules.length>0),
     [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting, showMarketplaceAutoImport]
   );
 
@@ -535,8 +541,9 @@ export default function AdminModuleNav({
   }, [groups, q]);
 
   const handleQuick = (action: AdminQuickAction) => {
-    if (action === "quotation") onSelect("pdf-templates");
-    else if (action === "invoice" && showInvoices) onSelect("invoices");
+    if (action === "invoice" && onQuickAction) {onQuickAction("invoice");return;}
+    if (action === "quotation") selectModule("pdf-templates");
+    else if (action === "invoice" && showInvoices) selectModule("invoices");
     else onQuickAction?.(action);
   };
 
@@ -562,9 +569,9 @@ export default function AdminModuleNav({
           },
         ]
       : []),
-    { id: "quotations", label: "Quotations", icon: ClipboardList, onClick: () => onSelect("pdf-templates") },
+    { id: "quotations", label: "Quotations", icon: ClipboardList, onClick: () => isNativeApp() && onQuickAction ? onQuickAction("quotation") : selectModule("pdf-templates") },
     ...(financeSegment
-      ? [{ id: "finance", label: "Finance", icon: DollarSign, onClick: () => onSelect(financeSegment) }]
+      ? [{ id: "finance", label: "Finance", icon: DollarSign, onClick: () => selectModule(financeSegment) }]
       : []),
   ];
 
@@ -619,7 +626,7 @@ export default function AdminModuleNav({
                   mod={mod}
                   active={active}
                   onClick={() => {
-                    onSelect(mod.id, isSettings ? { settingsSubTab: "settings" } : undefined);
+                    selectModule(mod.id, isSettings ? { settingsSubTab: "settings" } : undefined);
                     setMobileOpen(false);
                   }}
                 />
@@ -721,7 +728,7 @@ export default function AdminModuleNav({
                           mod={mod}
                           active={isModuleActive(mod, activeSegment, pdfSubTab)}
                           onClick={() =>
-                            onSelect(
+                            selectModule(
                               mod.id,
                               mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined
                             )
@@ -743,7 +750,7 @@ export default function AdminModuleNav({
                     mod={mod}
                     active={isModuleActive(mod, activeSegment, pdfSubTab)}
                     onClick={() =>
-                      onSelect(mod.id, mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined)
+                      selectModule(mod.id, mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined)
                     }
                   />
                 ))
@@ -760,7 +767,7 @@ export default function AdminModuleNav({
                   mod={mod}
                   active={isModuleActive(mod, activeSegment, pdfSubTab)}
                   onClick={() =>
-                    onSelect(mod.id, mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined)
+                    selectModule(mod.id, mod.settingsSubTab === "settings" ? { settingsSubTab: "settings" } : undefined)
                   }
                 />
               ))

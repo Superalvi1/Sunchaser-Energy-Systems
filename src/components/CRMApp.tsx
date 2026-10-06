@@ -1,3 +1,4 @@
+import { isNativeApp } from "../lib/appPlatform";
 import React, { useState } from "react";
 import { 
   Users, Search, Filter, Mail, Phone, Calendar, ArrowRightLeft, 
@@ -726,7 +727,7 @@ export default function CRMApp({
                       <StaffClientWorkspace staffUser={staffUser} lead={lead} relatedLeads={leads} initialTab={workspaceInitialTab} />
                     )}
 
-                    <WhatsAppModule
+                    {!isNativeApp() && <WhatsAppModule
                       staffUser={staffUser}
                       preset="lead"
                       phone={lead.phone}
@@ -740,7 +741,7 @@ export default function CRMApp({
                         balance: lead.quotes?.[0]?.totalCost,
                       }}
                       compact
-                    />
+                    />}
 
                     {/* Standard Action items bar */}
                     <div className="flex flex-wrap justify-between items-center gap-3 pt-2.5 border-t border-slate-800/50">
