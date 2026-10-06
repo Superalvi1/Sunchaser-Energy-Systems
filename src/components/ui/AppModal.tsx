@@ -16,6 +16,7 @@ interface AppModalProps {
    * untouched. Used by large configurators that cannot fit a phone as a dialog.
    */
   mobileFullScreen?: boolean;
+  fullScreen?: boolean;
 }
 
 export default function AppModal({
@@ -25,6 +26,7 @@ export default function AppModal({
   panelClassName = "",
   closeOnBackdrop = true,
   mobileFullScreen = false,
+  fullScreen = false,
 }: AppModalProps) {
   useOverlayBackClose(open, onClose);
 
@@ -51,7 +53,7 @@ export default function AppModal({
     <div
       data-app-modal-overlay
       className={`fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden ${
-        mobileFullScreen ? "p-0 md:p-4" : "p-4"
+        fullScreen ? "p-0" : mobileFullScreen ? "p-0 md:p-4" : "p-4"
       }`}
       style={{
         position: "fixed",
@@ -73,7 +75,7 @@ export default function AppModal({
       />
       <div
         className={`relative z-[1] w-full overflow-y-auto ${
-          mobileFullScreen ? "h-full max-h-none md:h-auto md:max-h-[90vh]" : "max-h-[90vh]"
+          fullScreen ? "h-full max-h-none" : mobileFullScreen ? "h-full max-h-none md:h-auto md:max-h-[90vh]" : "max-h-[90vh]"
         } ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}

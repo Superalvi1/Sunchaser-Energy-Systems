@@ -1,3 +1,4 @@
+import AppModal from "./ui/AppModal";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
@@ -33,6 +34,7 @@ import DeliveryChallanPanel from "./DeliveryChallanPanel";
 import VyaparMatchedImporter from "./VyaparMatchedImporter";
 
 interface InvoiceStaffProps {
+  key?: React.Key;
   staffUser: User;
   products?: Product[];
   leads?: Lead[];
@@ -41,6 +43,10 @@ interface InvoiceStaffProps {
   onOpenInvoiceConsumed?: () => void;
   /** Preselect and scope the editor to one customer from the client workspace. */
   initialCustomerId?: string;
+  fullPage?: boolean;
+  onDirtyChange?: (dirty:boolean)=>void;
+  startNew?: boolean;
+  initialParty?: {name:string;phone:string;address:string};
 }
 
 const PAYMENT_TERMS = ["Cash on delivery", "Net 7 days", "Net 15 days", "Net 30 days", "Advance"];
@@ -77,6 +83,10 @@ export default function InvoiceStaff({
   openInvoiceId,
   onOpenInvoiceConsumed,
   initialCustomerId,
+  fullPage = false,
+  startNew = false,
+  initialParty,
+  onDirtyChange,
 }: InvoiceStaffProps) {
   const allowed = canCreateInvoice(staffUser.username, staffUser.role);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -85,7 +95,8 @@ export default function InvoiceStaff({
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showList, setShowList] = useState(false);
+  const [showList, setShowList] = useState(fullPage && !startNew);
+  const [editorOpen,setEditorOpen] = useState(!fullPage || startNew);
   const [panelTab, setPanelTab] = useState<"invoices" | "ready">("invoices");
   const [readyLeads, setReadyLeads] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -95,12 +106,15 @@ export default function InvoiceStaff({
   const [bulkSelected, setBulkSelected] = useState<Record<string, boolean>>({});
   const [creatingLeadId, setCreatingLeadId] = useState<string | null>(null);
   const [paymentDraft, setPaymentDraft] = useState({ amount: "", method: "Cash", notes: "" });
+  const [editingItem, setEditingItem] = useState<number|null>(null);
+  const [itemDraft,setItemDraft] = useState<InvoiceLineItem>(emptyLine);
+  const editMobileItem=(index:number)=>{setEditingItem(index);setItemDraft({...draft.items[index]});};
   const [editorTab, setEditorTab] = useState<"invoice" | "delivery">("invoice");
 
   const [draft, setDraft] = useState({
-    customerName: "",
-    customerPhone: "",
-    customerAddress: "",
+    customerName: initialParty?.name || "",
+    customerPhone: initialParty?.phone || "",
+    customerAddress: initialParty?.address || "",
     cnicNtn: "",
     customerId: "",
     invoiceNumber: "",
@@ -129,6 +143,10 @@ export default function InvoiceStaff({
     netMeteringStatus: "",
     clientPhotoUrl: "",
   });
+
+  const [baseline,setBaseline]=useState(()=>JSON.stringify(draft));
+  useEffect(()=>{onDirtyChange?.(JSON.stringify(draft)!==baseline);},[draft,baseline,onDirtyChange]);
+  const setCleanDraft=(next:typeof draft)=>{setDraft(next);setBaseline(JSON.stringify(next));};
 
   const load = async () => {
     if (!allowed) return;
@@ -263,8 +281,9 @@ export default function InvoiceStaff({
   const selectInvoice = (inv: any) => {
     const meta = decodeInvoiceMeta(inv.notes);
     setSelectedId(inv.id);
+    setEditorOpen(true);
     setEditorTab("invoice");
-    setDraft({
+    setCleanDraft({
       customerName: inv.customerName || "",
       customerPhone: inv.customerPhone || "",
       customerAddress: inv.customerAddress || "",
@@ -321,8 +340,10 @@ export default function InvoiceStaff({
   }, [openInvoiceId, loading, invoices, onOpenInvoiceConsumed]);
 
   const newInvoice = () => {
+    if(fullPage && JSON.stringify(draft)!==baseline && !window.confirm("Discard unsaved invoice changes?"))return;
+    setEditorOpen(true);
     setSelectedId(null);
-    setDraft({
+    setCleanDraft({
       customerName: "",
       customerPhone: "",
       customerAddress: "",
@@ -571,6 +592,7 @@ export default function InvoiceStaff({
         setSelectedId((res as any).invoice?.id);
         setMsg("Invoice created.");
       }
+      setBaseline(JSON.stringify(draft));
       await load();
     } catch (e: any) {
       setMsg(e.message);
@@ -609,7 +631,7 @@ export default function InvoiceStaff({
   }
 
   return (
-    <div className="min-h-[80vh] bg-slate-100 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+    <div className={`min-h-[80vh] bg-slate-100 rounded-xl overflow-hidden border border-slate-200 shadow-sm ${fullPage ? "invoice-workspace" : ""}`}>
       {/* Vyapar-style header */}
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -621,7 +643,8 @@ export default function InvoiceStaff({
             type="button"
             onClick={() => {
               setPanelTab("invoices");
-              setShowList(!showList);
+              if(fullPage)setEditorOpen(false);
+              setShowList(fullPage ? true : !showList);
             }}
             className={`text-xs font-semibold flex items-center gap-1 px-2 py-1 rounded ${
               panelTab === "invoices" ? "bg-violet-100 text-violet-800" : "text-violet-600"
@@ -658,7 +681,7 @@ export default function InvoiceStaff({
         </div>
       </div>
 
-      {showList && panelTab === "invoices" && (
+      {showList && (!fullPage || !editorOpen) && panelTab === "invoices" && (
         <div className="bg-slate-50 border-b border-slate-200 p-2 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[180px]">
@@ -700,7 +723,7 @@ export default function InvoiceStaff({
               </div>
             )}
           </div>
-          <div className="max-h-40 overflow-y-auto grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          <div className={fullPage ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3" : "max-h-40 overflow-y-auto grid sm:grid-cols-2 lg:grid-cols-4 gap-2"}>
           {loading ? (
             <Loader2 className="animate-spin h-5 w-5 text-violet-500" />
           ) : filteredInvoices.length === 0 ? (
@@ -810,7 +833,7 @@ export default function InvoiceStaff({
         <p className="text-xs text-amber-800 bg-amber-50 border-b border-amber-200 px-4 py-2">{msg}</p>
       )}
 
-      {selectedId && (
+      {(!fullPage || editorOpen) && selectedId && (
         <div className="flex gap-1 px-4 pt-3 border-b border-slate-200 bg-white">
           <button
             type="button"
@@ -837,7 +860,7 @@ export default function InvoiceStaff({
         </div>
       )}
 
-      {selectedId && editorTab === "delivery" ? (
+      {(!fullPage || editorOpen) && (selectedId && editorTab === "delivery" ? (
         <div className="p-4">
           <DeliveryChallanPanel
             staffUser={staffUser}
@@ -906,8 +929,8 @@ export default function InvoiceStaff({
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
-          <p className={labelClass}>Project information (PDF page 1)</p>
+        <details open={!fullPage} className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
+          <summary className={labelClass + " cursor-pointer"}>Project information (optional)</summary>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {(
               [
@@ -940,9 +963,9 @@ export default function InvoiceStaff({
               onChange={(e) => setDraft((d) => ({ ...d, clientPhotoUrl: e.target.value }))}
             />
           </div>
-        </div>
+        </details>
 
-        <div className="bg-gradient-to-r from-slate-800 to-violet-900 rounded-lg p-4 text-white">
+        <div className={`bg-gradient-to-r from-slate-800 to-violet-900 rounded-lg p-4 text-white ${fullPage ? "hidden" : ""}`}>
           <p className="text-[10px] font-bold uppercase tracking-wider text-amber-300 mb-2">Payment progress (PDF)</p>
           <div className="grid grid-cols-4 gap-2 text-center text-xs mb-2">
             <div>
@@ -1037,8 +1060,25 @@ export default function InvoiceStaff({
           </div>
         </div>
 
+        {fullPage && <div className="space-y-3 sm:hidden">
+          <h3 className="text-lg font-bold">Items</h3>
+          {draft.items.map((line,index)=><div key={index} className="rounded-xl border border-slate-200 bg-white p-4">
+            <button type="button" className="w-full text-left" onClick={()=>editMobileItem(index)}><strong className="block">{line.itemName || 'Add item details'}</strong><span className="block text-sm text-slate-500">{line.qty} {line.unit} × Rs {Number(line.rate).toLocaleString()} · Tap to edit</span><span className="block text-right font-bold">Rs {(computeInvoiceTotals([line]).items[0]?.lineTotal||0).toLocaleString()}</span></button>
+            <button type="button" aria-label={`Remove item ${index+1}`} onClick={()=>removeLine(index)} className="text-red-600">Remove</button>
+          </div>)}
+          <button type="button" onClick={()=>{setItemDraft(emptyLine());setEditingItem(draft.items.length);}} className="w-full rounded-full border border-blue-500 font-bold text-blue-600">+ Add Item</button>
+        </div>}
+        {fullPage && editingItem!==null && <AppModal open fullScreen onClose={()=>setEditingItem(null)} panelClassName="bg-white text-slate-800 p-5">
+          <div className="mx-auto max-w-xl space-y-5 pb-8" style={{paddingTop:'env(safe-area-inset-top)'}}>
+            <div className="flex items-center gap-4"><button type="button" onClick={()=>setEditingItem(null)} className="min-h-11 text-blue-600">← Back</button><h2 className="text-xl font-bold">Item Details</h2></div>
+            <label className="block text-sm">From catalogue<select className="mt-2 w-full rounded-xl border p-3" value={itemDraft.productId||''} onChange={e=>{const p=products.find(p=>p.id===e.target.value);if(p)setItemDraft(d=>({...d,productId:p.id,itemName:p.name,description:p.name,rate:Number(p.price)||0}));}}><option value="">Custom item</option>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            {(['itemName','description','qty','unit','rate','taxPercent','discountAmount'] as const).map(field=><label key={field} className="block text-sm font-semibold">{{itemName:'Item name',description:'Description',qty:'Quantity',unit:'Unit',rate:'Price per unit (Rs)',taxPercent:'Tax (%)',discountAmount:'Discount (Rs)'}[field]}<input className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 p-3 text-base" type={['qty','rate','taxPercent','discountAmount'].includes(field)?'number':'text'} min={['qty','rate','taxPercent','discountAmount'].includes(field)?0:undefined} value={itemDraft[field]||''} onChange={e=>setItemDraft(d=>({...d,[field]:['qty','rate','taxPercent','discountAmount'].includes(field)?Number(e.target.value):e.target.value}))}/></label>)}
+            <p className="text-lg font-bold">Item total: Rs {(computeInvoiceTotals([itemDraft]).items[0]?.lineTotal||0).toLocaleString()}</p>
+            <button type="button" onClick={()=>{if(editingItem===draft.items.length)setDraft(d=>({...d,items:[...d.items,itemDraft]}));else updateLine(editingItem,itemDraft);setEditingItem(null);}} className="min-h-12 w-full rounded-full bg-rose-600 font-bold text-white">Save Item</button>
+          </div>
+        </AppModal>}
         {/* Items table */}
-        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div className={`bg-white border border-slate-200 rounded-lg overflow-x-auto ${fullPage ? "hidden sm:block" : ""}`}>
           <table className="w-full text-[11px]">
             <thead>
               <tr className="bg-violet-600 text-white">
@@ -1324,7 +1364,7 @@ export default function InvoiceStaff({
           </div>
         )}
       </div>
-      )}
+      ))}
     </div>
   );
 }

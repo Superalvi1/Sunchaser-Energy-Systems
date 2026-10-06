@@ -63,7 +63,7 @@ export class CRMLinkService {
    * Phase 2A: Automatic CRM Lead Linking on inbound message.
    * If conversation is already linked, keeps existing lead.
    * Otherwise searches CRM for active lead by normalized phone; links if found,
-   * or creates a new lead, confirms leadId, links conversation, and returns leadId.
+   * and links the conversation only when a qualified CRM lead already exists.
    */
   async autoLinkInboundLead(
     conversationId: string
@@ -112,34 +112,9 @@ export class CRMLinkService {
       }
     }
 
-    if (this.deps.createLead) {
-      const result = await this.createLeadFromConversation(conversationId, {
-        actor: systemActor,
-        forceCreate: false,
-      });
-      if (result.kind === "created") {
-        return { leadId: result.leadId, created: true };
-      }
-      if (result.kind === "duplicate_suggestion") {
-        const leadId = normalizeLeadId(result.suggestion.linkedEntityId);
-        if (leadId) {
-          const link = await this.crmLinks.upsert({
-            conversationId,
-            linkedEntityType: result.suggestion.linkedEntityType,
-            linkedEntityId: leadId,
-            linkedByUserId: systemActor.id,
-            companyId: this.companyId,
-          });
-          await this.conversations.touchUpdatedAt(conversationId, this.companyId);
-          return { leadId, created: false };
-        }
-      }
-    }
-
-    throw new InboxServiceError(
-      "service_unavailable",
-      "Unable to auto-link lead: CRM integration not available"
-    );
+    // An inbound enquiry is not consent to create a CRM lead. Staff promotion
+    // and confirmed Smart Quote submissions retain their explicit creation paths.
+    return { leadId: "", created: false };
   }
 
   async getLink(

@@ -1029,7 +1029,7 @@ await test("Phase 2A: autoLinkInboundLead links existing CRM lead when duplicate
   assert.equal(link?.linkedEntityId, "lead_crm_existing_456");
 });
 
-await test("Phase 2A: autoLinkInboundLead creates new lead when no existing CRM lead found", async () => {
+await test("Inbound enquiry stays in inbox until staff explicitly promote it", async () => {
   const repos = createInMemoryWhatsAppInboxRepositories();
   seedConversation(repos.store, { id: "c_new" });
 
@@ -1043,11 +1043,14 @@ await test("Phase 2A: autoLinkInboundLead creates new lead when no existing CRM 
   });
 
   const res = await services.crmLinks.autoLinkInboundLead("c_new");
-  assert.equal(res.leadId, "lead_created_777");
-  assert.equal(res.created, true);
+  assert.equal(res.leadId, "");
+  assert.equal(res.created, false);
 
   const link = await services.crmLinks.getLink("c_new", admin());
-  assert.equal(link?.linkedEntityId, "lead_created_777");
+  assert.equal(link, null);
+  const promoted = await services.crmLinks.createLeadFromConversation("c_new", {actor:admin(),forceCreate:true});
+  assert.equal(promoted.kind,"created");
+  assert.equal((await services.crmLinks.getLink("c_new",admin()))?.linkedEntityId,"lead_created_777");
 });
 
 await test("Recovery A: create lead succeeds, link fails once, retry links the same exact leadId", async () => {
@@ -1093,7 +1096,7 @@ await test("Recovery A: create lead succeeds, link fails once, retry links the s
   assert.equal(createCalls, 1);
 });
 
-await test("Recovery B: create lead succeeds, link fails permanently, webhook retry does not create a second lead", async () => {
+await test("Recovery B: explicit promotion retries do not create a second lead", async () => {
   const repos = createInMemoryWhatsAppInboxRepositories();
   seedConversation(repos.store, { id: "c_rec_b" });
 
@@ -1114,10 +1117,10 @@ await test("Recovery B: create lead succeeds, link fails permanently, webhook re
     findDuplicate: async () => null,
   });
 
-  await assert.rejects(() => services.crmLinks.autoLinkInboundLead("c_rec_b"));
+  await assert.rejects(() => services.crmLinks.createLeadFromConversation("c_rec_b", {actor:admin(),forceCreate:true}));
   assert.equal(createCalls, 1);
 
-  await assert.rejects(() => services.crmLinks.autoLinkInboundLead("c_rec_b"));
+  await assert.rejects(() => services.crmLinks.createLeadFromConversation("c_rec_b", {actor:admin(),forceCreate:true}));
   assert.equal(createCalls, 1);
 });
 

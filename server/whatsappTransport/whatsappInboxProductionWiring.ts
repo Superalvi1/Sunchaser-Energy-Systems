@@ -326,7 +326,7 @@ export function buildProductionInboxServiceOptions(
       monthlyBill: 0,
       monthlyUnits: 0,
       notes: `Created from WhatsApp Shared Inbox conversation ${conversationId} by ${actor.username}.`,
-      leadSource: "WhatsApp Shared Inbox",
+      leadSource: "Direct/Referral",
       status: "New",
       createdAt: new Date().toISOString(),
     };

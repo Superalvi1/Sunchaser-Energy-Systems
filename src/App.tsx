@@ -1,3 +1,6 @@
+import AccountsWorkspace from "./components/AccountsWorkspace";
+import { canCreateInvoice } from "./lib/invoices";
+import { filterCrmState } from "./lib/crmLeadQualification";
 import React, { useEffect, useState } from "react";
 import { 
   Sun, Users, Wrench, Bot, Shield, FileText, UserCircle, GraduationCap,
@@ -147,6 +150,8 @@ function AuthenticatedApp() {
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [cachedUsername, setCachedUsername] = useState("");
+  const [sessionRestoreUnavailable, setSessionRestoreUnavailable] = useState(false);
+  const [accountsInitialView, setAccountsInitialView] = useState<"parties" | "sales">("parties");
 
   // Active workspace navigation
   const [activeTab, setActiveTab] = useState<string>("Overview");
@@ -206,7 +211,7 @@ function AuthenticatedApp() {
     setSessionSyncError(null);
     try {
       const state = await fetchAppState();
-      setAppState(state);
+      setAppState(filterCrmState(state));
       if (state.settings?.currencySettings) {
         const match = state.settings.currencySettings.match(/\(([^)]+)\)/);
         if (match) {
@@ -270,14 +275,10 @@ function AuthenticatedApp() {
     let cancelled = false;
 
     (async () => {
-      if (isNativeApp()) {
-        const cached = getStoredUser();
-        if (cached?.username) setCachedUsername(cached.username);
-        if (!cancelled) setLoading(false);
-        return;
-      }
-
-      const { user } = await restoreAuthSession();
+      const cached = getStoredUser();
+      if (cached?.username) setCachedUsername(cached.username);
+      const { user, temporaryFailure } = await restoreAuthSession();
+      if (temporaryFailure) setSessionRestoreUnavailable(true);
       if (cancelled) return;
 
       if (!user) {
@@ -311,7 +312,7 @@ function AuthenticatedApp() {
     let cancelled = false;
     const refresh = async () => {
       if (document.visibilityState !== "visible") return;
-      try { const state = await fetchAppState(); if (!cancelled) setAppState(state); } catch { /* Retain the last successful state. */ }
+      try { const state = await fetchAppState(); if (!cancelled) setAppState(filterCrmState(state)); } catch { /* Retain the last successful state. */ }
     };
     const timer = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
@@ -321,6 +322,7 @@ function AuthenticatedApp() {
   // Set default tab based on logged-in role
   useEffect(() => {
     if (currentUser) {
+      if (window.location.pathname === "/accounts" && canCreateInvoice(currentUser.username, currentUser.role)) { setActiveTab("Accounts"); return; }
       if (isAdminInboxPath() || isAdminWhatsAppConnectionPath()) {
         setActiveTab("Admin Dashboard");
         return;
@@ -633,10 +635,16 @@ function AuthenticatedApp() {
    * bottom bar can never offer a screen the role cannot open. Slots 1-3 are
    * primary; anything beyond goes into More alongside the module groups.
    */
-  const shellTabs: ShellTab[] = currentUser ? (getAllowedTabs() as ShellTab[]) : [];
+  const shellTabs: ShellTab[] = currentUser ? [
+    ...(getAllowedTabs() as ShellTab[]).filter(t => !isNativeApp() || !["Learning Studio", "Sunchaser AI", "Activity Telemetry"].includes(t.id)),
+    ...(canCreateInvoice(currentUser.username,currentUser.role) ? [{id:"Accounts",label:"Accounts",icon:FileText}] : [])
+  ] : [];
+  if (isNativeApp()) { const i = shellTabs.findIndex(t => t.id === "Accounts"); if(i > 1) shellTabs.splice(1,0,...shellTabs.splice(i,1)); }
   const mobileScreenTitle =
     shellTabs.find((t) => t.id === activeTab)?.label ?? "Sunchaser CRM";
 
+  if (!currentUser && sessionRestoreUnavailable) return <main className="min-h-screen grid place-items-center bg-slate-950 px-6 text-slate-100"><section className="max-w-md space-y-4 text-center"><h1 className="text-xl font-bold">Reconnect to your saved session</h1><p className="text-slate-400">Your login is still saved. The server could not be reached. Check your connection and retry.</p><button onClick={()=>window.location.reload()} className="min-h-12 w-full rounded-xl bg-amber-400 font-bold text-slate-950">Retry connection</button><button onClick={()=>{clearAuthSession();setSessionRestoreUnavailable(false);setGuestView("login");}} className="min-h-11 text-slate-400">Use another account</button></section></main>;
+  if (currentUser && !showOnboarding && activeTab === "Accounts" && canCreateInvoice(currentUser.username,currentUser.role)) return <AccountsWorkspace staffUser={currentUser} leads={appState?.leads || []} products={appState?.products || []} initialView={accountsInitialView} onAddParty={handleAddLead} onExit={()=>{window.history.replaceState(null,"","/");setActiveTab("Admin Dashboard");}}/>;
   if (currentUser && showOnboarding) {
     const variant =
       currentUser.role === "Customer"
@@ -665,7 +673,7 @@ function AuthenticatedApp() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(false)}
         />
-        <AICommandCenter layout="customer" />
+        {!isNativeApp() && <AICommandCenter layout="customer" />}
       </>
     );
   }
@@ -690,12 +698,12 @@ function AuthenticatedApp() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(true)}
         />
-        <AICommandCenter />
+        {!isNativeApp() && <AICommandCenter />}
         {isGlobalSearchAllowedForUser(currentUser) ? (
           <GlobalSearch
             appState={null}
             currentUser={currentUser}
-            allowedTabIds={getAllowedTabs().map((t) => t.id)}
+            allowedTabIds={shellTabs.map((t) => t.id)}
             onNavigate={setActiveTab}
           />
         ) : null}
@@ -833,7 +841,7 @@ function AuthenticatedApp() {
         {currentUser && (
           <div className="bg-slate-950 border-t border-slate-800/65 py-2 overflow-x-auto">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-start md:justify-center gap-2 text-xs font-semibold">
-              {getAllowedTabs().map((tab) => {
+              {shellTabs.map((tab) => {
                 const TabIcon = tab.icon;
                 return (
                   <button
@@ -1158,6 +1166,7 @@ function AuthenticatedApp() {
                 onQuickAction={(action) => {
                   if (action === "lead" || action === "customer" || action === "crm") setActiveTab("CRM Database");
                   else if (action === "quotation" || action === "sales-advisor") setActiveTab("Sales Advisor");
+                  else if (action === "accounts" || action === "invoice") {setAccountsInitialView(action === "invoice" ? "sales" : "parties"); window.history.replaceState(null,"","/accounts");setActiveTab("Accounts");}
                 }}
                 activityLogs={appState.activityLogs || []}
               />
@@ -1323,12 +1332,12 @@ function AuthenticatedApp() {
         </MobileMoreSheet>
       </>
     )}
-    {currentUser ? <AICommandCenter /> : null}
+    {currentUser && !isNativeApp() ? <AICommandCenter /> : null}
     {currentUser && isGlobalSearchAllowedForUser(currentUser) ? (
       <GlobalSearch
         appState={appState}
         currentUser={currentUser}
-        allowedTabIds={getAllowedTabs().map((t) => t.id)}
+        allowedTabIds={shellTabs.map((t) => t.id)}
         onNavigate={setActiveTab}
       />
     ) : null}

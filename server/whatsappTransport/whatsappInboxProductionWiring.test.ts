@@ -996,7 +996,7 @@ await test("composition: inbox list availability is wired Meta-only (no QR sessi
   assert.ok(src.indexOf("createWhatsAppInboxRouter({") >= 0);
 });
 
-await test("production wiring: signed inbound customer message auto-links lead and duplicate does not repeat lead creation", async () => {
+await test("production wiring: inbound enquiries and duplicate deliveries do not create CRM leads", async () => {
   const waRepo = new InMemoryWhatsAppRepository();
   const persistedLeads: any[] = [];
 
@@ -1028,15 +1028,15 @@ await test("production wiring: signed inbound customer message auto-links lead a
 
   // Auto-link lead on message acceptance
   const linkRes = await autoLinkLead(conversation.id);
-  assert.ok(linkRes.leadId);
-  assert.equal(linkRes.created, true);
-  assert.equal(persistedLeads.length, 1);
+  assert.equal(linkRes.leadId, "");
+  assert.equal(linkRes.created, false);
+  assert.equal(persistedLeads.length, 0);
 
   // Duplicate delivery attempt
   const linkResDuplicate = await autoLinkLead(conversation.id);
   assert.equal(linkResDuplicate.leadId, linkRes.leadId);
   assert.equal(linkResDuplicate.created, false);
-  assert.equal(persistedLeads.length, 1);
+  assert.equal(persistedLeads.length, 0);
 });
 
 if (failed > 0) {
