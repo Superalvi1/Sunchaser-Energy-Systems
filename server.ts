@@ -444,6 +444,7 @@ import {
   listAdminCustomerDocuments,
   prepareLeadCustomerProfile,
   assertCustomerAdmin,
+  assertCustomerUploadTarget,
   assignCustomerDocument,
   uploadFileToCustomerStorage,
   fetchCustomerPortalSystemMe,
@@ -596,7 +597,17 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   }
   return next(err);
 });
-app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
+// Files here are staff-supplied and served before authentication on the CRM origin: never let them run script.
+app.use("/uploads", express.static(path.join(__dirname, "public", "uploads"), {
+  setHeaders: (res, filePath) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Raster images and PDFs cannot run script (type comes from the extension, nosniff stops sniffing); everything else
+    // (html, svg, xml ...) is sandboxed. A sandbox header would also stop Chrome's built-in PDF viewer, so PDFs are exempt.
+    if (!/\.(pdf|png|jpe?g|gif|webp)$/i.test(filePath)) {
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    }
+  },
+}));
 
 /**
  * Stable signed capability URL for private Railway bucket objects.
@@ -614,6 +625,7 @@ app.get("/api/storage/object/:namespace/:encodedKey", async (req, res) => {
     const object = await getRailwayObject(verified.namespace, verified.key);
     if (!object) return res.status(404).json({ error: "Object not found." });
     res.setHeader("Content-Type", object.contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, max-age=300");
     if (object.etag) res.setHeader("ETag", object.etag);
     return res.send(object.body);
@@ -2007,8 +2019,9 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
   const uploadId = typeof clientUploadId === "string" && /^[A-Za-z0-9_-]{8,80}$/.test(clientUploadId) ? clientUploadId : null;
   try {
     loadDb();
-    // Authorize before anything is written to storage.
+    // Authorize and validate the target before anything is written to storage.
     await assertCustomerAdmin(userId, username, role, db);
+    await assertCustomerUploadTarget(String(customerId), documentType || "other", db);
     const objectId = uploadId ? createHash("sha256").update(`${customerId}\n${uploadId}`).digest("hex").slice(0, 32) : undefined;
     const { url, storagePath } = await uploadFileToCustomerStorage(
       String(customerId),
@@ -2036,6 +2049,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     return res.status(201).json(doc);
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    console.error("[customer-documents] upload failed:", err?.message || err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -4812,13 +4826,18 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
 app.post("/api/admin/customer-documents", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
-  const { id: userId, username } = staff;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
-    const doc = await createAdminCustomerDocument(userId, username, req.body || {}, db);
+    // Same gate as /upload and /assign: any other staff role could otherwise attach files to any client.
+    await assertCustomerAdmin(userId, username, role, db);
+    // The caller may not choose which bucket object a row points at; uploads set storagePath themselves.
+    const { storagePath: _clientChosenPath, ...body } = req.body || {};
+    const doc = await createAdminCustomerDocument(userId, username, body, db);
     saveDb();
     return res.status(201).json(doc);
   } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message || "Failed to save document." });
   }

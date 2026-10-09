@@ -47,7 +47,9 @@ export function isRailwayObjectStorageConfigured(env: NodeJS.ProcessEnv = proces
 
 function normalizeObjectKey(namespace: RailwayObjectNamespace, key: string): string {
   const raw = String(key || "").trim().replace(/^\/+/, "");
-  if (!raw || raw.length > 1024 || raw.includes("..") || raw.includes("\\")) {
+  // Only whole "." / ".." segments are dangerous: fetch() collapses them after the request was signed
+  // (SignatureDoesNotMatch) and they are the only traversal form. File names such as "scan..pdf" are valid keys.
+  if (!raw || raw.length > 1024 || raw.includes("\\") || raw.split("/").some((part) => part === "." || part === "..")) {
     throw new Error("Invalid object key.");
   }
   return `${namespace}/${raw}`;
@@ -136,11 +138,35 @@ async function signedBucketRequest(
   if (options.ifMatch) headers["if-match"] = options.ifMatch;
   if (options.ifNoneMatch) headers["if-none-match"] = options.ifNoneMatch;
 
-  return fetch(url, {
-    method,
-    headers,
-    body: method === "PUT" ? body : undefined,
-  });
+  const timeoutMs = Number(process.env.RAILWAY_S3_TIMEOUT_MS) > 0 ? Number(process.env.RAILWAY_S3_TIMEOUT_MS) : 60_000;
+  try {
+    return await fetch(url, {
+      method,
+      headers,
+      body: method === "PUT" ? body : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    // Say why (timeout, refused, DNS, TLS) without echoing hosts, keys or request details.
+    const e = err as { name?: string; cause?: { code?: string } };
+    const reason = e?.name === "TimeoutError" ? `no answer within ${Math.round(timeoutMs / 1000)} s` : e?.cause?.code || "network error";
+    throw new Error(`Railway object storage unreachable (${reason}).`);
+  }
+}
+
+/** The S3 error code (e.g. SignatureDoesNotMatch, NoSuchBucket) from an XML error body; never the message text. */
+async function s3ErrorCode(res: Response): Promise<string> {
+  try {
+    const text = (await res.text()).slice(0, 4096);
+    return /<Code>([A-Za-z0-9]{1,64})<\/Code>/.exec(text)?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+async function failure(res: Response, action: string, knownCode?: string): Promise<Error> {
+  const code = knownCode ?? (await s3ErrorCode(res));
+  return new Error(`Railway object ${action} failed (HTTP ${res.status}${code ? ` ${code}` : ""}).`);
 }
 
 export async function putRailwayObject(
@@ -150,9 +176,7 @@ export async function putRailwayObject(
   contentType: string,
 ): Promise<void> {
   const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
-  if (!res.ok) {
-    throw new Error(`Railway object upload failed (HTTP ${res.status}).`);
-  }
+  if (!res.ok) throw await failure(res, "upload");
 }
 
 export async function deleteRailwayObject(
@@ -160,16 +184,18 @@ export async function deleteRailwayObject(
   key: string,
 ): Promise<void> {
   const res = await signedBucketRequest("DELETE", namespace, key);
-  if (!res.ok && res.status !== 404) {
-    throw new Error(`Railway object delete failed (HTTP ${res.status}).`);
-  }
+  if (res.ok) return;
+  // A missing key is success; a missing BUCKET (wrong configuration) must not look like a completed delete.
+  const code = await s3ErrorCode(res);
+  if (res.status === 404 && code !== "NoSuchBucket") return;
+  throw await failure(res, "delete", code);
 }
 
 /** Atomic metadata update; false means another writer changed the object. */
 export async function putRailwayObjectConditional(namespace: RailwayObjectNamespace, key: string, body: Buffer, contentType: string, etag: string | null): Promise<boolean> {
   const res = await signedBucketRequest("PUT", namespace, key, { body, contentType, ...(etag ? { ifMatch: etag } : { ifNoneMatch: "*" }) });
   if (res.status === 412 || res.status === 409) return false;
-  if (!res.ok) throw new Error(`Railway object update failed (HTTP ${res.status}).`);
+  if (!res.ok) throw await failure(res, "update");
   return true;
 }
 
@@ -178,13 +204,21 @@ export async function getRailwayObject(
   key: string,
 ): Promise<{ body: Buffer; contentType: string; etag: string | null } | null> {
   const res = await signedBucketRequest("GET", namespace, key);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Railway object read failed (HTTP ${res.status}).`);
+  if (res.status === 404) {
+    const code = await s3ErrorCode(res);
+    if (code !== "NoSuchBucket") return null;
+    throw await failure(res, "read", code); // wrong bucket name is a configuration fault, not "file not found"
+  }
+  if (!res.ok) throw await failure(res, "read");
   return {
     body: Buffer.from(await res.arrayBuffer()),
     contentType: res.headers.get("content-type") || "application/octet-stream",
     etag: res.headers.get("etag"),
   };
+}
+
+function hmacProxySignature(secret: string, namespace: RailwayObjectNamespace, key: string): string {
+  return createHmac("sha256", secret).update(`${namespace}\n${key}`).digest("hex");
 }
 
 function proxySignature(
@@ -194,9 +228,7 @@ function proxySignature(
 ): string {
   const secret = String(env.RAILWAY_OBJECT_PROXY_SECRET || "").trim();
   if (!secret) throw new Error("RAILWAY_OBJECT_PROXY_SECRET is not configured.");
-  return createHmac("sha256", secret)
-    .update(`${namespace}\n${key}`)
-    .digest("hex");
+  return hmacProxySignature(secret, namespace, key);
 }
 
 export function buildRailwayObjectProxyUrl(
@@ -233,33 +265,74 @@ export function verifyRailwayObjectProxySignature(
   }
   const supplied = String(signature || "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(supplied)) return { ok: false };
-  const expected = proxySignature(namespaceRaw, key, env);
+  // During a secret rotation RAILWAY_OBJECT_PROXY_SECRET_PREVIOUS keeps links issued before the change working.
+  // Leave it unset to revoke every earlier link at once (e.g. after a leak). Every candidate is compared, no early exit.
+  const secrets = [env.RAILWAY_OBJECT_PROXY_SECRET, env.RAILWAY_OBJECT_PROXY_SECRET_PREVIOUS]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!secrets.length) throw new Error("RAILWAY_OBJECT_PROXY_SECRET is not configured.");
   const a = Buffer.from(supplied, "hex");
-  const b = Buffer.from(expected, "hex");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false };
+  let valid = false;
+  for (const secret of secrets) {
+    const b = Buffer.from(hmacProxySignature(secret, namespaceRaw, key), "hex");
+    if (a.length === b.length && timingSafeEqual(a, b)) valid = true;
+  }
+  if (!valid) return { ok: false };
   return { ok: true, namespace: namespaceRaw, key };
 }
 
+/**
+ * A NEW customer_documents row may only point at that customer's own folder or at a Smart Quote PDF archive.
+ * Without this a staff-supplied storage_path could name another customer's (or an internal) object.
+ */
+export function isStoragePathForCustomer(customerId: string | null | undefined, storagePath: string): boolean {
+  const owner = String(customerId || "").trim();
+  const key = String(storagePath || "").trim().replace(/^\/+/, "");
+  return Boolean(owner) && (key.startsWith(`${owner}/`) || key.startsWith("smart-quotes/"));
+}
+
+/** Objects the app keeps for itself (sales-agent settings, pending conversations). Never signed for a document row. */
+const INTERNAL_KEY_PREFIXES = ["whatsapp-agent/"];
+
+/**
+ * Turns a stored document URL into a currently valid signed proxy link. It never throws: a malformed legacy row
+ * (bad %-escape, ".." in a name, misconfigured endpoint) keeps its original URL instead of failing the whole list.
+ */
 export function rewriteLegacyStorageUrl(
   url: string | null | undefined,
   storagePath?: string | null,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const original = String(url || "").trim();
-  if (!resolveRailwayObjectStorageConfig(env)) return original;
-  if (original.includes("/api/storage/object/")) return original;
+  try {
+    if (!resolveRailwayObjectStorageConfig(env)) return original;
+    const fallbackPath = String(storagePath || "").trim().replace(/^\/+/, "");
+    const signable = (key: string) => !INTERNAL_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
 
-  const match = original.match(
-    /\/storage\/v1\/object\/public\/(customer-documents|quote-assets)\/(.+)$/i,
-  );
-  const namespace = (match?.[1] || "") as RailwayObjectNamespace;
-  const matchedKey = match?.[2] ? decodeURIComponent(match[2]) : "";
-  const fallbackPath = String(storagePath || "").trim().replace(/^\/+/, "");
-  if (namespace) {
-    return buildRailwayObjectProxyUrl(namespace, fallbackPath || matchedKey, env);
+    if (original.includes("/api/storage/object/")) {
+      // Re-issue a stored link that points at the row's own object, so rotating RAILWAY_OBJECT_PROXY_SECRET
+      // (or changing the public host) does not leave every stored link dead.
+      const stored = /\/api\/storage\/object\/(customer-documents|quote-assets)\/([A-Za-z0-9_-]+)/.exec(original);
+      if (stored && fallbackPath && signable(fallbackPath) && Buffer.from(stored[2], "base64url").toString("utf8") === fallbackPath) {
+        return buildRailwayObjectProxyUrl(stored[1] as RailwayObjectNamespace, fallbackPath, env);
+      }
+      return original;
+    }
+
+    const match = original.match(
+      /\/storage\/v1\/object\/public\/(customer-documents|quote-assets)\/(.+)$/i,
+    );
+    const namespace = (match?.[1] || "") as RailwayObjectNamespace;
+    const matchedKey = match?.[2] ? decodeURIComponent(match[2]) : "";
+    if (namespace) {
+      const key = fallbackPath || matchedKey;
+      return signable(key) ? buildRailwayObjectProxyUrl(namespace, key, env) : original;
+    }
+    if (fallbackPath && original.includes("customer-documents") && signable(fallbackPath)) {
+      return buildRailwayObjectProxyUrl("customer-documents", fallbackPath, env);
+    }
+    return original;
+  } catch {
+    return original;
   }
-  if (fallbackPath && original.includes("customer-documents")) {
-    return buildRailwayObjectProxyUrl("customer-documents", fallbackPath, env);
-  }
-  return original;
 }
