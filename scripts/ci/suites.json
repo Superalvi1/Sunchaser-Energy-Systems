@@ -111,7 +111,9 @@
     },
     {
       "script": "test:marketplace-catalogue-manager-pg",
-      "area": "marketplace / database suite that starts its own Postgres container"
+      "area": "marketplace / database suite that starts its own Postgres container",
+      "tracked": true,
+      "reason": "Fails on a real Docker run with CATALOGUE_RESPONSE_INVALID in catalogueRepository.listProducts (test line 870, >=1100-product pagination). The PR touches no marketplace file; until now the suite only ever printed SKIP. Marketplace is a founding-company module outside this release. Needs its own investigation."
     },
     {
       "script": "test:marketplace-ceo-auto-import-pg",

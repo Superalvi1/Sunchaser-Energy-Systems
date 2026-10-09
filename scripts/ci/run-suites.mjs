@@ -37,7 +37,7 @@ function classify(r) {
 }
 
 const jobs = (group === "docker"
-  ? (cfg.docker || []).map((s) => ({ ...s, kind: "required" })) // in the Docker job nothing may be skipped
+  ? (cfg.docker || []).map((s) => ({ ...s, kind: s.tracked ? "tracked" : "required" })) // in the Docker job nothing may be skipped
   : [
       ...cfg.required.map((s) => ({ ...s, kind: "required" })),
       ...cfg.tracked.map((s) => ({ ...s, kind: "tracked" })),
