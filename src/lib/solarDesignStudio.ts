@@ -130,7 +130,7 @@ export const PACKAGE_OPTIONS: { id: DesignPackageTier; label: string; note: stri
   { id: "premium", label: "Premium", note: "Tier-1 panels, extended warranty bundle" },
 ];
 
-export const SYSTEM_SIZE_PRESETS: readonly number[] = SUPPORTED_SYSTEM_SIZES_KW;
+export const SYSTEM_SIZE_PRESETS: readonly (typeof SUPPORTED_SYSTEM_SIZES_KW)[number][] = SUPPORTED_SYSTEM_SIZES_KW;
 
 export function polygonArea(points: DesignPoint[]): number {
   const valid = points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));

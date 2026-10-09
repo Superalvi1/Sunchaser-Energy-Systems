@@ -7,7 +7,8 @@ import {
   saveCustomerSystem,
   fetchAdminCustomerDocumentsList,
 } from "../services/api";
-import { DOCUMENT_WALLET_TYPES } from "../lib/clientPortalPhase2";
+import { DOCUMENT_WALLET_TYPES, type DocumentWalletType } from "../lib/clientPortalPhase2";
+import { pickOption } from "../lib/optionGuards";
 import CustomerDocumentUploader from "./CustomerDocumentUploader";
 import CustomerInvitationPanel from "./CustomerInvitationPanel";
 import ClientPortalStaffTools from "./ClientPortalStaffTools";
@@ -47,7 +48,7 @@ export default function CustomerProfileStaff({ staffUser, initialUserId }: Custo
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
-  const [docType, setDocType] = useState(DOCUMENT_WALLET_TYPES[0].type);
+  const [docType, setDocType] = useState<DocumentWalletType>(DOCUMENT_WALLET_TYPES[0].type);
   const [docTitle, setDocTitle] = useState("");
   const [visibleToCustomer, setVisibleToCustomer] = useState(true);
   const [internalOnly, setInternalOnly] = useState(false);
@@ -215,7 +216,10 @@ export default function CustomerProfileStaff({ staffUser, initialUserId }: Custo
                 <Upload className="h-4 w-4" /> Assign quotation / agreement
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                <select value={docType} onChange={(e) => setDocType(e.target.value)} className="input-cell">
+                <select value={docType} onChange={(e) => {
+                  const next = pickOption(DOCUMENT_WALLET_TYPES.map((d) => d.type), e.target.value);
+                  if (next) setDocType(next);
+                }} className="input-cell">
                   {DOCUMENT_WALLET_TYPES.map((d) => (
                     <option key={d.type} value={d.type}>{d.label}</option>
                   ))}

@@ -423,7 +423,7 @@ export default function ProjectDesignWorkspace({
         url,
         result.image.provider ? `satellite-${result.image.provider}` : "satellite-image"
       );
-      if (!applied.ok) {
+      if (applied.ok === false) {
         setSatelliteMessage(applied.error);
         return;
       }

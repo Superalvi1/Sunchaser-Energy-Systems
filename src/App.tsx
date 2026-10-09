@@ -767,7 +767,7 @@ function AuthenticatedApp() {
             {/* Sync trigger */}
             {currentUser && needsCrmAppState(currentUser.role) ? (
               <button
-                onClick={loadDatabaseState}
+                onClick={() => void loadDatabaseState()}
                 className="bg-slate-800 hover:bg-slate-700 p-2.5 rounded-xl text-slate-350 transition hover:text-white"
                 title="Force Sync Database State"
               >

@@ -1,6 +1,26 @@
 /** Live catalog products for BOQ quick-fill — same source as Pakistan Solar Hardware Catalog. */
 
-export function isActiveCatalogProduct(product: unknown): product is Record<string, unknown> {
+/** Catalog row as stored in the live product library; every field except `id` may be absent on legacy rows. */
+export interface LiveCatalogProduct {
+  id: string | number;
+  name?: string;
+  brand?: string;
+  model?: string;
+  sku?: string;
+  category?: string;
+  price?: number;
+  stock?: number;
+  warrantyPeriod?: string;
+  specifications?: {
+    description?: string;
+    wattage?: number;
+    costPrice?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export function isActiveCatalogProduct(product: unknown): product is LiveCatalogProduct {
   if (!product || typeof product !== "object") return false;
   const p = product as Record<string, unknown>;
   if (!p.id) return false;
@@ -10,9 +30,9 @@ export function isActiveCatalogProduct(product: unknown): product is Record<stri
 }
 
 /** Dedupe by id; exclude soft-deleted / invalid rows. Never merges settings.boqMasterLibrary or seed data. */
-export function getLiveCatalogProducts(products: unknown[] | undefined | null): Record<string, unknown>[] {
+export function getLiveCatalogProducts(products: unknown[] | undefined | null): LiveCatalogProduct[] {
   const seen = new Set<string>();
-  const out: Record<string, unknown>[] = [];
+  const out: LiveCatalogProduct[] = [];
   for (const raw of products || []) {
     if (!isActiveCatalogProduct(raw)) continue;
     const id = String(raw.id);

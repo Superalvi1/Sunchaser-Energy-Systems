@@ -845,7 +845,7 @@ export default function SolarConsultantWizard({ onBackToLanding }: SolarConsulta
                     <input
                       id="lead-name"
                       type="text"
-                      autocomplete="name"
+                      autoComplete="name"
                       required
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
@@ -859,7 +859,7 @@ export default function SolarConsultantWizard({ onBackToLanding }: SolarConsulta
                     <input
                       id="lead-email"
                       type="email"
-                      autocomplete="email"
+                      autoComplete="email"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -873,7 +873,7 @@ export default function SolarConsultantWizard({ onBackToLanding }: SolarConsulta
                     <input
                       id="lead-phone"
                       type="tel"
-                      autocomplete="tel"
+                      autoComplete="tel"
                       required
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
@@ -887,7 +887,7 @@ export default function SolarConsultantWizard({ onBackToLanding }: SolarConsulta
                     <input
                       id="lead-address"
                       type="text"
-                      autocomplete="street-address"
+                      autoComplete="street-address"
                       value={streetAddress}
                       onChange={(e) => setStreetAddress(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-xs text-slate-100 placeholder:text-slate-700 focus-visible:outline-2 focus-visible:outline-amber-500"
