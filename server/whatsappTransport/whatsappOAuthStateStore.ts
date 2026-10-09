@@ -119,7 +119,12 @@ export const memoryOAuthStateStore: OAuthStateStore = makeMemoryOAuthStateStore(
  * Nonce column stores SHA-256(hex) of the raw nonce returned to the client.
  */
 export class SupabaseOAuthStateStore implements OAuthStateStore {
-  constructor(private readonly client: SupabaseClient) {}
+  /** A client, or a factory resolved on every call so the client follows the current company context. */
+  constructor(private readonly clientSource: SupabaseClient | (() => SupabaseClient)) {}
+
+  private get client(): SupabaseClient {
+    return typeof this.clientSource === "function" ? this.clientSource() : this.clientSource;
+  }
 
   async create(companyId: string, actorId: string): Promise<string> {
     const nonce = generateNonce();
@@ -197,5 +202,5 @@ export function createDefaultOAuthStateStore(): OAuthStateStore {
       "OAuth state storage requires an active Supabase backend"
     );
   }
-  return new SupabaseOAuthStateStore(getSupabase()!);
+  return new SupabaseOAuthStateStore(() => getSupabase()!);
 }

@@ -22,7 +22,7 @@ test("scope of representative paths", () => {
     ["GET", "/api/marketplace/admin/products", "founding_only"],
     ["GET", "/api/learning/courses", "founding_only"],
     ["GET", "/api/diagnostics/phase7-columns", "founding_only"],
-    ["GET", "/api/state", "founding_only"],
+    ["GET", "/api/state", "company"],
     ["POST", "/api/db/update", "founding_only"],
     ["GET", "/api/platform/companies", "platform"],
     ["GET", "/assets/app.js", "none"],

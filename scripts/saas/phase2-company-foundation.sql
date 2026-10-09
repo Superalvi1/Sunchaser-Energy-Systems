@@ -77,10 +77,11 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'authenticator') then grant crm_tenant to authenticator; end if;
 end $$;
 grant usage on schema public to crm_tenant;
-grant usage on schema app to crm_tenant;
+grant usage on schema app to crm_tenant, service_role;  -- service_role evaluates the column defaults too
 grant execute on function app.request_company_id(), app.default_company_id() to crm_tenant, service_role;
 grant select on app.config to crm_tenant, service_role;
 grant select on public.companies to crm_tenant;
+grant select, insert, update, delete on public.companies, public.company_memberships to service_role;
 alter table public.companies enable row level security;
 alter table public.company_memberships enable row level security;
 drop policy if exists tenant_sees_own_company on public.companies;

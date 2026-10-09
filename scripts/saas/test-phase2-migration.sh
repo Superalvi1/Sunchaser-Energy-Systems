@@ -47,6 +47,11 @@ check "tenant role holds no privilege on marketplace tables" "$($Q -c "select co
 check "tenant role holds no privilege on users" "$($Q -c "select count(*) from information_schema.role_table_grants where grantee='crm_tenant' and table_name='users'")" "0"
 check "tenant role cannot execute application functions" "$($Q -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and has_function_privilege('crm_tenant', p.oid, 'execute')")" "0"
 check "service role can still execute application functions" "$($Q -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and not has_function_privilege('service_role', p.oid, 'execute')")" "0"
+check "service role can read and write the new identity tables" "$($Q -c "set role service_role; select count(*) from company_memberships; update companies set name = name where id='sunchaser'" 2>&1 | grep -E '^[0-9]+$|ERROR|denied' | head -1 | sed -E 's/^[0-9]+$/ok/')" "ok"
+# Legacy single-company writes (service role, no company context) must still work: the column default is evaluated by that role.
+SR_OUT=$($Q -c "set role service_role; insert into leads (id,name,phone,email,address,status) values ('mig-sr1','SR Lead','03009990000','sr@example.test','Road','New') returning company_id" 2>&1 | grep -E '^sunchaser$|ERROR|denied' | head -1)
+check "service role inserts without a company default to sunchaser" "$SR_OUT" "sunchaser"
+$P -c "delete from leads where id='mig-sr1'" > /dev/null 2>&1 || true
 $Q -c "select md5(string_agg((to_jsonb(t)-'company_id')::text,'|' order by id)) from (select * from leads) t" > "$W/leads.mid"
 check "row data unchanged apart from the new column" "$(cat "$W/leads.mid")" "$(cat "$W/leads.before.json")" 
 

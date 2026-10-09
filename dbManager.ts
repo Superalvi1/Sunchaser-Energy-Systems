@@ -2557,7 +2557,7 @@ export async function fetchCustomerPortalData(
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
-    const { data: userRow, error: userErr } = await supabase
+    const { data: userRow, error: userErr } = await getSystemSupabase()!
       .from("users")
       .select("*")
       .eq("id", normalizedUserId)
@@ -2873,7 +2873,7 @@ export async function verifyCustomerPortalUser(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase
       .from("users")
       .select("*")
@@ -2917,7 +2917,7 @@ export async function verifyStaffPortalUser(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase
       .from("users")
       .select("*")
@@ -5961,7 +5961,7 @@ export async function verifyTechnicalStaffUser(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase
       .from("users")
       .select("*")
@@ -6699,7 +6699,7 @@ export async function fetchOnboardingMe(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase.from("users").select("*").eq("id", normalizedUserId).single();
     if (error || !userRow) throw new TechnicalStaffAuthError("User not found.");
     if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
@@ -6741,7 +6741,7 @@ export async function completeOnboarding(
   const now = new Date().toISOString();
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase
       .from("users")
       .update({ onboarding_completed: true, onboarding_completed_at: now })
@@ -6781,7 +6781,7 @@ export async function resetOnboarding(
   await fetchOnboardingMe(userId, username, localDb);
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase
       .from("users")
       .update({ onboarding_completed: false, onboarding_completed_at: null })

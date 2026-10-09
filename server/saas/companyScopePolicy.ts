@@ -33,7 +33,8 @@ const RULES: Rule[] = [
   { prefix: "/api/debug/", scope: "founding_only" },
   { prefix: "/api/backup/", scope: "founding_only" },
   { prefix: "/api/db/", scope: "founding_only" },
-  { prefix: "/api/state", scope: "founding_only", exact: true },
+  // Boot payload of the CRM: company-scoped (every table it reads is tenant data; users are never included).
+  { prefix: "/api/state", scope: "company", exact: true },
   // Staff and user administration spans identities; company members are managed under /api/company/members.
   { prefix: "/api/admin/users", scope: "founding_only" },
   { prefix: "/api/admin/roles", scope: "founding_only" },

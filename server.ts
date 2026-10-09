@@ -219,6 +219,7 @@ import {
   upsertSolarPackageCatalogToSupabase,
   upsertAppSettingsToSupabase,
   describeSupabaseBackendConfig,
+  getSystemSupabase,
 } from "./dbManager.js";
 import { isSupabaseConnectivityError, SUPABASE_UNAVAILABLE_CODE } from "./supabaseConnectivity.ts";
 import {
@@ -347,9 +348,9 @@ import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/s
 import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
 import { assertProductionJwtConfig, canRenewSession, sessionMaxAgeSeconds, sessionStartedAtSeconds, signAccessToken, verifyAccessToken } from "./server/auth/jwt.ts";
-import { createPostgrestCompanyStore } from "./server/saas/companyStore.ts";
+import { createPostgrestCompanyStore, listCompanyMemberUserIds } from "./server/saas/companyStore.ts";
 import { assertMultiCompanyConfig, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
-import { runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
+import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
 import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
@@ -1965,6 +1966,10 @@ app.get("/api/leads/:id/smart-quote-versions", async (req, res) => {
   if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
   if (!isSupabaseActive()) return res.json({ available: false, versions: [] });
   try {
+    // A lead this caller cannot see (other company, or missing) answers 404, never an empty list.
+    const visible = await getSupabase()!.from("leads").select("id").eq("id", req.params.id).maybeSingle();
+    if (visible.error) throw new Error(visible.error.message);
+    if (!visible.data) return res.status(404).json({ error: "Lead not found." });
     const versions = await createPostgrestSmartQuoteVersionStore(getSupabase()!).listByLead(req.params.id);
     return res.json({ available: true, versions: versions.map(({ payloadSha256: _fingerprint, ...version }) => version) });
   } catch (error) {
@@ -2147,13 +2152,18 @@ async function resolveSalesUserByNameOrUsername(nameOrUsername: unknown): Promis
   const token = String(nameOrUsername || "").trim();
   if (!token) return null;
   loadDb();
+  const multi = isMultiCompanyEnabled();
+  const ctx = multi ? getCompanyContext() : undefined;
+  // Multi-company mode: only active members of the caller's own company can be resolved.
+  const memberIds = multi ? (ctx?.kind === "company" ? new Set(await listCompanyMemberUserIds(ctx.companyId)) : new Set<string>()) : null;
   const byUsername = await findUserByUsername(token, db);
-  if (byUsername) return byUsername;
+  if (byUsername) return memberIds && !memberIds.has(byUsername.id) ? null : byUsername;
   const normalized = token.toLowerCase();
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
-    const { data } = await supabase.from("users").select("*").ilike("name", token).maybeSingle();
-    return data || null;
+    const query = getSystemSupabase()!.from("users").select("*").ilike("name", token);
+    const { data } = memberIds ? await query.in("id", [...memberIds]).limit(2) : await query.limit(2);
+    // Exact display-name match only: an ambiguous name resolves to nobody.
+    return data && data.length === 1 ? data[0] : null;
   }
   return (
     (db.users || []).find(
@@ -4590,7 +4600,7 @@ app.get("/api/diagnostics/phase9-tables", async (_req, res) => {
     ? { ok: false, message: tjuErr.message, hint: `Run ${schemaScript} in Supabase` }
     : { ok: true, sampleCount: tju?.length ?? 0 };
 
-  const { data: userRow, error: usersErr } = await supabase
+  const { data: userRow, error: usersErr } = await getSystemSupabase()!
     .from("users")
     .select("id, onboarding_completed, onboarding_completed_at")
     .limit(1)
@@ -4994,7 +5004,7 @@ app.get("/api/diagnostics/db", async (req, res) => {
 
   if (active && supabase) {
     try {
-      const { count, error } = await supabase
+      const { count, error } = await getSystemSupabase()!
         .from("users")
         .select("*", { count: "exact", head: true });
       if (error) {
@@ -5136,7 +5146,7 @@ app.get("/api/diagnostics/auth-users", async (req, res) => {
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getSystemSupabase()!
       .from("users")
       .select("id, username, name, email, role")
       .order("username", { ascending: true });

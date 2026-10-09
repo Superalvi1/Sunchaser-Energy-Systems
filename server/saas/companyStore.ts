@@ -40,3 +40,10 @@ export function createPostgrestCompanyStore(ttlMs: number = TTL_MS): CompanyStor
     },
   };
 }
+
+/** User ids with an active membership in a company (used to keep name/username lookups inside one company). */
+export async function listCompanyMemberUserIds(companyId: string): Promise<string[]> {
+  const { data, error } = await getSystemSupabase()!.from("company_memberships").select("user_id").eq("company_id", companyId).eq("status", "active");
+  if (error) throw new Error(`Could not load company members: ${error.message}`);
+  return (data || []).map((r: any) => r.user_id);
+}

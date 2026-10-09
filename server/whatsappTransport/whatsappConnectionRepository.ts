@@ -213,7 +213,12 @@ export class InMemoryWhatsAppConnectionRepository
 export class SupabaseWhatsAppConnectionRepository
   implements WhatsAppConnectionRepository
 {
-  constructor(private readonly client: SupabaseClient) {}
+  /** A client, or a factory resolved on every call so the client follows the current company context. */
+  constructor(private readonly clientSource: SupabaseClient | (() => SupabaseClient)) {}
+
+  private get client(): SupabaseClient {
+    return typeof this.clientSource === "function" ? this.clientSource() : this.clientSource;
+  }
 
   async get(companyId: string): Promise<WhatsAppConnectionRecord | null> {
     const id = String(companyId || "").trim();
@@ -272,5 +277,5 @@ export function createDefaultWhatsAppConnectionRepository(): WhatsAppConnectionR
       "WhatsApp connection storage requires an active Supabase backend"
     );
   }
-  return new SupabaseWhatsAppConnectionRepository(getSupabase()!);
+  return new SupabaseWhatsAppConnectionRepository(() => getSupabase()!);
 }
