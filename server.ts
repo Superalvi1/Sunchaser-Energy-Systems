@@ -1483,10 +1483,10 @@ app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) =>
   // handed out. If the revocation store cannot be written, the refresh fails (503) rather than leaving two live
   // sessions behind; the client keeps its current token and retries later.
   try {
-    loadDb();
+    if (!isSupabaseActive()) loadDb(); // the JSON store is only the revocation backend without a data API
     const rotated = await rotateSession(session.keys, req.actor.id, session.tokenExpiresAt, refreshGraceSeconds(), db);
     if (rotated.alreadyRevoked) return res.status(401).json({ error: "Unauthorized" });
-    saveDb();
+    if (!isSupabaseActive()) saveDb();
   } catch (err) {
     if (err instanceof RevocationLookupError) {
       return res.status(503).json({ error: "Session service temporarily unavailable. Please retry." });
@@ -1503,11 +1503,11 @@ app.post("/api/auth/logout", requireAuth, async (req, res) => {
   const session = req.authSession;
   if (!req.actor || !session) return res.status(401).json({ error: "Unauthorized" });
   try {
-    loadDb();
+    if (!isSupabaseActive()) loadDb();
     // A family key lives until the session's absolute limit (every renewed token ends by then); a lone key until its token's exp.
     const endsAt = session.keys.family && session.startedAt ? session.startedAt + sessionMaxAgeSeconds() : session.tokenExpiresAt;
     const out = await revokeSessionNow(session.keys.logoutKey, req.actor.id, endsAt, db);
-    saveDb();
+    if (!isSupabaseActive()) saveDb();
     return res.json({ success: true, revoked: out.stored, ...(out.stored ? {} : { reason: "revocation_inactive" }) });
   } catch (err) {
     if (err instanceof RevocationLookupError) {
@@ -10806,7 +10806,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
-    loadDb();
+    if (!isSupabaseActive()) loadDb();
     void probeRevocationStore(db);
     // Rows are only needed until the revoked token would have expired; purge best-effort every 6 hours.
     const purge = setInterval(() => { void purgeExpiredRevocations(db); }, 6 * 3600 * 1000);

@@ -32,6 +32,8 @@ node scripts/e2e-crm-repair/j3-documents.mjs    # uploads: rejected types, inter
 node scripts/e2e-crm-repair/j5-rename.mjs       # rename client; invoices, documents and portal stay linked
 node scripts/e2e-crm-repair/j7-session.mjs      # reopen keeps session (renewed); expiry, suspension, logout
 node scripts/e2e-crm-repair/j4-whatsapp.mjs     # signed inbound enquiry → no automatic lead → explicit conversion
+node scripts/e2e-crm-repair/j9-logout.mjs       # server-side logout/revocation; start the server with SESSION_REFRESH_GRACE_SECONDS=3 SESSION_REVOCATION_REPROBE_MS=300 REFRESH_RATE_LIMIT_MAX=500; also needs E2E_PGRST_PID, POSTGREST_BIN, E2E_STACK_DIR
+node scripts/e2e-crm-repair/j9-logout-browser.mjs # the SPA logout button (set E2E_CHROMIUM if Playwright browsers are elsewhere)
 ```
 
 Each script prints `PASS`/`FAIL` lines, writes `<journey>-results.json` and screenshots under `$E2E_STATE_DIR`,
