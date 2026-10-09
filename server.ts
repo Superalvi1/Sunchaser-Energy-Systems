@@ -854,11 +854,18 @@ async function saveSmartQuote(input: SmartQuoteLeadInput, options: { sendWelcome
       if (existing && !existing.deleted_at) return { leadId: existing.id, customerId: existing.customer_id ?? null };
       const notes = [smartQuoteVersionNotes(quote, 1), ...context.extraNoteLines].join("\n");
       const record = { ...buildPublicLeadRecord({ ...toPublicLeadInput(quote), notes }), id: leadId };
-      // Never message a number that is already a CRM client on the strength of an unverified web form.
-      const created = await persistPublicMarketingLead(record, context.phoneAlreadyInCrm ? { ...options, sendWelcome: false } : options);
+      // The welcome message is sent detached, and never to a number that is already a CRM client on the strength of an
+      // unverified web form. Detaching keeps the request's timing the same whether or not the number matched a lead.
+      const created = await persistPublicMarketingLead(record, { ...options, sendWelcome: false });
+      if (options.sendWelcome !== false && !context.phoneAlreadyInCrm) {
+        setTimeout(() => {
+          triggerWhatsAppNotification(quote.name, quote.phone, "survey_confirmation", `☀️ Hi ${quote.name}! Thanks for contacting Sunchaser Energy. Our team will follow up shortly.`)
+            .catch((error: unknown) => console.warn("[smart-quotes] welcome notification failed:", error instanceof Error ? error.message : error));
+        }, 1000 + Math.floor(Math.random() * 3000)).unref();
+      }
       return { leadId: created.leadId, customerId: created.customerId ?? null };
     },
-  });
+  }, source);
 }
 
 /**

@@ -290,3 +290,18 @@ test("route: the link token is never logged and is not part of the quotation fin
 test("deterministic lead id is still keyed only by the quote number", () => {
   assert.equal(deterministicSmartQuoteLeadId("SES-20261009-0001"), deterministicSmartQuoteLeadId("SES-20261009-0001"));
 });
+
+// ---- Wiring in server.ts (the adapters are not unit-testable without the whole server; the live journey j10 covers behaviour) ----
+
+test("server.ts forwards the verified source to the save, and only the WhatsApp agent claims a verified phone", async () => {
+  const { readFileSync } = await import("node:fs");
+  const server = readFileSync(new URL("../../server.ts", import.meta.url), "utf8");
+  assert.match(server, /return saveSmartQuoteSubmission\(input, \{[\s\S]*?\}, source\);\s*\n\}/, "saveSmartQuote passes `source` through to saveSmartQuoteSubmission");
+  assert.match(server, /saveSmartQuote: \(input, source\) => saveSmartQuote\(input, \{\}, source\)/, "the public route passes its resolved source");
+  const verifiedPhone = server.match(/kind:"verified-phone"/g) || [];
+  assert.equal(verifiedPhone.length, 1, "exactly one caller (the WhatsApp agent) claims a verified phone");
+  assert.match(server, /saveSmartQuote\(smartQuoteInput,\{sendWelcome:false\},\{kind:"verified-phone",via:"whatsapp-sender"\}\)/);
+  const callers = server.match(/\bsaveSmartQuote\(/g) || [];
+  assert.equal(callers.length, 3, "definition + public route adapter + WhatsApp agent are the only callers");
+  assert.match(server, /app\.post\("\/api\/leads\/:id\/smart-quote-link"[\s\S]{0,400}guardSalesOwnedResource\(req, res, "lead", req\.params\.id\)/, "link issuance is behind the sales ownership guard");
+});

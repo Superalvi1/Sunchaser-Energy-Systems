@@ -222,7 +222,7 @@ export async function saveSmartQuoteSubmission(
   const attached = !leadCreated;
 
   const createdAt = (deps.now?.() ?? new Date()).toISOString();
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 15; attempt++) {
     const versionNumber = (await store.latestVersionNumber(lead.id)) + 1;
     const result = await store.insert({
       id: `sqv-${createHash("sha256").update(input.quoteNumber).digest("hex").slice(0, 32)}`,
@@ -252,7 +252,11 @@ export async function saveSmartQuoteSubmission(
       const winner = await store.findByQuoteNumber(input.quoteNumber);
       return winner ? replayOrConflict(winner) : { kind: "conflict" };
     }
-    if (result === "duplicate_version") continue;
+    if (result === "duplicate_version") {
+      // Another revision of this lead took the number: back off briefly (jittered) so a burst of parallel revisions settles.
+      await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 10 * (attempt + 1))));
+      continue;
+    }
     await promoteLatestBlock(store, lead.id, smartQuoteVersionNotes(input, versionNumber), versionNumber);
     return { kind: "created", leadId: lead.id, versionNumber, leadCreated, attached, ...(fallback ? { fallback } : {}) };
   }
@@ -301,13 +305,14 @@ async function preserveLegacyQuotation(store: SmartQuoteVersionStore, lead: Smar
 
 /** Keep the CRM lead's summary pointing at its newest version without touching staff notes. */
 async function promoteLatestBlock(store: SmartQuoteVersionStore, leadId: string, block: string, versionNumber: number) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     const current = await store.readLeadNotes(leadId);
     if (current === null) return;
     const currentQuote = parseSmartQuoteLeadNotes(current)?.quoteNumber;
     if (currentQuote && blockVersion(current) > versionNumber) return;
     if (currentQuote && currentQuote === parseSmartQuoteLeadNotes(block)?.quoteNumber && /^Version: /m.test(current)) return;
     if (await store.replaceLeadNotes(leadId, current, replaceSmartQuoteBlock(current, block))) return;
+    await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 8 * (attempt + 1))));
   }
   throw new Error("Lead changed repeatedly while saving the quotation summary. Please retry.");
 }
