@@ -1153,6 +1153,14 @@ export async function fetchLeadSmartQuoteVersions(leadId: string): Promise<{ ava
   return data;
 }
 
+/** Staff: a signed Smart Quote URL that adds the client's next quotation to THIS lead (valid up to 30 days). */
+export async function issueLeadSmartQuoteLink(leadId: string, days?: number): Promise<{ url: string; expiresAt: string }> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/smart-quote-link`, { method: "POST", body: JSON.stringify(days ? { days } : {}) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Could not create the Smart Quote link.");
+  return data;
+}
+
 export async function prepareLeadCustomerProfile(leadId: string): Promise<{ customerId: string }> {
   const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/customer-profile`, { method: "POST", body: "{}" });
   const data = await res.json().catch(() => ({}));
@@ -3284,13 +3292,13 @@ export type PublicSmartQuoteLeadPayload = {
   generatedAt: string;
 };
 
+import { publicSmartQuoteHeaders, readSmartQuoteLinkToken } from "../lib/smartQuoteLinkClient";
+
 export async function submitPublicSmartQuoteLead(payload: PublicSmartQuoteLeadPayload) {
+  const portalToken = getStoredUser()?.role === "Customer" ? getStoredAuthToken() : null;
   const res = await fetch(`${API_BASE_URL}/api/public/smart-quotes`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Idempotency-Key": `smart-quote:${payload.quoteNumber}`,
-    },
+    headers: publicSmartQuoteHeaders(payload.quoteNumber, readSmartQuoteLinkToken(), portalToken),
     body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));

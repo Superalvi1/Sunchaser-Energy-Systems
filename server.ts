@@ -11,7 +11,16 @@ import {
   saveSmartQuoteSubmission,
   smartQuoteVersionNotes,
   SmartQuoteVersionsUnavailableError,
+  type SmartQuoteSource,
 } from "./server/publicLeads/smartQuoteVersions.ts";
+import {
+  issueSmartQuoteLinkToken,
+  SMART_QUOTE_LINK_DEFAULT_TTL_SECONDS,
+  SMART_QUOTE_LINK_MAX_TTL_SECONDS,
+  SmartQuoteLinkUnavailableError,
+} from "./server/publicLeads/smartQuoteLinkToken.ts";
+import { hydrateActorFromJwt, readBearerToken } from "./server/middleware/actor.ts";
+import { normalizePakistanMobile } from "./src/lib/smartQuoteLead.ts";
 import { buildPublicLeadRecord } from "./server/publicLeads/publicLeadService.ts";
 import { randomUUID, createHash } from "crypto";
 
@@ -675,7 +684,9 @@ const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,mess
   const smartQuoteInput:SmartQuoteLeadInput={name:requirements.name,phone,city:requirements.city,quoteNumber,systemCapacityKw:requirements.systemCapacityKw,estimatedTotalPkr:result.totalPkr,panel:`${requirements.panelQuantity} × ${result.panel.brand} ${result.panel.watts}W`,inverter:`${requirements.inverterQuantity} × ${result.inverter.brand} ${result.inverter.capacityKw}kW`,battery:requirements.batteryId ? `${requirements.batteryQuantity} × ${result.battery.brand} ${result.battery.capacityKwh}kWh` : "Not included",structure:result.structureLabel,generatedAt,snapshot:{lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr}};
   let leadId=agentLeadId;
   try {
-    const saved=await saveSmartQuote(smartQuoteInput,{sendWelcome:false});
+    // The WhatsApp sender number is authenticated by Meta (signed webhook), so it is a verified phone; it still joins an
+    // existing lead only when that lead's name also plausibly matches. The customer-chosen name alone never attaches.
+    const saved=await saveSmartQuote(smartQuoteInput,{sendWelcome:false},{kind:"verified-phone",via:"whatsapp-sender"});
     if(saved.kind==="conflict") throw new Error("Quotation number conflict.");
     leadId=saved.leadId;
   } catch(error) {
@@ -827,21 +838,49 @@ async function persistPublicMarketingLead(
   return { leadId: newLead.id, customerId: persistedCustomerId };
 }
 
-/** Versioned Smart Quote save: one lead per client phone, one immutable row per quote number. */
-async function saveSmartQuote(input: SmartQuoteLeadInput, options: { sendWelcome?: boolean } = {}) {
+/**
+ * Versioned Smart Quote save: one immutable row per quote number. An anonymous submission always gets its own lead (keyed
+ * by quote number); it joins an existing lead only through a verified `source` (staff link token, the portal customer's
+ * own session, or the authenticated WhatsApp sender number).
+ */
+async function saveSmartQuote(input: SmartQuoteLeadInput, options: { sendWelcome?: boolean } = {}, source: SmartQuoteSource = { kind: "anonymous" }) {
   if (!isSupabaseActive()) throw new SmartQuoteVersionsUnavailableError();
   const supabase = getSupabase()!;
   return saveSmartQuoteSubmission(input, {
     store: createPostgrestSmartQuoteVersionStore(supabase),
-    createLead: async (quote, leadId) => {
+    createLead: async (quote, leadId, context) => {
       // A concurrent retry of the same first quotation may have created this lead already.
       const { data: existing } = await supabase.from("leads").select("id,customer_id,deleted_at").eq("id", leadId).maybeSingle();
       if (existing && !existing.deleted_at) return { leadId: existing.id, customerId: existing.customer_id ?? null };
-      const record = { ...buildPublicLeadRecord({ ...toPublicLeadInput(quote), notes: smartQuoteVersionNotes(quote, 1) }), id: leadId };
-      const created = await persistPublicMarketingLead(record, options);
+      const notes = [smartQuoteVersionNotes(quote, 1), ...context.extraNoteLines].join("\n");
+      const record = { ...buildPublicLeadRecord({ ...toPublicLeadInput(quote), notes }), id: leadId };
+      // Never message a number that is already a CRM client on the strength of an unverified web form.
+      const created = await persistPublicMarketingLead(record, context.phoneAlreadyInCrm ? { ...options, sendWelcome: false } : options);
       return { leadId: created.leadId, customerId: created.customerId ?? null };
     },
   });
+}
+
+/**
+ * The logged-in portal customer's own lead for a Smart Quote, or null. The session comes from the Authorization header
+ * of the public request (the public form works without it); anything but a valid Customer session is ignored. Among the
+ * customer's leads the newest one whose phone equals the quotation's phone is used, so a customer cannot be steered onto
+ * a lead for a different number.
+ */
+async function resolvePortalCustomerLeadId(req: express.Request, quote: SmartQuoteLeadInput): Promise<string | null> {
+  const token = readBearerToken(req);
+  if (!token || !isSupabaseActive()) return null;
+  const hydrated = await hydrateActorFromJwt(token, resolveAuthLocalDb());
+  if (!hydrated.ok || hydrated.actor.role !== "Customer" || !hydrated.actor.customerId) return null;
+  const { data } = await getSupabase()!
+    .from("leads")
+    .select("id,phone,created_at")
+    .eq("customer_id", hydrated.actor.customerId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const wanted = normalizePakistanMobile(quote.phone);
+  return (data || []).find((row: any) => wanted && normalizePakistanMobile(String(row.phone || "")) === wanted)?.id ?? null;
 }
 
 // Archive the exact PDF downloaded by a guest, scoped to their captured quotation.
@@ -907,7 +946,8 @@ app.use(
   "/api/public",
   createPublicLeadRouter({
     persistLead: persistPublicMarketingLead,
-    saveSmartQuote: (input) => saveSmartQuote(input),
+    saveSmartQuote: (input, source) => saveSmartQuote(input, {}, source),
+    resolvePortalLeadId: resolvePortalCustomerLeadId,
     archivePdf: archivePublicSmartQuotePdf,
   })
 );
@@ -2036,6 +2076,49 @@ app.post("/api/leads/:id/customer-profile", async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     return res.status(err instanceof CustomerProfileError ? err.statusCode : 500).json({ error: err.message || "Could not prepare client documents." });
+  }
+});
+
+/**
+ * Staff issue a signed link that lets one client's Smart Quote join THIS lead as its next version. The only way for a
+ * public (not logged-in) quotation to attach to an existing lead; names and phone numbers alone never do.
+ */
+app.post("/api/leads/:id/smart-quote-link", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
+  try {
+    let lead: { id: string; phone: string } | null = null;
+    if (isSupabaseActive()) {
+      const { data } = await getSupabase()!.from("leads").select("id,phone,deleted_at").eq("id", req.params.id).maybeSingle();
+      if (data && !data.deleted_at) lead = { id: data.id, phone: String(data.phone || "") };
+    } else {
+      loadDb();
+      const local = (db.leads as any[]).find((l) => l.id === req.params.id && !l.deletedAt);
+      if (local) lead = { id: local.id, phone: String(local.phone || "") };
+    }
+    if (!lead) return res.status(404).json({ error: "Lead not found." });
+    const phone = normalizePakistanMobile(lead.phone);
+    if (!phone) return res.status(422).json({ error: "Add a valid mobile number to this lead before creating a Smart Quote link." });
+    const days = req.body?.days === undefined ? SMART_QUOTE_LINK_DEFAULT_TTL_SECONDS / 86400 : Number(req.body.days);
+    if (!Number.isFinite(days) || days < 1 / 24 || days > SMART_QUOTE_LINK_MAX_TTL_SECONDS / 86400) {
+      return res.status(400).json({ error: "days must be between 1 hour and 30 days." });
+    }
+    const { token, expiresAt } = issueSmartQuoteLinkToken({ leadId: lead.id, phone, ttlSeconds: Math.round(days * 86400) });
+    const configured = String(process.env.SMART_QUOTE_PUBLIC_URL || "").trim();
+    const base = configured || (process.env.NODE_ENV === "production" ? "https://smartquote.sunchaserenergy.co/quote" : `${req.protocol}://${req.get("host")}/quote`);
+    const url = new URL(base);
+    url.searchParams.set("link", token);
+    try {
+      await appendActivityLog(staff.id, staff.username, staff.role, "Smart Quote Link Issued", `Lead ${lead.id}, expires ${new Date(expiresAt).toISOString()}`);
+    } catch (logError) {
+      console.warn("[smart-quote-link] activity log failed:", logError instanceof Error ? logError.message : logError);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ leadId: lead.id, url: url.toString(), token, expiresAt: new Date(expiresAt).toISOString() });
+  } catch (error) {
+    if (error instanceof SmartQuoteLinkUnavailableError) return res.status(503).json({ error: "Smart Quote links are not configured on this server." });
+    console.error("[smart-quote-link] issue failed:", error instanceof Error ? error.message : error);
+    return res.status(500).json({ error: "Could not create the Smart Quote link." });
   }
 });
 
