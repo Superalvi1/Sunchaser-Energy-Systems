@@ -54,11 +54,30 @@ export function getJwtExpiresIn(): string {
   return expiresIn;
 }
 
-export function signAccessToken(claims: JwtUserClaims): string {
+export function signAccessToken(claims: JwtUserClaims & { sessionStartedAt?: number }): string {
   const options: SignOptions = {
     expiresIn: getJwtExpiresIn() as SignOptions["expiresIn"],
   };
-  return jwt.sign(claims, getJwtSecret(), options);
+  const { sessionStartedAt, ...userClaims } = claims;
+  return jwt.sign(sessionStartedAt ? { ...userClaims, sst: sessionStartedAt } : userClaims, getJwtSecret(), options);
+}
+
+/** Absolute limit for renewing a session from its original sign-in (default 30 days). */
+export function sessionMaxAgeSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const days = Number(env.SESSION_MAX_AGE_DAYS || 30);
+  return Math.round((Number.isFinite(days) && days > 0 ? days : 30) * 86400);
+}
+
+/** Original sign-in time of an already verified token; renewals carry it forward as `sst`. */
+export function sessionStartedAtSeconds(verifiedToken: string): number | null {
+  const decoded = jwt.decode(verifiedToken);
+  if (!decoded || typeof decoded !== "object") return null;
+  const startedAt = Number((decoded as Record<string, unknown>).sst ?? decoded.iat);
+  return Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null;
+}
+
+export function canRenewSession(startedAtSeconds: number | null, nowSeconds: number, maxAgeSeconds: number): boolean {
+  return startedAtSeconds !== null && startedAtSeconds <= nowSeconds && nowSeconds - startedAtSeconds <= maxAgeSeconds;
 }
 
 export function verifyAccessToken(token: string): JwtUserClaims {

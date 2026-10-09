@@ -18,10 +18,13 @@ import {
   validatePublicLeadPayload,
 } from "./publicLeadValidation.ts";
 import { createQuotePdfUploadToken, verifyQuotePdfUploadToken, parseQuotePdfBase64 } from "./smartQuotePdfArchive";
-import { toPublicLeadInput, validateSmartQuoteLeadPayload } from "./smartQuoteLead.ts";
+import { toPublicLeadInput, validateSmartQuoteLeadPayload, type SmartQuoteLeadInput } from "./smartQuoteLead.ts";
+import { SmartQuoteVersionsUnavailableError, type SaveSmartQuoteResult } from "./smartQuoteVersions.ts";
 
 export type PublicLeadRouterDeps = {
   persistLead: PersistPublicLeadFn;
+  /** Durable versioned save; when absent or not yet migrated, the legacy one-lead-per-quote path is used. */
+  saveSmartQuote?: (input: SmartQuoteLeadInput) => Promise<SaveSmartQuoteResult>;
   archivePdf?: (leadId: string, quoteNumber: string, pdf: Buffer) => Promise<import("./smartQuotePdfArchive").SmartQuotePdfArchive>;
   issuePdfUploadToken?: (leadId: string, quoteNumber: string) => string;
   idempotencyStore?: IdempotencyStore;
@@ -131,6 +134,27 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
       const validation = validateSmartQuoteLeadPayload(req.body);
       if (validation.ok === false) {
         return res.status(validation.status).json({ ok: false, error: validation.error });
+      }
+
+      if (deps.saveSmartQuote) {
+        try {
+          const saved = await deps.saveSmartQuote(validation.value);
+          if (saved.kind === "conflict") {
+            return res.status(409).json({ ok: false, error: "This quotation number is already in use. Generate a new quotation." });
+          }
+          console.info(`[smart-quotes] ${saved.kind} leadId=${saved.leadId} quote=${validation.value.quoteNumber} version=${saved.versionNumber}`);
+          return res.status(saved.kind === "created" ? 201 : 200).json({
+            ok: true,
+            success: true,
+            leadId: saved.leadId,
+            versionNumber: saved.versionNumber,
+            pdfUploadToken: uploadToken(saved.leadId, validation.value.quoteNumber),
+            message: "Smart Quote saved",
+          });
+        } catch (error) {
+          if (!(error instanceof SmartQuoteVersionsUnavailableError)) throw error;
+          console.warn("[smart-quotes] version history table missing; using legacy lead capture.");
+        }
       }
 
       const idempotencyKey =

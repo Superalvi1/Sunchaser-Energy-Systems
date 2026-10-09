@@ -11,7 +11,8 @@ import {
   toLoginError,
 } from "../lib/startupFetch.ts";
 
-const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
+// Render was retired; production API and UI are served from Railway at this domain.
+const PRODUCTION_API = "https://crm.sunchaserenergy.co";
 
 function resolveApiBaseUrl(): string {
   // These web domains proxy the production API as well as the UI. Using the
@@ -24,7 +25,7 @@ function resolveApiBaseUrl(): string {
     const host = window.location.hostname;
     if (host === "localhost" || host === "127.0.0.1") return "";
   }
-  return RENDER_PRODUCTION_API;
+  return PRODUCTION_API;
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
@@ -1120,6 +1121,38 @@ export async function fetchAdminCustomerDocumentsList(staff: User, customerId: s
   return data as { documents: any[] };
 }
 
+export type SmartQuoteVersionView = {
+  id: string;
+  quoteNumber: string;
+  leadId: string;
+  versionNumber: number;
+  source: string;
+  clientName: string;
+  clientPhone: string;
+  clientCity: string | null;
+  systemCapacityKw: number;
+  panel: string;
+  inverter: string;
+  battery: string;
+  structure: string;
+  lines: { category?: string; description: string; specification: string; unit: string; quantity: number; unitPricePkr: number; totalPkr: number }[] | null;
+  subtotalPkr: number | null;
+  discountPkr: number | null;
+  totalPkr: number;
+  generatedAt: string;
+  createdAt: string;
+  pdf: { fileName: string; fileUrl: string; savedAt: string; sizeBytes: number } | null;
+};
+
+export async function fetchLeadSmartQuoteVersions(leadId: string): Promise<{ available: boolean; versions: SmartQuoteVersionView[] }> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/smart-quote-versions`);
+  // A server without version history (not yet deployed) keeps the legacy proposal view.
+  if (res.status === 404) return { available: false, versions: [] };
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Could not load saved quotation versions.");
+  return data;
+}
+
 export async function prepareLeadCustomerProfile(leadId: string): Promise<{ customerId: string }> {
   const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/customer-profile`, { method: "POST", body: "{}" });
   const data = await res.json().catch(() => ({}));
@@ -1157,6 +1190,7 @@ export async function uploadAdminCustomerDocument(
 export function uploadAdminCustomerDocumentWithProgress(
   staff: User,
   body: {
+    clientUploadId?: string;
     customerId: string;
     base64Data: string;
     fileName: string;
@@ -1360,6 +1394,16 @@ export async function fetchAuthMe(): Promise<{ success: boolean; user: User }> {
     throw Object.assign(new Error(parsed.error || `Session expired (HTTP ${res.status}).`), { status: res.status });
   }
   return parsed as { success: boolean; user: User };
+}
+
+/** Exchange a still-valid token for a fresh one so an active mobile session survives restarts. */
+export async function refreshAuthToken(): Promise<string> {
+  const res = await apiFetch("/api/auth/refresh", { method: "POST", body: "{}", signal: AbortSignal.timeout(12000) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok || typeof parsed.token !== "string") {
+    throw Object.assign(new Error(parsed.error || `Session refresh failed (HTTP ${res.status}).`), { status: res.status });
+  }
+  return parsed.token;
 }
 
 export async function loginUser(
@@ -3227,9 +3271,9 @@ export async function submitPublicSmartQuoteLead(payload: PublicSmartQuoteLeadPa
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || "Could not save your quote details. Please try again.");
+    throw Object.assign(new Error(data.error || "Could not save your quote details. Please try again."), { status: res.status });
   }
-  return data as { success: boolean; leadId: string; message: string; pdfUploadToken?: string };
+  return data as { success: boolean; leadId: string; message: string; pdfUploadToken?: string; versionNumber?: number };
 }
 
 

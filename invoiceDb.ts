@@ -37,6 +37,15 @@ import {
 } from "./src/lib/invoiceFromLead.ts";
 import { isInvoiceArchived } from "./src/lib/invoices.ts";
 import { syncCostingSheetFromInvoice } from "./internalCostingDb.js";
+import {
+  balanceAfterLedger,
+  findRecentDuplicatePayment,
+  ledgerTotal,
+  normalizeClientRequestId,
+  overpaymentError,
+  paymentIdFor,
+  roundMoney,
+} from "./server/finance/paymentLedger.ts";
 
 export class InvoiceDbError extends Error {
   statusCode: number;
@@ -288,18 +297,49 @@ async function recalcPaidTotals(invoiceId: string, localDb?: Database) {
   return payments.reduce((s, p) => s + Number(p.amount || 0), 0);
 }
 
+/** Returns false when a row with the same id already exists (a replayed submission). */
 async function insertPaymentRow(
   payRow: Record<string, unknown>,
   localDb?: Database
-) {
+): Promise<boolean> {
   if (isSupabaseActive()) {
     const { error } = await getSupabase()!.from("invoice_payments").insert(payRow);
+    if (error?.code === "23505") return false;
     if (error) throw error;
+    return true;
+  }
+  const db = localDb as any;
+  db.invoicePayments = db.invoicePayments || [];
+  if (db.invoicePayments.some((r: any) => r.id === payRow.id)) return false;
+  db.invoicePayments.push(payRow);
+  return true;
+}
+
+/** Persist paid/balance/status derived from the payment ledger. */
+async function persistLedgerTotals(
+  invoiceId: string,
+  grandTotal: number,
+  dueDate: string | null | undefined,
+  username: string,
+  localDb?: Database
+) {
+  const paidTotal = await recalcPaidTotals(invoiceId, localDb);
+  const patch = {
+    paid_amount: paidTotal,
+    balance_due: balanceAfterLedger(grandTotal, paidTotal),
+    payment_status: derivePaymentStatus(grandTotal, paidTotal, dueDate ?? null),
+    updated_at: new Date().toISOString(),
+    updated_by: username,
+  };
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+    if (error) throw new InvoiceDbError(`Payment saved, but the invoice balance could not be updated: ${error.message}. Retry to refresh the balance.`, 500);
   } else {
     const db = localDb as any;
-    db.invoicePayments = db.invoicePayments || [];
-    db.invoicePayments.push(payRow);
+    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
+    if (idx >= 0) Object.assign(db.invoices[idx], patch);
   }
+  return paidTotal;
 }
 
 /** Auto-insert audit row when invoice is saved with paidAmount > 0 and no payments yet. */
@@ -318,7 +358,8 @@ async function ensureInitialPaymentRow(
   if (existing.length > 0) return;
 
   const payRow = {
-    id: `pay-init-${Date.now()}`,
+    // One opening row per invoice, even if two saves race.
+    id: `pay-init-${invoiceId}`,
     invoice_id: invoiceId,
     amount: opts.paidAmount,
     payment_method: coercePaymentMethod(opts.paymentMode),
@@ -678,30 +719,47 @@ export async function updateAdminInvoice(
     updated_by: username,
   };
 
-  if (rawItems) {
-    const totals = computeInvoiceTotals(
-      rawItems,
-      Number(body.discountAmount ?? body.discount_amount ?? 0)
+  // Recorded payments decide what was paid; a stale form value must not overwrite the ledger.
+  const ledger = await loadPayments(invoiceId, localDb);
+  const totals = rawItems
+    ? computeInvoiceTotals(rawItems, Number(body.discountAmount ?? body.discount_amount ?? 0))
+    : null;
+  const grandTotal = totals ? totals.grandTotal : existing.grandTotal;
+  const requestedPaid = body.paidAmount !== undefined || body.paid_amount !== undefined
+    ? roundMoney(Number(body.paidAmount ?? body.paid_amount ?? 0))
+    : existing.paidAmount;
+  const paidAmount = ledger.length ? ledgerTotal(ledger) : requestedPaid;
+  // Only an edit that changes the total or paid amount is checked; legacy overpaid invoices stay editable.
+  const changesMoney = grandTotal !== existing.grandTotal || (!ledger.length && requestedPaid !== existing.paidAmount);
+  if (paidAmount > grandTotal && changesMoney) {
+    throw new InvoiceDbError(
+      ledger.length
+        ? `The invoice total (PKR ${grandTotal.toLocaleString("en-PK")}) cannot be lower than payments already recorded (PKR ${paidAmount.toLocaleString("en-PK")}).`
+        : "Paid amount cannot exceed the invoice total.",
+      422
     );
-    const paidAmount =
-      body.paidAmount !== undefined || body.paid_amount !== undefined
-        ? Number(body.paidAmount ?? body.paid_amount ?? 0)
-        : existing.paidAmount;
-    const balanceDue = Math.max(0, totals.grandTotal - paidAmount);
+  }
+  if (totals || body.paidAmount !== undefined || body.paid_amount !== undefined) {
+    patch = {
+      ...patch,
+      paid_amount: paidAmount,
+      balance_due: balanceAfterLedger(grandTotal, paidAmount),
+      payment_status: derivePaymentStatus(
+        grandTotal,
+        paidAmount,
+        sanitizeDate(body.dueDate ?? body.due_date ?? existing.dueDate),
+        body.paymentStatus as any
+      ),
+    };
+  }
+
+  if (rawItems && totals) {
     patch = {
       ...patch,
       subtotal: totals.subtotal,
       discount_amount: totals.discountAmount,
       tax_amount: totals.taxAmount,
       grand_total: totals.grandTotal,
-      paid_amount: paidAmount,
-      balance_due: balanceDue,
-      payment_status: derivePaymentStatus(
-        totals.grandTotal,
-        paidAmount,
-        sanitizeDate(body.dueDate ?? body.due_date),
-        body.paymentStatus as any
-      ),
     };
 
     const amountWords =
@@ -726,8 +784,17 @@ export async function updateAdminInvoice(
     }));
 
     if (isSupabaseActive()) {
-      await getSupabase()!.from("invoice_items").delete().eq("invoice_id", invoiceId);
-      if (itemRows.length) await getSupabase()!.from("invoice_items").insert(itemRows);
+      // Write the new lines before removing old ones, so a failed save never leaves an empty invoice.
+      const client = getSupabase()!;
+      if (itemRows.length) {
+        const { error: upsertError } = await client.from("invoice_items").upsert(itemRows, { onConflict: "id" });
+        if (upsertError) throw new InvoiceDbError(`Invoice items could not be saved: ${upsertError.message}`, 500);
+      }
+      const keep = itemRows.map((r) => r.id);
+      let removal = client.from("invoice_items").delete().eq("invoice_id", invoiceId);
+      if (keep.length) removal = removal.not("id", "in", `(${keep.map((id) => `"${String(id).replace(/"/g, "")}"`).join(",")})`);
+      const { error: deleteError } = await removal;
+      if (deleteError) throw new InvoiceDbError(`Removed invoice items could not be deleted: ${deleteError.message}`, 500);
     } else {
       const db = localDb as any;
       db.invoiceItems = (db.invoiceItems || []).filter(
@@ -735,19 +802,6 @@ export async function updateAdminInvoice(
       );
       db.invoiceItems.push(...itemRows);
     }
-  }
-
-  if (body.paidAmount !== undefined || body.paid_amount !== undefined) {
-    const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
-    const balanceDue = Math.max(0, Math.round((existing.grandTotal - paidAmount) * 100) / 100);
-    patch.paid_amount = paidAmount;
-    patch.balance_due = balanceDue;
-    patch.payment_status = derivePaymentStatus(
-      existing.grandTotal,
-      paidAmount,
-      sanitizeDate(body.dueDate ?? body.due_date ?? existing.dueDate),
-      body.paymentStatus as any
-    );
   }
 
   if (!existing.customerId) {
@@ -861,7 +915,7 @@ export async function recordInvoicePayment(
   invoiceId: string,
   body: Record<string, unknown>,
   localDb?: Database
-): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord }>;
+): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord; replayed: boolean }>;
 export async function recordInvoicePayment(
   userId: string,
   username: string,
@@ -869,7 +923,7 @@ export async function recordInvoicePayment(
   invoiceId: string,
   body: Record<string, unknown>,
   localDb?: Database
-): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord }>;
+): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord; replayed: boolean }>;
 export async function recordInvoicePayment(
   actorOrUserId: RequestActor | string,
   invoiceIdOrUsername: string,
@@ -897,15 +951,38 @@ export async function recordInvoicePayment(
 
   const username = actor.username;
   await FinanceOwnershipResolver.assertInvoiceModuleOwnedByActor(actor, invoiceId, localDb);
-  await getAdminInvoiceById(actor, invoiceId, localDb);
-  const amount = Number(body.amount || 0);
-  if (amount <= 0) throw new InvoiceDbError("Payment amount must be positive.");
+  const before = await getAdminInvoiceById(actor, invoiceId, localDb);
+  const amount = roundMoney(Number(body.amount || 0));
+  if (!(amount > 0)) throw new InvoiceDbError("Payment amount must be positive.");
+
+  const clientRequestId = normalizeClientRequestId(body.clientRequestId);
+  const paymentMethod = coercePaymentMethod((body.paymentMethod || body.payment_method) as string | undefined);
+  const paymentDate = sanitizeDate(body.paymentDate ?? body.payment_date) ?? new Date().toISOString().slice(0, 10);
+  const referenceNumber = String(body.referenceNumber || body.reference_number || "").trim() || null;
+  const notes = String(body.notes || "").trim() || null;
+  const nowMs = Date.now();
+  const payId = paymentIdFor({ invoiceId, clientRequestId, amount, paymentMethod, paymentDate, referenceNumber, notes, recordedBy: username, nowMs });
+
+  // Legacy invoices may carry a paid amount without ledger rows; record it before adding more.
+  await ensureInitialPaymentRow(invoiceId, { paidAmount: before.paidAmount, paymentMode: before.paymentMode, invoiceDate: before.invoiceDate, createdBy: username }, localDb);
+  const ledger = await loadPayments(invoiceId, localDb);
+  const replay = async () => {
+    const existing = (await loadPayments(invoiceId, localDb)).find((p) => p.id === payId);
+    if (!clientRequestId) throw new InvoiceDbError("An identical payment was recorded moments ago. Refresh the invoice before recording it again, or add a reference to tell the payments apart.", 409);
+    await persistLedgerTotals(invoiceId, before.grandTotal, before.dueDate, username, localDb);
+    return { payment: existing as Record<string, unknown>, invoice: await getAdminInvoiceById(actor, invoiceId, localDb), replayed: true };
+  };
+  if (ledger.some((p) => p.id === payId)) return replay();
+  if (!clientRequestId && findRecentDuplicatePayment(ledger, { amount, paymentMethod, paymentDate, referenceNumber, notes, recordedBy: username, nowMs })) {
+    throw new InvoiceDbError("An identical payment was recorded moments ago. Refresh the invoice before recording it again, or add a reference to tell the payments apart.", 409);
+  }
+  const overpaid = overpaymentError(amount, before.grandTotal, ledgerTotal(ledger));
+  if (overpaid) throw new InvoiceDbError(overpaid, 422);
 
   let receiptUrl = body.receiptUrl || body.receipt_url || null;
   let receiptStoragePath = body.receiptStoragePath || body.receipt_storage_path || null;
   if (body.base64Receipt && body.fileName) {
-    const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
-    const cid = inv.customerId || "general";
+    const cid = before.customerId || "general";
     const up = await uploadFileToCustomerStorage(
       cid,
       String(body.base64Receipt),
@@ -916,47 +993,23 @@ export async function recordInvoicePayment(
     receiptStoragePath = up.storagePath;
   }
 
-  const payId = `pay-${Date.now()}`;
   const payRow = {
     id: payId,
     invoice_id: invoiceId,
     amount,
-    payment_method: coercePaymentMethod(
-      (body.paymentMethod || body.payment_method) as string | undefined
-    ),
-    payment_date:
-      sanitizeDate(body.paymentDate ?? body.payment_date) ??
-      new Date().toISOString().slice(0, 10),
-    reference_number: body.referenceNumber || body.reference_number || null,
+    payment_method: paymentMethod,
+    payment_date: paymentDate,
+    reference_number: referenceNumber,
     receipt_url: receiptUrl,
     receipt_storage_path: receiptStoragePath,
-    notes: body.notes || null,
+    notes,
     recorded_by: username,
-    created_at: new Date().toISOString(),
+    created_at: new Date(nowMs).toISOString(),
   };
 
-  await insertPaymentRow(payRow, localDb);
+  if (!(await insertPaymentRow(payRow, localDb))) return replay();
 
-  const paidTotal = await recalcPaidTotals(invoiceId, localDb);
-  const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
-  const balanceDue = Math.max(0, inv.grandTotal - paidTotal);
-  const paymentStatus = derivePaymentStatus(inv.grandTotal, paidTotal, inv.dueDate);
-
-  const patch = {
-    paid_amount: paidTotal,
-    balance_due: balanceDue,
-    payment_status: paymentStatus,
-    updated_at: new Date().toISOString(),
-    updated_by: username,
-  };
-
-  if (isSupabaseActive()) {
-    await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
-  } else {
-    const db = localDb as any;
-    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
-    if (idx >= 0) Object.assign(db.invoices[idx], patch);
-  }
+  const paidTotal = await persistLedgerTotals(invoiceId, before.grandTotal, before.dueDate, username, localDb);
 
   try {
     await syncCostingSheetFromInvoice(invoiceId, paidTotal, localDb);
@@ -964,7 +1017,7 @@ export async function recordInvoicePayment(
     console.warn("[CostingPaymentSync]", err?.message || err);
   }
 
-  return { payment: payRow, invoice: await getAdminInvoiceById(actor, invoiceId, localDb) };
+  return { payment: payRow, invoice: await getAdminInvoiceById(actor, invoiceId, localDb), replayed: false };
 }
 
 export async function fetchCustomerPortalInvoicesMe(

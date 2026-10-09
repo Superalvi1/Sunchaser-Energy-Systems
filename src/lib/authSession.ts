@@ -5,6 +5,7 @@ import {
   getStoredAuthToken,
   getStoredUser,
   persistAuthSession,
+  refreshAuthToken,
 } from "../services/api";
 
 export type AuthSessionRestoreResult = {
@@ -20,6 +21,7 @@ type RestoreDependencies = {
   clearAuthSession: typeof clearAuthSession;
   fetchAuthMe: typeof fetchAuthMe;
   persistAuthSession: typeof persistAuthSession;
+  refreshAuthToken?: typeof refreshAuthToken;
 };
 
 export async function restoreAuthSessionUsing({
@@ -28,6 +30,7 @@ export async function restoreAuthSessionUsing({
   clearAuthSession,
   fetchAuthMe,
   persistAuthSession,
+  refreshAuthToken,
 }: RestoreDependencies): Promise<AuthSessionRestoreResult> {
   const token = getStoredAuthToken();
   if (!token) {
@@ -41,7 +44,13 @@ export async function restoreAuthSessionUsing({
 
   try {
     const { user } = await fetchAuthMe();
-    persistAuthSession(user, token);
+    let activeToken = token;
+    try {
+      if (refreshAuthToken) activeToken = await refreshAuthToken();
+    } catch {
+      // The verified token is still valid until it expires; renewal is retried on the next start.
+    }
+    persistAuthSession(user, activeToken);
     return { user, unauthorized: false };
   } catch (error) {
     const status = (error as { status?: number })?.status;
@@ -61,6 +70,7 @@ export function restoreAuthSession() {
     clearAuthSession,
     fetchAuthMe,
     persistAuthSession,
+    refreshAuthToken,
   });
 }
 

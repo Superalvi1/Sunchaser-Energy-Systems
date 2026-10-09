@@ -5,7 +5,13 @@ import { createSalesAgentRuntime, absoluteCrmFileUrl } from "./server/whatsappAg
 import { createSalesAgentRouter } from "./server/whatsappAgent/agentRoutes.ts";
 import { calculateAgentQuote } from "./server/whatsappAgent/quoteTools.ts";
 import { buildSmartQuotationPdf } from "./src/lib/smartQuotationPdf.ts";
-import { toPublicLeadInput } from "./server/publicLeads/smartQuoteLead.ts";
+import { toPublicLeadInput, type SmartQuoteLeadInput } from "./server/publicLeads/smartQuoteLead.ts";
+import {
+  createPostgrestSmartQuoteVersionStore,
+  saveSmartQuoteSubmission,
+  smartQuoteVersionNotes,
+  SmartQuoteVersionsUnavailableError,
+} from "./server/publicLeads/smartQuoteVersions.ts";
 import { buildPublicLeadRecord } from "./server/publicLeads/publicLeadService.ts";
 import { randomUUID, createHash } from "crypto";
 
@@ -337,9 +343,10 @@ import {
   mapUserRow,
   findUserByUsername,
 } from "./userAuthDb.js";
-import { parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
+import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
+import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
-import { assertProductionJwtConfig, signAccessToken } from "./server/auth/jwt.ts";
+import { assertProductionJwtConfig, canRenewSession, sessionMaxAgeSeconds, sessionStartedAtSeconds, signAccessToken } from "./server/auth/jwt.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
@@ -436,6 +443,7 @@ import {
   upsertCustomerSystemProfile,
   listAdminCustomerDocuments,
   prepareLeadCustomerProfile,
+  assertCustomerAdmin,
   assignCustomerDocument,
   uploadFileToCustomerStorage,
   fetchCustomerPortalSystemMe,
@@ -639,12 +647,19 @@ const messagingRepository = messagingProductionWiring.repository;
 const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,messageId)=> {
   const {result}=calculateAgentQuote(requirements,phone);
   const hash=createHash("sha256").update(messageId).digest("hex");
-  const leadId=`lead-ai-${hash.slice(0,24)}`;
+  const agentLeadId=`lead-ai-${hash.slice(0,24)}`;
   const generatedAt=new Date().toISOString();
   const quoteNumber=`SES-${new Date(Date.now()+5*3600000).toISOString().slice(0,10).replaceAll("-","")}-${String(parseInt(hash.slice(0,6),16)%10000).padStart(4,"0")}`;
-  const input=toPublicLeadInput({name:requirements.name,phone,city:requirements.city,quoteNumber,systemCapacityKw:requirements.systemCapacityKw,estimatedTotalPkr:result.totalPkr,panel:`${requirements.panelQuantity} × ${result.panel.brand} ${result.panel.watts}W`,inverter:`${requirements.inverterQuantity} × ${result.inverter.brand} ${result.inverter.capacityKw}kW`,battery:requirements.batteryId ? `${requirements.batteryQuantity} × ${result.battery.brand} ${result.battery.capacityKwh}kWh` : "Not included",structure:result.structureLabel,generatedAt,snapshot:{lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr}});
-  const record={...buildPublicLeadRecord(input),id:leadId};
-  await persistPublicMarketingLead(record,{sendWelcome:false});
+  const smartQuoteInput:SmartQuoteLeadInput={name:requirements.name,phone,city:requirements.city,quoteNumber,systemCapacityKw:requirements.systemCapacityKw,estimatedTotalPkr:result.totalPkr,panel:`${requirements.panelQuantity} × ${result.panel.brand} ${result.panel.watts}W`,inverter:`${requirements.inverterQuantity} × ${result.inverter.brand} ${result.inverter.capacityKw}kW`,battery:requirements.batteryId ? `${requirements.batteryQuantity} × ${result.battery.brand} ${result.battery.capacityKwh}kWh` : "Not included",structure:result.structureLabel,generatedAt,snapshot:{lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr}};
+  let leadId=agentLeadId;
+  try {
+    const saved=await saveSmartQuote(smartQuoteInput,{sendWelcome:false});
+    if(saved.kind==="conflict") throw new Error("Quotation number conflict.");
+    leadId=saved.leadId;
+  } catch(error) {
+    if(!(error instanceof SmartQuoteVersionsUnavailableError)) throw error;
+    await persistPublicMarketingLead({...buildPublicLeadRecord(toPublicLeadInput(smartQuoteInput)),id:agentLeadId},{sendWelcome:false});
+  }
   const logoPath=path.resolve("public/assets/sunchaser-logo.png");
   const logoDataUrl=fs.existsSync(logoPath) ? `data:image/png;base64,${fs.readFileSync(logoPath).toString("base64")}` : undefined;
   const pdf=await buildSmartQuotationPdf({quoteNumber,system:`${requirements.systemCapacityKw} kW`,generatedAt,clientName:requirements.name,clientPhone:phone,clientCity:requirements.city,lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr,totalPkr:result.totalPkr,logoDataUrl});
@@ -679,8 +694,9 @@ app.use("/api/learning", createLearningRouter());
 async function persistPublicMarketingLead(
   lead: PersistedPublicLead,
   options: {sendWelcome?:boolean} = {}
-): Promise<{ leadId: string }> {
+): Promise<{ leadId: string; customerId?: string }> {
   loadDb();
+  let persistedCustomerId: string | undefined;
   const newLead: any = {
     id: lead.id,
     name: lead.name,
@@ -710,6 +726,7 @@ async function persistPublicMarketingLead(
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const customerId = `cust-${randomUUID()}`;
+    persistedCustomerId = customerId;
     const customerCode = await generateCustomerCode(db);
 
     const { error: custErr } = await supabase.from("customers").insert({
@@ -785,7 +802,24 @@ async function persistPublicMarketingLead(
     console.warn("[public-leads] notification failed:", sideErr?.message || sideErr);
   }
 
-  return { leadId: newLead.id };
+  return { leadId: newLead.id, customerId: persistedCustomerId };
+}
+
+/** Versioned Smart Quote save: one lead per client phone, one immutable row per quote number. */
+async function saveSmartQuote(input: SmartQuoteLeadInput, options: { sendWelcome?: boolean } = {}) {
+  if (!isSupabaseActive()) throw new SmartQuoteVersionsUnavailableError();
+  const supabase = getSupabase()!;
+  return saveSmartQuoteSubmission(input, {
+    store: createPostgrestSmartQuoteVersionStore(supabase),
+    createLead: async (quote, leadId) => {
+      // A concurrent retry of the same first quotation may have created this lead already.
+      const { data: existing } = await supabase.from("leads").select("id,customer_id,deleted_at").eq("id", leadId).maybeSingle();
+      if (existing && !existing.deleted_at) return { leadId: existing.id, customerId: existing.customer_id ?? null };
+      const record = { ...buildPublicLeadRecord({ ...toPublicLeadInput(quote), notes: smartQuoteVersionNotes(quote, 1) }), id: leadId };
+      const created = await persistPublicMarketingLead(record, options);
+      return { leadId: created.leadId, customerId: created.customerId ?? null };
+    },
+  });
 }
 
 // Archive the exact PDF downloaded by a guest, scoped to their captured quotation.
@@ -802,8 +836,15 @@ async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, p
     if (!lead) throw new Error("Quotation lead is unavailable.");
     return { id: lead.id, customerId: lead.customerId, notes: lead.notes || "" };
   };
+  const versions = isSupabaseActive() ? createPostgrestSmartQuoteVersionStore(getSupabase()!) : null;
+  let version: Awaited<ReturnType<NonNullable<typeof versions>["findByQuoteNumber"]>> = null;
+  try {
+    version = versions ? await versions.findByQuoteNumber(quoteNumber) : null;
+  } catch (error) {
+    if (!(error instanceof SmartQuoteVersionsUnavailableError)) throw error;
+  }
   const original = await readLead();
-  if (parseSmartQuoteLeadNotes(original.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation does not belong to this lead.");
+  if (version ? version.leadId !== leadId : parseSmartQuoteLeadNotes(original.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation does not belong to this lead.");
   const key = quotePdfObjectKey(leadId, quoteNumber, pdf);
   await putRailwayObject("customer-documents", key, pdf, "application/pdf");
   const archive = { quoteNumber, fileName: `Sunchaser-Quotation-${quoteNumber}.pdf`, fileUrl: buildRailwayObjectProxyUrl("customer-documents", key), sha256: createHash("sha256").update(pdf).digest("hex"), savedAt: new Date().toISOString(), sizeBytes: pdf.length };
@@ -818,10 +859,15 @@ async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, p
       if (index >= 0) local.customerDocuments[index] = document; else local.customerDocuments.push(document);
     }
   }
+  if (version && versions) await versions.setPdf(quoteNumber, { ...archive, storagePath: key });
   // Compare-and-swap preserves staff notes if they edit while the upload is running.
   for (let attempt = 0; attempt < 3; attempt++) {
     const current = await readLead();
-    if (parseSmartQuoteLeadNotes(current.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation lead changed during upload.");
+    // An older version's PDF lives on its version row; the lead summary only tracks the latest quote.
+    if (parseSmartQuoteLeadNotes(current.notes)?.quoteNumber !== quoteNumber) {
+      if (version) return archive;
+      throw new Error("Quotation lead changed during upload.");
+    }
     const notes = addPdfArchiveToNotes(current.notes, archive);
     if (isSupabaseActive()) {
       const { data, error } = await getSupabase()!.from("leads").update({ notes }).eq("id", leadId).eq("notes", current.notes).is("deleted_at", null).select("id").maybeSingle();
@@ -839,6 +885,7 @@ app.use(
   "/api/public",
   createPublicLeadRouter({
     persistLead: persistPublicMarketingLead,
+    saveSmartQuote: (input) => saveSmartQuote(input),
     archivePdf: archivePublicSmartQuotePdf,
   })
 );
@@ -1382,6 +1429,18 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   }
 });
 
+// Sliding renewal for a verified session: an expired, suspended or deleted account cannot renew.
+app.post("/api/auth/refresh", requireAuth, async (req, res) => {
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  // requireAuth already verified this token; renewal never extends past the absolute session age.
+  const startedAt = sessionStartedAtSeconds(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+  if (!canRenewSession(startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
+    return res.status(401).json({ error: "Your session has ended. Please sign in again." });
+  }
+  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: req.actor.role, sessionStartedAt: startedAt! });
+  return res.json({ success: true, token, user: actorToApiUser(req.actor) });
+});
+
 app.post("/api/auth/register", async (req, res) => {
   try {
     loadDb();
@@ -1874,6 +1933,20 @@ app.post("/api/leads/:id/customer-profile", async (req, res) => {
   }
 });
 
+app.get("/api/leads/:id/smart-quote-versions", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
+  if (!isSupabaseActive()) return res.json({ available: false, versions: [] });
+  try {
+    const versions = await createPostgrestSmartQuoteVersionStore(getSupabase()!).listByLead(req.params.id);
+    return res.json({ available: true, versions: versions.map(({ payloadSha256: _fingerprint, ...version }) => version) });
+  } catch (error) {
+    if (error instanceof SmartQuoteVersionsUnavailableError) return res.json({ available: false, versions: [] });
+    console.error("[smart-quote-versions] list failed:", error instanceof Error ? error.message : error);
+    return res.status(500).json({ error: "Could not load saved quotation versions." });
+  }
+});
+
 app.get("/api/admin/customer-documents/:customerId", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -1914,15 +1987,20 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
   const { id: userId, username, role } = staff;
-  const { customerId, base64Data, fileName, mimeType, documentType, title, visibleToCustomer, internalOnly, notes, projectId } =
+  const { customerId, base64Data, fileName, mimeType, documentType, title, visibleToCustomer, internalOnly, notes, projectId, clientUploadId } =
     req.body || {};
+  const uploadId = typeof clientUploadId === "string" && /^[A-Za-z0-9_-]{8,80}$/.test(clientUploadId) ? clientUploadId : null;
   try {
     loadDb();
+    // Authorize before anything is written to storage.
+    await assertCustomerAdmin(userId, username, role, db);
+    const objectId = uploadId ? createHash("sha256").update(`${customerId}\n${uploadId}`).digest("hex").slice(0, 32) : undefined;
     const { url, storagePath } = await uploadFileToCustomerStorage(
       String(customerId),
       String(base64Data),
       String(fileName || "document"),
-      mimeType
+      mimeType,
+      { objectId }
     );
     const doc = await assignCustomerDocument(userId, username, role, {
       customerId: String(customerId),
@@ -1937,6 +2015,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
       notes,
       projectId,
       uploadedBy: username,
+      documentId: objectId ? `doc-${objectId}` : undefined,
     }, db);
     saveDb();
     return res.status(201).json(doc);
@@ -4160,6 +4239,20 @@ app.get("/api/admin/invoices/contracted-ready", async (req, res) => {
   }
 });
 
+/** Append-only finance audit entry; a failed write is reported loudly instead of being swallowed. */
+async function recordFinanceAudit(staff: { id: string; name?: string; username: string; role: string }, action: string, details: string) {
+  const entry = { id: `log-fin-${randomUUID()}`, timestamp: new Date().toISOString(), userId: staff.id, userName: staff.name || staff.username, role: staff.role, action, details };
+  db.activityLogs.unshift(entry);
+  saveDb();
+  if (!isSupabaseActive()) return;
+  const { error } = await getSupabase()!.from("activity_logs").insert({ id: entry.id, timestamp: entry.timestamp, user_id: entry.userId, user_name: entry.userName, role: entry.role, action, details });
+  if (error) console.error(`[finance-audit] FAILED to record "${action}" for ${staff.username}: ${error.message} :: ${details}`);
+}
+
+function invoiceAuditLabel(invoice: { invoiceNumber?: string | null; id: string }) {
+  return `${invoice.invoiceNumber || invoice.id} (${invoice.id})`;
+}
+
 app.post("/api/admin/invoices/from-lead", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -4168,6 +4261,7 @@ app.post("/api/admin/invoices/from-lead", async (req, res) => {
     const leads = await getLeadsForInvoiceOps();
     const result = await createInvoiceFromContractedLead(staff, req.body || {}, leads, db);
     saveDb();
+    if (!result.existing && result.invoice) await recordFinanceAudit(staff, "Invoice Created", `Invoice ${invoiceAuditLabel(result.invoice)} from lead ${req.body?.leadId || "?"}: total ${result.invoice.grandTotal}, paid ${result.invoice.paidAmount}`);
     return res.status(result.existing ? 200 : 201).json(result);
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
@@ -4199,6 +4293,7 @@ app.post("/api/admin/invoices", async (req, res) => {
     loadDb();
     const invoice = await createAdminInvoice(staff, req.body || {}, db);
     saveDb();
+    await recordFinanceAudit(staff, "Invoice Created", `Invoice ${invoiceAuditLabel(invoice)} for ${invoice.customerName || "client"}: total ${invoice.grandTotal}, paid ${invoice.paidAmount}, balance ${invoice.balanceDue}`);
     return res.status(201).json({ invoice });
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
@@ -4213,8 +4308,11 @@ app.patch("/api/admin/invoices/:id", async (req, res) => {
   if (!staff) return;
   try {
     loadDb();
+    const before = await getAdminInvoiceById(staff, req.params.id, db);
     const invoice = await updateAdminInvoice(staff, req.params.id, req.body || {}, db);
     saveDb();
+    const changes = describeInvoiceChange(before, invoice);
+    if (changes.length) await recordFinanceAudit(staff, "Invoice Edited", `Invoice ${invoiceAuditLabel(invoice)}: ${changes.join("; ")}`);
     return res.json({ invoice });
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
@@ -4231,7 +4329,8 @@ app.post("/api/admin/invoices/:id/payments", async (req, res) => {
     loadDb();
     const result = await recordInvoicePayment(staff, req.params.id, req.body || {}, db);
     saveDb();
-    return res.status(201).json(result);
+    if (!result.replayed) await recordFinanceAudit(staff, "Invoice Payment Recorded", `Invoice ${invoiceAuditLabel(result.invoice)}: payment ${result.payment.id} PKR ${result.payment.amount} ${result.payment.payment_method || ""}; paid ${result.invoice.paidAmount} of ${result.invoice.grandTotal}; balance ${result.invoice.balanceDue}`);
+    return res.status(result.replayed ? 200 : 201).json(result);
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -4247,6 +4346,7 @@ app.post("/api/admin/invoices/:id/archive", async (req, res) => {
     loadDb();
     const invoice = await archiveAdminInvoice(staff, req.params.id, db);
     saveDb();
+    await recordFinanceAudit(staff, "Invoice Archived", `Invoice ${invoiceAuditLabel(invoice)}: total ${invoice.grandTotal}, paid ${invoice.paidAmount}`);
     return res.json({ invoice, ok: true, message: "Invoice archived." });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -4260,8 +4360,10 @@ app.delete("/api/admin/invoices/:id", async (req, res) => {
   if (!staff) return;
   try {
     loadDb();
+    const before = await getAdminInvoiceById(staff, req.params.id, db).catch(() => null);
     const result = await deleteAdminInvoice(staff, req.params.id, req.body || {}, db);
     saveDb();
+    await recordFinanceAudit(staff, "Invoice Deleted", `Invoice ${before ? invoiceAuditLabel(before) : req.params.id}: total ${before?.grandTotal ?? "?"}, paid ${before?.paidAmount ?? "?"}`);
     return res.json(result);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -4277,6 +4379,7 @@ app.post("/api/admin/invoices/bulk-delete", async (req, res) => {
     loadDb();
     const result = await bulkDeleteAdminInvoices(staff.id, staff.username, staff.role, req.body || {}, db);
     saveDb();
+    await recordFinanceAudit(staff, "Invoices Bulk Deleted", `Requested ${JSON.stringify((req.body || {}).ids || [])}; result ${JSON.stringify(result).slice(0, 1500)}`);
     return res.json(result);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
@@ -5051,11 +5154,11 @@ app.get("/api/diagnostics/api-config", (req, res) => {
   const renderApiBase = `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
 
   res.json({
-    productionRenderApiBaseUrl: "https://sunchaser-energy-systems.onrender.com",
+    productionApiBaseUrl: "https://crm.sunchaserenergy.co",
     currentServerApiBaseUrl: renderApiBase,
     loginEndpoint: `${renderApiBase}/api/auth/login`,
-    recommendedVercelEnv: {
-      VITE_API_BASE_URL: "https://sunchaser-energy-systems.onrender.com",
+    recommendedClientEnv: {
+      VITE_API_BASE_URL: "https://crm.sunchaserenergy.co",
     },
     supabaseHostname,
     supabaseActive: isSupabaseActive(),
@@ -5208,13 +5311,30 @@ app.post("/api/leads", async (req, res) => {
 app.put("/api/leads/:id", async (req, res) => {
   const { id } = req.params;
   if (!(await guardSalesOwnedResource(req, res, "lead", id))) return;
-  const { quotes: _ignoredQuotes, ...leadPatch } = req.body || {};
+  // Customer links, identity and lifecycle fields are server-owned; relinking a lead
+  // here could overwrite another client's contact details through the customer patch.
+  const {
+    quotes: _ignoredQuotes,
+    id: _ignoredId,
+    customerId: _ignoredCustomerId,
+    customer_id: _ignoredCustomerIdColumn,
+    createdAt: _ignoredCreatedAt,
+    created_at: _ignoredCreatedAtColumn,
+    deletedAt: _ignoredDeletedAt,
+    deleted_at: _ignoredDeletedAtColumn,
+    deletedBy: _ignoredDeletedBy,
+    deleted_by: _ignoredDeletedByColumn,
+    ...leadPatch
+  } = req.body || {};
   const becomingContracted = leadPatch.status === "Contracted";
 
   try {
     const ctx = await resolveLeadForMutation(id, { includeQuotes: becomingContracted });
     if (!ctx) {
       return res.status(404).json({ error: "Lead not found" });
+    }
+    if (leadPatch.notes !== undefined) {
+      leadPatch.notes = mergeStaffEditedLeadNotes(ctx.lead.notes, String(leadPatch.notes ?? ""));
     }
 
     const priorStatus = ctx.lead.status;

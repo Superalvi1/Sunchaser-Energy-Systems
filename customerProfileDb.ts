@@ -34,7 +34,7 @@ function mapCustomerDocumentForResponse(row: any) {
   });
 }
 
-async function assertCustomerAdmin(
+export async function assertCustomerAdmin(
   actorId: string,
   actorUsername: string,
   actorRole: string,
@@ -224,6 +224,15 @@ export async function prepareLeadCustomerProfile(actorId: string, actorUsername:
   return { customerId };
 }
 
+async function findCustomerDocument(id: string, localDb?: Database): Promise<any | null> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!.from("customer_documents").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return (localDb?.customerDocuments || []).find((d: any) => d.id === id) || null;
+}
+
 export async function assignCustomerDocument(
   actorId: string,
   actorUsername: string,
@@ -241,6 +250,7 @@ export async function assignCustomerDocument(
     notes?: string;
     projectId?: string;
     uploadedBy?: string;
+    documentId?: string;
   },
   localDb?: Database
 ) {
@@ -249,12 +259,19 @@ export async function assignCustomerDocument(
   if (!customerId || !body.fileUrl) {
     throw new CustomerProfileError("customerId and fileUrl required.");
   }
+  const documentId = body.documentId || `doc-${randomUUID()}`;
+  const existing = await findCustomerDocument(documentId, localDb);
+  if (existing) {
+    // A retried upload: return the saved row, never a copy or another customer's document.
+    if ((existing.customer_id ?? existing.customerId) !== customerId) throw new CustomerProfileError("Upload id belongs to another client.", 409);
+    return mapCustomerDocumentForResponse(existing);
+  }
 
   const internalOnly = !!body.internalOnly;
   const visibleToCustomer = body.visibleToCustomer !== false && !internalOnly;
 
   const doc = {
-    id: `doc-${randomUUID()}`,
+    id: documentId,
     customer_id: customerId,
     project_id: body.projectId || null,
     document_type: body.documentType,
@@ -310,14 +327,28 @@ function assertCustomerDocumentUpload(fileName: string, buffer: Buffer, contentT
   if (!extOk || !mimeOk) {
     throw new CustomerProfileError("Only PDF, JPG, PNG, and DOCX files are allowed.", 422);
   }
+  // The name and declared type come from the browser; the bytes must match them too.
+  const signatures: Record<string, number[]> = {
+    "application/pdf": [0x25, 0x50, 0x44, 0x46],
+    "image/png": [0x89, 0x50, 0x4e, 0x47],
+    "image/jpeg": [0xff, 0xd8, 0xff],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [0x50, 0x4b, 0x03, 0x04],
+  };
+  if (!signatures[contentType].every((byte, index) => buffer[index] === byte)) {
+    throw new CustomerProfileError("The file content does not match its type. Upload the original PDF, JPG, PNG or DOCX file.", 422);
+  }
 }
 
 export async function uploadFileToCustomerStorage(
   customerId: string,
   base64Data: string,
   fileName: string,
-  mimeType?: string
+  mimeType?: string,
+  options: { objectId?: string } = {}
 ): Promise<{ url: string; storagePath: string }> {
+  if (!/^(?!.*\.\.)[A-Za-z0-9._-]{1,120}$/.test(customerId)) {
+    throw new CustomerProfileError("Invalid customer id.", 400);
+  }
   const matches = base64Data.match(/^data:([^;]*);base64,(.+)$/);
   let buffer: Buffer;
   let contentType = mimeType || "application/octet-stream";
@@ -331,7 +362,7 @@ export async function uploadFileToCustomerStorage(
   assertCustomerDocumentUpload(fileName, buffer, contentType);
 
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `${customerId}/${Date.now()}_${safeName}`;
+  const storagePath = `${customerId}/${options.objectId || Date.now()}_${safeName}`;
 
   if (isRailwayObjectStorageConfigured()) {
     await putRailwayObject("customer-documents", storagePath, buffer, contentType);

@@ -1,5 +1,5 @@
 import AppModal from "./ui/AppModal";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   Download,
@@ -106,6 +106,9 @@ export default function InvoiceStaff({
   const [bulkSelected, setBulkSelected] = useState<Record<string, boolean>>({});
   const [creatingLeadId, setCreatingLeadId] = useState<string | null>(null);
   const [paymentDraft, setPaymentDraft] = useState({ amount: "", method: "Cash", notes: "" });
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  // One id per payment submission; a retry after a timeout reuses it so the server cannot double count.
+  const paymentRequestId = useRef<string | null>(null);
   const [editingItem, setEditingItem] = useState<number|null>(null);
   const [itemDraft,setItemDraft] = useState<InvoiceLineItem>(emptyLine);
   const editMobileItem=(index:number)=>{setEditingItem(index);setItemDraft({...draft.items[index]});};
@@ -152,14 +155,16 @@ export default function InvoiceStaff({
     if (!allowed) return;
     setLoading(true);
     try {
-      const [invRes, accRes, readyRes] = await Promise.all([
+      // Portal accounts are admin-only; sales and accounts roles must still see their invoices.
+      const [invRes, accRes, readyRes] = await Promise.allSettled([
         fetchAdminInvoices(staffUser, { includeArchived: showArchived }),
         fetchCustomerAccounts(staffUser),
         fetchContractedLeadsReadyForInvoice(staffUser),
       ]);
-      setInvoices(invRes.invoices || []);
-      setAccounts(accRes.accounts || []);
-      setReadyLeads(readyRes.leads || []);
+      if (invRes.status === "rejected") throw invRes.reason;
+      setInvoices(invRes.value.invoices || []);
+      setAccounts(accRes.status === "fulfilled" ? accRes.value.accounts || [] : []);
+      setReadyLeads(readyRes.status === "fulfilled" ? readyRes.value.leads || [] : []);
     } catch (e: any) {
       setMsg(e.message);
     } finally {
@@ -602,20 +607,26 @@ export default function InvoiceStaff({
   };
 
   const recordPayment = async () => {
-    if (!selectedId) return;
+    if (!selectedId || recordingPayment) return;
+    paymentRequestId.current ||= globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    setRecordingPayment(true);
     try {
-      await recordAdminInvoicePayment(staffUser, selectedId, {
+      const result = await recordAdminInvoicePayment(staffUser, selectedId, {
         amount: Number(paymentDraft.amount),
         paymentMethod: paymentDraft.method,
         notes: paymentDraft.notes,
-      });
+        clientRequestId: paymentRequestId.current,
+      }) as { invoice?: any; replayed?: boolean };
+      paymentRequestId.current = null;
       setPaymentDraft({ amount: "", method: "Cash", notes: "" });
-      setMsg("Payment recorded.");
+      // Show the server's ledger totals; the list state captured before this request is stale.
+      if (result.invoice) selectInvoice(result.invoice);
+      setMsg(result.replayed ? "Payment was already recorded; balance refreshed." : "Payment recorded.");
       await load();
-      const inv = invoices.find((i) => i.id === selectedId);
-      if (inv) selectInvoice(inv);
     } catch (e: any) {
       setMsg(e.message);
+    } finally {
+      setRecordingPayment(false);
     }
   };
 
@@ -1336,7 +1347,7 @@ export default function InvoiceStaff({
               placeholder="Add payment amount"
               className={fieldClass}
               value={paymentDraft.amount}
-              onChange={(e) => setPaymentDraft((p) => ({ ...p, amount: e.target.value }))}
+              onChange={(e) => { paymentRequestId.current = null; setPaymentDraft((p) => ({ ...p, amount: e.target.value })); }}
             />
             <select
               className={fieldClass}
@@ -1357,9 +1368,10 @@ export default function InvoiceStaff({
             <button
               type="button"
               onClick={recordPayment}
-              className="sm:col-span-4 py-2 rounded-lg bg-indigo-600 text-white font-bold text-xs"
+              disabled={recordingPayment || !(Number(paymentDraft.amount) > 0)}
+              className="sm:col-span-4 py-2 rounded-lg bg-indigo-600 text-white font-bold text-xs disabled:opacity-60"
             >
-              Record additional payment
+              {recordingPayment ? "Recording payment…" : "Record additional payment"}
             </button>
           </div>
         )}

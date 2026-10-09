@@ -7,7 +7,8 @@ const key = "whatsapp-agent/settings.json";
 export const defaultAgentSettings = (): SalesAgentSettings => ({ enabled: false, ownerUsername: "", businessFacts: "", dailyLimit: 100, autoQuotes: false, quotations: [], revision: 0 });
 export function agentReadiness(env: NodeJS.ProcessEnv = process.env, selection: SalesProviderSelection = {}) {
   const config = resolveSalesProvider(env, selection);
-  return { providerConfigured: Boolean(config.apiKey), modelConfigured: Boolean(config.model), storageConfigured: isRailwayObjectStorageConfigured(env), whatsappEnabled: /^(true|1|yes)$/i.test(env.WHATSAPP_CONVERSATIONS_ENABLED || "") };
+  // Unsupervised sending stays off until the owner sets this server variable; settings alone cannot enable it.
+  return { providerConfigured: Boolean(config.apiKey), modelConfigured: Boolean(config.model), storageConfigured: isRailwayObjectStorageConfigured(env), whatsappEnabled: /^(true|1|yes)$/i.test(env.WHATSAPP_CONVERSATIONS_ENABLED || ""), autonomousSendApproved: /^(true|1|yes)$/i.test(env.WHATSAPP_SALES_AGENT_AUTONOMOUS_SEND || "") };
 }
 export function canEnableAgent(env: NodeJS.ProcessEnv = process.env, selection: SalesProviderSelection = {}) { return Object.values(agentReadiness(env,selection)).every(Boolean); }
 export async function loadAgentSettings() {

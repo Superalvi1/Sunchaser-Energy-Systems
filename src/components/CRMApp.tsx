@@ -5,7 +5,7 @@ import {
   Trash, ChevronDown, CheckCircle, Plus, Star, Sparkles, Brain, Loader2, RefreshCw, X, ShieldCheck, TrendingUp, MapPin, Inbox, FileText
 } from "lucide-react";
 import { Lead, User } from "../types";
-import { formatLeadReceivedAt, leadReceivedAt, parseSmartQuoteLeadNotes, visibleLeadNotes } from "../lib/smartQuoteLead";
+import { editableLeadNotes, formatLeadReceivedAt, leadLatestActivityAt, leadReceivedAt, parseSmartQuoteLeadNotes, visibleLeadNotes } from "../lib/smartQuoteLead";
 import SmartQuotePreview from "./SmartQuotePreview";
 import StaffClientWorkspace from "./StaffClientWorkspace";
 import { runAiLeadScoring, currencySymbol, createInvoiceFromLead } from "../services/api";
@@ -156,7 +156,7 @@ export default function CRMApp({
     setEditPhone(lead.phone);
     setEditAddress(lead.address);
     setEditLocation(sanitizeLeadLocationInput(lead.location) || "");
-    setEditNotes(lead.notes || "");
+    setEditNotes(editableLeadNotes(lead.notes));
     setEditSalesperson(sanitizeLeadAdvisorInput(lead.assignedSalesperson) || "");
     setEditLeadSource(lead.leadSource || "Direct/Referral");
     setEditEngagement(lead.engagementLevel || "Medium");
@@ -280,8 +280,8 @@ export default function CRMApp({
     if (sortBy === 'rating') {
       return b.rating - a.rating;
     }
-    // Sort by creation date list
-    return leadReceivedAt(b) - leadReceivedAt(a) || b.id.localeCompare(a.id);
+    // Newest client activity first: a returning client's new Smart Quote moves the lead up.
+    return leadLatestActivityAt(b) - leadLatestActivityAt(a) || b.id.localeCompare(a.id);
   });
 
   return (
@@ -454,7 +454,8 @@ export default function CRMApp({
                 ? parsedSanctionedLoad
                 : null;
 
-            const smartQuoteKw = Number(parseSmartQuoteLeadNotes(lead.notes)?.system.match(/[\d.]+/)?.[0]);
+            const latestQuote = parseSmartQuoteLeadNotes(lead.notes);
+            const smartQuoteKw = Number(latestQuote?.system.match(/[\d.]+/)?.[0]);
             const primaryMetric =
               Number.isFinite(smartQuoteKw) && smartQuoteKw > 0 ? `${smartQuoteKw} kW` : quotedSystemSize !== null
                 ? `${quotedSystemSize} kW`
@@ -502,6 +503,7 @@ export default function CRMApp({
                     <span className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
                       <span className={`rounded-full border px-2.5 py-1 ${lead.leadSource === "Smart Quote" ? "border-violet-400/50 bg-violet-500/20 text-violet-200" : lead.leadSource === "Staff Quote" ? "border-amber-400/50 bg-amber-500/20 text-amber-200" : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"}`}>{lead.leadSource || "Source not recorded"}</span>
                       <span className="inline-flex items-center gap-1 rounded-full border border-cyan-400/50 bg-cyan-500/15 px-2.5 py-1 text-cyan-200"><Calendar className="h-3.5 w-3.5"/>{formatLeadReceivedAt(lead.createdAt)}</span>
+                      {latestQuote ? <span data-testid={`crm-lead-latest-quote-${lead.id}`} className="rounded-full border border-violet-400/40 bg-violet-500/10 px-2.5 py-1 text-violet-200">Latest quote {latestQuote.quoteNumber}{latestQuote.generatedAt ? ` · ${formatLeadReceivedAt(latestQuote.generatedAt)}` : ""}</span> : null}
                     </span>
                   </span>
                   <span
