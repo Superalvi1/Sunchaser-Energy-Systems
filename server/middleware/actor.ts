@@ -1,7 +1,13 @@
 import type { Request } from "express";
 import type { Database } from "../../dbManager";
 import { findUserByUsername, mapUserRow } from "../../userAuthDb.js";
-import { verifyAccessToken } from "../auth/jwt.ts";
+import {
+  passwordVersion,
+  passwordVersionMatches,
+  sessionLimitViolation,
+  sessionMaxAgeSeconds,
+  verifySessionToken,
+} from "../auth/jwt.ts";
 
 export type ActorAuthMethod = "jwt";
 
@@ -23,9 +29,18 @@ export type RequestActor = {
   authMethod: ActorAuthMethod;
 };
 
+/** What a verified token says about its session; `passwordVersion` is the CURRENT value derived from the database. */
+export type AuthSessionInfo = {
+  startedAt: number | null;
+  passwordVersion: string | null;
+};
+
 export type ActorHydrationResult =
-  | { ok: true; actor: RequestActor }
+  | { ok: true; actor: RequestActor; session?: AuthSessionInfo }
   | { ok: false; status: 401 | 403; error: string; reason: string };
+
+/** Account states that may not use an existing session (login refuses the same states). */
+const INACTIVE_ACCOUNT_STATUSES = new Set(["Suspended", "Rejected", "Pending"]);
 
 /** Protected /api/* routes require Bearer JWT — middleware hydrates req.actor only. */
 
@@ -61,43 +76,76 @@ export function actorToApiUser(actor: RequestActor): Record<string, unknown> {
   return user;
 }
 
-export async function hydrateActorFromUsername(
+async function loadActiveUser(
   username: string,
   localDb: Database | undefined,
   authMethod: ActorAuthMethod
-): Promise<ActorHydrationResult> {
+): Promise<
+  | { ok: true; actor: RequestActor; passwordVersion: string | null }
+  | { ok: false; status: 401 | 403; error: string; reason: string }
+> {
   const row = await findUserByUsername(username, localDb);
   if (!row) {
     return { ok: false, status: 401, error: "Unauthorized", reason: "user_not_found" };
   }
 
   const actor = rowToActor(row as Record<string, unknown>, authMethod);
-  if (actor.accountStatus === "Suspended" || actor.accountStatus === "Rejected") {
+  if (INACTIVE_ACCOUNT_STATUSES.has(actor.accountStatus)) {
     return { ok: false, status: 403, error: "Account is not active.", reason: "account_inactive" };
   }
 
-  return { ok: true, actor };
+  return {
+    ok: true,
+    actor,
+    passwordVersion: passwordVersion((row as Record<string, unknown>).password),
+  };
+}
+
+export async function hydrateActorFromUsername(
+  username: string,
+  localDb: Database | undefined,
+  authMethod: ActorAuthMethod
+): Promise<ActorHydrationResult> {
+  const loaded = await loadActiveUser(username, localDb, authMethod);
+  return loaded.ok ? { ok: true, actor: loaded.actor } : loaded;
 }
 
 export async function hydrateActorFromJwt(
   token: string,
   localDb: Database | undefined
 ): Promise<ActorHydrationResult> {
-  let claims;
+  let verified;
   try {
-    claims = verifyAccessToken(token);
+    verified = verifySessionToken(token);
   } catch {
     return { ok: false, status: 401, error: "Unauthorized", reason: "invalid_jwt" };
   }
 
-  const hydrated = await hydrateActorFromUsername(claims.username, localDb, "jwt");
-  if (!hydrated.ok) return hydrated;
+  // The absolute session limit holds on every request, not only when a client asks for a renewal.
+  const violation = sessionLimitViolation(verified, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds());
+  if (violation) {
+    return { ok: false, status: 401, error: "Unauthorized", reason: violation };
+  }
 
-  if (hydrated.actor.id !== claims.userId) {
+  const claims = verified.claims;
+  const loaded = await loadActiveUser(claims.username, localDb, "jwt");
+  if (!loaded.ok) return loaded;
+
+  if (loaded.actor.id !== claims.userId) {
     return { ok: false, status: 401, error: "Unauthorized", reason: "token_user_mismatch" };
   }
 
-  return hydrated;
+  // A password change or reset retires every token minted before it. Tokens issued before this claim existed
+  // carry none and stay valid until they expire (they are re-bound to the current password on renewal).
+  if (verified.passwordVersion && !passwordVersionMatches(verified.passwordVersion, loaded.passwordVersion)) {
+    return { ok: false, status: 401, error: "Unauthorized", reason: "password_changed" };
+  }
+
+  return {
+    ok: true,
+    actor: loaded.actor,
+    session: { startedAt: verified.startedAt, passwordVersion: loaded.passwordVersion },
+  };
 }
 
 export function actorToLegacyUser(actor: RequestActor): {

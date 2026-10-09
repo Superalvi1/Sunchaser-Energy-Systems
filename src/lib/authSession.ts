@@ -47,8 +47,15 @@ export async function restoreAuthSessionUsing({
     let activeToken = token;
     try {
       if (refreshAuthToken) activeToken = await refreshAuthToken();
-    } catch {
-      // The verified token is still valid until it expires; renewal is retried on the next start.
+    } catch (refreshError) {
+      const refreshStatus = (refreshError as { status?: number })?.status;
+      if (refreshStatus === 401 || refreshStatus === 403) {
+        // The server has just ended this session (absolute limit, password changed, account disabled): sign out.
+        clearAuthSession();
+        return { user: null, unauthorized: true };
+      }
+      // Offline, rate limited or a server error: the verified token is still valid until it expires; renewal is
+      // retried on the next start.
     }
     persistAuthSession(user, activeToken);
     return { user, unauthorized: false };

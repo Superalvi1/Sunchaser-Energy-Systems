@@ -323,7 +323,7 @@ import {
   DeliveryManagementDbError,
 } from "./deliveryManagementDb.js";
 import {
-  authenticateUser,
+  authenticateUserWithCredentials,
   registerUser,
   backfillUnlinkedClientUsers,
   verifyEmailToken,
@@ -346,7 +346,7 @@ import {
 import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
 import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
-import { assertProductionJwtConfig, canRenewSession, sessionMaxAgeSeconds, sessionStartedAtSeconds, signAccessToken } from "./server/auth/jwt.ts";
+import { assertProductionJwtConfig, canRenewSession, passwordVersion, sessionMaxAgeSeconds, signAccessToken } from "./server/auth/jwt.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
@@ -373,7 +373,7 @@ import {
   filterExportStateForSales,
   financeRouteLockdownErrorResponse,
 } from "./server/middleware/financeRouteLockdown.ts";
-import { loginRateLimit } from "./server/middleware/rateLimit.ts";
+import { loginRateLimit, refreshRateLimit } from "./server/middleware/rateLimit.ts";
 import { handleAiChatPost, configureAiChatRoute } from "./server/ai/chatRoute.ts";
 import {
   createPublicLeadRouter,
@@ -1370,6 +1370,13 @@ async function triggerWhatsAppNotification(customerName: string, phone: string, 
 
 /* --- REST SYSTEM API GATEWAYS --- */
 
+// Token-bearing and session responses must never be stored by a browser, proxy or CDN cache.
+app.use("/api/auth", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+
 // 1. Auth — login, register, verify, reset, admin user management
 app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body;
@@ -1382,11 +1389,12 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
 
   try {
     loadDb();
-    const user = await authenticateUser(normalizedUsername, normalizedPassword, db);
+    const { user, passwordHash } = await authenticateUserWithCredentials(normalizedUsername, normalizedPassword, db);
     const token = signAccessToken({
       userId: user.id,
       username: user.username,
       role: user.role,
+      passwordVersion: passwordVersion(passwordHash),
     });
     await appendActivityLog(
       user.id,
@@ -1429,15 +1437,22 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   }
 });
 
-// Sliding renewal for a verified session: an expired, suspended or deleted account cannot renew.
-app.post("/api/auth/refresh", requireAuth, async (req, res) => {
-  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
-  // requireAuth already verified this token; renewal never extends past the absolute session age.
-  const startedAt = sessionStartedAtSeconds(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
-  if (!canRenewSession(startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
-    return res.status(401).json({ error: "Your session has ended. Please sign in again." });
+// Sliding renewal for a verified session. requireAuth has already re-checked the account (suspended, deleted,
+// password changed, absolute session age); the renewed token keeps the original sign-in time, so it never
+// outlives sst + SESSION_MAX_AGE_DAYS, and carries the role and password version read from the database.
+app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) => {
+  const session = req.authSession;
+  if (!req.actor || !session) return res.status(401).json({ error: "Unauthorized" });
+  if (!canRenewSession(session.startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
+    return res.status(401).json({ error: "Your session has ended. Please sign in again.", code: "session_ended" });
   }
-  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: req.actor.role, sessionStartedAt: startedAt! });
+  const token = signAccessToken({
+    userId: req.actor.id,
+    username: req.actor.username,
+    role: req.actor.role,
+    sessionStartedAt: session.startedAt!,
+    passwordVersion: session.passwordVersion,
+  });
   return res.json({ success: true, token, user: actorToApiUser(req.actor) });
 });
 

@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { getSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
+import { getSupabase, isReservedStaffUsername, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
 import {
   isLocalDatabaseAuthFallbackEnabled,
   isSupabaseConnectivityError,
@@ -71,7 +71,8 @@ export function publicAppUrl(path: string) {
 }
 
 export async function sendAuthEmail(to: string, subject: string, html: string) {
-  console.log("[Auth Email]", { to, subject, html: html.slice(0, 200) });
+  // The body carries one-time reset / verification links: keep them out of production logs.
+  console.log("[Auth Email]", process.env.NODE_ENV === "production" ? { to, subject } : { to, subject, html: html.slice(0, 200) });
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.AUTH_EMAIL_FROM || "Sunchaser <noreply@sunchaser-energy.com>";
   if (!apiKey) return { sent: false, logged: true };
@@ -191,6 +192,15 @@ export async function authenticateUser(
   password: string,
   localDb?: Database
 ) {
+  return (await authenticateUserWithCredentials(username, password, localDb)).user;
+}
+
+/** Same as authenticateUser, also returning the stored password hash the password was checked against (never send it to a client). */
+export async function authenticateUserWithCredentials(
+  username: string,
+  password: string,
+  localDb?: Database
+) {
   const row = await findUserByUsername(username, localDb);
   if (!row || !verifyPassword(password, String(row.password || ""))) {
     throw new UserAuthError("Invalid credentials.", 401);
@@ -221,13 +231,13 @@ export async function authenticateUser(
         phone: row.phone,
       }, localDb);
       const refreshed = await getUserById(row.id, localDb);
-      if (refreshed) return mapUserRow(refreshed);
+      if (refreshed) return { user: mapUserRow(refreshed), passwordHash: String(row.password || "") };
     } catch (err) {
       console.error("[Auth] client CRM profile backfill failed", err);
     }
   }
 
-  return mapUserRow(row);
+  return { user: mapUserRow(row), passwordHash: String(row.password || "") };
 }
 
 export async function registerUser(
@@ -257,7 +267,7 @@ export async function registerUser(
   if (!canSelfRegister(role)) {
     throw new UserAuthError(`${role} cannot self-register. Contact Super Admin.`);
   }
-  if (await findUserByUsername(username, localDb)) {
+  if (isReservedStaffUsername(username) || (await findUserByUsername(username, localDb))) {
     throw new UserAuthError("Username already taken.");
   }
   if (await findUserByEmail(email, localDb)) {
@@ -322,9 +332,8 @@ export async function registerUser(
     row.customer_id = profile.customerId;
   }
 
-  let verificationUrl: string | null = null;
   if (verificationToken) {
-    verificationUrl = publicAppUrl(`/verify-email?token=${verificationToken}`);
+    const verificationUrl = publicAppUrl(`/verify-email?token=${verificationToken}`);
     await sendAuthEmail(
       email,
       "Verify your Sunchaser account",
@@ -335,7 +344,6 @@ export async function registerUser(
   return {
     user: mapUserRow(row),
     needsApproval,
-    verificationUrl,
     message: needsApproval
       ? "Registration submitted. Verify your email, then wait for Super Admin approval."
       : "Registration complete. You can sign in now.",
@@ -404,7 +412,8 @@ export async function requestPasswordReset(email: string, localDb?: Database) {
     "Reset your Sunchaser password",
     `<p>Reset password: <a href="${resetUrl}">${resetUrl}</a></p><p>Link expires in 2 hours.</p>`
   );
-  return { ok: true, message: "If that email exists, a reset link was sent.", resetUrl };
+  // The link is only ever delivered by e-mail. Returning it here would let anyone who knows an address reset that account.
+  return { ok: true, message: "If that email exists, a reset link was sent." };
 }
 
 export async function resetPasswordWithToken(
@@ -441,7 +450,9 @@ export async function resetPasswordWithToken(
     updated_at: new Date().toISOString(),
   };
   if (isSupabaseActive()) {
-    await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    // Never tell someone their password changed (and that an old, possibly stolen, session is gone) if the write failed.
+    const { error } = await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    if (error) throw new UserAuthError("Could not update the password. Please try again.", 503);
   } else {
     Object.assign(row, patch);
   }

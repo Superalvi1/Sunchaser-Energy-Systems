@@ -1,4 +1,5 @@
-import jwt, { type SignOptions } from "jsonwebtoken";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import jwt from "jsonwebtoken";
 
 export type JwtUserClaims = {
   userId: string;
@@ -36,6 +37,16 @@ export function assertProductionJwtConfig(): void {
   if (!expiresIn) {
     throw new Error("JWT_EXPIRES_IN is required in production.");
   }
+  // A value jsonwebtoken cannot parse would make every login fail with HTTP 500 after a successful boot.
+  let lifetime: number;
+  try {
+    lifetime = jwtLifetimeSeconds(expiresIn);
+  } catch {
+    throw new Error(`JWT_EXPIRES_IN "${expiresIn}" is not a valid duration (use e.g. 8h, 1d, or a number of seconds).`);
+  }
+  if (!(lifetime > 0)) {
+    throw new Error("JWT_EXPIRES_IN must be a positive duration.");
+  }
 }
 
 export function getJwtSecret(): string {
@@ -54,12 +65,20 @@ export function getJwtExpiresIn(): string {
   return expiresIn;
 }
 
-export function signAccessToken(claims: JwtUserClaims & { sessionStartedAt?: number }): string {
-  const options: SignOptions = {
-    expiresIn: getJwtExpiresIn() as SignOptions["expiresIn"],
-  };
-  const { sessionStartedAt, ...userClaims } = claims;
-  return jwt.sign(sessionStartedAt ? { ...userClaims, sst: sessionStartedAt } : userClaims, getJwtSecret(), options);
+/**
+ * jsonwebtoken reads a numeric STRING as milliseconds ("3600" would be 3.6 s), but an environment variable is
+ * always a string. A bare number in JWT_EXPIRES_IN therefore means seconds, as the library documents for numbers.
+ */
+export function parseExpiresIn(raw: string): string | number {
+  const value = String(raw ?? "").trim();
+  return /^\d+$/.test(value) ? Number(value) : value;
+}
+
+/** Token lifetime in seconds that JWT_EXPIRES_IN yields; throws if jsonwebtoken cannot parse it. */
+export function jwtLifetimeSeconds(raw: string = getJwtExpiresIn()): number {
+  const probe = jwt.sign({}, "x".repeat(JWT_SECRET_MIN_LENGTH), { expiresIn: parseExpiresIn(raw) as never });
+  const { iat, exp } = jwt.decode(probe) as { iat: number; exp: number };
+  return exp - iat;
 }
 
 /** Absolute limit for renewing a session from its original sign-in (default 30 days). */
@@ -68,20 +87,104 @@ export function sessionMaxAgeSeconds(env: NodeJS.ProcessEnv = process.env): numb
   return Math.round((Number.isFinite(days) && days > 0 ? days : 30) * 86400);
 }
 
+/** Tolerated difference between the clocks of two instances (a token minted a moment "in the future"). */
+export const SESSION_CLOCK_SKEW_SECONDS = 30;
+
+/**
+ * Short, non-reversible version of a user's stored password hash. Every password set or reset writes a new salted
+ * hash, so the version changes and tokens minted before the change stop verifying. Keyed with JWT_SECRET so the
+ * claim reveals nothing about the hash; rotating the secret therefore also retires every token.
+ */
+export function passwordVersion(storedPassword: unknown): string | null {
+  const stored = typeof storedPassword === "string" ? storedPassword : "";
+  if (!stored) return null;
+  return createHmac("sha256", getJwtSecret()).update(`pwv1:${stored}`).digest("hex").slice(0, 16);
+}
+
+export function passwordVersionMatches(claimed: string, current: string | null): boolean {
+  if (!current) return false;
+  const a = Buffer.from(claimed);
+  const b = Buffer.from(current);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export type SignableClaims = JwtUserClaims & {
+  /** Original sign-in time (seconds) carried through renewals; omitted at sign-in. */
+  sessionStartedAt?: number;
+  /** passwordVersion() of the user's current stored password. */
+  passwordVersion?: string | null;
+};
+
+export function signAccessToken(claims: SignableClaims, env: NodeJS.ProcessEnv = process.env): string {
+  const { sessionStartedAt, passwordVersion: pwv, ...userClaims } = claims;
+  const payload: Record<string, unknown> = { ...userClaims };
+  if (sessionStartedAt) payload.sst = sessionStartedAt;
+  if (pwv) payload.pwv = pwv;
+
+  const secret = getJwtSecret();
+  const now = Math.floor(Date.now() / 1000);
+  // No token may outlive the session's absolute limit, whatever JWT_EXPIRES_IN says.
+  const hardStop = (sessionStartedAt || now) + sessionMaxAgeSeconds(env);
+  if (hardStop <= now) throw new Error("Session has reached its absolute lifetime.");
+
+  const token = jwt.sign(payload, secret, { expiresIn: parseExpiresIn(getJwtExpiresIn()) as never });
+  const { exp } = jwt.decode(token) as { exp: number };
+  return exp <= hardStop ? token : jwt.sign({ ...payload, exp: hardStop }, secret);
+}
+
 /** Original sign-in time of an already verified token; renewals carry it forward as `sst`. */
 export function sessionStartedAtSeconds(verifiedToken: string): number | null {
   const decoded = jwt.decode(verifiedToken);
   if (!decoded || typeof decoded !== "object") return null;
-  const startedAt = Number((decoded as Record<string, unknown>).sst ?? decoded.iat);
-  return Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null;
+  return startedAtFromPayload(decoded as Record<string, unknown>);
+}
+
+function positiveNumber(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function startedAtFromPayload(payload: Record<string, unknown>): number | null {
+  return positiveNumber(payload.sst ?? payload.iat);
 }
 
 export function canRenewSession(startedAtSeconds: number | null, nowSeconds: number, maxAgeSeconds: number): boolean {
-  return startedAtSeconds !== null && startedAtSeconds <= nowSeconds && nowSeconds - startedAtSeconds <= maxAgeSeconds;
+  return (
+    startedAtSeconds !== null &&
+    startedAtSeconds <= nowSeconds + SESSION_CLOCK_SKEW_SECONDS &&
+    nowSeconds - startedAtSeconds <= maxAgeSeconds
+  );
 }
 
-export function verifyAccessToken(token: string): JwtUserClaims {
-  const decoded = jwt.verify(token, getJwtSecret());
+export type SessionLimitViolation = "missing_exp" | "unknown_start" | "future_start" | "session_too_old";
+
+/**
+ * Absolute-lifetime check applied to every authenticated request (not only to /api/auth/refresh), so a token whose
+ * `exp` lies beyond the session limit - e.g. issued while JWT_EXPIRES_IN was set very high - cannot be used past it.
+ */
+export function sessionLimitViolation(
+  session: { startedAt: number | null; expiresAt: number | null },
+  nowSeconds: number,
+  maxAgeSeconds: number
+): SessionLimitViolation | null {
+  if (session.expiresAt === null) return "missing_exp";
+  if (session.startedAt === null) return "unknown_start";
+  if (session.startedAt > nowSeconds + SESSION_CLOCK_SKEW_SECONDS) return "future_start";
+  if (nowSeconds - session.startedAt > maxAgeSeconds) return "session_too_old";
+  return null;
+}
+
+export type VerifiedSession = {
+  claims: JwtUserClaims;
+  startedAt: number | null;
+  expiresAt: number | null;
+  /** passwordVersion() recorded in the token; null for tokens issued before the claim existed. */
+  passwordVersion: string | null;
+};
+
+export function verifySessionToken(token: string): VerifiedSession {
+  // Tokens are only ever signed HS256; pinning the algorithm keeps verification from accepting anything else.
+  const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] });
   if (!decoded || typeof decoded !== "object") {
     throw new Error("Invalid token payload");
   }
@@ -92,5 +195,15 @@ export function verifyAccessToken(token: string): JwtUserClaims {
   if (!userId || !username) {
     throw new Error("Invalid token claims");
   }
-  return { userId, username, role };
+  const pwv = typeof payload.pwv === "string" && payload.pwv ? payload.pwv : null;
+  return {
+    claims: { userId, username, role },
+    startedAt: startedAtFromPayload(payload),
+    expiresAt: positiveNumber(payload.exp),
+    passwordVersion: pwv,
+  };
+}
+
+export function verifyAccessToken(token: string): JwtUserClaims {
+  return verifySessionToken(token).claims;
 }

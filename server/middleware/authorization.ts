@@ -8,6 +8,8 @@ declare global {
   namespace Express {
     interface Request {
       actor?: import("./actor.ts").RequestActor;
+      /** Session details of the verified JWT (start time, current password version); set with `actor`. */
+      authSession?: import("./actor.ts").AuthSessionInfo;
     }
   }
 }
@@ -63,6 +65,7 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
     }
 
     req.actor = hydrated.actor;
+    req.authSession = hydrated.session;
     if (req.actor.role === "Customer" && !isCustomerAllowedApiRoute(path)) {
       sendAuthFailure(res, 403, "Not authorized for staff routes.");
       return;
