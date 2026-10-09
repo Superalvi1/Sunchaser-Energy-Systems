@@ -96,7 +96,7 @@ export class CRMLinkService {
         companyId: this.companyId,
         actor: systemActor,
       });
-      if (suggestion) {
+      if (suggestion && !suggestion.ambiguous) {
         const leadId = normalizeLeadId(suggestion.linkedEntityId);
         if (leadId) {
           const link = await this.crmLinks.upsert({

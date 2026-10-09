@@ -530,7 +530,7 @@ async function syncQuotationVaultForLead(
 ) {
   if (!quoteId || !leadId) return;
   const customerId =
-    (await findExistingCustomerIdForLinking({ phone: lead.phone, email: lead.email }, localDb)) ||
+    (await findExistingCustomerIdForLinking({ phone: lead.phone, email: lead.email, name: lead.name }, localDb)) ||
     customerIdHint ||
     null;
   if (!customerId) return;
