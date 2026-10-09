@@ -1,5 +1,5 @@
 {
-  "_comment": "Required suites fail the build. Tracked suites are known-failing or need infrastructure CI does not have; they run, are reported with their reason, and never turn green silently. A tracked suite that starts passing is flagged so it can be promoted.",
+  "_comment": "Required suites fail the build. Tracked suites are known-failing or need infrastructure CI does not have; they run, are reported with their reason, and never turn green silently. A tracked suite that starts passing is flagged so it can be promoted. The 'docker' group runs only in the CI job that provides Docker and a Postgres service; there a skip is a failure.",
   "required": [
     {
       "script": "test:crm-repair",
@@ -74,10 +74,64 @@
     {
       "script": "test:startup-smoke",
       "reason": "needs a built dist/server.cjs and database credentials"
+    }
+  ],
+  "docker": [
+    {
+      "script": "test:smart-quote-migration",
+      "area": "Smart Quote migration applied for real: idempotent, RLS, lock timeout, rollback, restore"
+    },
+    {
+      "script": "test:marketplace-ws0",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws1",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws2-atomicity",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws3",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws4",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws-map-0",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ceo-auto-import",
+      "area": "marketplace / database suite that starts its own Postgres container"
     },
     {
       "script": "test:marketplace-catalogue-manager-pg",
-      "reason": "needs Docker; prints SKIP and exits 0"
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ceo-auto-import-pg",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ceo-auto-import-privileges",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws5",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws6a",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws6b",
+      "area": "marketplace / database suite that starts its own Postgres container"
     }
   ]
 }

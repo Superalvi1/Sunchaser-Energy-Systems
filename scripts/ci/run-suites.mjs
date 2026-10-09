@@ -10,8 +10,9 @@ const cfgPath = (process.argv.find((a) => a.startsWith("--config=")) || "").spli
 const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
 const arg = (n, d) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || "").split("=")[1] ?? d;
 const only = arg("only", "") ? arg("only", "").split(",") : null;
+const group = arg("group", "default"); // default = required + tracked; docker = the Docker/Postgres suites
 const timeoutMs = Number(arg("timeout", "600")) * 1000;
-const outDir = path.resolve(root, process.env.CI_REPORT_DIR || "ci-report");
+const outDir = path.resolve(root, process.env.CI_REPORT_DIR || (group === "docker" ? "ci-report-docker" : "ci-report"));
 fs.mkdirSync(outDir, { recursive: true });
 
 function run(script) {
@@ -27,7 +28,7 @@ function run(script) {
 }
 
 // A suite that exits 0 but says it did not run its real checks must not be counted as a pass.
-const SKIP_MARKERS = [/\bSKIP\b[^\n]*(Docker|credential|database|unavailable)/i, /\bBLOCKED\b/];
+const SKIP_MARKERS = [/\bSKIP\b[^\n]*(Docker|credential|database|unavailable)/i, /\bBLOCKED\b/, /# SKIP\b/, /^# skipped [1-9]/m, /\bPostgres not ready\b/i];
 function classify(r) {
   if (r.timedOut) return "timeout";
   if (r.code !== 0) return "fail";
@@ -35,10 +36,13 @@ function classify(r) {
   return "pass";
 }
 
-const jobs = [
-  ...cfg.required.map((s) => ({ ...s, kind: "required" })),
-  ...cfg.tracked.map((s) => ({ ...s, kind: "tracked" })),
-].filter((j) => !only || only.includes(j.script));
+const jobs = (group === "docker"
+  ? (cfg.docker || []).map((s) => ({ ...s, kind: "required" })) // in the Docker job nothing may be skipped
+  : [
+      ...cfg.required.map((s) => ({ ...s, kind: "required" })),
+      ...cfg.tracked.map((s) => ({ ...s, kind: "tracked" })),
+    ]
+).filter((j) => !only || only.includes(j.script));
 
 const results = [];
 for (const j of jobs) {

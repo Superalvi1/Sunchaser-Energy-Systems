@@ -99,7 +99,7 @@
     "test:marketplace-ws6b": "PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/codRoutes.test.ts && PLAYWRIGHT_BROWSERS_PATH=0 tsx server/marketplace/cod/marketplaceWs6bCod.test.ts",
     "test:smart-quote-pdf": "node --import tsx server/publicLeads/smartQuotePdfArchive.test.ts && node --import tsx src/lib/smartQuotationPdf.test.ts",
     "test:whatsapp-sales-agent": "node --import tsx --test server/whatsappAgent/*.test.ts",
-    "test:crm-repair": "node --import tsx --test src/lib/aiDraftNoAutoSave.test.ts server/publicLeads/smartQuoteVersions.test.ts server/finance/paymentLedger.test.ts server/finance/invoiceLock.test.ts server/finance/recordInvoicePayment.test.ts src/lib/smartQuoteNotes.test.ts server/documents/customerDocumentSignature.test.ts src/lib/authSession.test.ts server/auth/sessionRenewal.test.ts server/publicLeads/crmQuotationPersistence.test.ts src/lib/clientIdentity.test.ts invoiceCustomerLink.nameGate.test.ts server/auth/sessionRevocation.test.ts",
+    "test:crm-repair": "node --import tsx --test server/storage/railwayObjectStorage.test.ts server/storage/railwayObjectStorageHardening.test.ts src/lib/aiDraftNoAutoSave.test.ts server/publicLeads/smartQuoteVersions.test.ts server/finance/paymentLedger.test.ts server/finance/invoiceLock.test.ts server/finance/recordInvoicePayment.test.ts src/lib/smartQuoteNotes.test.ts server/documents/customerDocumentSignature.test.ts src/lib/authSession.test.ts server/auth/sessionRenewal.test.ts server/publicLeads/crmQuotationPersistence.test.ts src/lib/clientIdentity.test.ts invoiceCustomerLink.nameGate.test.ts server/auth/sessionRevocation.test.ts",
     "typecheck": "tsc --noEmit",
     "test:ci": "node scripts/ci/run-suites.mjs"
   },

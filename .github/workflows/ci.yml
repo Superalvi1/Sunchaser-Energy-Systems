@@ -64,3 +64,45 @@ jobs:
           name: ci-report
           path: ci-report/
           retention-days: 14
+
+  # Suites that need Docker (they start their own Postgres containers) or a scratch Postgres server.
+  # Here a skipped suite is a FAILURE: GitHub's runners provide Docker, so "Docker unavailable" means something is wrong.
+  docker-suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      MIGRATION_TEST_PSQL: "-h 127.0.0.1 -p 5432 -U postgres"
+      REQUIRE_DB_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Docker and Postgres versions
+        run: |
+          docker version --format 'docker {{.Server.Version}}'
+          psql --version
+      - name: Run Docker / database suites (each independently; a skip fails)
+        run: node scripts/ci/run-suites.mjs --group=docker
+      - name: Upload per-suite logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-report-docker
+          path: ci-report-docker/
+          retention-days: 14
