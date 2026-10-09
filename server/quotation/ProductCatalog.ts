@@ -157,8 +157,9 @@ export function requireActiveProduct(catalog: ProductCatalog, productId: string)
   return product;
 }
 
-export function buildSolarProduct(overrides: Partial<SolarProductInput> = {}): SolarProduct {
-  return createSolarProduct({
+/** Raw (unvalidated) product input, for tests that need to feed invalid values to the validator. */
+export function buildSolarProductInput(overrides: Partial<SolarProductInput> = {}): SolarProductInput {
+  return {
     id: "panel-longi-550",
     category: "panel",
     name: "LONGi Hi-MO 550W",
@@ -169,5 +170,10 @@ export function buildSolarProduct(overrides: Partial<SolarProductInput> = {}): S
     specs: { wattage: 550 },
     active: true,
     ...overrides,
-  });
+  };
+}
+
+/** A validated product (throws on invalid overrides). Test helper; not used by production code. */
+export function buildSolarProduct(overrides: Partial<SolarProductInput> = {}): SolarProduct {
+  return createSolarProduct(buildSolarProductInput(overrides));
 }
