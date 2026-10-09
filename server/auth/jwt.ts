@@ -4,6 +4,8 @@ export type JwtUserClaims = {
   userId: string;
   username: string;
   role: string;
+  /** Company the session is acting for (multi-company mode). Only a hint: memberships are re-checked on every request. */
+  companyId?: string;
 };
 
 const JWT_SECRET_MIN_LENGTH = 32;
@@ -58,8 +60,11 @@ export function signAccessToken(claims: JwtUserClaims & { sessionStartedAt?: num
   const options: SignOptions = {
     expiresIn: getJwtExpiresIn() as SignOptions["expiresIn"],
   };
-  const { sessionStartedAt, ...userClaims } = claims;
-  return jwt.sign(sessionStartedAt ? { ...userClaims, sst: sessionStartedAt } : userClaims, getJwtSecret(), options);
+  const { sessionStartedAt, companyId, ...userClaims } = claims;
+  const payload: Record<string, unknown> = { ...userClaims };
+  if (sessionStartedAt) payload.sst = sessionStartedAt;
+  if (companyId) payload.cid = companyId;
+  return jwt.sign(payload, getJwtSecret(), options);
 }
 
 /** Absolute limit for renewing a session from its original sign-in (default 30 days). */
@@ -92,5 +97,6 @@ export function verifyAccessToken(token: string): JwtUserClaims {
   if (!userId || !username) {
     throw new Error("Invalid token claims");
   }
-  return { userId, username, role };
+  const cid = typeof payload.cid === "string" && /^[a-z][a-z0-9_]{1,40}$/.test(payload.cid) ? payload.cid : undefined;
+  return cid ? { userId, username, role, companyId: cid } : { userId, username, role };
 }

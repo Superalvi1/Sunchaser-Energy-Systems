@@ -22,6 +22,9 @@ import {
 import type { RequestActor } from "./server/middleware/actor.ts";
 import { liftWebsiteSourceFields } from "./src/lib/websiteCatalog/normalize.ts";
 import { rewriteLegacyStorageUrl } from "./server/storage/railwayObjectStorage.ts";
+import { CompanyContextMissingError, getCompanyContext } from "./server/saas/companyContext.ts";
+import { isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { getTenantClient } from "./server/saas/tenantClient.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -172,7 +175,25 @@ function railwayPostgrestFetch(baseUrl: string): typeof fetch {
   }) as typeof fetch;
 }
 
+/**
+ * The data client for the current unit of work.
+ * - Single-company mode (default): the service-role client, exactly as before.
+ * - Multi-company mode: a client bound to the current company through the non-bypass tenant role, so the database
+ *   itself restricts every query. Outside a company context this throws instead of silently reading every company;
+ *   platform work must say so with runAsSystem().
+ */
 export function getSupabase(): SupabaseClient | null {
+  if (isMultiCompanyEnabled()) {
+    const ctx = getCompanyContext();
+    if (ctx?.kind === "company") return getTenantClient(ctx.companyId);
+    if (ctx?.kind === "system") return getSystemSupabase();
+    throw new CompanyContextMissingError();
+  }
+  return getSystemSupabase();
+}
+
+/** The service-role client. Bypasses row security: use only for identity, platform and billing work. */
+export function getSystemSupabase(): SupabaseClient | null {
   if (clientInstance) return clientInstance;
 
   const railwayPostgrestUrl = String(process.env.RAILWAY_POSTGREST_URL || "").trim();
@@ -219,7 +240,7 @@ export function getSupabase(): SupabaseClient | null {
 
 export function isSupabaseActive(): boolean {
   if (isConfigured) return true;
-  return getSupabase() !== null;
+  return getSystemSupabase() !== null;
 }
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */

@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { getSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
+import { getSupabase, getSystemSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
 import {
   isLocalDatabaseAuthFallbackEnabled,
   isSupabaseConnectivityError,
@@ -59,6 +59,7 @@ export function mapUserRow(row: any) {
     approvedBy: row.approved_by || row.approvedBy || undefined,
     rejectedReason: row.rejected_reason || row.rejectedReason || undefined,
     createdAt: row.created_at || row.createdAt,
+    isPlatformAdmin: !!(row.is_platform_admin ?? row.isPlatformAdmin),
   };
 }
 
@@ -101,7 +102,7 @@ export async function findUserByUsername(username: string, localDb?: Database) {
   }
 
   try {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase.from("users").select("*").eq("username", normalized).maybeSingle();
     if (error) throw error;
     return data;
@@ -129,7 +130,7 @@ async function findUserByEmail(email: string, localDb?: Database) {
   }
 
   try {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase
       .from("users")
       .select("*")
@@ -286,7 +287,7 @@ export async function registerUser(
   };
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { error } = await supabase.from("users").insert(row);
     if (error) throw error;
   } else if (localDb) {
@@ -348,7 +349,7 @@ export async function verifyEmailToken(tokenValue: string, localDb?: Database) {
 
   let row: any;
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase
       .from("users")
       .select("*")
@@ -374,7 +375,7 @@ export async function verifyEmailToken(tokenValue: string, localDb?: Database) {
   };
 
   if (isSupabaseActive()) {
-    await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    await getSystemSupabase()!.from("users").update(patch).eq("id", row.id);
   } else {
     Object.assign(row, patch);
   }
@@ -394,7 +395,7 @@ export async function requestPasswordReset(email: string, localDb?: Database) {
     updated_at: new Date().toISOString(),
   };
   if (isSupabaseActive()) {
-    await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    await getSystemSupabase()!.from("users").update(patch).eq("id", row.id);
   } else {
     Object.assign(row, patch);
   }
@@ -417,7 +418,7 @@ export async function resetPasswordWithToken(
 
   let row: any;
   if (isSupabaseActive()) {
-    const { data, error } = await getSupabase()!
+    const { data, error } = await getSystemSupabase()!
       .from("users")
       .select("*")
       .eq("reset_token", t)
@@ -441,7 +442,7 @@ export async function resetPasswordWithToken(
     updated_at: new Date().toISOString(),
   };
   if (isSupabaseActive()) {
-    await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    await getSystemSupabase()!.from("users").update(patch).eq("id", row.id);
   } else {
     Object.assign(row, patch);
   }
@@ -450,7 +451,7 @@ export async function resetPasswordWithToken(
 
 export async function assertSuperAdminActor(userId: string, username: string, localDb?: Database) {
   const row = isSupabaseActive()
-    ? (await getSupabase()!.from("users").select("*").eq("id", userId).single()).data
+    ? (await getSystemSupabase()!.from("users").select("*").eq("id", userId).single()).data
     : (localDb?.users || []).find((u: any) => u.id === userId);
   if (!row || !isSuperAdmin(username, resolveAppUserRole(row.username, row.role))) {
     throw new UserAuthError("Super Admin access required.", 403);
@@ -461,7 +462,7 @@ export async function assertSuperAdminActor(userId: string, username: string, lo
 export async function listUsersForAdmin(actorId: string, actorUsername: string, localDb?: Database) {
   await assertSuperAdminActor(actorId, actorUsername, localDb);
   if (isSupabaseActive()) {
-    const { data, error } = await getSupabase()!
+    const { data, error } = await getSystemSupabase()!
       .from("users")
       .select("*")
       .order("created_at", { ascending: false });
@@ -550,7 +551,7 @@ export async function createUserByAdmin(
     updated_at: new Date().toISOString(),
   };
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("users").insert(row);
+    const { error } = await getSystemSupabase()!.from("users").insert(row);
     if (error) throw error;
   } else {
     mirrorUserToLocalDb(row, localDb);
@@ -638,7 +639,7 @@ async function listLeadsForLinking(localDb?: Database): Promise<ClientLinkLead[]
 
 async function persistUserCustomerId(userId: string, customerId: string, localDb?: Database) {
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("users").update({ customer_id: customerId }).eq("id", userId);
+    const { error } = await getSystemSupabase()!.from("users").update({ customer_id: customerId }).eq("id", userId);
     if (error) throw error;
   }
   if (localDb?.users) {
@@ -739,7 +740,7 @@ export async function ensureClientCrmProfileForUser(
 
 export async function backfillUnlinkedClientUsers(localDb?: Database) {
   const users = isSupabaseActive()
-    ? ((await getSupabase()!.from("users").select("*").eq("role", "Customer")).data || [])
+    ? ((await getSystemSupabase()!.from("users").select("*").eq("role", "Customer")).data || [])
     : (localDb?.users || []).filter((u: any) => String(u.role) === "Customer");
 
   const results: Array<{ userId: string; username?: string; customerId: string; leadId: string | null }> = [];
@@ -852,7 +853,7 @@ export async function updateUserByAdmin(
 
 async function updateUserRow(id: string, patch: Record<string, unknown>, localDb?: Database) {
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("users").update(patch).eq("id", id);
+    const { error } = await getSystemSupabase()!.from("users").update(patch).eq("id", id);
     if (error) throw error;
     return;
   }
@@ -905,7 +906,7 @@ async function clearUserForeignReferences(userId: string, localDb?: Database) {
 
 async function getUserById(id: string, localDb?: Database) {
   if (isSupabaseActive()) {
-    const { data, error } = await getSupabase()!.from("users").select("*").eq("id", id).maybeSingle();
+    const { data, error } = await getSystemSupabase()!.from("users").select("*").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!data) throw new UserAuthError("User not found.", 404);
     return data;
@@ -940,6 +941,7 @@ export async function deleteUserByAdmin(
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
+    const identityDb = getSystemSupabase()!;
     if (linkedCustomerId) {
       const { data: cust } = await supabase
         .from("customers")
@@ -952,7 +954,7 @@ export async function deleteUserByAdmin(
       await supabase.from("customers").update({ user_id: null }).eq("user_id", targetUserId);
     }
     await clearUserForeignReferences(targetUserId, localDb);
-    const { error } = await supabase.from("users").delete().eq("id", targetUserId);
+    const { error } = await identityDb.from("users").delete().eq("id", targetUserId);
     if (error) throw error;
     removeUserFromLocalDb(targetUserId, localDb);
   } else {

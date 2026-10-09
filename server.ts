@@ -346,7 +346,11 @@ import {
 import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
 import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
-import { assertProductionJwtConfig, canRenewSession, sessionMaxAgeSeconds, sessionStartedAtSeconds, signAccessToken } from "./server/auth/jwt.ts";
+import { assertProductionJwtConfig, canRenewSession, sessionMaxAgeSeconds, sessionStartedAtSeconds, signAccessToken, verifyAccessToken } from "./server/auth/jwt.ts";
+import { createPostgrestCompanyStore } from "./server/saas/companyStore.ts";
+import { assertMultiCompanyConfig, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
+import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
@@ -682,9 +686,11 @@ app.use(
 );
 }
 
-app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+const companyStore = createPostgrestCompanyStore();
+app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, companyStore }));
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
-if (!railwayPrivateSmokeMode) setInterval(()=>{void salesAgentRuntime.drain();},5000).unref();
+// The sales agent is a founding-company feature until WhatsApp is scoped per company.
+if (!railwayPrivateSmokeMode) setInterval(()=>{void runAsFoundingCompany(() => salesAgentRuntime.drain());},5000).unref();
 
 // Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
 // The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.
@@ -1383,19 +1389,21 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   try {
     loadDb();
     const user = await authenticateUser(normalizedUsername, normalizedPassword, db);
+    const multi = isMultiCompanyEnabled();
+    const companies = multi ? await listLoginCompanies(user, companyStore) : undefined;
+    // One company: the session is bound to it. Several: the client must choose (POST /api/auth/select-company).
+    const companyId = companies && companies.length === 1 ? companies[0].id : undefined;
     const token = signAccessToken({
       userId: user.id,
       username: user.username,
       role: user.role,
+      companyId,
     });
-    await appendActivityLog(
-      user.id,
-      user.name,
-      user.role,
-      "User Logged In",
-      `Role ${user.role} · status ${user.accountStatus}`
-    );
-    return res.json({ success: true, user, token });
+    const logLogin = () =>
+      appendActivityLog(user.id, user.name, user.role, "User Logged In", `Role ${user.role} · status ${user.accountStatus}`);
+    if (!multi) await logLogin();
+    else if (companyId) await runWithCompany({ companyId, userId: user.id, role: user.role }, logLogin);
+    return res.json({ success: true, user, token, ...(companies ? { companies, companyId } : {}) });
   } catch (err: any) {
     if (err instanceof UserAuthError) {
       return res.status(err.statusCode).json({ error: err.message });
@@ -1437,8 +1445,27 @@ app.post("/api/auth/refresh", requireAuth, async (req, res) => {
   if (!canRenewSession(startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
     return res.status(401).json({ error: "Your session has ended. Please sign in again." });
   }
-  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: req.actor.role, sessionStartedAt: startedAt! });
+  const raw = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const companyId = isMultiCompanyEnabled() ? verifyAccessToken(raw).companyId : undefined;
+  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: req.actor.role, sessionStartedAt: startedAt!, companyId });
   return res.json({ success: true, token, user: actorToApiUser(req.actor) });
+});
+
+// Multi-company mode: a user who belongs to several companies picks the one this session acts for.
+app.post("/api/auth/select-company", requireAuth, async (req, res) => {
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  if (!isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
+  const wanted = String(req.body?.companyId || "");
+  const companies = await listLoginCompanies(req.actor, companyStore);
+  const chosen = companies.find((c) => c.id === wanted);
+  if (!chosen) return res.status(403).json({ error: "You are not a member of this company.", code: "not_a_member" });
+  const raw = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const startedAt = sessionStartedAtSeconds(raw);
+  if (!canRenewSession(startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
+    return res.status(401).json({ error: "Your session has ended. Please sign in again." });
+  }
+  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: chosen.role, sessionStartedAt: startedAt!, companyId: chosen.id });
+  return res.json({ success: true, token, companyId: chosen.id, role: chosen.role, companies });
 });
 
 app.post("/api/auth/register", async (req, res) => {
@@ -10541,7 +10568,7 @@ if (!fs.existsSync(BACKUPS_DIR)) {
   fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 }
 
-setInterval(async () => {
+setInterval(() => runAsFoundingCompany(async () => {
   try {
     let backupState: Database = db;
     if (isSupabaseActive()) {
@@ -10560,7 +10587,7 @@ setInterval(async () => {
   } catch (err: any) {
     console.error("[Database Backup Error]:", err.message);
   }
-}, 24 * 60 * 60 * 1000); // 24-hour cycle schedule
+}), 24 * 60 * 60 * 1000); // 24-hour cycle schedule
 
 // Simple health check and status endpoints for separated deployments
 app.get("/health", (req, res) => {
@@ -10631,6 +10658,7 @@ function logServerBuildIdentity() {
 async function startServer() {
   try {
     assertProductionJwtConfig();
+    assertMultiCompanyConfig();
   } catch (err) {
     console.error(
       "\x1b[31m%s\x1b[0m",

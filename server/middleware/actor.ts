@@ -20,11 +20,14 @@ export type RequestActor = {
   approvedBy?: string;
   rejectedReason?: string;
   createdAt?: string;
+  isPlatformAdmin?: boolean;
+  /** Set by the authorization middleware in multi-company mode. */
+  companyId?: string;
   authMethod: ActorAuthMethod;
 };
 
 export type ActorHydrationResult =
-  | { ok: true; actor: RequestActor }
+  | { ok: true; actor: RequestActor; tokenCompanyId?: string }
   | { ok: false; status: 401 | 403; error: string; reason: string };
 
 /** Protected /api/* routes require Bearer JWT — middleware hydrates req.actor only. */
@@ -52,6 +55,7 @@ function rowToActor(row: Record<string, unknown>, authMethod: ActorAuthMethod): 
     approvedBy: mapped.approvedBy,
     rejectedReason: mapped.rejectedReason,
     createdAt: mapped.createdAt,
+    isPlatformAdmin: mapped.isPlatformAdmin,
     authMethod,
   };
 }
@@ -97,7 +101,7 @@ export async function hydrateActorFromJwt(
     return { ok: false, status: 401, error: "Unauthorized", reason: "token_user_mismatch" };
   }
 
-  return hydrated;
+  return claims.companyId ? { ...hydrated, tokenCompanyId: claims.companyId } : hydrated;
 }
 
 export function actorToLegacyUser(actor: RequestActor): {
