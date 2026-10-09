@@ -104,7 +104,7 @@ jobs:
         if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Sunchaser-CRM-1.0.14-build17-debug
+          name: Sunchaser-CRM-1.0.17-build20-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -113,7 +113,7 @@ jobs:
         if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Sunchaser-CRM-1.0.14-build17-release-apk
+          name: Sunchaser-CRM-1.0.17-build20-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -122,7 +122,7 @@ jobs:
         if: steps.gradle_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Sunchaser-CRM-1.0.14-build17-play-store-aab
+          name: Sunchaser-CRM-1.0.17-build20-play-store-aab
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
