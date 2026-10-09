@@ -19,7 +19,7 @@ const login = async (u, pw = PW) => (await j(await post("/api/auth/login", { use
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (n) => String(Math.floor(Math.random() * 10 ** n)).padStart(n, "0");
 
-const admin = await login("t_admin");
+let admin = await login("t_admin");
 const A = (p, init = {}) => fetch(BASE + p, { ...init, headers: { "content-type": "application/json", authorization: `Bearer ${admin}`, ...(init.headers || {}) } });
 
 // ============ 1. Sessions ============
@@ -63,12 +63,23 @@ check("the token cannot be renewed after the reset either", (await post("/api/au
 check("signing in with the new password works", Boolean(await login("t_sales", "Changed-By-Verify-9!")));
 // restore the synthetic password hash
 psql(`update users set password=(select password from users where username='t_accounts') where username='t_sales'`);
-// logout
-const lo = await post("/api/auth/logout", {}, admin);
-if (lo.status === 404) note("LOGOUT: there is no server-side logout endpoint. Signing out only clears the device; a copied token stays valid until it expires or the password changes. This is a known gap (needs a session_epoch column).");
-else check("logout revokes the token", (await me(admin)) === 401);
+// logout: a separate login ("device 2") is signed out; the first session ("device 1") must keep working
+const dev2 = await login("t_admin");
+check("a second device is signed in", (await me(dev2)) === 200);
+const lo = await post("/api/auth/logout", {}, dev2);
+check("logout succeeds", lo.status === 200, String(lo.status));
+check("the logged-out token is refused immediately", (await me(dev2)) === 401);
+check("a logged-out token cannot be refreshed", (await post("/api/auth/refresh", {}, dev2)).status === 401);
+check("logging out on one device leaves the other device signed in", (await me(admin)) === 200);
+const dev3 = await login("t_admin"), dev4 = await login("t_admin");
+const lall = await post("/api/auth/logout-all", {}, dev3);
+check("logout-all succeeds", lall.status === 200, String(lall.status));
+check("logout-all kills every session of that user", (await me(dev3)) === 401 && (await me(dev4)) === 401 && (await me(admin)) === 401);
+const admin2 = await login("t_admin");
+admin = admin2; // continue the run with a fresh session
 // refresh abuse
-const results = await Promise.all(Array.from({ length: 30 }, () => post("/api/auth/refresh", {}, rj.token)));
+const fresh = await login("t_admin");
+const results = await Promise.all(Array.from({ length: 30 }, () => post("/api/auth/refresh", {}, fresh)));
 check("refresh is rate limited", results.some((r) => r.status === 429), results.map((r) => r.status).join(","));
 // takeover paths
 const fp = await j(await post("/api/auth/forgot-password", { email: "t_admin@example.test" }));
