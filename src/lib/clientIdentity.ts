@@ -1,8 +1,11 @@
 /**
- * Conservative "is this the same client?" test used when a phone number alone is not enough to attach a new
- * Smart Quote to an existing CRM lead. A phone number is shared by families, offices, installers and agents who
- * quote for several clients, so the name must also plausibly agree. When unsure this returns false: a wrongly
- * split client costs staff one deliberate merge, a wrongly merged client exposes someone else's quotation.
+ * Conservative "do these two names plausibly refer to the same person?" test.
+ *
+ * This is a HINT for staff and a guard for already-verified sources. It is NOT an authorisation check: a public Smart
+ * Quote never attaches to an existing lead because a name and phone agree (anyone who knows a client's name and number
+ * could claim to be them). It is used to (1) word the "possible existing client" note staff see on a new lead,
+ * (2) pick among several leads on a number whose phone was authenticated by the channel (the WhatsApp sender), and
+ * (3) group likely duplicates in the staff CRM, always labelled unverified. When unsure this returns false.
  *
  * Rule (after normalisation: Unicode NFKC, case-folded, diacritics and punctuation removed, honorifics dropped,
  * Muhammad spellings unified):
