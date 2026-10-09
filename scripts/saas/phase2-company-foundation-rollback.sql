@@ -45,6 +45,10 @@ begin
     if orig = 'false' then execute format('alter table public.%I disable row level security', t); end if;
   end loop;
 
+  for f in select name from app.original_state where kind = 'created_trigger' loop
+    execute format('drop trigger if exists tenant_ref_check on public.%I', f.name);
+  end loop;
+
   for p in select * from app.dropped_policies order by id loop
     if to_regclass(format('%I.%I', p.schema_name, p.table_name)) is null then continue; end if;
     if exists (select 1 from pg_policies where schemaname = p.schema_name and tablename = p.table_name and policyname = p.policy_name) then continue; end if;

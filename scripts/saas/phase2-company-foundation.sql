@@ -189,6 +189,52 @@ begin
   end loop;
 end $$;
 
+-- Same-company references. Row security only looks at a row's own company_id; a foreign key only proves the parent
+-- exists. Without this, company A could insert a child row pointing at company B's parent, and any server-side
+-- aggregate computed by parent id would include it. SECURITY DEFINER so the parent is found despite row security;
+-- it only compares company ids and is a trigger function (not callable through the API).
+create or replace function app.assert_same_company() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $f$
+declare i int := 0; col text; ptab text; pcol text; ptype text; v text; pc text; hit boolean; nv jsonb := to_jsonb(NEW);
+begin
+  while i < TG_NARGS loop
+    col := TG_ARGV[i]; ptab := TG_ARGV[i + 1]; pcol := TG_ARGV[i + 2]; ptype := TG_ARGV[i + 3]; i := i + 4;
+    v := nv ->> col;
+    if v is null then continue; end if;
+    -- EXECUTE ... INTO does not set FOUND, so the query returns its own "row exists" flag.
+    hit := null; pc := null;
+    execute format('select company_id, true from public.%I where %I = $1::%s', ptab, pcol, ptype) into pc, hit using v;
+    if hit and pc is not null and pc is distinct from NEW.company_id then
+      raise exception 'cross-company reference: %.% -> %.%', TG_TABLE_NAME, col, ptab, pcol using errcode = '42501';
+    end if;
+  end loop;
+  return NEW;
+end $f$;
+revoke all on function app.assert_same_company() from public;
+
+do $$
+declare
+  tenant_all text[] := array['activity_logs','after_sales_service_logs','bank_accounts','bills','categories','ceo_messages','company_terms','customer_documents','customer_energy_devices','customer_equipment','customer_portal_profiles','customer_savings_profiles','customer_subscriptions','customer_systems','customer_warranties','customers','delivery_challan_items','delivery_challan_photos','delivery_challans','design_sessions','energy_alerts','installation_photos','installation_tasks','interactive_proposal_events','interactive_proposals','internal_costing_sheets','inventory_items','inventory_movements','inventory_purchases','investors','invoice_items','invoice_payments','invoices','leads','net_metering_trackers','notifications','orders','party_ledger_archives','payments','products','products_inventory','project_completion_media','project_deliveries','project_delivery_items','project_delivery_updates','project_finance_records','project_installation_photos','project_installed_equipment','project_inventory_reservations','projects','purchase_orders','quotations','quote_pdf_settings','quote_template_pages','quote_templates','service_requests','service_visit_photos','service_visit_reports','settings','site_surveys','smart_quote_versions','social_links','solar_packages','structure_descriptions','subscription_payments','subscription_plans','support_ticket_updates','support_tickets','technical_job_updates','warranties','warranty_claims','website_content','whatsapp_logs','whatsapp_message_logs','whatsapp_audit_events','whatsapp_channels','whatsapp_connections','whatsapp_contacts','whatsapp_conversation_assignment_events','whatsapp_conversation_crm_links','whatsapp_conversation_status_events','whatsapp_conversations','whatsapp_message_status_events','whatsapp_messages','whatsapp_oauth_states','whatsapp_outbound_idempotency_keys','whatsapp_read_watermarks','whatsapp_webhook_events','role_permissions','roles']::text[];
+  t text; args text;
+begin
+  foreach t in array tenant_all loop
+    if to_regclass('public.' || t) is null then continue; end if;
+    select string_agg(format('%L, %L, %L, %L', a.attname, cf.relname, af.attname, format_type(af.atttypid, af.atttypmod)), ', ')
+      into args
+    from pg_constraint c
+      join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+      join pg_class cf on cf.oid = c.confrelid
+      join pg_attribute af on af.attrelid = c.confrelid and af.attnum = c.confkey[1]
+    where c.contype = 'f' and c.conrelid = ('public.' || t)::regclass and array_length(c.conkey, 1) = 1
+      and cf.relname = any(tenant_all) and cf.relname <> t;
+    if args is not null then
+      execute format('drop trigger if exists tenant_ref_check on public.%I', t);
+      execute format('create trigger tenant_ref_check before insert or update on public.%I for each row execute function app.assert_same_company(%s)', t, args);
+      insert into app.original_state (kind, name, value) values ('created_trigger', t, 'tenant_ref_check') on conflict do nothing;
+    end if;
+  end loop;
+end $$;
+
 -- Post-conditions: abort the whole migration if any tenant table is not fully protected.
 do $$
 declare t text; bad text[] := '{}';

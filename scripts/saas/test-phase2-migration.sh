@@ -16,7 +16,10 @@ check() { if [ "$2" = "$3" ]; then echo "PASS: $1"; ok=$((ok+1)); else echo "FAI
 
 # Re-runnable: if a previous run left the migration applied, undo it first so the snapshot is the true original.
 if [ "$($Q -c "select count(*) from pg_namespace where nspname='app'")" != "0" ]; then
-  $P -f "$REPO/scripts/saas/phase2-company-foundation-rollback.sql" > /dev/null 2>&1
+  if ! $P -f "$REPO/scripts/saas/phase2-company-foundation-rollback.sql" > "$W/pre-rollback.log" 2>&1; then
+    echo "Could not undo the previous migration run on this database:"; grep -iE "refused|error" "$W/pre-rollback.log" | head -3
+    echo "Remove other companies (or use a fresh database) and rerun."; exit 3
+  fi
 fi
 $P -c "drop schema if exists app_rollback_backup cascade" > /dev/null 2>&1
 
