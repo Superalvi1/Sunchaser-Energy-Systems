@@ -776,6 +776,60 @@ export async function createAdminInvoice(
   return created;
 }
 
+/** The version (updated_at) of the invoice the caller's form was loaded from; null when the client sends none. */
+function parseExpectedVersion(body: Record<string, unknown>): string | null {
+  const raw = body.expectedUpdatedAt ?? body.expected_updated_at;
+  if (raw === undefined || raw === null || raw === "") return null;
+  const text = String(raw);
+  if (Number.isNaN(Date.parse(text))) {
+    throw new InvoiceDbError("expectedUpdatedAt is not a valid timestamp.", 400, "INVOICE_VERSION_INVALID");
+  }
+  return text;
+}
+
+/**
+ * Saves header + lines + ledger-derived totals through the invoice_save_atomic database function: one transaction,
+ * the invoice row locked, optional stale-version check, header/lines consistency verified before commit.
+ * Returns "unavailable" when the function is not installed so the previous path can run.
+ */
+async function saveInvoiceAtomically(
+  invoiceId: string,
+  expectedVersion: string | null,
+  patch: Record<string, unknown>,
+  itemRows: ReturnType<typeof toInvoiceItemRow>[] | null
+): Promise<"saved" | "unavailable"> {
+  const { updated_at: _u, balance_due: _b, payment_status: _p, ...header } = patch;
+  const { error } = await getSupabase()!.rpc("invoice_save_atomic", {
+    p_invoice_id: invoiceId,
+    p_expected_updated_at: expectedVersion,
+    p_patch: header,
+    p_items: itemRows,
+  });
+  if (!error) return "saved";
+  const message = String(error.message || "");
+  const code = String(error.code || "");
+  if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(message)) return "unavailable";
+  if (message.startsWith("invoice_conflict")) {
+    throw new InvoiceDbError("This invoice was changed by someone else after you opened it. Nothing was saved; reload the invoice and apply your change again.", 409, "INVOICE_CONFLICT");
+  }
+  if (message.startsWith("invoice_busy") || isTransientDbError(error)) {
+    throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again.", 503, "INVOICE_BUSY");
+  }
+  if (message.startsWith("invoice_total_below_payments")) {
+    throw new InvoiceDbError("The invoice total cannot be lower than payments already recorded. Refresh the invoice and review its lines.", 422, "TOTAL_BELOW_PAYMENTS");
+  }
+  if (message.startsWith("invoice_item_id_conflict")) {
+    throw new InvoiceDbError("A line item id belongs to a different invoice. Reload the invoice and try again.", 409, "INVOICE_ITEM_ID_CONFLICT");
+  }
+  if (message.startsWith("invoice_not_found")) throw new InvoiceDbError("Invoice not found.", 404, "INVOICE_NOT_FOUND");
+  if (message.startsWith("invoice_patch_invalid")) throw new InvoiceDbError("The invoice change was malformed. Nothing was saved.", 400, "INVOICE_PATCH_INVALID");
+  console.error(`[InvoiceEdit] atomic save of ${invoiceId} failed: ${code} ${message}`);
+  if (message.startsWith("invoice_totals_inconsistent")) {
+    throw new InvoiceDbError("The invoice lines and totals did not agree, so nothing was saved. Reload the invoice and try again.", 500, "INVOICE_TOTALS_INCONSISTENT");
+  }
+  throw new InvoiceDbError("The invoice change could not be saved. Nothing was changed; reload the invoice and try again.", 500, "INVOICE_WRITE_FAILED");
+}
+
 export async function updateAdminInvoice(
   actor: RequestActor,
   invoiceId: string,
@@ -829,6 +883,7 @@ async function updateAdminInvoiceLocked(
   const existing = await getAdminInvoiceById(actor, invoiceId, localDb);
 
   const rawItems = body.items as InvoiceLineItem[] | undefined;
+  let itemRows: ReturnType<typeof toInvoiceItemRow>[] | null = null;
   let patch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
     updated_by: username,
@@ -883,11 +938,9 @@ async function updateAdminInvoiceLocked(
       amountInWordsPkr(totals.grandTotal);
     patch.amount_in_words = amountWords;
 
-    const itemRows = totals.items.map((it, idx) => toInvoiceItemRow(invoiceId, it, idx));
+    itemRows = totals.items.map((it, idx) => toInvoiceItemRow(invoiceId, it, idx));
 
-    if (isSupabaseActive()) {
-      await replaceInvoiceItemRows(invoiceId, itemRows);
-    } else {
+    if (!isSupabaseActive()) {
       const db = localDb as any;
       db.invoiceItems = (db.invoiceItems || []).filter(
         (r: any) => (r.invoice_id || r.invoiceId) !== invoiceId
@@ -963,12 +1016,19 @@ async function updateAdminInvoiceLocked(
     );
   }
 
-  if (isSupabaseActive()) {
+  const atomic = isSupabaseActive()
+    ? await saveInvoiceAtomically(invoiceId, parseExpectedVersion(body), patch, itemRows)
+    : "local";
+  if (atomic === "saved") {
+    // Header, lines and ledger totals were written in one database transaction (scripts/invoice-save-atomic.sql).
+  } else if (isSupabaseActive()) {
+    // The function is not installed: previous, non-atomic path.
+    if (itemRows) await replaceInvoiceItemRows(invoiceId, itemRows);
     const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
     if (error) {
       if (ledgerGuardKind(error) === "total_below_payments") {
         // The lines were already replaced above; put the previous lines back so lines and total still agree.
-        if (rawItems && totals) {
+        if (itemRows) {
           try {
             await replaceInvoiceItemRows(invoiceId, existing.items.map((it, idx) => toInvoiceItemRow(invoiceId, it, idx)));
           } catch (restoreErr: any) {
