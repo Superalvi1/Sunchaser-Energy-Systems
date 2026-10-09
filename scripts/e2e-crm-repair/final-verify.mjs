@@ -73,9 +73,11 @@ check("refresh is rate limited", results.some((r) => r.status === 429), results.
 // takeover paths
 const fp = await j(await post("/api/auth/forgot-password", { email: "t_admin@example.test" }));
 check("forgot-password does not return a reset link", !JSON.stringify(fp).includes("token="), Object.keys(fp).join(","));
-const reg = await j(await post("/api/auth/register", { username: "allauddin", password: "Attacker-Pass-123!", name: "Not Admin", email: `a${rand(5)}@example.test`, role: "Customer", phone: "03" + rand(9) }));
-const regLogin = await j(await post("/api/auth/login", { username: "allauddin", password: "Attacker-Pass-123!" }));
-check("a self-registered 'allauddin' does not become Super Admin", (regLogin.user?.role || reg.user?.role || "Customer") !== "Super Admin", JSON.stringify([reg.user?.role, regLogin.user?.role]));
+for (const reserved of ["allauddin", "raza"]) {
+  const reg = await post("/api/auth/register", { username: reserved, password: "Attacker-Pass-123!", name: "Not Admin", email: `a${rand(5)}@example.test`, role: "Customer", phone: "03" + rand(9) });
+  check(`self-registering the reserved staff name '${reserved}' is refused`, reg.status >= 400 && reg.status < 500, String(reg.status));
+  check(`…and nobody can sign in as '${reserved}' with the attacker's password`, !(await login(reserved, "Attacker-Pass-123!")));
+}
 
 // ============ 2. Shared phone numbers ============
 console.log("\n== 2. Shared phone numbers");
@@ -115,7 +117,7 @@ async function newInvoice(total) {
   const body = await j(r); const id = body.invoice?.id || body.id;
   return { id, status: r.status, body };
 }
-const state = (id) => ({ ledger: Number(psql(`select coalesce(sum(amount),0) from invoice_payments where invoice_id='${id}'`)), paid: Number(psql(`select paid_amount from invoices where id='${id}'`)), total: Number(psql(`select grand_total from invoices where id='${id}'`)), balance: Number(psql(`select balance_amount from invoices where id='${id}'`)), rows: Number(psql(`select count(*) from invoice_payments where invoice_id='${id}'`)) });
+const state = (id) => ({ ledger: Number(psql(`select coalesce(sum(amount),0) from invoice_payments where invoice_id='${id}'`)), paid: Number(psql(`select paid_amount from invoices where id='${id}'`)), total: Number(psql(`select grand_total from invoices where id='${id}'`)), balance: Number(psql(`select balance_due from invoices where id='${id}'`)), rows: Number(psql(`select count(*) from invoice_payments where invoice_id='${id}'`)) });
 const pay = (id, amount, extra = {}) => A(`/api/admin/invoices/${id}/payments`, { method: "POST", body: JSON.stringify({ amount, paymentMethod: "Cash", paymentDate: "2026-10-09", ...extra }) });
 const inv = await newInvoice(100000);
 check("a test invoice can be created", Boolean(inv.id), `${inv.status} ${JSON.stringify(inv.body).slice(0, 160)}`);
@@ -167,8 +169,6 @@ if (inv.id) {
   const after4 = state(inv4.id);
   check("rejected payments (overpay, negative, text, zero, missing invoice) are refused with 4xx", bad.every((r) => r.status >= 400 && r.status < 500), bad.map((r) => r.status).join(","));
   check("rejected payments leave the invoice and ledger exactly as they were", JSON.stringify(before4) === JSON.stringify(after4), JSON.stringify([before4, after4]));
-  const conflict = await pay(inv4.id, 12345, { clientRequestId: "verify-f-ok-" + "x" });
-  void conflict;
   // same id, different amount
   const rid2 = "verify-conf-" + rand(8);
   await pay(inv4.id, 1000, { clientRequestId: rid2 });
