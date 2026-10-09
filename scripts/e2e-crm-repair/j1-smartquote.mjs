@@ -34,14 +34,22 @@ check("J1 PDF archived against the version", pdfSha1.length === 64);
 check("J1 one lead and one customer for the phone", sql(`select count(*) from leads where phone='${canonical(phone)}'`) === "1" && sql(`select count(*) from customers where phone='${canonical(phone)}'`) === "1");
 check("J1 client PDF appears in CRM proposal documents", sql(`select count(*) from customer_documents where id='doc-smart-${leadId}-${quote1}'`) === "1");
 
-// --- Journey 2 (part A): revise the quotation (12 kW) for the same client.
+// --- Journey 2 (part A): the same anonymous visitor revises the quotation (12 kW).
+// Changed by the Smart Quote link-token repair (finding P4-03): a public submission NEVER attaches to an existing lead on
+// name + phone alone, so the revision is its own lead, flagged for staff, and the first lead is left exactly as it was.
+// Joining the first lead as version 2 now needs a staff-issued link (see j10-smartquote-link.mjs).
+const leadBefore = sql(`select md5(row(id,name,phone,notes,customer_id,status)::text) from leads where id='${leadId}'`);
 await page.getByRole("button", { name: "12 kW", exact: true }).click();
 await page.locator("aside").getByRole("button", { name: /Generate My Quote/ }).click();
 await page.getByText("Quotation and PDF saved to Sunchaser CRM").waitFor({ timeout: 30000 });
 const versions = sql(`select version_number||'|'||quote_number||'|'||total_pkr from smart_quote_versions where lead_id='${leadId}' order by version_number`).split("\n");
-check("J2 revision stored as version 2 on the same lead", versions.length === 2 && versions[1].startsWith("2|"), versions.join(" ; "));
-check("J2 version 1 unchanged after revision", versions[0] === `1|${quote1}|${total1}`);
-check("J2 still one lead for the phone", sql(`select count(*) from leads where phone='${canonical(phone)}'`) === "1");
+check("J2 anonymous revision does NOT join the first lead", versions.length === 1 && versions[0] === `1|${quote1}|${total1}`, versions.join(" ; "));
+check("J2 first lead row is byte-identical after the revision", sql(`select md5(row(id,name,phone,notes,customer_id,status)::text) from leads where id='${leadId}'`) === leadBefore);
+const leadsForPhone = sql(`select id from leads where phone='${canonical(phone)}' order by created_at`).split("\n");
+check("J2 the revision is its own lead", leadsForPhone.length === 2 && leadsForPhone[0] === leadId, leadsForPhone.join(","));
+const revisionLead = leadsForPhone[1];
+check("J2 the revision lead is flagged 'possible existing client' for staff", new RegExp(`Possible existing client: ${leadId}`).test(sql(`select notes from leads where id='${revisionLead}'`)));
+check("J2 the revision has its own version 1", sql(`select count(*) from smart_quote_versions where lead_id='${revisionLead}' and version_number=1`) === "1");
 await ctx.close();
 
 // --- Journey 9: the save response is lost after the server committed; the client retries.

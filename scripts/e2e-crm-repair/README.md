@@ -34,6 +34,7 @@ node scripts/e2e-crm-repair/j7-session.mjs      # reopen keeps session (renewed)
 node scripts/e2e-crm-repair/j4-whatsapp.mjs     # signed inbound enquiry → no automatic lead → explicit conversion
 node scripts/e2e-crm-repair/j9-logout.mjs       # server-side logout/revocation; start the server with SESSION_REFRESH_GRACE_SECONDS=3 SESSION_REVOCATION_REPROBE_MS=300 REFRESH_RATE_LIMIT_MAX=500; also needs E2E_PGRST_PID, POSTGREST_BIN, E2E_STACK_DIR
 node scripts/e2e-crm-repair/j9-logout-browser.mjs # the SPA logout button (set E2E_CHROMIUM if Playwright browsers are elsewhere)
+node scripts/e2e-crm-repair/j10-smartquote-link.mjs # Smart Quote link tokens: anonymous never attaches; staff link/portal session joins; forged/expired/stale tokens; concurrency; response parity (needs JWT_SECRET)
 ```
 
 Each script prints `PASS`/`FAIL` lines, writes `<journey>-results.json` and screenshots under `$E2E_STATE_DIR`,

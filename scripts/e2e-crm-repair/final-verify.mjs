@@ -98,10 +98,12 @@ check("A's saved versions contain only A's quotation", (vA.versions || []).lengt
 check("B's saved versions contain only B's quotation", (vB.versions || []).length === 1 && vB.versions[0].quoteNumber === q2);
 const r3 = await sq("ahmed  KHAN", q3, 10, 1000000);
 const b3 = await j(r3);
-check("A revising their own quote (case/spacing variant of the name) joins A's lead as version 2", b3.leadId === b1.leadId && psql(`select count(*) from smart_quote_versions where lead_id='${b1.leadId}'`) === "2", `${r3.status} ${JSON.stringify(b3).slice(0, 100)}`);
+// Changed by the Smart Quote link-token repair (P4-03): a public submission never joins an existing lead on name + phone, so
+// A's anonymous revision is its own lead (flagged for staff). Joining A's lead needs a staff-issued link: j10-smartquote-link.mjs.
+check("A's anonymous revision (name variant) does NOT join A's lead and A's lead stays at one version", b3.leadId && b3.leadId !== b1.leadId && psql(`select count(*) from smart_quote_versions where lead_id='${b1.leadId}'`) === "1", `${r3.status} ${JSON.stringify(b3).slice(0, 100)}`);
 const r2b = await sq("Sana Malik", q2, 12, 1200000);
 check("B retrying the same quote number is a replay, not a duplicate", r2b.status === 200 && (await j(r2b)).leadId === b2.leadId && psql(`select count(*) from smart_quote_versions where quote_number='${q2}'`) === "1", String(r2b.status));
-check("no extra leads or customers were created for the shared number", psql(`select count(distinct id) from leads where phone like '%${phone.slice(-7)}'`) === "2", psql(`select count(distinct id) from leads where phone like '%${phone.slice(-7)}'`));
+check("each distinct quotation has exactly one lead for the shared number (A, B, A's revision)", psql(`select count(distinct id) from leads where phone like '%${phone.slice(-7)}'`) === "3", psql(`select count(distinct id) from leads where phone like '%${phone.slice(-7)}'`));
 const sharedNote = psql(`select (select coalesce(notes,'') from leads where id='${b2.leadId}') ilike '%shared%' or (select coalesce(notes,'') from leads where id='${b1.leadId}') ilike '%shared%'`);
 note(`staff-visible 'shared phone' marker present on the leads: ${sharedNote}`);
 // a sales user who does not own lead A must not see its versions
