@@ -140,7 +140,14 @@ export function paymentRequestConflict(stored: LedgerPayment, requested: Request
   return `${pkr}${stored.paymentMethod ? ` ${stored.paymentMethod}` : ""}${when ? ` on ${when}` : ""}`;
 }
 
-export type LedgerGuardKind = "overpayment" | "total_below_payments" | "not_collectible" | "has_payments" | "invalid_payment";
+export type LedgerGuardKind =
+  | "overpayment"
+  | "total_below_payments"
+  | "not_collectible"
+  | "has_payments"
+  | "invalid_payment"
+  | "opening_balance_missing"
+  | "busy";
 
 /**
  * Recognises rejections raised by the optional database guard (scripts: invoice-payments-integrity.sql).
@@ -153,7 +160,19 @@ export function ledgerGuardKind(err: unknown): LedgerGuardKind | null {
   if (message.startsWith("invoice_not_collectible")) return "not_collectible";
   if (message.startsWith("invoice_has_payments")) return "has_payments";
   if (message.startsWith("invoice_payment_invalid")) return "invalid_payment";
+  if (message.startsWith("invoice_opening_balance_missing")) return "opening_balance_missing";
+  if (message.startsWith("invoice_busy")) return "busy";
   return null;
+}
+
+/**
+ * Failures that leave nothing behind and are worth repeating: a deadlock victim (40P01), a serialization failure (40001),
+ * a lock wait that timed out (55P03) or the guard's own invoice_busy tag. Payment ids are deterministic, so repeating an
+ * insert whose first attempt did commit ends in a duplicate-id replay, never in a second payment.
+ */
+export function isTransientDbError(err: unknown): boolean {
+  const code = String((err as { code?: unknown } | null)?.code || "");
+  return code === "40001" || code === "40P01" || code === "55P03" || ledgerGuardKind(err) === "busy";
 }
 
 /** Invoice states that must not take new payments. 'archived' stays collectible: there is no restore path for invoices. */

@@ -4484,6 +4484,15 @@ app.get("/api/admin/invoices/:id", async (req, res) => {
   }
 });
 
+/** Maps an invoice write failure to a coded 4xx; anything unexpected is logged and answered without database text. */
+function invoiceMutationErrorResponse(err: any, res: express.Response, action: string) {
+  if (err instanceof InvoiceDbError) {
+    return res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+  }
+  console.error(`[Invoice] ${action} failed: ${err?.code || ""} ${err?.message || err}`);
+  return res.status(500).json({ error: "The invoice change could not be saved. Reload the invoice and try again.", code: "INVOICE_WRITE_FAILED" });
+}
+
 app.post("/api/admin/invoices", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -4496,8 +4505,7 @@ app.post("/api/admin/invoices", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "create");
   }
 });
 
@@ -4515,8 +4523,7 @@ app.patch("/api/admin/invoices/:id", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "edit");
   }
 });
 
@@ -4532,8 +4539,7 @@ app.post("/api/admin/invoices/:id/payments", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "payment");
   }
 });
 
@@ -4548,8 +4554,7 @@ app.post("/api/admin/invoices/:id/archive", async (req, res) => {
     return res.json({ invoice, ok: true, message: "Invoice archived." });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "archive");
   }
 });
 
@@ -4565,8 +4570,7 @@ app.delete("/api/admin/invoices/:id", async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "delete");
   }
 });
 

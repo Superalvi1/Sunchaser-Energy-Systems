@@ -6,6 +6,7 @@ import {
   describeInvoiceChange,
   DUPLICATE_PAYMENT_WINDOW_MS,
   findRecentDuplicatePayment,
+  isTransientDbError,
   ledgerGuardKind,
   ledgerTotal,
   NON_COLLECTIBLE_INVOICE_STATUSES,
@@ -130,8 +131,18 @@ test("database guard rejections are recognised by their stable tags only", () =>
   assert.equal(ledgerGuardKind({ message: "invoice_not_collectible: invoice is marked void" }), "not_collectible");
   assert.equal(ledgerGuardKind({ message: "invoice_has_payments: an invoice with recorded payments" }), "has_payments");
   assert.equal(ledgerGuardKind({ message: "invoice_payment_invalid: payment amount must be positive" }), "invalid_payment");
+  assert.equal(ledgerGuardKind({ message: "invoice_opening_balance_missing: invoice shows 50000.00 paid but has no payment rows" }), "opening_balance_missing");
+  assert.equal(ledgerGuardKind({ code: "PT409", message: "invoice_busy: this invoice is being updated by someone else" }), "busy");
   for (const other of [null, undefined, {}, { code: "23505", message: "duplicate key value violates unique constraint" }, { message: "the invoice_overpayment word later in text" }]) {
     assert.equal(ledgerGuardKind(other), null);
   }
   assert.deepEqual([...NON_COLLECTIBLE_INVOICE_STATUSES], ["void", "duplicate", "test"]);
+});
+
+test("only failures that leave nothing behind are retried (deadlock, serialization, lock timeout, guard busy)", () => {
+  for (const code of ["40P01", "40001", "55P03"]) assert.equal(isTransientDbError({ code, message: "x" }), true);
+  assert.equal(isTransientDbError({ code: "PT409", message: "invoice_busy: this invoice is being updated by someone else" }), true);
+  for (const other of [null, undefined, {}, { code: "23505", message: "duplicate key" }, { code: "PT422", message: "invoice_overpayment: payment 5 exceeds" }, { code: "PT409", message: "invoice_has_payments: x" }]) {
+    assert.equal(isTransientDbError(other), false);
+  }
 });
