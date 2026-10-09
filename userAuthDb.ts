@@ -71,7 +71,7 @@ export function publicAppUrl(path: string) {
 }
 
 export async function sendAuthEmail(to: string, subject: string, html: string) {
-  console.log("[Auth Email]", { to, subject, html: html.slice(0, 200) });
+  console.log("[Auth Email]", process.env.NODE_ENV === "production" ? { to, subject } : { to, subject, html: html.slice(0, 200) });
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.AUTH_EMAIL_FROM || "Sunchaser <noreply@sunchaser-energy.com>";
   if (!apiKey) return { sent: false, logged: true };
@@ -335,7 +335,7 @@ export async function registerUser(
   return {
     user: mapUserRow(row),
     needsApproval,
-    verificationUrl,
+    verificationUrl: process.env.NODE_ENV === "production" ? null : verificationUrl,
     message: needsApproval
       ? "Registration submitted. Verify your email, then wait for Super Admin approval."
       : "Registration complete. You can sign in now.",
@@ -404,7 +404,8 @@ export async function requestPasswordReset(email: string, localDb?: Database) {
     "Reset your Sunchaser password",
     `<p>Reset password: <a href="${resetUrl}">${resetUrl}</a></p><p>Link expires in 2 hours.</p>`
   );
-  return { ok: true, message: "If that email exists, a reset link was sent.", resetUrl };
+  // The link is a secret: it must only reach the account owner, never the unauthenticated caller of this endpoint.
+  return { ok: true, message: "If that email exists, a reset link was sent." };
 }
 
 export async function resetPasswordWithToken(
