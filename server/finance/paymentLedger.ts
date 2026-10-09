@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 /** Payment rows are the source of truth for what a client has paid. */
 export type LedgerPayment = {
@@ -14,8 +14,29 @@ export type LedgerPayment = {
 
 export const DUPLICATE_PAYMENT_WINDOW_MS = 2 * 60 * 1000;
 
+/**
+ * Rounds to whole paisa, half away from zero, without binary floating point surprises
+ * (1.005 * 100 is 100.49999999999999, so the naive Math.round(x * 100) / 100 stores 1.00 instead of 1.01).
+ */
 export function roundMoney(value: number): number {
-  return Math.round((Number(value) || 0) * 100) / 100;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Number.isNaN(n) ? 0 : n;
+  const text = String(Math.abs(n));
+  // Exponent notation (very large or tiny values) cannot be shifted as text; plain scaling is precise enough there.
+  if (/e/i.test(text)) return Math.round(n * 100) / 100;
+  const rounded = Number(`${Math.round(Number(`${text}e2`))}e-2`);
+  return n < 0 ? -rounded : rounded;
+}
+
+/**
+ * Strict payment amount parser. Accepts a finite number or a plain decimal string ("25000", "25000.50").
+ * Booleans, arrays, hex ("0x10"), exponents ("1e3"), thousands separators and "Infinity" are rejected, because
+ * Number() would otherwise turn them into real money. Returns whole paisa, or null when the input is not an amount.
+ */
+export function parsePaymentAmount(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? roundMoney(raw) : null;
+  if (typeof raw === "string" && /^\s*\d+(\.\d+)?\s*$/.test(raw)) return roundMoney(Number(raw.trim()));
+  return null;
 }
 
 export function ledgerTotal(payments: Pick<LedgerPayment, "amount">[]): number {
@@ -85,6 +106,58 @@ export function findRecentDuplicatePayment(
     }) || null
   );
 }
+
+/** Id for a payment the user explicitly confirmed as a second identical payment (legacy clients without a request id). */
+export function confirmedPaymentId(): string {
+  return `pay-${createHash("sha256").update(`confirmed\n${randomUUID()}`).digest("hex").slice(0, 32)}`;
+}
+
+type RequestedPayment = {
+  amount: number;
+  /** Only fields the caller actually sent are compared, so a retry that omits optional fields is still a retry. */
+  paymentMethod?: string;
+  paymentDate?: string;
+  referenceNumber?: string | null;
+  notes?: string | null;
+};
+
+const norm = (v: unknown) => String(v ?? "").trim();
+
+/**
+ * A client request id names ONE payment. When it is reused for a payment that differs from the stored one,
+ * returns a short description of the stored payment; the caller must answer with a conflict, never with a replay.
+ */
+export function paymentRequestConflict(stored: LedgerPayment, requested: RequestedPayment): string | null {
+  const differs =
+    roundMoney(stored.amount) !== roundMoney(requested.amount) ||
+    (requested.paymentMethod !== undefined && norm(stored.paymentMethod) !== norm(requested.paymentMethod)) ||
+    (requested.paymentDate !== undefined && norm(stored.paymentDate).slice(0, 10) !== norm(requested.paymentDate).slice(0, 10)) ||
+    (requested.referenceNumber !== undefined && norm(stored.referenceNumber) !== norm(requested.referenceNumber)) ||
+    (requested.notes !== undefined && norm(stored.notes) !== norm(requested.notes));
+  if (!differs) return null;
+  const pkr = `PKR ${roundMoney(stored.amount).toLocaleString("en-PK")}`;
+  const when = norm(stored.paymentDate).slice(0, 10);
+  return `${pkr}${stored.paymentMethod ? ` ${stored.paymentMethod}` : ""}${when ? ` on ${when}` : ""}`;
+}
+
+export type LedgerGuardKind = "overpayment" | "total_below_payments" | "not_collectible" | "has_payments" | "invalid_payment";
+
+/**
+ * Recognises rejections raised by the optional database guard (scripts: invoice-payments-integrity.sql).
+ * Matches the stable message tag, so it works whatever status PostgREST attaches. Returns null for any other error.
+ */
+export function ledgerGuardKind(err: unknown): LedgerGuardKind | null {
+  const message = String((err as { message?: unknown } | null)?.message || "");
+  if (message.startsWith("invoice_overpayment")) return "overpayment";
+  if (message.startsWith("invoice_total_below_payments")) return "total_below_payments";
+  if (message.startsWith("invoice_not_collectible")) return "not_collectible";
+  if (message.startsWith("invoice_has_payments")) return "has_payments";
+  if (message.startsWith("invoice_payment_invalid")) return "invalid_payment";
+  return null;
+}
+
+/** Invoice states that must not take new payments. 'archived' stays collectible: there is no restore path for invoices. */
+export const NON_COLLECTIBLE_INVOICE_STATUSES = ["void", "duplicate", "test"] as const;
 
 export function balanceAfterLedger(grandTotal: number, paid: number): number {
   return Math.max(0, roundMoney(grandTotal - paid));

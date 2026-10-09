@@ -27,6 +27,7 @@ node scripts/e2e-crm-repair/j1-staff-crm.mjs    # CRM lead list, saved versions,
 node scripts/e2e-crm-repair/j2-price-change.mjs # see header: needs a temporary catalogue price change and rebuild
 node scripts/e2e-crm-repair/j6-finance.mjs      # quotation → invoice → partial payment, retries, overpayment, audit
 node scripts/e2e-crm-repair/link-portal.mjs     # links the synthetic portal user to the j6 client
+node scripts/e2e-crm-repair/j8-payment-concurrency.mjs # parallel payments: request-id retries, overpayment race, edit/delete races, audit rows
 node scripts/e2e-crm-repair/j3-documents.mjs    # uploads: rejected types, interrupted/lost-response retries, refresh, re-login, cross-customer
 node scripts/e2e-crm-repair/j5-rename.mjs       # rename client; invoices, documents and portal stay linked
 node scripts/e2e-crm-repair/j7-session.mjs      # reopen keeps session (renewed); expiry, suspension, logout

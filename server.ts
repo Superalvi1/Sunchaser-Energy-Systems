@@ -4349,7 +4349,7 @@ app.post("/api/admin/invoices/:id/payments", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
+    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
     return res.status(500).json({ error: err.message });
   }
 });

@@ -48,3 +48,11 @@ export function resolveInvoiceBalanceDue(inv: InvoiceRecord): number {
     Math.round((Number(inv.grandTotal || 0) - received) * 100) / 100
   );
 }
+
+/**
+ * One id per payment submission. Resending the SAME id after a lost response is a safe retry; a NEW id is a new payment,
+ * so two genuine payments of the same amount are never mistaken for a double click. Matches the server's accepted format.
+ */
+export function newPaymentRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
