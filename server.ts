@@ -347,7 +347,7 @@ import {
 import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
 import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
-import { assertProductionJwtConfig, canRenewSession, passwordVersion, revocationKeyOfIssued, sessionMaxAgeSeconds, signAccessToken } from "./server/auth/jwt.ts";
+import { assertProductionJwtConfig, canRenewSession, passwordVersion, sessionMaxAgeSeconds, signAccessToken } from "./server/auth/jwt.ts";
 import {
   probeRevocationStore,
   purgeExpiredRevocations,
@@ -1476,6 +1476,7 @@ app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) =>
     sessionStartedAt: session.startedAt!,
     passwordVersion: session.passwordVersion,
     sessionEpoch: session.sessionEpoch,
+    sessionId: session.sessionId || undefined,
   });
   // Rotation: the presented token is retired after a short grace (so requests already in flight with it still
   // succeed) and remembers its successor. If it was ALREADY revoked (logout raced this refresh), no new token is
@@ -1483,8 +1484,7 @@ app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) =>
   // sessions behind; the client keeps its current token and retries later.
   try {
     loadDb();
-    const newKey = revocationKeyOfIssued(token);
-    const rotated = await rotateSession(session.tokenKey, newKey, req.actor.id, session.tokenExpiresAt, refreshGraceSeconds(), db);
+    const rotated = await rotateSession(session.keys, req.actor.id, session.tokenExpiresAt, refreshGraceSeconds(), db);
     if (rotated.alreadyRevoked) return res.status(401).json({ error: "Unauthorized" });
     saveDb();
   } catch (err) {
@@ -1504,7 +1504,9 @@ app.post("/api/auth/logout", requireAuth, async (req, res) => {
   if (!req.actor || !session) return res.status(401).json({ error: "Unauthorized" });
   try {
     loadDb();
-    const out = await revokeSessionNow(session.tokenKey, req.actor.id, session.tokenExpiresAt, db);
+    // A family key lives until the session's absolute limit (every renewed token ends by then); a lone key until its token's exp.
+    const endsAt = session.keys.family && session.startedAt ? session.startedAt + sessionMaxAgeSeconds() : session.tokenExpiresAt;
+    const out = await revokeSessionNow(session.keys.logoutKey, req.actor.id, endsAt, db);
     saveDb();
     return res.json({ success: true, revoked: out.stored, ...(out.stored ? {} : { reason: "revocation_inactive" }) });
   } catch (err) {

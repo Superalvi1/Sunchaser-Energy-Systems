@@ -4,7 +4,7 @@ import { findUserByUsername, mapUserRow, sessionEpochOf } from "../../userAuthDb
 import {
   passwordVersion,
   passwordVersionMatches,
-  revocationKeyFor,
+  sessionKeysFor,
   sessionLimitViolation,
   sessionMaxAgeSeconds,
   verifySessionToken,
@@ -37,10 +37,12 @@ export type AuthSessionInfo = {
   passwordVersion: string | null;
   /** users.session_epoch as currently stored (0 when the column does not exist yet). */
   sessionEpoch: number;
-  /** Revocation key of the presented token (its jti, or a hash for tokens issued before jti existed). */
-  tokenKey: string;
+  /** Revocation keys of the presented token (see sessionKeysFor). */
+  keys: import("../auth/jwt.ts").SessionKeys;
   /** The presented token's own expiry (seconds). */
   tokenExpiresAt: number | null;
+  /** Session family id of the presented token (null for tokens issued before it existed). */
+  sessionId: string | null;
 };
 
 export type ActorHydrationResult =
@@ -139,8 +141,8 @@ export async function hydrateActorFromJwt(
 
   const claims = verified.claims;
   // One indexed lookup on revoked_sessions, run alongside the user lookup the request needs anyway.
-  const tokenKey = revocationKeyFor(token, verified.jti);
-  const revocation = isSessionRevoked(tokenKey, localDb).then(
+  const keys = sessionKeysFor(token, verified);
+  const revocation = isSessionRevoked(keys.checkKeys, localDb).then(
     (revoked) => ({ revoked, error: null as unknown }),
     (error: unknown) => ({ revoked: false, error })
   );
@@ -179,8 +181,9 @@ export async function hydrateActorFromJwt(
       startedAt: verified.startedAt,
       passwordVersion: loaded.passwordVersion,
       sessionEpoch: loaded.sessionEpoch,
-      tokenKey,
+      keys,
       tokenExpiresAt: verified.expiresAt,
+      sessionId: verified.sid,
     },
   };
 }

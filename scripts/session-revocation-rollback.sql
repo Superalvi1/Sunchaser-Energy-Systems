@@ -1,6 +1,6 @@
 -- Rollback for scripts/session-revocation-schema.sql.
--- Roll the APPLICATION back first (or set SESSION_REVOCATION_DISABLED=1 and restart): while the app is running with
--- revocation active, dropping the table makes revocation checks fail closed (503) until it is restarted.
+-- Order does not matter for availability: a running new build notices the missing table (PostgREST PGRST205), logs one
+-- INACTIVE warning, sets sessionRevocationActive=false on /health and carries on as before the migration.
 -- Effects: every logged-out / rotated-out token that has not yet expired becomes valid again, and tokens revoked by
 -- "sign out of all devices" likewise. If that matters, rotate JWT_SECRET (signs everyone out) instead of rolling back.
 

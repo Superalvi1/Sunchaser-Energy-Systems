@@ -2,19 +2,23 @@
  * Server-side session revocation store (public.revoked_sessions) with a safe degraded mode.
  *
  * Contract:
- *  - A session is identified by its revocation key (token `jti`, or a hash for pre-jti tokens).
- *  - A row means "dead from revoked_at on". revoked_at in the FUTURE is the refresh-rotation grace: the rotated-out
+ *  - Rows are keyed by `jti` (see sessionKeysFor in jwt.ts): a token id, a session family "s:<sid>" or a hash "h:...".
+ *    A row means "dead from revoked_at on". revoked_at in the FUTURE is the refresh-rotation grace: the rotated-out
  *    token keeps working for a few seconds so requests already in flight with it do not fail.
- *  - If the table does not exist yet (migration not applied) every check says "not revoked" - the app behaves as it
- *    did before - and revocation is reported INACTIVE (one warning, flag on /health). It re-probes periodically, so
- *    applying the migration activates it without a restart.
- *  - Once the table has been seen working, ANY lookup error is fail-CLOSED: callers get RevocationLookupError
- *    (HTTP 503), never "allow". A revoked token must not pass because the database hiccuped.
+ *  - Every authenticated request costs ONE indexed primary-key query (`jti IN (token id, family)`).
+ *  - If the table does not exist (migration not applied, or deliberately rolled back) every check says "not revoked" -
+ *    the app behaves as it did before - and revocation is reported INACTIVE (one warning, flag on /health). It
+ *    re-probes periodically, so applying the migration activates it without a restart.
+ *  - ANY OTHER lookup error (connection, timeout, permission, anything not "relation missing") is fail-CLOSED:
+ *    callers get RevocationLookupError (HTTP 503), never "allow". A revoked token must not pass because the database
+ *    hiccuped. "Relation missing" is the single deliberate exception: a table that does not exist holds no
+ *    revocations, the state is loud (warning + /health) and identical to the not-yet-migrated state.
  */
 import type { Database } from "../../dbManager";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
+import type { SessionKeys } from "./jwt.ts";
 
-export type RevocationRow = { jti: string; user_id: string; expires_at: string; revoked_at: string; replaced_by?: string | null };
+export type RevocationRow = { jti: string; user_id: string; expires_at: string; revoked_at: string };
 
 export class RevocationLookupError extends Error {
   readonly statusCode = 503;
@@ -26,7 +30,8 @@ export class RevocationLookupError extends Error {
 }
 
 export interface RevocationBackend {
-  find(key: string): Promise<RevocationRow | null>;
+  /** One query: rows whose key is in `keys`. */
+  find(keys: string[]): Promise<RevocationRow[]>;
   /** INSERT ... ON CONFLICT DO NOTHING. */
   insertIfAbsent(row: RevocationRow): Promise<void>;
   /** UPDATE revoked_at = iso WHERE jti = key AND revoked_at > iso (pull a scheduled revocation forward, never postpone). */
@@ -67,7 +72,8 @@ export function setRevocationBackendForTests(b: RevocationBackend | null): void 
 function isMissingRelation(err: any): boolean {
   const code = String(err?.code || "");
   const msg = String(err?.message || "");
-  return code === "PGRST205" || code === "42P01" || /could not find the table|relation .*revoked_sessions.* does not exist/i.test(msg);
+  // PostgREST answers 42P01 (relation does not exist) or PGRST205 (table not in schema cache, newer versions).
+  return (code === "PGRST205" || code === "42P01") && /revoked_sessions/.test(msg);
 }
 
 function markInactive(reason: string): void {
@@ -91,10 +97,10 @@ function markActive(): void {
 function supabaseBackend(): RevocationBackend {
   const client = () => getSupabase()!;
   return {
-    async find(key) {
-      const { data, error } = await client().from("revoked_sessions").select("jti,user_id,expires_at,revoked_at,replaced_by").eq("jti", key).maybeSingle();
+    async find(keys) {
+      const { data, error } = await client().from("revoked_sessions").select("jti,user_id,expires_at,revoked_at").in("jti", keys);
       if (error) throw error;
-      return (data as RevocationRow | null) ?? null;
+      return (data as RevocationRow[]) ?? [];
     },
     async insertIfAbsent(row) {
       const { error } = await client().from("revoked_sessions").upsert(row, { onConflict: "jti", ignoreDuplicates: true });
@@ -115,8 +121,8 @@ function supabaseBackend(): RevocationBackend {
 function localBackend(localDb: Database): RevocationBackend {
   const rows = (): RevocationRow[] => ((localDb as any).revokedSessions ||= []);
   return {
-    async find(key) {
-      return rows().find((r) => r.jti === key) ?? null;
+    async find(keys) {
+      return rows().filter((r) => keys.includes(r.jti));
     },
     async insertIfAbsent(row) {
       if (!rows().some((r) => r.jti === row.jti)) rows().push({ ...row });
@@ -151,30 +157,34 @@ async function guarded<T>(fn: () => Promise<T>, onMissing: T): Promise<T> {
     markActive();
     return out;
   } catch (err) {
-    if (state !== "active" && isMissingRelation(err)) {
-      markInactive("table public.revoked_sessions does not exist (migration not applied)");
+    if (isMissingRelation(err)) {
+      markInactive("table public.revoked_sessions does not exist (migration not applied or rolled back)");
       return onMissing;
     }
     throw new RevocationLookupError("Session check unavailable.", err);
   }
 }
 
-/** One indexed primary-key lookup. Throws RevocationLookupError (fail-closed) on any error once the table has been seen working. */
-export async function isSessionRevoked(key: string, localDb?: Database, nowMs = Date.now()): Promise<boolean> {
+const isDead = (rows: RevocationRow[], nowMs: number) => rows.some((r) => Date.parse(r.revoked_at) <= nowMs);
+
+/** One indexed primary-key query. Throws RevocationLookupError (fail-closed) on any error other than "relation missing". */
+export async function isSessionRevoked(keys: string[], localDb?: Database, nowMs = Date.now()): Promise<boolean> {
   if (skipLookup()) return false;
   const backend = backendFor(localDb);
   if (!backend) return false;
-  const row = await guarded(() => backend.find(key), null);
-  return Boolean(row) && Date.parse(row!.revoked_at) <= nowMs;
+  return isDead(await guarded(() => backend.find(keys), [] as RevocationRow[]), nowMs);
 }
 
-const farFuture = (nowMs: number, expSec: number | null) => new Date((expSec ?? Math.floor(nowMs / 1000) + 31 * 86400) * 1000).toISOString();
+const endIso = (nowMs: number, expSec: number | null) => new Date((expSec ?? Math.floor(nowMs / 1000) + 31 * 86400) * 1000).toISOString();
 
-/** Revoke now (logout). Follows `replaced_by` so logging out with a just-rotated token also ends its successor. */
+/**
+ * Logout: revoke `key` now (the session family, or the lone token). A pending rotation-grace row for the same key is
+ * pulled forward so the effect is immediate.
+ */
 export async function revokeSessionNow(
   key: string,
   userId: string,
-  expiresAtSec: number | null,
+  endsAtSec: number | null,
   localDb?: Database,
   nowMs = Date.now()
 ): Promise<{ stored: boolean }> {
@@ -183,25 +193,19 @@ export async function revokeSessionNow(
   if (!backend) return { stored: false };
   const iso = new Date(nowMs).toISOString();
   return guarded<{ stored: boolean }>(async () => {
-    const seen = new Set<string>();
-    let cursor: string | null = key;
-    for (let hop = 0; cursor && hop < 5 && !seen.has(cursor); hop++) {
-      seen.add(cursor);
-      await backend.insertIfAbsent({ jti: cursor, user_id: userId, expires_at: farFuture(nowMs, expiresAtSec), revoked_at: iso });
-      await backend.pullForward(cursor, iso);
-      cursor = (await backend.find(cursor))?.replaced_by ?? null;
-    }
+    await backend.insertIfAbsent({ jti: key, user_id: userId, expires_at: endIso(nowMs, endsAtSec), revoked_at: iso });
+    await backend.pullForward(key, iso);
     return { stored: true };
   }, { stored: false });
 }
 
 /**
- * Refresh rotation: the old token dies `graceSeconds` from now and records its successor. Reports whether the old
- * session was ALREADY dead (logged out / revoked earlier) - the caller must then refuse to hand out a new token.
+ * Refresh rotation: the presented token dies `graceSeconds` from now. Reports whether the session was ALREADY dead
+ * (logged out / revoked earlier, checked AFTER the write so a racing logout is seen) - the caller must then refuse to
+ * hand out the new token. A logout that lands later still kills the new token, because it shares the session family.
  */
 export async function rotateSession(
-  oldKey: string,
-  newKey: string,
+  keys: SessionKeys,
   userId: string,
   oldExpiresAtSec: number | null,
   graceSeconds: number,
@@ -212,16 +216,14 @@ export async function rotateSession(
   const backend = backendFor(localDb);
   if (!backend) return { stored: false, alreadyRevoked: false };
   const row: RevocationRow = {
-    jti: oldKey,
+    jti: keys.rotateKey,
     user_id: userId,
-    expires_at: farFuture(nowMs, oldExpiresAtSec),
+    expires_at: endIso(nowMs, oldExpiresAtSec),
     revoked_at: new Date(nowMs + graceSeconds * 1000).toISOString(),
-    replaced_by: newKey,
   };
   return guarded<{ stored: boolean; alreadyRevoked: boolean }>(async () => {
     await backend.insertIfAbsent(row); // a parallel refresh or an earlier logout keeps its row
-    const after = await backend.find(oldKey);
-    return { stored: true, alreadyRevoked: Boolean(after) && Date.parse(after!.revoked_at) <= nowMs };
+    return { stored: true, alreadyRevoked: isDead(await backend.find(keys.checkKeys), nowMs) };
   }, { stored: false, alreadyRevoked: false });
 }
 
@@ -246,7 +248,7 @@ export async function probeRevocationStore(localDb?: Database): Promise<void> {
   const backend = backendFor(localDb);
   if (!backend) return;
   try {
-    await guarded(() => backend.find("__probe__"), null);
+    await guarded(() => backend.find(["__probe__"]), [] as RevocationRow[]);
   } catch (err) {
     console.error("[SessionRevocation] startup probe failed; requests will be refused (503) until the store answers:", (err as any)?.cause?.message || (err as Error).message);
   }

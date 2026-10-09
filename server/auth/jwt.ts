@@ -115,12 +115,15 @@ export type SignableClaims = JwtUserClaims & {
   passwordVersion?: string | null;
   /** users.session_epoch at issue time; carried as `se` only when > 0, so tokens look the same until a first revocation. */
   sessionEpoch?: number;
+  /** Session family id (`sid`): minted at sign-in, carried unchanged through every renewal. */
+  sessionId?: string;
 };
 
 export function signAccessToken(claims: SignableClaims, env: NodeJS.ProcessEnv = process.env): string {
-  const { sessionStartedAt, passwordVersion: pwv, sessionEpoch, ...userClaims } = claims;
-  // Every token carries its own unique id (`jti`) so ONE session can be revoked (logout, refresh rotation).
-  const payload: Record<string, unknown> = { ...userClaims, jti: randomUUID() };
+  const { sessionStartedAt, passwordVersion: pwv, sessionEpoch, sessionId, ...userClaims } = claims;
+  // `jti` is unique per token (refresh rotation retires the old one); `sid` is shared by every token renewed from one
+  // sign-in, so logging out revokes the whole family - including tokens minted by a refresh racing the logout.
+  const payload: Record<string, unknown> = { ...userClaims, jti: randomUUID(), sid: sessionId || randomUUID() };
   if (sessionEpoch && sessionEpoch > 0) payload.se = sessionEpoch;
   if (sessionStartedAt) payload.sst = sessionStartedAt;
   if (pwv) payload.pwv = pwv;
@@ -186,6 +189,8 @@ export type VerifiedSession = {
   passwordVersion: string | null;
   /** Unique token id; null for tokens issued before it existed. */
   jti: string | null;
+  /** Session family id; null for tokens issued before it existed. */
+  sid: string | null;
   /** users.session_epoch recorded in the token (`se`); 0 when absent. */
   sessionEpoch: number;
 };
@@ -210,6 +215,7 @@ export function verifySessionToken(token: string): VerifiedSession {
     expiresAt: positiveNumber(payload.exp),
     passwordVersion: pwv,
     jti: typeof payload.jti === "string" && payload.jti ? payload.jti : null,
+    sid: typeof payload.sid === "string" && payload.sid ? payload.sid : null,
     sessionEpoch: Number.isInteger(payload.se) && (payload.se as number) > 0 ? (payload.se as number) : 0,
   };
 }
@@ -219,15 +225,27 @@ export function verifyAccessToken(token: string): JwtUserClaims {
 }
 
 /**
- * Key under which a session is revoked: the token's `jti`, or - for tokens issued before `jti` existed - a SHA-256
- * of the token itself, so those can still be logged out and rotated. The hash is not reversible to the token.
+ * Keys under which a token can be revoked in public.revoked_sessions.
+ *  - `checkKeys`: looked up on every request in ONE indexed query (`jti IN (...)`).
+ *  - `logoutKey`: what logout records - the whole session family (`s:<sid>`) when the token has one.
+ *  - `rotateKey`: what refresh retires (after a grace) - this token alone.
+ * Tokens issued before `jti`/`sid` existed are keyed by a SHA-256 of the token (not reversible), so they can still be
+ * logged out and rotated.
  */
-export function revocationKeyFor(token: string, jti: string | null): string {
-  return jti ? jti : `h:${createHash("sha256").update(token).digest("hex").slice(0, 40)}`;
+export type SessionKeys = { checkKeys: string[]; logoutKey: string; rotateKey: string; family: boolean };
+
+export function sessionKeysFor(token: string, ids: { jti: string | null; sid: string | null }): SessionKeys {
+  if (!ids.jti) {
+    const k = `h:${createHash("sha256").update(token).digest("hex").slice(0, 40)}`;
+    return { checkKeys: [k], logoutKey: k, rotateKey: k, family: false };
+  }
+  if (!ids.sid) return { checkKeys: [ids.jti], logoutKey: ids.jti, rotateKey: ids.jti, family: false };
+  const fam = `s:${ids.sid}`;
+  return { checkKeys: [ids.jti, fam], logoutKey: fam, rotateKey: ids.jti, family: true };
 }
 
-/** Revocation key of a token this process just signed (reads its jti without re-verifying). */
-export function revocationKeyOfIssued(token: string): string {
-  const decoded = jwt.decode(token) as { jti?: unknown } | null;
-  return revocationKeyFor(token, typeof decoded?.jti === "string" ? decoded.jti : null);
+/** Keys of a token this process just signed or is inspecting (decodes without verifying; for tests/diagnostics). */
+export function sessionKeysOfToken(token: string): SessionKeys {
+  const d = (jwt.decode(token) || {}) as { jti?: unknown; sid?: unknown };
+  return sessionKeysFor(token, { jti: typeof d.jti === "string" ? d.jti : null, sid: typeof d.sid === "string" ? d.sid : null });
 }

@@ -1,9 +1,10 @@
 -- Server-side session revocation (additive, idempotent). Rollback: scripts/session-revocation-rollback.sql
 -- Read-only check first: scripts/session-revocation-preflight.sql
 --
---  * public.revoked_sessions   one row per revoked token id (jti). POST /api/auth/logout inserts the caller's token;
---                              refresh rotation inserts the OLD token with revoked_at slightly in the future (grace).
---                              Rows are only needed until expires_at (the token's own expiry) and are purged after.
+--  * public.revoked_sessions   one row per revoked key. `jti` holds a token id (refresh rotation inserts the OLD token's
+--                              jti with revoked_at slightly in the future = grace), a session family 's:<sid>' (logout:
+--                              kills every token renewed from one sign-in) or 'h:<sha256>' (tokens issued before jti).
+--                              Rows are only needed until expires_at and are purged after.
 --  * public.users.session_epoch  integer, 0 by default. "Sign out of all devices", suspend/reject/pending and the admin
 --                              "revoke sessions" action increment it; tokens carry the epoch they were minted under.
 --
@@ -20,8 +21,7 @@ create table if not exists public.revoked_sessions (
   jti text primary key,
   user_id text not null,
   expires_at timestamptz not null,
-  revoked_at timestamptz not null default now(),
-  replaced_by text
+  revoked_at timestamptz not null default now()
 );
 comment on table public.revoked_sessions is
   'Revoked JWT ids. revoked_at in the future = refresh-rotation grace. Purge rows where expires_at < now().';
